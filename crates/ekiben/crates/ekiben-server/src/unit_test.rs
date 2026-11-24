@@ -1108,6 +1108,667 @@ mod tests {
         );
     }
 
+    fn write(dir: &Path, name: &str, text: &str) -> String {
+        let p = dir.join(name);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).expect("dir");
+        }
+        std::fs::write(&p, text).expect("write");
+        p.to_string_lossy().into_owned()
+    }
+
+    async fn report(paths: &[PathBuf], resources: &[PathBuf]) -> (bool, String, String) {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let ok = run_all(
+            crate::build_full_registry(),
+            paths,
+            resources,
+            &mut out,
+            &mut err,
+        )
+        .await;
+        (
+            ok,
+            String::from_utf8(out).expect("utf8"),
+            String::from_utf8(err).expect("utf8"),
+        )
+    }
+
+    const TARGET: &str = r#"pipeline:
+  processors:
+    - label: up
+      mapping: 'root = content().uppercase()'
+    - label: tag
+      mapping: 'meta tag = "t"'
+"#;
+
+    #[tokio::test]
+    async fn run_all_reports_passes_failures_and_missing_targets() {
+        let dir = tempfile::tempdir().expect("dir");
+        let d = dir.path();
+        write(d, "ok.yaml", TARGET);
+        write(
+            d,
+            "ok_bento_test.yaml",
+            r#"tests:
+  - name: upper
+    input_batch:
+      - content: abc
+        metadata: {k: v}
+    output_batches:
+      - - content_equals: ABC
+          metadata_equals: {tag: t, k: v}
+          content_matches: '^A.C$'
+          bloblang: 'content() == "ABC"'
+"#,
+        );
+        write(d, "bad.yaml", TARGET);
+        write(
+            d,
+            "bad_bento_test.yaml",
+            r#"tests:
+  - name: wrong
+    input_batches:
+      - - content: abc
+        - content: def
+    output_batches:
+      - - content_equals: nope
+  - name: counts
+    input_batch:
+      - content: x
+    output_batches:
+      - []
+      - - content_equals: X
+"#,
+        );
+        write(d, "sub/notes.txt", "not yaml");
+        write(d, "sub/none.yaml", "input: {generate: {}}\n");
+        let (ok, out, err) = report(&[PathBuf::from(format!("{}/...", d.display()))], &[]).await;
+        assert!(!ok);
+        assert!(err.is_empty(), "{err}");
+        assert!(
+            out.contains("Test '") && out.contains("ok.yaml' succeeded"),
+            "{out}"
+        );
+        assert!(out.contains("bad.yaml' failed"), "{out}");
+        assert!(out.contains("wrong [line 2]:"), "{out}");
+        assert!(
+            out.contains("content_equals: content mismatch\n  expected: nope\n  received: ABC"),
+            "{out}"
+        );
+        assert!(
+            out.contains("unexpected message from batch 0: DEF"),
+            "{out}"
+        );
+        assert!(
+            out.contains("mismatch of output batch 0 message counts, expected 1, got 2"),
+            "{out}"
+        );
+        assert!(out.contains("counts [line 8]:"), "{out}");
+        assert!(
+            out.contains("wrong batch count, expected 2, got 1"),
+            "{out}"
+        );
+
+        let (ok, out, _) = report(&[PathBuf::from(d.join("ok.yaml"))], &[]).await;
+        assert!(ok, "{out}");
+        let (ok, out, _) = report(&[d.join("sub")], &[]).await;
+        assert!(!ok);
+        assert_eq!(out, "No tests were found\n");
+        let (ok, _, err) = report(&[d.join("missing.yaml")], &[]).await;
+        assert!(!ok);
+        assert!(
+            err.starts_with("Failed to obtain test targets: unable to access target config file"),
+            "{err}"
+        );
+        let (ok, _, err) = report(&[PathBuf::from(format!("{}/gone/...", d.display()))], &[]).await;
+        assert!(!ok);
+        assert!(err.contains("gone"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn two_failing_targets_and_odd_paths_are_reported_in_order() {
+        let dir = tempfile::tempdir().expect("dir");
+        let d = dir.path();
+        let failing = "pipeline:\n  processors:\n    - mapping: 'root = content()'\ntests:\n  - name: f\n    environment: ~\n    input_batch: [{content: a}]\n    output_batches: [[{content_equals: b}]]\n";
+        write(d, "a.yaml", failing);
+        write(d, "b.yaml", failing);
+        write(d, "nested/c.yaml", failing);
+        write(d, "notes.txt", "plain");
+        let (ok, out, _) = report(&[d.to_path_buf(), d.join("notes.txt")], &[]).await;
+        assert!(!ok);
+        assert!(
+            out.contains("a.yaml' failed") && out.contains("b.yaml' failed"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("c.yaml"),
+            "a directory without /... is not walked: {out}"
+        );
+        assert!(
+            out.contains("---\n\nf [line 5]:\n") && out.contains("\n\n--- "),
+            "{out}"
+        );
+
+        write(d, "x.yaml", TARGET);
+        std::fs::create_dir(d.join("x_bento_test.yaml")).expect("dir");
+        let (_, _, err) = report(&[d.join("x.yaml")], &[]).await;
+        assert!(err.contains("failed to read test definition from"), "{err}");
+        write(d, "y.yaml", TARGET);
+        write(d, "y_bento_test.yaml", "tests: [\n");
+        let (_, _, err) = report(&[d.join("y.yaml")], &[]).await;
+        assert!(
+            err.contains("failed to parse test definition from"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_target_that_does_not_build_stops_the_run() {
+        let dir = tempfile::tempdir().expect("dir");
+        let d = dir.path();
+        write(
+            d,
+            "t.yaml",
+            "pipeline:\n  processors:\n    - mapping: 'root = ('\ntests:\n  - name: x\n    input_batch: [{content: a}]\n",
+        );
+        let (ok, _, err) = report(&[d.join("t.yaml")], &[]).await;
+        assert!(!ok);
+        assert!(
+            err.contains("Failed to execute test target") && err.contains("test case 0 failed"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mappings_files_mocks_labels_and_resources_feed_a_case() {
+        let dir = tempfile::tempdir().expect("dir");
+        let d = dir.path();
+        write(d, "lib.blobl", "map up {\n  root = this.uppercase()\n}\n");
+        write(
+            d,
+            "m.blobl",
+            "import \"./lib.blobl\"\nroot = content().string().apply(\"up\")\n",
+        );
+        write(d, "in.txt", "from file");
+        write(d, "want.txt", "FROM FILE");
+        write(d, "want.json", r#"{"a":1,"b":[1,2]}"#);
+        write(
+            d,
+            "shared.yaml",
+            "processor_resources:\n  - label: shout\n    mapping: 'root = content() + \"!\"'\n",
+        );
+        write(
+            d,
+            "t.yaml",
+            r#"pipeline:
+  processors:
+    - label: call_api
+      http:
+        url: http://127.0.0.1:1/never
+    - resource: shout
+    - label: json
+      mapping: 'root = {"a": 1, "b": [1, 2], "c": true}'
+tests:
+  - name: mapping file
+    target_mapping: m.blobl
+    input_batch:
+      - file_content: in.txt
+    output_batches:
+      - - file_equals: want.txt
+  - name: mocked by label and pointer
+    target_processors: /pipeline/processors
+    environment: {WHO: env}
+    mocks:
+      call_api:
+        mapping: 'root = content().string() + "-" + env("WHO")'
+      /pipeline/processors/2:
+        label: replaced
+        mapping: 'root = content()'
+    input_batch:
+      - content: hi
+    output_batches:
+      - - content_equals: hi-env!
+  - name: json by label
+    target_processors: json
+    input_batch:
+      - json_content: {x: 1}
+    output_batches:
+      - - json_equals: {a: 1, b: [1, 2], c: true}
+          json_contains: '{"a": 1}'
+          file_json_contains: want.json
+  - name: whole file by fragment
+    target_processors: 't.yaml#/pipeline/processors/2'
+    input_batch: [{content: a}]
+    output_batches:
+      - - file_json_equals: want.json
+"#,
+        );
+        let res = [PathBuf::from(d.join("shared.yaml"))];
+        let (ok, out, err) = report(&[d.join("t.yaml")], &res).await;
+        assert!(err.is_empty(), "{err}");
+        assert!(!ok, "{out}");
+        // Only the last case fails: the result has `c`, the file does not.
+        assert!(out.contains("whole file by fragment [line"), "{out}");
+        assert!(
+            out.contains("file_json_equals: JSON content mismatch"),
+            "{out}"
+        );
+        assert!(!out.contains("mapping file ["), "{out}");
+        assert!(!out.contains("mocked by label"), "{out}");
+        assert!(!out.contains("json by label ["), "{out}");
+    }
+
+    #[tokio::test]
+    async fn case_setup_errors_name_what_is_missing() {
+        let dir = tempfile::tempdir().expect("dir");
+        let d = dir.path();
+        let target = write(d, "t.yaml", TARGET);
+        let reg = crate::build_full_registry();
+        let case = |extra: &str| {
+            let def = format!("tests:\n  - name: c\n    input_batch: [{{content: a}}]\n{extra}");
+            parse_definition(&def).expect("def").remove(0)
+        };
+        for (extra, want) in [
+            (
+                "    target_mapping: gone.blobl\n",
+                "failed to initialise Bloblang mapping 'gone.blobl'",
+            ),
+            (
+                "    target_processors: 't.yaml#'\n",
+                "reference URI must contain a path or fragment",
+            ),
+            (
+                "    target_processors: nolabel\n",
+                "target for label 'nolabel' failed",
+            ),
+            (
+                "    target_processors: /pipeline/nothing\n",
+                "failed to resolve case processors",
+            ),
+            (
+                "    target_processors: /pipeline/processors/0/label\n",
+                "failed to resolve case processors",
+            ),
+            (
+                "    target_processors: 'bad_target.yaml#/pipeline'\n",
+                "failed to parse config file",
+            ),
+            (
+                "    target_processors: 'other.yaml#/pipeline'\n",
+                "failed to parse config file",
+            ),
+            (
+                "    mocks: {nolabel: {noop: {}}}\n",
+                "mock for label 'nolabel' could not be applied",
+            ),
+            (
+                "    mocks: {/pipeline/processors/9/x: {noop: {}}}\n",
+                "failed to set mock '/pipeline/processors/9/x'",
+            ),
+        ] {
+            let err = execute(&reg, &[case(extra)], &target, &[])
+                .await
+                .expect_err(extra);
+            assert!(err.contains(want), "{extra}: {err}");
+        }
+        write(d, "bad_target.yaml", "input: 5\npipeline: {}\n");
+        write(d, "broken.blobl", "root = (");
+        let err = execute(
+            &reg,
+            &[case("    target_mapping: broken.blobl\n")],
+            &target,
+            &[],
+        )
+        .await
+        .expect_err("mapping");
+        assert!(
+            err.contains("failed to initialise Bloblang mapping 'broken.blobl'"),
+            "{err}"
+        );
+        // `${VAR}` the case does not set is left for the config to report.
+        let with_var = write(
+            d,
+            "var.yaml",
+            "pipeline:\n  processors:\n    - mapping: 'root = \"${T7583_UNSET_VAR}\"'\n",
+        );
+        let failures = execute(
+            &reg,
+            &[case("    output_batches: [[{content_equals: x}]]\n")],
+            &with_var,
+            &[],
+        )
+        .await
+        .expect("runs");
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        let err = execute(&reg, &[case("")], &target, &[d.join("gone.yaml")])
+            .await
+            .expect_err("resources");
+        assert!(err.contains("failed to parse config file"), "{err}");
+        let bad_res = write(d, "bad_res.yaml", "input: 5\n");
+        let err = execute(&reg, &[case("")], &target, &[PathBuf::from(bad_res)])
+            .await
+            .expect_err("bad resources");
+        assert!(
+            err.contains("failed to parse resources config file"),
+            "{err}"
+        );
+        let bad = write(
+            d,
+            "badres.yaml",
+            "processor_resources:\n  - label: x\n    mapping: 'root = ('\n",
+        );
+        let err = execute(&reg, &[case("")], &bad, &[])
+            .await
+            .expect_err("resources build");
+        assert!(err.contains("failed to initialise resources"), "{err}");
+        let file_case = parse_definition("tests:\n  - input_batch: [{file_content: none.txt}]\n")
+            .expect("def")
+            .remove(0);
+        let err = execute(&reg, &[file_case], &target, &[])
+            .await
+            .expect_err("file");
+        assert!(err.contains("failed to create test input 0"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_processor_error_and_an_extra_batch_are_reported() {
+        let dir = tempfile::tempdir().expect("dir");
+        let d = dir.path();
+        let target = write(
+            d,
+            "t.yaml",
+            "pipeline:\n  processors:\n    - mapping: 'root = this.missing.number()'\n",
+        );
+        let reg = crate::build_full_registry();
+        let def = "tests:\n  - name: e\n    input_batches: [[{content: '{}'}], [{content: '{}'}]]\n    output_batches:\n      - - content_equals: x\n";
+        let cases = parse_definition(def).expect("def");
+        let failures = execute(&reg, &cases, &target, &[]).await.expect("runs");
+        let reasons: Vec<&str> = failures.iter().map(|f| f.reason.as_str()).collect();
+        assert!(
+            reasons
+                .iter()
+                .any(|r| r.starts_with("batch 0 message 0: content_equals")),
+            "{reasons:?}"
+        );
+        assert!(
+            reasons
+                .iter()
+                .any(|r| r.starts_with("batch 0 message 0: ") && !r.contains("content_equals")),
+            "{reasons:?}"
+        );
+        assert!(
+            reasons.iter().any(|r| r.starts_with("unexpected batch: [")),
+            "{reasons:?}"
+        );
+    }
+
+    #[test]
+    fn definitions_refuse_wrong_shapes() {
+        assert!(parse_definition("a: [\n").is_err());
+        assert!(parse_definition("pipeline: {}\n").expect("none").is_empty());
+        assert_eq!(
+            parse_definition("tests: 5\n").unwrap_err(),
+            "field tests: expected array value"
+        );
+        for (def, want) in [
+            (
+                "tests: [{name: [1]}]\n",
+                "field name: expected string value, got array",
+            ),
+            (
+                "tests: [{environment: 5}]\n",
+                "field environment: expected object value",
+            ),
+            (
+                "tests: [{environment: {A: {b: 1}}}]\n",
+                "expected string value, got object",
+            ),
+            (
+                "tests: [{mocks: 5}]\n",
+                "field mocks: expected object value",
+            ),
+            (
+                "tests: [{input_batches: [5]}]\n",
+                "field input_batches: expected array value",
+            ),
+            (
+                "tests: [{output_batches: [5]}]\n",
+                "field output_batches: expected array value",
+            ),
+            (
+                "tests: [{input_batch: [{content: [1]}]}]\n",
+                "expected string value, got array",
+            ),
+            (
+                "tests: [{input_batch: [{file_content: {a: 1}}]}]\n",
+                "expected string value, got object",
+            ),
+            (
+                "tests: [{input_batch: [{metadata: 5}]}]\n",
+                "field metadata: expected object value",
+            ),
+            (
+                "tests: [{output_batches: [[{content_equals: [1]}]]}]\n",
+                "field content_equals: expected string value",
+            ),
+            (
+                "tests: [{output_batches: [[{bloblang: 'root = ('}]]}]\n",
+                "bloblang: ",
+            ),
+            (
+                "tests: [{output_batches: [[{metadata_equals: 5}]]}]\n",
+                "field metadata_equals: expected object value",
+            ),
+        ] {
+            let err = parse_definition(def).expect_err(def);
+            assert!(err.contains(want), "{def}: {err}");
+        }
+        let c = parse_definition(
+            "tests:\n  - name: 7\n    environment: {N: 1, B: true, Z: ~}\n    input_batch: []\n    output_batches: [[5, {unknown_check: x, json_equals: '{\"a\":1}'}]]\n",
+        )
+        .expect("def")
+        .remove(0);
+        assert_eq!(c.name, "7");
+        assert_eq!(c.environment["N"], "1");
+        assert_eq!(c.environment["B"], "true");
+        assert_eq!(c.environment["Z"], "");
+        assert!(c.input_batches.is_empty());
+        assert!(c.output_batches[0][0].is_empty());
+        assert_eq!(c.output_batches[0][1].len(), 1);
+    }
+
+    #[test]
+    fn paths_split_join_and_clean_like_go() {
+        assert_eq!(
+            path_pair("plain"),
+            ("plain".to_string(), "plain_bento_test".to_string())
+        );
+        assert_eq!(clean("../a/../../b"), "../../b");
+        assert_eq!(clean("/../a"), "/a");
+        assert_eq!(dir_of("/x"), "/");
+        assert_eq!(dir_of("a/b/c"), "a/b");
+        assert_eq!(dir_of("c"), ".");
+        assert_eq!(join("a", "/abs/./x"), "/abs/x");
+        assert_eq!(join("a", "b/../c"), "a/c");
+        assert!(case_lines("pipeline: {}\n").is_empty());
+        assert_eq!(
+            case_lines("tests:\n# c\n\n- name: a\n  nested:\n    - x\n- name: b\n"),
+            vec![4, 7]
+        );
+    }
+
+    #[test]
+    fn get_and_set_paths_refuse_what_is_not_there() {
+        let mut root = serde_json::json!({"a": [{"b": 1}], "s": "x"});
+        let seg = |p: &str| pointer_segments(p);
+        assert_eq!(
+            get_path(&root, &seg("/a/0/b")).unwrap(),
+            &serde_json::json!(1)
+        );
+        assert_eq!(
+            get_path(&root, &seg("/a/x")).unwrap_err(),
+            "path 'x' not found"
+        );
+        assert_eq!(
+            get_path(&root, &seg("/s/y")).unwrap_err(),
+            "path 'y' not found"
+        );
+        assert_eq!(pointer_segments("/a~1b/c~0d"), vec!["a/b", "c~d"]);
+        set_path(&mut root, &seg("/a/0/b"), serde_json::json!(2)).unwrap();
+        set_path(&mut root, &seg("/new/deep"), serde_json::json!(3)).unwrap();
+        assert_eq!(root["a"][0]["b"], 2);
+        assert_eq!(root["new"]["deep"], 3);
+        assert_eq!(
+            set_path(&mut root, &seg("/a/5/b"), serde_json::json!(0)).unwrap_err(),
+            "index '5' out of bounds"
+        );
+        assert_eq!(
+            set_path(&mut root, &seg("/a/9"), serde_json::json!(0)).unwrap_err(),
+            "index '9' out of bounds"
+        );
+        assert_eq!(
+            set_path(&mut root, &seg("/s/t/u"), serde_json::json!(0)).unwrap_err(),
+            "path 't' is not a container"
+        );
+        assert_eq!(
+            set_path(&mut root, &seg("/s/t"), serde_json::json!(0)).unwrap_err(),
+            "path 't' is not a container"
+        );
+        set_path(&mut root, &[], serde_json::json!("whole")).unwrap();
+        assert_eq!(root, serde_json::json!("whole"));
+        // A mock that names its own label drops it; a target without one adds none.
+        let mut root = serde_json::json!({"p": [{"noop": {}}]});
+        set_mock(
+            &mut root,
+            &serde_json::json!({"label": "m", "noop": {}}),
+            &seg("/p/0"),
+        )
+        .unwrap();
+        assert_eq!(root, serde_json::json!({"p": [{"noop": {}}]}));
+        set_mock(&mut root, &serde_json::json!({"drop": {}}), &seg("/p/0")).unwrap();
+        assert_eq!(root, serde_json::json!({"p": [{"drop": {}}]}));
+        let labels = labels_to_paths(&serde_json::json!({"a": {"label": ""}, "b": {"label": "x"}}));
+        assert_eq!(labels.len(), 1);
+    }
+
+    #[test]
+    fn conditions_compare_content_metadata_and_json() {
+        let dir = tempfile::tempdir().expect("dir");
+        let d = dir.path().to_string_lossy().into_owned();
+        let env = HashMap::new();
+        let mut part = Part::new(r#"{"a":1,"b":[1,2]}"#);
+        part.meta_set("s".to_string(), Value::String("v".into()));
+        part.meta_set("n".to_string(), Value::Int(3));
+        let chk = |c: Condition| check(&c, &d, &part, &env);
+        assert!(chk(Condition::Bloblang("root = false".into()))
+            .unwrap_err()
+            .contains("was false"));
+        assert!(chk(Condition::Bloblang("root = (".into())).is_err());
+        assert!(chk(Condition::Bloblang("root = this.a.uppercase()".into())).is_err());
+        assert!(chk(Condition::ContentMatches("(".into()))
+            .unwrap_err()
+            .starts_with("invalid pattern"));
+        assert!(chk(Condition::ContentMatches("^x$".into()))
+            .unwrap_err()
+            .starts_with("pattern mismatch"));
+        let meta =
+            |k: &str, v: serde_json::Value| Condition::MetadataEquals(vec![(k.to_string(), v)]);
+        assert!(chk(meta("n", serde_json::json!(3.0))).is_ok());
+        assert!(chk(meta("gone", serde_json::json!(1)))
+            .unwrap_err()
+            .contains("expected but not found"));
+        let err = chk(meta("s", serde_json::json!(["v"]))).unwrap_err();
+        assert!(
+            err.contains("expected: [v]") && err.contains("received: v"),
+            "{err}"
+        );
+        assert!(chk(Condition::FileEquals("none.txt".into()))
+            .unwrap_err()
+            .starts_with("failed to read comparison file"));
+        assert!(chk(Condition::FileJsonEquals("none.json".into()))
+            .unwrap_err()
+            .starts_with("failed to read comparison JSON file"));
+        assert!(chk(Condition::JsonContains(r#"{"a":1}"#.into())).is_ok());
+        assert!(chk(Condition::JsonEquals(r#"{"a":1}"#.into()))
+            .unwrap_err()
+            .starts_with("JSON content mismatch"));
+        assert!(chk(Condition::JsonContains(r#"{"z":1}"#.into()))
+            .unwrap_err()
+            .starts_with("JSON superset mismatch"));
+        assert!(chk(Condition::JsonEquals("nope".into()))
+            .unwrap_err()
+            .ends_with("second argument is invalid json"));
+        assert!(json_check(b"x", "{}", false)
+            .unwrap_err()
+            .ends_with("first argument is invalid json"));
+        assert!(json_check(b"x", "y", false)
+            .unwrap_err()
+            .ends_with("both arguments are invalid json"));
+    }
+
+    #[test]
+    fn i_compare_and_go_sprint_follow_bento() {
+        let v = |j: serde_json::Value| Value::from_json_value(j);
+        assert!(i_compare(&Value::Null, &Value::Null));
+        assert!(!i_compare(&Value::Null, &v(serde_json::json!(1))));
+        assert!(i_compare(
+            &v(serde_json::json!("b")),
+            &Value::Bytes(b"b".to_vec())
+        ));
+        assert!(!i_compare(&v(serde_json::json!("b")), &Value::Int(1)));
+        assert!(!i_compare(&Value::Int(1), &v(serde_json::json!("1"))));
+        assert!(i_compare(
+            &v(serde_json::json!(true)),
+            &v(serde_json::json!(true))
+        ));
+        assert!(!i_compare(
+            &v(serde_json::json!(true)),
+            &v(serde_json::json!(false))
+        ));
+        assert!(i_compare(
+            &v(serde_json::json!([1, "a"])),
+            &v(serde_json::json!([1.0, "a"]))
+        ));
+        assert!(!i_compare(
+            &v(serde_json::json!([1])),
+            &v(serde_json::json!([1, 2]))
+        ));
+        assert!(!i_compare(
+            &v(serde_json::json!([1])),
+            &v(serde_json::json!({"a": 1}))
+        ));
+        assert!(i_compare(
+            &v(serde_json::json!({"a": [1]})),
+            &v(serde_json::json!({"a": [1]}))
+        ));
+        assert!(!i_compare(
+            &v(serde_json::json!({"a": 1})),
+            &v(serde_json::json!({"b": 1}))
+        ));
+        assert!(!i_compare(
+            &v(serde_json::json!({"a": 1})),
+            &v(serde_json::json!([1]))
+        ));
+        assert!(i_compare(
+            &Value::Bytes(b"x".to_vec()),
+            &Value::Bytes(b"x".to_vec())
+        ));
+        assert_eq!(go_sprint(&Value::Null), "<nil>");
+        assert_eq!(
+            go_sprint(&v(serde_json::json!({"k": [1, null]}))),
+            "map[k:[1 <nil>]]"
+        );
+        assert_eq!(type_name(&serde_json::json!(null)), "null");
+        assert_eq!(type_name(&serde_json::json!(true)), "bool");
+        assert_eq!(type_name(&serde_json::json!(1)), "number");
+        assert_eq!(type_name(&serde_json::json!("s")), "string");
+        assert_eq!(
+            json_test_string(&serde_json::json!({"b": 1, "a": 2})),
+            r#"{"a":2,"b":1}"#
+        );
+    }
+
     #[test]
     fn mocks_keep_label_and_append() {
         let mut root = serde_json::json!({"pipeline": {"processors": [
