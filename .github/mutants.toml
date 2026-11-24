@@ -47,6 +47,11 @@ exclude_re = [
   # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
   # skipping them by name or not is alike; the @context half is held by a test (T-7622).
   'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
+  # jc-tabular Table::append: widening every row to a header of the same width is a no-op (T-7794).
+  'jc-tabular/src/lib\.rs:\d+:\d+: replace > with >= in Table::append',
+  # jc-tabular compact: walk recurses into every non-empty object, so the leaf objects compact sees
+  # are empty and the deleted arm's `false` is the fallback's (T-7794).
+  'jc-tabular/src/lib\.rs:\d+:\d+: delete match arm Value::Object\(members\) in compact',
   # T-7579 ekiben-io-http and ekiben-io-remote: the fuzzing helpers compile only with the `fuzzing` feature, which the
   # crates' tests never enable; fuzz/ drives them (cargo fuzz), so no test run can tell a mutant of them.
   'ekiben-io-(remote|http)/src/[a-z_]+\.rs:\d+:\d+: .*\bfuzz(ing::|_)',
@@ -122,6 +127,32 @@ exclude_re = [
   # T-7576 go_fmt format_float %g: p == dp takes p = nd, and nd <= p (digits are rounded to p), so (p - dp).max(0)
   # is 0 either way.
   'ekiben-bloblang/src/go_fmt\.rs:\d+:\d+: replace > with >= in format_float',
+  # T-7576 json_schema number: multipleOf 0 gives q = n / 0, an infinity or NaN whose `q - q.round()` is NaN and
+  # never > 1e-9, so admitting 0 refuses nothing; and a quotient exactly 1e-9 off a whole number does not occur.
+  'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace > with >= in Validator<.*>::number',
+  # T-7576 msgpack len: an overstated remainder lets a forged length through one step further, where the first element
+  # read fails with the same "unexpected EOF"; the collect never reserves by the length.
+  'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace - with \+ in Reader<.*>::len',
+  # T-7576 go_sort insertion_sort: starting at i = a runs one iteration whose `j > a` test fails at once.
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace \+ with \* in insertion_sort',
+  # T-7786 go_sort heap_sort: a root at or past hi / 2 has no child inside the heap, so sift_down returns at once
+  # without a comparison; starting the build loop at hi * 2 only adds those no-op calls.
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace / with \* in heap_sort',
+  # T-7786 go_sort partition and partition_equal: after the two scans i == j cannot hold (the second scan steps j
+  # past an i the first one stopped at), so `i > j` and `i >= j` break alike.
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace > with >= in partition',
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace > with >= in partition_equal',
+  # T-7786 go_sort reverse_range: at i == j the extra swap is of a place with itself.
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace < with <= in reverse_range',
+  # T-7786 time_format parse_tz_offset_token: hours and minutes are read as exactly two digits, so 1 + hn * mn and
+  # 1 + hn + mn are both 5.
+  'ekiben-bloblang/src/time_format\.rs:\d+:66: replace \+ with \* in parse_tz_offset_token',
+  # T-7786 time_format parse_go_duration_nanos: a zero fraction adds 0 to a v already checked against LIMIT / mult.
+  'ekiben-bloblang/src/time_format\.rs:\d+:17: replace > with >= in parse_go_duration_nanos',
+  # T-7576 go_sort sort_slice_at: a larger recursion limit only matters once pdqsort exhausts bits(n) unbalanced
+  # partitions; break_patterns prevents that: 200,000 shaped inputs of 13-132 elements never reached the heap sort
+  # fallback (a_spent_recursion_limit_falls_back_to_heap_sort reaches it with limit 0).
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace - with \+ in sort_slice_at',
   # T-7748 executor: EmptyBatch::part_bytes answers an empty slice, borrowed or owned alike.
   'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace <impl MessageBatch for EmptyBatch>::part_bytes -> Cow<.*> with Cow::(Borrowed|Owned)\(Vec::leak\(Vec::new\(\)\).*',
   # T-7748 executor: the parser builds every Executor with an empty annotation.

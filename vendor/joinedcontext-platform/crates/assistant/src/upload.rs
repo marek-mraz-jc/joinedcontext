@@ -504,4 +504,22 @@ mod tests {
             assert_eq!(file_name(bad), None, "{bad:?}");
         }
     }
+
+    #[test]
+    fn a_zip64_or_a_misplaced_directory_is_refused_before_anything_inflates() {
+        let mut wide = zip(&[("word/document.xml", 10)], false);
+        let end = wide.len() - 22;
+        wide[end + 10..end + 12].copy_from_slice(&0xFFFF_u16.to_le_bytes());
+        assert_eq!(
+            sniff("x.docx", &wide),
+            Err("a ZIP64 archive is not read".into())
+        );
+        let mut moved = zip(&[("word/document.xml", 10)], false);
+        let end = moved.len() - 22;
+        moved[end + 16..end + 20].copy_from_slice(&0_u32.to_le_bytes());
+        assert_eq!(
+            sniff("x.docx", &moved),
+            Err("the archive is not a readable DOCX or XLSX".into())
+        );
+    }
 }

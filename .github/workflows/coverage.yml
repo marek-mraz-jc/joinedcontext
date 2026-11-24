@@ -46,7 +46,10 @@ jobs:
           - { ws: root, dir: ".", args: "nextest --profile ci --workspace" }
           - { ws: antares, dir: crates/antares, args: "nextest --profile ci --workspace" }
           - { ws: portal, dir: crates/portal, args: "--workspace -j 2" }
-          - { ws: platform, dir: vendor/joinedcontext-platform, args: "--workspace --lib --bins" }
+          # context-gateway's `it` binary as ci.yml platform-test runs it: most of the gateway's
+          # handlers are tested there, through the router (T-7767); jc-manifest, jc-tabular and
+          # jc-dcat are tested from their tests/ binaries alone (T-7794). `;` separates the runs.
+          - { ws: platform, dir: vendor/joinedcontext-platform, args: "--workspace --lib --bins", extra: "-p context-gateway --test it; -p jc-manifest -p jc-tabular -p jc-dcat --all-features --tests" }
     defaults: { run: { working-directory: "${{ matrix.dir }}" } }
     services:
       postgres:
@@ -111,6 +114,17 @@ jobs:
             out=tests-failed
             echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
           }
+          # a second test run of the workspace adds to the same profile data before the report
+          if [ -n "${{ matrix.extra }}" ]; then
+            IFS=';' read -ra runs <<< "${{ matrix.extra }}"
+            for run in "${runs[@]}"; do
+              # shellcheck disable=SC2086
+              DCAT_RECORDS_DIR="$RUNNER_TEMP/dcat-records" cargo llvm-cov $run --locked --no-report --no-fail-fast || {
+                out=tests-failed
+                echo "::warning::tests failed in ${{ matrix.ws }} ($run): its crates are not judged by the ratchet tonight"
+              }
+            done
+          fi
           # the full export: the ratchet merges each function's instances from its records
           cargo llvm-cov report --json --output-path "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"
           gzip "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"

@@ -138,6 +138,45 @@ async fn each_broker_shows_its_spaces_version_health_and_load() {
     );
 }
 
+/// A space whose load the broker does not report names itself in the row's reason while the
+/// others still count; a Portal that knows no broker address says the health is unknown, never up.
+#[tokio::test]
+async fn a_space_without_a_load_says_so_and_an_unaddressed_broker_is_unknown() {
+    let server = broker().await;
+    let token = token("space-load");
+    let state = state(&server, &token, false);
+    state
+        .mirror
+        .upsert(envelope("ContextSpace", "water", "ovzdusie", json!({})));
+    let (status, body) = brokers(&state, "jana").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let main = &body["items"][0];
+    assert_eq!(main["health"], "up", "{main}");
+    assert_eq!(main["entities"], 42, "{main}");
+    assert!(
+        main["reason"]
+            .as_str()
+            .is_some_and(|r| r.starts_with("ovzdusie/water: ")),
+        "{main}"
+    );
+
+    let mut unaddressed = state.clone();
+    unaddressed.space_usage = std::sync::Arc::new(joinedcontext_portal::space_usage::Counter::new(
+        None,
+        Some(token.clone()),
+    ));
+    let (status, body) = brokers(&unaddressed, "jana").await;
+    let _ = std::fs::remove_file(&token);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let main = &body["items"][0];
+    assert_eq!(main["health"], "unknown", "{main}");
+    assert_eq!(main["entities"], 0, "{main}");
+    assert!(
+        main["reason"].as_str().is_some_and(|r| !r.is_empty()),
+        "{main}"
+    );
+}
+
 #[tokio::test]
 async fn an_organization_without_brokers_shows_the_implicit_main() {
     let server = broker().await;

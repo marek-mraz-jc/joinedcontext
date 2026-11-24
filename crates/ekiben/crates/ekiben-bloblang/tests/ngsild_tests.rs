@@ -84,6 +84,22 @@ fn property_examples() {
 
 #[test]
 fn property_null_empty_and_types() {
+    // A null or empty optional parameter is left out, not refused.
+    for args in [
+        "unit_code: null",
+        r#"unit_code: """#,
+        "observed_at: null",
+        r#"observed_at: """#,
+    ] {
+        assert_eq!(
+            run(
+                &format!("root = this.t.ngsild_property({args})"),
+                json!({"t": 1})
+            ),
+            Ok(json!({"type": "Property", "value": 1})),
+            "{args}"
+        );
+    }
     assert!(err("root = this.missing.ngsild_property()", json!({})).contains("needs a value"));
     assert!(err(
         r#"root = this.t.ngsild_property(observed_at: "yesterday")"#,
@@ -124,7 +140,8 @@ fn relationship_examples() {
 
 #[test]
 fn relationship_null_empty_and_types() {
-    assert!(err("root = this.o.ngsild_relationship()", json!({"o": ""})).contains("empty"));
+    assert!(err("root = this.o.ngsild_relationship()", json!({"o": ""}))
+        .contains("got an empty string"));
     assert!(err(
         "root = this.o.ngsild_relationship()",
         json!({"o": "not a uri"})
@@ -258,6 +275,24 @@ fn language_property_null_empty_and_types() {
     assert!(e.contains("expected string value, got number"), "{e}");
 }
 
+#[test]
+fn a_language_map_takes_string_lists_and_none_but_no_malformed_tag() {
+    let m = "root = this.s.ngsild_language_property()";
+    let map = json!({"en": ["a", "b"], "@none": "c", "sr-Latn-RS": "d"});
+    assert_eq!(
+        ok(m, json!({ "s": map.clone() })),
+        json!({"type": "LanguageProperty", "languageMap": map})
+    );
+    assert!(err(m, json!({"s": {"en": ["a", 1]}})).contains("holding a string"));
+    // An empty subtag, a subtag past 8 characters and one holding a symbol are not BCP 47.
+    for tag in ["en-", "en--US", "en-abcdefghi", "en-U_S"] {
+        assert!(
+            err(m, json!({"s": {tag: "x"}})).contains("holding a string"),
+            "{tag}"
+        );
+    }
+}
+
 // --- ngsild_key_values / ngsild_normalized ---
 
 #[test]
@@ -288,10 +323,12 @@ fn normalized_from_the_simplified_example() {
     assert_eq!(
         ok(
             "root = this.ngsild_normalized()",
-            json!({"id": "urn:a", "type": "T", "refCode": "ABC", "owner": "urn:ngsi-ld:P:1"})
+            json!({"id": "urn:a", "type": "T", "refCode": "ABC", "refSite": "https://x.example/1", "refBad": "urn:ngsi-ld:P 1", "owner": "urn:ngsi-ld:P:1"})
         ),
         json!({"id": "urn:a", "type": "T",
                "refCode": {"type": "Property", "value": "ABC"},
+               "refSite": {"type": "Property", "value": "https://x.example/1"},
+               "refBad": {"type": "Property", "value": "urn:ngsi-ld:P 1"},
                "owner": {"type": "Property", "value": "urn:ngsi-ld:P:1"}})
     );
 }

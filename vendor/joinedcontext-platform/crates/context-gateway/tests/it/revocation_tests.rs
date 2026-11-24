@@ -145,6 +145,126 @@ async fn portal(items: Arc<Mutex<Value>>) -> String {
     format!("http://{address}/internal/revocations")
 }
 
+/// A Portal answering `statuses` in turn (the last repeats), each full list tagged `"r1"`, and
+/// a realm's token endpoint granting `workload-t`; each list call logs its `Authorization` and
+/// `If-None-Match`.
+async fn tagged_portal(statuses: Vec<u16>) -> (String, Arc<Mutex<Vec<(String, String)>>>) {
+    let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let log = Arc::clone(&seen);
+    let app = Router::new()
+        .route(
+            "/token",
+            axum::routing::post(|| async {
+                axum::Json(json!({ "access_token": "workload-t", "expires_in": 300 }))
+            }),
+        )
+        .route(
+            "/refusing-token",
+            axum::routing::post(|| async { StatusCode::UNAUTHORIZED }),
+        )
+        .route(
+            "/internal/revocations",
+            axum::routing::get(move |headers: axum::http::HeaderMap| {
+                let (log, statuses) = (Arc::clone(&log), statuses.clone());
+                async move {
+                    let header = |name: axum::http::HeaderName| {
+                        headers
+                            .get(name)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or_default()
+                            .to_owned()
+                    };
+                    let mut log = log.lock().unwrap_or_else(|e| e.into_inner());
+                    let status = statuses[log.len().min(statuses.len() - 1)];
+                    log.push((
+                        header(axum::http::header::AUTHORIZATION),
+                        header(axum::http::header::IF_NONE_MATCH),
+                    ));
+                    axum::http::Response::builder()
+                        .status(status)
+                        .header(axum::http::header::ETAG, "\"r1\"")
+                        .body(Body::from(json!({ "items": [] }).to_string()))
+                        .unwrap_or_default()
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port");
+    let address = listener.local_addr().expect("an address");
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    (format!("http://{address}"), seen)
+}
+
+/// T-7767: the poller asks with the gateway's workload token and the last list's tag; a `304`
+/// keeps the list, a refusal is an error naming the status and forgets the tag, and a realm
+/// that refuses the token is an error before the Portal is asked.
+#[tokio::test]
+async fn the_poller_sends_its_token_and_tag_and_a_refusal_forgets_the_tag() {
+    use context_gateway::previews::WorkloadToken;
+    let realm = common::Realm::new();
+    let verifier = Arc::new(realm.verifier());
+    let (base, seen) = tagged_portal(vec![200, 304, 500, 200]).await;
+    let token = Arc::new(WorkloadToken::new(
+        format!("{base}/token"),
+        "context-gateway".to_owned(),
+        "test-client-secret".to_owned(),
+    ));
+    let mut poller = Revocations::new(
+        format!("{base}/internal/revocations"),
+        Some(token),
+        Arc::clone(&verifier),
+    )
+    .expect("a poller");
+    assert_eq!(poller.poll().await, Ok(Some(0)));
+    assert_eq!(poller.poll().await, Ok(None), "a 304 keeps the list");
+    let refused = poller.poll().await.expect_err("a 500");
+    assert!(refused.contains("500"), "{refused}");
+    assert_eq!(poller.poll().await, Ok(Some(0)));
+    let seen = seen.lock().map(|s| s.clone()).unwrap_or_default();
+    let tags: Vec<&str> = seen.iter().map(|(_, tag)| tag.as_str()).collect();
+    assert_eq!(tags, ["", "\"r1\"", "\"r1\"", ""]);
+    assert!(
+        seen.iter().all(|(bearer, _)| bearer == "Bearer workload-t"),
+        "{seen:?}"
+    );
+
+    let refusing = Arc::new(WorkloadToken::new(
+        format!("{base}/refusing-token"),
+        "context-gateway".to_owned(),
+        "test-client-secret".to_owned(),
+    ));
+    let mut poller = Revocations::new(
+        format!("{base}/internal/revocations"),
+        Some(refusing),
+        verifier,
+    )
+    .expect("a poller");
+    let refused = poller.poll().await.expect_err("no token");
+    assert!(refused.contains("refused the grant"), "{refused}");
+}
+
+/// T-7767: the follower polls at once and keeps polling after a failed answer.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn the_follower_polls_again_after_a_failed_answer() {
+    let realm = common::Realm::new();
+    let (base, seen) = tagged_portal(vec![500, 200]).await;
+    let poller = Revocations::new(
+        format!("{base}/internal/revocations"),
+        None,
+        Arc::new(realm.verifier()),
+    )
+    .expect("a poller");
+    tokio::spawn(poller.follow());
+    for _ in 0..120 {
+        if seen.lock().map(|s| s.len()).unwrap_or(0) >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    assert!(seen.lock().map(|s| s.len()).unwrap_or(0) >= 2);
+}
+
 #[tokio::test]
 async fn a_revoked_subject_is_refused_on_rest_and_mcp_within_one_poll() {
     let realm = common::Realm::new();
