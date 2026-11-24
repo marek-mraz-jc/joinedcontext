@@ -835,6 +835,17 @@ pub async fn warm_types(state: Arc<ChatState>) {
         .unwrap_or_default();
     let mut connectors = Vec::new();
     for deployment in &snapshot.deployments {
+        // The sources' languages too, so no question waits on them (T-7765).
+        if deployment.spec.routes() != Routes::Data {
+            routed::warm_languages(
+                &state.answers,
+                &state.pool,
+                &format!("{}/{}", deployment.project, deployment.name),
+                &crate::sources_by_project(&deployment.project, &deployment.spec.sources),
+                deployment.spec.channel.is_anonymous(),
+            )
+            .await;
+        }
         // No person: only what a visitor may read is listed, with no token.
         let mut failed = Vec::new();
         for connector in connected(&state, deployment, None, None, &mut failed).await {
