@@ -297,7 +297,27 @@ pub mod fuzzing {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_workload, run_id_is_well_formed};
+    use super::{credentials, is_workload, run_id_is_well_formed};
+
+    /// A bearer with an empty run id or an empty ticket presents no credential at all, so it is
+    /// answered as missing, never judged as a malformed run (T-7795).
+    #[test]
+    fn a_bearer_missing_its_run_or_its_ticket_presents_no_credential() {
+        for bearer in ["Bearer jcr_.ticket", "Bearer jcr_run-1.", "Bearer jcr_."] {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert("authorization", bearer.parse().expect("a header value"));
+            assert_eq!(credentials(&headers), None, "{bearer}");
+        }
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "authorization",
+            "Bearer jcr_run-1.ticket".parse().expect("a header value"),
+        );
+        assert_eq!(
+            credentials(&headers),
+            Some(("run-1".to_owned(), "ticket".to_owned()))
+        );
+    }
 
     /// ADR-N-038 decision 6: with mesh identity required, a data credential is honoured from the
     /// functions workload alone, its account compared whole.
