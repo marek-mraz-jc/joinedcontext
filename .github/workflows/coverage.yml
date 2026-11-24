@@ -85,9 +85,14 @@ jobs:
           } >> "$GITHUB_ENV"
           docker run -d --name assistant-pg -p 5433:5432 --entrypoint bash \
             ghcr.io/cloudnative-pg/postgis@sha256:9d597fcf4350e4bae9ff40cbe0e4383746a9c7f9c60da72483b0e966e4c20765 \
-            -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null
-            && echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf
-            && exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
+            -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null &&
+            echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf &&
+            exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
+          # ci.yml folds this command (>-); here each line is literal, so a line starting with `&&`
+          # was a bash syntax error: the container exited at once and every assistant test met
+          # PoolTimedOut (run 45342728744, T-7787). A server that does not answer fails the step.
+          for _ in $(seq 30); do docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -q -h /tmp -U postgres 2>/dev/null && break; sleep 1; done
+          docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -h /tmp -U postgres || { docker logs assistant-pg; exit 1; }
       # JetStream for the live-NATS tests of antares-bus and the broker (a service cannot pass -js);
       # nats 2.15.3 of 2026-11-11.
       - if: matrix.ws == 'antares'
@@ -326,9 +331,14 @@ jobs:
           } >> "$GITHUB_ENV"
           docker run -d --name assistant-pg -p 5433:5432 --entrypoint bash \
             ghcr.io/cloudnative-pg/postgis@sha256:9d597fcf4350e4bae9ff40cbe0e4383746a9c7f9c60da72483b0e966e4c20765 \
-            -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null
-            && echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf
-            && exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
+            -c 'export PATH=/usr/lib/postgresql/16/bin:$PATH; initdb -D /tmp/pg -U postgres --auth=trust >/dev/null &&
+            echo "host all all 0.0.0.0/0 trust" >> /tmp/pg/pg_hba.conf &&
+            exec postgres -D /tmp/pg -c listen_addresses=* -c unix_socket_directories=/tmp'
+          # ci.yml folds this command (>-); here each line is literal, so a line starting with `&&`
+          # was a bash syntax error: the container exited at once and every assistant test met
+          # PoolTimedOut (run 45342728744, T-7787). A server that does not answer fails the step.
+          for _ in $(seq 30); do docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -q -h /tmp -U postgres 2>/dev/null && break; sleep 1; done
+          docker exec assistant-pg /usr/lib/postgresql/16/bin/pg_isready -h /tmp -U postgres || { docker logs assistant-pg; exit 1; }
       # JetStream for the live-NATS tests of antares-bus and the broker (a service cannot pass -js);
       # nats 2.15.3 of 2026-11-11.
       - if: needs.mutants-plan.outputs.ws == 'antares'
