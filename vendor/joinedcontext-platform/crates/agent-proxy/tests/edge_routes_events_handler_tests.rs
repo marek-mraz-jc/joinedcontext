@@ -405,7 +405,13 @@ async fn a_kind_that_is_not_a_short_name_is_refused_before_the_portal_is_asked()
         .await
         .unwrap_or_default()
         .is_empty());
-    for kind in ["thought", "preview_observation", "file-written"] {
+    let longest = "a".repeat(32);
+    for kind in [
+        "thought",
+        "preview_observation",
+        "file-written",
+        longest.as_str(),
+    ] {
         let sent = serde_json::json!({ "kind": kind, "payload": {} }).to_string();
         let response = proxy(&portal.uri(), 100)
             .oneshot(

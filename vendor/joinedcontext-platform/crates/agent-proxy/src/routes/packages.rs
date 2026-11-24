@@ -64,8 +64,5 @@ pub async fn handler(
         duration_ms: start.elapsed().as_millis(),
     });
 
-    Response::builder()
-        .status(status)
-        .body(Body::from(resp_bytes))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (status, Body::from(resp_bytes)).into_response()
 }

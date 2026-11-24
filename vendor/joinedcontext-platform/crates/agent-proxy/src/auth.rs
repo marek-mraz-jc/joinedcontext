@@ -249,9 +249,75 @@ fn is_runs_own_workload(client_id: &str, run_id: &str) -> bool {
             .is_some_and(|account| account == format!("agent-run-{run_id}"))
 }
 
+/// The two credential shapes a request presents, over any header values, for the fuzz target
+/// `credentials` (T-7795). Compiled only with the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::*;
+
+    /// What is read from the headers is never empty; a run id from the two headers never carries
+    /// their padding. A bearer's run id may hold anything, which `run_id_is_well_formed` refuses
+    /// before the id is used.
+    pub fn credentials(headers: &HeaderMap) {
+        if let Some((run, ticket)) = super::credentials(headers) {
+            assert!(!run.is_empty() && !ticket.is_empty());
+            let given = |name: &str| {
+                headers
+                    .get(name)
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| !value.trim().is_empty())
+            };
+            if given(RUN_HEADER) && given(TICKET_HEADER) {
+                assert_eq!(run.trim(), run);
+            } else {
+                assert!(
+                    !run.contains('.'),
+                    "a bearer's run id ends at its first dot"
+                );
+            }
+        }
+        if let Some((run, secret)) = crate::data_credential::presented(headers) {
+            assert!(!run.is_empty() && !secret.is_empty());
+        }
+    }
+
+    /// A run id the door takes is a name of letters, digits and `-`, never a path or a second
+    /// line; and a workload is the run's own only by its exact client id.
+    pub fn names(run_id: &str, client_id: &str) {
+        if run_id_is_well_formed(run_id) {
+            assert!(run_id.len() <= RUN_ID_MAX);
+            assert!(!run_id.contains(['/', '%', ' ', '\n', '.']));
+        }
+        if is_runs_own_workload(client_id, run_id) {
+            assert!(client_id.contains(run_id));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_workload, run_id_is_well_formed};
+    use super::{credentials, is_workload, run_id_is_well_formed};
+
+    /// A bearer with an empty run id or an empty ticket presents no credential at all, so it is
+    /// answered as missing, never judged as a malformed run (T-7795).
+    #[test]
+    fn a_bearer_missing_its_run_or_its_ticket_presents_no_credential() {
+        for bearer in ["Bearer jcr_.ticket", "Bearer jcr_run-1.", "Bearer jcr_."] {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert("authorization", bearer.parse().expect("a header value"));
+            assert_eq!(credentials(&headers), None, "{bearer}");
+        }
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "authorization",
+            "Bearer jcr_run-1.ticket".parse().expect("a header value"),
+        );
+        assert_eq!(
+            credentials(&headers),
+            Some(("run-1".to_owned(), "ticket".to_owned()))
+        );
+    }
 
     /// ADR-N-038 decision 6: with mesh identity required, a data credential is honoured from the
     /// functions workload alone, its account compared whole.

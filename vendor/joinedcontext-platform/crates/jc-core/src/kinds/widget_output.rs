@@ -383,3 +383,85 @@ pub fn widget_gaps(outputs: &[WidgetOutput], linkml: Option<&str>) -> Result<Vec
     }
     Ok(gaps)
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn table_columns_cap_exceeded_is_reported() {
+        let table = WidgetTable {
+            columns: (0..31).map(|i| format!("col{i}")).collect(),
+            ..Default::default()
+        };
+        let gaps = table.shape_gaps("widget output `map`, Device");
+        assert!(gaps.iter().any(|g| g.contains("at most 30")));
+    }
+
+    #[test]
+    fn widget_output_shape_gaps_invalid_tag_and_type_name() {
+        let output_bad_tag = WidgetOutput {
+            name: "map-output".into(),
+            title: BTreeMap::from([("invalid_lang_tag".into(), "Title".into())]),
+            description: BTreeMap::new(),
+            sources: vec![],
+        };
+        let gaps = output_bad_tag.shape_gaps();
+        assert!(gaps.iter().any(|g| g.contains("takes a language tag")));
+
+        let output_bad_type = WidgetOutput {
+            name: "map-output".into(),
+            title: BTreeMap::new(),
+            description: BTreeMap::new(),
+            sources: vec![WidgetSource {
+                entity_type: "not-a-valid-type!".into(),
+                mapping: WidgetRoles::default(),
+                cluster: None,
+                table: None,
+            }],
+        };
+        let gaps = output_bad_type.shape_gaps();
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("is not an NGSI-LD type name")));
+    }
+
+    #[test]
+    fn widget_output_shape_gaps_invalid_popup_path() {
+        let output = WidgetOutput {
+            name: "map-output".into(),
+            title: BTreeMap::new(),
+            description: BTreeMap::new(),
+            sources: vec![WidgetSource {
+                entity_type: "Device".into(),
+                mapping: WidgetRoles {
+                    geometry: None,
+                    colour: None,
+                    popup: vec!["bad attribute name!".into()],
+                },
+                cluster: None,
+                table: None,
+            }],
+        };
+        let gaps = output.shape_gaps();
+        assert!(gaps.iter().any(|g| g.contains("is not an attribute path")));
+    }
+
+    #[test]
+    fn widget_gaps_checks_max_outputs_and_linkml_parse_error() {
+        let outputs: Vec<WidgetOutput> = (0..=MAX_OUTPUTS)
+            .map(|i| WidgetOutput {
+                name: format!("out-{i}"),
+                title: BTreeMap::new(),
+                description: BTreeMap::new(),
+                sources: vec![],
+            })
+            .collect();
+        let gaps = widget_gaps(&outputs, None).unwrap();
+        assert!(gaps.iter().any(|g| g.contains("at most 20")), "{gaps:?}");
+
+        // with no shape gap the model is read, and a model that is no YAML is the error
+        let err = widget_gaps(&[], Some("invalid: [yaml")).unwrap_err();
+        assert!(!err.is_empty());
+    }
+}

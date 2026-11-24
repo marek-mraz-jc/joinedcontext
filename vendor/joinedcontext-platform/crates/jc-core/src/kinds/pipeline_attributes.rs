@@ -409,10 +409,18 @@ mod tests {
     }
 
     fn refused_at(result: Result<()>) -> String {
-        match result {
-            Err(Error::Invalid { field, reason }) => format!("{field}: {reason}"),
-            other => panic!("refused, got {other:?}"),
+        match result.expect_err("refused") {
+            Error::Invalid { field, reason } => format!("{field}: {reason}"),
+            other => other.to_string(),
         }
+    }
+
+    #[test]
+    fn refused_at_reports_another_error_by_its_message() {
+        assert_eq!(
+            refused_at(Err(Error::Parse("bad".into()))),
+            "manifest does not parse: bad"
+        );
     }
 
     const GOOD: &str = r#"
@@ -482,5 +490,103 @@ mod tests {
         );
         assert!(dataset_template("urn:x:$(env)").is_err());
         assert!(dataset_template("urn:x:{a").is_err());
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn dataset_template_handles_empty_text_between_fields() {
+        let parts = dataset_template("urn:{station.code}{kind}").unwrap();
+        assert_eq!(
+            parts,
+            vec![
+                DatasetPart::Text("urn:".into()),
+                DatasetPart::Field("station.code".into()),
+                DatasetPart::Field("kind".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_refuses_more_than_max_types_and_unwritten_type() {
+        let entries: Vec<AttributeRules> = (0..65)
+            .map(|i| AttributeRules {
+                entity_type: format!("Type{i}"),
+                rules: vec![],
+                system_members: None,
+                source_dates: None,
+            })
+            .collect();
+        let ctx = Context {
+            written: None,
+            history: &[],
+            author_texts: &[],
+        };
+        let err = validate(&entries, &ctx).unwrap_err();
+        assert!(err.to_string().contains("name one to 20 types"), "{err}");
+
+        let entries_unwritten = vec![AttributeRules {
+            entity_type: "WeatherObserved".into(),
+            rules: vec![],
+            system_members: Some(SystemMembers::Strip),
+            source_dates: None,
+        }];
+        let written = BTreeSet::from(["OtherType"]);
+        let ctx_unwritten = Context {
+            written: Some(&written),
+            history: &[],
+            author_texts: &[],
+        };
+        let err = validate(&entries_unwritten, &ctx_unwritten).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("no output of this pipeline writes `WeatherObserved`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_rules_refuses_too_many_rules_and_empty_names() {
+        let rules: Vec<AttributeRule> = (0..65)
+            .map(|i| AttributeRule {
+                names: vec![format!("attr{i}")],
+                observed_at: Some("now".into()),
+                unit_code: None,
+                dataset_id: None,
+            })
+            .collect();
+        let entries = vec![AttributeRules {
+            entity_type: "WeatherObserved".into(),
+            rules,
+            system_members: None,
+            source_dates: None,
+        }];
+        let ctx = Context {
+            written: None,
+            history: &[],
+            author_texts: &[],
+        };
+        let err = validate(&entries, &ctx).unwrap_err();
+        assert!(err.to_string().contains("write at most 64 rules"), "{err}");
+
+        let entries_empty_names = vec![AttributeRules {
+            entity_type: "WeatherObserved".into(),
+            rules: vec![AttributeRule {
+                names: vec![],
+                observed_at: Some("now".into()),
+                unit_code: None,
+                dataset_id: None,
+            }],
+            system_members: None,
+            source_dates: None,
+        }];
+        let err = validate(&entries_empty_names, &ctx).unwrap_err();
+        assert!(
+            err.to_string().contains("name one to 64 attributes"),
+            "{err}"
+        );
     }
 }

@@ -4602,4 +4602,76 @@ mod tests {
         let err = named_realm(&state, "dev").await.unwrap_err();
         assert!(matches!(&err, KaisatsuError::NotFound(m) if m == "realm not found"));
     }
+
+    #[test]
+    fn an_exchange_keeps_the_subjects_organization_pin_once() {
+        // Already asked for: kept once, not added again.
+        assert_eq!(
+            narrowed_like_subject("openid organization:acme", "openid organization:acme").unwrap(),
+            "openid organization:acme"
+        );
+        // Not asked for: added from the subject token.
+        assert_eq!(
+            narrowed_like_subject("openid", "organization:acme").unwrap(),
+            "openid organization:acme"
+        );
+        // Another organization than the subject's: refused, naming both.
+        let err = narrowed_like_subject("organization:other", "organization:acme").unwrap_err();
+        assert!(err.to_string().contains("organization:other"), "{err}");
+    }
+
+    fn offline_family(offline_since: Option<TimestampTz>, auth_time: i64) -> RefreshTokenFamily {
+        RefreshTokenFamily {
+            id: "fam".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            sso_session_id: "sso".into(),
+            user_id: "u".into(),
+            client_id: "c".into(),
+            scope: "openid offline_access".into(),
+            mapper_scopes: Vec::new(),
+            acr: "1".into(),
+            amr: Vec::new(),
+            auth_time,
+            rotation_counter: 0,
+            current_jti_hash: String::new(),
+            previous_hashes: Vec::new(),
+            dpop_jkt: None,
+            offline: true,
+            offline_since,
+            revoked: false,
+            expires_at: TimestampTz::now(),
+            act: None,
+            only_audience: None,
+        }
+    }
+
+    #[test]
+    fn an_offline_session_ends_after_the_realm_maximum_counted_from_its_start() {
+        let mut realm = RealmConfig {
+            offline_session_max_lifespan_enabled: true,
+            offline_session_max_lifespan: 60,
+            ..RealmConfig::default()
+        };
+        let start = TimestampTz::from_second(1_700_000_000).unwrap();
+        // Counted from offline_since when stored.
+        assert_eq!(
+            offline_session_end(&realm, &offline_family(Some(start), 0)),
+            Some(start + SignedDuration::from_secs(60))
+        );
+        // A family stored before offline_since counts from its sign-in.
+        assert_eq!(
+            offline_session_end(&realm, &offline_family(None, 1_700_000_000)),
+            Some(start + SignedDuration::from_secs(60))
+        );
+        // No readable start: it has ended (now, not never).
+        let ended = offline_session_end(&realm, &offline_family(None, i64::MAX)).unwrap();
+        assert!(ended <= TimestampTz::now());
+        // The realm turned the maximum off: it never ends by age.
+        realm.offline_session_max_lifespan_enabled = false;
+        assert_eq!(
+            offline_session_end(&realm, &offline_family(None, i64::MAX)),
+            None
+        );
+    }
 }

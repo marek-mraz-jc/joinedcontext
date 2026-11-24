@@ -398,6 +398,73 @@ def test_jc_prod_carries_the_cutover_parts(rendered):
     assert jc["spec"]["strategy"]["type"] == "Recreate" and jc["spec"]["replicas"] == 1
 
 
+def functions_on(tree):
+    """jc-dev with the script sandbox on, as the environments checkout turns it on (T-7774)."""
+    values = tree / "deployment/environments/jc-dev/global.yaml.gotmpl"
+    text = values.read_text()
+    if "  functions:\n    enabled: true" not in text:
+        assert text.count("\njc:\n") == 1, "jc-dev names no jc block"
+        values.write_text(text.replace("\njc:\n", "\njc:\n  functions:\n    enabled: true\n", 1))
+
+
+@requires_helmfile
+def test_jc_dev_runs_the_sandbox_from_jcs_own_image_with_no_credential(rendered_variant):
+    """T-7774: jc-functions on jc-dev is jc's own image (one pin), verifies the assistant's token
+    against the realm's keys over the edge, and holds no credential or writable root."""
+    docs = rendered_variant("jc-dev", functions_on)
+    (functions,) = [d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == "jc-functions"]
+    pod = functions["spec"]["template"]["spec"]
+    (container,) = pod["containers"]
+    assert container["image"] in jc_server_images(docs), "jc-functions runs an image other than jc-dev's jc pin"
+    assert container["command"] == ["/usr/local/bin/jc-functions"]
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    assert all("valueFrom" not in e for e in container["env"]), "the sandbox holds no secret"
+    # Slug mode: the realm under the instance's one host, read over https through the edge.
+    assert env["JC_OIDC_ISSUER"] == "https://jc.jcdev.dev.joinedcontext.com/login/realms/dev"
+    assert env["JC_OIDC_JWKS_URL"] == env["JC_OIDC_ISSUER"] + "/protocol/openid-connect/certs"
+    assert env["JC_GATEWAY_URL"] == "https://jc.jcdev.dev.joinedcontext.com"
+    assert env["JC_FUNCTIONS_ASSISTANT_CALLER"] == "jc-assistant" and env["JC_FUNCTIONS_AUDIENCE"] == "jc-functions"
+    assert pod.get("automountServiceAccountToken") is False
+    assert container["securityContext"]["readOnlyRootFilesystem"] is True
+    assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
+    # 16 scripts at their heap limit peak at about 1.3 GiB (crates/functions tests/memory_tests.rs).
+    assert container["resources"]["limits"]["memory"] == "1536Mi"
+    # The assistant finds the sandbox where the Portal does (bins/jc assistant.rs `sandbox`).
+    assert {e["name"]: e.get("value") for e in jc_container(docs)["env"]}["JC_FUNCTIONS_URL"] == "http://jc-functions.jc-dev.svc.cluster.local:8080"
+
+
+@requires_helmfile
+@pytest.mark.parametrize("env", ["jc-prod"])
+def test_jc_functions_reaches_dns_the_edge_and_linkerd_alone(rendered, env):
+    """T-7774: the sandbox's egress is DNS, the ingress controllers (the realm's keys and the
+    gateway, over https) and Linkerd's control plane; never jc's public listener, which admits the
+    edge alone (this file's J-1)."""
+    docs = rendered(env)
+    ns, labels = pod_of(docs, "jc-functions")
+    peers = set()
+    for policy in docs:
+        if policy.get("kind") != "NetworkPolicy" or policy["metadata"].get("namespace") != ns:
+            continue
+        if not selects(policy["spec"].get("podSelector"), labels):
+            continue
+        for rule in policy["spec"].get("egress") or []:
+            ports = tuple(sorted(p["port"] for p in rule.get("ports") or []))
+            for peer in rule.get("to") or [{}]:
+                pod_sel = (peer.get("podSelector") or {})
+                names = pod_sel.get("matchLabels", {}).get("app.kubernetes.io/name") or pod_sel.get("matchLabels", {}).get("k8s-app")
+                if names is None:
+                    names = ",".join(v for e in pod_sel.get("matchExpressions", []) for v in e.get("values", [])) or "*"
+                ns_sel = peer.get("namespaceSelector") or {}
+                where = ns_sel.get("matchLabels", {}).get("kubernetes.io/metadata.name") or ",".join(
+                    v for e in ns_sel.get("matchExpressions", []) for v in e.get("values", [])) or ns
+                peers.add((where, names, ports))
+    assert peers == {
+        ("kube-system", "kube-dns", (53, 53)),
+        ("traefik,kube-system,ingress-nginx", "traefik,ingress-nginx", (443, 8443)),
+        ("linkerd", "*", (8080, 8086, 8090)),
+    }, peers
+
+
 def with_retain(tree):
     """jc-prod with the dev move's 24 h retain sweep turned on (retainHours: 24)."""
     path = tree / "deployment/environments/jc-prod/global.yaml.gotmpl"

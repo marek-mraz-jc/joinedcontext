@@ -323,7 +323,7 @@ mod tests {
     fn refused_field(versions: serde_json::Value) -> String {
         match validate(versions).expect_err("refused") {
             Error::Invalid { field, .. } => field,
-            other => panic!("unexpected {other}"),
+            other => other.to_string(),
         }
     }
 
@@ -334,6 +334,12 @@ mod tests {
             version("1.1.0", "draft")
         ]))
         .expect("valid");
+    }
+
+    #[test]
+    fn a_manifest_that_does_not_parse_is_reported_by_its_message() {
+        let said = refused_field(serde_json::json!("not-a-list"));
+        assert!(said.starts_with("manifest does not parse"), "{said}");
     }
 
     #[test]
@@ -417,5 +423,69 @@ mod tests {
             version: "1.0.0".into(),
         };
         assert!(bad.validate("f").is_err());
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn script_limits_accessors_and_defaults() {
+        let limits = ScriptLimits {
+            timeout_ms: Some(120),
+            memory_mb: Some(48),
+        };
+        assert_eq!(limits.timeout_ms(), 120);
+        assert_eq!(limits.memory_mb(), 48);
+
+        let default_limits = ScriptLimits::default();
+        assert_eq!(default_limits.timeout_ms(), DEFAULT_TIMEOUT_MS);
+        assert_eq!(default_limits.memory_mb(), DEFAULT_MEMORY_MB);
+    }
+
+    #[test]
+    fn script_spec_version_lookup_and_tests_cap() {
+        let code = "let m = bento.v0_msg_as_structured();";
+        let spec = ScriptSpec {
+            language: ScriptLanguage::Javascript,
+            description: None,
+            versions: vec![ScriptVersion {
+                version: "1.0.0".into(),
+                state: ScriptState::Published,
+                code: code.into(),
+                sha256: digest(code),
+                limits: None,
+                tests: vec![],
+            }],
+        };
+        assert!(spec.version("1.0.0").is_some());
+        assert!(spec.version("2.0.0").is_none());
+
+        let too_many_tests: Vec<ScriptTest> = (0..21)
+            .map(|i| ScriptTest {
+                name: format!("test-{i}"),
+                input: serde_json::json!({}),
+                expected: serde_json::json!({}),
+            })
+            .collect();
+        let spec_too_many = ScriptSpec {
+            language: ScriptLanguage::Javascript,
+            description: None,
+            versions: vec![ScriptVersion {
+                version: "1.0.0".into(),
+                state: ScriptState::Draft,
+                code: code.into(),
+                sha256: digest(code),
+                limits: None,
+                tests: too_many_tests,
+            }],
+        };
+        let err = spec_too_many.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a version carries at most 20 tests"),
+            "{err}"
+        );
     }
 }

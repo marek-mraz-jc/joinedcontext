@@ -212,3 +212,36 @@ impl GridConfig {
 pub const MAX_PAGE_SIZE: u32 = 1000;
 /// Points of one attribute's history, as `MAX_POINTS` of the SDK has it.
 pub const MAX_HISTORY_POINTS: u32 = 1000;
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    fn with_points(max_points: u32) -> GridConfig {
+        GridConfig {
+            history: Some(GridHistory {
+                enabled: Some(true),
+                max_points: Some(max_points),
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn rejects_a_history_of_no_points_or_too_many() {
+        for points in [0, MAX_HISTORY_POINTS + 1] {
+            assert_eq!(
+                with_points(points).validate("spec.grid"),
+                Err(Error::Name {
+                    field: "spec.grid",
+                    value: points.to_string(),
+                    reason: "a history holds between 1 and 1000 points",
+                })
+            );
+        }
+        assert_eq!(
+            with_points(MAX_HISTORY_POINTS).validate("spec.grid"),
+            Ok(())
+        );
+    }
+}

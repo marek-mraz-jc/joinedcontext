@@ -535,3 +535,56 @@ mod tests {
         assert!(breadth(Audience::Organization) < breadth(Audience::Public));
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn access_level_display_formats_all_levels() {
+        assert_eq!(format!("{}", AccessLevel::Public), "public");
+        assert_eq!(format!("{}", AccessLevel::Organization), "organization");
+        assert_eq!(format!("{}", AccessLevel::Project), "project");
+        assert_eq!(format!("{}", AccessLevel::Grant), "grant");
+    }
+
+    #[test]
+    fn mcp_server_spec_validate_spec_checks_metadata_and_spec() {
+        let spec = McpServerSpec {
+            members: vec![TypedRef {
+                kind: "Endpoint".into(),
+                name: "bikes".into(),
+                namespace: None,
+            }],
+            select: None,
+            audience: Audience::Public,
+            allowed_projects: Vec::new(),
+            knowledge_sources: Vec::new(),
+        };
+        let meta_valid = ObjectMeta {
+            name: "public-server".to_string(),
+            namespace: Some("helsinki".to_string()),
+            ..Default::default()
+        };
+        assert!(spec.validate_spec(&meta_valid).is_ok());
+
+        let meta_invalid_name = ObjectMeta {
+            name: "Invalid_Server_Name".to_string(),
+            namespace: Some("helsinki".to_string()),
+            ..Default::default()
+        };
+        assert!(spec.validate_spec(&meta_invalid_name).is_err());
+    }
+
+    #[test]
+    fn select_refuses_invalid_entity_type() {
+        let select = Select {
+            types: Some(vec!["not_an_entity_type".to_string()]),
+            ..Default::default()
+        };
+        let err = select
+            .validate(Audience::Public)
+            .expect_err("invalid entity type");
+        assert!(err.to_string().contains("spec.select.types"), "{err}");
+    }
+}

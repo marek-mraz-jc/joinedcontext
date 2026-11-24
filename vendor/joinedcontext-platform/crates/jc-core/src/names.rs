@@ -634,10 +634,17 @@ mod tests {
             "sk_marek-mraz"
         );
         let long = format!("{}.{}.sk", "a".repeat(40), "b".repeat(40));
-        match OrganizationId::from_domain(&long) {
-            Err(Error::Name { field, .. }) => assert_eq!(field, "orgDomain"),
-            other => panic!("{other:?}"),
-        }
+        let too_long = OrganizationId::from_domain(&long);
+        assert!(
+            matches!(
+                &too_long,
+                Err(Error::Name {
+                    field: "orgDomain",
+                    ..
+                })
+            ),
+            "{too_long:?}"
+        );
         assert!(OrganizationId::from_domain("bbsk").is_err());
         let parsed: OrganizationId = serde_json::from_str("\"fi_hel\"").unwrap();
         assert_eq!(serde_json::to_string(&parsed).unwrap(), "\"fi_hel\"");
@@ -679,8 +686,9 @@ mod tests {
         for org in &ids {
             for segment in &segments {
                 let tenant = TenantName::new(org, segment).expect("valid pair");
-                let parsed = TenantName::parse(tenant.as_str())
-                    .unwrap_or_else(|e| panic!("{}: {e}", tenant.as_str()));
+                let parsed = TenantName::parse(tenant.as_str());
+                assert!(parsed.is_ok(), "{}: {parsed:?}", tenant.as_str());
+                let parsed = parsed.unwrap();
                 assert_eq!(
                     (parsed.organization(), parsed.segment()),
                     (org.as_str(), segment.as_str())
@@ -836,7 +844,8 @@ mod tests {
                 for name in ["marek-mraz", "com-marek-mraz"] {
                     let mut renamed = doc.clone();
                     renamed["metadata"]["name"] = name.into();
-                    valid(&renamed).unwrap_or_else(|e| panic!("{kind} {name}: {e}"));
+                    let checked = valid(&renamed);
+                    assert_eq!(checked, Ok(()), "{kind} {name}");
                     assert!(OrganizationId::parse(name).is_err());
                 }
             }
@@ -851,12 +860,14 @@ mod tests {
     #[test]
     fn a_path_beside_a_manifest_stays_inside_the_repository() {
         for path in ["../x", "a/../../b", "/etc/passwd", "", "./"] {
-            match validate_relative_path("spec.tests.input", path) {
-                Err(Error::Name { field, value, .. }) => {
-                    assert_eq!((field, value.as_str()), ("spec.tests.input", path));
-                }
-                other => panic!("`{path}` passed: {other:?}"),
-            }
+            let refused = validate_relative_path("spec.tests.input", path);
+            assert!(
+                matches!(
+                    &refused,
+                    Err(Error::Name { field: "spec.tests.input", value, .. }) if value == path
+                ),
+                "`{path}` passed: {refused:?}"
+            );
         }
         for path in ["tests/in.json", "./tests/in.json", "a/b..c/d"] {
             assert!(validate_relative_path("linkml", path).is_ok(), "{path}");
@@ -873,5 +884,50 @@ mod tests {
             ),
             "{renamed:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn organization_id_parses_via_from_str() {
+        let org: OrganizationId = "sk_bbsk".parse().expect("valid id");
+        assert_eq!(org.as_str(), "sk_bbsk");
+        assert!("invalid".parse::<OrganizationId>().is_err());
+    }
+
+    #[test]
+    fn tenant_name_display_formats_as_string() {
+        let tenant = TenantName::parse("sk_bbsk__mobility").expect("valid tenant");
+        assert_eq!(format!("{tenant}"), "sk_bbsk__mobility");
+    }
+
+    #[test]
+    fn rename_keeps_non_name_error_variants() {
+        let err_invalid = Error::Invalid {
+            field: "orig".to_string(),
+            reason: "some reason".to_string(),
+        };
+        let renamed = rename(err_invalid.clone(), "new_field");
+        assert_eq!(renamed, err_invalid);
+
+        let err_api = Error::ApiVersion("joinedcontext.com/v1".to_string());
+        let renamed_api = rename(err_api.clone(), "new_field");
+        assert_eq!(renamed_api, err_api);
+    }
+
+    #[test]
+    fn tenant_name_of_space_validates_label_format() {
+        let key = jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint());
+        let err = TenantName::of_space(key, "Invalid_Space").expect_err("not a label");
+        assert!(
+            err.to_string().contains("must be lower-case letters"),
+            "{err}"
+        );
+
+        let err_empty = TenantName::of_space(key, "").expect_err("empty space name");
+        assert!(err_empty.to_string().contains("space"), "{err_empty}");
     }
 }

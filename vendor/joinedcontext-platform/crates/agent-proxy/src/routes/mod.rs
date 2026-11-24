@@ -169,14 +169,39 @@ pub(crate) async fn upstream_body(
 /// Whether a path a workspace sends would leave the base it is appended to once the outbound URL
 /// is parsed. axum has decoded the path once; the URL parser follows WHATWG, which reads `%2e%2e`
 /// as a `..` segment and a backslash as a slash in an http(s) URL, so nothing still encoded, no
-/// backslash, no dot segment and no empty segment gets through (T-0817, T-1300, T-1301). A
-/// trailing slash, a directory listing, stays allowed.
+/// backslash, no dot segment and no empty segment gets through (T-0817, T-1300, T-1301). The
+/// parser also drops every tab and line break before it reads a segment, so `.%09.` would be `..`
+/// once sent: no control character gets through either (T-7795). A decoded `?` or `#` ends the
+/// path there, so `..?x` would be `..` once sent: neither gets through (T-7795). The parser strips
+/// trailing spaces from the whole URL, and the path often ends it, so `.. ` would be `..`: no path
+/// ends in a space (T-7795). A trailing slash, a directory listing, stays allowed.
 pub(crate) fn escapes(path: &str) -> bool {
-    path.contains('%')
+    path.contains(['%', '?', '#'])
+        || path.ends_with(' ')
+        || path.contains(|c: char| c.is_ascii_control())
         || path.contains('\\')
         || path.starts_with('/')
         || path.contains("//")
         || path.split('/').any(|segment| matches!(segment, "." | ".."))
+}
+
+/// The path rule over any string, for the fuzz target `forge_body` (T-7795). Compiled only with
+/// the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    /// A path the rule lets through, appended to a base the way every door appends it, stays
+    /// on that base's host and under its path.
+    pub fn path(path: &str) {
+        if super::escapes(path) {
+            return;
+        }
+        let Ok(url) = url::Url::parse(&format!("https://upstream.invalid/base/{path}")) else {
+            return;
+        };
+        assert_eq!(url.host_str(), Some("upstream.invalid"), "{path}");
+        assert!(url.path().starts_with("/base/"), "{path} -> {}", url.path());
+    }
 }
 
 /// The `429` for a run past its `requests_per_minute`, or `None` while it is inside it. Every door
@@ -217,8 +242,21 @@ mod tests {
             "/etc/passwd",
             "a//b",
             "./x",
+            // The URL parser drops every tab and line break before it reads a segment (T-7795).
+            ".\t.",
+            "\t../admin",
+            ".\n./admin",
+            "a/.\r./.\r./b",
+            "a\u{0}b",
+            // A decoded `?` or `#` ends the path; the `..` before it is a dot segment (T-7795).
+            "..?x",
+            "..#",
+            "a/..?/../../b",
+            // The parser strips trailing spaces from the whole URL (T-7795).
+            ".. ",
+            "a/b/.. ",
         ] {
-            assert!(escapes(path), "{path}");
+            assert!(escapes(path), "{path:?}");
         }
         for path in [
             "ngsi-ld/v1/entities",

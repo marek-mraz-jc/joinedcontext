@@ -1055,3 +1055,332 @@ mod tests {
         assert!(scoped_stylesheet("a{color:red}", "x y").is_err());
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use cssparser::Token;
+
+    #[test]
+    fn stylesheet_normalizes_consecutive_whitespace() {
+        let out = scoped_stylesheet("a   b { color: red; }", "jc-portal-x").unwrap();
+        assert!(out.contains("body.jc-portal-x a b"));
+    }
+
+    #[test]
+    fn stylesheet_refuses_nul_and_malformed_syntax() {
+        let err = scoped_stylesheet("a { color: red;\0 }", "jc-portal-x").unwrap_err();
+        assert!(err.to_string().contains("free of NUL characters"), "{err}");
+
+        let err =
+            scoped_stylesheet("a { font-family: \"broken\nstring\"; }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string().contains("a value of `font-family` without"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn portal_file_url_checks_segments() {
+        assert!(!is_portal_file_url("/files/noslash"));
+        assert!(!is_portal_file_url("/files/"));
+        assert!(!is_portal_file_url(
+            "/notfiles/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/ok.png"
+        ));
+        assert!(!is_portal_file_url(
+            "/files/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef/.hidden"
+        ));
+    }
+
+    #[test]
+    fn media_rule_requires_query_and_block() {
+        let err = scoped_stylesheet("@media screen", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string().contains("a `@media` rule with a block"),
+            "{err}"
+        );
+
+        let err = scoped_stylesheet("@media {}", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string().contains("a `@media` rule with a query"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn style_rules_require_valid_selectors_and_closing_blocks() {
+        let err = scoped_stylesheet("body.test", "jc-portal-x").unwrap_err();
+        assert!(err.to_string().contains("a rule with a block"), "{err}");
+
+        let err = scoped_stylesheet("a, { color: red; }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a selector list without an empty member"),
+            "{err}"
+        );
+
+        let err = scoped_stylesheet("a[href > 1] { color: red; }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("an attribute selector `[name]` or `[name=value]`"),
+            "{err}"
+        );
+
+        let err = scoped_stylesheet("li:nth-child(0.00000001) { color: red; }", "jc-portal-x")
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("numbers from 0.0001 up to 1000000"),
+            "{err}"
+        );
+
+        let err = scoped_stylesheet("a; { color: red; }", "jc-portal-x").unwrap_err();
+        assert!(err.to_string().contains("a selector without `;`"), "{err}");
+    }
+
+    #[test]
+    fn functional_pseudo_classes_in_selectors_are_permitted() {
+        let ok = scoped_stylesheet(
+            "a:is(b, c), a:not(.disabled), li:nth-child(2n+1) { color: red; }",
+            "jc-portal-x",
+        )
+        .unwrap();
+        assert!(ok.contains("body.jc-portal-x a:is(b, c)"));
+        assert!(ok.contains("body.jc-portal-x a:not(.disabled)"));
+        assert!(ok.contains("body.jc-portal-x li:nth-child(2n"), "{ok}");
+    }
+
+    #[test]
+    fn media_query_validates_tokens_and_numbers() {
+        let err = scoped_stylesheet(
+            "@media (min-width: 0.000001px) { a { color: red; } }",
+            "jc-portal-x",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("numbers from 0.0001 up to 1000000"),
+            "{err}"
+        );
+
+        let err = scoped_stylesheet("@media \"screen\" { a { color: red; } }", "jc-portal-x")
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a media query without `\"screen\"`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn declarations_validate_syntax_and_extra_semicolons() {
+        let ok =
+            scoped_stylesheet("a { color: red;; background-color: blue; }", "jc-portal-x").unwrap();
+        assert!(ok.contains("color: red;"));
+        assert!(ok.contains("background-color: blue;"));
+
+        let err = scoped_stylesheet("a { 123: red; }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("declarations `property: value;` alone in a rule's block, not `123`"),
+            "{err}"
+        );
+
+        let err = scoped_stylesheet("a { color red; }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("`color` followed by `:` and its value"),
+            "{err}"
+        );
+
+        let err = scoped_stylesheet("a { color: ; }", "jc-portal-x").unwrap_err();
+        assert!(err.to_string().contains("`color` with a value"), "{err}");
+
+        let err = scoped_stylesheet("a { background-image: url(\"broken\n\"); }", "jc-portal-x")
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("`url()` with one quoted address"),
+            "{err}"
+        );
+
+        let err = scoped_stylesheet(
+            "a { background-image: url(\"/files/test\" extra); }",
+            "jc-portal-x",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("`url()` with one quoted address and nothing else"),
+            "{err}"
+        );
+
+        let err = scoped_stylesheet("a { color: @invalid; }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a value of `color` without `@invalid`"),
+            "{err}"
+        );
+
+        let ok_brackets = scoped_stylesheet("a { font-family: [sans]; }", "jc-portal-x").unwrap();
+        assert!(ok_brackets.contains("font-family: [sans];"));
+    }
+
+    #[test]
+    fn helper_checks_handle_percentages_and_units() {
+        assert!(plain_number(&Token::Percentage {
+            unit_value: 0.5,
+            has_sign: false,
+            int_value: None
+        }));
+        assert!(!plain_number(&Token::Percentage {
+            unit_value: 0.0000001,
+            has_sign: false,
+            int_value: None
+        }));
+        assert!(!plain_number(&Token::Dimension {
+            has_sign: false,
+            value: 10.0,
+            int_value: None,
+            unit: "e2".into()
+        }));
+
+        assert!(small_spacing(
+            "font-size",
+            &Token::Percentage {
+                unit_value: 2.0,
+                has_sign: false,
+                int_value: None
+            }
+        ));
+        assert!(small_spacing(
+            "margin",
+            &Token::Percentage {
+                unit_value: 0.05,
+                has_sign: false,
+                int_value: None
+            }
+        ));
+        assert!(!small_spacing(
+            "margin",
+            &Token::Percentage {
+                unit_value: 0.5,
+                has_sign: false,
+                int_value: None
+            }
+        ));
+        assert!(!small_spacing(
+            "padding",
+            &Token::Dimension {
+                has_sign: false,
+                value: 5.0,
+                int_value: None,
+                unit: "in".into()
+            }
+        ));
+
+        assert!(!small_shadow(&Token::Dimension {
+            has_sign: false,
+            value: 5.0,
+            int_value: None,
+            unit: "in".into()
+        }));
+        assert!(!small_shadow(&Token::Percentage {
+            unit_value: 0.1,
+            has_sign: false,
+            int_value: None
+        }));
+    }
+    #[test]
+    fn whitespace_on_both_sides_of_a_comment_is_one_space() {
+        let out = scoped_stylesheet("a /* x */ b { color: red }", "jc-portal-x").unwrap();
+        assert_eq!(out, "body.jc-portal-x a b {\n  color: red;\n}\n");
+    }
+
+    #[test]
+    fn a_control_character_in_a_string_is_refused_as_an_escape() {
+        let err = scoped_stylesheet("a { font-family: \"x\u{1}y\" }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("free of characters a name can only hold escaped"),
+            "{err}"
+        );
+        let err =
+            scoped_stylesheet("[title=\"a\u{7f}b\"] { color: red }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("free of characters a name can only hold escaped"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_pseudo_class_function_off_the_list() {
+        let err = scoped_stylesheet("a:matches(b) { color: red }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a selector without `matches()`, which a portal stylesheet may not use"),
+            "{err}"
+        );
+        let err = scoped_stylesheet("a:has(b) { color: red }", "jc-portal-x").unwrap_err();
+        assert!(err.to_string().contains("without `:has()`"), "{err}");
+    }
+
+    #[test]
+    fn media_percentages_are_checked_like_numbers() {
+        let ok = scoped_stylesheet(
+            "@media (min-aspect: 50%) { a { color: red } }",
+            "jc-portal-x",
+        )
+        .unwrap();
+        assert!(ok.starts_with("@media (min-aspect: 50%) {\n"), "{ok}");
+        let err = scoped_stylesheet(
+            "@media (min-aspect: 0.000001%) { a { color: red } }",
+            "jc-portal-x",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("numbers from 0.0001 up to 1000000"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn shadows_in_em_stay_within_half_an_em() {
+        let ok = scoped_stylesheet("a { box-shadow: 0 0 0.25em #000000 }", "jc-portal-x").unwrap();
+        assert!(ok.contains("box-shadow: 0 0 0.25em #000000;"), "{ok}");
+        let err =
+            scoped_stylesheet("a { box-shadow: 0 0 1rem #000000 }", "jc-portal-x").unwrap_err();
+        assert!(err.to_string().contains("a shadow of at most 8px"), "{err}");
+        assert!(small_shadow(&Token::Dimension {
+            has_sign: false,
+            value: 0.5,
+            int_value: None,
+            unit: "EM".into()
+        }));
+    }
+
+    #[test]
+    fn number_helpers_pass_tokens_that_are_not_numbers() {
+        let ident = Token::Ident("auto".into());
+        assert!(plain_number(&ident));
+        assert!(small_spacing("margin", &ident));
+        assert!(!small_shadow(&ident));
+    }
+
+    #[test]
+    fn media_queries_keep_plain_numbers_and_lengths() {
+        let ratio = scoped_stylesheet(
+            "@media (min-aspect-ratio: 16/9) { a { color: red } }",
+            "jc-portal-x",
+        )
+        .expect("a ratio of plain numbers is a media query");
+        assert!(ratio.starts_with("@media (min-aspect-ratio: 16"), "{ratio}");
+        let width = scoped_stylesheet(
+            "@media screen and (min-width: 600px) { a { color: red } }",
+            "jc-portal-x",
+        )
+        .expect("a plain length is a media query");
+        assert!(width.contains("600px"), "{width}");
+    }
+}

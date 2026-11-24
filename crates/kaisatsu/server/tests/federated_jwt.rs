@@ -271,6 +271,27 @@ async fn a_pod_logs_in_with_its_projected_token_as_on_prod() {
 }
 
 #[tokio::test]
+async fn a_rotated_key_whose_set_cannot_be_read_again_is_refused() {
+    let c = cluster(true, None, Duration::ZERO).await;
+    let (st, body) = c
+        .login(&c.assertion(&c.key, Cluster::claims(ISSUER)), None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    // The cluster CA is unmounted before the rotation: the second read cannot trust the API
+    // server, so the token naming the new kid is refused, never accepted on the cached set.
+    std::fs::remove_file(c.dir.join("ca.crt")).unwrap();
+    let rotated = KeyManager::generate_es256("k8s-next", &c.kek, 100, "ACTIVE").unwrap();
+    *c.stub.jwks.lock().unwrap() = jwks_of(&[&c.key, &rotated]);
+    let (st, body) = c
+        .login(&c.assertion(&rotated, Cluster::claims(ISSUER)), None)
+        .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(body.contains("invalid_client"), "{body}");
+    assert!(!body.contains("access_token"), "{body}");
+    assert_eq!(c.fetches(), 1, "the untrusted read reached no handler");
+}
+
+#[tokio::test]
 async fn a_cluster_ca_that_is_not_mounted_trusts_nothing_of_the_cluster() {
     let c = cluster(false, None, Duration::ZERO).await;
     let (st, _) = c

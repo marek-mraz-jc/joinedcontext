@@ -550,12 +550,8 @@ spec:
     fn refusal(from: &str, to: &str) -> String {
         let yaml = VALID.replacen(from, to, 1);
         assert_ne!(yaml, VALID, "{from}");
-        let profile = AgentProfile::from_yaml(&yaml).unwrap_or_else(|e| panic!("{yaml}\n{e}"));
-        profile
-            .validate()
-            .err()
-            .unwrap_or_else(|| panic!("{to} is refused"))
-            .to_string()
+        let profile = AgentProfile::from_yaml(&yaml).expect(&yaml);
+        profile.validate().expect_err(to).to_string()
     }
 
     #[test]
