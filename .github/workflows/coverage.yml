@@ -48,7 +48,12 @@ jobs:
           # watched.sh (as ci.yml portal-test): the build and tests in a memory cgroup with a sampler
           # in the log, so an overrun kills rustc and names it instead of losing the runner (T-7787)
           - { ws: portal, dir: crates/portal, args: "--workspace -j 2", watch: "sh ../../.github/scripts/watched.sh" }
-          - { ws: platform, dir: vendor/joinedcontext-platform, args: "--workspace --lib --bins" }
+          # every lib, bin and tests/ binary but two (PLATFORM_TESTS, set below); jc-core's lib and bins
+          # in a second pass (`then`), as its `it` binary needs files the vendored copy lacks
+          - ws: platform
+            dir: vendor/joinedcontext-platform
+            args: "--workspace --exclude jc-core --lib --bins $PLATFORM_TESTS"
+            then: "-p jc-core --lib --bins"
     defaults: { run: { working-directory: "${{ matrix.dir }}" } }
     services:
       postgres:
@@ -98,9 +103,15 @@ jobs:
           sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
           sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal
           { echo CARGO_PROFILE_DEV_DEBUG=0; echo CARGO_PROFILE_TEST_DEBUG=0; } >> "$GITHUB_ENV"
-      # The platform's lockfile repeats the root one's versions (ci.yml platform-test).
+      # The platform's lockfile repeats the root one's versions (ci.yml platform-test). Its test
+      # targets, but jc-core's `it` (examples/apps) and context-gateway's in_flight_tests (the
+      # Dockerfile): both read files of the platform repository that are not vendored.
       - if: matrix.ws == 'platform'
-        run: python3 ../../.github/scripts/lock-subset.py ../../Cargo.lock Cargo.lock
+        run: |
+          python3 ../../.github/scripts/lock-subset.py ../../Cargo.lock Cargo.lock
+          tests=$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name != "jc-core")
+            | .targets[] | select(.kind == ["test"] and .name != "in_flight_tests") | "--test \(.name)"' | sort -u | tr '\n' ' ')
+          { echo "PLATFORM_TESTS=$tests"; echo "DCAT_RECORDS_DIR=$RUNNER_TEMP/dcat-records"; } >> "$GITHUB_ENV"
       - uses: ./.github/actions/rust
         with: { workspace: "${{ matrix.dir }}", key: "coverage-${{ matrix.ws }}", components: llvm-tools-preview }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
@@ -117,6 +128,13 @@ jobs:
             out=tests-failed
             echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
           }
+          if [ -n "${{ matrix.then }}" ]; then
+            # shellcheck disable=SC2086
+            cargo llvm-cov ${{ matrix.then }} --locked --no-report --no-fail-fast || {
+              out=tests-failed
+              echo "::warning::tests failed in ${{ matrix.ws }} (${{ matrix.then }}): its crates are not judged by the ratchet tonight"
+            }
+          fi
           # the full export: the ratchet merges each function's instances from its records
           cargo llvm-cov report --json --output-path "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"
           gzip "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"
