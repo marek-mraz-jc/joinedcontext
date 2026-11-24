@@ -784,7 +784,11 @@ mod tests {
                 vec![st("\u{80}"), st("\u{2003}"), st("\u{10000}\u{ffff}")],
                 "\"\\u0080\"|\"\\u2003\"|\"\\U00010000\\uffff\"",
             ),
-            ("%#q|%#q|%#q", vec![i(0xE9), i(0x27), i(0x41)], "'é'|'\\''|'A'"),
+            (
+                "%#q|%#q|%#q",
+                vec![i(0xE9), i(0x27), i(0x41)],
+                "'é'|'\\''|'A'",
+            ),
             // Go's fmtSbx: case, the space and # flags, width either side.
             ("%x|%X", vec![st("zz"), st("zz")], "7a7a|7A7A"),
             (
