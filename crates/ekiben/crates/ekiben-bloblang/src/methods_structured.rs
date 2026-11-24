@@ -1018,17 +1018,15 @@ fn key_less(
             Ok(lf < rf)
         }
         Value::String(_) | Value::Bytes(_) => {
-            let rb = match r {
-                Value::String(s) => s.as_bytes(),
-                Value::Bytes(b) => b.as_slice(),
-                _ => return Err((false, type_err(r, "string"))),
-            };
-            let lb = match l {
-                Value::String(s) => s.as_bytes(),
-                Value::Bytes(b) => b.as_slice(),
-                _ => &[],
-            };
-            Ok(lb < rb)
+            fn text(v: &Value) -> Option<&[u8]> {
+                match v {
+                    Value::String(s) => Some(s.as_bytes()),
+                    Value::Bytes(b) => Some(b.as_slice()),
+                    _ => None,
+                }
+            }
+            let rb = text(r).ok_or_else(|| (false, type_err(r, "string")))?;
+            Ok(text(l) < Some(rb))
         }
         _ => Err((true, type_err(l, "number or string"))),
     }

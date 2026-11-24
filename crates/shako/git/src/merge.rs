@@ -93,8 +93,8 @@ pub fn check_mergeability(
     })
 }
 
-/// Merged tree as flat `path -> (kind, blob id, new blob bytes when written by the merge)`.
-type MergedTree = BTreeMap<String, (EntryKind, ObjectId, Option<Vec<u8>>)>;
+/// Merged tree as flat `path -> (kind, blob id)`: a clean merge takes each entry from one side.
+type MergedTree = BTreeMap<String, (EntryKind, ObjectId)>;
 
 /// Performs a 3-way tree merge in memory between `ancestor_oid`, `our_oid`, and `their_oid`,
 /// path by path: a file both sides changed differently is a conflict (no line-level merge).
@@ -135,7 +135,7 @@ fn merge_trees_in_memory(
     all_paths.extend(our_files.keys().cloned());
     all_paths.extend(their_files.keys().cloned());
 
-    let mut merged: BTreeMap<String, (EntryKind, ObjectId, Option<Vec<u8>>)> = BTreeMap::new();
+    let mut merged = MergedTree::new();
     let mut conflicts = Vec::new();
 
     for path in all_paths {
@@ -145,13 +145,13 @@ fn merge_trees_in_memory(
 
         match (b, o, t) {
             (_, Some(ours), Some(theirs)) if ours == theirs => {
-                merged.insert(path, (ours.0, ours.1, None));
+                merged.insert(path, ours);
             }
             (Some(base), Some(ours), Some(theirs)) if base == ours => {
-                merged.insert(path, (theirs.0, theirs.1, None));
+                merged.insert(path, theirs);
             }
             (Some(base), Some(ours), Some(theirs)) if base == theirs => {
-                merged.insert(path, (ours.0, ours.1, None));
+                merged.insert(path, ours);
             }
             (Some(base), Some(ours), None) if base == ours => {
                 // Deleted cleanly by theirs
@@ -160,10 +160,10 @@ fn merge_trees_in_memory(
                 // Deleted cleanly by ours
             }
             (None, Some(ours), None) => {
-                merged.insert(path, (ours.0, ours.1, None));
+                merged.insert(path, ours);
             }
             (None, None, Some(theirs)) => {
-                merged.insert(path, (theirs.0, theirs.1, None));
+                merged.insert(path, theirs);
             }
             (Some(_), None, None) => {}
             _ => {
@@ -263,14 +263,7 @@ pub fn execute_pr_merge(
     }
 
     let mut new_objects = Vec::new();
-    let mut flat_entries = BTreeMap::new();
-    for (path, (kind, oid, maybe_bytes)) in merged_map {
-        if let Some(raw) = maybe_bytes {
-            new_objects.push((oid, gix_object::Kind::Blob, raw));
-        }
-        flat_entries.insert(path, (kind, oid));
-    }
-    let root_tree_oid = build_nested_trees(&flat_entries, &mut new_objects)?;
+    let root_tree_oid = build_nested_trees(&merged_map, &mut new_objects)?;
 
     let now_secs = jc_time::TimestampTz::now().as_second();
     let time = gix::date::Time::new(now_secs, 0);
@@ -460,4 +453,307 @@ pub fn diff_refs_files(
 
     out.sort_by(|a, b| a.filename.cmp(&b.filename));
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repo::{create_branch, list_tree_entries, read_commit_info, read_file_at_ref};
+    use crate::testutil::{author, put, remove, repo};
+
+    fn opts<'a>(style: MergeStyle, expected_head_sha: Option<&'a str>) -> MergeOptions<'a> {
+        static AUTHOR: std::sync::LazyLock<CommitAuthor> = std::sync::LazyLock::new(author);
+        MergeOptions {
+            expected_head_sha,
+            style,
+            message: "merge",
+            author: &AUTHOR,
+            committer: &AUTHOR,
+        }
+    }
+
+    fn file(path: &Path, branch: &str, name: &str) -> Option<String> {
+        read_file_at_ref(path, branch, name, &mut crate::testutil::admit_all)
+            .expect("read")
+            .map(|(_, bytes)| String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[test]
+    fn a_merge_style_parses_by_name_and_refuses_rebase_and_unknown_ones() {
+        assert_eq!(
+            MergeStyle::parse("merge").expect("merge"),
+            MergeStyle::Merge
+        );
+        assert_eq!(
+            MergeStyle::parse("SQUASH").expect("squash"),
+            MergeStyle::Squash
+        );
+        for ff in ["fast-forward-only", "fast_forward_only"] {
+            assert_eq!(
+                MergeStyle::parse(ff).expect(ff),
+                MergeStyle::FastForwardOnly
+            );
+        }
+        for (style, says) in [
+            ("rebase", "not supported"),
+            ("rebase-merge", "not supported"),
+            ("octopus", "unknown"),
+        ] {
+            let err = MergeStyle::parse(style).expect_err(style);
+            assert_eq!(err.status_code(), 422);
+            assert!(err.to_string().contains(says), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_three_way_merge_takes_each_side_change_and_names_every_conflict() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, false);
+        for name in [
+            "same",
+            "ours",
+            "theirs",
+            "both",
+            "del-theirs",
+            "del-ours",
+            "del-both",
+            "clash",
+            "mod-del",
+        ] {
+            put(&path, "main", &format!("{name}.txt"), b"base\n");
+        }
+        create_branch(&path, "head", "main").expect("branch");
+        // main is ours, head is theirs.
+        for (name, body) in [
+            ("ours", "o"),
+            ("both", "same"),
+            ("clash", "o"),
+            ("mod-del", "o"),
+            ("add-ours", "o"),
+            ("add-both", "o"),
+        ] {
+            put(&path, "main", &format!("{name}.txt"), body.as_bytes());
+        }
+        for name in ["del-ours", "del-both"] {
+            remove(&path, "main", &format!("{name}.txt"));
+        }
+        for (name, body) in [
+            ("theirs", "t"),
+            ("both", "same"),
+            ("clash", "t"),
+            ("add-theirs", "t"),
+            ("add-both", "t"),
+        ] {
+            put(&path, "head", &format!("{name}.txt"), body.as_bytes());
+        }
+        for name in ["del-theirs", "del-both", "mod-del"] {
+            remove(&path, "head", &format!("{name}.txt"));
+        }
+        let check = check_mergeability(&path, "main", "head").expect("check");
+        assert!(!check.mergeable && check.is_behind_base);
+        assert_eq!(
+            check.conflicting_paths,
+            ["add-both.txt", "clash.txt", "mod-del.txt"]
+        );
+        assert_eq!(check.merge_base.len(), 40);
+        let err = execute_pr_merge(&path, "main", "head", &opts(MergeStyle::Merge, None))
+            .expect_err("conflicts");
+        assert_eq!(
+            err.to_string(),
+            "merge conflict in: add-both.txt, clash.txt, mod-del.txt"
+        );
+        assert_eq!(err.status_code(), 409);
+
+        // head takes main's side of each conflict; the merge then holds every clean change.
+        for name in ["clash", "mod-del", "add-both"] {
+            put(&path, "head", &format!("{name}.txt"), b"o");
+        }
+        let head = check_mergeability(&path, "main", "head")
+            .expect("check")
+            .head_sha;
+        let merged = execute_pr_merge(&path, "main", "head", &opts(MergeStyle::Merge, Some(&head)))
+            .expect("merge");
+        let info = read_commit_info(&path, &merged).expect("info");
+        assert_eq!(info.parent_shas.len(), 2);
+        assert_eq!(info.parent_shas[1], head);
+        let (_, entries) = list_tree_entries(&path, "main", false).expect("tree");
+        let names: Vec<_> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "add-both.txt",
+                "add-ours.txt",
+                "add-theirs.txt",
+                "both.txt",
+                "clash.txt",
+                "mod-del.txt",
+                "ours.txt",
+                "same.txt",
+                "theirs.txt"
+            ]
+        );
+        for (name, body) in [
+            ("ours", "o"),
+            ("theirs", "t"),
+            ("same", "base\n"),
+            ("both", "same"),
+            ("add-theirs", "t"),
+        ] {
+            assert_eq!(
+                file(&path, "main", &format!("{name}.txt")).as_deref(),
+                Some(body),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn squash_fast_forward_and_a_moved_head_each_behave_as_named() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        create_branch(&path, "same", "main").expect("branch");
+        create_branch(&path, "feature", "main").expect("branch");
+        let tip = put(&path, "feature", "f.txt", b"f").to_string();
+
+        let err = execute_pr_merge(
+            &path,
+            "main",
+            "feature",
+            &opts(MergeStyle::Squash, Some("0000")),
+        )
+        .expect_err("moved");
+        assert_eq!(err.status_code(), 409);
+        let ff = execute_pr_merge(
+            &path,
+            "main",
+            "feature",
+            &opts(MergeStyle::FastForwardOnly, Some("")),
+        )
+        .expect("ff");
+        assert_eq!(ff, tip);
+        // `same` takes a commit of its own: main is no ancestor of it any more.
+        put(&path, "same", "s.txt", b"s");
+        let err = execute_pr_merge(
+            &path,
+            "main",
+            "same",
+            &opts(MergeStyle::FastForwardOnly, None),
+        )
+        .expect_err("diverged");
+        assert_eq!(err.status_code(), 409);
+        assert!(err.to_string().contains("cannot fast-forward"), "{err}");
+
+        let squashed = execute_pr_merge(&path, "main", "same", &opts(MergeStyle::Squash, None))
+            .expect("squash");
+        let info = read_commit_info(&path, &squashed).expect("info");
+        assert_eq!(
+            (info.parent_shas, info.message),
+            (vec![tip], "merge".to_owned())
+        );
+        assert_eq!(file(&path, "main", "s.txt").as_deref(), Some("s"));
+        // A merge of a branch into itself has one parent.
+        let again =
+            execute_pr_merge(&path, "main", "main", &opts(MergeStyle::Merge, None)).expect("self");
+        assert_eq!(
+            read_commit_info(&path, &again).expect("info").parent_shas,
+            [squashed]
+        );
+        for (base, head) in [("nope", "main"), ("main", "nope")] {
+            let err = execute_pr_merge(&path, base, head, &opts(MergeStyle::Merge, None))
+                .expect_err("unknown");
+            assert_eq!(err.status_code(), 404);
+            assert_eq!(
+                check_mergeability(&path, base, head)
+                    .expect_err("unknown")
+                    .status_code(),
+                404
+            );
+            assert_eq!(
+                diff_refs_files(&path, base, head)
+                    .expect_err("unknown")
+                    .status_code(),
+                404
+            );
+            assert_eq!(
+                update_pr_branch(&path, base, head, &author())
+                    .expect_err("unknown")
+                    .status_code(),
+                404
+            );
+        }
+    }
+
+    #[test]
+    fn updating_a_branch_merges_its_base_in_only_when_it_is_behind() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        create_branch(&path, "feature", "main").expect("branch");
+        let ahead = put(&path, "feature", "f.txt", b"f").to_string();
+        assert_eq!(
+            update_pr_branch(&path, "main", "feature", &author()).expect("current"),
+            ahead
+        );
+        let base = put(&path, "main", "m.txt", b"m").to_string();
+        let updated = update_pr_branch(&path, "main", "feature", &author()).expect("update");
+        let info = read_commit_info(&path, &updated).expect("info");
+        assert_eq!(info.message, "Merge branch 'main' into feature");
+        assert_eq!(info.parent_shas, [ahead, base]);
+        assert_eq!(file(&path, "feature", "m.txt").as_deref(), Some("m"));
+        let check = check_mergeability(&path, "main", "feature").expect("check");
+        assert!(check.mergeable && !check.is_behind_base);
+    }
+
+    #[test]
+    fn a_diff_names_files_added_modified_deleted_and_renamed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, false);
+        for (name, body) in [
+            ("keep", "k"),
+            ("mod", "m"),
+            ("del", "d"),
+            ("old-name", "moved"),
+        ] {
+            put(&path, "main", &format!("{name}.txt"), body.as_bytes());
+        }
+        create_branch(&path, "head", "main").expect("branch");
+        put(&path, "head", "mod.txt", b"changed");
+        remove(&path, "head", "del.txt");
+        remove(&path, "head", "old-name.txt");
+        put(&path, "head", "new-name.txt", b"moved");
+        put(&path, "head", "added.txt", b"a");
+        let diff = diff_refs_files(&path, "main", "head").expect("diff");
+        let got: Vec<_> = diff
+            .iter()
+            .map(|d| (d.filename.as_str(), d.status.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("added.txt", "added"),
+                ("del.txt", "deleted"),
+                ("mod.txt", "modified"),
+                ("new-name.txt", "renamed")
+            ]
+        );
+        // Unrelated histories diff against the base itself.
+        // Other content than main's first commit, which would otherwise hash the same.
+        put(&path, "orphan", "keep.txt", b"elsewhere");
+        let diff = diff_refs_files(&path, "main", "orphan").expect("diff");
+        let got: Vec<_> = diff
+            .iter()
+            .map(|d| (d.filename.as_str(), d.status.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("del.txt", "deleted"),
+                ("keep.txt", "modified"),
+                ("mod.txt", "deleted"),
+                ("old-name.txt", "deleted")
+            ]
+        );
+        let check = check_mergeability(&path, "main", "orphan").expect("check");
+        assert_eq!(check.merge_base, "");
+        assert!(check.is_behind_base);
+    }
 }

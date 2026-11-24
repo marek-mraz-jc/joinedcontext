@@ -2503,6 +2503,48 @@ mod tests {
     /// path, so if it ever stopped compiling the broker would panic on
     /// precisely the queries the fallback exists to serve. Pinned here rather
     /// than argued in a comment.
+    /// Every aggregation method and timeproperty the table names compiles to its own SQL and
+    /// column; any other name compiles to nothing, so the caller reconstructs and the request's
+    /// own text never reaches the statement.
+    #[test]
+    fn aggregates_compile_from_the_table_and_nothing_else() {
+        use crate::store::filter::{Aggregate, Period};
+        let compile = |timeproperty: &'static str, method: &str| {
+            let methods = [method.to_owned()];
+            let f = TemporalFilter {
+                timeproperty,
+                ..TemporalFilter::default()
+            };
+            let agg = Aggregate {
+                methods: &methods,
+                period: Period::Whole,
+                anchor: None,
+                attrs: None,
+            };
+            aggregate_expr(&f, &agg, 1, None).map(|(sql, _)| sql)
+        };
+        for (method, sql) in [("stddev", "stddev_pop(s.v)"), ("sumsq", "sum(s.v * s.v)")] {
+            let got = compile("observedAt", method).expect("a table method compiles");
+            assert!(got.contains(sql), "{method}: {got}");
+        }
+        for (timeproperty, col) in [("createdAt", "created_at"), ("modifiedAt", "modified_at")] {
+            let got = compile(timeproperty, "avg").expect("a column timeproperty compiles");
+            assert!(got.contains(col), "{timeproperty}: {got}");
+        }
+        assert_eq!(compile("observedAt", "median"), None, "unknown method");
+        assert_eq!(compile("observedAt", "avg); DROP TABLE x; --"), None);
+        assert_eq!(compile("deletedAt", "avg"), None, "no aggregate column");
+    }
+
+    /// A write without a stamp to range over binds the whole time line.
+    #[test]
+    fn an_empty_write_ranges_over_all_time() {
+        assert_eq!(
+            observed_range(&[]),
+            ("-infinity".to_owned(), "infinity".to_owned())
+        );
+    }
+
     #[test]
     fn the_unpruned_fallback_always_compiles() {
         let f = TemporalFilter::default();
@@ -2510,9 +2552,7 @@ mod tests {
         assert!(f.last_n.is_none(), "the default filter carries no lastN");
         for first_bind in [1, 3, 4, 17] {
             let built = attr_object_expr(&f, first_bind, None);
-            let (sql, binds) = built.unwrap_or_else(|| {
-                panic!("the unpruned fallback failed to compile at bind {first_bind}")
-            });
+            let (sql, binds) = built.expect("the unpruned fallback compiles at every bind");
             assert!(!sql.is_empty(), "empty SQL at bind {first_bind}");
             assert!(
                 !sql.contains('$'),

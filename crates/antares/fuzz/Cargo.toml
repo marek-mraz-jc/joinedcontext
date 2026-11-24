@@ -26,6 +26,9 @@ odata-csdl = { path = "../crates/odata-csdl" }
 odata-json = { path = "../crates/odata-json" }
 antares-mcp = { path = "../crates/antares-mcp", features = ["fuzzing"] }
 odata-batch = { path = "../crates/odata-batch" }
+antares-sta = { path = "../crates/antares-sta" }
+antares-bus = { path = "../crates/antares-bus" }
+antares-ogc = { path = "../crates/antares-ogc", default-features = false, features = ["fuzzing"] }
 antares-ws = { path = "../crates/antares-ws" }
 antares-residual = { package = "ngsild-residual", path = "../crates/antares-residual" }
 # store_id_pattern: the store seam's idPattern and expiry helpers, no backend linked.
@@ -241,6 +244,34 @@ bench = false
 [[bin]]
 name = "store_id_pattern"
 path = "fuzz_targets/store_id_pattern.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sta_query"
+path = "fuzz_targets/sta_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bus_change_event"
+path = "fuzz_targets/bus_change_event.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ogc_items_query"
+path = "fuzz_targets/ogc_items_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sql_prefilter"
+path = "fuzz_targets/sql_prefilter.rs"
 test = false
 doc = false
 bench = false

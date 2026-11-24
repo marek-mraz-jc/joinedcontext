@@ -125,4 +125,14 @@ mod tests {
         assert!(!constant_time_eq("abc", "abcd"));
         assert_eq!(sha256_hex(b"shako").len(), 64);
     }
+
+    #[test]
+    fn default_ids_are_fresh_and_uuid_conversions_round_trip() {
+        assert_ne!(OrgId::default(), OrgId::default());
+        let u = Uuid::from_u128(42);
+        let id = InstanceId::from(u);
+        assert_eq!(id.as_uuid(), u);
+        assert_eq!(id, InstanceId::from_u128(42));
+        assert!("not-a-uuid".parse::<WebhookId>().is_err());
+    }
 }

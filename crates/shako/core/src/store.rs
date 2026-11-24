@@ -375,22 +375,12 @@ pub trait Store: Send + Sync {
     ) -> StoreFuture<'_, bool>;
     /// The oldest undispatched event not waiting for a retry, held for the caller to send and
     /// then mark or give back with [`Store::retry_outbox`]. A store replicas share leases it, so
-    /// one of them sends it; the default fits a store of one process, whose dispatcher holds a
-    /// lock, and knows no retries.
+    /// one of them sends it.
     fn claim_outbox(
         &self,
         instance_id: InstanceId,
         org_id: OrgId,
-    ) -> StoreFuture<'_, Option<OutboxClaim>> {
-        let pending = self.list_undispatched_outbox(instance_id, org_id);
-        Box::pin(async move {
-            Ok(pending
-                .await?
-                .into_iter()
-                .next()
-                .map(|event| OutboxClaim { event, attempts: 0 }))
-        })
-    }
+    ) -> StoreFuture<'_, Option<OutboxClaim>>;
     /// Gives a claimed event back after a failed delivery: claimable again `after` from now,
     /// with one attempt more. `false` when the event is unknown or dispatched.
     fn retry_outbox(
@@ -413,4 +403,27 @@ pub trait Store: Send + Sync {
         instance_id: InstanceId,
         org_id: OrgId,
     ) -> StoreFuture<'_, Vec<AuditRecord>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn memory_secrets_are_kept_per_organization() {
+        let store = MemorySecretStore::new();
+        let (a, b) = (OrgId::new(), OrgId::new());
+        assert_eq!(store.get_secret(a, "shako/token").await.expect("get"), None);
+        store.put_secret(a, "shako/token", "v1").await.expect("put");
+        store.put_secret(a, "shako/token", "v2").await.expect("put");
+        assert_eq!(
+            store
+                .get_secret(a, "shako/token")
+                .await
+                .expect("get")
+                .as_deref(),
+            Some("v2")
+        );
+        assert_eq!(store.get_secret(b, "shako/token").await.expect("get"), None);
+    }
 }

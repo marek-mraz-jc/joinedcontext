@@ -378,6 +378,69 @@ fn a_record_reads_a_numeric_id_its_licence_link_bbox_html_page_and_link_formats(
     assert!(parse_ogc_records_page(org, cat, &src, "not a url", &page, "sk").is_err());
 }
 
+/// A `bbox` that is no array, or not four numbers, gives no extent; GeoJSON, JSON, HTML and
+/// WMS capability links read under the catalogue's format labels, a parameter after `;` dropped.
+#[test]
+fn a_record_with_a_broken_bbox_has_no_extent_and_its_links_read_their_formats() {
+    let (org, cat) = (
+        OrgId::from_uuid(Uuid::nil()),
+        CatalogueId::from_uuid(Uuid::nil()),
+    );
+    let url = format!("{RECORDS}/items?limit=100&f=json");
+    let link = |t: &str, href: &str| json!({"rel": "item", "type": t, "href": href});
+    let record = |id: &str, bbox: Value| {
+        json!({
+            "id": id,
+            "bbox": bbox,
+            "properties": {"title": format!("Záznam {id}")},
+            "links": [
+                link("application/geo+json", "a.geojson"),
+                link("application/json; charset=utf-8", "a.json"),
+                link("text/html", "a.html"),
+                link("application/vnd.ogc.wms_xml", "wms"),
+                link("OGC:WMS", "wms2"),
+                link("download", "a.bin"),
+            ]
+        })
+    };
+    let page = json!({"features": [
+        record("a", json!("17,48,18,49")),
+        record("b", json!([17.0, 48.0, 18.0])),
+        record("c", json!({"w": 17})),
+    ]})
+    .to_string();
+    let got = parse_ogc_records_page(org, cat, &records_source(), &url, &page, "sk").expect("page");
+    assert_eq!(got.kept.len(), 3, "{:?}", got.skipped);
+    for (id, ds) in &got.kept {
+        assert!(
+            !ds.extras.contains_key("spatial"),
+            "{id}: no extent from a broken bbox: {:?}",
+            ds.extras
+        );
+        let formats: Vec<Option<&str>> = ds
+            .distributions
+            .iter()
+            .map(|d| d.format.as_deref())
+            .collect();
+        assert_eq!(
+            formats,
+            [
+                Some("GeoJSON"),
+                Some("JSON"),
+                Some("HTML"),
+                Some("WMS"),
+                Some("WMS"),
+                None
+            ],
+            "{id}"
+        );
+        assert_eq!(
+            ds.distributions[1].media_type.as_deref(),
+            Some("application/json; charset=utf-8")
+        );
+    }
+}
+
 #[test]
 fn a_service_reads_its_initial_extent_and_skips_a_layer_without_an_id() {
     let (org, cat) = (
@@ -472,6 +535,123 @@ async fn an_arcgis_url_naming_one_service_reads_that_service_alone() {
         Some("Elevation/GlacierBay/MapServer")
     );
     assert_eq!(title(&ds[0]), "Glacier Bay Elevation");
+}
+
+/// A folder listed twice (here: by itself) is read once.
+#[tokio::test]
+async fn an_arcgis_folder_that_lists_itself_is_read_once() {
+    let w = world(&[]).await;
+    let f = MapFetcher::new();
+    let json = Some("application/json");
+    f.insert(
+        format!("{GIS}?f=json"),
+        json,
+        json!({"folders": ["Loop", "Loop"], "services": []}).to_string(),
+    );
+    f.insert(
+        format!("{GIS}/Loop?f=json"),
+        json,
+        json!({"folders": ["Loop"], "services": [{"name": "Loop/GlacierBay", "type": "MapServer"}]})
+            .to_string(),
+    );
+    f.insert(
+        format!("{GIS}/Loop/GlacierBay/MapServer?f=json"),
+        json,
+        fixture("arcgis-rest/glacier-bay.json"),
+    );
+    let run = engine(&f)
+        .run_source(&w.ctx, &w.store, &gis_source())
+        .await
+        .expect("run");
+    assert_eq!(
+        (run.state, run.created_count),
+        (HarvestRunState::Succeeded, 1)
+    );
+}
+
+/// A directory with more folders than a run pages through, or more services than a run reads,
+/// is an incomplete read: nothing is written.
+#[tokio::test]
+async fn an_arcgis_directory_past_its_folder_or_service_cap_changes_nothing() {
+    let w = world(&[]).await;
+    let json = Some("application/json");
+    let f = MapFetcher::new();
+    let folders: Vec<String> = (0..60).map(|n| format!("F{n}")).collect();
+    f.insert(
+        format!("{GIS}?f=json"),
+        json,
+        json!({"folders": folders, "services": []}).to_string(),
+    );
+    for name in &folders {
+        f.insert(
+            format!("{GIS}/{name}?f=json"),
+            json,
+            json!({"folders": [], "services": []}).to_string(),
+        );
+    }
+    let err = engine(&f)
+        .run_source(&w.ctx, &w.store, &gis_source())
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("incomplete read: the directory has more than 50 folders"),
+        "{err}"
+    );
+
+    let f = MapFetcher::new();
+    let services: Vec<Value> = (0..501)
+        .map(|n| json!({"name": format!("S{n}"), "type": "MapServer"}))
+        .collect();
+    f.insert(
+        format!("{GIS}?f=json"),
+        json,
+        json!({"folders": [], "services": services}).to_string(),
+    );
+    let err = engine(&f)
+        .run_source(&w.ctx, &w.store, &gis_source())
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("the directory lists 501 services, more than the 500 a run reads"),
+        "{err}"
+    );
+    assert!(active_names(&w).await.is_empty());
+}
+
+/// A Hub page without `features` adds no item; the read goes on to the next page.
+#[tokio::test]
+async fn a_hub_page_without_features_adds_nothing_and_the_next_page_is_read() {
+    let w = world(&[]).await;
+    let hub = "https://hub.city.example";
+    let first = format!(
+        "{hub}/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created"
+    );
+    let second = format!("{hub}/api/search/v1/collections/dataset/items?page=2");
+    let f = MapFetcher::new();
+    let json = Some("application/json");
+    f.insert(
+        first,
+        json,
+        json!({"numberMatched": 1, "features": "none",
+               "links": [{"rel": "next", "href": second}]})
+        .to_string(),
+    );
+    f.insert(
+        second,
+        json,
+        json!({"numberMatched": 1, "features": [hub_item("aaa111", "Cesty", 1)]}).to_string(),
+    );
+    let src = source("arc-gis-hub", "hub", hub, &["hub.city.example"]);
+    let run = engine(&f)
+        .run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("run");
+    assert_eq!(
+        (run.state, run.created_count),
+        (HarvestRunState::Succeeded, 1)
+    );
 }
 
 #[tokio::test]

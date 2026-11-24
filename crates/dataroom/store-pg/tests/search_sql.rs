@@ -451,6 +451,51 @@ async fn rows_written_before_the_search_columns_are_found_then_reindexed() {
     assert_eq!(ids(&again), ["dochodky"]);
 }
 
+#[tokio::test]
+async fn a_term_with_no_candidate_matches_only_rows_not_indexed_yet() {
+    let Some(pg) = common::pg("a_term_with_no_candidate_matches_only_rows_not_indexed_yet").await
+    else {
+        return;
+    };
+    let store = pg.app_store().await;
+    let (org, cat) = tenant();
+    let member = member_ctx(org, cat);
+    let (publishers, datasets) = fixture();
+    seed(&store, &member, &publishers, &datasets).await;
+    sqlx::query(
+        "UPDATE dataroom.cat_dataset SET search_v = 0
+         WHERE org_id = $1 AND catalogue_id = $2 AND id = 'rozpocet'",
+    )
+    .bind(org.as_uuid())
+    .bind(cat.as_uuid())
+    .execute(&pg.admin)
+    .await
+    .expect("age one row");
+    let mut ranks = Vec::new();
+    let mut pick = |_: &[Publisher], c: Vec<SearchCandidate>| {
+        ranks = c.iter().map(|c| (c.dataset.id.clone(), c.rank)).collect();
+        Ok(vec!["rozpocet".to_owned()])
+    };
+    // One word with no folded prefix: no indexed row can match it; the aged row comes whole and
+    // unranked for the caller to match.
+    let query = dataroom_core::SearchQuery {
+        terms: vec![Vec::new()],
+        ..Default::default()
+    };
+    let page = store
+        .search_page(&member, &query, &mut pick)
+        .await
+        .expect("page");
+    assert_eq!(ranks, [("rozpocet".to_owned(), None)]);
+    assert_eq!(
+        page.datasets
+            .iter()
+            .map(|d| d.id.as_str())
+            .collect::<Vec<_>>(),
+        ["rozpocet"]
+    );
+}
+
 async fn views_and_types(store: &dyn Store) {
     let (org, cat) = tenant();
     let ctx = member_ctx(org, cat);

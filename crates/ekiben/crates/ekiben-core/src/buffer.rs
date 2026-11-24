@@ -88,7 +88,7 @@ async fn feed(
             Err(CoreError::EndOfInput) => break,
             Err(CoreError::Timeout) => continue,
             Err(e) => {
-                *read_err.lock().unwrap_or_else(|p| p.into_inner()) = Some(e.to_string());
+                *read_err.lock().unwrap_or_else(PoisonError::into_inner) = Some(e.to_string());
                 break;
             }
         }
@@ -128,7 +128,7 @@ impl Input for BufferedInput {
                 match self
                     .read_err
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .take()
                 {
                     Some(e) => Err(CoreError::other(e)),

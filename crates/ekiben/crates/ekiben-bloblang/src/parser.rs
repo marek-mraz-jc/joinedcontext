@@ -242,7 +242,7 @@ fn unescape_go_quoted_string(raw: &str) -> Result<String, String> {
                 let h1 = chars.next().ok_or("short \\x escape")?;
                 let h2 = chars.next().ok_or("short \\x escape")?;
                 let hex_s = format!("{h1}{h2}");
-                let b = u8::from_str_radix(&hex_s, 16).map_err(|e| e.to_string())?;
+                let b = u8::from_str_radix(&hex_s, 16).map_err(crate::error::text)?;
                 out.push(b as char);
             }
             'u' => {
@@ -250,7 +250,7 @@ fn unescape_go_quoted_string(raw: &str) -> Result<String, String> {
                 for _ in 0..4 {
                     hex_s.push(chars.next().ok_or("short \\u escape")?);
                 }
-                let code = u32::from_str_radix(&hex_s, 16).map_err(|e| e.to_string())?;
+                let code = u32::from_str_radix(&hex_s, 16).map_err(crate::error::text)?;
                 let ch = char::from_u32(code).ok_or("invalid unicode codepoint")?;
                 out.push(ch);
             }
@@ -259,7 +259,7 @@ fn unescape_go_quoted_string(raw: &str) -> Result<String, String> {
                 for _ in 0..8 {
                     hex_s.push(chars.next().ok_or("short \\U escape")?);
                 }
-                let code = u32::from_str_radix(&hex_s, 16).map_err(|e| e.to_string())?;
+                let code = u32::from_str_radix(&hex_s, 16).map_err(crate::error::text)?;
                 let ch = char::from_u32(code).ok_or("invalid unicode codepoint")?;
                 out.push(ch);
             }
@@ -314,7 +314,8 @@ pub fn parse_mapping(env: &Environment, input: &str) -> Result<Executor, ParseEr
     });
 
     match (stmt_res, single_res) {
-        (Ok(statements), _) if stmt_state.is_eof() => Ok(Executor::new(
+        // At the top level (no closing brace to stop on) the block reads to the end or fails.
+        (Ok(statements), _) => Ok(Executor::new(
             String::new(),
             Arc::new(maps),
             statements,
@@ -344,7 +345,6 @@ pub fn parse_mapping(env: &Environment, input: &str) -> Result<Executor, ParseEr
                 Err(e1)
             }
         }
-        (Ok(_), Err(e)) => Err(e),
     }
 }
 
@@ -499,9 +499,6 @@ fn parse_statements_block(
             break;
         }
         if !state.consume_newline_or_comment() {
-            if stop_on_brace && state.rem().starts_with('}') {
-                break;
-            }
             return Err(state.err("expected line break between statements"));
         }
     }
@@ -606,9 +603,7 @@ fn parse_root_if_statement(
     enable_meta: bool,
     line: usize,
 ) -> Result<Statement, ParseError> {
-    if !state.starts_with_keyword("if") {
-        return Err(state.err("expected 'if'"));
-    }
+    // The one caller checked the keyword.
     state.pos += 2;
     state.skip_spaces_and_tabs();
     let cond = parse_query(state)?;
@@ -1250,14 +1245,12 @@ fn parse_number_literal(state: &mut ParserState<'_>) -> Result<Expr, ParseError>
         neg = true;
         state.pos += 1;
     }
+    // The one caller stands on a digit or on '-' before one.
     let int_len = state
         .rem()
         .bytes()
         .take_while(|b| b.is_ascii_digit())
         .count();
-    if int_len == 0 {
-        return Err(state.err_at(start, "expected number"));
-    }
     state.pos += int_len;
     let mut is_float = false;
     if state.rem().starts_with('.') {
@@ -1337,17 +1330,18 @@ fn parse_array_literal(state: &mut ParserState<'_>) -> Result<Expr, ParseError> 
         }
         return Err(state.err("expected ',' or ']' in array literal"));
     }
-    if items.iter().all(|e| matches!(e, Expr::Literal(_))) {
-        let static_items: Vec<Value> = items
-            .into_iter()
-            .filter_map(|e| match e {
-                Expr::Literal(v) if !matches!(v, Value::Delete | Value::Nothing) => Some(v),
-                _ => None,
-            })
-            .collect();
-        return Ok(Expr::Literal(Value::Array(static_items.into())));
-    }
-    Ok(Expr::ArrayLiteral(items))
+    // An array of literals folds into one literal (the parser never builds a deleted() literal).
+    let static_items: Option<Vec<Value>> = items
+        .iter()
+        .map(|e| match e {
+            Expr::Literal(v) => Some(v.clone()),
+            _ => None,
+        })
+        .collect();
+    Ok(match static_items {
+        Some(values) => Expr::Literal(Value::Array(values.into())),
+        None => Expr::ArrayLiteral(items),
+    })
 }
 
 fn parse_object_literal(state: &mut ParserState<'_>) -> Result<Expr, ParseError> {
@@ -1403,22 +1397,18 @@ fn parse_object_literal(state: &mut ParserState<'_>) -> Result<Expr, ParseError>
         return Err(state.err("expected ',' or '}' in object literal"));
     }
 
-    if pairs
+    // String keys with literal values fold into one literal.
+    let static_map: Option<std::collections::BTreeMap<String, Value>> = pairs
         .iter()
-        .all(|(k, v)| matches!(k, Expr::Literal(Value::String(_))) && matches!(v, Expr::Literal(_)))
-    {
-        let mut map = std::collections::BTreeMap::new();
-        for (k, v) in pairs {
-            if let (Expr::Literal(Value::String(ks)), Expr::Literal(vv)) = (k, v) {
-                if !matches!(vv, Value::Delete | Value::Nothing) {
-                    map.insert(ks, vv);
-                }
-            }
-        }
-        return Ok(Expr::Literal(Value::Object(map.into())));
-    }
-
-    Ok(Expr::ObjectLiteral(pairs))
+        .map(|kv| match kv {
+            (Expr::Literal(Value::String(k)), Expr::Literal(v)) => Some((k.clone(), v.clone())),
+            _ => None,
+        })
+        .collect();
+    Ok(match static_map {
+        Some(map) => Expr::Literal(Value::Object(map.into())),
+        None => Expr::ObjectLiteral(pairs),
+    })
 }
 
 fn parse_if_expr(state: &mut ParserState<'_>) -> Result<Expr, ParseError> {
@@ -1512,11 +1502,8 @@ fn parse_match_expr(state: &mut ParserState<'_>) -> Result<Expr, ParseError> {
     state.skip_ws_and_comments();
 
     let mut cases = Vec::new();
+    // Every path back to the loop's head has skipped white space and comments already.
     while !state.rem().starts_with('}') {
-        state.skip_ws_and_comments();
-        if state.rem().starts_with('}') {
-            break;
-        }
         let pattern = if state.rem().starts_with('_')
             && !state.rem()[1..]
                 .chars()
@@ -1558,9 +1545,7 @@ fn parse_match_expr(state: &mut ParserState<'_>) -> Result<Expr, ParseError> {
         return Err(state.err("expected ',', newline, or '}' after match case"));
     }
 
-    if !state.rem().starts_with('}') {
-        return Err(state.err("required: expected '}' closing match expression"));
-    }
+    // The loop above ends only on the closing '}'.
     state.pos += 1;
 
     Ok(Expr::Match {
@@ -1571,9 +1556,7 @@ fn parse_match_expr(state: &mut ParserState<'_>) -> Result<Expr, ParseError> {
 
 fn parse_arg_list(state: &mut ParserState<'_>) -> Result<ArgList, ParseError> {
     let start = state.pos;
-    if !state.rem().starts_with('(') {
-        return Err(state.err("expected '(' starting arguments"));
-    }
+    // Both callers stand on the '('.
     state.pos += 1;
     state.skip_ws_and_comments();
     if state.rem().starts_with(')') {
@@ -1727,4 +1710,21 @@ fn validate_method_args_at_parse(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unescape_go_quoted_string;
+
+    #[test]
+    fn a_go_quoted_string_refuses_a_trailing_backslash() {
+        assert_eq!(
+            unescape_go_quoted_string("\"a\\\""),
+            Err("trailing backslash".to_string())
+        );
+        assert_eq!(
+            unescape_go_quoted_string("\"\\a\\u00e9\""),
+            Ok("\u{7}é".to_string())
+        );
+    }
 }

@@ -54,31 +54,29 @@ pub fn credential_header(module: Module, setup: &Setup) -> Option<HeaderValue> {
 
 /// Whether `got` is `module`'s service credential `value` in a form a Portal client sends it:
 /// HTTP Basic for daiya, else the bare value (CKAN) or after `Bearer`/`token` (Gitea). Compared
-/// in constant time.
+/// byte for byte in constant time, so a credential holding any byte a header carries matches.
 #[must_use]
 pub fn is_credential(module: Module, got: &HeaderValue, value: &str) -> bool {
-    let Ok(got) = got.to_str() else {
-        return false;
-    };
-    let got = got.trim();
+    let got = got.as_bytes().trim_ascii();
     if module == Module::Daiya {
-        let Some(encoded) = got.strip_prefix("Basic ") else {
+        let Some(encoded) = got.strip_prefix(b"Basic ") else {
             return false;
         };
         let expected = format!("{DASHBOARDS_USER}:{value}");
         return base64::engine::general_purpose::STANDARD
-            .decode(encoded.trim())
+            .decode(encoded.trim_ascii())
             .is_ok_and(|raw| jc_secret::constant_time_eq(&raw, expected.as_bytes()));
     }
-    let bare = match got.split_once(' ') {
-        Some((scheme, rest))
-            if scheme.eq_ignore_ascii_case("bearer") || scheme.eq_ignore_ascii_case("token") =>
+    let bare = match got.iter().position(|b| *b == b' ') {
+        Some(at)
+            if got[..at].eq_ignore_ascii_case(b"bearer")
+                || got[..at].eq_ignore_ascii_case(b"token") =>
         {
-            rest.trim()
+            got[at + 1..].trim_ascii()
         }
         _ => got,
     };
-    jc_secret::constant_time_eq(bare.as_bytes(), value.as_bytes())
+    jc_secret::constant_time_eq(bare, value.as_bytes())
 }
 
 /// The verifier of a module container's door ([`jc_door::Verifier`] over `[door]`).
@@ -159,7 +157,7 @@ impl Remote {
         if let Some((token, until)) = self
             .cache
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&module)
             && Instant::now() < *until
         {
@@ -175,7 +173,7 @@ impl Remote {
         .await?;
         self.cache
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(module, (token.clone(), Instant::now() + life));
         Ok(token)
     }
@@ -287,7 +285,9 @@ const LOCAL_TOKEN_SECONDS: i64 = 300;
 /// beside each other), started on first use; a failed start is retried on the next.
 pub fn local_issuer() -> Result<Arc<jc_door::issuer::LocalIssuer>, String> {
     static ISSUER: Mutex<Option<Arc<jc_door::issuer::LocalIssuer>>> = Mutex::new(None);
-    let mut held = ISSUER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut held = ISSUER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(issuer) = held.as_ref() {
         return Ok(Arc::clone(issuer));
     }
@@ -320,3 +320,428 @@ pub fn local_verifier() -> Result<jc_door::Verifier, String> {
 /// The Portal container's [`Remote`], set when it starts the forwarders (role split): the
 /// Portal takes its publisher tokens for a dataroom in another container from it.
 pub static REMOTE: std::sync::OnceLock<Arc<Remote>> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{DoorSection, RemoteSection};
+    use std::collections::BTreeMap as Map;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tower::ServiceExt as _;
+
+    fn setup(roles: &[Module]) -> (Setup, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), roles, &Map::new()).unwrap();
+        (setup, dir)
+    }
+
+    /// A module that answers with the `Authorization` header it got, or `none`.
+    fn echo() -> Router {
+        Router::new().fallback(|req: Request| async move {
+            req.headers()
+                .get(header::AUTHORIZATION)
+                .map_or_else(|| "none".to_owned(), |v| v.to_str().unwrap().to_owned())
+        })
+    }
+
+    async fn text(router: Router, auth: Option<&str>) -> String {
+        let mut req = Request::builder().uri("/x");
+        if let Some(auth) = auth {
+            req = req.header(header::AUTHORIZATION, auth);
+        }
+        let resp = router
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        String::from_utf8(body.to_vec()).unwrap()
+    }
+
+    #[test]
+    fn the_credential_header_is_basic_for_daiya_and_bearer_for_the_others() {
+        let (setup, _dir) = setup(&Module::ALL);
+        let daiya = credential_header(Module::Daiya, &setup).unwrap();
+        assert!(daiya.is_sensitive());
+        let password = setup.value(Secret::DashboardsPassword).unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode(format!("{DASHBOARDS_USER}:{password}"));
+        assert_eq!(daiya.to_str().unwrap(), format!("Basic {encoded}"));
+        let shako = credential_header(Module::Shako, &setup).unwrap();
+        let token = setup.value(Secret::ShakoToken).unwrap();
+        assert_eq!(shako.to_str().unwrap(), format!("Bearer {token}"));
+        // A module without a service credential, and one whose secret is not held.
+        assert!(credential_header(Module::Dataroom, &setup).is_none());
+        let (portal_only, _dir) = self::setup(&[Module::Portal]);
+        assert!(credential_header(Module::Ekiben, &portal_only).is_none());
+    }
+
+    #[test]
+    fn a_credential_with_a_line_break_gives_no_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut given = Map::new();
+        given.insert(
+            Secret::ShakoToken,
+            crate::setup::Given {
+                path: None,
+                secret: jc_secret::Secret::new("bad\nvalue".to_owned()),
+                source: jc_secret::Source::Env,
+            },
+        );
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &given).unwrap();
+        assert!(credential_header(Module::Shako, &setup).is_none());
+    }
+
+    #[test]
+    fn is_credential_takes_each_form_a_client_sends() {
+        let h = |s: &str| HeaderValue::from_str(s).unwrap();
+        // CKAN: the bare value; Gitea: `token` or `Bearer`, any case, padded.
+        assert!(is_credential(Module::Shako, &h("s3cret"), "s3cret"));
+        assert!(is_credential(Module::Shako, &h(" token s3cret "), "s3cret"));
+        assert!(is_credential(Module::Shako, &h("BEARER  s3cret"), "s3cret"));
+        assert!(!is_credential(Module::Shako, &h("Bearer other"), "s3cret"));
+        assert!(!is_credential(Module::Shako, &h("Basic s3cret"), "s3cret"));
+        assert!(!is_credential(Module::Shako, &h(""), "s3cret"));
+        // Bytes past ASCII compare as bytes: another byte never matches, the same ones do
+        // (found by the door_credential fuzz target: such a credential never matched).
+        let opaque = HeaderValue::from_bytes(b"\xffs3cret").unwrap();
+        assert!(!is_credential(Module::Shako, &opaque, "s3cret"));
+        let wide = HeaderValue::from_str("Bearer 66666\u{99}").unwrap();
+        assert!(is_credential(Module::Shako, &wide, "66666\u{99}"));
+        assert!(!is_credential(Module::Shako, &wide, "66666"));
+        // daiya: HTTP Basic of the dashboards user only.
+        let basic = |user: &str, pw: &str| {
+            let enc = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pw}"));
+            h(&format!("Basic {enc}"))
+        };
+        assert!(is_credential(
+            Module::Daiya,
+            &basic(DASHBOARDS_USER, "pw"),
+            "pw"
+        ));
+        assert!(!is_credential(
+            Module::Daiya,
+            &basic(DASHBOARDS_USER, "no"),
+            "pw"
+        ));
+        assert!(!is_credential(Module::Daiya, &basic("someone", "pw"), "pw"));
+        assert!(!is_credential(Module::Daiya, &h("Bearer pw"), "pw"));
+        assert!(!is_credential(Module::Daiya, &h("Basic !!!"), "pw"));
+    }
+
+    #[tokio::test]
+    async fn the_door_swaps_only_a_verified_token_of_the_modules_audience() {
+        let issuer = jc_door::testing::Issuer::start("", "k1").await;
+        let door = Arc::new(
+            Door::new(&DoorSection {
+                issuer: issuer.issuer.clone(),
+                jwks_url: issuer.jwks_url.clone(),
+                clients: vec!["portal".to_owned()],
+            })
+            .unwrap(),
+        );
+        assert_eq!(door.verifier().issuer(), issuer.issuer);
+        let (setup, _dir) = setup(&Module::ALL);
+        let credential = format!("Bearer {}", setup.value(Secret::ShakoToken).unwrap());
+        let guarded = door.guard(Module::Shako, echo(), &setup);
+
+        let good = issuer.token("portal", "shako", 60);
+        assert_eq!(
+            text(guarded.clone(), Some(&format!("Bearer {good}"))).await,
+            credential
+        );
+        // The guard fetched the issuer's keys on that first call.
+        assert!(door.verify(&good, "shako"));
+        // Another audience, another client, an expired token, a person's own credential, none.
+        for token in [
+            issuer.token("portal", "ekiben", 60),
+            issuer.token("stranger", "shako", 60),
+            issuer.token("portal", "shako", -120),
+        ] {
+            let sent = format!("Bearer {token}");
+            assert_eq!(text(guarded.clone(), Some(&sent)).await, sent);
+        }
+        assert_eq!(
+            text(guarded.clone(), Some("Basic eDp5")).await,
+            "Basic eDp5"
+        );
+        assert_eq!(text(guarded, None).await, "none");
+    }
+
+    #[tokio::test]
+    async fn a_module_without_a_credential_is_not_guarded() {
+        let issuer = jc_door::testing::Issuer::start("", "k1").await;
+        let door = Arc::new(
+            Door::new(&DoorSection {
+                issuer: issuer.issuer.clone(),
+                jwks_url: issuer.jwks_url.clone(),
+                clients: vec!["portal".to_owned()],
+            })
+            .unwrap(),
+        );
+        let (setup, _dir) = setup(&Module::ALL);
+        let token = issuer.token("portal", "dataroom", 60);
+        let sent = format!("Bearer {token}");
+        let router = door.guard(Module::Dataroom, echo(), &setup);
+        assert_eq!(text(router, Some(&sent)).await, sent);
+    }
+
+    /// kaisatsu's token endpoint: answers `status` with a token naming the call's number.
+    async fn token_endpoint(status: StatusCode, calls: Arc<AtomicUsize>) -> String {
+        let router = Router::new().route(
+            "/token",
+            axum::routing::post(move |body: String| {
+                let calls = Arc::clone(&calls);
+                async move {
+                    let n = calls.fetch_add(1, Ordering::SeqCst);
+                    assert!(body.contains("grant_type=client_credentials"));
+                    assert!(body.contains("client_id=portal"));
+                    let scope = body.split('&').find_map(|kv| kv.strip_prefix("scope="));
+                    let answer = serde_json::json!({
+                        "access_token": format!("t{n}-{}", scope.unwrap_or_default()),
+                        "expires_in": 300,
+                    });
+                    (status, axum::Json(answer))
+                }
+            }),
+        );
+        format!("http://{}/token", serve(router).await)
+    }
+
+    async fn serve(router: Router) -> SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        addr
+    }
+
+    fn remote(token_url: String) -> Arc<Remote> {
+        let cfg = RemoteSection {
+            token_url,
+            client_id: "portal".to_owned(),
+            ..RemoteSection::default()
+        };
+        Arc::new(Remote::new(&cfg, jc_secret::Secret::new("client-secret".to_owned())).unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_remote_token_is_cached_per_module_until_it_expires() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let remote = remote(token_endpoint(StatusCode::OK, Arc::clone(&calls)).await);
+        assert_eq!(
+            remote.token(Module::Shako).await.unwrap().expose(),
+            "t0-shako"
+        );
+        assert_eq!(
+            remote.token(Module::Shako).await.unwrap().expose(),
+            "t0-shako"
+        );
+        assert_eq!(
+            remote.token(Module::Ekiben).await.unwrap().expose(),
+            "t1-ekiben"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        // An entry past its time is fetched again.
+        remote.cache.lock().unwrap().insert(
+            Module::Shako,
+            (jc_secret::Secret::new("old".into()), Instant::now()),
+        );
+        assert_eq!(
+            remote.token(Module::Shako).await.unwrap().expose(),
+            "t2-shako"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_token_request_is_an_error_and_nothing_is_cached() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let remote = remote(token_endpoint(StatusCode::UNAUTHORIZED, Arc::clone(&calls)).await);
+        let e = remote.token(Module::Shako).await.unwrap_err();
+        assert!(e.contains("401"), "{e}");
+        assert!(!e.contains("client-secret"));
+        assert!(remote.cache.lock().unwrap().is_empty());
+    }
+
+    /// The other container's module: echoes method, path, the `Authorization` and `Host` it
+    /// got and the body length.
+    async fn upstream() -> String {
+        let router = Router::new().fallback(|req: Request| async move {
+            let auth = req
+                .headers()
+                .get(header::AUTHORIZATION)
+                .map_or("none", |v| v.to_str().unwrap())
+                .to_owned();
+            let line = format!(
+                "{} {} {auth} {}",
+                req.method(),
+                req.uri(),
+                req.headers().contains_key("x-kept")
+            );
+            let body = axum::body::to_bytes(req.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            (
+                StatusCode::CREATED,
+                [("x-answer", "1")],
+                format!("{line} {}", body.len()),
+            )
+        });
+        format!("http://{}/base", serve(router).await)
+    }
+
+    async fn call(router: Router, auth: Option<&str>) -> (StatusCode, String, bool) {
+        let mut req = Request::builder()
+            .method("PUT")
+            .uri("/api/v1/x?y=1")
+            .header("x-kept", "1")
+            .header(header::HOST, "elsewhere");
+        if let Some(auth) = auth {
+            req = req.header(header::AUTHORIZATION, auth);
+        }
+        let resp = router
+            .oneshot(req.body(Body::from("abc")).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let answered = resp.headers().contains_key("x-answer");
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, String::from_utf8(body.to_vec()).unwrap(), answered)
+    }
+
+    #[tokio::test]
+    async fn the_forwarder_swaps_only_the_local_credential_for_a_token() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let remote = remote(token_endpoint(StatusCode::OK, Arc::clone(&calls)).await);
+        let base = upstream().await;
+        let (listener, router) = remote
+            .forward(Module::Shako, base, jc_secret::Secret::new("local".into()))
+            .await
+            .unwrap();
+        assert!(listener.local_addr().unwrap().ip().is_loopback());
+
+        let (status, body, answered) = call(router.clone(), Some("token local")).await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert!(answered);
+        assert_eq!(body, "PUT /base/api/v1/x?y=1 Bearer t0-shako true 3");
+        // Any other credential, or none, goes on unchanged and fetches no token.
+        let (_, body, _) = call(router.clone(), Some("Bearer someone")).await;
+        assert_eq!(body, "PUT /base/api/v1/x?y=1 Bearer someone true 3");
+        let (_, body, _) = call(router, None).await;
+        assert_eq!(body, "PUT /base/api/v1/x?y=1 none true 3");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn the_forwarder_answers_502_without_a_token_or_a_reachable_module() {
+        let refused =
+            remote(token_endpoint(StatusCode::FORBIDDEN, Arc::new(AtomicUsize::new(0))).await);
+        let (_l, router) = refused
+            .forward(
+                Module::Ekiben,
+                upstream().await,
+                jc_secret::Secret::new("local".into()),
+            )
+            .await
+            .unwrap();
+        let (status, body, _) = call(router, Some("Bearer local")).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body, "no token for the remote module");
+
+        // A module whose listener is gone.
+        let gone = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", gone.local_addr().unwrap());
+        drop(gone);
+        let ok = remote(token_endpoint(StatusCode::OK, Arc::new(AtomicUsize::new(0))).await);
+        let (_l, router) = ok
+            .forward(Module::Ekiben, base, jc_secret::Secret::new("local".into()))
+            .await
+            .unwrap();
+        let (status, _, _) = call(router, None).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn a_body_over_the_cap_answers_413_and_a_cut_answer_502() {
+        let ok = remote(token_endpoint(StatusCode::OK, Arc::new(AtomicUsize::new(0))).await);
+        let (_l, router) = ok
+            .forward(
+                Module::Shako,
+                upstream().await,
+                jc_secret::Secret::new("local".into()),
+            )
+            .await
+            .unwrap();
+        let big = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .body(Body::from(vec![0u8; MAX_BODY_BYTES + 1]))
+            .unwrap();
+        let resp = router.oneshot(big).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        // A module that promises 100 bytes and closes after 5.
+        let cut = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", cut.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+            let (mut conn, _) = cut.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = conn.read(&mut buf).await.unwrap();
+            conn.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\nshort")
+                .await
+                .unwrap();
+        });
+        let (_l, router) = ok
+            .forward(Module::Shako, base, jc_secret::Secret::new("local".into()))
+            .await
+            .unwrap();
+        let (status, _, _) = call(router, None).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn a_token_that_is_no_header_value_answers_502() {
+        let router = Router::new().route(
+            "/token",
+            axum::routing::post(|| async {
+                axum::Json(serde_json::json!({"access_token": "a\nb", "expires_in": 300}))
+            }),
+        );
+        let remote = remote(format!("http://{}/token", serve(router).await));
+        let (_l, router) = remote
+            .forward(
+                Module::Shako,
+                upstream().await,
+                jc_secret::Secret::new("local".into()),
+            )
+            .await
+            .unwrap();
+        let (status, _, _) = call(router, Some("local")).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+    }
+
+    #[test]
+    fn the_local_issuer_signs_publisher_tokens_its_verifier_admits() {
+        let a = local_issuer().unwrap();
+        let b = local_issuer().unwrap();
+        assert!(Arc::ptr_eq(&a, &b), "one issuer per process");
+        let token = local_publisher_token().unwrap();
+        let verifier = local_verifier().unwrap();
+        assert_eq!(verifier.issuer(), a.issuer());
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(verifier.prepare(token.expose()));
+        assert_eq!(
+            verifier
+                .client(token.expose(), Module::Dataroom.name())
+                .as_deref(),
+            Some(PUBLISHER_CLIENT)
+        );
+        assert!(!verifier.verify(token.expose(), Module::Shako.name()));
+    }
+}

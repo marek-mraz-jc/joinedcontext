@@ -1,8 +1,12 @@
-# Fuzzes what shako-api reads from outside (T-7661): OData paths, keys, query strings and action
-# bodies, Gitea REST bodies, and webhook signatures. Requests go through the public routers onto
+# Fuzzes what shako-api, shako-web and shako-registry read from outside (T-7661, T-7804), and what
+# shako-git and shako-core read from a Git client or a request (T-7662): OData paths, keys, query
+# strings and action bodies, Gitea REST bodies, webhook signatures, Markdown, page paths and login
+# redirects, OCI registry paths and queries, pkt-lines, upload-pack and receive-pack requests, and
+# names, Authorization headers and protection rules. Requests go through the public routers onto
 # an in-memory forge seeded once, as a reader, so a fuzzed write is refused and the forge never
 # grows. Each request must end in an answer, never a panic, a hang or an allocation past the
-# input's size. Run by hand: cargo +nightly fuzz run <odata|rest|signature> -- -max_total_time=300.
+# input's size. Run by hand: cargo +nightly fuzz run
+# <odata|rest|signature|web|registry|git_wire|git_push|core_input> -- -max_total_time=300.
 # Not a member of the root workspace.
 [package]
 name = "shako-fuzz"
@@ -22,7 +26,10 @@ tokio = { version = "1.54", features = ["rt"] }
 tower = { version = "0.5", features = ["util"] }
 shako-api = { path = "../api" }
 shako-core = { path = "../core" }
+shako-git = { path = "../git" }
 shako-store-memory = { path = "../store-memory" }
+shako-web = { path = "../web" }
+shako-registry = { path = "../registry" }
 
 [[bin]]
 name = "odata"
@@ -41,6 +48,41 @@ bench = false
 [[bin]]
 name = "signature"
 path = "fuzz_targets/signature.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web"
+path = "fuzz_targets/web.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "registry"
+path = "fuzz_targets/registry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_wire"
+path = "fuzz_targets/git_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_push"
+path = "fuzz_targets/git_push.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_input"
+path = "fuzz_targets/core_input.rs"
 test = false
 doc = false
 bench = false

@@ -1,0 +1,66 @@
+# Fuzzes what ekiben-core and ekiben-io-nats read from outside (T-7685): `${VAR}` interpolation
+# of configs, the binary batch wire format, URL and config redaction, stream configs with their
+# lint and metrics section, message bodies read as JSON, and nats configs, subjects and buckets.
+# Any input must end in a value or an error, never a panic, a hang or an allocation the input
+# did not pay for. Run by hand: cargo +nightly fuzz run <target> -- -max_total_time=300
+# -rss_limit_mb=2048. Not a member of the ekiben workspace.
+[package]
+name = "ekiben-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+serde_json = "1"
+url = "2"
+ekiben-core = { path = ".." }
+ekiben-io-nats = { path = "../../ekiben-io-nats" }
+
+[[bin]]
+name = "interpolate"
+path = "fuzz_targets/interpolate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wire"
+path = "fuzz_targets/wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "redact"
+path = "fuzz_targets/redact.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream_config"
+path = "fuzz_targets/stream_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "part_json"
+path = "fuzz_targets/part_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nats_config"
+path = "fuzz_targets/nats_config.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

@@ -39,6 +39,38 @@ fn a_refused_configuration_exits_2_and_says_why() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("scheme must be http or https"));
 }
 
+/// `jc doctor`, `jc kaisatsu split-realm` and `jc validate` are commands of their own: each
+/// answers its usage without starting a module.
+#[test]
+fn each_operator_command_answers_its_own_usage() {
+    let run = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_jc"))
+            .args(args)
+            .output()
+            .expect("run jc");
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        (out.status.code(), stdout, stderr)
+    };
+    let (code, _, stderr) = run(&["doctor"]);
+    assert_eq!(code, Some(2));
+    assert!(stderr.contains("usage: jc doctor domains"), "{stderr}");
+    let (code, stdout, _) = run(&["kaisatsu", "split-realm", "--help"]);
+    assert_eq!(code, Some(0));
+    assert!(stdout.contains("--retire"), "{stdout}");
+    let (code, _, stderr) = run(&["kaisatsu", "split-realm", "--apply", "--restore"]);
+    assert_eq!(code, Some(2), "{stderr}");
+    let (code, _, stderr) = run(&["validate"]);
+    assert_eq!(code, Some(2));
+    assert!(
+        stderr.contains("usage: joinedcontext-portal validate"),
+        "{stderr}"
+    );
+    // `kaisatsu` alone is no command: the flags parser refuses it as jc's own argument.
+    let (code, _, _) = run(&["kaisatsu"]);
+    assert_eq!(code, Some(2));
+}
+
 #[test]
 fn a_start_failure_exits_1() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

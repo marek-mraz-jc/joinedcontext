@@ -1116,14 +1116,14 @@ fn reserve_portal_internal(cfg: &Config) -> Result<Option<Arc<std::net::TcpListe
 }
 
 /// The Portal's internal listener as `JC_INTERNAL_BIND` names it, when it names a port.
-fn explicit_portal_internal(cfg: &Config) -> Option<SocketAddr> {
+fn explicit_portal_internal(
+    cfg: &Config,
+    env: impl Fn(&str) -> Option<String>,
+) -> Option<SocketAddr> {
     if !cfg.roles.contains(&Module::Portal) {
         return None;
     }
-    let addr: SocketAddr = crate::config::portal_env("JC_INTERNAL_BIND")?
-        .trim()
-        .parse()
-        .ok()?;
+    let addr: SocketAddr = env("JC_INTERNAL_BIND")?.trim().parse().ok()?;
     (addr.port() != 0).then_some(addr)
 }
 
@@ -1366,7 +1366,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     let portal_internal = reserve_portal_internal(cfg)?;
     siblings.portal_internal = match &portal_internal {
         Some(reserved) => Some(reserved.local_addr().map_err(StartError::Serve)?),
-        None => explicit_portal_internal(cfg),
+        None => explicit_portal_internal(cfg, crate::config::portal_env),
     };
     let tasks = TaskTracker::new();
     #[cfg(feature = "model-tools")]
@@ -1971,6 +1971,176 @@ mod tests {
         );
     }
 
+    /// The Portal's container in a role split: a remote module with a service credential gets a
+    /// loopback forwarder, the gateway and dataroom (no credential) their public base; a
+    /// credential the setup does not hold stops the start with the module named.
+    #[tokio::test]
+    async fn each_remote_module_is_reached_by_forwarder_or_public_base() {
+        let file = "[remote]\ntoken_url = \"http://127.0.0.1:9/token\"\nclient_id = \"portal\"\n\
+                    [remote.modules]\nshako = \"https://git.city.test\"\n\
+                    gateway = \"http://jc-data:8080\"\ndataroom = \"https://data.city.test\"\n";
+        let cfg = dev_config("portal", file);
+        let env = std::collections::BTreeMap::from([
+            (
+                "JCBIN_REMOTE_CLIENT_SECRET".to_owned(),
+                "remote-secret".to_owned(),
+            ),
+            (
+                "JCBIN_GATEWAY_CLIENT_SECRET".to_owned(),
+                "gateway-secret".to_owned(),
+            ),
+        ]);
+        let secrets = crate::config::Secrets::load_from(&cfg, &env).unwrap();
+        let plans = plan_mounts(&cfg).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare_with(
+            dir.path(),
+            &cfg.roles,
+            &std::collections::BTreeMap::new(),
+            &[crate::setup::Secret::ShakoToken],
+        )
+        .unwrap();
+        let mut siblings = Siblings::new(&plans, "127.0.0.1:8080".parse().unwrap());
+        let forwarders = remote_forwarders(&cfg, &secrets, &setup, &mut siblings)
+            .await
+            .unwrap();
+        assert_eq!(forwarders.len(), 1, "shako alone holds a credential");
+        let at = forwarders[0].0.local_addr().unwrap();
+        let shako = siblings.get(Module::Shako).unwrap();
+        assert_eq!(shako.public, "https://git.city.test");
+        assert_eq!(shako.internal, format!("http://{at}"));
+        for (module, base) in [
+            (Module::Gateway, "http://jc-data:8080"),
+            (Module::Dataroom, "https://data.city.test"),
+        ] {
+            let got = siblings.get(module).unwrap();
+            assert_eq!((got.public.as_str(), got.internal.as_str()), (base, base));
+        }
+
+        let bare =
+            Setup::prepare(dir.path(), &cfg.roles, &std::collections::BTreeMap::new()).unwrap();
+        let e = remote_forwarders(&cfg, &secrets, &bare, &mut siblings)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("no credential held for shako"), "{e}");
+        // No [remote] section: no forwarder.
+        let alone = dev_config("portal", "");
+        let none =
+            crate::config::Secrets::load_from(&alone, &std::collections::BTreeMap::new()).unwrap();
+        assert!(
+            remote_forwarders(&alone, &none, &bare, &mut siblings)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// `JC_INTERNAL_BIND` names the Portal's internal listener only with a port of its own;
+    /// without the Portal, unset, port 0 or no address, `jc` picks a loopback port itself.
+    #[test]
+    fn the_internal_bind_is_taken_only_as_an_address_with_a_port() {
+        let portal = dev_config("portal", "");
+        let bind = |v: &'static str| move |k: &str| (k == "JC_INTERNAL_BIND").then(|| v.to_owned());
+        assert_eq!(
+            explicit_portal_internal(&portal, bind(" 0.0.0.0:9100 ")),
+            Some("0.0.0.0:9100".parse().unwrap())
+        );
+        assert_eq!(explicit_portal_internal(&portal, bind("127.0.0.1:0")), None);
+        assert_eq!(
+            explicit_portal_internal(&portal, bind("internal:9100")),
+            None
+        );
+        assert_eq!(explicit_portal_internal(&portal, |_| None), None);
+        let viz = dev_config("viz", "");
+        assert_eq!(explicit_portal_internal(&viz, bind("0.0.0.0:9100")), None);
+    }
+
+    /// The registry's rows become each Organization's hosts: the first of each role wins, a
+    /// Portal site is added, a role the router gives no refusals is left out, names folded.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn registry_rows_become_organization_hosts() {
+        let hosts = registry_hosts([
+            ("Portal.A.test", "a", "working"),
+            ("second.a.test", "a", "working"),
+            ("data.a.test", "a", "opendata"),
+            ("data2.a.test", "a", "opendata"),
+            ("api.a.test", "a", "api"),
+            ("idm.a.test", "a", "signin"),
+            ("site.a.test", "a", "portal-site"),
+            ("plain.a.test", "a", "host"),
+            ("portal.b.test:443", "b", "working"),
+        ]);
+        let a = &hosts["a"];
+        assert_eq!(a.portal, "portal.a.test");
+        assert_eq!(a.opendata.as_deref(), Some("data.a.test"));
+        assert_eq!(a.api.as_deref(), Some("api.a.test"));
+        assert_eq!(a.idm.as_deref(), Some("idm.a.test"));
+        assert_eq!(a.portals, ["site.a.test"]);
+        assert_eq!(hosts["b"].portal, "portal.b.test");
+        assert_eq!(hosts.len(), 2);
+    }
+
+    /// T-7384: while the modules are built the listener answers `pong` to ekiben's ping on each
+    /// of its entries (any host for a path entry, its own host for a host entry, named by the
+    /// Host header or the request target) and 503 to every other request.
+    #[tokio::test]
+    async fn the_starting_listener_answers_ekibens_ping_and_503_to_the_rest() {
+        use tower::ServiceExt as _;
+        async fn ask(
+            plans: &[MountPlan],
+            method: &str,
+            uri: &str,
+            host: Option<&str>,
+        ) -> StatusCode {
+            let mut req = Request::builder().method(method).uri(uri);
+            if let Some(host) = host {
+                req = req.header(header::HOST, host);
+            }
+            let req = req.body(axum::body::Body::empty()).unwrap();
+            starting_router(plans).oneshot(req).await.unwrap().status()
+        }
+        let slug = plan_mounts(&dev_config(
+            "ekiben",
+            "mode = \"slug\"\nbase_host = \"city.test\"\n",
+        ))
+        .unwrap();
+        let ping = format!("/{}/ping", Module::Ekiben.slug());
+        assert_eq!(ask(&slug, "GET", &ping, None).await, StatusCode::OK);
+        assert_eq!(
+            ask(&slug, "HEAD", &ping, Some("any.test")).await,
+            StatusCode::OK
+        );
+        let unavailable = StatusCode::SERVICE_UNAVAILABLE;
+        assert_eq!(ask(&slug, "POST", &ping, None).await, unavailable);
+        assert_eq!(ask(&slug, "GET", "/ping", None).await, unavailable);
+        assert_eq!(ask(&slug, "GET", "/portal/", None).await, unavailable);
+
+        let host = plan_mounts(&dev_config(
+            "ekiben",
+            "mode = \"host\"\nbase_host = \"city.test\"\n",
+        ))
+        .unwrap();
+        let spec = host[0].specs().next().unwrap();
+        let at = spec.host.clone().expect("a host entry");
+        let ping = format!("{}/ping", spec.path_prefix.as_deref().unwrap_or(""));
+        assert_eq!(
+            ask(&host, "GET", &ping, Some(&at.to_uppercase())).await,
+            StatusCode::OK
+        );
+        let target = format!("http://{at}{ping}");
+        assert_eq!(ask(&host, "GET", &target, None).await, StatusCode::OK);
+        assert_eq!(
+            ask(&host, "GET", &ping, Some("other.test")).await,
+            unavailable
+        );
+        assert_eq!(ask(&host, "GET", &ping, None).await, unavailable);
+        // Nothing to ping without ekiben.
+        let none = plan_mounts(&dev_config("viz", "base_host = \"city.test\"\n")).unwrap();
+        assert_eq!(ask(&none, "GET", "/ping", None).await, unavailable);
+    }
+
     /// T-6992: the embed module answers as `embed` in slug mode; `/viz/...` answers `308` to the
     /// same path and query under `/embed`, an Organization's prefix on a shared host kept.
     #[tokio::test]
@@ -2447,7 +2617,7 @@ mod tests {
                 move |org: Option<axum::Extension<jc_router::Organization>>,
                       axum::Extension(mount): axum::Extension<Mount>,
                       uri: axum::http::Uri| async move {
-                    let org = org.map_or_else(|| "-".to_owned(), |o| o.0.0);
+                    let org = org.map_or("-".to_owned(), |o| o.0.0);
                     format!("{name} {org} {} {}", mount.public_base(), uri.path())
                 },
             );
@@ -2529,7 +2699,7 @@ mod tests {
             let router = Router::new().fallback(
                 move |org: Option<axum::Extension<jc_router::Organization>>,
                       axum::Extension(mount): axum::Extension<Mount>| async move {
-                    let org = org.map_or_else(|| "-".to_owned(), |o| o.0.0);
+                    let org = org.map_or("-".to_owned(), |o| o.0.0);
                     format!("{name} {org} {}", mount.public_base())
                 },
             );
@@ -2870,33 +3040,11 @@ mod tests {
             .unwrap();
     }
 
-    #[derive(Clone, Default)]
-    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Captured {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .map_err(|_| std::io::ErrorKind::Other)?
-                .extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
     /// The start report names each secret in a `name` field: `secret="admin-token"` reads as a
     /// printed value to the logs smoke suite (27 false password fields in the 2026-11-09 gate).
     #[test]
     fn the_start_report_names_a_secret_without_a_value_shaped_field() {
-        let buf = Captured::default();
-        let writer = buf.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .finish();
-        tracing::subscriber::with_default(subscriber, || {
+        let log = crate::captured(|| {
             report_secret(
                 "admin-token",
                 jc_secret::Source::File,
@@ -2908,7 +3056,6 @@ mod tests {
                 crate::config::Profile::Production,
             );
         });
-        let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
         assert!(log.contains(r#"name="admin-token" source="file""#), "{log}");
         assert!(log.contains(r#"name="ekiben-token" source="env""#), "{log}");
         assert!(!log.contains("secret="), "{log}");

@@ -174,7 +174,7 @@ async fn model_refusal(view: &ViewOps, c: &Collection, answer: Response) -> Opti
     let body = view.read_answer(answer.into_body(), "ogc").await.ok()?;
     let problem = serde_json::from_slice::<Value>(&body).ok()?;
     let detail = problem.get("detail")?.as_str()?;
-    shown_refusal(c, detail).then(|| detail.to_owned())
+    shown_refusal(c, detail).then_some(detail.to_owned())
 }
 
 /// Whether `detail` is the data model's refusal of an attribute the collection shows:

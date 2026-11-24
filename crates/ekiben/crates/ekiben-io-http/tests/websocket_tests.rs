@@ -328,6 +328,24 @@ async fn bento_input_websocket_test_websocket_close() {
     assert!(matches!(err, CoreError::NotConnected), "{err}");
 }
 
+/// A server that accepts the TCP connection and never answers the upgrade fails the connect
+/// with the handshake timeout, so a dead peer never holds the input.
+#[tokio::test(start_paused = true)]
+async fn a_silent_server_times_the_handshake_out() {
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = silent.local_addr().unwrap();
+    // The task's output, the accepted stream, stays open until the handle drops.
+    let held = tokio::spawn(async move { silent.accept().await });
+    let (reg, ctx, _stop) = context(true, Environment::new());
+    let mut input = build(json!({ "url": format!("ws://{addr}/") }), &ctx, &reg);
+    let err = input.connect(&ctx).await.expect_err("timed out");
+    assert!(
+        err.to_string().contains("websocket handshake timed out"),
+        "{err}"
+    );
+    drop(held);
+}
+
 #[tokio::test]
 async fn loopback_is_refused_unless_the_organization_allows_private_ips() {
     let (url, mut conns) = ws_server().await;
@@ -492,4 +510,78 @@ fn fields_outside_the_outbound_rule_are_refused() {
     assert!(WebsocketConf::from_json(&json!({}), &env).is_err());
     let ok = WebsocketConf::from_json(&json!({"url": "ws://x/ws"}), &env).unwrap();
     assert!(ok.auto_replay_nacks, "Bento's default");
+}
+
+/// OAuth 1 signs the upgrade request; the input names itself.
+#[tokio::test]
+async fn oauth_signs_the_upgrade_and_the_input_names_itself() {
+    let (url, mut conns) = ws_server().await;
+    let (reg, ctx, _stop) = context(true, Environment::new());
+    let conf = json!({"url": url, "oauth": {"enabled": true, "consumer_key": "ck",
+        "consumer_secret": "cs-secret", "access_token": "tok", "access_token_secret": "ts-secret"}});
+    let mut input = build(conf, &ctx, &reg);
+    assert_eq!((input.input_type(), input.label()), ("websocket", ""));
+    assert!(!input.is_connected());
+    input.connect(&ctx).await.expect("connects");
+    assert!(input.is_connected());
+    let server = accepted(&mut conns).await;
+    let auth = server
+        .headers
+        .get("authorization")
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        auth.starts_with("OAuth oauth_consumer_key=\"ck\""),
+        "{auth}"
+    );
+    assert!(
+        !auth.contains("cs-secret") && !auth.contains("ts-secret"),
+        "{auth}"
+    );
+}
+
+/// A header that fails to interpolate, is not a valid value or is one the handshake sets
+/// itself, a refused upgrade and a TLS server that is not there are each named at connect.
+#[tokio::test]
+async fn a_connect_that_cannot_build_or_finish_the_upgrade_is_named() {
+    let (url, _conns) = ws_server().await;
+    let (reg, ctx, _stop) = context(true, Environment::new());
+    for (headers, want) in [
+        (
+            json!({"X-N": "${! content().number() }"}),
+            "failed string interpolation on header \"X-N\"",
+        ),
+        (
+            json!({"X-Bad": "${! \"a\\nb\" }"}),
+            "bad value for header 'X-Bad'",
+        ),
+        (
+            json!({"Sec-WebSocket-Key": "mine"}),
+            "header 'Sec-WebSocket-Key'",
+        ),
+    ] {
+        let mut input = build(json!({"url": url, "headers": headers}), &ctx, &reg);
+        let err = input.connect(&ctx).await.expect_err("refused").to_string();
+        assert!(err.contains(want), "{want}: {err}");
+    }
+
+    let refusing = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = refusing.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = refusing.accept().await {
+            let mut buf = [0u8; 2048];
+            let _ = s.read(&mut buf).await;
+            let _ = s
+                .write_all(
+                    b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await;
+        }
+    });
+    let mut input = build(json!({"url": format!("ws://{addr}/feed")}), &ctx, &reg);
+    let err = input.connect(&ctx).await.expect_err("refused").to_string();
+    assert!(err.contains("websocket handshake failed"), "{err}");
+    let mut input = build(json!({"url": format!("wss://{addr}/feed")}), &ctx, &reg);
+    let err = input.connect(&ctx).await.expect_err("not tls").to_string();
+    assert!(err.contains("tls handshake failed"), "{err}");
 }
