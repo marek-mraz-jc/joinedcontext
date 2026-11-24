@@ -1822,6 +1822,134 @@ async fn odata_scopes_follow_dataset_visibility() {
     assert!(!member.iter().any(|(p, _)| p == "visibility"), "{member:?}");
 }
 
+/// Each OData row carries its record's own fields under the column names the service declares,
+/// and the members-only sets (and harvest state without a Read) answer an outsider empty.
+#[tokio::test]
+async fn odata_rows_carry_their_record_and_members_only_sets_stay_empty() {
+    use dataroom_core::odata_defs::{
+        activity_to_row, catalogue_to_row, dataroom_service, distribution_to_row,
+        harvest_source_to_row, publisher_to_row, set_readable, shacl_report_to_row,
+    };
+    use dataroom_core::scope_for_context;
+    let w = world().await;
+    let admin = w.admin();
+    let cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    let row = catalogue_to_row(&cat);
+    assert_eq!(
+        (row["name"].as_str(), row["title"].as_str()),
+        (Some("city"), Some("Mesto"))
+    );
+    assert_eq!(row["host"], "data.city.example");
+    let p = w
+        .store
+        .get_publisher(&admin, "dept")
+        .await
+        .unwrap()
+        .unwrap();
+    let row = publisher_to_row(&p, Some("sk"));
+    assert_eq!(
+        (row["name"].as_str(), row["title"].as_str()),
+        (Some("dept"), Some("Vydavateľ dept"))
+    );
+    assert_eq!(
+        (row["uri"].as_str(), row["state"].as_str()),
+        (Some("https://example.org/dept"), Some("active"))
+    );
+    let ds = w
+        .store
+        .get_dataset(&admin, "dept-air")
+        .await
+        .unwrap()
+        .unwrap();
+    let row = distribution_to_row(w.org, w.cat, &ds.distributions[0], Some("sk"));
+    assert_eq!(
+        (row["name"].as_str(), row["format"].as_str()),
+        (Some("JSON"), Some("JSON"))
+    );
+    assert_eq!(row["dataset_id"], json!(ds.id));
+    assert_eq!(row["catalogue_id"], json!(w.cat.to_string()));
+    let source: dataroom_core::HarvestSource = serde_json::from_value(json!({
+        "orgId": w.org, "catalogueId": w.cat, "id": "hs-1", "name": "feed", "kind": "ckan-action",
+        "url": "https://h.example/api/3", "publisherId": "city", "allowedHosts": [],
+        "enabled": false, "modified": "2026-11-01T10:00:00Z"
+    }))
+    .unwrap();
+    let row = harvest_source_to_row(&source);
+    assert_eq!(
+        (row["kind"].as_str(), row["enabled"].as_bool()),
+        (Some("ckan-action"), Some(false))
+    );
+    assert_eq!(row["publisher_id"], "city");
+    let row = activity_to_row(&audit("dataset.approve"));
+    assert_eq!(
+        (row["operation"].as_str(), row["actor"].as_str()),
+        (Some("dataset.approve"), Some("test"))
+    );
+    let report: ShaclValidationReport = serde_json::from_value(json!({
+        "orgId": w.org, "catalogueId": w.cat, "id": "r-1", "datasetId": "d-1",
+        "profileId": "dcat-ap", "profileVersion": "3.0.1", "conforms": false,
+        "violationCount": 2, "warningCount": 1, "findings": [],
+        "checkedAt": "2026-11-01T10:00:00Z"
+    }))
+    .unwrap();
+    let row = shacl_report_to_row(&report);
+    assert_eq!(
+        (
+            row["violation_count"].as_i64(),
+            row["warning_count"].as_i64()
+        ),
+        (Some(2), Some(1))
+    );
+    assert_eq!(
+        (row["conforms"].as_bool(), row["profile_version"].as_str()),
+        (Some(false), Some("3.0.1"))
+    );
+    // every set reads without a permission and writes only with its own
+    let service = dataroom_service();
+    let catalogues = service.sets.iter().find(|d| d.set == "Catalogues").unwrap();
+    let perm = |op: odata_table::Operation| {
+        catalogues
+            .rules
+            .iter()
+            .find(|r| r.operation == op)
+            .map(|r| r.permission.clone())
+    };
+    assert_eq!(perm(odata_table::Operation::Read), Some(None));
+    assert_eq!(
+        perm(odata_table::Operation::Create),
+        Some(Some("propose:Catalogue".into()))
+    );
+    let outsider = w.outsider();
+    for set in [
+        "HarvestSources",
+        "HarvestRuns",
+        "ActivityRows",
+        "ShaclResults",
+    ] {
+        assert!(
+            !set_readable(&outsider, set) && set_readable(&w.member(), set),
+            "{set}"
+        );
+    }
+    assert!(set_readable(&outsider, "Datasets"));
+    let emptied = |ctx: &RequestCtx, set: &str| {
+        scope_for_context(ctx, w.authz.as_ref(), set, None)
+            .restrictions
+            .iter()
+            .any(|r| r.path == ["id"] && r.any_of.is_empty())
+    };
+    assert!(emptied(&outsider, "ActivityRows"));
+    assert!(!emptied(&admin, "ActivityRows"));
+    assert!(
+        !emptied(&admin, "HarvestSources"),
+        "an admin reads harvest state"
+    );
+    assert!(
+        emptied(&w.member(), "HarvestSources"),
+        "a member without Read does not"
+    );
+}
+
 #[test]
 fn a_stored_run_error_reads_as_one_word() {
     use dataroom_core::ops::run_error_word;

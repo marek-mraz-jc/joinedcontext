@@ -501,3 +501,32 @@ fn own_dataset_fields_show_only_checked_values_under_their_property() {
     };
     assert_eq!(bare.property(&fields.fields[0]), None);
 }
+
+#[test]
+fn a_layout_finds_its_pages_and_sizes_its_radii_and_addresses_know_when_unset() {
+    use dataroom_core::branding::{BrandingAddresses, BrandingLayout};
+    let page = |slug: &str| -> jc_core::kinds::portal_page::PortalPage {
+        serde_json::from_value(json!({ "slug": slug })).unwrap()
+    };
+    let layout = BrandingLayout {
+        radius_px: Some(8),
+        pages: vec![page("home"), page("doprava")],
+        ..BrandingLayout::default()
+    };
+    assert_eq!(
+        layout.page("doprava").map(|p| p.slug.as_str()),
+        Some("doprava")
+    );
+    assert_eq!(layout.page("home").map(|p| p.slug.as_str()), Some("home"));
+    assert!(layout.page("missing").is_none());
+    let radii = "--jc-radius-sm: 6px; --jc-radius: 8px; --jc-radius-lg: 12px;";
+    assert_eq!(layout.radius_css(), radii);
+    assert!(layout.tokens_css().starts_with(radii));
+    assert_eq!(BrandingLayout::default().radius_css(), "");
+    assert!(BrandingAddresses::default().is_empty());
+    let viz = BrandingAddresses {
+        viz: "https://viz.city.example".into(),
+        ..BrandingAddresses::default()
+    };
+    assert!(!viz.is_empty());
+}

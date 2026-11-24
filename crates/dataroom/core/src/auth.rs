@@ -696,6 +696,19 @@ mod tests {
             assert!(policy.check(&ctx, action, &dataset).allowed, "{action:?}");
         }
         assert!(!policy.check(&ctx, Action::Admin, &dataset).allowed);
+        let internal = ObjectTarget::Dataset {
+            org_id: org,
+            catalogue_id: cat,
+            dataset_id: "d-2".into(),
+            publisher_id: "city".into(),
+            visibility: Visibility::Internal,
+            restricted_grants: Vec::new(),
+            publisher_editor_grants: Vec::new(),
+        };
+        assert!(
+            policy.check(&ctx, Action::Read, &internal).allowed,
+            "an editor reads it"
+        );
         let profile = ObjectTarget::Profile {
             org_id: org,
             catalogue_id: cat,
