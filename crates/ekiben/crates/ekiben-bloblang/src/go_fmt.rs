@@ -767,6 +767,14 @@ mod tests {
             ),
             "   ab|ab|int64|%!d(MISSING)"
         );
+        // Zero padding needs the 0 flag and a width; a sign is kept in front.
+        assert_eq!(
+            s(
+                "%8.2f|%0.2f|%+0.1f",
+                vec![Value::Float(-3.5), Value::Float(-3.5), Value::Float(2.5)]
+            ),
+            "   -3.50|-3.50|+2.5"
+        );
         // A two-digit exponent takes no pad zero.
         assert_eq!(
             s("%e|%e", vec![Value::Float(1e10), Value::Float(1e-10)]),

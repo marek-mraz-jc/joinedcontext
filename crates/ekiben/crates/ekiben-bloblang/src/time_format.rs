@@ -1394,6 +1394,8 @@ mod tests {
             "03 12 UTC +0000 % %q"
         );
         assert_eq!(format_strftime(&east, "%I %Z %p %P"), "03 +05:30 PM pm");
+        // A '%' that ends the format has no specifier and is copied.
+        assert_eq!(format_strftime(&east, "%H%"), "15%");
         Ok(())
     }
 
@@ -1624,11 +1626,21 @@ mod tests {
         );
         assert!(parse_go_duration_nanos("9223372036.854775807s").is_ok());
         assert!(parse_go_duration_nanos("9223372036.854775809s").is_err());
+        // 2^63 ns after its fraction is still in range for a negative duration, as in Go.
+        assert_eq!(
+            parse_go_duration_nanos("-9223372036.854775808s"),
+            Ok(i64::MIN)
+        );
     }
 
     #[test]
     fn strptime_weekday_names_need_letters() {
         assert!(parse_strptime("Tue 2026-11-24", "%a %Y-%m-%d").is_ok());
+        // The last hour and minute of a day are in range.
+        assert_eq!(
+            parse_strptime("2026-11-24 23:59", "%Y-%m-%d %H:%M").map(|z| (z.hour(), z.minute())),
+            Ok((23, 59))
+        );
         assert_eq!(
             parse_strptime("2026-11-24", "%a%Y-%m-%d").map(|_| ()),
             Err("expected weekday name in '2026-11-24'".to_string())

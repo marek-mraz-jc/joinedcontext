@@ -239,13 +239,11 @@ fn partial_insertion_sort<T, F: FnMut(usize, &T, usize, &T) -> bool>(
                 j -= 1;
             }
         }
-        if b - i >= 2 {
-            for j in i + 1..b {
-                if !d.less(j, j - 1) {
-                    break;
-                }
-                d.swap(j, j - 1);
+        for j in i + 1..b {
+            if !d.less(j, j - 1) {
+                break;
             }
+            d.swap(j, j - 1);
         }
     }
     false
@@ -466,6 +464,72 @@ mod tests {
             pdqsort(&mut d, 0, n, 0);
             assert_eq!(v, want);
         }
+    }
+
+    #[test]
+    fn sorted_and_descending_inputs_take_their_counted_paths() {
+        // Sorted input ends in partial_insertion_sort; descending input is reversed around its
+        // pivot first. Counts pinned like the shapes above.
+        let mut counts = Vec::new();
+        for n in [100usize, 1000] {
+            for shape in 0..3 {
+                let mut v: Vec<i64> = (0..n as i64)
+                    .map(|i| match shape {
+                        0 => i,
+                        1 => n as i64 - i,
+                        _ => n as i64 - i + if i % 7 == 0 { 3 } else { 0 },
+                    })
+                    .collect();
+                let mut calls = 0usize;
+                sort_slice(&mut v, |a, b| {
+                    calls += 1;
+                    a < b
+                });
+                assert!(v.windows(2).all(|w| w[0] <= w[1]));
+                counts.push(calls);
+            }
+        }
+        assert_eq!(counts, vec![111, 111, 565, 1011, 1011, 9485]);
+    }
+
+    #[test]
+    fn an_unbalanced_partition_spends_the_recursion_limit() {
+        // With limit 1, one unbalanced partition leaves 0 and the next round falls back to
+        // heap_sort, which compares differently from another pdqsort round.
+        let count = |shape: usize, limit: u32| {
+            let n = 400i64;
+            let mut v: Vec<i64> = (0..n)
+                .map(|i| match shape {
+                    0 => (i * 7919) % 401,
+                    1 => i.min(n - i),
+                    2 => {
+                        if i % 50 == 0 {
+                            0
+                        } else {
+                            n - i % 3
+                        }
+                    }
+                    _ => (i * i) % 397,
+                })
+                .collect();
+            let mut calls = 0usize;
+            let mut less = |_: usize, a: &i64, _: usize, b: &i64| {
+                calls += 1;
+                a < b
+            };
+            let mut d = Data {
+                v: &mut v,
+                less: &mut less,
+            };
+            pdqsort(&mut d, 0, n as usize, limit);
+            assert!(v.windows(2).all(|w| w[0] <= w[1]));
+            calls
+        };
+        let probe: Vec<_> = (0..4).map(|s| (count(s, 1), count(s, 64))).collect();
+        assert_eq!(
+            probe,
+            vec![(3618, 3583), (3296, 3282), (3253, 1522), (3437, 3437)]
+        );
     }
 
     #[test]

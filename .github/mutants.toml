@@ -105,6 +105,17 @@ exclude_re = [
   # T-7786 go_sort heap_sort: a root at or past hi / 2 has no child inside the heap, so sift_down returns at once
   # without a comparison; starting the build loop at hi * 2 only adds those no-op calls.
   'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace / with \* in heap_sort',
+  # T-7786 go_sort partition and partition_equal: after the two scans i == j cannot hold (the second scan steps j
+  # past an i the first one stopped at), so `i > j` and `i >= j` break alike.
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace > with >= in partition',
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace > with >= in partition_equal',
+  # T-7786 go_sort reverse_range: at i == j the extra swap is of a place with itself.
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace < with <= in reverse_range',
+  # T-7786 time_format parse_tz_offset_token: hours and minutes are read as exactly two digits, so 1 + hn * mn and
+  # 1 + hn + mn are both 5.
+  'ekiben-bloblang/src/time_format\.rs:\d+:66: replace \+ with \* in parse_tz_offset_token',
+  # T-7786 time_format parse_go_duration_nanos: a zero fraction adds 0 to a v already checked against LIMIT / mult.
+  'ekiben-bloblang/src/time_format\.rs:\d+:17: replace > with >= in parse_go_duration_nanos',
   # T-7576 go_sort sort_slice_at: a larger recursion limit only matters once pdqsort exhausts bits(n) unbalanced
   # partitions; break_patterns prevents that: 200,000 shaped inputs of 13-132 elements never reached the heap sort
   # fallback (a_spent_recursion_limit_falls_back_to_heap_sort reaches it with limit 0).

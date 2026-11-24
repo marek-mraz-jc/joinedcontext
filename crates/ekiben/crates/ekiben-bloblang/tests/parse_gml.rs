@@ -173,7 +173,34 @@ fn an_arc_through_three_points_stays_on_its_circle() {
     assert!(items(coords(&g)).iter().all(|p| xy(p).1 <= 1e-9));
     // Nearly collinear at projected scale (an offset of 1e-6 over 2e6 metres) is a line too.
     let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:ArcString><gml:posList>0 0 1000000 1000000 2000000 2000000.000001</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#), None, None).unwrap();
-    assert_eq!(items(coords(&g)).len(), 3);
+    let ps = items(coords(&g));
+    assert_eq!(ps.len(), 3);
+    assert_eq!(
+        xy(&ps[1]),
+        (1_000_000.0, 1_000_000.0),
+        "the middle position is kept"
+    );
+    // A centre off both of the start's axes, and a z that starts above 0.
+    let t0 = 8f64.atan2(6.0);
+    let te = t0 + 177.5f64.to_radians();
+    let (ex, ey) = (10.0 * te.cos(), 10.0 * te.sin());
+    let off = format!("<gml:Curve srsDimension=\"3\"><gml:segments><gml:ArcString><gml:posList>6 8 2 -8 6 4 {ex} {ey} 8</gml:posList></gml:ArcString></gml:segments></gml:Curve>");
+    let g = parse_gml(&text(&off), None, None).unwrap();
+    let ps = items(coords(&g));
+    assert_eq!(ps.len(), 37, "177.5 degrees in 36 chords");
+    for (i, p) in ps.iter().enumerate() {
+        let Value::Array(c) = p else { panic!("{p:?}") };
+        let (x, y) = xy(p);
+        let f = i as f64 / 36.0;
+        let t = t0 + 177.5f64.to_radians() * f;
+        let z = c[2].as_f64().unwrap_or(f64::NAN);
+        assert!(
+            (x - 10.0 * t.cos()).abs() < 1e-9
+                && (y - 10.0 * t.sin()).abs() < 1e-9
+                && (z - (2.0 + 6.0 * f)).abs() < 1e-9,
+            "{i}: {x} {y} {z}"
+        );
+    }
     // Three collinear positions are a straight line.
     let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:ArcString><gml:posList>0 0 1 1 2 2</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#), None, None).unwrap();
     assert_eq!(items(coords(&g)).len(), 3);
