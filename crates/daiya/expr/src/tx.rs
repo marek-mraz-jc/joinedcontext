@@ -1450,7 +1450,9 @@ mod tests {
         assert_eq!(renamed[0].fields[1].name, "metric_al");
         // T-7799: a pattern that compiles only inside the `^(?:...)$` wrapper renames nothing
         assert!(js_regex("v)|(.*").is_none());
-        assert!(js_regex("val|x").is_some_and(|(re, _)| re.is_match("val") && !re.is_match("vals")));
+        assert!(
+            js_regex("val|x").is_some_and(|(re, _)| re.is_match("val") && !re.is_match("vals"))
+        );
 
         // labelsToFields
         let l2f = tx_labels_to_fields(vec![f1.clone()], &json!({"mode": "columns"}));

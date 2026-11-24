@@ -497,8 +497,10 @@ mod tests {
     #[test]
     fn a_pattern_closing_the_wrapper_is_refused_and_holds_for_nothing() {
         let constraint = |pattern: &str| -> Constraint {
-            serde_json::from_value(serde_json::json!({ "field": "metadata.name", "pattern": pattern }))
-                .expect("a constraint parses")
+            serde_json::from_value(
+                serde_json::json!({ "field": "metadata.name", "pattern": pattern }),
+            )
+            .expect("a constraint parses")
         };
         let escape = constraint("t1)|(.*");
         let err = escape.validate().expect_err("closes the wrapper");

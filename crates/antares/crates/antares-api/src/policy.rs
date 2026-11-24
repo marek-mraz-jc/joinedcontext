@@ -662,9 +662,10 @@ impl Rule {
     pub fn selects_id(&self, id: &str) -> bool {
         (self.ids.is_empty() && self.id_patterns.is_empty())
             || self.ids.iter().any(|i| i == id)
-            || self.id_patterns.iter().any(|p| {
-                antares_ql::regex::compile_anchored(p).is_ok_and(|re| re.is_match(id))
-            })
+            || self
+                .id_patterns
+                .iter()
+                .any(|p| antares_ql::regex::compile_anchored(p).is_ok_and(|re| re.is_match(id)))
     }
 
     /// Whether the rule has a condition beside its types.

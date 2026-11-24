@@ -15,7 +15,7 @@ enum IdMatcher {
     /// An `id` selector, or an `idPattern` that is one escaped literal between `^` and `$`:
     /// matched by string equality, so an id holding `.` or `+` never widens.
     Exact(String),
-    /// An `idPattern`, anchored at both ends as the broker reads it: `^a.*|.*$` passes the
+    /// An `idPattern`, anchored at both ends as the broker reads it: `^a.*|b$` passes the
     /// `^`/`$` check of `EntitySelector::validate` yet its raw program matches every id (T-7799).
     Pattern(Arc<regex::Regex>),
     /// A pattern that does not compile: it matches nothing, so a grant the gateway cannot
@@ -167,9 +167,12 @@ mod tests {
     /// that compiles only inside that wrapper matches nothing.
     #[test]
     fn a_top_level_alternation_stays_anchored_and_a_wrapper_escape_matches_nothing() {
-        let wide = patterns(&["^urn:x:a.*|.*$"]);
-        assert!(wide.permits("urn:x:a1"));
-        assert!(!wide.permits("urn:y:b"), "the second branch is anchored at the start too");
+        let wide = patterns(&["^urn:x:a.*|b$"]);
+        assert!(wide.permits("urn:x:a1") && wide.permits("b"));
+        assert!(
+            !wide.permits("urn:y:b"),
+            "the second branch is anchored at the start too"
+        );
         let both = patterns(&["^urn:x:a$|^urn:x:b$"]);
         assert!(both.permits("urn:x:b") && !both.permits("urn:x:c"));
         let escape = patterns(&["^urn:x:a$)|(^.*$"]);

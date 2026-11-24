@@ -1221,11 +1221,6 @@ mod tests {
                 json!({"policies": [with("information", json!([{"entities": [{"type": "Car", "idPattern": "("}]}]))]}),
                 "idPattern",
             ),
-            // T-7799: parses only inside the rule's `^(?:...)$`, closing its group early
-            (
-                json!({"policies": [with("information", json!([{"entities": [{"type": "Car", "idPattern": "urn:x:a)|(.*"}]}]))]}),
-                "idPattern",
-            ),
             (
                 json!({"policies": [with("extra", json!(1))]}),
                 "unknown field",
@@ -1240,6 +1235,15 @@ mod tests {
             let why = compile(&doc).err().unwrap_or_default();
             assert!(why.contains(said), "{doc}: {why:?} does not say {said:?}");
         }
+    }
+
+    /// T-7799: an `idPattern` that parses only inside the rule's `^(?:...)$`,
+    /// closing its group early, is refused by name.
+    #[test]
+    fn a_pattern_closing_the_wrapper_is_refused() {
+        let doc = json!({"policies": [with("information", json!([{"entities": [{"type": "Car", "idPattern": "urn:x:a)|(.*"}]}]))]});
+        let why = compile(&doc).err().unwrap_or_default();
+        assert!(why.contains("idPattern"), "{why:?}");
     }
 
     /// T-3729: names expand by the core `@context`, the form the broker
