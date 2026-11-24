@@ -264,11 +264,20 @@ NaN delta 1899-12-30T00:00:00Z
         assert_eq!(text(&Data::Float(2.5)), "2.5");
         assert_eq!(text(&Data::Bool(true)), "TRUE");
         assert_eq!(text(&Data::Empty), "");
+        assert_eq!(text(&Data::Int(-7)), "-7");
+        assert_eq!(text(&Data::Error(calamine::CellErrorType::Div0)), "#DIV/0!");
     }
 
     /// A minimal xlsx: a merged header (B1:C1), a number, a date (style numFmt 22), an empty
     /// row, a boolean, and a second sheet.
     fn workbook() -> Vec<u8> {
+        workbook_with(SHEET1)
+    }
+
+    const SHEET1: &str = r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>id</t></is></c><c r="B1" t="inlineStr"><is><t>measured</t></is></c><c r="D1" t="inlineStr"><is><t>when</t></is></c></row><row r="2"><c r="A2"><v>1</v></c><c r="B2"><v>2.5</v></c><c r="C2" t="inlineStr"><is><t>x</t></is></c><c r="D2" s="1"><v>45992.5</v></c></row><row r="4"><c r="A4" t="b"><v>1</v></c></row></sheetData><mergeCells count="1"><mergeCell ref="B1:C1"/></mergeCells></worksheet>"#;
+
+    /// The same workbook with `sheet1` as its first sheet.
+    fn workbook_with(sheet1: &str) -> Vec<u8> {
         use std::io::Write;
         let files = [
             (
@@ -291,10 +300,7 @@ NaN delta 1899-12-30T00:00:00Z
                 "xl/styles.xml",
                 r#"<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="22" applyNumberFormat="1"/></cellXfs></styleSheet>"#,
             ),
-            (
-                "xl/worksheets/sheet1.xml",
-                r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>id</t></is></c><c r="B1" t="inlineStr"><is><t>measured</t></is></c><c r="D1" t="inlineStr"><is><t>when</t></is></c></row><row r="2"><c r="A2"><v>1</v></c><c r="B2"><v>2.5</v></c><c r="C2" t="inlineStr"><is><t>x</t></is></c><c r="D2" s="1"><v>45992.5</v></c></row><row r="4"><c r="A4" t="b"><v>1</v></c></row></sheetData><mergeCells count="1"><mergeCell ref="B1:C1"/></mergeCells></worksheet>"#,
-            ),
+            ("xl/worksheets/sheet1.xml", sheet1),
             (
                 "xl/worksheets/sheet2.xml",
                 r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="2"><c r="A2" t="inlineStr"><is><t>k</t></is></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>v</t></is></c></row></sheetData></worksheet>"#,
@@ -331,6 +337,25 @@ NaN delta 1899-12-30T00:00:00Z
         assert!(rows(&book, Some("Missing"), 10).is_err());
         let capped = rows(&book, None, 1).expect_err("over the row cap");
         assert!(capped.contains("more than 1 rows"), "{capped}");
+    }
+
+    #[test]
+    fn a_sheet_past_the_cell_cap_is_refused_and_an_empty_one_has_no_rows() {
+        let sheet = |cells: &str| {
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{cells}</sheetData></worksheet>"#
+            )
+        };
+        // Two cells, A1 and XFD2000, span 2000 x 16384 cells.
+        let wide = workbook_with(&sheet(
+            r#"<row r="1"><c r="A1"><v>1</v></c></row><row r="2000"><c r="XFD2000"><v>2</v></c></row>"#,
+        ));
+        assert_eq!(
+            rows(&wide, None, 10).expect_err("over the cell cap"),
+            format!("sheet 'Counts' holds 2000 x 16384 cells, more than {MAX_CELLS}")
+        );
+        let empty = workbook_with(&sheet(r#"<row r="1"><c r="A1"/></row>"#));
+        assert!(rows(&empty, None, 10).expect("reads").is_empty());
     }
 
     #[test]

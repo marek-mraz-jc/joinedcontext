@@ -29,3 +29,4 @@ futures = { workspace = true }
 [dev-dependencies]
 jc-time = { workspace = true }
 serde_norway = { workspace = true }
+tracing-subscriber = { workspace = true }
