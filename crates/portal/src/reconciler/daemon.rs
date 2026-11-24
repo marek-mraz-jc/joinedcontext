@@ -20,7 +20,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +48,17 @@ const PIPELINE_RUNNER_DEPLOYMENT: &str = "pipeline-runner";
 /// What a merged change takes live ahead of the whole run (T-6455): what a new space takes its
 /// first write through. Every other kind has a step of a run that compares it with the mirror.
 const GO_LIVE_KINDS: [&str; 4] = ["ContextSpace", "DataModel", "Endpoint", "Policy"];
+
+/// Log lines kept as consts so each `tracing` call stays on one line.
+const LAST_RUN_SERVES: &str =
+    "the last completed run's mirror serves until this process's first run ends";
+const WAVE_SKIPPED: &str =
+    "the catalogue wave of the last run is still running: this run's is skipped";
+const HANDED_TO_HOST: &str = "the pipeline runner's secrets are handed to the host runner";
+const NO_RUNNER: &str = "no cluster: a pipeline's credentials resolve and reach no runner";
+const KEYS_LOOKUP_ONLY: &str =
+    "no gateway namespace or no cluster: the personal-data keys reach only the subject lookup";
+const CATALOGUE_UPDATED: &str = "the NGSI-LD catalogue was brought up to date";
 
 /// How long a managed roles file seen held is taken as held before the branch is read again.
 const ROLES_HELD_FOR: std::time::Duration = std::time::Duration::from_secs(300);
@@ -162,11 +173,8 @@ fn drift_summary(err: &SyncError) -> String {
 /// One line when warnings of a family stopped standing since the last cycle, with how many.
 fn cleared(what: &str, change: &super::warned::Change) {
     if change.cleared > 0 {
-        tracing::info!(
-            cleared = change.cleared,
-            standing = change.standing,
-            "{what}: some no longer stand"
-        );
+        let (cleared, standing) = (change.cleared, change.standing);
+        tracing::info!(cleared, standing, "{what}: some no longer stand");
     }
 }
 
@@ -893,7 +901,7 @@ impl Syncer {
     pub fn with_leadership(mut self, leadership: Arc<Leadership>) -> Self {
         self.status
             .write()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .leader = leadership.is_leader();
         self.leadership = Some(leadership);
         self
@@ -913,7 +921,7 @@ impl Syncer {
     pub fn accepted(&self) -> Option<Arc<Repository>> {
         self.accepted
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
@@ -930,7 +938,7 @@ impl Syncer {
     pub fn status(&self) -> SyncStatus {
         self.status
             .read()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
@@ -965,16 +973,11 @@ impl Syncer {
                 let landed = before.revision.as_deref() != Some(revision.as_str());
                 // How long a merge waits for the mirror is this run's length, and a run in
                 // flight before it (PL-61, T-4270).
-                tracing::info!(
-                    %revision,
-                    manifests = count,
-                    leader,
-                    elapsed_ms = started.elapsed().as_millis() as u64,
-                    "sync run finished"
-                );
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                tracing::info!(%revision, manifests = count, leader, elapsed_ms, "sync run finished");
                 {
                     let now = crate::auth::session::now_unix();
-                    let mut status = self.status.write().unwrap_or_else(|p| p.into_inner());
+                    let mut status = self.status.write().unwrap_or_else(PoisonError::into_inner);
                     status.last_sync = Some(now);
                     status.revision = Some(revision.clone());
                     status.manifests = count;
@@ -1000,7 +1003,7 @@ impl Syncer {
                 let repeated = before.last_error.as_deref() == Some(message.as_str());
                 self.status
                     .write()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .last_error = Some(message.clone());
                 if !repeated {
                     self.say_drifted(&drift_summary(&err)).await;
@@ -1067,12 +1070,8 @@ impl Syncer {
             *merges = merges.wrapping_add(1);
         }
         drop(merges);
-        tracing::info!(
-            %revision,
-            changed,
-            elapsed_ms = started.elapsed().as_millis() as u64,
-            "merged change live"
-        );
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        tracing::info!(%revision, changed, elapsed_ms, "merged change live");
         Ok(())
     }
 
@@ -1092,10 +1091,7 @@ impl Syncer {
             Ok(resources) => {
                 self.provisional
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                tracing::info!(
-                    resources,
-                    "the last completed run's mirror serves until this process's first run ends"
-                );
+                tracing::info!(resources, "{LAST_RUN_SERVES}");
             }
             Err(error) => {
                 tracing::warn!(%error, path = %path.display(), "the last run's mirror does not load: the Portal answers 'starting' until the first run ends");
@@ -1159,12 +1155,7 @@ impl Syncer {
         match loaded {
             Ok((mirror, manifests)) => {
                 self.mirror.replace_all(&mirror);
-                tracing::warn!(
-                    error = %err,
-                    manifests,
-                    assembly = %self.assembly.display(),
-                    "the first run read nothing from the forge: the last assembly serves until a run does"
-                );
+                tracing::warn!(error = %err, manifests, assembly = %self.assembly.display(), "the first run read nothing from the forge: the last assembly serves until a run does");
             }
             Err(error) => {
                 tracing::warn!(%error, assembly = %self.assembly.display(), "the last assembly does not load either: nothing serves until the forge answers");
@@ -1257,7 +1248,10 @@ impl Syncer {
             .map(|refusal| (refusal.slug.clone(), refusal.reason.clone()))
             .collect();
         let told = {
-            let mut told = self.told_refused.lock().unwrap_or_else(|p| p.into_inner());
+            let mut told = self
+                .told_refused
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             told.retain(|key| current.contains(key));
             told.clone()
         };
@@ -1299,7 +1293,7 @@ impl Syncer {
             self.tell_refusal(refusal, &sha, &authors).await;
             self.told_refused
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(PoisonError::into_inner)
                 .insert(key);
         }
     }
@@ -1459,7 +1453,7 @@ impl Syncer {
             Ok(leader) => {
                 self.status
                     .write()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .leader = leader;
                 leader
             }
@@ -1467,7 +1461,7 @@ impl Syncer {
                 tracing::warn!(error = %err, "cannot reach the database to elect a reconciler");
                 self.status
                     .write()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .leader = false;
                 false
             }
@@ -1490,7 +1484,7 @@ impl Syncer {
         let last = self
             .last_render
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         if let Some((render, _)) = last {
             if render.unchanged(&org).await {
@@ -1512,7 +1506,7 @@ impl Syncer {
         let last = self
             .last_render
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         if let Some((render, repository)) = last {
             if render.unchanged(&org).await {
@@ -1523,7 +1517,10 @@ impl Syncer {
             .render(stage_listed(&self.shako, revision, &org).await?, org, None)
             .await?;
         let fresh = (Arc::new(render), Arc::new(repository));
-        *self.last_render.lock().unwrap_or_else(|p| p.into_inner()) = Some(fresh.clone());
+        *self
+            .last_render
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(fresh.clone());
         Ok(fresh)
     }
 
@@ -1688,7 +1685,8 @@ impl Syncer {
         //     serves in its place, or nothing does (CHG-04).
         let (repository, refusals) =
             off_runtime(|| self.refuse_invalid(&scratch, repository, &revision, &default_branch));
-        *self.accepted.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&repository));
+        *self.accepted.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(Arc::clone(&repository));
         steps.mark("stage");
 
         // 4b. The author's mapping beside a Pipeline manifest (PL-03): the loader leaves
@@ -2015,9 +2013,7 @@ impl Syncer {
             return None;
         }
         let Ok(mut previous) = Arc::clone(&self.catalogue).try_lock_owned() else {
-            tracing::info!(
-                "the catalogue wave of the last run is still running: this run's is skipped"
-            );
+            tracing::info!("{WAVE_SKIPPED}");
             return None;
         };
         if previous.is_none() {
@@ -2064,10 +2060,8 @@ impl Syncer {
     ) -> Result<(Arc<Render>, Arc<Repository>), SyncError> {
         let staging = std::time::Instant::now();
         let (scratch, repository) = self.staged(revision).await?;
-        tracing::info!(
-            elapsed_ms = staging.elapsed().as_millis() as u64,
-            "repository staged and loaded"
-        );
+        let elapsed_ms = staging.elapsed().as_millis() as u64;
+        tracing::info!(elapsed_ms, "repository staged and loaded");
         let misplaced = repository
             .misplaced()
             .into_iter()
@@ -2153,7 +2147,7 @@ impl Syncer {
         let accepted = self
             .accepted
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let mut served = (*repository).clone();
         for (id, refusal) in refusals.iter_mut() {
@@ -2182,7 +2176,7 @@ impl Syncer {
         let accepted = self
             .accepted
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let mut ids = BTreeMap::new();
         let mut held = std::collections::BTreeSet::new();
@@ -2558,7 +2552,7 @@ impl Syncer {
         let mut held_from = self
             .held_from
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .unwrap_or_else(PoisonError::into_inner);
         if fresh_mirror.removals_held() {
             held_from.get_or_insert_with(|| Arc::new(self.last_run_mirror()));
             let now = Mirror::new();
@@ -2577,7 +2571,7 @@ impl Syncer {
         let done = self
             .protected
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let mut due = Vec::new();
         if !done.contains(&self.shako.repo) {
@@ -2595,7 +2589,10 @@ impl Syncer {
                 .await;
             due.push((repository, protected));
         }
-        let mut protected = self.protected.lock().unwrap_or_else(|p| p.into_inner());
+        let mut protected = self
+            .protected
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         for (repository, result) in due {
             match result {
                 Ok(()) => {
@@ -2767,7 +2764,7 @@ impl Syncer {
                 *self
                     .app_client_secrets
                     .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = run.secrets;
+                    .unwrap_or_else(PoisonError::into_inner) = run.secrets;
             }
         }
         for clients in &self.organization_app_clients {
@@ -2847,7 +2844,7 @@ impl Syncer {
         let mut values = self
             .host_runner_values
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         if let Some(clients) = self.workload_clients.as_ref() {
             for (project, secrets) in clients.host_secrets_by_project() {
@@ -2919,7 +2916,7 @@ impl Syncer {
         let secrets = self
             .app_client_secrets
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let (apps, mut skipped) =
             super::edge_file::edge_apps(fresh_mirror, &secrets, settings, edge_file.wasm_host());
@@ -3391,12 +3388,7 @@ impl Syncer {
                 .await;
             match store.ensure_project(&key, legacy.as_ref()).await {
                 Ok(credentials) => {
-                    tracing::info!(
-                        project = %project,
-                        issued = credentials.len(),
-                        old_layout_read = legacy.is_some(),
-                        "artifact store credentials are in place"
-                    );
+                    tracing::info!(project = %project, issued = credentials.len(), old_layout_read = legacy.is_some(), "artifact store credentials are in place");
                     self.hand_over_reader(&key, store.as_ref()).await;
                 }
                 Err(err) => {
@@ -3699,19 +3691,15 @@ impl Syncer {
             *self
                 .host_runner_values
                 .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = runner.by_project().clone();
+                .unwrap_or_else(PoisonError::into_inner) = runner.by_project().clone();
             self.hand_to_host(host.as_ref());
-            tracing::info!(
-                variables = runner.variables().count(),
-                "the pipeline runner's secrets are handed to the host runner"
-            );
+            let variables = runner.variables().count();
+            tracing::info!(variables, "{HANDED_TO_HOST}");
         } else if !runner.is_empty() {
             let written = match self.credentials.as_ref() {
                 Some((kube, namespace)) => self.write_runner_secret(kube, namespace, &runner).await,
                 None => {
-                    tracing::info!(
-                        "no cluster: a pipeline's credentials resolve and reach no runner"
-                    );
+                    tracing::info!("{NO_RUNNER}");
                     false
                 }
             };
@@ -3755,8 +3743,7 @@ impl Syncer {
                 ) {
                     Ok(block) => block.key_ref,
                     Err(err) => {
-                        tracing::warn!(project = %namespace, space = %space, error = %err,
-                            "a space's personalData block is not one; its keyedHash slots have no key");
+                        tracing::warn!(project = %namespace, space = %space, error = %err, "a space's personalData block is not one; its keyedHash slots have no key");
                         continue;
                     }
                 };
@@ -3770,14 +3757,12 @@ impl Syncer {
                     Ok(raw) => crate::personal_keys::usable(&raw),
                     // The reference is named, the value never is (PL-17, MF-24).
                     Err(err) => {
-                        tracing::warn!(project = %namespace, space = %space, secret_ref = %reference.name, error = %err,
-                            "a space's personal-data key does not resolve; its keyedHash slots have no key");
+                        tracing::warn!(project = %namespace, space = %space, secret_ref = %reference.name, error = %err, "a space's personal-data key does not resolve; its keyedHash slots have no key");
                         continue;
                     }
                 };
                 let Some(key) = key else {
-                    tracing::warn!(project = %namespace, space = %space, secret_ref = %reference.name,
-                        "a space's personal-data key is shorter than 32 bytes; its keyedHash slots have no key");
+                    tracing::warn!(project = %namespace, space = %space, secret_ref = %reference.name, "a space's personal-data key is shorter than 32 bytes; its keyedHash slots have no key");
                     continue;
                 };
                 by_segment.insert(
@@ -3791,17 +3776,17 @@ impl Syncer {
         let (Some((kube, _)), Some(gateway)) = (self.credentials.as_ref(), gateway_namespace)
         else {
             if !by_segment.is_empty() {
-                tracing::info!(spaces = by_segment.len(),
-                    "no gateway namespace or no cluster: the personal-data keys reach only the subject lookup");
+                let spaces = by_segment.len();
+                tracing::info!(spaces, "{KEYS_LOOKUP_ONLY}");
             }
             return;
         };
         let secret = crate::personal_keys::secret(gateway, &by_segment);
         match kube.apply(&secret).await {
-            Ok(()) => tracing::debug!(
-                spaces = by_segment.len(),
-                "the gateway's personal-data keys are in place"
-            ),
+            Ok(()) => {
+                let spaces = by_segment.len();
+                tracing::debug!(spaces, "the gateway's personal-data keys are in place")
+            }
             Err(err) => {
                 tracing::warn!(error = %err, "the gateway's personal-data keys were not written")
             }
@@ -3839,8 +3824,7 @@ impl Syncer {
                 ) {
                     Ok(block) => block,
                     Err(err) => {
-                        tracing::warn!(project = %namespace, source = %name, error = %err,
-                                "the webhook block of a sync source is not one; it is not reachable through the webhook");
+                        tracing::warn!(project = %namespace, source = %name, error = %err, "the webhook block of a sync source is not one; it is not reachable through the webhook");
                         continue;
                     }
                 };
@@ -3853,14 +3837,14 @@ impl Syncer {
                                 Ok(secret) => secrets.push(secret),
                                 // The reference is named, the value never is: this line travels into
                                 // a log collector (PL-17, MF-24).
-                                Err(err) => tracing::warn!(project = %namespace, source = %name,
-                                secret = %reference.name, error = %err,
-                                "a sync source's webhook secret does not resolve"),
+                                Err(err) => {
+                                    tracing::warn!(project = %namespace, source = %name, secret = %reference.name, error = %err, "a sync source's webhook secret does not resolve")
+                                }
                             }
                         }
-                        None => tracing::warn!(project = %namespace, source = %name,
-                            secret = %reference.name,
-                            "this Portal has no secret backend, so a webhook-driven sync source is not reachable"),
+                        None => {
+                            tracing::warn!(project = %namespace, source = %name, secret = %reference.name, "this Portal has no secret backend, so a webhook-driven sync source is not reachable")
+                        }
                     }
                 }
                 if !secrets.is_empty() {
@@ -3868,10 +3852,8 @@ impl Syncer {
                 }
             }
         }
-        tracing::debug!(
-            sources = resolved.len(),
-            "sync sources reachable through the webhook"
-        );
+        let sources = resolved.len();
+        tracing::debug!(sources, "sync sources reachable through the webhook");
         accepted.replace_all(resolved);
     }
 
@@ -3893,10 +3875,8 @@ impl Syncer {
             tracing::warn!(error = %err, "the pipeline runner's secrets were not written");
             return false;
         }
-        tracing::info!(
-            variables = runner.variables().count(),
-            "the pipeline runner's secrets are in place"
-        );
+        let variables = runner.variables().count();
+        tracing::info!(variables, "the pipeline runner's secrets are in place");
         let rollout = serde_json::json!({
             "apiVersion": "apps/v1",
             "kind": "Deployment",
@@ -3929,15 +3909,12 @@ impl Syncer {
         let secret = crate::artifact_store::reader_secret(namespace, key, &reader);
         let name = crate::artifact_store::reader_secret_name(key);
         match kube.apply(&secret).await {
-            Ok(()) => tracing::info!(
-                secret = %name,
-                "the artifact store reader is in the namespace that serves"
-            ),
-            Err(err) => tracing::warn!(
-                secret = %name,
-                error = %err,
-                "the reader credential was minted and not handed over"
-            ),
+            Ok(()) => {
+                tracing::info!(secret = %name, "the artifact store reader is in the namespace that serves")
+            }
+            Err(err) => {
+                tracing::warn!(secret = %name, error = %err, "the reader credential was minted and not handed over")
+            }
         }
     }
 
@@ -3968,14 +3945,19 @@ impl Syncer {
                     .get(path)
                     .is_some_and(|(seen, at)| *seen == digest && at.elapsed() < ROLES_HELD_FOR)
             };
-            if held(&self.roles_held.lock().unwrap_or_else(|p| p.into_inner())) {
+            if held(
+                &self
+                    .roles_held
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner),
+            ) {
                 continue;
             }
             let existing = self.shako.get_file(path, branch).await?;
             let hold = || {
                 self.roles_held
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .insert(path.to_owned(), (digest, std::time::Instant::now()));
             };
             if existing.as_ref().map(|f| f.content.as_str()) == Some(&*committed) {
@@ -4370,31 +4352,25 @@ impl CatalogueWave {
         if let Some(catalogue) = self.ckan.as_ref() {
             let started = std::time::Instant::now();
             let reports = catalogue.converge(repository, previous, scratch).await;
-            tracing::info!(
-                reports = reports.len(),
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "the CKAN wave finished"
-            );
+            let (reports_len, elapsed_ms) = (reports.len(), started.elapsed().as_millis() as u64);
+            tracing::info!(reports = reports_len, elapsed_ms, "the CKAN wave finished");
             self.say_published(&reports).await;
         }
         // 5g. The same public Endpoints as NGSI-LD entities an agent searches first (T-4500).
         if let Some(catalog) = self.catalog.as_ref() {
             let started = std::time::Instant::now();
             match catalog.converge(repository).await {
-                Ok(Some(run)) if run.upserted + run.deleted > 0 => tracing::info!(
-                    upserted = run.upserted,
-                    deleted = run.deleted,
-                    "the NGSI-LD catalogue was brought up to date"
-                ),
+                Ok(Some(run)) if run.upserted + run.deleted > 0 => {
+                    let (upserted, deleted) = (run.upserted, run.deleted);
+                    tracing::info!(upserted, deleted, "{CATALOGUE_UPDATED}")
+                }
                 Ok(_) => {}
                 Err(err) => {
                     tracing::warn!(error = %err, "the NGSI-LD catalogue was not brought up to date")
                 }
             }
-            tracing::info!(
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "the NGSI-LD catalogue wave finished"
-            );
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            tracing::info!(elapsed_ms, "the NGSI-LD catalogue wave finished");
         }
     }
 
@@ -4672,7 +4648,7 @@ impl Syncer {
         }
         self.status
             .write()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .held_removals = held;
     }
 }
