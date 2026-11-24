@@ -26,7 +26,8 @@
   }
 </style>
 <link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
-{% if let Some(sheet) = chrome.branding.layout.stylesheet %}<link rel="stylesheet" href="{{ chrome.mount_prefix }}/portal-css/{{ sheet.hash }}.css">{% endif %}
+{%- if let Some(sheet) = chrome.branding.layout.stylesheet %}
+<link rel="stylesheet" href="{{ chrome.mount_prefix }}/portal-css/{{ sheet.hash }}.css">{% endif %}
   <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-dock.js"></script>
   <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-copy.js" defer></script>
   <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-forms.js" defer></script>

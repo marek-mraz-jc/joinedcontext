@@ -3163,13 +3163,28 @@ mod tests {
             ))
             .expect("envelope")
         };
-        let perms = effective(&mirror, "no-bootstrap", &eva, ORG_NAMESPACE, TimestampTz::now());
+        let perms = effective(
+            &mirror,
+            "no-bootstrap",
+            &eva,
+            ORG_NAMESPACE,
+            TimestampTz::now(),
+        );
         let doprava = portal("bbsk-doprava", "bbsk");
         assert!(perms.check("Portal", Verb::Propose, Some(&doprava)).is_ok());
         for (target, why) in [
-            (portal("bbsk-default", "bbsk"), "the Organization's default portal"),
-            (portal("barcelona-default", "barcelona"), "another Organization's portal"),
-            (portal("bbsk-doprava", "barcelona"), "its portal moved to another Organization"),
+            (
+                portal("bbsk-default", "bbsk"),
+                "the Organization's default portal",
+            ),
+            (
+                portal("barcelona-default", "barcelona"),
+                "another Organization's portal",
+            ),
+            (
+                portal("bbsk-doprava", "barcelona"),
+                "its portal moved to another Organization",
+            ),
         ] {
             assert!(
                 matches!(

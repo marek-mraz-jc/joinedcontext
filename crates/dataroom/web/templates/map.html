@@ -19,7 +19,8 @@
   }
 </style>
 <link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
-{% if let Some(sheet) = chrome.branding.layout.stylesheet %}<link rel="stylesheet" href="{{ chrome.mount_prefix }}/portal-css/{{ sheet.hash }}.css">{% endif %}
+{%- if let Some(sheet) = chrome.branding.layout.stylesheet %}
+<link rel="stylesheet" href="{{ chrome.mount_prefix }}/portal-css/{{ sheet.hash }}.css">{% endif %}
 </head>
 <body class="jc-embed{% if let Some(sheet) = chrome.branding.layout.stylesheet %} jc-portal-css {{ sheet.class }}{% endif %}">
   <main class="jc-map-page">
