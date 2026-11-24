@@ -230,9 +230,10 @@ var JCRender = (function () {
     var position = {};
     (citations || []).forEach(function (c) {
       if (!c || typeof c.n !== "number") return;
-      var url = typeof c.url === "string" && /^https?:\/\//i.test(c.url) ? c.url : null;
+      var url = typeof c.url === "string" && /^(https?:\/\/|upload:)/i.test(c.url) ? c.url : null;
       var live = Boolean(c.tool);
-      var key = url || (live ? "live:" + (c.endpoint || "") : null);
+      // An uploaded file's passages are one source, whichever page they cite (T-4869).
+      var key = url ? url.replace(/^(upload:.*)#page=\d+$/, "$1") : live ? "live:" + (c.endpoint || "") : null;
       if (!key) return;
       if (!(key in byKey)) {
         byKey[key] = list.length;
@@ -382,39 +383,39 @@ var JCRender = (function () {
     Debate: { sk: "Diskusie", cs: "Diskuse", en: "Debates", de: "Debatten" },
     Survey: { sk: "Dotazníky", cs: "Dotazníky", en: "Surveys", de: "Umfragen" }
   };
-  var YES_NO = { sk: ["Áno", "Nie"], cs: ["Ano", "Ne"], en: ["Yes", "No"], de: ["Ja", "Nein"] };
-  var OF = { sk: "z", cs: "z", en: "of", de: "von" };
-  var DAYS = { sk: "dní", cs: "dní", en: "days", de: "Tagen" };
-  var FIRST = { sk: "prvých", cs: "prvních", en: "first", de: "die ersten" };
+  var YES_NO = { sk: ["Áno", "Nie"], cs: ["Ano", "Ne"], en: ["Yes", "No"], de: ["Ja", "Nein"], fi: ["Kyllä", "Ei"] };
+  var OF = { sk: "z", cs: "z", en: "of", de: "von", fi: "/" };
+  var DAYS = { sk: "dní", cs: "dní", en: "days", de: "Tagen", fi: "päivää" };
+  var FIRST = { sk: "prvých", cs: "prvních", en: "first", de: "die ersten", fi: "ensimmäiset" };
   // A long address in a cell reads as this word, a link (T-4682).
-  var LINK = { sk: "Zdroj", cs: "Zdroj", en: "Source", de: "Quelle" };
+  var LINK = { sk: "Zdroj", cs: "Zdroj", en: "Source", de: "Quelle", fi: "Lähde" };
   // The rows a table shows at once, and of how many it pages (T-7504); the dataset holds the
   // rest (T-4682).
   var ROWS = 20;
   var LISTED = 50;
-  var PAGE = { sk: ["Predchádzajúce", "Ďalšie"], cs: ["Předchozí", "Další"], en: ["Previous", "Next"], de: ["Zurück", "Weiter"] };
+  var PAGE = { sk: ["Predchádzajúce", "Ďalšie"], cs: ["Předchozí", "Další"], en: ["Previous", "Next"], de: ["Zurück", "Weiter"], fi: ["Edellinen", "Seuraava"] };
   // What code computed, said over its chart and as its table's caption (T-7504).
   var METHODS = {
-    count: { sk: "Počet", cs: "Počet", en: "Count", de: "Anzahl" },
-    avg: { sk: "Priemer", cs: "Průměr", en: "Average", de: "Durchschnitt" },
-    sum: { sk: "Súčet", cs: "Součet", en: "Sum", de: "Summe" },
-    max: { sk: "Maximum", cs: "Maximum", en: "Maximum", de: "Maximum" },
-    min: { sk: "Minimum", cs: "Minimum", en: "Minimum", de: "Minimum" },
-    totalCount: { sk: "Počet meraní", cs: "Počet měření", en: "Number of readings", de: "Zahl der Messungen" }
+    count: { sk: "Počet", cs: "Počet", en: "Count", de: "Anzahl", fi: "Määrä" },
+    avg: { sk: "Priemer", cs: "Průměr", en: "Average", de: "Durchschnitt", fi: "Keskiarvo" },
+    sum: { sk: "Súčet", cs: "Součet", en: "Sum", de: "Summe", fi: "Summa" },
+    max: { sk: "Maximum", cs: "Maximum", en: "Maximum", de: "Maximum", fi: "Suurin" },
+    min: { sk: "Minimum", cs: "Minimum", en: "Minimum", de: "Minimum", fi: "Pienin" },
+    totalCount: { sk: "Počet meraní", cs: "Počet měření", en: "Number of readings", de: "Zahl der Messungen", fi: "Mittausten määrä" }
   };
   var PER = {
-    value: { sk: "podľa: {of}", cs: "podle: {of}", en: "by {of}", de: "nach: {of}" },
-    year: { sk: "za rok", cs: "za rok", en: "per year", de: "pro Jahr" },
-    decade: { sk: "za desaťročie", cs: "za desetiletí", en: "per decade", de: "pro Jahrzehnt" },
-    month: { sk: "za mesiac", cs: "za měsíc", en: "per month", de: "pro Monat" },
-    day: { sk: "za deň (UTC)", cs: "za den (UTC)", en: "per day (UTC)", de: "pro Tag (UTC)" },
-    hour: { sk: "za hodinu", cs: "za hodinu", en: "per hour", de: "pro Stunde" },
-    period: { sk: "za interval", cs: "za interval", en: "per interval", de: "pro Intervall" }
+    value: { sk: "podľa: {of}", cs: "podle: {of}", en: "by {of}", de: "nach: {of}", fi: "{of} mukaan" },
+    year: { sk: "za rok", cs: "za rok", en: "per year", de: "pro Jahr", fi: "vuodessa" },
+    decade: { sk: "za desaťročie", cs: "za desetiletí", en: "per decade", de: "pro Jahrzehnt", fi: "vuosikymmenessä" },
+    month: { sk: "za mesiac", cs: "za měsíc", en: "per month", de: "pro Monat", fi: "kuukaudessa" },
+    day: { sk: "za deň (UTC)", cs: "za den (UTC)", en: "per day (UTC)", de: "pro Tag (UTC)", fi: "päivässä (UTC)" },
+    hour: { sk: "za hodinu", cs: "za hodinu", en: "per hour", de: "pro Stunde", fi: "tunnissa" },
+    period: { sk: "za interval", cs: "za interval", en: "per interval", de: "pro Intervall", fi: "jaksossa" }
   };
-  var ONLY = { sk: "v chate je prvých {n}", cs: "v chatu je prvních {n}", en: "the first {n} are listed here", de: "hier stehen die ersten {n}" };
-  var PART = { sk: "len časť obdobia", cs: "jen část období", en: "only part of the period", de: "nur ein Teil des Zeitraums" };
+  var ONLY = { sk: "v chate je prvých {n}", cs: "v chatu je prvních {n}", en: "the first {n} are listed here", de: "hier stehen die ersten {n}", fi: "tässä on ensimmäiset {n}" };
+  var PART = { sk: "len časť obdobia", cs: "jen část období", en: "only part of the period", de: "nur ein Teil des Zeitraums", fi: "vain osa jaksosta" };
   // A row measured a day or more before the table's newest says so beside its time (T-4682).
-  var STALE = { sk: "neaktuálne", cs: "neaktuální", en: "out of date", de: "veraltet" };
+  var STALE = { sk: "neaktuálne", cs: "neaktuální", en: "out of date", de: "veraltet", fi: "vanhentunut" };
   var STALE_MS = 24 * 3600 * 1000;
 
   // `dateObserved` → "Date observed", `AirQualityObserved` → "Air quality observed".
@@ -521,7 +522,8 @@ var JCRender = (function () {
     sk: "Na mape je prvých {n}; ostatné sú v datasete.",
     cs: "Na mapě je prvních {n}; ostatní jsou v datové sadě.",
     en: "The map draws the first {n}; the dataset has the rest.",
-    de: "Die Karte zeigt die ersten {n}; der Datensatz hat den Rest."
+    de: "Die Karte zeigt die ersten {n}; der Datensatz hat den Rest.",
+    fi: "Kartalla on ensimmäiset {n}; loput ovat aineistossa."
   };
 
   /** The answer's map source (T-7755) when it is one this service names, else null. */
@@ -891,7 +893,13 @@ var JCRender = (function () {
       steps: "Steps" },
     cs: { understanding: "Přemýšlím nad otázkou…", searching: "Hledám ve zdrojích", reading: "Čtu živá data",
       history: "Čtu historii dat", schema: "Čtu schéma dat", answering: "Připravuji odpověď…",
-      steps: "Postup" }
+      steps: "Postup" },
+    de: { understanding: "Ich lese Ihre Frage…", searching: "Ich suche in den Quellen", reading: "Ich lese Live-Daten",
+      history: "Ich lese den Verlauf der Daten", schema: "Ich lese das Schema der Daten", answering: "Ich bereite die Antwort vor…",
+      steps: "Schritte" },
+    fi: { understanding: "Luen kysymystäsi…", searching: "Haen lähteistä", reading: "Luen reaaliaikaista dataa",
+      history: "Luen datan historiaa", schema: "Luen datan skeemaa", answering: "Valmistelen vastausta…",
+      steps: "Vaiheet" }
   };
   // The stages that are one step of the answer's work, listed under it (T-4294).
   var STEPS = ["searching", "reading", "history", "schema"];
@@ -900,7 +908,9 @@ var JCRender = (function () {
   var TIMED_WORDS = {
     sk: { route: "Výber zdroja", search: "Vyhľadávanie v zdrojoch", judge: "Kontrola nájdeného", answer: "Odpoveď" },
     en: { route: "Choosing the sources", search: "Searching the sources", judge: "Checking what was found", answer: "Answer" },
-    cs: { route: "Výběr zdroje", search: "Vyhledávání ve zdrojích", judge: "Kontrola nalezeného", answer: "Odpověď" }
+    cs: { route: "Výběr zdroje", search: "Vyhledávání ve zdrojích", judge: "Kontrola nalezeného", answer: "Odpověď" },
+    de: { route: "Auswahl der Quellen", search: "Suche in den Quellen", judge: "Prüfung der Funde", answer: "Antwort" },
+    fi: { route: "Lähteiden valinta", search: "Haku lähteistä", judge: "Löydösten tarkistus", answer: "Vastaus" }
   };
 
   /**
@@ -1330,10 +1340,13 @@ var JCRender = (function () {
   }
 
   /**
-   * The line a failed answer shows: the service's own sentence for a limit, which names when it
-   * resets, while the chat reads the service's language (Slovak); the widget's word otherwise.
+   * The line a failed answer shows: the reset time from `reset` (resetAt's words) when there is
+   * one; else the service's own sentence for a limit, which names when it resets, while the chat
+   * reads the service's language (Slovak); the widget's word otherwise.
    */
-  function said(word, detail, lang, words) {
+  function said(word, detail, lang, words, reset) {
+    // A limit or a busy refusal with its `Retry-After` names the time in every language (T-7790).
+    if (reset && (word === "limit" || word === "busy")) return words[word + "At"].replace("{time}", reset);
     return word === "limit" && lang === "sk" && typeof detail === "string" && detail.trim()
       ? detail.trim()
       : words[word];
@@ -1531,7 +1544,102 @@ var JCRender = (function () {
     };
   }
 
+  /**
+   * One answer's state after one more of its events (T-7790): what the widget and the Portal chat
+   * show of a turn, with no DOM. `turn` is never changed: each event returns a new object, so the
+   * Portal keeps it in React state. `ms`, the time since the question, is kept with each stage.
+   * The answer's text shows as soon as `answer` arrives; its source marks come with `citations`.
+   */
+  function reduce(turn, name, data, ms) {
+    var t = Object.assign({
+      conversation: null, at: null, resumable: null, stages: [], tools: [], scripts: [], data: [],
+      visuals: [], reads: [], text: "", answered: false, citations: null, timed: null, followups: [],
+      error: null, done: false
+    }, turn);
+    var d = data && typeof data === "object" ? data : {};
+    var str = function (v) { return typeof v === "string" ? v : null; };
+    if (name === "conversation") {
+      t.conversation = str(d.id);
+      t.at = str(d.at);
+      t.resumable = str(d.turn);
+    } else if (name === "stage") {
+      t.stages = t.stages.concat([Object.assign({}, d, { ms: ms })]);
+    } else if (name === "tool") {
+      var status = d.status === "done" || d.status === "failed" ? d.status : "started";
+      t.tools = t.tools.concat([{ name: str(d.name), endpoint: str(d.endpoint), status: status }]);
+    } else if (name === "script") {
+      t.scripts = t.scripts.concat([{ code: String(d.code || ""), output: str(d.output) !== null ? d.output : String(d.error || "") }]);
+    } else if (name === "data") {
+      t.data = t.data.concat([d]);
+    } else if (name === "visualization") {
+      t.visuals = t.visuals.concat([d]);
+    } else if (name === "step") {
+      t.reads = t.reads.concat([d]);
+    } else if (name === "delta") {
+      if (!t.answered && str(d.text) !== null) t.text += d.text;
+    } else if (name === "answer") {
+      t.text = d.text === undefined || d.text === null ? "" : String(d.text);
+      t.answered = true;
+    } else if (name === "citations") {
+      t.citations = Array.isArray(data) ? data : [];
+    } else if (name === "followups") {
+      t.followups = followups(d);
+    } else if (name === "done") {
+      t.done = true;
+      if (d.stagesMs && typeof d.stagesMs === "object") t.timed = d.stagesMs;
+    } else if (name === "error") {
+      var code = typeof d.status === "number" ? d.status : null;
+      t.error = { word: trouble(code, d.title), status: code, title: str(d.title), detail: str(d.detail) };
+    }
+    return t;
+  }
+
+  // A cell a spreadsheet would run as a formula starts with one of these (OWASP CSV injection).
+  var FORMULA = /^[=+\-@\t\r]/;
+
+  /**
+   * A data table as CSV (T-7790, T-7775 item 7): RFC 4180 quoting, CRLF rows, a UTF-8 BOM so a
+   * spreadsheet reads the letters, and a leading apostrophe on a cell a spreadsheet would run as a
+   * formula. Values are written as the table holds them; null when there are no columns.
+   */
+  function csv(data) {
+    if (!data || !Array.isArray(data.columns) || data.columns.length === 0) return null;
+    var cell = function (v) {
+      var s = v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+      // A number stays a number: -3 is a value, never a formula.
+      if (typeof v !== "number" && FORMULA.test(s)) s = "'" + s;
+      return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    var rows = [data.columns].concat((Array.isArray(data.rows) ? data.rows : []).filter(Array.isArray));
+    return "\ufeff" + rows.map(function (row) {
+      return data.columns.map(function (_, i) { return cell(row[i]); }).join(",");
+    }).join("\r\n") + "\r\n";
+  }
+
+  /** A CSV file's name from a table's caption: `[A-Za-z0-9._-]`, at most 80, then `.csv`. */
+  function csvName(caption) {
+    var base = String(caption || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|-+$/g, "").slice(0, 80);
+    return (base || "data") + ".csv";
+  }
+
+  /**
+   * When a limit resets, from a `Retry-After` of `seconds` (T-7790): the time alone today, else
+   * the day and the time, in the reader's language; null without a usable value.
+   */
+  function resetAt(seconds, lang, now) {
+    var s = Number(seconds);
+    if (!isFinite(s) || s <= 0 || s > 400 * 86400) return null;
+    now = typeof now === "number" ? now : Date.now();
+    var at = new Date(now + s * 1000);
+    var locale = /^[a-z]{2,3}$/.test(lang) && Intl.DateTimeFormat.supportedLocalesOf([lang]).length > 0 ? lang : "en";
+    var time = { hour: "numeric", minute: "2-digit" };
+    var sameDay = new Date(now).toDateString() === at.toDateString();
+    return new Intl.DateTimeFormat(locale, sameDay ? time : Object.assign({ day: "numeric", month: "numeric" }, time)).format(at);
+  }
+
   return {
+    reduce: reduce, csv: csv, csvName: csvName, resetAt: resetAt,
     closeTargets: closeTargets, connector: connector, dataset: dataset, view: view,
     sourceCount: sourceCount, badges: badges, chosen: chosen, asksLanguage: asksLanguage, ordered: ordered,
     followups: followups, restore: restore, remember: remember, stamp: stamp,

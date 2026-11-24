@@ -16,7 +16,8 @@
       script: "Skript, ktorý asistent spustil", failed: "Odpoveď sa nepodarilo načítať. Skúste to znova.",
       offline: "Nepodarilo sa spojiť so službou. Skontrolujte pripojenie a skúste to znova.",
       busy: "Položili ste veľa otázok naraz. Počkajte chvíľu a skúste to znova.",
-      paused: "Asistent teraz neodpovedá. Skúste to neskôr.", limit: "Asistent dosiahol svoj limit. Skúste to znova neskôr.", you: "Vy", assistant: "Asistent", bot: "AI asistent",
+      paused: "Asistent teraz neodpovedá. Skúste to neskôr.", limit: "Asistent dosiahol svoj limit. Skúste to znova neskôr.",
+      limitAt: "Asistent dosiahol svoj limit. Skúste to znova po {time}.", busyAt: "Položili ste veľa otázok naraz. Skúste to znova po {time}.", you: "Vy", assistant: "Asistent", bot: "AI asistent",
       hello: "Dobrý deň! Na čo sa chcete opýtať?",
       reading: "Čítam", live: "Živé dáta", unlisted: "nie je v katalógu otvorených dát", source: "Zdroj", allRows: "Zobraziť všetky v datasete", fresh: "Nová konverzácia", expand: "Celá obrazovka", collapse: "Zmenšiť", copy: "Kopírovať",
       copied: "Odpoveď je skopírovaná.", selected: "Odpoveď je označená: stlačte Ctrl+C.", close: "Zavrieť", suggested: "Môžete sa opýtať",
@@ -47,7 +48,8 @@
       script: "Script the assistant ran", failed: "The answer could not be loaded. Try again.",
       offline: "The service could not be reached. Check your connection and try again.",
       busy: "You asked many questions at once. Wait a moment and try again.",
-      paused: "The assistant is not answering right now. Try again later.", limit: "The assistant has reached its limit. Try again later.", you: "You", assistant: "Assistant", bot: "AI assistant",
+      paused: "The assistant is not answering right now. Try again later.", limit: "The assistant has reached its limit. Try again later.",
+      limitAt: "The assistant has reached its limit. Try again after {time}.", busyAt: "You asked many questions at once. Try again after {time}.", you: "You", assistant: "Assistant", bot: "AI assistant",
       hello: "Hello! What would you like to ask?",
       reading: "Reading", live: "Live data", unlisted: "not in the open data catalogue", source: "Source", allRows: "Show all in the dataset", fresh: "New conversation", expand: "Full screen", collapse: "Collapse", copy: "Copy",
       copied: "The answer is copied.", selected: "The answer is selected: press Ctrl+C.", close: "Close", suggested: "You can ask",
@@ -78,7 +80,8 @@
       script: "Skript, který asistent spustil", failed: "Odpověď se nepodařilo načíst. Zkuste to znovu.",
       offline: "Službu se nepodařilo zastihnout. Zkontrolujte připojení a zkuste to znovu.",
       busy: "Položili jste mnoho otázek najednou. Chvíli počkejte a zkuste to znovu.",
-      paused: "Asistent teď neodpovídá. Zkuste to později.", limit: "Asistent dosáhl svého limitu. Zkuste to znovu později.", you: "Vy", assistant: "Asistent", bot: "AI asistent",
+      paused: "Asistent teď neodpovídá. Zkuste to později.", limit: "Asistent dosáhl svého limitu. Zkuste to znovu později.",
+      limitAt: "Asistent dosáhl svého limitu. Zkuste to znovu po {time}.", busyAt: "Položili jste mnoho otázek najednou. Zkuste to znovu po {time}.", you: "Vy", assistant: "Asistent", bot: "AI asistent",
       hello: "Dobrý den! Na co se chcete zeptat?",
       reading: "Čtu", live: "Živá data", unlisted: "není v katalogu otevřených dat", source: "Zdroj", allRows: "Zobrazit všechny v datové sadě", fresh: "Nová konverzace", expand: "Celá obrazovka", collapse: "Zmenšit", copy: "Kopírovat",
       copied: "Odpověď je zkopírovaná.", selected: "Odpověď je označená: stiskněte Ctrl+C.", close: "Zavřít", suggested: "Můžete se zeptat",
@@ -103,10 +106,74 @@
       askData: "Chcete se zeptat na zpracování údajů nebo požádat o přístup, opravu či smazání? Napište nám:",
       documents: "Informace o ochraně osobních údajů", moreInfo: "Více", lessInfo: "Méně", tabTable: "Tabulka", tabMap: "Mapa", chart: "Graf",
       dock: "Připnout k okraji", undock: "Plovoucí okno", follow: "Otevírat dataset automaticky",
-      opened: "Otevřel jsem dataset {title}", back: "Zpět", changed: "Stránka změněna na dataset {title}" }
+      opened: "Otevřel jsem dataset {title}", back: "Zpět", changed: "Stránka změněna na dataset {title}" },
+    de: { ask: "Stellen Sie Ihre Frage", send: "Senden", stop: "Stopp", stopped: "Sie haben die Antwort gestoppt.",
+      tools: "Live-Daten, die der Assistent lesen darf", thinking: "Ich suche…",
+      script: "Skript, das der Assistent ausgeführt hat", failed: "Die Antwort konnte nicht geladen werden. Versuchen Sie es erneut.",
+      offline: "Der Dienst ist nicht erreichbar. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut.",
+      busy: "Sie haben viele Fragen auf einmal gestellt. Warten Sie kurz und versuchen Sie es erneut.",
+      paused: "Der Assistent antwortet gerade nicht. Versuchen Sie es später.", limit: "Der Assistent hat sein Limit erreicht. Versuchen Sie es später erneut.",
+      limitAt: "Der Assistent hat sein Limit erreicht. Versuchen Sie es nach {time} erneut.", busyAt: "Sie haben viele Fragen auf einmal gestellt. Versuchen Sie es nach {time} erneut.", you: "Sie", assistant: "Assistent", bot: "KI-Assistent",
+      hello: "Guten Tag! Was möchten Sie fragen?",
+      reading: "Ich lese", live: "Live-Daten", unlisted: "nicht im Katalog offener Daten", source: "Quelle", allRows: "Alle im Datensatz anzeigen", fresh: "Neues Gespräch", expand: "Vollbild", collapse: "Verkleinern", copy: "Kopieren",
+      copied: "Die Antwort ist kopiert.", selected: "Die Antwort ist markiert: drücken Sie Strg+C.", close: "Schließen", suggested: "Sie können fragen",
+      dataset: "Datensatz öffnen", download: "Daten herunterladen", geojson: "GeoJSON herunterladen", language: "Sprache",
+      table: "Die Daten, aus denen der Assistent antwortet", up: "Hilfreiche Antwort", down: "Nicht hilfreich",
+      missing: "Was hat gefehlt? (optional)", sendNote: "Senden", skip: "Überspringen",
+      thanks: "Danke für Ihre Bewertung.", more: "Weitere Fragen", contact: "Kontakt", map: "Auf der Karte zeigen", steps: "Schritte", retry: "Erneut versuchen",
+      full: "Dieses Gespräch ist schon lang. Fahren Sie in einem neuen Gespräch fort; ich stelle Ihre Frage dort erneut.",
+      unreachable: "Der Assistent erreicht sein Modell gerade nicht. Versuchen Sie es in einer Minute erneut.",
+      unanswered: "Der Assistent konnte keine Antwort zusammenstellen. Fragen Sie mit anderen Worten.",
+      slow: "Die Antwort hat zu lange gedauert. Stellen Sie eine kürzere oder andere Frage.",
+      declined: "Auf diese Frage antwortet der Assistent nicht.",
+      choose: "Wählen Sie Ihre Sprache",
+      verify: "Bitte prüfen Sie wichtige Informationen.", privacy: "Datenschutz", aboutTitle: "Über diesen Assistenten",
+      aboutAi: "Die Antworten erstellt künstliche Intelligenz, sie können Fehler enthalten. Prüfen Sie wichtige Informationen in offiziellen Quellen. Geben Sie keine sensiblen personenbezogenen Daten ein.",
+      remember: "Gespräch in diesem Browser merken",
+      rememberHint: "Das Gespräch bleibt höchstens 90 Tage nach der letzten Änderung in diesem Browser; Ausschalten löscht es sofort. Schalten Sie das auf einem geteilten Gerät nicht ein.",
+      keptHeading: "Gespräche",
+      keptDays: "Wir speichern den Inhalt der Gespräche {days} Tage, um den Dienst zu erbringen, ihn zu prüfen und Fehler zu beheben. Der Verlauf enthält die Fragen und die gezeigten Antworten.",
+      keptNone: "Wir speichern keinen Gesprächsinhalt.",
+      askHeading: "Fragen zu personenbezogenen Daten",
+      askData: "Möchten Sie nach der Verarbeitung der Daten fragen oder Auskunft, Berichtigung oder Löschung verlangen? Schreiben Sie uns:",
+      documents: "Datenschutzinformationen", moreInfo: "Mehr", lessInfo: "Weniger", tabTable: "Tabelle", tabMap: "Karte", chart: "Diagramm",
+      dock: "Am Rand andocken", undock: "Schwebendes Fenster", follow: "Datensatz automatisch öffnen",
+      opened: "Ich habe den Datensatz {title} geöffnet", back: "Zurück", changed: "Die Seite zeigt jetzt den Datensatz {title}" },
+    fi: { ask: "Kirjoita kysymyksesi", send: "Lähetä", stop: "Pysäytä", stopped: "Pysäytit vastauksen.",
+      tools: "Reaaliaikainen data, jota avustaja saa lukea", thinking: "Etsin…",
+      script: "Avustajan ajama skripti", failed: "Vastausta ei voitu ladata. Yritä uudelleen.",
+      offline: "Palveluun ei saatu yhteyttä. Tarkista yhteys ja yritä uudelleen.",
+      busy: "Kysyit monta kysymystä kerralla. Odota hetki ja yritä uudelleen.",
+      paused: "Avustaja ei vastaa juuri nyt. Yritä myöhemmin.", limit: "Avustaja on saavuttanut rajansa. Yritä myöhemmin uudelleen.",
+      limitAt: "Avustaja on saavuttanut rajansa. Yritä uudelleen klo {time} jälkeen.", busyAt: "Kysyit monta kysymystä kerralla. Yritä uudelleen klo {time} jälkeen.", you: "Sinä", assistant: "Avustaja", bot: "Tekoälyavustaja",
+      hello: "Hei! Mitä haluaisit kysyä?",
+      reading: "Luen", live: "Reaaliaikainen data", unlisted: "ei avoimen datan katalogissa", source: "Lähde", allRows: "Näytä kaikki aineistossa", fresh: "Uusi keskustelu", expand: "Koko näyttö", collapse: "Pienennä", copy: "Kopioi",
+      copied: "Vastaus on kopioitu.", selected: "Vastaus on valittu: paina Ctrl+C.", close: "Sulje", suggested: "Voit kysyä",
+      dataset: "Avaa aineisto", download: "Lataa data", geojson: "Lataa GeoJSON", language: "Kieli",
+      table: "Data, josta avustaja vastaa", up: "Hyödyllinen vastaus", down: "Ei hyödyllinen",
+      missing: "Mitä puuttui? (vapaaehtoinen)", sendNote: "Lähetä", skip: "Ohita",
+      thanks: "Kiitos palautteesta.", more: "Lisää kysymyksiä", contact: "Yhteystiedot", map: "Näytä kartalla", steps: "Vaiheet", retry: "Yritä uudelleen",
+      full: "Tämä keskustelu on jo pitkä. Jatka uudessa keskustelussa; kysyn kysymyksesi siellä uudelleen.",
+      unreachable: "Avustaja ei saa juuri nyt yhteyttä malliinsa. Yritä minuutin kuluttua uudelleen.",
+      unanswered: "Avustaja ei pystynyt koostamaan vastausta. Kysy toisin sanoin.",
+      slow: "Vastaus kesti liian kauan. Kysy lyhyemmin tai eri tavalla.",
+      declined: "Avustaja ei vastaa tähän kysymykseen.",
+      choose: "Valitse kieli",
+      verify: "Tarkista tärkeät tiedot.", privacy: "Tietosuoja", aboutTitle: "Tietoa tästä avustajasta",
+      aboutAi: "Vastaukset tuottaa tekoäly, ja niissä voi olla virheitä. Tarkista tärkeät tiedot virallisista lähteistä. Älä syötä arkaluonteisia henkilötietoja.",
+      remember: "Muista keskustelu tässä selaimessa",
+      rememberHint: "Keskustelu säilyy tässä selaimessa enintään 90 päivää viimeisestä muutoksesta; poiskytkentä poistaa sen heti. Älä ota tätä käyttöön jaetulla laitteella.",
+      keptHeading: "Keskustelut",
+      keptDays: "Säilytämme keskustelujen sisällön {days} päivää palvelun tarjoamista, tarkastusta ja virheiden korjaamista varten. Historia sisältää kysymykset ja näytetyt vastaukset.",
+      keptNone: "Emme säilytä keskustelujen sisältöä.",
+      askHeading: "Kysymykset henkilötiedoista",
+      askData: "Haluatko kysyä tietojen käsittelystä tai pyytää pääsyä, oikaisua tai poistoa? Kirjoita meille:",
+      documents: "Tietosuojatiedot", moreInfo: "Lisää", lessInfo: "Vähemmän", tabTable: "Taulukko", tabMap: "Kartta", chart: "Kaavio",
+      dock: "Kiinnitä reunaan", undock: "Kelluva ikkuna", follow: "Avaa aineisto automaattisesti",
+      opened: "Avasin aineiston {title}", back: "Takaisin", changed: "Sivu vaihtui aineistoon {title}" }
   };
   // Each language's name in itself, for the toggle's labels and the `ask` mode's chooser (T-4283).
-  var NATIVE = { sk: "Slovensky", en: "English", cs: "Česky" };
+  var NATIVE = { sk: "Slovensky", en: "English", cs: "Česky", de: "Deutsch", fi: "Suomi" };
   var params = new URLSearchParams(location.search);
   var embedded = params.get("embed") === "1" && window.parent !== window;
   // A light host page asks for the light scheme (T-4761): a cross-origin frame never inherits
@@ -718,7 +785,7 @@
     if (!item.streaming) return;
     var follow = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     var linkable = function (url) { return JCRender.linkHost(url, config.linkHosts || []); };
-    var blocks = JCRender.markdown(JCRender.streamable(item.text), null, linkable);
+    var blocks = JCRender.markdown(item.final ? item.text : JCRender.streamable(item.text), null, linkable);
     var keys = blocks.map(function (block) { return JSON.stringify(block); });
     var shown = item.painted || [];
     var same = 0;
@@ -1192,7 +1259,7 @@
       item.streaming = null;
     }
     item.classList.add("jc-error");
-    var p = el("p", "", JCRender.said(word, detail, lang, w));
+    var p = el("p", "", JCRender.said(word, detail, lang, w, JCRender.resetAt(item.retryAfter, lang)));
     p.setAttribute("role", "alert");
     item.appendChild(p);
     if (word === "full") {
@@ -1275,13 +1342,22 @@
       item.text = (item.text || "") + data.text;
       if (!item.frame) item.frame = requestAnimationFrame(function () { paint(item); });
     } else if (name === "answer") {
-      // Shown with its citations, which come next; `ask` shows it alone if they never do.
+      // Shown at once (T-7790); its source marks come with the citations, which show it again,
+      // and `read` shows it alone if they never do.
       if (item.status) {
         item.status.remove();
         item.status = null;
       }
       item.pending = String(data.text);
       history.push({ role: "assistant", text: item.pending.slice(0, 4000) });
+      if (!item.streaming) {
+        item.streaming = el("div", "jc-answer jc-streaming");
+        item.insertBefore(item.streaming, item.visuals || null);
+      }
+      item.text = item.pending;
+      item.final = true;
+      if (item.frame) cancelAnimationFrame(item.frame);
+      paint(item);
     } else if (name === "citations") {
       var cited = Array.isArray(data) ? data : [];
       item.cited = cited;
@@ -1492,6 +1568,8 @@
   // The answer's events as they stream, then its final view and, when it is about one dataset,
   // the host is asked to open it.
   async function read(response, item) {
+    // When a limit resets, for the line that says so (T-7790).
+    item.retryAfter = response.headers.get("Retry-After");
     if (!response.ok || !response.body) {
       var problem = await response.json().catch(function () { return {}; });
       fail(item, refusal(response.status, problem.title), problem.detail);
@@ -1654,11 +1732,21 @@
     event.preventDefault();
     submit(input.value);
   });
-  stop.addEventListener("click", function () {
-    if (busy) busy.abort();
-  });
+  // Stop ends the answer on the server too (T-7790): a held turn would otherwise run on and spend.
+  function halt() {
+    if (!busy) return;
+    var id = live && live.resumable;
+    busy.abort();
+    if (!id) return;
+    visitorToken().then(function (held) {
+      return fetch(api + "/api/v1/d/" + encodeURIComponent(config.publicId) + "/turns/" + encodeURIComponent(id) + "/cancel", {
+        method: "POST", headers: { "X-JC-Visitor": held.token }, credentials: "omit"
+      });
+    }).catch(function () { /* the answer still ends at its own limit */ });
+  }
+  stop.addEventListener("click", halt);
   fresh.addEventListener("click", function () {
-    if (busy) busy.abort();
+    halt();
     conversation = null;
     history = [];
     turns = 0;
