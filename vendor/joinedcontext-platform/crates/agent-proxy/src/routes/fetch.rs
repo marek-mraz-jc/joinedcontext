@@ -373,15 +373,15 @@ pub mod fuzzing {
     /// A URL the rules let through is https, on the list, and carries no credential; so is every
     /// redirect hop from it, and a content type is judged without a panic.
     pub fn url(raw: &str, location: &str, allowed: &[String]) {
-        let holds = |url: &Url| {
-            assert_eq!(url.scheme(), "https");
-            assert!(url.username().is_empty() && url.password().is_none());
-            let host = url.host_str().unwrap_or_default();
-            assert!(allowed.iter().any(|entry| entry.eq_ignore_ascii_case(host)));
-            assert!(url
-                .query_pairs()
-                .all(|(name, _)| !CREDENTIAL_PARAMETERS.contains(&name.to_ascii_lowercase().as_str())));
-        };
+        let holds =
+            |url: &Url| {
+                assert_eq!(url.scheme(), "https");
+                assert!(url.username().is_empty() && url.password().is_none());
+                let host = url.host_str().unwrap_or_default();
+                assert!(allowed.iter().any(|entry| entry.eq_ignore_ascii_case(host)));
+                assert!(url.query_pairs().all(|(name, _)| !CREDENTIAL_PARAMETERS
+                    .contains(&name.to_ascii_lowercase().as_str())));
+            };
         if let Ok(url) = checked(raw, allowed) {
             holds(&url);
             if let Ok(next) = next_hop(&url, location, allowed) {

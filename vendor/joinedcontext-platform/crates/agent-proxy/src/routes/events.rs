@@ -51,7 +51,8 @@ pub mod fuzzing {
     /// A payload the redaction leaves alone is the payload it was given.
     pub fn payload(payload: &serde_json::Value) {
         let out = super::redacted(payload);
-        if crate::routes::diagnostics::redact(&payload.to_string()) == payload.to_string() {
+        let text = payload.to_string();
+        if crate::routes::diagnostics::redact(&text) == text {
             assert_eq!(&out, payload);
         }
     }

@@ -261,7 +261,10 @@ mod tests {
         );
         resolver.cache.write().await.insert(
             "run-1".to_owned(),
-            (Instant::now() - Duration::from_secs(1), Arc::new(run("building"))),
+            (
+                Instant::now() - Duration::from_secs(1),
+                Arc::new(run("building")),
+            ),
         );
         assert!(matches!(
             resolver.resolve("run-1").await,

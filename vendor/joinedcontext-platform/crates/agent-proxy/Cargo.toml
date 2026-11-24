@@ -45,9 +45,15 @@ url = "2"
 [dev-dependencies]
 agent-proxy = { path = ".", features = ["test-stub"] }
 tower = { version = "0.5", features = ["util"] }
+# A paused clock for the stream's 120 s idle cut (llm_stream_edges_tests.rs, T-7795).
+tokio = { version = "1", features = ["full", "test-util"] }
 # Captures the proxy's log lines, to prove no token is written to one; already in the tree via jc-core.
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 wiremock = "0.6"
+# A local https upstream for the fetch and packages routes, which reach https alone (T-7795); both
+# already in the lock through the assistant's suites, with the same features.
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 
 [package.metadata.cargo-machete]
 # Declared only to turn on its getrandom feature for argon2's OsRng (data_credential.rs).

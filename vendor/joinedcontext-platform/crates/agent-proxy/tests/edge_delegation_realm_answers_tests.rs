@@ -161,8 +161,14 @@ async fn an_exchange_the_realm_breaks_off_or_garbles_binds_nothing() {
         .await;
         let grants = Grants::new(config(&realm, &[]));
         let bound = grants.bind(&run(), PERSON_TOKEN).await;
-        assert!(matches!(bound, Err(BindError::Transport(_))), "{case}: {bound:?}");
-        assert!(matches!(grants.token("run-1").await, Err(GrantError::Missing)), "{case}");
+        assert!(
+            matches!(bound, Err(BindError::Transport(_))),
+            "{case}: {bound:?}"
+        );
+        assert!(
+            matches!(grants.token("run-1").await, Err(GrantError::Missing)),
+            "{case}"
+        );
     }
     let realm = Realm::start(|path, body| {
         if path.ends_with("/introspect") {
@@ -238,7 +244,10 @@ async fn a_refresh_the_realm_fails_keeps_the_grant_and_a_new_refresh_token_is_ke
     for case in 0..3 {
         *step.lock().expect("the step") = case;
         let token = grants.token("run-1").await;
-        assert!(matches!(token, Err(GrantError::Transport(_))), "{case}: {token:?}");
+        assert!(
+            matches!(token, Err(GrantError::Transport(_))),
+            "{case}: {token:?}"
+        );
     }
     *step.lock().expect("the step") = 3;
     assert_eq!(grants.token("run-1").await.expect("a token"), "delegated-1");
@@ -246,14 +255,19 @@ async fn a_refresh_the_realm_fails_keeps_the_grant_and_a_new_refresh_token_is_ke
     assert_eq!(grants.token("run-1").await.expect("a token"), "delegated-1");
     let refreshes = realm.bodies_at("/token");
     let last = refreshes.last().expect("a refresh");
-    assert!(last.contains("refresh_token=rotated-refresh-token"), "{last}");
+    assert!(
+        last.contains("refresh_token=rotated-refresh-token"),
+        "{last}"
+    );
 }
 
 /// Ending a run that holds no grant asks the realm nothing.
 #[tokio::test]
 async fn ending_a_run_without_a_grant_asks_the_realm_nothing() {
     let realm = Realm::start(|_, _| reply(200, "{}")).await;
-    Grants::new(config(&realm, &[])).end("run-without-grant").await;
+    Grants::new(config(&realm, &[]))
+        .end("run-without-grant")
+        .await;
     assert!(realm.paths().is_empty(), "{:?}", realm.paths());
 }
 
@@ -276,13 +290,25 @@ async fn a_revocation_refused_or_unheard_drops_the_grant_and_is_logged_without_t
         let grants = Grants::new(config(&realm, &[]));
         grants.bind(&run(), PERSON_TOKEN).await.expect("bound");
         grants.end("run-1").await;
-        assert!(matches!(grants.token("run-1").await, Err(GrantError::Missing)), "{case}");
+        assert!(
+            matches!(grants.token("run-1").await, Err(GrantError::Missing)),
+            "{case}"
+        );
         assert_eq!(realm.bodies_at("/revoke").len(), 1, "{case}");
     }
     let lines = captured();
-    assert!(lines.contains("the realm refused to revoke the run's grant"), "{lines}");
-    assert!(lines.contains("the run's grant could not be revoked"), "{lines}");
-    assert!(!lines.contains(REFRESH), "a refresh token reached a log line");
+    assert!(
+        lines.contains("the realm refused to revoke the run's grant"),
+        "{lines}"
+    );
+    assert!(
+        lines.contains("the run's grant could not be revoked"),
+        "{lines}"
+    );
+    assert!(
+        !lines.contains(REFRESH),
+        "a refresh token reached a log line"
+    );
 }
 
 /// A proxy whose client credential cannot be read at the end of a run revokes nothing, drops
@@ -315,6 +341,34 @@ async fn a_revocation_without_a_readable_client_credential_is_logged_and_sends_n
     grants.end("run-1").await;
     let _ = std::fs::remove_dir_all(&dir);
     assert!(realm.bodies_at("/revoke").is_empty());
-    assert!(matches!(grants.token("run-1").await, Err(GrantError::Missing)));
+    assert!(matches!(
+        grants.token("run-1").await,
+        Err(GrantError::Missing)
+    ));
     assert!(captured().contains("the run's grant could not be revoked"));
+}
+
+/// A token endpoint the deployment names without the `/token` ending revokes beside it, at
+/// `{endpoint}/revoke` (T-7795).
+#[tokio::test]
+async fn a_token_endpoint_named_otherwise_revokes_beside_it() {
+    let realm = Realm::start(|path, body| {
+        if path.ends_with("/introspect") {
+            return introspection(body);
+        }
+        if path.ends_with("/revoke") {
+            return reply(200, "{}");
+        }
+        exchange(Some(REFRESH))
+    })
+    .await;
+    let endpoint = format!("{}/oauth2/exchange", realm.upstream.base);
+    let grants = Grants::new(config(&realm, &[("JC_OIDC_TOKEN_URL", endpoint)]));
+    grants.bind(&run(), PERSON_TOKEN).await.expect("bound");
+    grants.end("run-1").await;
+    assert!(
+        realm.paths().iter().any(|p| p == "/oauth2/exchange/revoke"),
+        "{:?}",
+        realm.paths()
+    );
 }

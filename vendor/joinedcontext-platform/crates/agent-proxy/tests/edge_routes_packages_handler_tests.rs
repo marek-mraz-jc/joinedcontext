@@ -168,7 +168,12 @@ async fn a_space_stays_inside_one_segment_and_a_control_character_is_refused() {
             &format!("/v1/packages/registry.invalid/{rest}"),
         )
         .await;
-        assert_eq!(response.status(), status, "'{rest}' answered {}", response.status());
+        assert_eq!(
+            response.status(),
+            status,
+            "'{rest}' answered {}",
+            response.status()
+        );
     }
 }
 

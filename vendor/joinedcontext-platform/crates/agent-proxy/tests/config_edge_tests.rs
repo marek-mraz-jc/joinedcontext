@@ -60,8 +60,11 @@ fn a_number_that_is_not_one_is_refused_and_a_blank_one_is_the_default() {
             }
         }
     }
-    let config = with(&[("JC_MODEL_PROBE_SECS", "  "), ("JC_DAILY_TOKENS_OTHER", " 42 ")])
-        .expect("a config");
+    let config = with(&[
+        ("JC_MODEL_PROBE_SECS", "  "),
+        ("JC_DAILY_TOKENS_OTHER", " 42 "),
+    ])
+    .expect("a config");
     assert_eq!(config.model_probe_secs, 900);
     assert_eq!(config.daily_caps.other, 42);
 }
@@ -115,11 +118,17 @@ fn an_organization_realm_list_that_breaks_a_rule_is_refused_with_its_reason() {
             "empty or listed twice",
         ),
         (
-            format!("[{}]", realm("bbsk", "ftp://idm.bbsk.sk/realms/bbsk", certs)),
+            format!(
+                "[{}]",
+                realm("bbsk", "ftp://idm.bbsk.sk/realms/bbsk", certs)
+            ),
             "is not an http(s) URL",
         ),
         (
-            format!("[{}]", realm("bbsk", "https://idm.bbsk.sk/realms/bbsk", "not a url")),
+            format!(
+                "[{}]",
+                realm("bbsk", "https://idm.bbsk.sk/realms/bbsk", "not a url")
+            ),
             "is not an http(s) URL",
         ),
     ] {
@@ -147,7 +156,10 @@ fn a_secret_file_that_cannot_be_read_names_the_file() {
     std::fs::write(&file, "forge-token-from-file\n").expect("the secret file");
     let config = with(&[("JC_FORGE_TOKEN_FILE", &file.display().to_string())]);
     let _ = std::fs::remove_file(&file);
-    assert_eq!(config.expect("a config").forge_token, "forge-token-from-file");
+    assert_eq!(
+        config.expect("a config").forge_token,
+        "forge-token-from-file"
+    );
 }
 
 /// The proxy does not start without the forge token or the model key, and names which.
@@ -155,9 +167,15 @@ fn a_secret_file_that_cannot_be_read_names_the_file() {
 fn a_proxy_without_its_forge_token_or_model_key_names_the_missing_one() {
     let secret = ("JC_OIDC_CLIENT_SECRET", "s");
     let no_forge = with(&[secret, ("JC_MODEL_KEY", "k")]).expect("a config");
-    assert!(matches!(no_forge.require_secrets(), Err(ConfigError::Missing("JC_FORGE_TOKEN_FILE"))));
+    assert!(matches!(
+        no_forge.require_secrets(),
+        Err(ConfigError::Missing("JC_FORGE_TOKEN_FILE"))
+    ));
     let no_key = with(&[secret, ("JC_FORGE_TOKEN", "f")]).expect("a config");
-    assert!(matches!(no_key.require_secrets(), Err(ConfigError::Missing("JC_MODEL_KEY_FILE"))));
+    assert!(matches!(
+        no_key.require_secrets(),
+        Err(ConfigError::Missing("JC_MODEL_KEY_FILE"))
+    ));
     let whole = with(&[secret, ("JC_FORGE_TOKEN", "f"), ("JC_MODEL_KEY", "k")]).expect("a config");
     assert!(whole.require_secrets().is_ok());
 }

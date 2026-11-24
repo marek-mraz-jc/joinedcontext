@@ -124,7 +124,7 @@ pub async fn serve(
     config: config::Config,
     listener: tokio::net::TcpListener,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     config.require_secrets()?;
     tracing::info!(bind = %config.bind, "starting jc-agent-proxy daemon");
     let config = Arc::new(config);

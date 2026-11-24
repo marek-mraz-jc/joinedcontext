@@ -889,7 +889,9 @@ fn stream_through(
         loop {
             // A caller gone or a provider silent past STREAM_IDLE ends the relay: neither the
             // task nor the upstream socket outlives the call (the client has no total timeout).
+            // The caller is asked first, so a send that found it gone ends the relay here.
             let next = tokio::select! {
+                biased;
                 () = tx.closed() => {
                     whole = false;
                     break;
@@ -912,10 +914,7 @@ fn stream_through(
                 Ok(chunk) => {
                     bytes += chunk.len();
                     usage.feed(&chunk);
-                    if tx.send(Ok(chunk)).await.is_err() {
-                        whole = false;
-                        break;
-                    }
+                    let _ = tx.send(Ok(chunk)).await;
                 }
                 Err(err) => {
                     whole = false;
@@ -979,12 +978,19 @@ pub mod fuzzing {
         let _ = provider_refusal(&bytes);
         let sent = routed(bytes.clone(), routes);
         if !object || routes {
-            assert_eq!(sent, bytes, "only an object loses its provider, and only off OpenRouter");
+            assert_eq!(
+                sent, bytes,
+                "only an object loses its provider, and only off OpenRouter"
+            );
         }
         let sent = with_model(bytes.clone(), model);
         if object && !model.is_empty() {
             let named: Value = serde_json::from_slice(&sent).expect("an object stays JSON");
-            assert_eq!(named["model"], json!(model), "the run's model is the one sent");
+            assert_eq!(
+                named["model"],
+                json!(model),
+                "the run's model is the one sent"
+            );
         } else {
             assert_eq!(sent, bytes);
         }
@@ -1309,7 +1315,11 @@ mod tests {
     fn a_stream_body_the_usage_flag_cannot_join_is_sent_as_it_came() {
         for body in ["[true]", r#"{"stream":true,"stream_options":"yes"}"#] {
             let sent = Bytes::from(body.to_owned());
-            assert_eq!(with_stream_usage(&sent, "v1/chat/completions"), sent, "{body}");
+            assert_eq!(
+                with_stream_usage(&sent, "v1/chat/completions"),
+                sent,
+                "{body}"
+            );
         }
         let asked: Value = serde_json::from_slice(&with_stream_usage(
             &Bytes::from_static(br#"{"stream":true,"stream_options":{"include_usage":false}}"#),
@@ -1329,7 +1339,9 @@ mod tests {
         huge.extend_from_slice(b"\"}}\n");
         usage.feed(&huge);
         assert_eq!(usage.tokens(), None, "the cut line counted nothing");
-        usage.feed(b"data: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"cost\":0.25}}\n");
+        usage.feed(
+            b"data: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"cost\":0.25}}\n",
+        );
         assert_eq!(usage.tokens(), Some(7));
         assert_eq!(usage.cost, Some(0.25));
         assert!(usage.line.is_empty());
