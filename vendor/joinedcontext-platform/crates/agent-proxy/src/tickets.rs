@@ -87,7 +87,22 @@ pub(crate) fn digests_equal(a: &[u8; 32], b: &[u8; 32]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::TicketCache;
+    use super::{digests_equal, TicketCache};
+
+    /// Digests that differ in any byte are unequal, two bytes differing the same way included:
+    /// the differences add up, they never cancel (T-7795).
+    #[test]
+    fn digests_differing_anywhere_are_unequal() {
+        let a = [7u8; 32];
+        assert!(digests_equal(&a, &a));
+        let mut once = a;
+        once[31] ^= 1;
+        assert!(!digests_equal(&a, &once));
+        let mut twice = a;
+        twice[0] ^= 1;
+        twice[1] ^= 1;
+        assert!(!digests_equal(&a, &twice));
+    }
     use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
     use std::sync::atomic::Ordering;
 
