@@ -48,11 +48,17 @@ jobs:
           # watched.sh (as ci.yml portal-test): the build and tests in a memory cgroup with a sampler
           # in the log, so an overrun kills rustc and names it instead of losing the runner (T-7787)
           - { ws: portal, dir: crates/portal, args: "--workspace -j 2", watch: "sh ../../.github/scripts/watched.sh" }
-          # context-gateway's `it` binary as ci.yml platform-test runs it: most of the gateway's
-          # handlers are tested there, through the router (T-7767); jc-manifest, jc-tabular and
-          # jc-dcat are tested from their tests/ binaries alone (T-7794); jc-core's `it` reads the schemas and
-          # examples vendored beside it (T-7766). `;` separates the runs.
-          - { ws: platform, dir: vendor/joinedcontext-platform, args: "--workspace --lib --bins", extra: "-p context-gateway --test it; -p jc-manifest -p jc-tabular -p jc-dcat --all-features --tests; -p jc-core --test it" }
+          # every lib, bin and tests/ binary but two (PLATFORM_TESTS, set below); jc-core in a second
+          # pass (`then`), so jcctl's --skip filters below do not reach its `it` binary, which reads
+          # the schemas and examples vendored beside it (T-7766). The features: jc-dcat's profiles
+          # and jc-manifest's OpenAPI derive, measured as T-7794 set their floors
+          - ws: platform
+            dir: vendor/joinedcontext-platform
+            args: "--workspace --exclude jc-core --lib --bins $PLATFORM_TESTS --features jc-dcat/dcat-ap-sk,jc-dcat/dcat-ap-cz,jc-manifest/utoipa"
+            then: "-p jc-core --lib --bins --test it"
+            # jcctl's `it` modules that read examples/ingestion and library/blueprints, not vendored
+            # either (ci.yml runs only its portal_api_drift_tests::)
+            testargs: "-- --skip ingestion_examples_tests:: --skip library_blueprints_tests::"
     defaults: { run: { working-directory: "${{ matrix.dir }}" } }
     services:
       postgres:
@@ -107,9 +113,15 @@ jobs:
           sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
           sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal
           { echo CARGO_PROFILE_DEV_DEBUG=0; echo CARGO_PROFILE_TEST_DEBUG=0; } >> "$GITHUB_ENV"
-      # The platform's lockfile repeats the root one's versions (ci.yml platform-test).
+      # The platform's lockfile repeats the root one's versions (ci.yml platform-test). Its test
+      # targets, but jc-core's (the `then` pass) and context-gateway's in_flight_tests, which reads
+      # the platform repository's Dockerfile, not vendored.
       - if: matrix.ws == 'platform'
-        run: python3 ../../.github/scripts/lock-subset.py ../../Cargo.lock Cargo.lock
+        run: |
+          python3 ../../.github/scripts/lock-subset.py ../../Cargo.lock Cargo.lock
+          tests=$(cargo metadata --no-deps --format-version 1 --locked | jq -r '.packages[] | select(.name != "jc-core")
+            | .targets[] | select(.kind == ["test"] and .name != "in_flight_tests") | "--test \(.name)"' | sort -u | tr '\n' ' ')
+          { echo "PLATFORM_TESTS=$tests"; echo "DCAT_RECORDS_DIR=$RUNNER_TEMP/dcat-records"; } >> "$GITHUB_ENV"
       - uses: ./.github/actions/rust
         with: { workspace: "${{ matrix.dir }}", key: "coverage-${{ matrix.ws }}", components: llvm-tools-preview }
       - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
@@ -122,20 +134,16 @@ jobs:
         run: |
           start=$(date +%s); out=coverage
           # shellcheck disable=SC2086
-          ${{ matrix.watch }} cargo llvm-cov ${{ matrix.args }} --locked --no-report --no-fail-fast || {
+          ${{ matrix.watch }} cargo llvm-cov ${{ matrix.args }} --locked --no-report --no-fail-fast ${{ matrix.testargs }} || {
             out=tests-failed
             echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
           }
-          # a second test run of the workspace adds to the same profile data before the report
-          if [ -n "${{ matrix.extra }}" ]; then
-            IFS=';' read -ra runs <<< "${{ matrix.extra }}"
-            for run in "${runs[@]}"; do
-              # shellcheck disable=SC2086
-              DCAT_RECORDS_DIR="$RUNNER_TEMP/dcat-records" cargo llvm-cov $run --locked --no-report --no-fail-fast || {
-                out=tests-failed
-                echo "::warning::tests failed in ${{ matrix.ws }} ($run): its crates are not judged by the ratchet tonight"
-              }
-            done
+          if [ -n "${{ matrix.then }}" ]; then
+            # shellcheck disable=SC2086
+            cargo llvm-cov ${{ matrix.then }} --locked --no-report --no-fail-fast || {
+              out=tests-failed
+              echo "::warning::tests failed in ${{ matrix.ws }} (${{ matrix.then }}): its crates are not judged by the ratchet tonight"
+            }
           fi
           # the full export: the ratchet merges each function's instances from its records
           cargo llvm-cov report --json --output-path "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"

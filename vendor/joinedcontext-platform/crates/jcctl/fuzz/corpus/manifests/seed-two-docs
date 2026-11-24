@@ -1,0 +1,16 @@
+apiVersion: joinedcontext.com/v1
+kind: Endpoint
+metadata:
+  name: air
+  namespace: p
+spec:
+  space: air
+status:
+  phase: Ready
+---
+apiVersion: joinedcontext.com/v1
+kind: Endpoint
+metadata:
+  name: air
+spec:
+  space: water

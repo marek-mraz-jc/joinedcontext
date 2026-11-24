@@ -349,33 +349,29 @@ impl Store {
     /// section so redb order equals memory order).
     fn persist(&self, table: Table, key: &[u8], doc: Option<&Value>) {
         if let Some(shadow) = &self.shadow {
-            // None means DELETE the key, so a document that will not encode
-            // must skip the write rather than collapse into one.
-            let bytes = match doc {
-                Some(d) => match serde_json::to_vec(d) {
-                    Ok(b) => Some(b),
-                    Err(_) => return,
-                },
-                None => None,
-            };
+            // None means DELETE the key. A `Value` always encodes (its map
+            // keys are strings and its numbers finite), and `to_string` is
+            // the compact form `serde_json::to_vec` writes.
+            let bytes = doc.map(|d| d.to_string().into_bytes());
             shadow.write(table, key, bytes.as_deref());
         }
     }
 
     /// [`Self::persist`] of many keys in one commit (`file` mode): what a
-    /// purge or a sweep deleted (`None`) or rewrote. A document that will not
-    /// encode is skipped, as `persist` skips it.
+    /// purge or a sweep deleted (`None`) or rewrote, encoded as `persist`
+    /// encodes it.
     fn persist_many(&self, writes: &[Persisted<'_>]) {
         let Some(shadow) = &self.shadow else {
             return;
         };
         let encoded: Vec<_> = writes
             .iter()
-            .filter_map(|(table, key, doc)| match doc {
-                Some(d) => serde_json::to_vec(d)
-                    .ok()
-                    .map(|b| (*table, key.as_slice(), Some(b))),
-                None => Some((*table, key.as_slice(), None)),
+            .map(|(table, key, doc)| {
+                (
+                    *table,
+                    key.as_slice(),
+                    doc.map(|d| d.to_string().into_bytes()),
+                )
             })
             .collect();
         shadow.write_many(encoded.iter().map(|(t, k, v)| (*t, *k, v.as_deref())));
@@ -1948,6 +1944,98 @@ mod tests {
             !stamped,
             "a file the guard could not read must not carry this binary's format marker"
         );
+    }
+
+    /// A marked file whose rows `seed` writes, opened: the boot's refusal.
+    fn boot_refusal(name: &str, seed: impl FnOnce(&::redb::WriteTransaction)) -> String {
+        let dir = tempdir(name);
+        {
+            let db = Database::create(dir.join("antares.redb")).expect("db");
+            let tx = db.begin_write().expect("tx");
+            seed(&tx);
+            tx.commit().expect("commit");
+        }
+        let err = match Store::open_file(&dir) {
+            Err(e) => e,
+            Ok(_) => panic!("{name}: the boot must refuse, not serve partial data"),
+        };
+        let _ = std::fs::remove_dir_all(&dir);
+        err
+    }
+
+    fn mark(tx: &::redb::WriteTransaction) {
+        let mut m = tx.open_table(T_META).expect("meta");
+        m.insert("format", FORMAT_VERSION).expect("marker");
+    }
+
+    fn raw_row(tx: &::redb::WriteTransaction, table: Table, key: &[u8], value: &[u8]) {
+        let mut t = tx.open_table(table).expect("table");
+        t.insert(key, value).expect("row");
+    }
+
+    /// Each decode and open error of the boot rebuild is a refusal that
+    /// names what it could not read, never a row or a table skipped.
+    #[test]
+    fn the_boot_refuses_every_row_and_table_it_cannot_decode() {
+        // a meta table of another key type: the marker cannot be read
+        let err = boot_refusal("meta-mistyped", |tx| {
+            let def = ::redb::TableDefinition::<u64, u64>::new("meta");
+            tx.open_table(def)
+                .expect("mistyped meta")
+                .insert(1, 1)
+                .expect("row");
+        });
+        assert!(err.contains("meta"), "{err}");
+
+        // marked, but an entities table of another type: the rebuild refuses it
+        let err = boot_refusal("entities-mistyped", |tx| {
+            mark(tx);
+            let def = ::redb::TableDefinition::<&str, &str>::new("entities");
+            tx.open_table(def)
+                .expect("mistyped")
+                .insert("k", "v")
+                .expect("row");
+        });
+        assert!(err.contains("entities"), "{err}");
+
+        // a key with no tenant separator, then one whose tenant is not UTF-8
+        for (name, key) in [
+            ("no-separator", &b"plain"[..]),
+            ("bad-tenant", &b"\xff\0urn:e:1"[..]),
+        ] {
+            let err = boot_refusal(name, |tx| {
+                mark(tx);
+                raw_row(tx, super::redb::T_SUBSCRIPTIONS, key, b"{}");
+            });
+            assert_eq!(err, "undecodable key in table Subscription", "{name}");
+        }
+
+        // a value that is not JSON names the tenant and id it belongs to
+        let err = boot_refusal("bad-value", |tx| {
+            mark(tx);
+            raw_row(
+                tx,
+                super::redb::T_VIEWS,
+                &key_bytes("plain", "urn:v:1"),
+                b"{not json",
+            );
+        });
+        assert!(
+            err.starts_with("undecodable value for plain/urn:v:1: "),
+            "{err}"
+        );
+
+        // a hosted @context under an id that is not UTF-8, then one that is not JSON
+        let err = boot_refusal("bad-context-id", |tx| {
+            mark(tx);
+            raw_row(tx, T_JSONLD_CONTEXTS, b"\xffctx", b"{}");
+        });
+        assert!(err.starts_with("undecodable context id: "), "{err}");
+        let err = boot_refusal("bad-context-doc", |tx| {
+            mark(tx);
+            raw_row(tx, T_JSONLD_CONTEXTS, b"urn:ctx:1", b"[");
+        });
+        assert!(err.starts_with("undecodable context urn:ctx:1: "), "{err}");
     }
 
     /// Every kind + contexts round-trip through a close/reopen.

@@ -1,0 +1,1 @@
+[{"organization":"city","issuer":"https://idm.city.example/realms/city","jwks_url":"http://idm.city.example/realms/city/protocol/openid-connect/certs"}]

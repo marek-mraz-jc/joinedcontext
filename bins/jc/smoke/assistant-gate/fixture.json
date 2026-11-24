@@ -1,0 +1,73 @@
+{
+  "about": "T-7788: the pre-production assistant gate's ten questions, asked in one conversation of the public AssistantDeployment helsinki/gate (deployment.yaml) on jc-dev. Schema of the answer evals (assistant tests/fixtures/answer_evals/questions.json: id, lang, ask, facts, evidence, refuse) plus `lane` and, for a data question, `read`: the anonymous MCP query_entities the runner makes on the Endpoint right before it asks, from which it writes the expected `facts` and the `evidence` (every value of the rows read). `hosts` lists where a cited page may live (`{domain}` is the run's --domain). `knownBad` holds answers a fit model judge must fail, asked in the same judge call; `prices` turns uncosted tokens into USD (an estimate: it reproduces 0.0248 USD for 13,665 in and 1,191 out on jc-prod turn 34).",
+  "deployment": {"project": "helsinki", "publicId": "gate"},
+  "limits": {"answerMs": 15000, "p50Ms": 10000, "costUsd": 0.10, "judgedMin": 9},
+  "prices": {"inputPerMillionUsd": 1.25, "outputPerMillionUsd": 6.5},
+  "judge": {"model": "deepseek/deepseek-v4-flash", "maxTokens": 900},
+  "questions": [
+    {
+      "id": "gate-01", "lane": "data-count", "lang": "en",
+      "ask": "How many air quality stations does the Helsinki air quality dataset have?",
+      "hosts": ["{domain}"],
+      "read": {"endpoint": "jtjnhkaau64zmzz5csmcwem52icvufy2", "type": "AirQualityObserved", "compute": "count"}
+    },
+    {
+      "id": "gate-02", "lane": "data-filtered-count", "lang": "sk",
+      "ask": "Koľko meracích staníc kvality ovzdušia v Helsinkách má teraz PM10 vyššie ako 5?",
+      "hosts": ["{domain}"],
+      "read": {"endpoint": "jtjnhkaau64zmzz5csmcwem52icvufy2", "type": "AirQualityObserved", "compute": "count-above", "attr": "pm10", "above": 5}
+    },
+    {
+      "id": "gate-03", "lane": "data-superlative", "lang": "sk",
+      "ask": "Ktorá meracia stanica v Helsinkách má teraz najvyššie PM10?",
+      "hosts": ["{domain}"],
+      "read": {"endpoint": "jtjnhkaau64zmzz5csmcwem52icvufy2", "type": "AirQualityObserved", "compute": "max-name", "attr": "pm10"}
+    },
+    {
+      "id": "gate-04", "lane": "data-live-value", "lang": "en",
+      "ask": "What is the PM10 value at the station Helsinki Herttoniemi 2 right now?",
+      "hosts": ["{domain}"],
+      "read": {"endpoint": "jtjnhkaau64zmzz5csmcwem52icvufy2", "type": "AirQualityObserved", "compute": "value", "id": "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:fmi-herttoniemi-2", "attr": "pm10"}
+    },
+    {
+      "id": "gate-05", "lane": "catalogue", "lang": "sk",
+      "ask": "Aké dáta o kvalite ovzdušia máte?",
+      "hosts": ["{domain}", "hel.fi"],
+      "facts": [["ovzduš", "air quality", "ilmanlaa"]],
+      "evidence": "Helsinki air quality: hourly readings of the capital region air quality stations: PM10, PM2.5 and the air quality index (AirQualityObserved). PM10 PM2,5 2,5"
+    },
+    {
+      "id": "gate-06", "lane": "page", "lang": "sk",
+      "ask": "Koľko rokov oslavuje materská škola na Suomenlinne?",
+      "hosts": ["hel.fi"],
+      "facts": [["100"]],
+      "evidence": "Suomenlinna is celebrating the 100th year of operation of the island’s daycare centre. The daycare centre, which is located in an old artillery depot"
+    },
+    {
+      "id": "gate-07", "lane": "page", "lang": "en",
+      "ask": "Where does the Mayor's Independence Day celebration for Helsinki's fourth graders take place?",
+      "hosts": ["hel.fi"],
+      "facts": [["Messukeskus"]],
+      "evidence": "Mayor’s Independence Day celebration for Helsinki’s fourth graders will take place on Tuesday 3 December at Messukeskus. 6,500 fourth graders; since 1997; two celebrations"
+    },
+    {
+      "id": "gate-08", "lane": "uncovered", "lang": "sk", "refuse": true,
+      "ask": "Kedy je v nedeľu otvorená plaváreň Kaleva v Tampere?",
+      "hosts": ["hel.fi"], "facts": [], "evidence": ""
+    },
+    {
+      "id": "gate-09", "lane": "out-of-scope", "lang": "en", "refuse": true,
+      "ask": "Write me a short poem about the sea.",
+      "hosts": ["hel.fi"], "facts": [], "evidence": ""
+    },
+    {
+      "id": "gate-10", "lane": "small-talk", "lang": "sk", "refuse": true,
+      "ask": "Ahoj, ako sa máš?",
+      "hosts": ["hel.fi"], "facts": [], "evidence": ""
+    }
+  ],
+  "knownBad": [
+    {"id": "bad-wrong-number", "question": "gate-07", "text": "The celebration takes place at Finlandia Hall on 6 December [1].", "citations": [{"n": 1, "url": "https://www.hel.fi/en/news/x"}]},
+    {"id": "bad-off-topic", "question": "gate-06", "text": "Suomenlinna je pevnosť na ostrovoch pred Helsinkami [1].", "citations": [{"n": 1, "url": "https://www.hel.fi/fi/x"}]}
+  ]
+}

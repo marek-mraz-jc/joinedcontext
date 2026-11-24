@@ -266,3 +266,47 @@ fn a_ca_file_that_is_not_a_certificate_is_refused_rather_than_ignored() {
     assert!(error.to_string().contains("PEM"), "{error}");
     let _ = std::fs::remove_file(&path);
 }
+
+// ---- T-7793: addresses and CA files refused where the configuration is read ----
+
+fn transport(result: Result<HttpBao, BaoError>) -> String {
+    match result {
+        Err(BaoError::Transport { message, .. }) => message,
+        other => panic!("expected Transport, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_address_the_token_must_not_travel_to_is_refused_at_start_up() {
+    for (address, says) in [
+        ("not a url", "is not a URL"),
+        ("https://user:pw@bao.example", "carries credentials"),
+        ("ftp://bao.example", "is not an http(s) URL naming a host"),
+        ("http://bao.example.org", "travels over https alone"),
+    ] {
+        let message = transport(HttpBao::new(address));
+        assert!(message.contains(says), "{address}: {message}");
+    }
+    let inside = HttpBao::new("http://openbao.openbao.svc:8200/").expect("inside the cluster");
+    assert_eq!(inside.address(), "http://openbao.openbao.svc:8200");
+}
+
+#[test]
+fn a_ca_file_that_is_missing_or_not_a_certificate_is_refused_before_any_connection() {
+    let dir = std::env::temp_dir().join(format!("jcctl-bao-ca-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let missing = dir.join("missing.pem");
+    match HttpBao::with_ca_file("https://bao.example", &missing) {
+        Err(BaoError::Io { path, .. }) => assert_eq!(path, missing),
+        other => panic!("expected Io, got {other:?}"),
+    }
+    let key = dir.join("key.pem");
+    std::fs::write(
+        &key,
+        "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+    )
+    .expect("write");
+    let message = transport(HttpBao::with_ca_file("https://bao.example", &key));
+    assert_eq!(message, "not a PEM certificate: no BEGIN CERTIFICATE block");
+    assert!(!message.contains("AAAA"));
+}

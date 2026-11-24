@@ -199,7 +199,7 @@ fn a_project_key_is_two_path_form_ids_and_nothing_else() {
         Some(OVZ)
     );
     for bad in [
-        format!("{org}"),
+        org.to_string(),
         format!("{org}/../{project}"),
         format!("{org}/{}", project.to_uppercase()),
         format!("{org}/{}", "a".repeat(26)),
