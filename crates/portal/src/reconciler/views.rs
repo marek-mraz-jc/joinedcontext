@@ -5467,10 +5467,10 @@ mod tests {
     #[tokio::test]
     async fn erasures_go_to_the_spaces_broker_and_say_why_they_fail() {
         let server = broker().await;
-        let authorized = header("authorization", format!("Bearer {TOKEN}").as_str());
+        let authorized = || header("authorization", format!("Bearer {TOKEN}").as_str());
         Mock::given(method("GET"))
             .and(path("/q/erasures/city-air"))
-            .and(authorized.clone())
+            .and(authorized())
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([{"subject": "s"}])))
             .mount(&server)
             .await;
@@ -5479,7 +5479,7 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/q/erasures/city-air"))
-            .and(authorized)
+            .and(authorized())
             .respond_with(
                 ResponseTemplate::new(200)
                     .set_body_json(json!({"id": "e1", "counts": {"entities": 1}})),
