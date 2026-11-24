@@ -93,7 +93,7 @@ impl Visit for Fields {
 
 /// `sql`'s first [`FINGERPRINT_CHARS`] characters with whitespace collapsed and each literal
 /// (`'…'`, `E'…'`, `$tag$…$tag$` is left to its tag, a number not part of a name) as `?`.
-fn fingerprint(sql: &str) -> String {
+pub fn fingerprint(sql: &str) -> String {
     let mut out = String::new();
     let mut chars = sql.chars().peekable();
     let mut prev = ' ';
@@ -190,31 +190,18 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    #[derive(Clone, Default)]
-    struct Buffer(Arc<Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Buffer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
+    /// One test at a time holds the process's window.
+    static SERIAL: Mutex<()> = Mutex::new(());
 
     /// What `f` logs through the same layers `init_tracing` installs, flushed a window later.
     fn logged(f: impl FnOnce()) -> String {
         use tracing_subscriber::layer::SubscriberExt;
-        let buffer = Buffer::default();
-        let writer = buffer.clone();
+        let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
+        use std::io::{Read as _, Seek as _};
+        let file = Arc::new(tempfile::tempfile().expect("a temporary log file"));
         let fmt = tracing_subscriber::fmt::layer()
             .with_ansi(false)
-            .with_writer(move || writer.clone())
+            .with_writer(Arc::clone(&file))
             .with_filter(tracing_subscriber::filter::filter_fn(|m| {
                 !is_slow_statement(m)
             }));
@@ -225,8 +212,11 @@ mod tests {
             f();
             flush(Instant::now() + WINDOW);
         });
-        String::from_utf8_lossy(&buffer.0.lock().unwrap_or_else(PoisonError::into_inner))
-            .into_owned()
+        let mut log = String::new();
+        let mut reader = &*file;
+        reader.rewind().expect("rewind the log");
+        reader.read_to_string(&mut log).expect("utf8 log");
+        log
     }
 
     /// sqlx's slow event, field for field (sqlx-core 0.9 logger.rs).
@@ -275,6 +265,64 @@ mod tests {
             assert!(!log.contains(leak), "{leak}: {log}");
         }
         assert!(log.contains("sqlx::query: statement"), "{log}");
+    }
+
+    #[test]
+    fn a_statement_without_its_text_is_counted_by_its_summary() {
+        let log = logged(|| {
+            tracing::warn!(
+                target: "sqlx::query",
+                summary = "update ledger set n = 5 where k = 'x' …",
+                db.statement = "  ",
+                db.system = "postgresql",
+                elapsed_secs = 3.0,
+                rows_secs = 0.5,
+                slow_threshold = ?Duration::from_secs(1),
+                "slow statement: execution time exceeded alert threshold"
+            );
+            slow("select a from aardvark", 1.0);
+        });
+        // One line per fingerprint, in fingerprint order.
+        let order: Vec<usize> = ["select a from aardvark", "update ledger"]
+            .iter()
+            .map(|f| log.find(f).expect(f))
+            .collect();
+        assert!(order[0] < order[1], "{log}");
+        let line = log
+            .lines()
+            .find(|l| l.contains("jc::slow_statement") && l.contains("ledger"))
+            .expect("a folded ledger line");
+        assert!(
+            line.contains("update ledger set n = ? where k = ?"),
+            "{log}"
+        );
+        assert!(
+            line.contains("statements=1") && line.contains("slowest_seconds=3"),
+            "{log}"
+        );
+        assert!(!line.contains('…'), "{log}");
+    }
+
+    #[test]
+    fn a_window_younger_than_a_minute_is_kept_and_the_layer_counts_into_it() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = Instant::now();
+        // The layer `init_tracing` installs (it starts the ticker once).
+        let subscriber = tracing_subscriber::registry().with(layer());
+        tracing::subscriber::with_default(subscriber, || slow("select 1 from young_window", 1.25));
+        flush(now);
+        let held = WINDOW_COUNTS.lock().unwrap_or_else(PoisonError::into_inner);
+        let seen = &held.as_ref().expect("the window stays").1["select ? from young_window"];
+        assert_eq!((seen.statements, seen.slowest), (1, 1.25));
+        drop(held);
+        flush(Instant::now() + WINDOW);
+        assert!(
+            WINDOW_COUNTS.lock().unwrap().is_none(),
+            "an old window is written and taken"
+        );
+        // No window at all: nothing to write.
+        flush(Instant::now() + WINDOW);
     }
 
     #[test]
