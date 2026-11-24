@@ -97,14 +97,12 @@ async fn handle_info_refs(
         .map(str::to_owned);
 
     let service_owned = service.to_owned();
-    let res = tokio::task::spawn_blocking(move || match service_owned.as_str() {
+    let res = crate::service::blocking(move || match service_owned.as_str() {
         "git-upload-pack" => advertise_upload_pack(&disk_path, git_protocol.as_deref()),
         "git-receive-pack" => advertise_receive_pack(&disk_path),
         _ => Err(ShakoError::Forbidden("unsupported service".into())),
     })
-    .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
+    .await;
 
     match res {
         Ok(bytes) => {

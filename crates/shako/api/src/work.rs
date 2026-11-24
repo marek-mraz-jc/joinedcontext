@@ -76,13 +76,12 @@ impl GitWork {
             .await
             .map_err(|e| refused("spool_bytes", e))?;
         let dir = self.dir.clone();
-        let file = tokio::task::spawn_blocking(move || {
-            std::fs::create_dir_all(&dir)?;
-            tempfile::tempfile_in(&dir)
+        let file = crate::service::blocking(move || {
+            std::fs::create_dir_all(&dir)
+                .and_then(|()| tempfile::tempfile_in(&dir))
+                .map_err(spool_io)
         })
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))?
-        .map_err(spool_io)?;
+        .await?;
         let spool = Spool {
             file,
             permit,
@@ -154,7 +153,7 @@ impl GitWork {
             .map_err(|e| refused("git_memory_bytes", e))?;
         let memory = self.memory.clone();
         let runtime = tokio::runtime::Handle::current();
-        tokio::task::spawn_blocking(move || {
+        crate::service::blocking(move || {
             let mut held = Some(first);
             job(&mut |bytes| {
                 // Over the whole budget means: alone.
@@ -174,7 +173,6 @@ impl GitWork {
             })
         })
         .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))?
     }
 
     /// Runs `job` like [`Self::run`] with a new spool to write its answer into.

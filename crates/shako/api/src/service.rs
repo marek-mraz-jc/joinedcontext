@@ -168,19 +168,23 @@ async fn record_new_repo(
 ) -> ShakoResult<RepoRecord> {
     let size = rec.size_bytes;
     let target = format!("repos/{}", rec.id);
-    let created = match async {
-        let created = state.store().create_repo(rec).await?;
-        audit(state, ctx, operation, target).await?;
-        Ok(created)
-    }
-    .await
-    {
+    let created = match state.store().create_repo(rec).await {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_dir_all(disk_path);
             return Err(e);
         }
     };
+    // A repository whose creation could not be audited is not kept: the record goes with its
+    // directory, so no unaudited repository answers later.
+    if let Err(e) = audit(state, ctx, operation, target).await {
+        let _ = state
+            .store()
+            .delete_repo(created.instance_id, created.org_id, created.id)
+            .await;
+        let _ = std::fs::remove_dir_all(disk_path);
+        return Err(e);
+    }
     let _ = state
         .store()
         .adjust_quota_usage(ctx.instance_id, ctx.org_id, 1, size as i64, 0)
@@ -1817,7 +1821,7 @@ pub fn blob_path(
 /// writers of one digest leave the same bytes.
 pub async fn write_blob_file(path: PathBuf, bytes: Vec<u8>) -> ShakoResult<()> {
     let failed = |e: std::io::Error| ShakoError::Storage(format!("blob write failed: {e}"));
-    tokio::task::spawn_blocking(move || {
+    blocking(move || {
         use std::io::Write as _;
         let dir = path
             .parent()
@@ -1832,7 +1836,6 @@ pub async fn write_blob_file(path: PathBuf, bytes: Vec<u8>) -> ShakoResult<()> {
             .map_err(failed)
     })
     .await
-    .map_err(|e| ShakoError::Internal(e.to_string()))?
 }
 
 /// Stores `bytes` as a blob of `owner`'s `image` in `org_id` and answers its digest. A blob new
@@ -2070,4 +2073,69 @@ pub async fn redeliver_webhook(
     )
     .await?;
     deliver_webhook_now(state, &hook, "push", &payload).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A blocking task answers its own result, its error included.
+    #[tokio::test]
+    async fn a_blocking_task_answers_its_result() -> ShakoResult<()> {
+        assert_eq!(blocking(|| Ok(7)).await?, 7);
+        let refused = blocking::<()>(|| Err(ShakoError::Conflict("busy".into()))).await;
+        assert!(matches!(refused, Err(ShakoError::Conflict(m)) if m == "busy"));
+        Ok(())
+    }
+
+    /// A blocking task that panics answers an internal error naming the panic; the request
+    /// does not hang and the runtime goes on.
+    #[tokio::test]
+    async fn a_blocking_task_that_panics_is_an_internal_error() {
+        let answer = blocking::<()>(|| panic!("gix gave up")).await;
+        assert!(
+            matches!(&answer, Err(ShakoError::Internal(m)) if m.contains("panicked") && m.contains("gix gave up")),
+            "{answer:?}"
+        );
+    }
+
+    fn guarding() -> BranchProtectionRule {
+        BranchProtectionRule {
+            rule_name: "main".into(),
+            enable_push: false,
+            ..BranchProtectionRule::default()
+        }
+    }
+
+    /// A guarding rule's protected paths changed, or unprotected paths named or changed, loosen
+    /// it; the same paths, or a rule guarding no writer, do not.
+    #[test]
+    fn changed_file_patterns_loosen_a_guarding_rule() {
+        let stored = BranchProtectionRule {
+            protected_file_patterns: "deploy/**".into(),
+            ..guarding()
+        };
+        let moved = BranchProtectionRule {
+            protected_file_patterns: "docs/**".into(),
+            ..stored.clone()
+        };
+        assert!(loosens(&stored, &moved));
+        assert!(!loosens(&stored, &stored.clone()));
+        let unprotected = BranchProtectionRule {
+            unprotected_file_patterns: "*.md".into(),
+            ..stored.clone()
+        };
+        assert!(loosens(&stored, &unprotected));
+        assert!(!loosens(&unprotected, &unprotected.clone()));
+        let open = BranchProtectionRule {
+            enable_push: true,
+            ..BranchProtectionRule::default()
+        };
+        let open_moved = BranchProtectionRule {
+            protected_file_patterns: "docs/**".into(),
+            ..open.clone()
+        };
+        assert!(!guards_writers(&open));
+        assert!(!loosens(&open, &open_moved));
+    }
 }
