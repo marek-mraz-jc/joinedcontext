@@ -337,6 +337,47 @@ async fn every_store_failure_of_a_pull_is_a_storage_error_not_an_absent_image() 
 }
 
 #[tokio::test]
+async fn a_tag_whose_manifest_blob_is_gone_is_an_unknown_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let r = registry(&tmp);
+    let man = push_manifest(&r.app, "v1", &manifest("application/x")).await;
+    assert_eq!(man.status, StatusCode::CREATED, "{:?}", man.body);
+    let store = r.state.store();
+    let mut ghost = store
+        .get_package_version(
+            InstanceId::from_u128(1),
+            org(),
+            "city",
+            "container",
+            "app",
+            "v1",
+        )
+        .await
+        .expect("read")
+        .expect("the version");
+    // A tag row naming a digest no blob row holds (a blob swept after its tag was written).
+    ghost.id = uuid::Uuid::now_v7();
+    ghost.version = "ghost".into();
+    ghost.digest = digest(b"no such manifest");
+    store.upsert_package_version(ghost).await.expect("tag row");
+    for method in [Method::GET, Method::HEAD] {
+        let a = send(
+            &r.app,
+            method.clone(),
+            "/v2/city/app/manifests/ghost",
+            PUSHER,
+            None,
+            vec![],
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::NOT_FOUND, "{method}");
+        if method == Method::GET {
+            assert_eq!(a.code(), "MANIFEST_UNKNOWN");
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_token_for_a_subject_without_a_login_is_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let r = registry(&tmp);

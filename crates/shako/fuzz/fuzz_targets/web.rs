@@ -60,16 +60,16 @@ fuzz_target!(|data: &[u8]| {
     match which % 4 {
         0 => {
             let html = render_safe_markdown(&text).to_ascii_lowercase();
-            for bad in [
-                "<script",
-                "<iframe",
-                "<svg",
-                "<img src=\"javascript:",
-                "href=\"javascript:",
-                "=\"data:",
-                "=\"vbscript:",
-            ] {
-                assert!(!html.contains(bad), "{bad} in {html}");
+            // Text escapes every `<`, so each `<` opens a tag the renderer wrote; quotes in text
+            // stay as they are and are no attribute.
+            for tag in html.split('<').skip(1) {
+                let tag = tag.split('>').next().unwrap_or_default();
+                for bad in ["script", "iframe", "svg", "object", "embed", "style"] {
+                    assert!(!tag.starts_with(bad), "<{tag}> in {html}");
+                }
+                for bad in ["=\"javascript:", "=\"data:", "=\"vbscript:", "\" on"] {
+                    assert!(!tag.contains(bad), "{bad} in <{tag}>");
+                }
             }
         }
         1 => {
