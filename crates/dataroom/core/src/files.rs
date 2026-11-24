@@ -611,15 +611,13 @@ mod tests {
     fn an_unknown_id_is_not_found_and_listing_orders_by_name_then_id() {
         let (files, root) = store();
         let k = key(8);
-        for (name, msg) in [("nope", "no file nope")] {
-            assert!(
-                matches!(files.rename(k, name, "x.png"), Err(DataroomError::NotFound(m)) if m == msg)
-            );
-            assert!(
-                matches!(files.replace(k, name, PNG, "ana"), Err(DataroomError::NotFound(m)) if m == msg)
-            );
-            assert!(matches!(files.delete(k, name), Err(DataroomError::NotFound(m)) if m == msg));
-        }
+        let gone =
+            |r: Result<_>| matches!(r, Err(DataroomError::NotFound(m)) if m == "no file nope");
+        assert!(gone(files.rename(k, "nope", "x.png")));
+        assert!(gone(files.replace(k, "nope", PNG, "ana")));
+        assert!(
+            matches!(files.delete(k, "nope"), Err(DataroomError::NotFound(m)) if m == "no file nope")
+        );
         let entries = [
             entry("f-2", "b.png", 1, "x"),
             entry("f-3", "a.png", 1, "x"),
