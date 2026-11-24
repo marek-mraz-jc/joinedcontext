@@ -289,6 +289,38 @@ fn mappers_write_what_the_built_in_claims_leave_out() {
     assert!(f.eval(TokenKind::UserInfo).get("amr").is_some());
 }
 
+/// Without the profile and email scopes, a property mapper of the username or the e-mail fills
+/// its standard claim; the organization claim of a pinned organization scope is in tokens, never
+/// in user info.
+#[test]
+fn property_mappers_fill_standard_claims_and_organization_skips_user_info() {
+    let f = Fixture::new(vec![
+        mapper(
+            "oidc-usermodel-property-mapper",
+            &[
+                ("user.attribute", "username"),
+                ("claim.name", "preferred_username"),
+            ],
+        ),
+        mapper(
+            "oidc-usermodel-property-mapper",
+            &[("user.attribute", "email"), ("claim.name", "email")],
+        ),
+    ]);
+    let mut ctx = f.ctx();
+    ctx.active_scopes = &[];
+    ctx.granted_scope_string = "openid organization:pinned-org";
+    let at = evaluate_mappers(&ctx, TokenKind::AccessToken).unwrap();
+    assert_eq!(at["preferred_username"], "alice");
+    assert_eq!(at["email"], "alice@hel.fi");
+    assert_eq!(at["organization"], json!({"pinned-org": {}}));
+    let info = evaluate_mappers(&ctx, TokenKind::UserInfo).unwrap();
+    assert!(info.get("organization").is_none());
+    ctx.granted_scope_string = "openid";
+    let plain = evaluate_mappers(&ctx, TokenKind::AccessToken).unwrap();
+    assert!(plain.get("organization").is_none(), "no organization scope");
+}
+
 /// IDN-02, TEN-04: a token says what kind of subject it names; a workload's token also carries its
 /// project's id, read from the client registry row and never from the client id's text. A mapper
 /// cannot write either claim, and a malformed id is left out for the verifier to refuse.

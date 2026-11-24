@@ -1420,7 +1420,9 @@ mod tests {
     /// nothing.
     #[test]
     fn a_properties_line_without_an_equals_sign_adds_nothing() {
-        let map = parse_properties("# comment\n\n a = one \nno equals here\nb=two=2\n");
+        let map = parse_properties(
+            "# comment\n# key = commented out\n\n a = one \nno equals here\nb=two=2\n",
+        );
         assert_eq!(map.len(), 2, "{map:?}");
         assert_eq!(map.get("a"), Some(&"one"));
         assert_eq!(map.get("b"), Some(&"two=2"));

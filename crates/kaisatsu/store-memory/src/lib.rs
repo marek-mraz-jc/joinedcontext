@@ -3009,7 +3009,6 @@ impl Store for MemoryStore {
             st.revoked_tokens.retain(|r| r.expires_at > now);
             removed += (b6 - st.revoked_tokens.len()) as u64;
 
-            let _ = SignedDuration::from_secs(0);
             Ok(removed)
         })
     }
@@ -4840,6 +4839,300 @@ mod tests {
         assert_eq!(granted(R, "ada").await, [g("app", "e"), g("other", "b")]);
         assert_eq!(granted(R, "bob").await, [g("app", "c")]);
         assert_eq!(granted("q", "ada").await, [g("app", "d")]);
+    }
+
+    /// Withdrawing a consent takes that consent, the offline sessions and the families of that
+    /// realm, person and client only.
+    #[tokio::test]
+    async fn withdrawing_a_consent_takes_only_its_own_offline_access() {
+        let store = MemoryStore::default();
+        seed_sessions(&store);
+        for (realm, who, c) in [
+            (R, "ada", "app"),
+            (R, "ada", "other"),
+            (R, "bob", "app"),
+            ("q", "ada", "app"),
+        ] {
+            store
+                .upsert_consent(ConsentRecord {
+                    realm_id: realm.into(),
+                    ..consent(who, c)
+                })
+                .await
+                .expect("consent");
+        }
+        assert!(
+            store
+                .delete_consent(R, "ada", "app")
+                .await
+                .expect("withdraw")
+        );
+        assert!(!store.delete_consent(R, "ada", "app").await.expect("again"));
+        let [client, offline, revoked] = session_state(&store);
+        assert_eq!(client.len(), 8);
+        assert_eq!(offline.len(), 7);
+        assert!(!offline.contains(&"r/off-ada-app".to_owned()));
+        assert_eq!(revoked, ["r/ada-app-false", "r/ada-app-true"]);
+        let left: Vec<(String, String, String)> = store
+            .inner
+            .read()
+            .consents
+            .iter()
+            .map(|c| (c.realm_id.clone(), c.user_id.clone(), c.client_id.clone()))
+            .collect();
+        assert_eq!(left.len(), 3, "{left:?}");
+        assert!(!left.contains(&(R.into(), "ada".into(), "app".into())));
+    }
+
+    /// Required actions are one per realm and alias, brandings one per realm and organization,
+    /// a passkey is updated by its id in its realm, and the outbox lists one realm's rows.
+    #[tokio::test]
+    async fn realm_settings_and_rows_are_kept_per_realm_by_their_key() {
+        let store = MemoryStore::default();
+        for realm in [R, "q"] {
+            for alias in ["CONFIGURE_TOTP", "VERIFY_EMAIL"] {
+                store
+                    .upsert_required_action(RequiredActionConfig {
+                        realm_id: realm.into(),
+                        alias: alias.into(),
+                        ..RequiredActionConfig::default()
+                    })
+                    .await
+                    .expect("action");
+            }
+            for org_id in [None, Some("hel")] {
+                store
+                    .upsert_branding(BrandingBlock {
+                        realm_id: realm.into(),
+                        org_id: org_id.map(str::to_owned),
+                        instance_name: format!("{realm}-{org_id:?}"),
+                        ..BrandingBlock::default()
+                    })
+                    .await
+                    .expect("branding");
+            }
+        }
+        store
+            .upsert_required_action(RequiredActionConfig {
+                realm_id: R.into(),
+                alias: "VERIFY_EMAIL".into(),
+                enabled: false,
+                ..RequiredActionConfig::default()
+            })
+            .await
+            .expect("again");
+        let actions = store.list_required_actions(R).await.expect("actions");
+        assert_eq!(actions.len(), 2);
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.alias == "CONFIGURE_TOTP" && a.enabled)
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.alias == "VERIFY_EMAIL" && !a.enabled)
+        );
+        assert!(
+            store
+                .list_required_actions("q")
+                .await
+                .expect("q")
+                .iter()
+                .all(|a| a.enabled)
+        );
+        store
+            .upsert_branding(BrandingBlock {
+                realm_id: R.into(),
+                org_id: Some("hel".into()),
+                instance_name: "renamed".into(),
+                ..BrandingBlock::default()
+            })
+            .await
+            .expect("branding again");
+        let name = |realm: &'static str, org: Option<&'static str>| {
+            let store = &store;
+            async move {
+                store
+                    .get_branding(realm, org)
+                    .await
+                    .expect("get")
+                    .map(|b| b.instance_name)
+            }
+        };
+        assert_eq!(name(R, Some("hel")).await.as_deref(), Some("renamed"));
+        assert_eq!(name(R, None).await.as_deref(), Some("r-None"));
+        assert_eq!(
+            name("q", Some("hel")).await.as_deref(),
+            Some("q-Some(\"hel\")")
+        );
+        assert_eq!(store.inner.read().brandings.len(), 4);
+
+        let mut st_rows = Vec::new();
+        {
+            let mut st = store.inner.write();
+            seed_every_set(&mut st, "r2", "hel");
+            seed_every_set(&mut st, "q2", "hel");
+            st_rows.extend(st.webauthn_credentials.iter().cloned());
+        }
+        let mut passkey = st_rows[1].clone();
+        assert_eq!(passkey.realm_id, "q2");
+        passkey.user_label = Some("phone".into());
+        store
+            .update_webauthn_credential(passkey)
+            .await
+            .expect("update");
+        let labels: Vec<(String, Option<String>)> = store
+            .inner
+            .read()
+            .webauthn_credentials
+            .iter()
+            .map(|w| (w.realm_id.clone(), w.user_label.clone()))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                ("r2".to_owned(), None),
+                ("q2".to_owned(), Some("phone".to_owned()))
+            ]
+        );
+        let mut missing = st_rows[0].clone();
+        missing.realm_id = "nowhere".into();
+        let refused = store.update_webauthn_credential(missing).await;
+        assert!(
+            matches!(refused, Err(KaisatsuError::NotFound(_))),
+            "{refused:?}"
+        );
+        let rows = store.list_outbox_rows("q2", None).await.expect("outbox");
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["q2-mail"]
+        );
+        let other: &[String] = &["esp".to_owned()];
+        assert!(
+            store
+                .list_outbox_rows("q2", Some(other))
+                .await
+                .expect("outbox")
+                .is_empty()
+        );
+    }
+
+    /// An upstream link is one per realm, provider and external id, found by all three.
+    #[tokio::test]
+    async fn idp_links_are_one_per_realm_provider_and_external_id() {
+        let store = MemoryStore::default();
+        let link = |realm: &str, alias: &str, ext: &str, user: &str| IdentityProviderLinkRecord {
+            id: String::new(),
+            realm_id: realm.into(),
+            org_id: None,
+            user_id: user.into(),
+            idp_alias: alias.into(),
+            external_user_id: ext.into(),
+            external_username: None,
+            created_at: TimestampTz::now(),
+        };
+        for l in [
+            link(R, "google", "x1", "ada"),
+            link(R, "google", "x2", "bob"),
+            link(R, "github", "x1", "cyd"),
+            link("q", "google", "x1", "dan"),
+            link(R, "google", "x1", "eve"),
+        ] {
+            store.upsert_idp_link(l).await.expect("link");
+        }
+        let who = |realm: &'static str, alias: &'static str, ext: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .get_idp_link_by_external(realm, alias, ext)
+                    .await
+                    .expect("get")
+                    .map(|l| l.user_id)
+            }
+        };
+        assert_eq!(who(R, "google", "x1").await.as_deref(), Some("eve"));
+        assert_eq!(who(R, "google", "x2").await.as_deref(), Some("bob"));
+        assert_eq!(who(R, "github", "x1").await.as_deref(), Some("cyd"));
+        assert_eq!(who("q", "google", "x1").await.as_deref(), Some("dan"));
+        assert_eq!(who(R, "github", "x2").await, None);
+        assert_eq!(store.inner.read().idp_links.len(), 4);
+    }
+
+    /// The sweeper removes what expired (auth sessions, codes, PAR requests, SSO and offline
+    /// sessions past either limit, revocation records) and counts exactly that.
+    #[tokio::test]
+    async fn the_sweeper_removes_and_counts_only_what_expired() {
+        let store = MemoryStore::default();
+        let now = TimestampTz::now();
+        let (past, future) = (
+            now - SignedDuration::from_hours(1),
+            now + SignedDuration::from_hours(1),
+        );
+        seed_sessions(&store);
+        {
+            let mut st = store.inner.write();
+            for (i, at) in [past, future].into_iter().enumerate() {
+                let mut s = auth_session(R, &format!("as{i}"));
+                s.expires_at = at;
+                st.auth_sessions.push(s);
+                st.auth_codes.push(AuthorizationCodeRecord {
+                    code_hash: format!("code{i}"),
+                    realm_id: R.into(),
+                    org_id: None,
+                    client_id: "app".into(),
+                    user_id: "ada".into(),
+                    sso_session_id: "s-ada".into(),
+                    redirect_uri: "https://x.test/cb".into(),
+                    scope: "openid".into(),
+                    mapper_scopes: Vec::new(),
+                    code_challenge: String::new(),
+                    code_challenge_method: String::new(),
+                    nonce: None,
+                    acr: "1".into(),
+                    amr: Vec::new(),
+                    dpop_jkt: None,
+                    auth_time: 0,
+                    consumed: false,
+                    created_at: now,
+                    expires_at: at,
+                });
+                st.par_requests.push(ParRequestRecord {
+                    request_uri_hash: format!("par{i}"),
+                    realm_id: R.into(),
+                    client_id: "app".into(),
+                    params: std::collections::BTreeMap::new(),
+                    consumed: false,
+                    expires_at: at,
+                });
+                st.revoked_tokens.push(RevokedTokenRecord {
+                    jti_hash: format!("jti{i}"),
+                    realm_id: R.into(),
+                    expires_at: at,
+                });
+            }
+            // r's ada: SSO idle limit passed; r's bob: SSO max limit passed.
+            st.sso_sessions[0].idle_expires_at = past;
+            st.sso_sessions[1].max_expires_at = past;
+            // Offline: one past its idle limit, one past its max limit.
+            st.offline_sessions[0].idle_expires_at = past;
+            st.offline_sessions[1].max_expires_at = past;
+        }
+        assert_eq!(store.sweep_expired().await.expect("sweep"), 8);
+        let st = store.inner.read();
+        assert_eq!(st.auth_sessions.len(), 1);
+        assert_eq!(st.auth_sessions[0].id, "as1");
+        assert_eq!(st.auth_codes.len(), 1);
+        assert_eq!(st.auth_codes[0].code_hash, "code1");
+        assert_eq!(st.par_requests.len(), 1);
+        assert_eq!(st.par_requests[0].request_uri_hash, "par1");
+        assert_eq!(st.revoked_tokens.len(), 1);
+        assert_eq!(st.revoked_tokens[0].jti_hash, "jti1");
+        assert_eq!(st.sso_sessions.len(), 2);
+        assert!(st.sso_sessions.iter().all(|s| s.realm_id == "q"));
+        assert_eq!(st.offline_sessions.len(), 6);
+        drop(st);
+        assert_eq!(store.sweep_expired().await.expect("again"), 0);
     }
 
     /// A rename may take a client id another realm uses; it renames this client's service
