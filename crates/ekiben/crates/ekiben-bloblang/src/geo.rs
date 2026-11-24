@@ -621,6 +621,35 @@ mod tests {
     }
 
     #[test]
+    fn a_position_reads_at_most_four_numbers() {
+        assert_eq!(
+            parse_wkt("POINT ZM (1 2 3 4 5)"),
+            Err("failed to parse WKT at byte 18: expected ')'".to_string())
+        );
+    }
+
+    #[test]
+    fn collections_nest_to_the_limit_and_no_deeper() {
+        let nested = |n: usize| {
+            format!(
+                "{}POINT(1 2){}",
+                "GEOMETRYCOLLECTION(".repeat(n),
+                ")".repeat(n)
+            )
+        };
+        assert!(parse_wkt(&nested(MAX_GEO_DEPTH)).is_ok());
+        let err = parse_wkt(&nested(MAX_GEO_DEPTH + 1))
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            err.ends_with(&format!(
+                "the GeometryCollection nests deeper than {MAX_GEO_DEPTH}"
+            )),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn a_wkt_fault_names_its_byte_and_reason() {
         assert_eq!(
             parse_wkt("POINT(1 x)"),

@@ -508,6 +508,7 @@ mod tests {
         assert!(lat.iter().all(|v| (-90.0..90.0).contains(v)), "{lat:?}");
         assert!(lon.iter().all(|v| (-180.0..180.0).contains(v)), "{lon:?}");
         assert!(lat.iter().any(|v| *v != lat[0]) && lon.iter().any(|v| *v != lon[0]));
+        assert!(lat.iter().any(|v| *v < 0.0) && lon.iter().any(|v| *v < 0.0));
         // float64() * 10^0..7, cut to one or two decimals: below 10^7 and seldom a whole number.
         let amounts: Vec<f64> = (0..60)
             .map(|_| {
