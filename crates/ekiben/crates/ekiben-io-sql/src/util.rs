@@ -401,7 +401,8 @@ fn encode_numeric(text: &str) -> Option<Vec<u8>> {
     let lead = (4 - point.rem_euclid(4)) % 4;
     digits.insert_str(0, &"0".repeat(lead as usize));
     point += lead;
-    while !digits.len().is_multiple_of(4) || (digits.len() as i32) < point {
+    // Whole groups; the weight carries the magnitude, so no zero group pads up to the point.
+    while !digits.len().is_multiple_of(4) {
         digits.push('0');
     }
     let groups: Vec<i16> = digits
@@ -1089,6 +1090,17 @@ mod tests {
             "1000"
         );
         assert!(encode_numeric("abc").is_none());
+        // The wire form postgres reads: leading and trailing zero groups dropped, the weight
+        // counting groups of four digits from the point.
+        for (t, b) in [
+            ("0.0001", vec![0, 1, 0xff, 0xff, 0, 0, 0, 4, 0, 1]),
+            ("10000", vec![0, 1, 0, 1, 0, 0, 0, 0, 0, 1]),
+            ("1e8", vec![0, 1, 0, 2, 0, 0, 0, 0, 0, 1]),
+            ("-12.5", vec![0, 2, 0, 0, 0x40, 0, 0, 1, 0, 12, 0x13, 0x88]),
+            ("0", vec![0, 0, 0, 0, 0, 0, 0, 0]),
+        ] {
+            assert_eq!(encode_numeric(t).unwrap(), b, "{t}");
+        }
     }
 
     #[test]
@@ -1414,7 +1426,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(pg_value(&row, 0).unwrap(), Value::String("7".into()));
-        assert!(pg_value(&row, 9).is_err());
+        assert!(pg_value(&row, 9).unwrap_err().contains("out of bounds"));
         db.close().await;
     }
 
@@ -1497,7 +1509,9 @@ mod tests {
             mysql_value(&row, 0, false, true).unwrap(),
             Value::String("7".into())
         );
-        assert!(mysql_value(&row, 9, false, true).is_err());
+        assert!(mysql_value(&row, 9, false, true)
+            .unwrap_err()
+            .contains("out of bounds"));
         db.close().await;
     }
 

@@ -47,6 +47,13 @@ exclude_re = [
   'ekiben-io-sql/src/sqlite\.rs:\d+:\d+: replace \| with \^ in parse_dsn',
   # T-7582 ekiben-io-sql parse_with_offset: the sign is 1 or -1, and x / 1 == x * 1, x / -1 == x * -1.
   'ekiben-io-sql/src/util\.rs:\d+:\d+: replace \* with / in parse_with_offset',
+  # T-7582 ekiben-io-sql pq_text: the float is infinite there, and 0.0 is not, so > and >= pick the same sign.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace > with >= in pq_text',
+  # T-7582 ekiben-io-sql format_pq_ts: an offset of 0 took the 'Z' branch above, so < and <= pick the same sign.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace < with <= in format_pq_ts',
+  # T-7582 ekiben-io-sql encode_numeric: `+ 4` pads one more leading zero group, which the strip below drops again
+  # with its weight, so the wire form is the same.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace % with \+ in encode_numeric',
   # T-7632 ekiben-io-ngsild status_text: a body of exactly ERROR_BODY_BYTES is cut at its own length either way.
   'ekiben-io-ngsild/src/client\.rs:\d+:\d+: replace > with >= in status_text',
   # T-7632 ekiben-io-ngsild: the next pass due exactly now sleeps zero either way; an equal timestamp
