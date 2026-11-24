@@ -525,6 +525,500 @@ async fn a_repository_lives_through_the_compat_surface() {
 /// Every entity set the service document names answers a page to a reader, after a repository
 /// has a branch, a commit status, a pull request with a review and a branch rule; an anonymous
 /// caller reads none of it.
+async fn op(app: &Router, name: &str, token: &str, body: Value) -> (StatusCode, Value) {
+    send(app, "POST", &format!("/odata/{name}"), token, Some(body)).await
+}
+
+/// Every OData action and function a client, MCP or the CLI calls by name: each runs through the
+/// same service as the REST surface, refuses a missing or malformed parameter with 422 naming
+/// it, and a reader writes nothing.
+#[tokio::test]
+async fn every_odata_operation_runs_and_refuses_bad_parameters() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let app = world(tmp.path());
+    const K: &str = "joinedcontext/ops";
+    let unprocessable = StatusCode::UNPROCESSABLE_ENTITY;
+
+    let (st, repo) = op(
+        &app,
+        "CreateRepository",
+        ADMIN,
+        json!({ "Owner": "joinedcontext", "Name": "ops", "Description": "d", "Private": false }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{repo}");
+    let rid = repo["Id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{repo}"))
+        .to_owned();
+    let (st, _) = op(
+        &app,
+        "CreateRepository",
+        ADMIN,
+        json!({ "Owner": "joinedcontext" }),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "Name required");
+    let (st, _) = op(
+        &app,
+        "Shako.CreateRepository",
+        READER,
+        json!({ "Owner": "joinedcontext", "Name": "nope" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "a reader creates nothing");
+
+    // Branches and files.
+    let (st, b) = op(
+        &app,
+        "CreateBranch",
+        ADMIN,
+        json!({ "repo": K, "NewBranchName": "feature", "OldBranchName": "main" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{b}");
+    assert_eq!(b["Name"], json!("feature"));
+    let (st, _) = op(&app, "CreateBranch", ADMIN, json!({ "NewBranchName": "x" })).await;
+    assert_eq!(st, unprocessable, "bound to a repository");
+    let (st, _) = op(
+        &app,
+        "CreateBranch",
+        ADMIN,
+        json!({ "repo": "joinedcontext/none", "NewBranchName": "x" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let files =
+        json!([{ "operation": "create", "path": "docs/a.txt", "content": STANDARD.encode("a") }]);
+    let author = json!({ "Name": "Ada", "Email": "ada@city.example" });
+    let (st, c) = op(
+        &app,
+        "CommitFiles",
+        ADMIN,
+        json!({ "repo": K, "Branch": "feature",
+        "Message": "add a", "Files": files, "Author": author, "Committer": author }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{c}");
+    assert!(c["Sha"].as_str().is_some_and(|s| s.len() == 40), "{c}");
+    for (body, says) in [
+        (json!({ "repo": K, "Message": "m" }), "Files required"),
+        (
+            json!({ "repo": K, "Message": "m", "Files": "nope" }),
+            "invalid Files",
+        ),
+        (json!({ "repo": K, "Files": [] }), "Message required"),
+        (
+            json!({ "repo": K, "Message": "m", "Files": [], "Author": { "Name": "Ada" } }),
+            "Author takes Name and Email",
+        ),
+    ] {
+        let (st, e) = op(&app, "CommitFiles", ADMIN, body).await;
+        assert_eq!(st, unprocessable, "{e}");
+        assert!(e.to_string().contains(says), "{says}: {e}");
+    }
+
+    // Functions read the repository under lower- or upper-case argument names.
+    let (st, tree) = op(
+        &app,
+        "Tree",
+        READER,
+        json!({ "repo": K, "ref": "feature", "recursive": true }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{tree}");
+    assert!(tree.to_string().contains("docs/a.txt"), "{tree}");
+    let (st, file) = op(
+        &app,
+        "File",
+        READER,
+        json!({ "repo": K, "Ref": "feature", "Path": "docs/a.txt" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{file}");
+    let (st, _) = op(&app, "File", READER, json!({ "repo": K, "Ref": "feature" })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "File requires Path");
+    let (st, hist) = op(
+        &app,
+        "History",
+        READER,
+        json!({ "repo": K, "ref": "feature", "top": 1 }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{hist}");
+    let (st, cmp) = op(
+        &app,
+        "Compare",
+        READER,
+        json!({ "repo": K, "base": "main", "head": "feature" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{cmp}");
+    let sha = c["Sha"].as_str().unwrap_or_default().to_owned();
+    let (st, cs) = op(
+        &app,
+        "CommitStatus",
+        READER,
+        json!({ "repo": K, "sha": sha }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{cs}");
+    let (st, _) = op(
+        &app,
+        "CommitStatus",
+        READER,
+        json!({ "repo": K, "Ref": "feature" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "CommitStatus requires Sha");
+
+    // A pull request's life through the actions.
+    let (st, pr) = op(
+        &app,
+        "OpenPullRequest",
+        ADMIN,
+        json!({ "repo": K, "Head": "feature", "Title": "t" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{pr}");
+    let number = pr["Number"].as_u64().unwrap_or_else(|| panic!("{pr}"));
+    let (st, _) = op(
+        &app,
+        "OpenPullRequest",
+        ADMIN,
+        json!({ "repo": K, "Head": "feature" }),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "Title required");
+    let (st, _) = op(
+        &app,
+        "Review",
+        APPROVER,
+        json!({ "repo": K, "Number": number, "Event": "juggle" }),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "an unknown verdict");
+    let (st, _) = op(
+        &app,
+        "Review",
+        APPROVER,
+        json!({ "repo": K, "Event": "APPROVED" }),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "Number required");
+    let (st, rv) = op(
+        &app,
+        "Review",
+        APPROVER,
+        json!({ "repo": format!("{K}:{number}"), "Event": "APPROVED", "Body": "ok" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{rv}");
+    let (st, m) = op(
+        &app,
+        "Mergeable",
+        READER,
+        json!({ "repo": K, "Number": number }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{m}");
+    let (st, _) = op(
+        &app,
+        "UpdateBranch",
+        ADMIN,
+        json!({ "repo": K, "Number": number, "Style": "rebase" }),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "only a merge update");
+    let (st, up) = op(
+        &app,
+        "UpdateBranch",
+        ADMIN,
+        json!({ "repo": K, "Number": number }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{up}");
+    let (st, _) = op(
+        &app,
+        "Merge",
+        ADMIN,
+        json!({ "repo": K, "Number": number, "Style": "juggle" }),
+    )
+    .await;
+    assert_eq!(st.as_u16() / 100, 4, "an unknown merge style");
+    let (st, merged) = op(
+        &app,
+        "Merge",
+        ADMIN,
+        json!({ "repo": K, "Number": number, "Style": "squash",
+        "Message": "m", "DeleteBranchAfterMerge": true, "Author": author }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{merged}");
+    assert_eq!(merged["Merged"], json!(true));
+    let (st, b2) = op(
+        &app,
+        "CreateBranch",
+        ADMIN,
+        json!({ "repo": K, "NewBranchName": "second" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{b2}");
+    let (_, _) = op(
+        &app,
+        "CommitFiles",
+        ADMIN,
+        json!({ "repo": K, "Branch": "second", "Message": "b",
+        "Files": [{ "operation": "create", "path": "b.txt", "content": STANDARD.encode("b") }] }),
+    )
+    .await;
+    let (st, pr2) = op(
+        &app,
+        "OpenPullRequest",
+        ADMIN,
+        json!({ "repo": K, "Head": "second", "Base": "main", "Title": "two", "Body": "b" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{pr2}");
+    let n2 = pr2["Number"].as_u64().unwrap_or_default();
+    let (st, closed) = op(&app, "Close", ADMIN, json!({ "repo": K, "Number": n2 })).await;
+    assert_eq!(st, StatusCode::OK, "{closed}");
+    let (st, _) = op(
+        &app,
+        "DeleteBranch",
+        ADMIN,
+        json!({ "repo": K, "Branch": "second" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = op(&app, "DeleteBranch", ADMIN, json!({ "repo": K })).await;
+    assert_eq!(st, unprocessable, "Branch required");
+
+    // Links to an archive or a bundle of a ref.
+    let (st, link) = op(
+        &app,
+        "ArchiveLink",
+        READER,
+        json!({ "repo": K, "Format": "tar.gz" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{link}");
+    assert!(
+        link["value"]
+            .as_str()
+            .is_some_and(|v| v.ends_with("/archive/main.tar.gz")),
+        "{link}"
+    );
+    let (st, link) = op(
+        &app,
+        "BundleLink",
+        READER,
+        json!({ "repo": K, "Ref": "main" }),
+    )
+    .await;
+    assert!(
+        st == StatusCode::OK
+            && link["value"]
+                .as_str()
+                .is_some_and(|v| v.ends_with("main.bundle")),
+        "{link}"
+    );
+    let (st, _) = op(
+        &app,
+        "ArchiveLink",
+        READER,
+        json!({ "repo": K, "Format": "rar" }),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "zip or tar.gz");
+    let (st, _) = op(
+        &app,
+        "ArchiveLink",
+        READER,
+        json!({ "repo": K, "Ref": "../x" }),
+    )
+    .await;
+    assert_eq!(st.as_u16() / 100, 4, "a ref that names no branch or tag");
+
+    // Branch rules.
+    let (st, rule) = op(
+        &app,
+        "Protect",
+        ADMIN,
+        json!({ "repo": K, "Rule": { "rule_name": "main", "required_approvals": 1 } }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{rule}");
+    assert_eq!(rule["Pattern"], json!("main"));
+    let (st, _) = op(
+        &app,
+        "Protect",
+        ADMIN,
+        json!({ "repo": K, "Rule": { "rule_name": "main", "nope": 1 } }),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "an unknown rule field");
+    let (st, _) = op(
+        &app,
+        "Unprotect",
+        ADMIN,
+        json!({ "repo": K, "Pattern": "main" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = op(&app, "Unprotect", ADMIN, json!({ "repo": K })).await;
+    assert_eq!(st, unprocessable, "Pattern required");
+
+    // Push mirrors through the outbound guard's github.com.
+    let (st, mirror) = op(&app, "AddPushMirror", ADMIN, json!({ "repo": K,
+        "RemoteAddress": "https://github.com/joinedcontext/ops.git", "Interval": "8h0m0s", "SyncOnCommit": false })).await;
+    assert_eq!(st, StatusCode::OK, "{mirror}");
+    let (st, _) = op(&app, "AddPushMirror", ADMIN, json!({ "repo": K })).await;
+    assert_eq!(st, unprocessable, "RemoteAddress required");
+    let (st, _) = op(&app, "SyncPushMirrors", ADMIN, json!({ "repo": K })).await;
+    assert!(st.is_success(), "{st}");
+    let mirror_name = mirror["Name"].as_str().unwrap_or_default().to_owned();
+    assert!(mirror_name.starts_with("mirror-"), "{mirror}");
+    let (st, _) = op(
+        &app,
+        "RemovePushMirror",
+        ADMIN,
+        json!({ "repo": K, "Name": mirror_name }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{mirror}");
+    let (st, _) = op(&app, "RemovePushMirror", ADMIN, json!({ "repo": K })).await;
+    assert_eq!(st, unprocessable, "Name required");
+
+    // Webhooks.
+    for (body, says) in [
+        (
+            json!({ "repo": K, "Url": "https://github.com/hook" }),
+            "Secret or SecretRef",
+        ),
+        (
+            json!({ "repo": K, "Url": "https://github.com/hook", "Secret": "s", "SecretRef": "r" }),
+            "Secret or SecretRef",
+        ),
+        (
+            json!({ "repo": K, "Url": "https://github.com/hook", "Secret": "s", "Events": 3 }),
+            "Events is a list",
+        ),
+        (json!({ "repo": K, "Secret": "s" }), "Url required"),
+    ] {
+        let (st, e) = op(&app, "AddWebhook", ADMIN, body).await;
+        assert_eq!(st, unprocessable, "{e}");
+        assert!(e.to_string().contains(says), "{says}: {e}");
+    }
+    let (st, hook) = op(
+        &app,
+        "AddWebhook",
+        ADMIN,
+        json!({ "repo": K, "Url": "https://github.com/hook",
+        "Secret": "hook-secret", "Events": ["push"], "Active": true }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{hook}");
+    assert!(
+        !hook.to_string().contains("hook-secret"),
+        "the secret is never answered"
+    );
+    let hook_id = hook["Id"].as_str().unwrap_or_default().to_owned();
+    let (st, _) = op(
+        &app,
+        "RedeliverWebhook",
+        ADMIN,
+        json!({ "Id": "not-a-uuid" }),
+    )
+    .await;
+    assert_eq!(st, unprocessable);
+    let (st, _) = op(
+        &app,
+        "RedeliverWebhook",
+        ADMIN,
+        json!({ "Id": "00000000-0000-4000-8000-000000000000" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, del) = op(&app, "RedeliverWebhook", ADMIN, json!({ "Id": hook_id })).await;
+    assert_eq!(st, StatusCode::OK, "{del}");
+
+    // Generic packages.
+    let (st, pkg) = op(
+        &app,
+        "PublishPackage",
+        ADMIN,
+        json!({ "Owner": "joinedcontext", "Package": "tool",
+        "Version": "1.0.0", "File": "tool.txt", "ContentBase64": STANDARD.encode("bytes") }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{pkg}");
+    assert_eq!(pkg["Size"], json!(5));
+    let (st, _) = op(
+        &app,
+        "PublishPackage",
+        ADMIN,
+        json!({ "Owner": "joinedcontext", "Package": "tool",
+        "Version": "1.0.1", "File": "t", "ContentBase64": "*not base64*" }),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "invalid ContentBase64");
+
+    // Who asks and what they may do.
+    let (st, me) = op(&app, "Me", READER, json!({})).await;
+    assert_eq!(st, StatusCode::OK, "{me}");
+    for (object, allowed) in [
+        (json!(null), true),
+        (json!(format!("Repository:{K}")), true),
+        (json!(rid.clone()), true),
+        (json!("ops"), true),
+        (json!("joinedcontext/none"), false),
+    ] {
+        let (st, dec) = op(
+            &app,
+            "Allowed",
+            READER,
+            json!({ "Operation": "Read", "Object": object }),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{dec}");
+        assert_eq!(
+            dec["allowed"].as_bool().or(dec["Allowed"].as_bool()),
+            Some(allowed),
+            "{object}: {dec}"
+        );
+    }
+    let (st, _) = op(&app, "Juggle", READER, json!({})).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "an unknown operation");
+
+    // A copy, then the archive and deletion of the original.
+    let (st, copy) = op(
+        &app,
+        "ImportRepository",
+        ADMIN,
+        json!({ "SourceOwner": "joinedcontext", "SourceName": "ops",
+        "RepoOwner": "joinedcontext", "RepoName": "ops-copy" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{copy}");
+    let (st, _) = op(
+        &app,
+        "ImportRepository",
+        ADMIN,
+        json!({ "SourceOwner": "joinedcontext" }),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "SourceName required");
+    let (st, arch) = op(&app, "Archive", ADMIN, json!({ "repo": K })).await;
+    assert_eq!(st, StatusCode::OK, "{arch}");
+    let (st, _) = op(&app, "Delete", READER, json!({ "repo": K })).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = op(&app, "Delete", ADMIN, json!({ "repo": K })).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = op(&app, "Archive", ADMIN, json!({ "repo": K })).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "gone");
+}
+
 #[tokio::test]
 async fn every_odata_set_answers_a_reader_and_refuses_the_anonymous() {
     let tmp = tempfile::tempdir().expect("tempdir");
