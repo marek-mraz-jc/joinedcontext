@@ -390,6 +390,255 @@ async fn ckan_source_reads_every_page_of_package_search() {
         .all(|d| d.harvest_source_id.as_deref() == Some("remote")));
 }
 
+const GATEWAY: &str = "https://api.city.example";
+const SLUG: &str = "treeslug0000000000";
+
+/// An Endpoint's model index listing every model file for `Tree`, version 2 over version 1.
+fn tree_index() -> String {
+    let files = [
+        "model.schema.json",
+        "context.jsonld",
+        "model.linkml.yaml",
+        "model.md",
+        "model.owl.ttl",
+        "model.rdf.ttl",
+        "model.shacl.ttl",
+    ];
+    let artefacts: serde_json::Map<String, serde_json::Value> = files
+        .iter()
+        .map(|f| {
+            (
+                (*f).to_owned(),
+                json!({"sha256": "ab", "bytes": 10, "type": "text/plain"}),
+            )
+        })
+        .collect();
+    json!({"models": [
+        {"types": ["Tree"], "version": 1, "artifacts": {}},
+        {"types": ["Tree"], "version": 2, "artifacts": artefacts},
+        {"types": ["Bench"], "version": 1, "artifacts": {}},
+    ]})
+    .to_string()
+}
+
+/// A CKAN source of three packages, two of them converted (Tree, Bench), on [`GATEWAY`].
+fn converted_source(base: &str) -> (dataroom_core::HarvestSource, MapFetcher) {
+    let mut src = source(
+        "ckan-action",
+        "conv",
+        base,
+        &["ckan.remote.example", "api.city.example"],
+    );
+    src.gateway = Some(format!("{GATEWAY}/"));
+    for (name, ty) in [("remote-trees", "Tree"), ("remote-benches", "Bench")] {
+        src.converted.insert(
+            name.into(),
+            serde_json::from_value(json!({
+                "endpoint": SLUG, "type": ty, "dataset": format!("urn:{name}"),
+                "location": true, "series": true
+            }))
+            .expect("entry"),
+        );
+    }
+    let f = MapFetcher::new();
+    f.insert(
+        format!("{base}/api/3/action/package_search?rows=1000&start=0"),
+        Some("application/json"),
+        ckan_page(
+            3,
+            vec![
+                ckan_package("r-1", "remote-trees", "Trees"),
+                ckan_package("r-2", "remote-benches", "Benches"),
+                ckan_package("r-3", "remote-noise", "Noise"),
+            ],
+        ),
+    );
+    (src, f)
+}
+
+#[tokio::test]
+async fn a_converted_source_lists_the_endpoints_distributions_and_skips_the_rest() {
+    let w = world(&[]).await;
+    let base = "https://ckan.remote.example";
+    let (src, f) = converted_source(base);
+    let root = format!("{GATEWAY}/api/endpoint/{SLUG}/");
+    f.insert(
+        format!("{root}schema/index.json"),
+        Some("application/json"),
+        tree_index(),
+    );
+    let entry = &src.converted["remote-trees"];
+    let sheet = dataroom_harvest::converted::sheet_address(&root, entry);
+    // The sheet answers 503 once, then the rows: the probe asks again after its wait.
+    f.insert_status(sheet.clone(), 503);
+    f.insert(sheet.clone(), Some("text/csv"), "id\n1\n");
+    let e = engine(&f).with_retry_waits(vec![std::time::Duration::ZERO]);
+    let run = e.run_source(&w.ctx, &w.store, &src).await.expect("run");
+    assert_eq!(
+        (run.created_count, run.state),
+        (1, HarvestRunState::Succeeded)
+    );
+    let skipped: Vec<&str> = run.skipped.iter().map(|s| s.reason.as_str()).collect();
+    assert_eq!(skipped.len(), 2, "{skipped:?}");
+    assert!(skipped
+        .iter()
+        .any(|r| r.contains("Bench on its Endpoint lacks an artefact")));
+    assert!(skipped
+        .iter()
+        .any(|r| r.contains("not converted to NGSI-LD")));
+    let ds = w.store.list_datasets(&w.ctx).await.unwrap();
+    let trees = ds.iter().find(|d| d.name == "remote-trees").expect("trees");
+    assert_eq!(trees.endpoint_url.as_deref(), Some(root.as_str()));
+    assert_eq!(
+        trees.uri, None,
+        "the platform's own dataset, not the source's IRI"
+    );
+    assert!(trees
+        .distributions
+        .iter()
+        .any(|d| d.access_url.contains("/schema/v2/model.shacl.ttl")));
+    let last = trees.distributions.last().expect("sheet");
+    assert_eq!(last.access_url, sheet, "the sheet comes last");
+    let reads = trees
+        .distributions
+        .iter()
+        .filter(|d| d.access_url == sheet)
+        .count();
+    assert_eq!(reads, 2, "the CSV distribution and the sheet");
+    assert_eq!(last.format.as_deref(), Some("CSV"));
+}
+
+#[tokio::test]
+async fn a_converted_dataset_the_catalogue_hides_gets_no_sheet_probe() {
+    let w = world(&[]).await;
+    let mut cat = w
+        .store
+        .get_catalogue(w.org, w.cat)
+        .await
+        .unwrap()
+        .expect("catalogue");
+    cat.hidden_datasets
+        .insert("remote-trees".into(), "hidden".into());
+    w.store.upsert_catalogue(cat).await.unwrap();
+    let base = "https://ckan.remote.example";
+    let (src, f) = converted_source(base);
+    let root = format!("{GATEWAY}/api/endpoint/{SLUG}/");
+    f.insert(
+        format!("{root}schema/index.json"),
+        Some("application/json"),
+        tree_index(),
+    );
+    let sheet = dataroom_harvest::converted::sheet_address(&root, &src.converted["remote-trees"]);
+    f.insert(sheet.clone(), Some("text/csv"), "id\n1\n");
+    let run = engine(&f)
+        .run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("run");
+    assert_eq!(run.created_count, 1);
+    let ds = w.store.list_datasets(&w.ctx).await.unwrap();
+    let trees = ds.iter().find(|d| d.name == "remote-trees").expect("trees");
+    let reads = trees
+        .distributions
+        .iter()
+        .filter(|d| d.access_url == sheet)
+        .count();
+    assert_eq!(reads, 1, "only the CSV distribution, no sheet");
+}
+
+#[tokio::test]
+async fn a_converted_sheet_that_keeps_failing_or_is_refused_is_left_out() {
+    let base = "https://ckan.remote.example";
+    let root = format!("{GATEWAY}/api/endpoint/{SLUG}/");
+    for (status, waits) in [(503, 1), (404, 2)] {
+        let w = world(&[]).await;
+        let (src, f) = converted_source(base);
+        f.insert(
+            format!("{root}schema/index.json"),
+            Some("application/json"),
+            tree_index(),
+        );
+        let sheet =
+            dataroom_harvest::converted::sheet_address(&root, &src.converted["remote-trees"]);
+        for _ in 0..=waits {
+            f.insert_status(sheet.clone(), status);
+        }
+        f.insert(sheet.clone(), Some("text/csv"), "id\n1\n");
+        let e = engine(&f).with_retry_waits(vec![std::time::Duration::ZERO; waits - 1]);
+        let run = e.run_source(&w.ctx, &w.store, &src).await.expect("run");
+        assert_eq!(run.created_count, 1, "HTTP {status}");
+        let ds = w.store.list_datasets(&w.ctx).await.unwrap();
+        let trees = ds.iter().find(|d| d.name == "remote-trees").expect("trees");
+        // The CSV distribution reads the same address; only the sheet would be a second one.
+        let reads = trees
+            .distributions
+            .iter()
+            .filter(|d| d.access_url == sheet)
+            .count();
+        assert_eq!(reads, 1, "HTTP {status}: no sheet");
+    }
+}
+
+#[tokio::test]
+async fn a_converted_source_without_a_gateway_or_a_readable_index_fails_and_withdraws_nothing() {
+    let base = "https://ckan.remote.example";
+    let root = format!("{GATEWAY}/api/endpoint/{SLUG}/");
+    // No gateway.
+    let w = world(&[]).await;
+    let (mut src, f) = converted_source(base);
+    src.gateway = Some("/".into());
+    let err = engine(&f).run_source(&w.ctx, &w.store, &src).await;
+    let run = w.store.list_harvest_runs(&w.ctx, None).await.unwrap();
+    assert!(
+        err.as_ref()
+            .is_err_and(|e| e.to_string().contains("gateway"))
+            || run
+                .iter()
+                .any(|r| r.error.as_deref().is_some_and(|m| m.contains("gateway"))),
+        "{err:?} {run:?}"
+    );
+    assert!(active_names(&w).await.is_empty());
+    // An index that is no JSON.
+    let w = world(&[]).await;
+    let (src, f) = converted_source(base);
+    f.insert(
+        format!("{root}schema/index.json"),
+        Some("application/json"),
+        "<html>",
+    );
+    let run = engine(&f).run_source(&w.ctx, &w.store, &src).await;
+    let runs = w.store.list_harvest_runs(&w.ctx, None).await.unwrap();
+    assert!(
+        run.as_ref()
+            .is_err_and(|e| e.to_string().contains("is not JSON"))
+            || runs.iter().any(|r| r
+                .error
+                .as_deref()
+                .is_some_and(|m| m.contains("is not JSON"))),
+        "{run:?} {runs:?}"
+    );
+    assert!(active_names(&w).await.is_empty());
+    // An index with no model of either type: nothing lists the platform's distributions.
+    let w = world(&[]).await;
+    let (src, f) = converted_source(base);
+    f.insert(
+        format!("{root}schema/index.json"),
+        Some("application/json"),
+        json!({"models": []}).to_string(),
+    );
+    let run = engine(&f).run_source(&w.ctx, &w.store, &src).await;
+    let runs = w.store.list_harvest_runs(&w.ctx, None).await.unwrap();
+    assert!(
+        run.as_ref()
+            .is_err_and(|e| e.to_string().contains("none of 3 datasets"))
+            || runs.iter().any(|r| r
+                .error
+                .as_deref()
+                .is_some_and(|m| m.contains("none of 3 datasets"))),
+        "{run:?} {runs:?}"
+    );
+    assert!(active_names(&w).await.is_empty());
+}
+
 #[tokio::test]
 async fn ckan_source_url_with_a_query_keeps_its_filter() {
     let w = world(&[]).await;
@@ -587,6 +836,38 @@ async fn a_withdrawn_harvested_record_comes_back_when_the_source_lists_it_again(
         .unwrap()
         .unwrap();
     assert_eq!(ds.state, RecordState::Active);
+}
+
+#[tokio::test]
+async fn of_two_held_copies_of_an_item_the_active_one_is_the_one_compared() {
+    let w = world(&[]).await;
+    let base = "https://ckan.remote.example";
+    let src = source("ckan-action", "remote", base, &["ckan.remote.example"]);
+    let f = MapFetcher::new();
+    f.insert(
+        format!("{base}/api/3/action/package_search?rows=1000&start=0"),
+        Some("application/json"),
+        ckan_page(1, vec![ckan_package("r-1", "remote-air", "Air")]),
+    );
+    let e = engine(&f);
+    e.run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("first run");
+    // A withdrawn copy of the same item under another name, as an older run left it.
+    let held = w.store.list_datasets(&w.ctx).await.unwrap();
+    let name = held[0].name.clone();
+    let mut copy = held[0].clone();
+    copy.id = "id-old-copy".into();
+    copy.name = format!("{name}-old");
+    copy.state = RecordState::Withdrawn;
+    copy.distributions.clear();
+    w.store.upsert_dataset(&w.ctx, copy).await.unwrap();
+    let run = e
+        .run_source(&w.ctx, &w.store, &src)
+        .await
+        .expect("second run");
+    assert_eq!((run.created_count, run.unchanged_count), (0, 1), "{run:?}");
+    assert_eq!(active_names(&w).await, [name]);
 }
 
 #[tokio::test]

@@ -454,7 +454,7 @@ pub(crate) trait Runner {
     async fn delete(&self, key: &Key) -> bool;
     /// Hears that the run `run` of `key` ended, `finished` or not (T-4891), and the
     /// [`stream_hash`] of the stream it ran (T-5825).
-    async fn ended(&self, _key: &Key, _run: &str, _finished: bool, _stream: &str) {}
+    async fn ended(&self, key: &Key, run: &str, finished: bool, stream: &str);
 }
 
 /// The queue and its two lanes' concurrency.
@@ -1921,6 +1921,13 @@ mod tests {
                 "queued, due 2026-10-17T05:00:00Z".to_owned()
             ))
         );
+        assert_eq!(
+            queue.lock().unwrap().outcome(&key("a")),
+            Some(StreamOutcome::Scheduled(
+                "Running",
+                "running since 2026-10-17T05:00:00Z".to_owned()
+            ))
+        );
         for (name, next) in [("a", "b"), ("b", "c")] {
             fake.end(name, RunState::Finished);
             step(&queue, &fake, five + jiff::SignedDuration::from_secs(60)).await;
@@ -2409,6 +2416,46 @@ mod tests {
             input["processors"][2]["protobuf"]["operator"], "to_json",
             "the feed's own decoding follows the read"
         );
+    }
+
+    /// T-4952, T-4428: with an outcome sink, a write that still fails ends the run as a failed
+    /// line naming the target, and a refused feed request as a failed run; an input that is no
+    /// clock and no feed stays as it is, and a sink without a URL adds nothing.
+    #[test]
+    fn a_run_with_an_outcome_sink_reports_failed_writes_and_refused_requests() {
+        let report = "http://portal.jc:8080/internal/runs/report";
+        let sink = crate::pipeline_log::SINK_LABELS[1];
+        let stream = serde_json::json!({
+            "input": {"broker": {"inputs": [
+                {"http_client": {"url": "https://feed/vp", "metadata": {"feed": "vp"}}},
+                {"stdin": {}},
+                "odd",
+            ]}},
+            "pipeline": {"processors": [{"mapping": "root = this"}]},
+            "output": {"broker": {"outputs": [{"label": sink, "http_client": {"url": report}}]}},
+        });
+        let run = one_run(&stream);
+        let inputs = &run["input"]["broker"]["inputs"];
+        assert_eq!(
+            inputs[0]["processors"][1],
+            crate::pipeline_log::source_failure(report)
+        );
+        assert_eq!(inputs[1], stream["input"]["broker"]["inputs"][1]);
+        assert_eq!(inputs[2], "odd");
+        let processors = run["pipeline"]["processors"].as_array().unwrap();
+        assert_eq!(processors.len(), 2);
+        let catch = processors[1]["catch"][0]["mutation"].as_str().unwrap();
+        assert!(
+            catch.starts_with(&format!("meta {} = ", crate::pipeline_log::FAILED_KEY)),
+            "{catch}"
+        );
+        assert!(catch.contains("\"the target\""), "{catch}");
+
+        let nowhere = serde_json::json!({
+            "pipeline": {"processors": []},
+            "output": {"label": sink, "drop": {}},
+        });
+        assert_eq!(one_run(&nowhere), nowhere);
     }
 
     /// T-5778: on a full batch lane a restarted Portal forgot the runs still queued, and each

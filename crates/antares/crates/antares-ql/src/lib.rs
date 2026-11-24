@@ -1124,7 +1124,10 @@ mod tests {
             (r#"a=="sl\/ash""#, "sl/ash"),
             (r#"a=="""#, ""),
         ] {
-            let node = parse_q(q).unwrap_or_else(|e| panic!("{q}: {e:?}"));
+            let node = match parse_q(q) {
+                Ok(node) => node,
+                Err(e) => panic!("{q}: {e:?}"),
+            };
             assert!(
                 matches!(&node, QNode::Cmp { value: QValue::Str(s), .. } if s == want),
                 "{q}: {node:?}"
@@ -1365,7 +1368,7 @@ mod complexity_tests {
             assert!(check_type_selection(ok).is_ok(), "{ok}");
         }
         for bad in [
-            "(A;)", "A;", ";A", "()", "A,", ",A", "A;;B", "(A;B", "A)", "((A))", "",
+            "(A;)", "A;", ";A", "A;B", "()", "A,", ",A", "A;;B", "(A;B", "A)", "((A))", "",
         ] {
             assert!(check_type_selection(bad).is_err(), "{bad}");
         }
@@ -1379,6 +1382,19 @@ mod complexity_tests {
         assert_eq!(q.attribute_paths(), ["speed", "brand", "sensor", "owner"]);
         assert!(q.has_linked_paths());
         assert_eq!(q.max_link_depth(), 1);
+        let whole: Vec<String> = q.paths().iter().map(|p| p.to_string()).collect();
+        assert_eq!(whole, ["speed", "brand", "sensor{humidity}", "owner"]);
+        let nested = parse_q("a.b[c]==1").expect("parse");
+        let [p] = nested.paths()[..] else {
+            panic!("one path expected");
+        };
+        assert_eq!(
+            (p.path.as_slice(), p.bracket.as_deref()),
+            (
+                &["a".to_owned(), "b".to_owned()][..],
+                Some(&["c".to_owned()][..])
+            )
+        );
         let flat = parse_q("speed>1|brand==\"x\"").expect("parse");
         assert!(!flat.has_linked_paths());
         assert_eq!(flat.max_link_depth(), 0);

@@ -2719,7 +2719,7 @@ async fn every_tools_call_is_one_activity_row_of_the_person_through_mcp() {
     assert_eq!(ran["details"]["channel"], json!("mcp"));
     assert_eq!(ran["details"]["client"], json!("mcp-mobile"));
     assert_eq!(ran["details"]["subject"], json!("steward.user"));
-    assert_eq!(ran["details"]["username"], json!("steward.user"));
+    assert!(ran["details"].get("username").is_none(), "{ran}");
     assert_eq!(
         row_of("jc_resource_delete")["details"]["decision"],
         json!("asked")

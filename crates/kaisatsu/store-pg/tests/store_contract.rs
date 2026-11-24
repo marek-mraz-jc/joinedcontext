@@ -68,6 +68,7 @@ fn family(id: &str, session: &str, user: &str, client: &str) -> RefreshTokenFami
         previous_hashes: Vec::new(),
         dpop_jkt: None,
         offline: false,
+        offline_since: None,
         revoked: false,
         expires_at: TimestampTz::now() + SignedDuration::from_hours(1),
         act: None,
@@ -168,6 +169,35 @@ async fn realms_orgs_and_memberships(store: &dyn Store) {
         again.len(),
         "listing keys twice creates no new key"
     );
+    store.ensure_signing_key(R, "EdDSA").await.expect("EdDSA");
+    store
+        .ensure_signing_key(R, "EdDSA")
+        .await
+        .expect("EdDSA again");
+    let keys = store.list_signing_keys(R).await.expect("keys");
+    assert_eq!(
+        keys.iter()
+            .filter(|k| k.algorithm == "EdDSA" && k.status == "ACTIVE")
+            .count(),
+        1,
+        "a second ensure adds no key"
+    );
+    assert!(matches!(
+        store.ensure_signing_key(R, "HS256").await,
+        Err(KaisatsuError::BadRequest(_))
+    ));
+    // ES256 and EdDSA active without an active RS256: listing mints the RS256 again (another
+    // algorithm's key does not stand in for the missing one).
+    for mut k in keys.into_iter().filter(|k| k.algorithm == "RS256") {
+        k.status = "PASSIVE".into();
+        store.upsert_signing_key(k).await.expect("passive RS256");
+    }
+    let keys = store.list_signing_keys(R).await.expect("keys");
+    assert!(
+        keys.iter()
+            .any(|k| k.algorithm == "RS256" && k.status == "ACTIVE"),
+        "the missing RS256 is minted"
+    );
 
     store
         .upsert_organization(org("hel", "Hel.FI", true, true))
@@ -177,10 +207,16 @@ async fn realms_orgs_and_memberships(store: &dyn Store) {
         .upsert_organization(org("zil", "zilina.sk", false, true))
         .await
         .expect("org");
-    store
-        .upsert_organization(org("off", "off.example", true, false))
+    // an organization written without an id takes its alias as id
+    let mut off = org("off", "off.example", true, false);
+    off.id = String::new();
+    store.upsert_organization(off).await.expect("org");
+    let got = store
+        .get_organization(R, "off")
         .await
-        .expect("org");
+        .expect("get")
+        .expect("found by alias");
+    assert_eq!(got.id, "off");
     let by_alias = store
         .get_organization(R, "hel")
         .await
@@ -928,6 +964,50 @@ async fn roles_and_clients(store: &dyn Store) {
         .expect("u1");
     assert!(u1.realm_roles.is_empty());
     assert_eq!(u1.client_roles.get("hel-app").map(Vec::len), Some(0));
+    // the importer's one write replaces both kinds of grant, and names no person who is not there
+    let grants = HashMap::from([("hel-app".to_owned(), vec!["editor".to_owned()])]);
+    store
+        .set_user_grants(R, "u1", &["viewer".to_owned()], &grants)
+        .await
+        .expect("grants");
+    let granted = store
+        .get_user_by_id(R, None, "u1")
+        .await
+        .expect("get")
+        .expect("u1");
+    assert_eq!(granted.realm_roles, ["viewer"]);
+    assert_eq!(granted.client_roles, grants);
+    assert!(matches!(
+        store
+            .set_user_grants(R, "nobody", &[], &HashMap::new())
+            .await,
+        Err(KaisatsuError::NotFound(_))
+    ));
+    store
+        .set_user_grants(R, "u1", &[], &u1.client_roles)
+        .await
+        .expect("restore");
+    // a client mapping that names no client is refused both ways, never read as a realm role
+    let ghost = RoleMappingRecord {
+        id: String::new(),
+        realm_id: R.into(),
+        org_id: None,
+        principal_kind: "user".into(),
+        principal_id: "u1".into(),
+        role_id: client_role.id.clone(),
+        role_name: "editor".into(),
+        client_uuid: Some("no-such-client".into()),
+    };
+    assert!(matches!(
+        store.add_role_mapping(ghost).await,
+        Err(KaisatsuError::NotFound(_))
+    ));
+    assert!(matches!(
+        store
+            .remove_role_mapping(R, "user", "u1", Some("no-such-client"), "editor")
+            .await,
+        Err(KaisatsuError::NotFound(_))
+    ));
     assert!(
         store
             .delete_role(R, Some(&client.id), "editor")
@@ -1281,6 +1361,14 @@ async fn sessions_and_tokens(store: &dyn Store) {
         .upsert_refresh_family(family("f3", "sso2", "u1", "grafana"))
         .await
         .expect("family");
+    // An offline family of sso1 outlives that session, not a password change (S3-22).
+    let mut offline = family("f1-offline", "sso1", "u1", "portal");
+    offline.offline = true;
+    offline.offline_since = Some(TimestampTz::now());
+    store
+        .upsert_refresh_family(offline)
+        .await
+        .expect("offline family");
     store
         .upsert_refresh_family(family("f4", "sso-x", "u2", "portal"))
         .await
@@ -1379,6 +1467,34 @@ async fn sessions_and_tokens(store: &dyn Store) {
             .expect("get")
             .expect("f1")
             .revoked
+    );
+    let kept = store
+        .get_refresh_family(R, "f1-offline")
+        .await
+        .expect("get")
+        .expect("f1-offline");
+    assert!(!kept.revoked, "an offline family outlives its SSO session");
+    assert!(kept.offline_since.is_some(), "the start is stored");
+    store
+        .revoke_offline_families_for_user(R, "u1")
+        .await
+        .expect("revoke offline");
+    assert!(
+        store
+            .get_refresh_family(R, "f1-offline")
+            .await
+            .expect("get")
+            .expect("f1-offline")
+            .revoked
+    );
+    assert!(
+        !store
+            .get_refresh_family(R, "f2")
+            .await
+            .expect("get")
+            .expect("f2")
+            .revoked,
+        "an online family stays for its own session"
     );
     store
         .revoke_refresh_families_for_session(R, "sso2", Some("grafana"))
@@ -2094,6 +2210,29 @@ async fn paged_lists(store: &dyn Store) {
         .map(|u| u.id.as_str())
         .collect();
     assert_eq!(ids, ["a", "c"]);
+    // by id, case-blind as the name
+    let by_id = store
+        .find_groups(
+            P,
+            None,
+            &[FieldMatch {
+                field: GroupField::Id,
+                op: Equals,
+                value: "HM".into(),
+            }],
+            0,
+            100,
+        )
+        .await
+        .expect("find by id");
+    assert_eq!(
+        by_id
+            .items
+            .iter()
+            .map(|g| g.group.id.as_str())
+            .collect::<Vec<_>>(),
+        ["hm"]
+    );
     let page = store.find_groups(P, None, &[], 1, 2).await.expect("page");
     assert_eq!(page.total, 6);
     let ids: Vec<&str> = page.items.iter().map(|g| g.group.id.as_str()).collect();
@@ -2134,6 +2273,14 @@ async fn paged_lists(store: &dyn Store) {
         .collect();
     ids.sort();
     assert_eq!(ids, ["1", "2"]);
+    assert!(
+        store
+            .list_client_scopes_with_prefix(P, "endpoint:\0")
+            .await
+            .expect("NUL prefix")
+            .is_empty(),
+        "a prefix holding NUL matches nothing"
+    );
     store.delete_client_scope(R, "4").await.expect("clean up");
 
     // A group past one page is read whole with `first`; one call stops at MAX_PAGE.

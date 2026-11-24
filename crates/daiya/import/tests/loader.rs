@@ -745,6 +745,47 @@ async fn a_dashboard_whose_file_is_gone_leaves_unless_deletion_is_disabled() {
     assert!(store.get_dashboard(ORG, "three").await.unwrap().is_some());
 }
 
+/// A datasources file that is not a mapping is refused; a `$` that starts no name stays a `$`,
+/// and an unclosed `${` is refused naming the text.
+#[tokio::test]
+async fn datasource_files_must_be_mappings_and_dollar_signs_are_read_strictly() {
+    let root = Root::new();
+    let store = FailingStore::new();
+    root.write("datasources/a.yaml", "- name: A\n- name: B\n");
+    let err = load(&store, &root.0).await.unwrap_err();
+    assert_eq!(err.status_code(), 400, "{err}");
+    assert!(
+        err.to_string()
+            .contains("datasource provisioning YAML must be a mapping"),
+        "{err}"
+    );
+
+    let root = Root::new();
+    root.write(
+        "datasources/a.yaml",
+        "apiVersion: 1\ndatasources:\n  - name: Prices\n    uid: prices\n    type: prometheus\n    url: http://h/$-a/$5/$\n",
+    );
+    load(&store, &root.0).await.unwrap();
+    let ds = store
+        .get_datasource_by_name(ORG, "Prices")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ds.url, "http://h/$-a/$5/$");
+
+    let root = Root::new();
+    root.write(
+        "datasources/a.yaml",
+        "apiVersion: 1\ndatasources:\n  - name: ${OPEN\n    type: prometheus\n",
+    );
+    let err = load(&store, &root.0).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("provisioning: unclosed '${' in '${OPEN'"),
+        "{err}"
+    );
+}
+
 /// `$NAME` and `${NAME}` come from the variables handed in, `$$` is a literal `$`, and an unset
 /// name fails the run before anything is written.
 #[tokio::test]

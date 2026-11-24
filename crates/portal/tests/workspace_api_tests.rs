@@ -479,8 +479,8 @@ async fn bringing_back_opens_one_change_in_the_lane_of_its_files() {
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
     let change = body(&answer.text);
     assert_eq!(
-        change["status"]["lane"], "green",
-        "a sandbox space is the whole change"
+        change["status"]["lane"], "yellow",
+        "an edit of a space that exists is reviewed, though it declares itself a sandbox"
     );
     let pulls = calls(&server, "POST", "/Shako.OpenPullRequest").await;
     assert_eq!(pulls.len(), 1);
@@ -697,6 +697,41 @@ async fn a_write_into_someone_elses_workspace_is_refused() {
     .await;
     assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.text);
     assert!(answer.text.contains("only its owner"), "{}", answer.text);
+}
+
+/// API/01 §22 (T-7657): a removal inside the owner's workspace is one commit on its branch and
+/// no Change of the project; in someone else's workspace it is refused and nothing is written.
+#[tokio::test]
+async fn a_removal_inside_a_workspace_is_a_commit_on_its_branch_and_only_the_owners() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    for git_ref in ["base1", "workspace/air-v2"] {
+        tree(&server, git_ref, &[(AIR, "x")]).await;
+    }
+    file(&server, "workspace/air-v2", &space("en", 10)).await;
+    let uri = "/api/v1/projects/ovzdusie/spaces/air?workspace=air-v2&confirm=air";
+    let other = Identity {
+        client: None,
+        groups: vec!["portal-approver".into()],
+        ..person("petra")
+    };
+    let refused = send(&state, other, "DELETE", uri, None).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    assert!(refused.text.contains("only its owner"), "{}", refused.text);
+    assert!(calls(&server, "POST", "/Shako.CommitFiles")
+        .await
+        .is_empty());
+
+    let removed = send(&state, steward(), "DELETE", uri, None).await;
+    assert_eq!(removed.status, StatusCode::OK, "{}", removed.text);
+    let answer = body(&removed.text);
+    assert_eq!(answer["branch"], "workspace/air-v2", "{answer}");
+    assert_eq!(answer["path"], AIR, "{answer}");
+    assert!(answer["metadata"].is_null(), "no Change: {answer}");
+    let commits = calls(&server, "POST", "/Shako.CommitFiles").await;
+    assert_eq!(commits.len(), 1, "{commits:?}");
+    assert_eq!(commits[0]["Branch"], "workspace/air-v2", "{}", commits[0]);
+    assert!(calls(&server, "POST", "/PullRequests").await.is_empty());
 }
 
 #[tokio::test]

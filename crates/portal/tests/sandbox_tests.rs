@@ -185,6 +185,139 @@ async fn a_refused_create_is_an_error_naming_the_object_and_no_job_starts() {
 }
 
 #[tokio::test]
+async fn a_refused_job_is_an_error_naming_it_and_its_config_map_is_still_removed() {
+    let server = MockServer::start().await;
+    deletes(&server).await;
+    Mock::given(method("POST"))
+        .and(path(CM))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(JOBS))
+        .respond_with(ResponseTemplate::new(422).set_body_json(json!({"message": "quota"})))
+        .mount(&server)
+        .await;
+
+    let report = run(&sandbox(&server), &tested(), 2_000).await;
+    assert_eq!(report.outcome, Outcome::Error);
+    let reason = report.reason.unwrap_or_default();
+    assert!(
+        reason.contains(&format!("Job {NAME}")) && reason.contains("quota"),
+        "{reason}"
+    );
+    let requests = server.received_requests().await.expect("recorded");
+    let removed = requests
+        .iter()
+        .filter(|r| r.method.as_str() == "DELETE" && r.url.path() == format!("{CM}/{NAME}"))
+        .count();
+    assert_eq!(removed, 2, "removed before and after the run");
+}
+
+/// The Job's own state as `GET` answers it: `status` and body.
+async fn job_answers(server: &MockServer, status: u16, body: &str) {
+    Mock::given(method("GET"))
+        .and(path(format!("{JOBS}/{NAME}")))
+        .respond_with(ResponseTemplate::new(status).set_body_string(body))
+        .mount(server)
+        .await;
+}
+
+async fn pods_answer(server: &MockServer, status: u16, body: serde_json::Value) {
+    Mock::given(method("GET"))
+        .and(path("/api/v1/namespaces/jc-app-tests/pods"))
+        .respond_with(ResponseTemplate::new(status).set_body_json(body))
+        .mount(server)
+        .await;
+}
+
+const COMPLETE: &str = r#"{"status":{"conditions":[{"type":"Complete","status":"True"}]}}"#;
+const FAILED: &str = r#"{"status":{"conditions":[{"type":"Failed","status":"True"}]}}"#;
+
+/// Each way the cluster can fail a run after the create is an error that names what it could
+/// not read, never a guess at the tests' outcome.
+#[tokio::test]
+async fn what_the_cluster_cannot_answer_is_an_error_naming_it() {
+    let no_pods = json!({"items": []});
+    let one_pod = json!({"items": [{"metadata": {"name": "p1"}}]});
+    for (job, pods, log, want) in [
+        ((404, "{}"), None, None, format!("the Job {NAME} is gone")),
+        (
+            (500, r#"{"message":"etcd down"}"#),
+            None,
+            None,
+            format!("Job {NAME}"),
+        ),
+        (
+            (200, COMPLETE),
+            Some((500, json!({"message": "x"}))),
+            None,
+            format!("the pods of {NAME}"),
+        ),
+        (
+            (200, COMPLETE),
+            Some((200, no_pods.clone())),
+            None,
+            format!("the Job {NAME} ended with no pod to read"),
+        ),
+        (
+            (200, FAILED),
+            Some((200, no_pods.clone())),
+            None,
+            format!("the Job {NAME} stopped before its pod ran"),
+        ),
+        (
+            (200, COMPLETE),
+            Some((200, one_pod.clone())),
+            Some(500),
+            "the log of p1".to_owned(),
+        ),
+    ] {
+        let server = MockServer::start().await;
+        deletes(&server).await;
+        creates(&server).await;
+        job_answers(&server, job.0, job.1).await;
+        if let Some((status, body)) = pods {
+            pods_answer(&server, status, body).await;
+        }
+        if let Some(status) = log {
+            Mock::given(method("GET"))
+                .and(path("/api/v1/namespaces/jc-app-tests/pods/p1/log"))
+                .respond_with(ResponseTemplate::new(status))
+                .mount(&server)
+                .await;
+        }
+        let report = run(&sandbox(&server), &tested(), 2_000).await;
+        assert_eq!(report.outcome, Outcome::Error, "{want}: {report:?}");
+        let reason = report.reason.unwrap_or_default();
+        assert!(reason.contains(&want), "{want}: {reason}");
+    }
+}
+
+/// An API server nobody answers on (port 1 refuses the connection): the error names the
+/// object and what the connection said, never an API status it did not get.
+#[tokio::test]
+async fn an_unreachable_api_server_is_an_error_naming_the_object() {
+    let settings = SandboxSettings {
+        namespace: NS.into(),
+        image: format!("registry/app-builder:1@sha256:{}", "a".repeat(64)),
+        rust_image: None,
+    };
+    let refused = Sandbox::new(
+        KubeClient::with_token("http://127.0.0.1:1", "t").expect("a client"),
+        settings,
+    );
+    let report = run(&refused, &tested(), 2_000).await;
+    assert_eq!(report.outcome, Outcome::Error, "{report:?}");
+    let reason = report.reason.unwrap_or_default();
+    assert!(
+        reason.starts_with(&format!("ConfigMap {NAME}: ")),
+        "{reason}"
+    );
+    assert!(!reason.contains("the API server answered"), "{reason}");
+}
+
+#[tokio::test]
 async fn a_version_without_tests_never_reaches_the_cluster() {
     let server = MockServer::start().await;
     let files = BTreeMap::from([("src/App.tsx".to_owned(), "x".to_owned())]);

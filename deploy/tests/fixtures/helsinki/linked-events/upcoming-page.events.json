@@ -1,0 +1,294 @@
+[
+ {
+  "description": {
+   "languageMap": {
+    "en": "Photographer Eino Partanen (1902–1962) recorded the Viipuri theatre scene for a period of ten years 1929–1939. ",
+    "fi": "Valokuvaaja Eino Partanen (1902–1962) kuvasi viipurilaista teatteria 10 vuoden ajan vuosina 1929–39. "
+   },
+   "type": "LanguageProperty"
+  },
+  "endDate": {
+   "type": "Property",
+   "value": "2026-12-31T21:59:00Z"
+  },
+  "eventStatus": {
+   "type": "Property",
+   "value": "EventScheduled"
+  },
+  "id": "urn:ngsi-ld:Event:hel.fi:helsinki:helsinki-afzapzc5sq",
+  "isAccessibleForFree": {
+   "type": "Property",
+   "value": true
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "coordinates": [
+     24.941486,
+     60.170576
+    ],
+    "type": "Point"
+   }
+  },
+  "name": {
+   "languageMap": {
+    "en": "Emotions and Elegance",
+    "fi": "Tunteita ja eleganssia"
+   },
+   "type": "LanguageProperty"
+  },
+  "source": {
+   "type": "Property",
+   "value": "https://api.hel.fi/linkedevents/v1/"
+  },
+  "startDate": {
+   "type": "Property",
+   "value": "2019-12-31T22:01:00Z"
+  },
+  "thematic": {
+   "type": "Property",
+   "value": [
+    "photography exhibitions",
+    "Internet",
+    "theatre (art forms)",
+    "remote participation"
+   ]
+  },
+  "type": "Event",
+  "webSite": {
+   "type": "Property",
+   "value": "https://www.teatterimuseo.fi/fi/Tunteita-ja-eleganssia"
+  }
+ },
+ {
+  "address": {
+   "type": "Property",
+   "value": {
+    "addressCountry": "FI",
+    "addressLocality": "Helsinki",
+    "postalCode": "00130",
+    "streetAddress": "Kopernikuksentie 1"
+   }
+  },
+  "description": {
+   "languageMap": {
+    "en": "Dive into the world of astronomy and the history of the Observatory building!",
+    "fi": "Observatorion perusnäyttely kutsuu kaikki vauvasta vaariin sukeltamaan avaruuden ihmeisiin ja Observatoriorakennuksen vaiheikkaaseen historiaan. ",
+    "sv": "Kasta dig in i rymdens under och Observatoriebyggnadens brokiga historia! Med undantag av tornen och planetariet ligger utställningen på huvudvåningen."
+   },
+   "type": "LanguageProperty"
+  },
+  "endDate": {
+   "type": "Property",
+   "value": "2030-12-31T14:00:00Z"
+  },
+  "eventStatus": {
+   "type": "Property",
+   "value": "EventScheduled"
+  },
+  "id": "urn:ngsi-ld:Event:hel.fi:helsinki:helsinki-agp5dhl25y",
+  "isAccessibleForFree": {
+   "type": "Property",
+   "value": false
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "coordinates": [
+     24.951674,
+     60.161884
+    ],
+    "type": "Point"
+   }
+  },
+  "name": {
+   "languageMap": {
+    "en": "The Universe and I",
+    "fi": "Minä ja maailmankaikkeus",
+    "sv": "Jag och världsalltet"
+   },
+   "type": "LanguageProperty"
+  },
+  "refPointOfInterest": {
+   "object": "urn:ngsi-ld:PointOfInterest:hel.fi:helsinki:servicemap-30092",
+   "type": "Relationship"
+  },
+  "source": {
+   "type": "Property",
+   "value": "https://api.hel.fi/linkedevents/v1/"
+  },
+  "startDate": {
+   "type": "Property",
+   "value": "2003-01-01T10:00:00Z"
+  },
+  "thematic": {
+   "type": "Property",
+   "value": [
+    "science",
+    "astronomy",
+    "outer space",
+    "exhibitions"
+   ]
+  },
+  "type": "Event",
+  "webSite": {
+   "type": "Property",
+   "value": "https://www.helsinki.fi/fi/tiedemuseo-liekki/nayttelyt/mina-ja-maailmankaikkeus"
+  }
+ },
+ {
+  "address": {
+   "type": "Property",
+   "value": {
+    "addressCountry": "FI",
+    "addressLocality": "Helsinki",
+    "postalCode": "00500",
+    "streetAddress": "Kinaporinkatu 7-9 A"
+   }
+  },
+  "description": {
+   "languageMap": {
+    "fi": "Kinaporin päivätansseissa on aina live bändi."
+   },
+   "type": "LanguageProperty"
+  },
+  "endDate": {
+   "type": "Property",
+   "value": "2026-12-23T13:00:00Z"
+  },
+  "eventStatus": {
+   "type": "Property",
+   "value": "EventScheduled"
+  },
+  "id": "urn:ngsi-ld:Event:hel.fi:helsinki:helsinki-agpg4hzhzq",
+  "isAccessibleForFree": {
+   "type": "Property",
+   "value": true
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "coordinates": [
+     24.962286,
+     60.18901
+    ],
+    "type": "Point"
+   }
+  },
+  "name": {
+   "languageMap": {
+    "fi": "Kinaporin päivätanssit"
+   },
+   "type": "LanguageProperty"
+  },
+  "refPointOfInterest": {
+   "object": "urn:ngsi-ld:PointOfInterest:hel.fi:helsinki:servicemap-48547",
+   "type": "Relationship"
+  },
+  "source": {
+   "type": "Property",
+   "value": "https://api.hel.fi/linkedevents/v1/"
+  },
+  "startDate": {
+   "type": "Property",
+   "value": "2026-12-23T11:00:00Z"
+  },
+  "superEvent": {
+   "object": "urn:ngsi-ld:Event:hel.fi:helsinki:helsinki-agpg4hzprq",
+   "type": "Relationship"
+  },
+  "thematic": {
+   "type": "Property",
+   "value": [
+    "dance (performing arts)"
+   ]
+  },
+  "type": "Event"
+ },
+ {
+  "address": {
+   "type": "Property",
+   "value": {
+    "addressCountry": "FI",
+    "addressLocality": "Helsinki",
+    "postalCode": "00170",
+    "streetAddress": "Aleksanterinkatu 16"
+   }
+  },
+  "dataProvider": {
+   "type": "Property",
+   "value": "ahjo:u4804001010"
+  },
+  "description": {
+   "languageMap": {
+    "en": "Near the Senate Square, in the oldest city blocks of Helsinki, you can find the blue-grey Sederholm …",
+    "fi": "Senaatintorin kulmalla Helsingin vanhimmissa kortteleissa sijaitsee siniharmaa Sederholmin talo, jok…",
+    "sv": "Vid Senatstorgets hörn i Helsingfors äldsta kvarter finns det blågrå Sederholmska huset som blev…"
+   },
+   "type": "LanguageProperty"
+  },
+  "endDate": {
+   "type": "Property",
+   "value": "2050-12-31T17:00:00Z"
+  },
+  "eventStatus": {
+   "type": "Property",
+   "value": "EventRescheduled"
+  },
+  "id": "urn:ngsi-ld:Event:hel.fi:helsinki:hkm-3466",
+  "isAccessibleForFree": {
+   "type": "Property",
+   "value": true
+  },
+  "location": {
+   "type": "GeoProperty",
+   "value": {
+    "coordinates": [
+     24.95398,
+     60.16886
+    ],
+    "type": "Point"
+   }
+  },
+  "name": {
+   "languageMap": {
+    "en": "Children’s Town",
+    "fi": "Lasten kaupunki",
+    "sv": "Barnens stad"
+   },
+   "type": "LanguageProperty"
+  },
+  "organizer": {
+   "type": "Property",
+   "value": {
+    "name": "Kaupunginkirjasto"
+   }
+  },
+  "refPointOfInterest": {
+   "object": "urn:ngsi-ld:PointOfInterest:hel.fi:helsinki:servicemap-8663",
+   "type": "Relationship"
+  },
+  "source": {
+   "type": "Property",
+   "value": "https://api.hel.fi/linkedevents/v1/"
+  },
+  "startDate": {
+   "type": "Property",
+   "value": "2001-01-01T09:00:00Z"
+  },
+  "thematic": {
+   "type": "Property",
+   "value": [
+    "everyday",
+    "cultural events",
+    "Helsinki residents",
+    "museums"
+   ]
+  },
+  "type": "Event",
+  "webSite": {
+   "type": "Property",
+   "value": "https://www.helsinginkaupunginmuseo.fi/nayttelyt/lasten-kaupunki/"
+  }
+ }
+]

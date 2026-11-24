@@ -674,6 +674,10 @@ mod tests {
         ] {
             assert!(!pushable_pattern(p), "{p}");
         }
+        assert!(
+            pushable_pattern(&"a".repeat(MAX_PUSHED_PATTERN)),
+            "the ceiling itself"
+        );
     }
 
     /// A number that cannot round-trip as a JSON literal is not compiled to

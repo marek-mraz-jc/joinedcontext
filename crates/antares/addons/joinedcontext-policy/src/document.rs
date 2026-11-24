@@ -889,7 +889,7 @@ mod tests {
             .policies
             .into_iter()
             .next()
-            .ok_or_else(|| "no policy".to_owned())
+            .ok_or("no policy".to_owned())
     }
 
     fn base() -> serde_json::Value {
@@ -990,6 +990,20 @@ mod tests {
         Ok(())
     }
 
+    /// A narrowed entry carries its Attribute lists alone: the capabilities are spent on the
+    /// narrowing, a schema read's entry included.
+    #[test]
+    fn a_narrowed_entry_carries_no_capabilities() -> Result<(), Box<dyn std::error::Error>> {
+        let info: Information = serde_json::from_value(json!({"entities": [{"type": "Air"}],
+            "propertyNames": ["name"], "attributes": {"name": {"read": true}}}))?;
+        for need in [Need::Schema, Need::Read] {
+            let narrowed = info.narrowed(need)?.ok_or("the entry grants nothing")?;
+            assert!(narrowed.attributes.is_empty(), "{need:?}");
+            assert_eq!(narrowed.property_names, ["name"], "{need:?}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn write_kinds_narrow_each_write_clause() -> Result<(), String> {
         let got = split(&air(
@@ -1002,6 +1016,33 @@ mod tests {
         };
         assert_eq!(clauses, &["5.6.2"]);
         assert_eq!(names(rules), ["name"]);
+        // each kind alone admits the clauses of that kind and no other: an append creates, a
+        // delete removes, and a write the table does not name needs every kind
+        let writes = json!(["5.6.1", "5.6.2", "5.6.5", "5.6.18"]);
+        for (kind, admitted) in [
+            ("append", "5.6.1"),
+            ("update", "5.6.2"),
+            ("delete", "5.6.5"),
+        ] {
+            let got = split(&air(
+                &json!({"name": {"write": [kind]}, "*": {"write": []}}),
+                &writes,
+            ))?;
+            let [(clauses, rules)] = got.as_slice() else {
+                return Err(format!("{kind}: {} policies, not 1", got.len()));
+            };
+            assert_eq!(clauses, &[admitted], "{kind}");
+            assert_eq!(names(rules), ["name"], "{kind}");
+        }
+        let all = json!({"name": {"write": ["update", "append", "delete"], "read": false}, "*": {"write": []}});
+        let got = split(&air(&all, &json!(["5.6.18"])))?;
+        let [(clauses, rules)] = got.as_slice() else {
+            return Err(format!("{} policies, not 1", got.len()));
+        };
+        assert_eq!(
+            (clauses.as_slice(), names(rules)),
+            (&["5.6.18".to_owned()][..], vec!["name".to_owned()])
+        );
         Ok(())
     }
 
@@ -1019,6 +1060,31 @@ mod tests {
         assert_eq!(by("5.7.2"), Some(vec!["name".into()]));
         assert_eq!(by("5.7.3"), Some(vec!["name".into(), "pm10".into()]));
         assert_eq!(by("5.7.8"), Some(vec!["name".into(), "pm10".into()]));
+        Ok(())
+    }
+
+    /// The access surface shows each split policy's selectors as narrowed, in the words of
+    /// the document: a read that does not give `pm10` names `name` alone.
+    #[test]
+    fn a_split_policy_shows_its_narrowed_selectors_as_written() -> Result<(), String> {
+        let t = compile(&json!({"policies": [air(
+            &json!({"pm10": {"read": false}}),
+            &json!(["5.7.2", "5.7.3"]),
+        )]}))?;
+        let shown = |clause: &str| {
+            t.policies
+                .iter()
+                .find(|p| p.clauses.contains(clause))
+                .map(|p| p.source.selectors.clone())
+        };
+        let selector = |attributes: &[&str]| Selector {
+            entity_type: "Air".into(),
+            id: None,
+            id_pattern: None,
+            attributes: attributes.iter().map(|a| (*a).to_owned()).collect(),
+        };
+        assert_eq!(shown("5.7.2"), Some(vec![selector(&["name"])]));
+        assert_eq!(shown("5.7.3"), Some(vec![selector(&["name", "pm10"])]));
         Ok(())
     }
 
@@ -1328,6 +1394,13 @@ PT1H => Err("refused")
         ] {
             assert_eq!(duration(bad), None, "{bad}");
         }
+        // the longest window chrono held is still read, one second more is not
+        let longest = i64::MAX / 1000;
+        assert_eq!(
+            duration(&format!("PT{longest}S")),
+            Some(SignedDuration::from_secs(longest))
+        );
+        assert_eq!(duration(&format!("PT{}S", longest + 1)), None);
         // T-3729: a bound is a duration strictly before now
         assert_eq!(duration("P0D"), Some(SignedDuration::ZERO));
         for (raw, ok) in [("P0D", false), ("PT1S", false), ("-PT1S", true)] {

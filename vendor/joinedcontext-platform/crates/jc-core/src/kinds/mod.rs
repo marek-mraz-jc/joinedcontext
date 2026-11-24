@@ -16,6 +16,7 @@ pub mod csr;
 pub mod dashboard;
 pub mod data_model;
 pub mod data_source;
+pub mod dataset_fields;
 pub mod dataspace;
 pub mod delegation_policy;
 pub mod ekiben_components;
@@ -47,6 +48,7 @@ pub mod role;
 pub mod script;
 pub mod service_account;
 pub mod space;
+pub mod stylesheet;
 pub mod subscription;
 pub mod sync;
 pub mod ui_schema;
@@ -63,8 +65,10 @@ pub use app::{
     GeoConstraint, GeoWithin, GitSource, TemporalConstraint, DEFAULT_ORGANIZATION_SERVICES,
 };
 pub use appearance::{
-    contrast_ratio, is_hex_colour, is_link_url, AppearanceColours, AppearanceFont, AppearanceHero,
-    AppearanceLink, AppearancePage, DatasetListLayout, OrganizationAppearance,
+    contrast_ratio, is_hex_colour, is_link_url, AppearanceColours, AppearanceDisplay,
+    AppearanceFont, AppearanceHero, AppearanceLink, AppearancePage, ButtonStyle, CardShadow,
+    ContentWidth, DatasetDisplay, DatasetListDisplay, DatasetListLayout, DisplaySection,
+    OrganizationAppearance,
 };
 pub use assistant::{
     AnswerSpec, AssistantDeploymentSpec, AssistantScope, Budget, Channel, ChatWidget, Connector,
@@ -95,6 +99,7 @@ pub use data_source::{
     HttpPagingOrder, HttpPreset, HttpPresetKind, MqttConnection, TlsSettings, WebSocketConnection,
     WebhookBearer, WebhookConnection, WebhookHmac,
 };
+pub use dataset_fields::{DatasetField, DatasetFieldType};
 pub use dataspace::{
     AgreementConstraints, AgreementRole, AgreementState, ConnectorEngine, DataAgreementSpec,
     DataOfferSpec, DataSpaceParticipantSpec, Did,

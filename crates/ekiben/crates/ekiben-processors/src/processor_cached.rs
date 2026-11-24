@@ -104,7 +104,7 @@ impl CachedProcessor {
         let cache = ctx
             .resources
             .get_cache(ctx.org_id(), &self.cache)
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::err_text)?;
         match cache.get(&key).await {
             Ok(stored) => {
                 return result_to_batch(&batch[i], &stored).map_err(|e| {
@@ -116,7 +116,7 @@ impl CachedProcessor {
         }
         let results = execute_all(ctx, &self.processors, vec![vec![batch[i].clone()]])
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::err_text)?;
         let mut should_cache = true;
         let mut collapsed = Vec::new();
         for b in results {

@@ -49,7 +49,7 @@ body {
 background: var(--jc-bg);
 color: var(--jc-ink);
 font-family: var(--jc-font-body);
-font-size: 1rem;
+font-size: var(--jc-font-size, 1rem);
 line-height: 1.6;
 -webkit-font-smoothing: antialiased;
 }
@@ -59,7 +59,7 @@ h2 { font-size: 1.375rem; font-weight: 650; line-height: 1.3; margin: 2rem 0 .75
 h3 { font-size: 1.0625rem; font-weight: 650; line-height: 1.4; }
 .container { max-width: var(--jc-content-max); }
 .main { background: var(--jc-bg); padding: 1.5rem 0 3rem; }
-a, .btn-link, .link-primary { color: var(--jc-primary); text-underline-offset: .2em; }
+a, .btn-link, .link-primary { color: var(--jc-link, var(--jc-primary)); text-underline-offset: .2em; }
 a:hover, a:focus, .btn-link:hover, .link-primary:hover, .link-primary:focus { color: var(--jc-primary-dark); }
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, iframe:focus-visible {
 outline: 3px solid var(--jc-ring); outline-offset: 2px; border-radius: var(--jc-radius-sm);
@@ -70,9 +70,9 @@ outline: 3px solid var(--jc-ring); outline-offset: 2px; border-radius: var(--jc-
 .account-masthead .account ul li a, .account-masthead .account ul li .btn-link { color: color-mix(in oklab, var(--jc-paper) 85%, var(--jc-ink)); font-weight: 500; }
 .account-masthead .account ul li a:hover, .account-masthead .account ul li a:focus { color: var(--jc-paper); background: transparent; text-decoration: underline; }
 .account-masthead .account ul li { border-left: 0; }
-.masthead { background: var(--jc-surface); color: var(--jc-ink); border-bottom: 1px solid var(--jc-border); padding: .75rem 0; box-shadow: none; }
+.masthead { background: var(--jc-header-bg, var(--jc-surface)); color: var(--jc-header-fg, var(--jc-ink)); border-bottom: 1px solid var(--jc-border); padding: .75rem 0; box-shadow: none; }
 .masthead .navbar { padding: 0; }
-.masthead a, .masthead .navbar a { color: var(--jc-ink); }
+.masthead a, .masthead .navbar a { color: var(--jc-header-fg, var(--jc-ink)); }
 .jc-brand { text-decoration: none; }
 /* CKAN sets the logo link inline-block on a text line, which left room for descenders under the
 image and lifted it above the navigation's centre: its box is a flex row of the image alone. */
@@ -141,7 +141,7 @@ color: var(--jc-ink); border-bottom-color: var(--jc-primary); background: transp
 .nav-simple > .active > a, .nav-facet .nav-item.active > a { background: var(--jc-primary-soft); color: var(--jc-primary-soft-fg); }
 /* ---- Buttons, inputs, badges ----------------------------------------------------------- */
 .btn { border-radius: var(--jc-radius); font-weight: 550; }
-.btn-primary { background: var(--jc-primary); border-color: var(--jc-primary); color: var(--jc-primary-fg); }
+.btn-primary { background: var(--jc-btn-bg, var(--jc-primary)); border-color: var(--jc-primary); color: var(--jc-btn-fg, var(--jc-primary-fg)); }
 .btn-primary:hover, .btn-primary:focus, .btn-primary:active, .btn-primary.active, .btn-check:checked + .btn-primary {
 background-color: var(--jc-primary-dark); border-color: var(--jc-primary-dark); color: var(--jc-primary-fg);
 }
@@ -452,8 +452,8 @@ only where the template put a <wbr> (before a slash). */
 .table-striped > tbody > tr:nth-of-type(odd) > * { background-color: var(--jc-n50); }
 .table th { font-weight: 600; }
 /* ---- Footer: the ink as the paper, the one pair the branding block makes legible -------- */
-.site-footer { background: var(--jc-ink); color: var(--jc-paper); border-top: 4px solid var(--jc-primary); padding: 3rem 0 2.5rem; margin-top: 0; }
-.site-footer p, .site-footer a, .site-footer label, .site-footer .attribution p, .site-footer li { color: color-mix(in oklab, var(--jc-paper) 88%, var(--jc-ink)); }
+.site-footer { background: var(--jc-footer-bg, var(--jc-ink)); color: var(--jc-footer-fg, var(--jc-paper)); border-top: 4px solid var(--jc-primary); padding: 3rem 0 2.5rem; margin-top: 0; }
+.site-footer p, .site-footer a, .site-footer label, .site-footer .attribution p, .site-footer li { color: var(--jc-footer-fg, color-mix(in oklab, var(--jc-paper) 88%, var(--jc-ink))); }
 .site-footer a { text-decoration: none; }
 .site-footer a:hover, .site-footer a:focus { color: var(--jc-paper); text-decoration: underline; }
 .site-footer a:focus-visible, .site-footer .form-select:focus-visible, .site-footer .btn:focus-visible { outline: 2px solid var(--jc-paper); outline-offset: 2px; box-shadow: none; }
@@ -982,3 +982,19 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
   .jc-row-2:has(> .jc-block-numbers:first-child) { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
   .jc-row-2:has(> .jc-block-numbers:last-child) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 }
+
+/* T-7745: a portal's own stylesheet (`spec.appearance.css`) may never take the licence and
+   publisher lines out of sight. Its declarations carry no !important and it may not hide, move,
+   layer or fade anything, so these win over any rule it holds, whatever the selector. Only a
+   page that links one carries `jc-portal-css`; every other page keeps the theme's look. */
+.jc-portal-css [data-jc-keep], .jc-portal-css [data-jc-keep] * {
+  font-size: max(.875rem, 1em) !important;
+  line-height: 1.5 !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  color: var(--jc-ink, #0f172a) !important;
+  background-color: var(--jc-paper, #ffffff) !important;
+  background-image: none !important;
+  text-shadow: none !important;
+}
+.jc-portal-css [data-jc-keep] a { color: var(--jc-link, var(--jc-primary, #0b5394)) !important; }

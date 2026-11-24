@@ -669,6 +669,98 @@ async fn userinfo_needs_a_live_access_token() {
     assert_eq!(st, StatusCode::UNAUTHORIZED);
 }
 
+/// A code asked for with `dpop_jkt` (RFC 9449 §10) is bound to that key: its exchange without
+/// a proof of the key is refused.
+#[tokio::test]
+async fn a_code_bound_to_a_dpop_key_needs_a_proof_at_the_exchange() {
+    let (app, _, _, _) = app().await;
+    let (st, h, _) = get(
+        &app,
+        &auth_query("&dpop_jkt=0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    let (st, h2, body) = login_from(&app, &location(&h), &auth_cookie(&h)).await;
+    assert_eq!(st, StatusCode::SEE_OTHER, "{body}");
+    let code = query_param(&location(&h2), "code").expect("code");
+    let (st, _, body) = post_form(
+        &app,
+        TOKEN,
+        &[
+            ("grant_type", "authorization_code"),
+            ("client_id", "edge"),
+            ("client_secret", "edge-secret-123"),
+            ("code", code.as_str()),
+            ("redirect_uri", CALLBACK),
+            ("code_verifier", VERIFIER),
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("invalid_dpop_proof"), "{body}");
+    assert!(body.contains("bound to a DPoP key"), "{body}");
+}
+
+/// A step-up on a password session of a person with a passkey asks for the passkey at once,
+/// not the password again.
+#[tokio::test]
+async fn a_step_up_with_a_passkey_asks_for_the_passkey() {
+    let (app, store, _, _) = app().await;
+    let (_, sso) = browser_login(&app).await;
+    let member = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .insert_webauthn_credential(WebAuthnCredentialRecord {
+            id: "pk-step".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            user_id: member.id.clone(),
+            user_handle: "handle-step".into(),
+            credential_id: "cred-step".into(),
+            public_key_cose_json: "{}".into(),
+            cose_alg: -7,
+            sign_count: 0,
+            uv_initialized: true,
+            backup_eligible: false,
+            backup_state: false,
+            transports: Vec::new(),
+            attestation_type: "none".into(),
+            rp_id: "idm.dev.example.test".into(),
+            user_label: None,
+            created_at: jc_time::TimestampTz::now(),
+            last_used_at: None,
+        })
+        .await
+        .unwrap();
+    let (st, h, _) = get(&app, &auth_query("&acr_values=mfa"), Some(&sso), None).await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    let login = location(&h);
+    assert!(login.contains("/login-actions/authenticate"), "{login}");
+    let (st, _, html) = get(&app, &login, Some(&auth_cookie(&h)), None).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(html.contains("webauthn-authenticate"), "{html}");
+    assert!(!html.contains(r#"name="password""#), "{html}");
+}
+
+/// A confidential client `client_id` in the dev realm, with no redirect URIs.
+async fn edge_like(store: &MemoryStore, client_id: &str) -> ClientRepresentation {
+    let client = ClientRepresentation {
+        id: format!("uuid-{client_id}"),
+        realm_id: "dev".into(),
+        client_id: client_id.into(),
+        enabled: true,
+        ..Default::default()
+    };
+    store.upsert_client(client.clone()).await.unwrap();
+    client
+}
+
 #[tokio::test]
 async fn rp_initiated_logout_and_back_channel_logout() {
     let (app, store, state, kek) = app().await;
@@ -705,6 +797,7 @@ async fn rp_initiated_logout_and_back_channel_logout() {
         format!("?post_logout_redirect_uri={signed_out}"),
         format!("?client_id=nope&post_logout_redirect_uri={signed_out}"),
         "?id_token_hint=not-a-jwt".to_owned(),
+        format!("?id_token_hint={id_token}&client_id=account-console"),
     ] {
         let (st, _, _) = get(&app, &format!("{logout}{q}"), None, None).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{q}");
@@ -713,6 +806,21 @@ async fn rp_initiated_logout_and_back_channel_logout() {
         store.get_sso_session("dev", &sid).await.unwrap().is_some(),
         "nothing ended yet"
     );
+    // The session also names a client deleted since and one whose pinned algorithm this realm
+    // cannot sign: neither gets a logout token, and the logout still ends the session.
+    let mut pinned = edge_like(&store, "pinned-alg").await;
+    pinned
+        .attributes
+        .insert("backchannel.logout.url".into(), backchannel.into());
+    pinned
+        .attributes
+        .insert("id.token.signed.response.alg".into(), "HS512".into());
+    store.upsert_client(pinned).await.unwrap();
+    let mut session = store.get_sso_session("dev", &sid).await.unwrap().unwrap();
+    for id in ["deleted-since", "pinned-alg"] {
+        session.clients.insert(id.into(), id.into());
+    }
+    store.upsert_sso_session(session).await.unwrap();
 
     let (st, h, _) = get(
         &app,

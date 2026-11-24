@@ -680,6 +680,17 @@ pub trait CurrentStateDriver: Send + Sync {
     ) -> Result<Vec<(String, u64)>, NgsiError> {
         Ok(digests(self.list(tenant, kind).await?))
     }
+    /// A number that moves whenever a document of this kind in the tenant
+    /// is written or deleted, for a reader polling [`Self::list_digests`]:
+    /// the same answer twice means nothing to list (S5-26). `None`: the
+    /// backend keeps no such number, so the reader lists every time.
+    async fn doc_revision(
+        &self,
+        _tenant: &TenantId,
+        _kind: Kind,
+    ) -> Result<Option<u64>, NgsiError> {
+        Ok(None)
+    }
     /// One id-ordered page of documents, for the internal readers that must
     /// see every one of them and so cannot be refused: ids strictly greater
     /// than `after`, at most `limit`. A short page means the end.

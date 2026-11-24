@@ -104,7 +104,7 @@ fn reading(
         "class": "auto",
         "targetEndpoint": "urn:ngsi-ld:Endpoint:probe.local:probe:probe"
     }))
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .map_err(ApiError::internal)?;
     let sample = Sample {
         text: Some(String::new()),
         url: None,
@@ -112,8 +112,7 @@ fn reading(
         records: None,
         sheet: None,
     };
-    let mut config =
-        harness(&probe, &sample, capture).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut config = harness(&probe, &sample, capture).map_err(ApiError::internal)?;
     config["input"] = input;
     config["pipeline"] = json!({ "processors": processors });
     Ok(config)
@@ -135,8 +134,7 @@ pub(crate) fn source_read(
         ));
     }
     let context = InputContext::new(name, project, reader);
-    let input = serde_json::to_value(input_of(source, &context))
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let input = serde_json::to_value(input_of(source, &context)).map_err(ApiError::internal)?;
     // The allow-list a pipeline step is held to (PL-07), over every address the input names.
     if let Some(reason) = refused_target(&input.to_string()) {
         return Err(ApiError::BadRequest(format!(
@@ -146,7 +144,7 @@ pub(crate) fn source_read(
     let input = isolated(input).map_err(ApiError::BadRequest)?;
     let (input, mut processors) = match (&source.source_type, input) {
         (DataSourceType::Http | DataSourceType::GtfsRt, Value::Object(mut map)) => {
-            let mut fetch = map.remove("http_client").unwrap_or_else(|| json!({}));
+            let mut fetch = map.remove("http_client").unwrap_or_default();
             fetch["timeout"] = json!("3s");
             fetch["retries"] = json!(0);
             (
@@ -157,8 +155,7 @@ pub(crate) fn source_read(
         (_, input) => (input, Vec::new()),
     };
     for processor in prepended_processors(source, &context) {
-        processors
-            .push(serde_json::to_value(processor).map_err(|e| ApiError::Internal(e.to_string()))?);
+        processors.push(serde_json::to_value(processor).map_err(ApiError::internal)?);
     }
     Ok((input, processors))
 }
@@ -234,8 +231,7 @@ pub(crate) fn saved_source(
         .mirror
         .get(project, "DataSource", name)
         .ok_or_else(unknown)?;
-    let manifest =
-        serde_json::to_value(&envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let manifest = serde_json::to_value(&envelope).map_err(ApiError::internal)?;
     // Running a source on the runner is what proposing one is for: a reader sees it, an author tests it.
     effective.check("DataSource", Verb::Propose, Some(&manifest))?;
     serde_json::from_value(envelope.spec.clone())
@@ -535,6 +531,67 @@ mod tests {
         assert_eq!(config["input"]["mqtt"]["clean_session"], true);
     }
 
+    /// A topic that only looks shared (no filter after the group) is read as written.
+    #[test]
+    fn a_share_prefix_without_a_filter_is_read_as_written() {
+        let mut map = serde_json::Map::new();
+        map.insert("topics".into(), json!(["$share/live", 7]));
+        isolated_mqtt(&mut map);
+        assert_eq!(map["topics"], json!(["$share/live", 7]));
+        assert_eq!(map["clean_session"], true);
+    }
+
+    /// An input with no kind is refused; a kind whose config is no object has no field to drop.
+    #[test]
+    fn an_input_is_one_kind_and_its_config() {
+        assert_eq!(
+            isolated(json!({})),
+            Err("the saved source has no input to read".to_owned())
+        );
+        assert_eq!(
+            isolated(json!({ "mqtt": null })),
+            Ok(json!({ "mqtt": null }))
+        );
+    }
+
+    /// T-4841: the workbench's sample reads the stream beside the live pipelines under a client of
+    /// its own per run, and keeps each message whole up to 64 KiB.
+    #[test]
+    fn a_stream_sample_reads_under_a_client_of_its_own_and_keeps_each_message_whole() {
+        let source = spec(json!({ "type": "mqtt", "mqtt": {
+            "urls": ["tcp://mqtt.example:1883"], "topics": ["$share/live/hfp/#"]
+        } }));
+        let config = stream_sample("hfp", "helsinki", &source, "http://portal/internal/run-7")
+            .expect("config");
+        assert_eq!(config["input"]["mqtt"]["topics"], json!(["hfp/#"]));
+        assert!(
+            config["input"]
+                .to_string()
+                .contains("workbench_sample_run-7"),
+            "{}",
+            config["input"]
+        );
+        let text = config["pipeline"].to_string();
+        assert!(text.contains(&format!("$size <= {RECORD_BYTES}")), "{text}");
+        assert!(text.contains("parse_json()"), "{text}");
+        assert_eq!(
+            config["output"]["http_client"]["url"],
+            "http://portal/internal/run-7"
+        );
+    }
+
+    /// A webhook waits for its sender: there is no feed a test or a sample could read.
+    #[test]
+    fn a_webhook_has_no_feed_to_read() {
+        let source = spec(json!({ "type": "webhook", "webhook": {
+            "auth": { "bearer": { "tokenRef": { "name": "ttn", "key": "token" } } }
+        } }));
+        assert!(matches!(
+            connection_test("ttn", "helsinki", &source, "http://portal/x"),
+            Err(ApiError::BadRequest(why)) if why.contains("Send test event")
+        ));
+    }
+
     #[test]
     fn a_queue_input_or_a_bound_consumer_is_refused_before_anything_runs() {
         for (kind, input) in [
@@ -624,6 +681,16 @@ mod tests {
             saved_source(&state, &who("dev@hel.fi"), "Oulu!", "aq"),
             Err(ApiError::NotFound(_))
         ));
+        state.mirror.upsert(envelope(
+            "DataSource",
+            "broken",
+            "oulu",
+            json!({ "type": 7 }),
+        ));
+        assert!(matches!(
+            saved_source(&state, &who("dev@hel.fi"), "oulu", "broken"),
+            Err(ApiError::BadRequest(why)) if why.starts_with("the saved source does not parse")
+        ));
         // The handler itself: a reader is refused before anything runs, and an author reaches the
         // runner, which this state does not have.
         let session = |email: &str| crate::auth::session::Session {
@@ -692,6 +759,16 @@ mod tests {
             discover("dev@hel.fi", "ckan", "https://feeds.example/").await,
             Err(ApiError::Unavailable(_))
         ));
+        assert!(matches!(
+            discover_datasource(
+                CurrentUser(session("dev@hel.fi")),
+                State(state.clone()),
+                Path("Oulu!".to_owned()),
+                ask("ckan", "https://feeds.example/"),
+            )
+            .await,
+            Err(ApiError::NotFound(_))
+        ));
         assert!(serde_json::from_value::<DiscoverRequest>(
             json!({ "kind": "shapefile", "url": "https://x.example" })
         )
@@ -731,5 +808,18 @@ mod tests {
             paging("dev@hel.fi", "https://feeds.example/items").await,
             Err(ApiError::Unavailable(_))
         ));
+        let elsewhere = guess_datasource_paging(
+            CurrentUser(session("dev@hel.fi")),
+            State(state.clone()),
+            Path("Oulu!".to_owned()),
+            Json(
+                serde_json::from_value::<PagingRequest>(
+                    json!({ "url": "https://feeds.example/items" }),
+                )
+                .expect("request"),
+            ),
+        )
+        .await;
+        assert!(matches!(elsewhere, Err(ApiError::NotFound(_))));
     }
 }

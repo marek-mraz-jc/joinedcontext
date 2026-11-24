@@ -20,6 +20,11 @@ pub mod workflow;
 use ekiben_core::Registry;
 
 /// Registers all standard processors, `local` rate_limit, and `memory`/`lru`/`ttlru`/`noop` caches into `registry`.
+/// An error as the text a message is flagged with.
+pub(crate) fn err_text(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
 pub fn register_all(registry: &Registry) {
     mapping::register(registry);
     branch::register(registry);

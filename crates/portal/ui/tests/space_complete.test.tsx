@@ -237,6 +237,114 @@ describe("SpaceComplete page", () => {
     expect(screen.getByLabelText(/Endpoint URL/i)).toHaveValue("https://example.com/free_bike_status.json");
   });
 
+  it("gives no summary it cannot read, and opens a draft of a kind without a page on the spaces", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", withSpaceList(vi.fn()));
+    navigate.mockClear();
+    const draft = (kind: string, name: string, spec: Record<string, unknown>) => ({
+      kind,
+      name,
+      inferred: true,
+      manifest: { kind, metadata: { name }, spec },
+      verdict: { ok: true, findings: [], inputDigest: "abc" },
+    });
+    window.history.replaceState(null, "", "/projects/helsinki/spaces/complete?space=city-bikes");
+    rememberPrefill("/projects/helsinki/spaces/complete?space=city-bikes", {
+      url: "",
+      result: {
+        space: "city-bikes",
+        found: [],
+        drafts: [
+          draft("DataModel", "city-bikes", { classes: ["BikeStation"], source: "classes: [unclosed" }),
+          draft("DataSource", "city-bikes-source", { type: "http", http: { url: "not a url" } }),
+          draft("ServiceAccount", "city-bikes-robot", {}),
+        ],
+        proposeReady: true,
+        lane: "yellow",
+        change: null,
+      },
+    });
+    renderComponent();
+    // A model whose source does not parse counts no attribute rather than failing the card.
+    expect(await screen.findByTestId("complete-draft-DataModel")).toHaveTextContent("Type BikeStation with 0 attributes");
+    expect(screen.getByTestId("complete-draft-DataSource")).not.toHaveTextContent("Fetches");
+    const robot = screen.getByTestId("complete-draft-ServiceAccount");
+    await user.click(within(robot).getByRole("button", { name: en.spaces.complete.open }));
+    expect(navigate).toHaveBeenLastCalledWith({ href: "/projects/helsinki/spaces" });
+  });
+
+  it("says why the completion failed when the service cannot be reached", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", withSpaceList(() => Promise.reject(new TypeError("Failed to fetch"))));
+    window.history.replaceState(null, "", "/projects/helsinki/spaces/complete");
+    renderComponent();
+    await user.type(screen.getByLabelText(/Endpoint URL/i), "https://example.com/station_status.json");
+    await user.click(screen.getByRole("button", { name: "Complete" }));
+    expect(await screen.findByText(/Failed to fetch/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Propose all/i })).toBeNull();
+  });
+
+  it("says so when the service answers something that is no completion", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", withSpaceList(() => Promise.resolve(new Response("<html>gateway</html>", { status: 200, headers: { "content-type": "text/html" } }))));
+    window.history.replaceState(null, "", "/projects/helsinki/spaces/complete");
+    renderComponent();
+    await user.type(screen.getByLabelText(/Endpoint URL/i), "https://example.com/station_status.json");
+    await user.click(screen.getByRole("button", { name: "Complete" }));
+    expect(await screen.findByText(en.spaces.complete.unreadable)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Propose all/i })).toBeNull();
+  });
+
+  it("sends one CSV file as a table to upload, typed after its name", async () => {
+    const user = userEvent.setup();
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      withSpaceList(async (input: RequestInfo | URL) => {
+        const request = input as Request;
+        if (request.method === "POST") bodies.push((await request.clone().json()) as Record<string, unknown>);
+        return Response.json({ space: "garages", found: [], drafts: [], proposeReady: false, lane: "green", change: null });
+      }),
+    );
+    window.history.replaceState(null, "", "/projects/helsinki/spaces/complete");
+    renderComponent();
+    await user.upload(screen.getByLabelText(en.spaces.complete.files), new File(["name,capacity\nKamppi,500\n"], "city-garages.csv", { type: "text/csv" }));
+    await user.click(await screen.findByRole("button", { name: "Complete" }));
+    await waitFor(() => expect(bodies.length).toBeGreaterThan(0));
+    const sent = bodies.find((body) => body.upload === true) as Record<string, unknown> & { files: { name: string }[] };
+    expect(sent.typeName).toBe("CityGarage");
+    expect(sent.files.map((f) => f.name)).toEqual(["city-garages.csv"]);
+  });
+
+  it("tells a role that may not propose a space why, instead of a form (T-4263)", async () => {
+    vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin);
+      if (url.pathname === "/api/v1/projects/helsinki/permissions/me") return Promise.resolve(Response.json({ project: "helsinki", bootstrap: false, grants: [] }));
+      return Promise.resolve(Response.json({ kind: "List", metadata: {}, items: [] }));
+    });
+    renderComponent();
+    expect(await screen.findByText(en.form.mayNotCreate)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Complete" })).toBeNull();
+  });
+
+  it("in the dock without a table leaves the page's handed drafts for the page", async () => {
+    vi.stubGlobal("fetch", withSpaceList(vi.fn()));
+    window.history.replaceState(null, "", "/projects/helsinki/spaces/complete");
+    const handed = { url: "https://example.com/feed.json", result: null };
+    rememberPrefill("/projects/helsinki/spaces/complete", handed);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nextProvider i18n={i18n}>
+          <CompleteFlow project="helsinki" inDock />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    // The dock asks for its own table; no feed address, and the page's is not taken.
+    expect(await screen.findByRole("combobox", { name: /Space name/ })).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(handed.url)).toBeNull();
+    expect(takePrefill("/projects/helsinki/spaces/complete")).toEqual(handed);
+  });
+
   it("opens each draft on its kind's page with the draft in hand (T-0771)", async () => {
     const user = userEvent.setup();
     vi.stubGlobal("fetch", withSpaceList(vi.fn()));

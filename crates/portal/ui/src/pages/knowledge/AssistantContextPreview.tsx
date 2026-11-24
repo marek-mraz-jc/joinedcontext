@@ -49,6 +49,7 @@ export function AssistantContextPreview({ project, manifest }: { project: string
   );
 }
 
+
 /** One resolved context: categories, the Endpoints and the sources, and what is missing. */
 export function ContextView({ context }: { context: AssistantContext }): JSX.Element {
   const { t } = useTranslation();

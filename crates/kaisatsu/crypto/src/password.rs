@@ -35,19 +35,18 @@ pub struct PasswordVerifyOutcome {
 /// Hashes a password with kaisatsu's default Argon2id parameters into a PHC string.
 pub fn hash_password(password: &str) -> Result<String> {
     let mut salt_bytes = [0u8; 16];
-    aws_lc_rs::rand::fill(&mut salt_bytes)
-        .map_err(|_| KaisatsuError::Crypto("CSPRNG failure".into()))?;
+    aws_lc_rs::rand::fill(&mut salt_bytes).map_err(crate::crypto_err("CSPRNG failure"))?;
     let params = Params::new(
         DEFAULT_MEMORY_KIB,
         DEFAULT_ITERATIONS,
         DEFAULT_PARALLELISM,
         Some(DEFAULT_OUTPUT_LEN),
     )
-    .map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
+    .map_err(crate::crypto_display)?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let hash: PasswordHash = argon2
         .hash_password_with_salt(password.as_bytes(), &salt_bytes)
-        .map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
+        .map_err(crate::crypto_display)?;
     Ok(hash.to_string())
 }
 
@@ -107,7 +106,7 @@ pub fn verify_and_maybe_rehash(
 ) -> Result<PasswordVerifyOutcome> {
     if cred.secret_data.starts_with("$argon2") {
         let parsed = PasswordHash::new(&cred.secret_data)
-            .map_err(|_| KaisatsuError::Crypto("invalid PHC password hash".into()))?;
+            .map_err(crate::crypto_err("invalid PHC password hash"))?;
         let valid = Argon2::default()
             .verify_password(password.as_bytes(), &parsed)
             .is_ok();
@@ -135,7 +134,7 @@ pub fn verify_keycloak_credential(
     credential_data_json: &str,
 ) -> Result<bool> {
     let secret: KcSecretData = serde_json::from_str(secret_data_json)
-        .map_err(|_| KaisatsuError::Crypto("invalid Keycloak secretData JSON".into()))?;
+        .map_err(crate::crypto_err("invalid Keycloak secretData JSON"))?;
     let meta: KcCredentialData = if credential_data_json.trim().is_empty() {
         KcCredentialData {
             hash_iterations: None,
@@ -144,16 +143,16 @@ pub fn verify_keycloak_credential(
         }
     } else {
         serde_json::from_str(credential_data_json)
-            .map_err(|_| KaisatsuError::Crypto("invalid Keycloak credentialData JSON".into()))?
+            .map_err(crate::crypto_err("invalid Keycloak credentialData JSON"))?
     };
 
     let expected_hash = B64_STD
         .decode(secret.value.trim())
-        .map_err(|_| KaisatsuError::Crypto("invalid base64 hash in secretData".into()))?;
+        .map_err(crate::crypto_err("invalid base64 hash in secretData"))?;
     let salt_b64 = secret.salt.as_deref().unwrap_or_default();
     let salt_bytes = B64_STD
         .decode(salt_b64.trim())
-        .map_err(|_| KaisatsuError::Crypto("invalid base64 salt in secretData".into()))?;
+        .map_err(crate::crypto_err("invalid base64 salt in secretData"))?;
 
     let alg = meta
         .algorithm
@@ -182,7 +181,7 @@ pub fn verify_keycloak_credential(
             );
             let hash_len = expected_hash.len();
             let params = Params::new(memory, iterations, parallelism, Some(hash_len))
-                .map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
+                .map_err(crate::crypto_display)?;
             let argon_alg = match meta
                 .additional_parameters
                 .get("type")
@@ -206,7 +205,7 @@ pub fn verify_keycloak_credential(
             let mut computed = vec![0u8; hash_len];
             argon2
                 .hash_password_into(password.as_bytes(), &salt_bytes, &mut computed)
-                .map_err(|e| KaisatsuError::Crypto(e.to_string()))?;
+                .map_err(crate::crypto_display)?;
             Ok(constant_time_eq(&computed, &expected_hash))
         }
         "pbkdf2-sha512" => {

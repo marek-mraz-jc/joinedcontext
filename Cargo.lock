@@ -2253,9 +2253,9 @@ dependencies = [
 
 [[package]]
 name = "cookie"
-version = "0.18.2"
+version = "0.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+checksum = "d55f2d6c30eeec7d5c6f98bd4395d4abb1895629eab97ee6522d340623615f8a"
 dependencies = [
  "aes-gcm 0.10.3",
  "base64 0.22.1",
@@ -2658,6 +2658,7 @@ dependencies = [
  "daiya-model",
  "daiya-query",
  "daiya-store-memory",
+ "futures-util",
  "hex",
  "http",
  "http-body-util",
@@ -2665,6 +2666,8 @@ dependencies = [
  "jc-audit",
  "jc-router",
  "jc-time",
+ "jc-types",
+ "jiff",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -2799,6 +2802,9 @@ version = "0.1.0"
 dependencies = [
  "daiya-model",
  "jc-time",
+ "jiff",
+ "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
+ "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "parking_lot",
  "serde",
  "serde_json",
@@ -2944,6 +2950,7 @@ dependencies = [
  "dataroom-web",
  "http-body-util",
  "jc-core",
+ "jc-door",
  "jc-router",
  "jc-time",
  "jcctl",
@@ -2973,7 +2980,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "subtle",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -3063,6 +3069,7 @@ dependencies = [
  "dataroom-store-memory",
  "dataroom-store-pg",
  "http-body-util",
+ "jc-door",
  "jc-pool",
  "jc-time",
  "serde_json",
@@ -3094,6 +3101,7 @@ dependencies = [
  "jc-time",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "serde_json",
+ "tokio",
  "uuid",
 ]
 
@@ -3102,6 +3110,7 @@ name = "dataroom-store-pg"
 version = "0.1.0"
 dependencies = [
  "dataroom-core",
+ "dataroom-search",
  "dataroom-store-memory",
  "jc-time",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -5202,7 +5211,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7518b930f6aeb75e871d32ce873c2ae46e35cef19b5a0b039d4337f651d897cd"
 dependencies = [
  "bstr 1.13.1",
- "hashbrown 0.17.1",
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -6980,6 +6989,7 @@ dependencies = [
  "axum",
  "sqlx",
  "tokio",
+ "tower",
  "tracing",
 ]
 
@@ -7000,6 +7010,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "axum",
+ "cssparser",
  "form_urlencoded",
  "hmac 0.12.1",
  "hyper-util",
@@ -7126,7 +7137,9 @@ dependencies = [
 name = "jc-pool"
 version = "0.1.0"
 dependencies = [
+ "sqlx",
  "sqlx-core",
+ "tokio",
 ]
 
 [[package]]
@@ -7696,8 +7709,10 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "http",
+ "http-body-util",
  "jc-audit",
  "jc-router",
+ "jc-time",
  "kaisatsu-admin",
  "kaisatsu-core",
  "kaisatsu-crypto",
@@ -7706,6 +7721,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -9905,9 +9921,9 @@ dependencies = [
 
 [[package]]
 name = "parquet"
-version = "60.1.0"
+version = "60.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "806eaa0f1c0436dcb43bee8e6a82bf2efff90521a60172f8281cb9ef577b43a4"
+checksum = "6701f0dd63f5ee23a0f1f2865ff76825c301759d6ab649e3e5686cc32d066957"
 dependencies = [
  "ahash",
  "brotli",
@@ -12639,6 +12655,7 @@ version = "0.1.0"
 dependencies = [
  "askama",
  "axum",
+ "base64 0.22.1",
  "http-body-util",
  "jc-router",
  "pulldown-cmark",
@@ -14094,7 +14111,7 @@ version = "2.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 dependencies = [
- "rand 0.10.3",
+ "rand 0.9.5",
 ]
 
 [[package]]

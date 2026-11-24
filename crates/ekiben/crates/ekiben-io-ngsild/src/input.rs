@@ -248,15 +248,12 @@ fn selection(f: &Fields<'_>, temporal: bool) -> Result<Selection, CoreError> {
         }
     };
     if !temporal && types.is_empty() && ids.is_empty() && attrs.is_empty() && q.is_none() && !geo {
-        return Err(f.err(
-            "a query needs at least one of type, id, attrs, q or geo_q (ETSI GS CIM 009 5.7.2)",
-        ));
-    }
-    if f.raw("id_pattern").is_some() && types.is_empty() && ids.is_empty() {
         // idPattern alone selects nothing on most brokers; refuse it rather than read nothing.
-        if !temporal && attrs.is_empty() && q.is_none() && !geo {
-            return Err(f.err("id_pattern needs type (or another selector) beside it"));
-        }
+        return Err(f.err(if f.raw("id_pattern").is_some() {
+            "id_pattern needs type (or another selector) beside it"
+        } else {
+            "a query needs at least one of type, id, attrs, q or geo_q (ETSI GS CIM 009 5.7.2)"
+        }));
     }
     Ok(Selection {
         head: head.join("&"),
@@ -444,7 +441,6 @@ pub struct QueryReader {
     gate: Option<Arc<Gate>>,
     pass: Option<Pass>,
     next_pass: Option<Instant>,
-    passes: u64,
 }
 
 impl QueryReader {
@@ -516,7 +512,6 @@ impl QueryReader {
             gate,
             pass: None,
             next_pass: None,
-            passes: 0,
         })
     }
 
@@ -549,7 +544,6 @@ impl QueryReader {
                         }
                     }
                 }
-                self.passes += 1;
                 self.pass = Some(Pass {
                     offset: 0,
                     total: None,
@@ -624,10 +618,7 @@ impl QueryReader {
             }
         }
         let next = offset.saturating_add(page_len);
-        let done = page_len < self.limit
-            || page_len == 0
-            || total.is_some_and(|t| next >= t)
-            || next >= self.max_entities;
+        let done = page_len < self.limit || page_len == 0 || total.is_some_and(|t| next >= t);
         if done {
             self.end_pass();
         } else {
@@ -764,7 +755,8 @@ fn newest_observed(entities: &[Value]) -> Option<Timestamp> {
 enum TimeRel {
     After,
     Before,
-    Between,
+    /// `between` with its `endTimeAt`.
+    Between(Timestamp),
 }
 
 /// The `temporal` mode.
@@ -773,8 +765,7 @@ pub struct TemporalReader {
     base: BrokerUrl,
     head: String,
     timerel: TimeRel,
-    time_at: Option<Timestamp>,
-    end_time_at: Option<Timestamp>,
+    time_at: Timestamp,
     max_pages: u64,
     interval: Option<Duration>,
     watermark: Arc<Mutex<Watermark>>,
@@ -814,22 +805,22 @@ impl TemporalReader {
         };
         let time_at = time("time_at")?;
         let end_time_at = time("end_time_at")?;
+        let Some(time_at) = time_at else {
+            return Err(f.err("time_at is required in mode temporal"));
+        };
         let timerel = match f.string_or("timerel", "after")?.as_str() {
             "after" => TimeRel::After,
             "before" => TimeRel::Before,
-            "between" => TimeRel::Between,
+            "between" => match end_time_at {
+                Some(end) => TimeRel::Between(end),
+                None => return Err(f.err("timerel between needs end_time_at")),
+            },
             other => {
                 return Err(f.err(format!(
                     "timerel must be after, before or between, got {other:?}"
                 )))
             }
         };
-        if time_at.is_none() {
-            return Err(f.err("time_at is required in mode temporal"));
-        }
-        if timerel == TimeRel::Between && end_time_at.is_none() {
-            return Err(f.err("timerel between needs end_time_at"));
-        }
         let interval = match f.str("interval")?.filter(|s| !s.is_empty()) {
             None => None,
             Some(_) => Some(f.duration_or("interval", Duration::ZERO)?).filter(|d| !d.is_zero()),
@@ -872,7 +863,6 @@ impl TemporalReader {
             head,
             timerel,
             time_at,
-            end_time_at,
             max_pages,
             interval,
             watermark: Arc::new(Mutex::new(Watermark::default())),
@@ -894,20 +884,15 @@ impl TemporalReader {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .committed;
-        let at = committed.or(self.time_at);
-        let rel = match self.timerel {
-            TimeRel::After => "after",
-            TimeRel::Before => "before",
-            TimeRel::Between => "between",
+        let at = committed.unwrap_or(self.time_at);
+        let mut time = match self.timerel {
+            TimeRel::After => "timerel=after".to_string(),
+            TimeRel::Before => "timerel=before".to_string(),
+            TimeRel::Between(_) => "timerel=between".to_string(),
         };
-        let mut time = format!("timerel={rel}");
-        if let Some(at) = at {
-            time.push_str(&format!("&timeAt={}", enc(&Self::fmt_time(at))));
-        }
-        if self.timerel == TimeRel::Between {
-            if let Some(end) = self.end_time_at {
-                time.push_str(&format!("&endTimeAt={}", enc(&Self::fmt_time(end))));
-            }
+        time.push_str(&format!("&timeAt={}", enc(&Self::fmt_time(at))));
+        if let TimeRel::Between(end) = self.timerel {
+            time.push_str(&format!("&endTimeAt={}", enc(&Self::fmt_time(end))));
         }
         self.base.join(&format!(
             "temporal/entities?{}",
@@ -1040,15 +1025,6 @@ impl TemporalReader {
         let batch: Batch = entities.into_iter().map(Part::from_structured).collect();
         Ok(Some((batch, ack)))
     }
-
-    /// The `timeAt` the next pass starts from, once the output acked the pages before it.
-    pub fn committed_watermark(&self) -> Option<String> {
-        self.watermark
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .committed
-            .map(Self::fmt_time)
-    }
 }
 
 #[cfg(test)]
@@ -1100,21 +1076,51 @@ mod tests {
 
     #[test]
     fn newest_observed_reads_instances_and_values() {
-        let v = Value::from_json_value(serde_json::json!([
-            {"id": "urn:a", "speed": [
+        let items: Vec<Value> = [
+            serde_json::json!({"id": "urn:a", "speed": [
                 {"type": "Property", "value": 1, "observedAt": "2026-01-01T00:00:00Z"},
                 {"type": "Property", "value": 2, "observedAt": "2026-01-01T00:05:00+01:00"}
-            ]},
-            {"id": "urn:b", "speed": {"type": "Property", "values": [[3, "2026-01-01T00:10:00Z"]]}}
-        ]));
-        let Value::Array(items) = v else {
-            panic!("array")
-        };
-        let items: Vec<Value> = items.iter().cloned().collect();
+            ]}),
+            serde_json::json!({"id": "urn:b", "speed": {"type": "Property",
+                "values": [[3, "2026-01-01T00:10:00Z"], [4], 5]}}),
+        ]
+        .into_iter()
+        .map(Value::from_json_value)
+        .collect();
         let n = newest_observed(&items).expect("found");
         assert_eq!(
             format_rfc3339(n, SecondsFormat::Secs, true),
             "2026-01-01T00:10:00Z"
+        );
+    }
+
+    #[test]
+    fn newest_observed_stops_below_six_levels() {
+        let deep = Value::from_json_value(serde_json::json!({"a": {"b": {"c": {"d": {"e": {"f": {
+            "g": {"observedAt": "2030-01-01T00:00:00Z"}}}}}}},
+            "observedAt": "2026-01-01T00:00:00Z"}));
+        let n = newest_observed(&[deep]).expect("found");
+        assert_eq!(
+            format_rfc3339(n, SecondsFormat::Secs, true),
+            "2026-01-01T00:00:00Z"
+        );
+        assert!(newest_observed(&[Value::from_json_value(serde_json::json!(1))]).is_none());
+        // Depth 6 is still read, in objects and in arrays alike; depth 7 is not.
+        let six = Value::from_json_value(serde_json::json!({"a": {"b": {"c": {"d": {"e": {"f": {
+            "observedAt": "2028-01-01T00:00:00Z"}}}}}}}));
+        let n = newest_observed(&[six]).expect("found");
+        assert_eq!(
+            format_rfc3339(n, SecondsFormat::Secs, true),
+            "2028-01-01T00:00:00Z"
+        );
+        let arrays = Value::from_json_value(
+            serde_json::json!([[[[[[{"observedAt": "2029-01-01T00:00:00Z"}]]]]],
+            [[[[[[{"observedAt": "2031-01-01T00:00:00Z"}]]]]]]]),
+        );
+        let n = newest_observed(&[arrays]).expect("found");
+        assert_eq!(
+            format_rfc3339(n, SecondsFormat::Secs, true),
+            "2029-01-01T00:00:00Z"
         );
     }
 

@@ -174,15 +174,9 @@ export function EditResourceDialogBody({
     propose.mutate(manifest);
   };
 
+  // Text that does not parse keeps the button refused (`parseFailure`), so it parses here.
   const submit = () => {
-    let manifest: unknown;
-    try {
-      manifest = parseYaml(source);
-    } catch (error) {
-      setInvalid(error instanceof Error ? error.message : String(error));
-      return;
-    }
-    proposeManifest(manifest);
+    proposeManifest(parseYaml(source));
   };
 
   // Closing forgets the edit and the answer, so the next opening starts from the stored manifest.

@@ -381,6 +381,7 @@ mod tests {
             json!({"type": "Relationship", "object": "urn:ngsi-ld:Place:1"}),
             json!({"type": "LanguageProperty", "languageMap": {"sk": "hudba"}}),
             json!({"type": "Property", "value": {"nested": "x"}}),
+            json!(["bare", 7]),
         ];
         let (values, truncated) = counted(attrs.iter(), None, 2);
         assert_eq!(
@@ -394,6 +395,9 @@ mod tests {
         let (all, more) = counted(attrs.iter(), None, MAX_LIMIT);
         assert_eq!(all.len(), 4);
         assert!(!more);
+        // a limit of exactly the values held leaves none out
+        let (exact, more) = counted(attrs.iter(), None, 4);
+        assert_eq!((exact.len(), more), (4, false));
     }
 
     #[test]

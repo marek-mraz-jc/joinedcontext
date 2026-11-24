@@ -1,0 +1,22 @@
+{# dataset page section `map` (T-7743): included once per place the resolved display lists it #}
+{% if let Some(map_json) = map_config_json %}
+<details class="jc-table jc-map-card" open hidden>
+  <summary><span class="jc-table-name">{% if let Some(h) = sec.heading %}{{ h }}{% else %}{{ labels.map }}{% endif %}</span></summary>
+  <link rel="stylesheet" href="{{ chrome.mount_prefix }}/maplibre-gl-6.14.0/maplibre-gl.css">
+  <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/pmtiles-4.5.0.js"></script>
+  <div class="jc-map" data-jc-map='{{ map_json }}'>
+    <div class="jc-map-area" role="application" aria-label="{{ labels.map_title }}: {{ dataset_title }}" aria-describedby="jc-map-keys"></div>
+    <p class="jc-map-note" role="status"></p>
+    <p id="jc-map-keys" class="visually-hidden">{{ labels.map_keys }}</p>
+  </div>
+  <div class="jc-preview-actions">
+    <a class="btn btn-default" href="#jc-preview-title">{{ labels.map_as_table }}</a>
+    <details class="jc-map-embed">
+      <summary class="btn btn-default">{{ labels.map_embed }}</summary>
+      <p class="jc-lead">{{ labels.map_embed_lead }}</p>
+      <textarea id="jc-map-embed" class="form-control" rows="3" readonly><iframe src="{{ map_embed_url }}" width="100%" height="480" title="{{ dataset_title }}" style="border:0" loading="lazy"></iframe></textarea>
+      <button type="button" class="btn btn-default" data-jc-copy="jc-map-embed" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}"><span class="jc-code-copy-label">{{ labels.copy }}</span></button>
+    </details>
+  </div>
+</details>
+{% endif %}

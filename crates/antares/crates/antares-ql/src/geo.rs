@@ -383,6 +383,11 @@ mod tests {
         let g = q("near;minDistance==1000", "Point", "[10,60]");
         assert!(g.matches_geometry(&geoval("Point", json!([10.0, 61.0]))));
         assert!(!g.matches_geometry(&geoval("Point", json!([10.0, 60.001]))));
+        // boundary contact is not disjoint: exactly minDistance away is out
+        let at = |c: [f64; 2]| geo_types::Geometry::Point(geo_types::Point::new(c[0], c[1]));
+        let d = min_distance_m(&at([10.0, 60.0]), &at([10.0, 61.0]));
+        let g = q(&format!("near;minDistance=={d}"), "Point", "[10,60]");
+        assert!(!g.matches_geometry(&geoval("Point", json!([10.0, 61.0]))));
     }
 
     /// A self-intersecting (bow-tie) query ring is evaluated, not refused: ETSI `019_11_06`

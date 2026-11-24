@@ -140,3 +140,66 @@ pub fn parse(input: &[u8], opts: &Options) -> (Option<SyslogMessage>, Option<Str
     }
     (Some(out.export()), None)
 }
+
+#[cfg(test)]
+mod chart_tests {
+    use super::*;
+    use crate::go_syslog::chart;
+
+    /// With best effort a failed parse keeps a partial message only when it has a priority.
+    #[test]
+    fn best_effort_needs_a_priority() {
+        let opts = Options {
+            best_effort: true,
+            year: 0,
+            rfc3339: false,
+            location: None,
+        };
+        let (m, e) = parse(b"<1>", &opts);
+        assert!(m.is_some() && e.is_some());
+        let (m, e) = parse(b"Dec  2", &opts);
+        assert!(m.is_none() && e.is_some());
+    }
+
+    /// The machine over `input` with its EOF actions off (eof is never reached).
+    fn step(input: &[u8], rfc3339: bool) -> (i32, Option<String>) {
+        let mut m = Machine {
+            data: input,
+            cs: START,
+            p: 0,
+            pe: isize::try_from(input.len()).expect("short input"),
+            eof: -1,
+            pb: 0,
+            err: None,
+            yyyy: 2025,
+            rfc3339,
+            loc: None,
+        };
+        machine::exec(&mut m, &mut Output::default());
+        (m.cs, m.err)
+    }
+
+    #[test]
+    fn the_parity_corpus_takes_every_transition_of_both_charts() {
+        let mut missing = Vec::new();
+        for rfc3339 in [true, false] {
+            let processor = serde_json::json!({"parse_log": {
+                "format": "syslog_rfc3164", "default_year": "2025", "allow_rfc3339": rfc3339
+            }});
+            let label = format!("parse_log rfc3164 rfc3339 {rfc3339}");
+            missing.extend(chart::missing(
+                &|i| step(i, rfc3339),
+                &chart::corpus(&processor),
+                &processor,
+                &label,
+            ));
+        }
+        assert!(
+            missing.is_empty(),
+            "{} transitions no parity case takes; add these to tests/parity/cases.json and record them \
+             with scripts/record-text-parity.py:\n{}",
+            missing.len(),
+            missing.join("\n")
+        );
+    }
+}

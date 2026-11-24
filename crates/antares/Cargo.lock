@@ -182,6 +182,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2788,6 +2789,7 @@ name = "odata-url"
 version = "0.3.0"
 dependencies = [
  "odata-csdl",
+ "odata-url",
  "proptest",
  "serde_json",
 ]
@@ -2925,9 +2927,9 @@ dependencies = [
 
 [[package]]
 name = "parquet"
-version = "60.0.0"
+version = "60.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8af83d2940bc0510f9aef86d865f56fdc6095f87ab115ac885a80b7c5226d3ba"
+checksum = "6701f0dd63f5ee23a0f1f2865ff76825c301759d6ab649e3e5686cc32d066957"
 dependencies = [
  "ahash",
  "bytes",

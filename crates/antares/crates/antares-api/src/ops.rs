@@ -54,7 +54,7 @@ impl ApiSurface for Admin {
             // T-6001: the names a replace write would be judged on.
             .route(attrs_p, get(crate::types_attrs::stored_attributes))
             .route(dl_p, get(dead_letters_list))
-            .route(dl_id_p, delete(dead_letter_delete))
+            .route(dl_id_p, get(dead_letter_get).delete(dead_letter_delete))
             .route(replay_p, post(dead_letter_replay));
         // `/q/views` (ADR-0023 rule 10), when a loader set it: views are
         // written here, so they sit behind the admin credential with the
@@ -362,10 +362,13 @@ pub(super) fn redact_letter(l: &mut serde_json::Value) {
     }
 }
 
-/// Dead letters of one tenant, newest first; `subscription=` narrows to one
-/// subscription, `limit=` bounds the page (default 100). The endpoint URI is
-/// shown with its userinfo redacted and every credential the letter carries
-/// is blanked.
+/// Dead letters of one tenant, newest first, a page at a time (S4-31):
+/// `limit=` bounds the page (default 100, at most 1000), `offset=` skips
+/// that many of the newest, `subscription=` narrows to one subscription.
+/// The listing carries no payload (`payloadBytes` says its size); `GET
+/// /q/dead-letters/{id}` reads one letter whole. The endpoint URI is shown
+/// with its userinfo redacted and every credential the letter carries is
+/// blanked.
 pub(super) async fn dead_letters_list(
     axum::extract::State(st): axum::extract::State<AppState>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
@@ -374,39 +377,131 @@ pub(super) async fn dead_letters_list(
         Ok(t) => t,
         Err(e) => return ApiError::from(e).into_response(),
     };
-    let limit = match q.get("limit") {
-        None => 100usize,
-        Some(v) => match v.parse::<usize>() {
-            Ok(n) if n > 0 => n,
-            _ => {
-                return ApiError::from(NgsiError::BadRequestData(format!(
-                    "limit must be a positive integer, got {v:?}"
-                )))
-                .into_response()
-            }
-        },
-    };
-    let mut letters = match st
-        .store
-        .list(&tenant, antares_store::Kind::DeadLetter)
-        .await
-    {
-        Ok(l) => l,
+    let limit = match page_param(&q, "limit", 100, 1) {
+        Ok(n) => n.min(1_000),
         Err(e) => return ApiError::from(e).into_response(),
     };
-    if let Some(sid) = q.get("subscription") {
-        letters.retain(|l| l["subscriptionId"].as_str() == Some(sid.as_str()));
+    let offset = match page_param(&q, "offset", 0, 0) {
+        Ok(n) => n,
+        Err(e) => return ApiError::from(e).into_response(),
+    };
+    let letters = match q.get("subscription") {
+        None => newest_page(&st, &tenant, offset, limit).await,
+        Some(sid) => subscription_page(&st, &tenant, sid, offset, limit).await,
+    };
+    match letters {
+        Ok(letters) => (
+            StatusCode::OK,
+            axum::Json(serde_json::Value::Array(letters)),
+        )
+            .into_response(),
+        Err(e) => ApiError::from(e).into_response(),
     }
-    letters.sort_by(|a, b| b["lastAt"].as_str().cmp(&a["lastAt"].as_str()));
-    letters.truncate(limit);
-    for l in &mut letters {
-        redact_letter(l);
+}
+
+/// A non-negative integer query parameter at least `min`, `default` when absent.
+fn page_param(
+    q: &std::collections::HashMap<String, String>,
+    name: &str,
+    default: usize,
+    min: usize,
+) -> Result<usize, NgsiError> {
+    match q.get(name) {
+        None => Ok(default),
+        Some(v) => match v.parse::<usize>() {
+            Ok(n) if n >= min => Ok(n),
+            _ if min > 0 => Err(NgsiError::BadRequestData(format!(
+                "{name} must be a positive integer, got {v:?}"
+            ))),
+            _ => Err(NgsiError::BadRequestData(format!(
+                "{name} must be a non-negative integer, got {v:?}"
+            ))),
+        },
     }
-    (
-        StatusCode::OK,
-        axum::Json(serde_json::Value::Array(letters)),
-    )
-        .into_response()
+}
+
+/// Letter ids sort by write time, so the newest `offset..offset + limit`
+/// are one id-ordered window counted from the end, read reversed.
+async fn newest_page(
+    st: &AppState,
+    tenant: &TenantId,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<serde_json::Value>, NgsiError> {
+    use antares_store::Kind;
+    let (_, held) = st.store.list_slice(tenant, Kind::DeadLetter, 0, 0).await?;
+    let end = held.saturating_sub(offset);
+    let start = end.saturating_sub(limit);
+    if end == start {
+        return Ok(Vec::new());
+    }
+    let (mut page, _) = st
+        .store
+        .list_slice(tenant, Kind::DeadLetter, start, end.saturating_sub(start))
+        .await?;
+    page.reverse();
+    Ok(page.into_iter().map(listed_letter).collect())
+}
+
+/// One subscription's letters: a keyset walk of the tenant's letters (at
+/// most [`notify::MAX_DEAD_LETTERS`] of them), keeping each match without
+/// its payload, so the peak is one store page.
+async fn subscription_page(
+    st: &AppState,
+    tenant: &TenantId,
+    sid: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<serde_json::Value>, NgsiError> {
+    let mut kept = Vec::new();
+    crate::csource::walk_docs(st, tenant, antares_store::Kind::DeadLetter, |l| {
+        if l.get("subscriptionId").and_then(serde_json::Value::as_str) == Some(sid) {
+            kept.push(listed_letter(l));
+        }
+        Ok(())
+    })
+    .await?;
+    Ok(kept.into_iter().rev().skip(offset).take(limit).collect())
+}
+
+/// A letter as the listing shows it: redacted, its payload replaced by
+/// `payloadBytes`.
+fn listed_letter(mut l: serde_json::Value) -> serde_json::Value {
+    if let Some(o) = l.as_object_mut() {
+        if let Some(payload) = o.remove("payload") {
+            let bytes = serde_json::to_vec(&payload).map_or(0, |b| b.len());
+            o.insert("payloadBytes".into(), bytes.into());
+        }
+    }
+    redact_letter(&mut l);
+    l
+}
+
+/// One dead letter whole, payload included, credentials blanked as in the
+/// listing; `404` when the tenant holds no such letter.
+pub(super) async fn dead_letter_get(
+    axum::extract::State(st): axum::extract::State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let tenant = match admin_tenant(&q) {
+        Ok(t) => t,
+        Err(e) => return ApiError::from(e).into_response(),
+    };
+    match st
+        .store
+        .get(&tenant, antares_store::Kind::DeadLetter, &id)
+        .await
+    {
+        Ok(Some(mut l)) => {
+            redact_letter(&mut l);
+            (StatusCode::OK, axum::Json(l)).into_response()
+        }
+        Ok(None) => {
+            ApiError::from(NgsiError::ResourceNotFound(format!("dead letter {id}"))).into_response()
+        }
+        Err(e) => ApiError::from(e).into_response(),
+    }
 }
 
 /// Re-deliver one dead letter once through its own binding: 204 and the

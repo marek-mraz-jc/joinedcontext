@@ -235,6 +235,51 @@ async fn data_survives_a_new_store_instance_and_secrets_stay_encrypted() {
             .is_err()
     );
     assert!(wrong.get_realm("dev").await.is_err());
+
+    // A row corrupted behind the store's back is refused with the reason, never read as data.
+    let refusal = |r: Result<String>| match r {
+        Ok(v) => panic!("a corrupt row was read: {v}"),
+        Err(e) => e.to_string(),
+    };
+    let aad = format!("kaisatsu:client-secret:dev:{}", client.id);
+    let not_utf8 = kek.encrypt(aad.as_bytes(), &[0xff, 0xfe]).expect("encrypt");
+    sqlx::query(
+        "UPDATE kaisatsu.applications SET secret_enc = $1 WHERE client_id = 'app-helsinki'",
+    )
+    .bind(not_utf8)
+    .execute(&su)
+    .await
+    .expect("corrupt the secret");
+    let e = refusal(
+        second
+            .get_client_by_client_id("dev", "app-helsinki")
+            .await
+            .map(|c| format!("{c:?}")),
+    );
+    assert!(e.contains("client secret is not UTF-8"), "{e}");
+    let not_utf8 = kek
+        .encrypt(b"kaisatsu:smtp-password:dev", &[0xff])
+        .expect("encrypt");
+    sqlx::query("UPDATE kaisatsu.realms SET smtp_password_enc = $1 WHERE realm_id = 'dev'")
+        .bind(not_utf8)
+        .execute(&su)
+        .await
+        .expect("corrupt the SMTP password");
+    let e = refusal(second.get_realm("dev").await.map(|r| format!("{r:?}")));
+    assert!(e.contains("SMTP password is not UTF-8"), "{e}");
+    sqlx::query(
+        "UPDATE kaisatsu.people SET doc = '{\"username\": 7}'::jsonb WHERE id = 'user-helsinki'",
+    )
+    .execute(&su)
+    .await
+    .expect("corrupt the person");
+    let e = refusal(
+        second
+            .get_user_by_id("dev", None, "user-helsinki")
+            .await
+            .map(|u| format!("{u:?}")),
+    );
+    assert!(e.contains("cannot decode stored record"), "{e}");
     su.close().await;
     db.drop_db().await;
 }
@@ -887,6 +932,37 @@ async fn sweeper_and_change_notifications() {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     assert!(seen, "a NOTIFY reaches the listener");
+    // The listener's own connect counts too, so the check above passes without any NOTIFY: a
+    // sibling pod's write and its notify_changed must each reach this pod's listener.
+    let sibling = db.store(Kek::generate_for_tests()).await;
+    let reached = |after: u64| {
+        let store = &store;
+        async move {
+            for _ in 0..50 {
+                if store.reload_generation() > after {
+                    return true;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            false
+        }
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let before = store.reload_generation();
+    sibling
+        .upsert_realm(RealmConfig {
+            id: "dev".into(),
+            realm: "dev".into(),
+            display_name: "Dev".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("sibling write");
+    assert!(reached(before).await, "a sibling's write notifies");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let before = store.reload_generation();
+    sibling.notify_changed("dev").await.expect("sibling notify");
+    assert!(reached(before).await, "a sibling's notify_changed notifies");
     listener.abort();
 
     let now = TimestampTz::now();
@@ -903,8 +979,34 @@ async fn sweeper_and_change_notifications() {
             .await
             .expect("revoked");
     }
+    // An expired SSO session goes with its client session: the sweep counts both rows.
+    let past = now - SignedDuration::from_mins(1);
+    store
+        .upsert_sso_session(SsoSession {
+            id: "sso-old".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            handle_hash: "h-old".into(),
+            user_id: "u-old".into(),
+            username: "old".into(),
+            ip_address: String::new(),
+            user_agent: String::new(),
+            start: 0,
+            last_access: 0,
+            auth_time: 0,
+            acr: "1".into(),
+            amr: vec!["pwd".into()],
+            clients: [("edge".to_owned(), String::new())].into(),
+            idle_expires_at: past,
+            max_expires_at: past,
+        })
+        .await
+        .expect("sso");
     let n = store.sweep_expired_batch(10).await.expect("sweep");
-    assert_eq!(n, 1);
+    assert_eq!(
+        n, 3,
+        "the old revocation, the SSO session and its client session"
+    );
     let su = db.superuser_pool().await;
     let left: Vec<String> = sqlx::query_scalar("SELECT token_hash FROM kaisatsu.revoked_token")
         .fetch_all(&su)

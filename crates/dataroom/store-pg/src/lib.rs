@@ -9,10 +9,11 @@ use dataroom_core::odata_defs::{
 use dataroom_core::store::{changed_since_read, next_modified, BoxFuture};
 use dataroom_core::{
     text_in_lang, ActivityRow, Catalogue, CatalogueDeclaration, CatalogueId, CataloguePlugin,
-    DataroomError, Dataset, Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord,
-    Publisher, RecordState, RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage,
-    Store,
+    DataroomError, Dataset, Distribution, HarvestRun, HarvestSource, OrgId, PickPage,
+    ProfileRecord, Publisher, RecordState, RequestCtx, ResourceView, Result, SearchCandidate,
+    SearchPage, SearchQuery, ShaclValidationReport, StaticPage, Store,
 };
+use dataroom_search::SearchLexemes;
 use jc_time::TimestampTz;
 use odata_table::{MemoryTable, Table};
 use sqlx::postgres::PgConnection;
@@ -76,14 +77,16 @@ impl PgStore {
             .await
             .map_err(|e| DataroomError::Storage(format!("advisory lock: {e}")))?;
 
-        let res = sqlx::raw_sql(MIGRATION_0001_SQL).execute(&mut *conn).await;
+        let res = match sqlx::raw_sql(MIGRATION_0001_SQL).execute(&mut *conn).await {
+            Ok(_) => reindex_search(&mut conn).await.map(|_| ()),
+            Err(e) => Err(DataroomError::Storage(format!("{e}"))),
+        };
 
         let _ = sqlx::query("SELECT pg_advisory_unlock(hashtext('jc-migrate-dataroom'))")
             .execute(&mut *conn)
             .await;
 
-        res.map_err(|e| DataroomError::Storage(format!("migration failed: {e}")))?;
-        Ok(())
+        res.map_err(|e| DataroomError::Storage(format!("migration failed: {e}")))
     }
 
     /// Moves every row of `catalogue` from tenant `from` to tenant `to` in one transaction, as
@@ -202,25 +205,35 @@ fn db_err(e: sqlx::Error) -> DataroomError {
     DataroomError::Storage(e.to_string())
 }
 
-/// The publisher with this id, name or IRI in the caller's tenant, without following merges.
+/// The publisher with this id, name or IRI in the caller's tenant, without following merges;
+/// with `lock`, its row stays locked for the rest of the caller's transaction.
 async fn find_publisher(
     conn: &mut PgConnection,
     ctx: &RequestCtx,
     id_or_name: &str,
+    lock: bool,
 ) -> Result<Option<Publisher>> {
-    let row: Option<(Json<Publisher>,)> = sqlx::query_as(
-        "SELECT doc FROM dataroom.cat_publisher
+    macro_rules! find {
+        () => {
+            "SELECT doc FROM dataroom.cat_publisher
          WHERE org_id = $1 AND catalogue_id = $2
            AND (id COLLATE \"C\" = $3 OR name COLLATE \"C\" = $3 OR uri COLLATE \"C\" = $3)
          ORDER BY (id COLLATE \"C\" = $3) DESC, (name COLLATE \"C\" = $3) DESC
-         LIMIT 1",
-    )
-    .bind(ctx.org_id.as_uuid())
-    .bind(ctx.catalogue_id.as_uuid())
-    .bind(id_or_name)
-    .fetch_optional(&mut *conn)
-    .await
-    .map_err(db_err)?;
+         LIMIT 1"
+        };
+    }
+    let sql = if lock {
+        concat!(find!(), " FOR UPDATE")
+    } else {
+        find!()
+    };
+    let row: Option<(Json<Publisher>,)> = sqlx::query_as(sql)
+        .bind(ctx.org_id.as_uuid())
+        .bind(ctx.catalogue_id.as_uuid())
+        .bind(id_or_name)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(db_err)?;
     Ok(row.map(|(Json(p),)| p))
 }
 
@@ -368,6 +381,107 @@ async fn insert_activity(
     Ok(())
 }
 
+/// [`insert_activity`] in the request's tenant, then the commit: the row lands with the change
+/// the transaction holds or neither does (AUD-02). A row with no `object_id` names `object_id`.
+async fn commit_with_activity(
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    ctx: &RequestCtx,
+    mut row: ActivityRow,
+    object_id: &str,
+) -> Result<()> {
+    if row.object_id.is_empty() {
+        object_id.clone_into(&mut row.object_id);
+    }
+    insert_activity(&mut tx, ctx.org_id, ctx.catalogue_id, row).await?;
+    tx.commit().await.map_err(db_err)
+}
+
+/// Writes a resource view row inside the caller's tenant transaction.
+async fn write_view(conn: &mut PgConnection, ctx: &RequestCtx, view: &ResourceView) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO dataroom.cat_view
+         (org_id, catalogue_id, distribution_id, id, view_type, title, view_order, doc)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
+            view_type = EXCLUDED.view_type,
+            title = EXCLUDED.title,
+            view_order = EXCLUDED.view_order,
+            doc = EXCLUDED.doc",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(&view.resource_id)
+    .bind(&view.id)
+    .bind(&view.view_type)
+    .bind(&view.title)
+    .bind(view.order)
+    .bind(Json(view))
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// Writes a harvest source row inside the caller's tenant transaction.
+async fn write_source(
+    conn: &mut PgConnection,
+    ctx: &RequestCtx,
+    source: &HarvestSource,
+) -> Result<()> {
+    refuse_deleted(conn, ctx).await?;
+    sqlx::query(
+        "INSERT INTO dataroom.cat_harvest_source
+         (org_id, catalogue_id, id, name, kind, url, publisher_id, enabled, modified, doc)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
+            name = EXCLUDED.name,
+            kind = EXCLUDED.kind,
+            url = EXCLUDED.url,
+            publisher_id = EXCLUDED.publisher_id,
+            enabled = EXCLUDED.enabled,
+            modified = EXCLUDED.modified,
+            doc = EXCLUDED.doc",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(&source.id)
+    .bind(&source.name)
+    .bind(source.kind.as_str())
+    .bind(&source.url)
+    .bind(&source.publisher_id)
+    .bind(source.enabled)
+    .bind(source.modified)
+    .bind(Json(source))
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
+/// Writes a plugin row inside the caller's tenant transaction.
+async fn write_plugin(
+    conn: &mut PgConnection,
+    ctx: &RequestCtx,
+    plugin: &CataloguePlugin,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO dataroom.cat_plugin (org_id, catalogue_id, name, modified, doc)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (org_id, catalogue_id, name) DO UPDATE SET
+            modified = EXCLUDED.modified,
+            doc = EXCLUDED.doc",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .bind(&plugin.name)
+    .bind(plugin.modified)
+    .bind(Json(plugin))
+    .execute(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(())
+}
+
 /// The stored dataset `id_or_name` names, locked for the rest of the caller's transaction.
 async fn dataset_for_update(
     conn: &mut PgConnection,
@@ -393,59 +507,135 @@ async fn dataset_for_update(
 
 /// Writes a dataset row and replaces its distribution rows inside the caller's tenant
 /// transaction.
+/// The version of the search columns this build writes (`cat_dataset.search_v`); a row below it
+/// was written before them and is matched in Rust until [`PgStore::migrate`] reindexes it.
+const SEARCH_VERSION: i16 = 1;
+
+/// The `cat_dataset` search columns of a dataset, as text arrays for `array_to_tsvector`.
+struct SearchColumns {
+    name: Vec<String>,
+    title: Vec<String>,
+    keywords: Vec<String>,
+    description: Vec<String>,
+}
+
+impl SearchColumns {
+    fn of(dataset: &Dataset) -> Self {
+        let lex = SearchLexemes::of(dataset);
+        Self {
+            name: lex.name_suffixes(),
+            title: lex.title,
+            keywords: lex.keywords,
+            description: lex.description,
+        }
+    }
+}
+
+/// A `tsquery` matching a word that starts with any of `candidates` (`'a':* | 'b':*`); `None`
+/// for no candidate, which matches nothing.
+fn prefix_tsquery(candidates: &[String]) -> Option<String> {
+    let alternatives: Vec<String> = candidates
+        .iter()
+        .map(|c| format!("'{}':*", c.replace('\\', "\\\\").replace('\'', "''")))
+        .collect();
+    (!alternatives.is_empty()).then(|| format!("({})", alternatives.join(" | ")))
+}
+
+/// A search candidate's record as the search reads it: no description, version notes,
+/// provenance or SHACL shapes, and distributions holding only id and format (S11-38).
+const SLIM_DOC: &str = "jsonb_set(
+        jsonb_set(doc - 'versionNotes' - 'provenance' - 'customShaclShapes',
+                  '{description}', '{}'::jsonb),
+        '{distributions}',
+        COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                             'id', d->'id', 'datasetId', d->'datasetId', 'title', '{}'::jsonb,
+                             'accessUrl', '', 'format', d->'format') ORDER BY n)
+                  FROM jsonb_array_elements(doc->'distributions') WITH ORDINALITY AS e(d, n)),
+                 '[]'::jsonb))";
+
+async fn read_publishers(conn: &mut PgConnection, ctx: &RequestCtx) -> Result<Vec<Publisher>> {
+    let rows: Vec<(Json<Publisher>,)> = sqlx::query_as(
+        "SELECT doc FROM dataroom.cat_publisher
+         WHERE org_id = $1 AND catalogue_id = $2
+         ORDER BY name COLLATE \"C\"",
+    )
+    .bind(ctx.org_id.as_uuid())
+    .bind(ctx.catalogue_id.as_uuid())
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(db_err)?;
+    Ok(rows.into_iter().map(|(Json(p),)| p).collect())
+}
+
+/// Reindexes every row whose search columns are older than [`SEARCH_VERSION`], 200 at a time,
+/// with row level security lifted for the table as in [`PgStore::move_catalogue`] (the rows of
+/// every tenant); `conn` holds the migration lock.
+async fn reindex_search(conn: &mut PgConnection) -> Result<u64> {
+    let fail = |e: sqlx::Error| DataroomError::Storage(format!("search reindex: {e}"));
+    let mut tx = sqlx::Connection::begin(&mut *conn).await.map_err(fail)?;
+    sqlx::raw_sql("ALTER TABLE dataroom.cat_dataset NO FORCE ROW LEVEL SECURITY")
+        .execute(&mut *tx)
+        .await
+        .map_err(fail)?;
+    let mut done = 0;
+    loop {
+        let rows: Vec<(uuid::Uuid, uuid::Uuid, String, Json<Dataset>)> = sqlx::query_as(
+            "SELECT org_id, catalogue_id, id, doc FROM dataroom.cat_dataset
+             WHERE search_v < $1 LIMIT 200",
+        )
+        .bind(SEARCH_VERSION)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(fail)?;
+        if rows.is_empty() {
+            break;
+        }
+        for (org, cat, id, Json(ds)) in rows {
+            let lex = SearchColumns::of(&ds);
+            sqlx::query(
+                "UPDATE dataroom.cat_dataset SET search_v = $4,
+                     search_name = array_to_tsvector($5), search_title = array_to_tsvector($6),
+                     search_kw = array_to_tsvector($7), search_desc = array_to_tsvector($8)
+                 WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3",
+            )
+            .bind(org)
+            .bind(cat)
+            .bind(&id)
+            .bind(SEARCH_VERSION)
+            .bind(&lex.name)
+            .bind(&lex.title)
+            .bind(&lex.keywords)
+            .bind(&lex.description)
+            .execute(&mut *tx)
+            .await
+            .map_err(fail)?;
+            done += 1;
+        }
+    }
+    sqlx::raw_sql("ALTER TABLE dataroom.cat_dataset FORCE ROW LEVEL SECURITY")
+        .execute(&mut *tx)
+        .await
+        .map_err(fail)?;
+    tx.commit().await.map_err(fail)?;
+    Ok(done)
+}
+
 async fn write_dataset(conn: &mut PgConnection, ctx: &RequestCtx, dataset: &Dataset) -> Result<()> {
     refuse_deleted(conn, ctx).await?;
     let title = text_in_lang(&dataset.title, None)
         .unwrap_or(&dataset.name)
         .to_owned();
     let notes = text_in_lang(&dataset.description, None).map(str::to_owned);
-    let tags_joined = dataset.tags.join(" ");
-    let text_sk = format!(
-        "{} {} {}",
-        dataset.title.get("sk").map(String::as_str).unwrap_or(""),
-        dataset
-            .description
-            .get("sk")
-            .map(String::as_str)
-            .unwrap_or(""),
-        tags_joined
-    );
-    let text_cs = format!(
-        "{} {} {}",
-        dataset.title.get("cs").map(String::as_str).unwrap_or(""),
-        dataset
-            .description
-            .get("cs")
-            .map(String::as_str)
-            .unwrap_or(""),
-        tags_joined
-    );
-    let text_en = format!(
-        "{} {} {}",
-        dataset.title.get("en").map(String::as_str).unwrap_or(""),
-        dataset
-            .description
-            .get("en")
-            .map(String::as_str)
-            .unwrap_or(""),
-        tags_joined
-    );
-    let text_fi = dataset.title.get("fi").cloned().unwrap_or_default();
-    let text_ca = dataset.title.get("ca").cloned().unwrap_or_default();
-
+    let lex = SearchColumns::of(dataset);
     sqlx::query(
         "INSERT INTO dataroom.cat_dataset
              (org_id, catalogue_id, id, name, title, notes, publisher_id, visibility, state,
               licence_id, frequency, endpoint_url, issued, modified,
-              search_sk, search_cs, search_en, search_fi, search_ca, doc)
+              search_v, search_name, search_title, search_kw, search_desc, doc)
              VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                to_tsvector('dataroom.dataroom_simple', $15),
-                to_tsvector('dataroom.dataroom_simple', $16),
-                to_tsvector('dataroom.dataroom_simple', $17),
-                to_tsvector('dataroom.dataroom_simple', $18),
-                to_tsvector('dataroom.dataroom_simple', $19),
-                $20
+                $15, array_to_tsvector($16), array_to_tsvector($17),
+                array_to_tsvector($18), array_to_tsvector($19), $20
              )
              ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
                 name = EXCLUDED.name,
@@ -459,11 +649,11 @@ async fn write_dataset(conn: &mut PgConnection, ctx: &RequestCtx, dataset: &Data
                 endpoint_url = EXCLUDED.endpoint_url,
                 issued = EXCLUDED.issued,
                 modified = EXCLUDED.modified,
-                search_sk = EXCLUDED.search_sk,
-                search_cs = EXCLUDED.search_cs,
-                search_en = EXCLUDED.search_en,
-                search_fi = EXCLUDED.search_fi,
-                search_ca = EXCLUDED.search_ca,
+                search_v = EXCLUDED.search_v,
+                search_name = EXCLUDED.search_name,
+                search_title = EXCLUDED.search_title,
+                search_kw = EXCLUDED.search_kw,
+                search_desc = EXCLUDED.search_desc,
                 doc = EXCLUDED.doc",
     )
     .bind(ctx.org_id.as_uuid())
@@ -480,11 +670,11 @@ async fn write_dataset(conn: &mut PgConnection, ctx: &RequestCtx, dataset: &Data
     .bind(&dataset.endpoint_url)
     .bind(dataset.issued)
     .bind(dataset.modified)
-    .bind(text_sk)
-    .bind(text_cs)
-    .bind(text_en)
-    .bind(text_fi)
-    .bind(text_ca)
+    .bind(SEARCH_VERSION)
+    .bind(&lex.name)
+    .bind(&lex.title)
+    .bind(&lex.keywords)
+    .bind(&lex.description)
     .bind(Json(&dataset))
     .execute(&mut *conn)
     .await
@@ -786,18 +976,9 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            let rows: Vec<(Json<Publisher>,)> = sqlx::query_as(
-                "SELECT doc FROM dataroom.cat_publisher
-                 WHERE org_id = $1 AND catalogue_id = $2
-                 ORDER BY name COLLATE \"C\"",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            let publishers = read_publishers(&mut tx, ctx).await?;
             tx.commit().await.map_err(db_err)?;
-            Ok(rows.into_iter().map(|(Json(p),)| p).collect())
+            Ok(publishers)
         })
     }
 
@@ -810,13 +991,13 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            let mut resolved = find_publisher(&mut tx, ctx, id_or_name).await?;
+            let mut resolved = find_publisher(&mut tx, ctx, id_or_name, false).await?;
             // Follow merge redirects (up to 4 hops, C16).
             for _ in 0..4 {
                 let Some(next) = resolved.as_ref().and_then(|p| p.merged_into.clone()) else {
                     break;
                 };
-                match find_publisher(&mut tx, ctx, &next).await? {
+                match find_publisher(&mut tx, ctx, &next, false).await? {
                     Some(found) => resolved = Some(found),
                     None => break,
                 }
@@ -846,11 +1027,52 @@ impl Store for PgStore {
         })
     }
 
+    fn save_publisher<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut publisher: Publisher,
+        expected: Option<TimestampTz>,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<Publisher>> {
+        Box::pin(async move {
+            publisher.org_id = ctx.org_id;
+            publisher.catalogue_id = ctx.catalogue_id;
+            if publisher.id.is_empty() {
+                publisher.id = format!("pub-{}", publisher.name);
+            }
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            if let Some(expected) = expected {
+                // The doc's version: the column keeps microseconds, a read returns the doc.
+                let stored: Option<(Json<Publisher>,)> = sqlx::query_as(
+                    "SELECT doc FROM dataroom.cat_publisher
+                     WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3
+                     FOR UPDATE",
+                )
+                .bind(ctx.org_id.as_uuid())
+                .bind(ctx.catalogue_id.as_uuid())
+                .bind(&publisher.id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db_err)?;
+                if stored.is_none_or(|(Json(p),)| p.modified != expected) {
+                    return Err(changed_since_read("publisher", &publisher.name));
+                }
+            }
+            publisher.modified = next_modified(publisher.modified, expected);
+            write_publisher(&mut tx, ctx, &publisher).await?;
+            commit_with_activity(tx, ctx, activity, &publisher.id).await?;
+            Ok(publisher)
+        })
+    }
+
     fn merge_publishers<'a>(
         &'a self,
         ctx: &'a RequestCtx,
         source_id_or_name: &'a str,
         target_id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Publisher>> {
         Box::pin(async move {
             let mut tx = self
@@ -858,15 +1080,16 @@ impl Store for PgStore {
                 .await?;
             // The source by its own record (an already merged source does not redirect to the
             // publisher it was merged into); the target as published, following redirects.
-            let Some(mut source) = find_publisher(&mut tx, ctx, source_id_or_name).await? else {
+            let Some(mut source) = find_publisher(&mut tx, ctx, source_id_or_name, true).await?
+            else {
                 return Err(DataroomError::NotFound(format!(
                     "publisher '{source_id_or_name}' not found"
                 )));
             };
-            let mut target = find_publisher(&mut tx, ctx, target_id_or_name).await?;
+            let mut target = find_publisher(&mut tx, ctx, target_id_or_name, true).await?;
             for _ in 0..4 {
                 match target.as_ref().and_then(|t| t.merged_into.clone()) {
-                    Some(next) => match find_publisher(&mut tx, ctx, &next).await? {
+                    Some(next) => match find_publisher(&mut tx, ctx, &next, true).await? {
                         Some(found) => target = Some(found),
                         None => break,
                     },
@@ -887,7 +1110,8 @@ impl Store for PgStore {
             let rows: Vec<(Json<Dataset>,)> = sqlx::query_as(
                 "SELECT doc FROM dataroom.cat_dataset
                  WHERE org_id = $1 AND catalogue_id = $2
-                   AND (publisher_id COLLATE \"C\" = $3 OR publisher_id COLLATE \"C\" = $4)",
+                   AND (publisher_id COLLATE \"C\" = $3 OR publisher_id COLLATE \"C\" = $4)
+                 FOR UPDATE",
             )
             .bind(ctx.org_id.as_uuid())
             .bind(ctx.catalogue_id.as_uuid())
@@ -906,7 +1130,7 @@ impl Store for PgStore {
             source.state = RecordState::Withdrawn;
             source.modified = now;
             write_publisher(&mut tx, ctx, &source).await?;
-            tx.commit().await.map_err(db_err)?;
+            commit_with_activity(tx, ctx, activity, &target.id).await?;
             Ok(target)
         })
     }
@@ -915,22 +1139,24 @@ impl Store for PgStore {
         &'a self,
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<Publisher>> {
         Box::pin(async move {
-            // The record named, never the one a merge points it to (as MemoryStore).
+            // The record named, never the one a merge points it to (as MemoryStore), read and
+            // written under its row lock (S11-25).
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            let found = find_publisher(&mut tx, ctx, id_or_name).await?;
-            tx.commit().await.map_err(db_err)?;
-            let Some(mut pub_rec) = found else {
+            let Some(mut pub_rec) = find_publisher(&mut tx, ctx, id_or_name, true).await? else {
                 return Err(DataroomError::NotFound(format!(
                     "publisher '{id_or_name}' not found"
                 )));
             };
             pub_rec.state = RecordState::Withdrawn;
-            pub_rec.modified = TimestampTz::now();
-            self.upsert_publisher(ctx, pub_rec).await
+            pub_rec.modified = next_modified(TimestampTz::now(), Some(pub_rec.modified));
+            write_publisher(&mut tx, ctx, &pub_rec).await?;
+            commit_with_activity(tx, ctx, activity, &pub_rec.id).await?;
+            Ok(pub_rec)
         })
     }
 
@@ -946,6 +1172,120 @@ impl Store for PgStore {
             )
             .bind(ctx.org_id.as_uuid())
             .bind(ctx.catalogue_id.as_uuid())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
+            Ok(rows.into_iter().map(|(Json(d),)| d).collect())
+        })
+    }
+
+    fn search_page<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        query: &'a SearchQuery,
+        pick: &'a mut PickPage<'_>,
+    ) -> BoxFuture<'a, Result<SearchPage>> {
+        Box::pin(async move {
+            // Per term, the query that matches it; a row is kept when every term matches. A
+            // term with no candidate matches nothing.
+            let per_term: Option<Vec<String>> =
+                query.terms.iter().map(|c| prefix_tsquery(c)).collect();
+            let per_term = per_term.unwrap_or_default();
+            let all = per_term.join(" & ");
+            // The indexed rows the text matches (GIN), and the rows not indexed yet, which the
+            // caller matches in Rust (their search columns are empty).
+            let text_filter = match (query.terms.is_empty(), per_term.is_empty()) {
+                (true, _) => "",
+                (false, true) => "AND search_v < {SEARCH_VERSION}",
+                (false, false) => "AND (search_all @@ $6::tsquery OR search_v < {SEARCH_VERSION})",
+            }
+            .replace("{SEARCH_VERSION}", &SEARCH_VERSION.to_string());
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let publishers = read_publishers(&mut tx, ctx).await?;
+            // ponytail: O(matches) slim rows reach Rust, which authorizes (Authorizer) and counts
+            // facets; facet counts in SQL would need the authorization rules in SQL.
+            let rows: Vec<(Json<Dataset>, Option<i64>)> =
+                sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                    "WITH q AS (SELECT array_agg(t::tsquery) AS terms FROM unnest($5::text[]) t)
+                     SELECT CASE WHEN search_v >= {SEARCH_VERSION} THEN {SLIM_DOC} ELSE doc END,
+                            CASE WHEN search_v >= {SEARCH_VERSION} THEN
+                                (SELECT COALESCE(sum(
+                                     CASE WHEN search_name @@ t THEN 8 ELSE 0 END
+                                     + CASE WHEN search_title @@ t THEN 4 ELSE 0 END
+                                     + CASE WHEN search_kw @@ t THEN 2 ELSE 0 END
+                                     + CASE WHEN search_desc @@ t THEN 1 ELSE 0 END), 0)
+                                 FROM unnest(q.terms) t)
+                            END
+                     FROM dataroom.cat_dataset, q
+                     WHERE org_id = $1 AND catalogue_id = $2
+                       AND (state = 'active' OR (state = 'draft' AND $3)
+                            OR (state = 'withdrawn' AND $4))
+                       AND (NOT $7 OR visibility = 'public')
+                       AND $6::text IS NOT NULL -- types $6 where no filter reads it
+                       {text_filter}
+                     ORDER BY name COLLATE \"C\""
+                )))
+                .bind(ctx.org_id.as_uuid())
+                .bind(ctx.catalogue_id.as_uuid())
+                .bind(query.include_drafts)
+                .bind(query.include_withdrawn)
+                .bind(&per_term)
+                .bind(all)
+                .bind(query.public_only)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            let candidates = rows
+                .into_iter()
+                .map(|(Json(dataset), rank)| SearchCandidate {
+                    dataset,
+                    rank: rank.map(|r| usize::try_from(r).unwrap_or(usize::MAX)),
+                })
+                .collect();
+            let ids = pick(&publishers, candidates)?;
+            let found: Vec<(Json<Dataset>,)> = sqlx::query_as(
+                "SELECT doc FROM dataroom.cat_dataset
+                 WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = ANY($3)",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
+            let mut by_id: std::collections::HashMap<String, Dataset> = found
+                .into_iter()
+                .map(|(Json(d),)| (d.id.clone(), d))
+                .collect();
+            let datasets = ids.iter().filter_map(|id| by_id.remove(id)).collect();
+            Ok(SearchPage {
+                publishers,
+                datasets,
+            })
+        })
+    }
+
+    fn list_datasets_of_type<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        dataset_type: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<Dataset>>> {
+        Box::pin(async move {
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let rows: Vec<(Json<Dataset>,)> = sqlx::query_as(
+                "SELECT doc FROM dataroom.cat_dataset
+                 WHERE org_id = $1 AND catalogue_id = $2 AND doc->>'datasetType' = $3
+                 ORDER BY name COLLATE \"C\"",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(dataset_type)
             .fetch_all(&mut *tx)
             .await
             .map_err(db_err)?;
@@ -1052,16 +1392,17 @@ impl Store for PgStore {
         &'a self,
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let Some(ds) = self.get_dataset(ctx, id_or_name).await? else {
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let Some(ds) = dataset_for_update(&mut tx, ctx, id_or_name).await? else {
                 return Err(DataroomError::NotFound(format!(
                     "dataset '{id_or_name}' not found"
                 )));
             };
-            let mut tx = self
-                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
-                .await?;
             // Tables in the migration's order, so a concurrent migration cannot deadlock.
             sqlx::query(
                 "DELETE FROM dataroom.cat_dataset
@@ -1106,7 +1447,7 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
+            commit_with_activity(tx, ctx, activity, &ds.id).await?;
             Ok(())
         })
     }
@@ -1166,6 +1507,36 @@ impl Store for PgStore {
         })
     }
 
+    fn list_views_of<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        distribution_ids: &'a [String],
+    ) -> BoxFuture<'a, Result<Vec<ResourceView>>> {
+        Box::pin(async move {
+            if distribution_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let rows: Vec<(Json<ResourceView>,)> = sqlx::query_as(
+                "SELECT doc FROM dataroom.cat_view
+                 WHERE org_id = $1 AND catalogue_id = $2
+                   AND distribution_id COLLATE \"C\" = ANY($3)
+                 ORDER BY array_position($3, distribution_id::text), view_order ASC,
+                          id COLLATE \"C\" ASC",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(distribution_ids)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
+            Ok(rows.into_iter().map(|(Json(v),)| v).collect())
+        })
+    }
+
     fn get_resource_view<'a>(
         &'a self,
         ctx: &'a RequestCtx,
@@ -1202,28 +1573,27 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            sqlx::query(
-                "INSERT INTO dataroom.cat_view
-                 (org_id, catalogue_id, distribution_id, id, view_type, title, view_order, doc)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
-                    view_type = EXCLUDED.view_type,
-                    title = EXCLUDED.title,
-                    view_order = EXCLUDED.view_order,
-                    doc = EXCLUDED.doc",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&view.resource_id)
-            .bind(&view.id)
-            .bind(&view.view_type)
-            .bind(&view.title)
-            .bind(view.order)
-            .bind(Json(&view))
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            write_view(&mut tx, ctx, &view).await?;
             tx.commit().await.map_err(db_err)?;
+            Ok(view)
+        })
+    }
+
+    fn save_resource_view<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut view: ResourceView,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<ResourceView>> {
+        Box::pin(async move {
+            if view.id.is_empty() {
+                view.id = format!("view-{}", uuid::Uuid::now_v7());
+            }
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            write_view(&mut tx, ctx, &view).await?;
+            commit_with_activity(tx, ctx, activity, &view.id).await?;
             Ok(view)
         })
     }
@@ -1232,6 +1602,7 @@ impl Store for PgStore {
         &'a self,
         ctx: &'a RequestCtx,
         view_id: &'a str,
+        activity: ActivityRow,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let mut tx = self
@@ -1247,12 +1618,12 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
-            tx.commit().await.map_err(db_err)?;
             if res.rows_affected() == 0 {
                 return Err(DataroomError::NotFound(format!(
                     "resource view '{view_id}' not found"
                 )));
             }
+            commit_with_activity(tx, ctx, activity, view_id).await?;
             Ok(())
         })
     }
@@ -1358,34 +1729,29 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            refuse_deleted(&mut tx, ctx).await?;
-            sqlx::query(
-                "INSERT INTO dataroom.cat_harvest_source
-                 (org_id, catalogue_id, id, name, kind, url, publisher_id, enabled, modified, doc)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                 ON CONFLICT (org_id, catalogue_id, id) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    kind = EXCLUDED.kind,
-                    url = EXCLUDED.url,
-                    publisher_id = EXCLUDED.publisher_id,
-                    enabled = EXCLUDED.enabled,
-                    modified = EXCLUDED.modified,
-                    doc = EXCLUDED.doc",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&source.id)
-            .bind(&source.name)
-            .bind(source.kind.as_str())
-            .bind(&source.url)
-            .bind(&source.publisher_id)
-            .bind(source.enabled)
-            .bind(source.modified)
-            .bind(Json(&source))
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            write_source(&mut tx, ctx, &source).await?;
             tx.commit().await.map_err(db_err)?;
+            Ok(source)
+        })
+    }
+
+    fn save_harvest_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut source: HarvestSource,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<HarvestSource>> {
+        Box::pin(async move {
+            source.org_id = ctx.org_id;
+            source.catalogue_id = ctx.catalogue_id;
+            if source.id.is_empty() {
+                source.id = format!("hs-{}", source.name);
+            }
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            write_source(&mut tx, ctx, &source).await?;
+            commit_with_activity(tx, ctx, activity, &source.id).await?;
             Ok(source)
         })
     }
@@ -1752,6 +2118,41 @@ impl Store for PgStore {
         })
     }
 
+    fn save_profile<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        profile: ProfileRecord,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<ProfileRecord>> {
+        Box::pin(async move {
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            let inserted = sqlx::query(
+                "INSERT INTO dataroom.cat_profile (org_id, catalogue_id, id, version, doc)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (org_id, catalogue_id, id, version) DO NOTHING",
+            )
+            .bind(ctx.org_id.as_uuid())
+            .bind(ctx.catalogue_id.as_uuid())
+            .bind(&profile.id)
+            .bind(&profile.version)
+            .bind(Json(&profile))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if inserted.rows_affected() == 0 {
+                return Err(DataroomError::Conflict(format!(
+                    "profile '{}' version '{}' already exists; upload a new version",
+                    profile.id, profile.version
+                )));
+            }
+            let object_id = format!("{}:{}", profile.id, profile.version);
+            commit_with_activity(tx, ctx, activity, &object_id).await?;
+            Ok(profile)
+        })
+    }
+
     fn list_pages<'a>(&'a self, ctx: &'a RequestCtx) -> BoxFuture<'a, Result<Vec<StaticPage>>> {
         Box::pin(async move {
             let mut tx = self
@@ -1838,22 +2239,26 @@ impl Store for PgStore {
             let mut tx = self
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
-            sqlx::query(
-                "INSERT INTO dataroom.cat_plugin (org_id, catalogue_id, name, modified, doc)
-                 VALUES ($1, $2, $3, $4, $5)
-                 ON CONFLICT (org_id, catalogue_id, name) DO UPDATE SET
-                    modified = EXCLUDED.modified,
-                    doc = EXCLUDED.doc",
-            )
-            .bind(ctx.org_id.as_uuid())
-            .bind(ctx.catalogue_id.as_uuid())
-            .bind(&plugin.name)
-            .bind(plugin.modified)
-            .bind(Json(&plugin))
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            write_plugin(&mut tx, ctx, &plugin).await?;
             tx.commit().await.map_err(db_err)?;
+            Ok(plugin)
+        })
+    }
+
+    fn save_plugin<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        mut plugin: CataloguePlugin,
+        activity: ActivityRow,
+    ) -> BoxFuture<'a, Result<CataloguePlugin>> {
+        Box::pin(async move {
+            plugin.org_id = ctx.org_id;
+            plugin.catalogue_id = ctx.catalogue_id;
+            let mut tx = self
+                .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
+                .await?;
+            write_plugin(&mut tx, ctx, &plugin).await?;
+            commit_with_activity(tx, ctx, activity, &plugin.name).await?;
             Ok(plugin)
         })
     }
@@ -2031,14 +2436,11 @@ mod tests {
             .execute(&admin_pool)
             .await
             .expect("drop test table");
-        match refused {
-            Err(DataroomError::Storage(msg)) => assert!(
-                msg.contains("zz_a6_no_forced_rls"),
-                "refusal names the table: {msg}"
-            ),
-            Err(other) => panic!("expected a storage refusal, got {other:?}"),
-            Ok(_) => panic!("boot check must refuse a table without forced RLS"),
-        }
+        let refused = refused.err();
+        assert!(
+            matches!(&refused, Some(DataroomError::Storage(msg)) if msg.contains("zz_a6_no_forced_rls")),
+            "the boot check refuses and names the table: {refused:?}"
+        );
 
         let store = PgStore::from_pool_unchecked(admin_pool.clone());
         let org_a = OrgId::from_uuid(Uuid::now_v7());

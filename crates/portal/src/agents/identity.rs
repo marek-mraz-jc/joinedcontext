@@ -19,17 +19,19 @@ use crate::state::AppState;
 /// edge is trusted, or the caller's own bearer. A Portal cookie session carries none in the
 /// request; [`run_token`] reads the one the Portal kept for it.
 pub fn persons_token(headers: &HeaderMap, trust_edge_token: bool) -> Option<&str> {
-    match Front::of(headers, trust_edge_token) {
-        Front::Edge => headers.get(&EDGE_TOKEN_HEADER)?.to_str().ok(),
-        Front::Bearer => headers
-            .get(header::AUTHORIZATION)?
-            .to_str()
-            .ok()?
-            .strip_prefix("Bearer "),
+    let front = Front::of(headers, trust_edge_token);
+    let sent = match front {
+        Front::Edge => headers.get(&EDGE_TOKEN_HEADER),
+        Front::Bearer => headers.get(header::AUTHORIZATION),
         Front::Portal => None,
-    }
-    .map(str::trim)
-    .filter(|token| !token.is_empty())
+    }?
+    .to_str()
+    .ok()?;
+    let token = match front {
+        Front::Bearer => sent.strip_prefix("Bearer ")?,
+        _ => sent,
+    };
+    Some(token.trim()).filter(|token| !token.is_empty())
 }
 
 /// The person's access token a run started by `headers` is handed (ADR-N-038 §3.1): what
@@ -254,6 +256,14 @@ mod tests {
 
     /// A realm the Portal can discover, whose token endpoint answers the client-credentials grant.
     async fn realm() -> (MockServer, OidcClient) {
+        realm_answering(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "portal-service-token", "token_type": "Bearer", "expires_in": 300
+        })))
+        .await
+    }
+
+    /// A realm whose token endpoint answers `token`.
+    async fn realm_answering(token: ResponseTemplate) -> (MockServer, OidcClient) {
         let server = MockServer::start().await;
         let issuer = format!("{}/realms/bb", server.uri());
         Mock::given(method("GET"))
@@ -278,9 +288,7 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/realms/bb/protocol/openid-connect/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "access_token": "portal-service-token", "token_type": "Bearer", "expires_in": 300
-            })))
+            .respond_with(token)
             .mount(&server)
             .await;
         let config = crate::config::Config::from_vars(|k| match k {
@@ -440,5 +448,61 @@ mod tests {
             Some("persons-token"),
         )
         .await;
+    }
+
+    #[test]
+    fn a_token_that_is_no_text_is_no_token() {
+        let mut opaque = HeaderMap::new();
+        let bytes = HeaderValue::from_bytes(b"tok\xffen").expect("an opaque header value");
+        opaque.insert("x-access-token", bytes.clone());
+        assert_eq!(persons_token(&opaque, true), None);
+        opaque.insert("authorization", bytes);
+        assert_eq!(persons_token(&opaque, true), None);
+    }
+
+    /// Without the Portal's own service token there is nobody to ask the proxy as: both the
+    /// hand-over and the data credential say so, naming no token.
+    #[tokio::test]
+    async fn no_service_token_asks_the_proxy_nothing() {
+        let (_realm, oidc) = realm_answering(ResponseTemplate::new(500)).await;
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&proxy)
+            .await;
+        let url = format!("{}/internal/runs/run-1/identity", proxy.uri());
+        let handed = hand_over_once(
+            &oidc,
+            &reqwest::Client::new(),
+            &url,
+            "run-1",
+            "persons-token",
+        )
+        .await;
+        assert!(
+            matches!(&handed, Handed::Unreachable(reason) if reason.starts_with("no service token"))
+        );
+        let refused = data_credential(Some(&oidc), &proxy.uri(), "run-1").await;
+        assert!(
+            matches!(&refused, Err(reason) if reason.starts_with("no service token to ask the proxy with")),
+            "{refused:?}"
+        );
+        proxy.verify().await;
+    }
+
+    #[tokio::test]
+    async fn a_proxy_answer_that_is_no_json_is_no_credential() {
+        let (_realm, oidc) = realm().await;
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/internal/runs/run-1/data-credential"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("jcd_but-not-json"))
+            .mount(&proxy)
+            .await;
+        assert_eq!(
+            data_credential(Some(&oidc), &proxy.uri(), "run-1").await,
+            Err("the proxy's answer is not a data credential".to_owned())
+        );
     }
 }

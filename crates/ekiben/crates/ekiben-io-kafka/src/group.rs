@@ -293,6 +293,33 @@ mod tests {
     }
 
     #[test]
+    fn range_assignment_skips_unknown_topics_and_leaves_extra_members_idle() {
+        let members = vec![
+            ("m1".to_string(), vec!["a".to_string(), "gone".to_string()]),
+            ("m2".to_string(), vec!["a".to_string()]),
+        ];
+        let got = range_assign(&members, &BTreeMap::from([("a".to_string(), 1)]));
+        assert_eq!(got["m1"], Assignment::from([("a".to_string(), vec![0])]));
+        assert!(got["m2"].is_empty());
+    }
+
+    #[test]
+    fn an_offset_commit_answers_its_first_refusal() {
+        let mut e = Enc::default();
+        e.i32(2);
+        e.str("a").array(&[(0, 0i16), (1, 22)], |e, (p, c)| {
+            e.i32(*p).i16(*c);
+        });
+        e.str("b").array(&[(0, 27i16)], |e, (p, c)| {
+            e.i32(*p).i16(*c);
+        });
+        assert_eq!(decode_offset_commit(Dec(e.0.into())), Ok(22));
+        let mut e = Enc::default();
+        e.i32(0);
+        assert_eq!(decode_offset_commit(Dec(e.0.into())), Ok(0));
+    }
+
+    #[test]
     fn subscription_and_assignment_round_trip() {
         let topics = vec!["x".to_string(), "y".to_string()];
         assert_eq!(
@@ -305,6 +332,14 @@ mod tests {
             a
         );
         assert!(decode_assignment(Bytes::new()).expect("empty").is_empty());
+        // both end in null user data (bytes length -1), which a broker hands back unchanged
+        for bytes in [subscription(&topics), assignment(&a)] {
+            assert_eq!(
+                bytes.get(bytes.len() - 4..),
+                Some(&[0xff; 4][..]),
+                "{bytes:?}"
+            );
+        }
     }
 
     #[test]

@@ -357,7 +357,11 @@ function YourAccess({
         </div>
         {permissions.data?.bootstrap ? <Alert tone="info">{t("projectSettings.access.bootstrap")}</Alert> : null}
         <AdminGrid<(typeof grants)[number]>
-          query={{ isPending: permissions.isLoading }}
+          query={{
+            isPending: permissions.isLoading,
+            isError: false,
+            error: null,
+          }}
           caption={t("projectSettings.access.caption", { project })}
           storageKey={`${project}:your-access`}
           rows={grants}

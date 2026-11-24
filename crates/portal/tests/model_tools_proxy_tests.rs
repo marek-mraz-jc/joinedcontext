@@ -1,12 +1,11 @@
 //! The Portal in front of Model Tools: what a session may compile, what a caller may steer, and
 //! what happens when the compiler is absent (DM-10, DM-18, DM-19).
 
-#[path = "common/csrf_echo.rs"]
-mod csrf_echo;
+mod common;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
-use csrf_echo::EchoCsrf;
+use common::csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
 use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
@@ -276,6 +275,219 @@ async fn a_refusing_or_silent_service_never_leaks_its_address() {
         !rendered.contains("127.0.0.1") && !rendered.contains(&tools.uri()),
         "the internal address stays in the log: {rendered}"
     );
+}
+
+/// A Model Tools URL on a port held bound but not listening: every connect is refused.
+fn refusing() -> (tokio::net::TcpSocket, Config) {
+    let closed = tokio::net::TcpSocket::new_v4().expect("socket");
+    closed
+        .bind("127.0.0.1:0".parse().expect("addr"))
+        .expect("bind");
+    let url = format!("http://{}", closed.local_addr().expect("addr"));
+    let config = Config {
+        model_tools_url: Some(url),
+        ..Config::for_tests()
+    };
+    (closed, config)
+}
+
+/// Every route over Model Tools answers 503 when it cannot be reached or answers something that
+/// is not its document, never a 500 or the service's own words.
+#[tokio::test]
+async fn an_unreachable_or_garbled_service_is_unavailable_on_every_route() {
+    let garbled = MockServer::start().await;
+    for route in ["/generate", "/import-sdm", "/infer-schema"] {
+        Mock::given(method("POST"))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("not json", "text/plain"))
+            .mount(&garbled)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/catalog"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("not json", "text/plain"))
+        .mount(&garbled)
+        .await;
+    let (_closed, refused) = refusing();
+    for config in [refused, config_for(&garbled)] {
+        let state = AppState::new(config.clone(), None);
+        let (status, body) = post(
+            config.clone(),
+            "/api/v1/tools/generate",
+            r#"{"source":"name: aq\n"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        let (status, body) = post(
+            config.clone(),
+            "/api/v1/tools/import-sdm",
+            r#"{"model":"dataModel.Environment/AirQualityObserved"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        let (status, body) = upload(
+            config.clone(),
+            "/api/v1/tools/infer-schema",
+            "a.csv",
+            b"a,b\n1,2\n",
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        let answer = common::send(
+            &state,
+            common::person("demo.steward"),
+            "GET",
+            "/api/v1/tools/sdm-catalog?refresh=true&subject=dataModel.Environment",
+            None,
+        )
+        .await;
+        assert_eq!(
+            answer.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{}",
+            answer.text
+        );
+    }
+}
+
+/// What Model Tools answers to a sample, read: a 400 is the person's reason (or a plain one when
+/// it gave none), any other failure or a body that is no object is 503.
+#[tokio::test]
+async fn a_sample_answer_without_reasons_failing_or_not_an_object() {
+    for (status, answer, want) in [
+        (400, r#"{"errors":[]}"#, StatusCode::BAD_REQUEST),
+        (400, r#"{"errors":"one string"}"#, StatusCode::BAD_REQUEST),
+        (
+            500,
+            r#"{"linkml":"id: x"}"#,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            200,
+            r#"["not","an","object"]"#,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+    ] {
+        let tools = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/infer-schema"))
+            .respond_with(ResponseTemplate::new(status).set_body_raw(answer, "application/json"))
+            .mount(&tools)
+            .await;
+        let (got, body) = upload(
+            config_for(&tools),
+            "/api/v1/tools/infer-schema",
+            "a.csv",
+            b"a\n1\n",
+        )
+        .await;
+        assert_eq!(got, want, "{status} {answer}: {body}");
+        if want == StatusCode::BAD_REQUEST {
+            assert_eq!(body["detail"], "the sample could not be read", "{body}");
+        }
+    }
+}
+
+/// The multipart body itself: one that does not parse is 400, a `format` outside the four is
+/// 400 naming it, and one of the four reaches Model Tools as given.
+#[tokio::test]
+async fn a_broken_upload_or_an_unknown_format_is_the_persons_400() {
+    let tools = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/infer-schema"))
+        .and(wiremock::matchers::body_partial_json(
+            serde_json::json!({ "format": "csv" }),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_raw(r#"{"linkml":"id: x"}"#, "application/json"),
+        )
+        .mount(&tools)
+        .await;
+    let state = AppState::new(config_for(&tools), None);
+    let send = |body: &'static str| {
+        let state = state.clone();
+        async move {
+            common::send_body(
+                &state,
+                common::person("demo.steward"),
+                "POST",
+                "/api/v1/tools/infer-schema",
+                "multipart/form-data; boundary=b",
+                Body::from(body),
+            )
+            .await
+        }
+    };
+    let broken = send("--b\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\nabc").await;
+    assert_eq!(broken.status, StatusCode::BAD_REQUEST, "{}", broken.text);
+    let cut = send("--b\r\nContent-Disposition: form-data; name=\"format\"\r\n\r\ncsv").await;
+    assert_eq!(cut.status, StatusCode::BAD_REQUEST, "{}", cut.text);
+    assert!(cut.text.contains("field 'format'"), "{}", cut.text);
+    let unknown = send(concat!(
+        "--b\r\nContent-Disposition: form-data; name=\"format\"\r\n\r\nexe\r\n",
+        "--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a\"\r\n\r\na,b\r\n",
+        "--b\r\nContent-Disposition: form-data; name=\"other\"\r\n\r\nignored\r\n",
+        "--b--\r\n"
+    ))
+    .await;
+    assert_eq!(unknown.status, StatusCode::BAD_REQUEST, "{}", unknown.text);
+    assert!(
+        unknown
+            .text
+            .contains("format 'exe' is not one of csv, xlsx, json, pdf"),
+        "{}",
+        unknown.text
+    );
+    let known = send(concat!(
+        "--b\r\nContent-Disposition: form-data; name=\"format\"\r\n\r\n csv \r\n",
+        "--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a\"\r\n\r\na,b\r\n",
+        "--b--\r\n"
+    ))
+    .await;
+    assert_eq!(known.status, StatusCode::OK, "{}", known.text);
+}
+
+/// The TypeScript the app builder writes against: Model Tools' rendering, or why there is none.
+#[tokio::test]
+async fn the_typescript_of_a_model_or_why_there_is_none() {
+    use joinedcontext_portal::tools::model_tools::typescript;
+    for (answer, want) in [
+        (
+            r#"{"typescript":"export type Air = {};"}"#,
+            Ok("export type Air = {};"),
+        ),
+        (
+            r#"{"typescript":"  ","errors":["no classes","no name"]}"#,
+            Err("no classes; no name"),
+        ),
+        (
+            r#"{"errors":[]}"#,
+            Err("model tools rendered no typescript"),
+        ),
+    ] {
+        let tools = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(answer, "application/json"))
+            .mount(&tools)
+            .await;
+        let state = AppState::new(config_for(&tools), None);
+        let got = typescript(&state, "name: air\n").await;
+        assert_eq!(got.as_deref().map_err(String::as_str), want, "{answer}");
+    }
+    let tools = MockServer::start().await;
+    let state = AppState::new(config_for(&tools), None);
+    let huge = "x".repeat(MAX_REQUEST_BYTES + 1);
+    let err = typescript(&state, &huge).await.expect_err("too large");
+    assert!(err.contains("larger than"), "{err}");
+    assert!(
+        typescript(&state, &"x".repeat(MAX_REQUEST_BYTES))
+            .await
+            .is_err(),
+        "nothing mounted: 404"
+    );
+    let unconfigured = AppState::new(Config::for_tests(), None);
+    assert!(typescript(&unconfigured, "name: air\n").await.is_err());
 }
 
 #[tokio::test]

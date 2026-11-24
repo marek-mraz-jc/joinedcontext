@@ -719,6 +719,7 @@
       "proposeAll": "Navrhnout vše",
       "open": "Otevřít",
       "noDrafts": "Zatím nejsou doplněny žádné návrhy.",
+      "unreadable": "Služba odpověděla něčím, co není doplnění prostoru. Zkuste to znovu; pokud se to opakuje, řekněte to správci.",
       "needInput": "Zadejte URL endpointu nebo přidejte soubor.",
       "filesHint": "Ukázka dat jako CSV, Excel (.xlsx), JSON nebo GeoJSON, s manifesty, README nebo .env, které popisují zdroj; dohromady do 10 MB. Příklad: stanice.xlsx.",
       "review": {
@@ -7676,7 +7677,6 @@
     "file": "Archiv nebo manifesty",
     "fileHelp": "ZIP z exportu, nebo YAML proud či JSON manifest.",
     "fileMissing": "Nejprve vyberte soubor.",
-    "noFile": "Nejprve vyberte soubor.",
     "noUrl": "Nahrajte balík jako soubor; Portál ho ze zadané adresy nestahuje.",
     "pastedSecret": "Tento balík má přihlašovací údaj napsaný přímo ({keys}). Nahraďte jej odkazem secretRef a vyberte soubor znovu; import jej stejně odmítne.",
     "namespace": "Projekt, do kterého se importuje",
@@ -9920,7 +9920,15 @@
         "contactBoth": "Uveďte jméno i e-mail kontaktu, nebo ani jedno.",
         "email": "Zadejte e-mailovou adresu, například opendata@example.org.",
         "period": "Konec období nemůže být před jeho začátkem. Vyberte datum konce po začátku.",
-        "title": "Zadejte název datové sady."
+        "title": "Zadejte název datové sady.",
+        "fieldRequired": "Vaše organizace toto pole vyžaduje: vyplňte ho.",
+        "field": {
+          "text": "Napište jeden řádek textu.",
+          "number": "Napište číslo.",
+          "date": "Vyberte datum.",
+          "url": "Napište adresu https://.",
+          "enum": "Vyberte jednu z nabízených hodnot."
+        }
       },
       "datasetTitle": "Název datové sady",
       "datasetTitleHelp": "Název, pod kterým ji katalog uvádí, v jazyce {language}.",
@@ -9948,7 +9956,17 @@
         "dcat": "Záznam DCAT-AP (JSON-LD)"
       },
       "inCatalogue": "Již v katalogu",
-      "typeNew": "V katalogu nic neodpovídá: napište nový a vyberte „Nové“."
+      "typeNew": "V katalogu nic neodpovídá: napište nový a vyberte „Nové“.",
+      "orgFields": "Pole vaší organizace",
+      "orgFieldsHelp": "Další údaje, které vaše organizace žádá u každé datové sady. Portál otevřených dat je ukáže v tabulce O datové sadě.",
+      "fieldHint": {
+        "text": "Jeden řádek textu, například: Financováno městem",
+        "number": "Číslo, například: 12.5",
+        "date": "Datum, například: 2026-11-23",
+        "url": "Adresa https://, například: https://example.org/zprava",
+        "enum": "Vyberte jednu z hodnot, které určila vaše organizace."
+      },
+      "fieldRefused": "Vaše organizace odmítla pole „{field}“ ({reason}). Vraťte se, opravte ho a navrhněte znovu."
     },
     "licence": {
       "CC_BY_4_0": "Creative Commons Attribution 4.0",
@@ -12207,7 +12225,7 @@
     "lastCall": "Poslední volání",
     "setupTitle": "Přidejte ho do svého AI klienta",
     "activityLoading": "Načítají se volání",
-    "noCalls": "Za posledních 30 dní přes tento konektor nepřišlo žádné volání.",
+    "noCalls": "Žádné volání přes tento konektor není uchováno. Každé jeho volání se zobrazí zde.",
     "activityOf": "Volání přes {name}",
     "noProjects": "Zatím nečtete žádný projekt a nic s vámi není sdíleno, takže konektor nemá na co sahat. Požádejte vlastníka projektu nebo správce organizace o přístup.",
     "accessOf": "Přístup pro {what}",
@@ -13365,10 +13383,12 @@
     "tabs": {
       "label": "Pohledy portálu",
       "settings": "Nastavení",
+      "appearance": "Vzhled",
       "sources": "Zdroje",
       "datasets": "Datové sady",
       "files": "Soubory",
-      "layout": "Rozvržení"
+      "layout": "Rozvržení",
+      "display": "Zobrazení"
     },
     "sources": {
       "empty": "Zatím žádný zdroj",
@@ -13746,6 +13766,205 @@
       "refused": "Profil {profile} se neuložil. {reason}",
       "unknownTitle": "Poskytované profily se nepodařilo načíst",
       "retry": "Načíst znovu"
+    },
+    "display": {
+      "heading": "Co portál otevřených dat zobrazuje",
+      "lead": "Vyberte, které části stránky datové sady se zobrazí a v jakém pořadí, řádky tabulky O datové sadě a co ukazuje seznam datových sad. Každý seznam se přebírá z Organizace nebo z vestavěné stránky, dokud jej tento portál nenastaví sám. Zveřejnění navrhne Změnu ke schválení.",
+      "refused": "Zobrazení bylo odmítnuto",
+      "refusedHint": "Opravte uvedené pole a zveřejněte znovu. Odmítnutý nadpis se otevře níže.",
+      "reset": "Obnovit zděděné",
+      "list": {
+        "sections": "Části stránky datové sady",
+        "about": "Řádky tabulky O datové sadě",
+        "fields": "Pole seznamu datových sad"
+      },
+      "from": {
+        "portal": "Nastaveno na tomto portálu",
+        "organization": "Zděděno z Organizace",
+        "builtIn": "Zděděno z výchozího nastavení instalace"
+      },
+      "hint": {
+        "sections": "Zaškrtněte části, které se zobrazí, a posuňte je šipkami, např. O datové sadě před Zdroji. Vydavatel a Odběr zůstávají nahoře a lze je jen skrýt.",
+        "about": "Zaškrtněte řádky tabulky O datové sadě v pořadí, např. nejprve Licence. Doplněk datové sady přidáte podle klíče.",
+        "fields": "Zaškrtněte, co každá datová sada v seznamu ukáže za názvem, např. Formát a Aktualizováno.",
+        "heading": "Prázdné ponechá vestavěný nadpis, např. O datech. Prostý text, nejvýše 120 znaků.",
+        "extra": "Klíč doplňku datové sady, malá písmena, číslice, _ nebo -, např. x_kraj."
+      },
+      "why": {
+        "inherited": "Tento seznam je už zděděný.",
+        "first": "Už je první.",
+        "last": "Už je poslední.",
+        "extra": "Nejprve napište nový klíč doplňku, např. x_kraj.",
+        "nothing": "Zatím se nic nezměnilo."
+      },
+      "up": "Posunout {name} výš",
+      "down": "Posunout {name} níž",
+      "headingIn": "Nadpis ({lang})",
+      "headingToggle": "Změnit nadpis",
+      "extra": "Klíč doplňku datové sady",
+      "addExtra": "Přidat řádek",
+      "extraRow": "Doplněk: {key}",
+      "fault": {
+        "empty": "Zobrazte alespoň jednu položku nebo obnovte zděděný seznam.",
+        "extra": "Klíč doplňku má 1 až 64 malých písmen, číslic, _ nebo -, např. x_kraj.",
+        "heading": "Nadpis je prostý text nejvýše 120 znaků bez < a >."
+      },
+      "unpublished": "Nezveřejněné změny: zveřejněním je navrhnete ke schválení.",
+      "published": "Zobrazení je zveřejněno.",
+      "discard": "Zahodit",
+      "publish": "Zveřejnit",
+      "sections": {
+        "publisher": "Vydavatel",
+        "subscribe": "Odběr",
+        "explorer": "Průzkumník dat",
+        "map": "Mapa",
+        "visualizations": "Vizualizace",
+        "dashboards": "Nástěnky",
+        "about": "O datové sadě",
+        "live": "API živých dat",
+        "mcp": "Konektor pro asistenta (MCP)",
+        "resources": "Zdroje",
+        "additional-info": "Další informace",
+        "shacl": "Kontrola SHACL (jen editoři)"
+      },
+      "about": {
+        "publisher": "Vydavatel",
+        "license": "Licence",
+        "rights": "Uvedení autora",
+        "source": "Zdroj",
+        "keyword": "Klíčová slova",
+        "accrualPeriodicity": "Frekvence aktualizace",
+        "issued": "Vytvořeno",
+        "modified": "Poslední aktualizace",
+        "nextUpdate": "Další aktualizace",
+        "spatial": "Pokrytí",
+        "temporal": "Období",
+        "contactPoint": "Kontakt",
+        "identifier": "Identifikátor",
+        "conformsTo": "Odpovídá standardu"
+      },
+      "fields": {
+        "notes": "Popis",
+        "format": "Formát",
+        "publisher": "Vydavatel",
+        "modified": "Aktualizováno"
+      }
+    },
+    "appearance": {
+      "heading": "Jak portál otevřených dat vypadá",
+      "lead": "Názvy, barvy, písma a rozvržení tohoto portálu. Prázdné pole ukáže hodnotu Organizace, pak výchozí nastavení instalace; Obnovit pole k ní vrátí. Zveřejnění navrhne Změnu ke schválení.",
+      "refused": "Vzhled byl odmítnut",
+      "refusedHint": "Opravte uvedené pole a zveřejněte znovu.",
+      "fix": "Některá pole je třeba opravit",
+      "fixHint": "Opravte označená pole ({count}) a zveřejněte znovu.",
+      "reset": "Obnovit",
+      "resetField": "Obnovit {field} na zděděné",
+      "inheritOption": "Zděděno ({value})",
+      "default": "výchozí",
+      "why": "Zatím se nic nezměnilo.",
+      "unpublished": "Nezveřejněné změny: zveřejněním je navrhnete ke schválení.",
+      "published": "Vzhled je zveřejněn.",
+      "discard": "Zahodit",
+      "publish": "Zveřejnit",
+      "group": {
+        "names": "Názvy a kontakt",
+        "colours": "Barvy",
+        "type": "Písmo a rozvržení"
+      },
+      "from": {
+        "portal": "Nastaveno na tomto portálu",
+        "organization": "Z Organizace",
+        "builtIn": "Výchozí nastavení instalace"
+      },
+      "field": {
+        "instanceName": "Celý název",
+        "shortName": "Krátký název",
+        "city": "Město nebo region",
+        "publisher": "Vydavatel",
+        "contactEmail": "Kontaktní e-mail",
+        "licenseDefault": "Výchozí licence",
+        "colours": {
+          "primary": "Hlavní barva",
+          "secondary": "Doplňková barva",
+          "accent": "Zvýrazňující barva",
+          "background": "Pozadí",
+          "text": "Barva textu",
+          "link": "Barva odkazů",
+          "headerBackground": "Pozadí záhlaví",
+          "headerText": "Text záhlaví",
+          "footerBackground": "Pozadí zápatí",
+          "footerText": "Text zápatí"
+        },
+        "headingFont": "Písmo nadpisů",
+        "bodyFont": "Písmo textu",
+        "fontSize": "Velikost textu (px)",
+        "width": "Šířka obsahu",
+        "radius": "Zaoblení rohů (px)",
+        "buttonStyle": "Tlačítka",
+        "cardShadow": "Stín karet",
+        "datasetList": "Seznam datových sad"
+      },
+      "hint": {
+        "instanceName": "Zobrazí se v názvech stránek, např. Město Brno.",
+        "shortName": "Zobrazí se v kartách prohlížeče, např. BR.",
+        "city": "Území, které portál pokrývá, např. Brno.",
+        "publisher": "Právní vydavatel v zápatí, např. Město Brno.",
+        "contactEmail": "Kam čtenáři píší, např. opendata@brno.cz.",
+        "licenseDefault": "Identifikátor SPDX, např. CC-BY-4.0.",
+        "colours_primary": "Tlačítka a aktivní karty, např. #0b5394.",
+        "colours_secondary": "Doplňkové akcenty, např. #0f766e.",
+        "colours_accent": "Zvýraznění, např. #f59e0b.",
+        "colours_background": "Pozadí stránky, např. #ffffff.",
+        "colours_text": "Text, alespoň 4,5:1 vůči pozadí, např. #0f172a.",
+        "colours_link": "Odkazy, alespoň 4,5:1 vůči pozadí, např. #1d4ed8.",
+        "colours_headerBackground": "Horní lišta, např. #0b5394.",
+        "colours_headerText": "Text v horní liště, alespoň 4,5:1 vůči jejímu pozadí, např. #ffffff.",
+        "colours_footerBackground": "Zápatí stránky, např. #0f172a.",
+        "colours_footerText": "Text v zápatí, alespoň 4,5:1 vůči jeho pozadí, např. #ffffff.",
+        "headingFont": "Nadpisy, systémové písmo, nic se nestahuje odjinud, např. Patkové.",
+        "bodyFont": "Text, např. Systémové.",
+        "fontSize": "14 až 18, např. 16.",
+        "width": "Jak široko obsah sahá, např. Běžná.",
+        "radius": "0 až 24, např. 8.",
+        "buttonStyle": "Plná nebo obrysová, např. Plná.",
+        "cardShadow": "Karty se stínem nebo bez, např. Jemný.",
+        "datasetList": "Karty s popisem nebo kompaktní tabulka, např. Tabulka."
+      },
+      "choice": {
+        "system": "Systémové",
+        "humanist": "Humanistické",
+        "serif": "Patkové",
+        "mono": "Neproporcionální",
+        "narrow": "Úzká",
+        "normal": "Běžná",
+        "wide": "Široká",
+        "filled": "Plná",
+        "outline": "Obrysová",
+        "none": "Žádný",
+        "soft": "Jemný",
+        "cards": "Karty",
+        "table": "Tabulka"
+      },
+      "fault": {
+        "text": "Prostý text s 1 až 120 znaky bez < a >.",
+        "email": "E-mailová adresa jako opendata@mesto.cz.",
+        "licence": "Identifikátor SPDX jako CC-BY-4.0.",
+        "colour": "Hexadecimální barva jako #0b5394.",
+        "choice": "Vyberte jednu z nabízených hodnot.",
+        "number": "Celé číslo v uvedeném rozsahu.",
+        "contrast": "Málo kontrastu: vyberte barvu s kontrastem alespoň 4,5:1 vůči pozadí (WCAG AA)."
+      },
+      "css": {
+        "heading": "Vlastní styl",
+        "lead": "CSS jen pro stránky tohoto portálu, nejvýše 32 KiB. Každé pravidlo platí jen na tomto portálu; řádky s licencí a vydavatelem zůstávají vždy viditelné.",
+        "label": "Styl (CSS)",
+        "hint": "Jen pravidla stylu a @media, např. {example}. Obrázky: {file} podle karty Soubory. Odmítne se: @import, @font-face, content, position, z-index, display: none, {important}, :has() a porovnání atributů jako [href^=…].",
+        "none": "Žádný: jen téma",
+        "fault": {
+          "size": "Nejvýše 32 KiB.",
+          "markup": "Odstraňte </: styl neobsahuje značky."
+        }
+      }
     }
   },
   "assistantGuides": {

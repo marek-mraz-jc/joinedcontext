@@ -183,6 +183,81 @@ async fn an_entity_over_the_byte_cap_is_a_member_refusal() {
     let posts = fake.posts();
     assert_eq!(posts.len(), 1);
     assert_eq!(posts[0].json(), json!([entity("urn:small")]));
+    assert_eq!(
+        pctx.metrics.get_counter(&metrics::refused_key("write_0")),
+        1,
+        "the local refusal is counted"
+    );
+}
+
+#[tokio::test]
+async fn an_entity_exactly_at_the_byte_cap_is_sent() {
+    let fake = FakeBroker::start().await;
+    let (_s, pctx, _stop) = ctx("org-a", true);
+    let e = entity("urn:fits");
+    // The body is `[` + the entity + `]`.
+    let cap = e.to_string().len() + 2;
+    let p = processor(conf(&fake.base(), json!({"max_batch_bytes": cap})), &pctx);
+    let out = run(&p, &pctx, vec![part(e.clone())]).await;
+    assert_eq!(out[0].meta_get_str("jc_refused_write_0"), "[]");
+    assert_eq!(fake.posts().len(), 1);
+    assert_eq!(fake.posts()[0].body.len(), cap);
+    let p = processor(
+        conf(&fake.base(), json!({"max_batch_bytes": cap - 1})),
+        &pctx,
+    );
+    let out = run(&p, &pctx, vec![part(e)]).await;
+    assert_ne!(out[0].meta_get_str("jc_refused_write_0"), "[]");
+    assert_eq!(fake.posts().len(), 1, "one byte over is refused locally");
+}
+
+#[tokio::test]
+async fn entities_exactly_at_the_byte_cap_share_one_request() {
+    let fake = FakeBroker::start().await;
+    let (_s, pctx, _stop) = ctx("org-a", true);
+    let all = [entity("urn:a"), entity("urn:b"), entity("urn:c")];
+    // `[` + a + `,` + b + `,` + c + `]`.
+    let cap = all.iter().map(|e| e.to_string().len()).sum::<usize>() + 4;
+    let p = processor(conf(&fake.base(), json!({"max_batch_bytes": cap})), &pctx);
+    run(&p, &pctx, all.iter().cloned().map(part).collect()).await;
+    assert_eq!(fake.posts().len(), 1);
+    assert_eq!(fake.posts()[0].body.len(), cap);
+    let p = processor(
+        conf(&fake.base(), json!({"max_batch_bytes": cap - 1})),
+        &pctx,
+    );
+    run(&p, &pctx, all.iter().cloned().map(part).collect()).await;
+    let posts = fake.posts();
+    assert_eq!(posts.len(), 3, "one byte less splits them");
+    assert_eq!(posts[1].json(), json!([entity("urn:a"), entity("urn:b")]));
+    assert_eq!(posts[2].json(), json!([entity("urn:c")]));
+}
+
+#[tokio::test]
+async fn a_message_refused_in_part_lists_its_refused_members() {
+    let fake = FakeBroker::start().await;
+    let (_s, pctx, _stop) = ctx("org-a", true);
+    let p = processor(conf(&fake.base(), json!({"max_batch_count": 1})), &pctx);
+    fake.script(
+        400,
+        &[],
+        r#"{"type":"x","title":"Bad Request","detail":"invalid"}"#,
+    );
+    let out = run(
+        &p,
+        &pctx,
+        vec![part(json!([entity("urn:a"), entity("urn:b")]))],
+    )
+    .await;
+    assert!(
+        out[0].meta_get("jc_failed").is_none(),
+        "one entity was written"
+    );
+    let refused: JsonValue =
+        serde_json::from_str(&out[0].meta_get_str("jc_refused_write_0")).expect("json");
+    assert_eq!(refused.as_array().map(Vec::len), Some(1));
+    assert_eq!(refused[0]["id"], "urn:a");
+    assert_eq!(refused[0]["message"], "invalid");
 }
 
 #[tokio::test]
@@ -296,6 +371,178 @@ async fn a_packed_whole_refusal_is_isolated_per_message() {
     assert_eq!(out[0].meta_get_str("jc_failed"), "invalid");
     assert_eq!(out[1].meta_get_str("jc_refused_write_0"), "[]");
     assert!(out[1].meta_get("jc_failed").is_none());
+}
+
+#[tokio::test]
+async fn isolation_keeps_the_entities_of_one_message_together() {
+    let fake = FakeBroker::start().await;
+    let (_s, pctx, _stop) = ctx("org-a", true);
+    let p = processor(conf(&fake.base(), json!({})), &pctx);
+    let bad = r#"{"type":"x","title":"Bad Request","detail":"invalid"}"#;
+    fake.script(400, &[], bad);
+    fake.script(400, &[], bad);
+    let out = run(
+        &p,
+        &pctx,
+        vec![
+            part(json!([entity("urn:b1"), entity("urn:b2")])),
+            part(entity("urn:good")),
+        ],
+    )
+    .await;
+    let posts = fake.posts();
+    assert_eq!(posts.len(), 3);
+    assert_eq!(posts[1].json(), json!([entity("urn:b1"), entity("urn:b2")]));
+    assert_eq!(posts[2].json(), json!([entity("urn:good")]));
+    assert_eq!(out[0].meta_get_str("jc_failed"), "invalid");
+    assert_eq!(out[1].meta_get_str("jc_refused_write_0"), "[]");
+}
+
+#[tokio::test]
+async fn a_207_that_is_no_batch_result_fails_its_messages() {
+    let fake = FakeBroker::start().await;
+    let (_s, pctx, _stop) = ctx("org-a", true);
+    let p = processor(conf(&fake.base(), json!({})), &pctx);
+    fake.script(207, &[], "not json");
+    let out = run(&p, &pctx, vec![part(entity("urn:a"))]).await;
+    assert!(
+        out[0].is_errored(),
+        "an unreadable 207 is a failure for replay"
+    );
+
+    fake.script(207, &[], r#"{"success": ["urn:a"]}"#);
+    let out = run(&p, &pctx, vec![part(entity("urn:a"))]).await;
+    assert!(!out[0].is_errored());
+    assert_eq!(out[0].meta_get_str("jc_refused_write_0"), "[]");
+}
+
+#[tokio::test]
+async fn a_207_error_naming_no_member_lands_on_the_id_less_entity() {
+    let fake = FakeBroker::start().await;
+    let (_s, pctx, _stop) = ctx("org-a", true);
+    let p = processor(conf(&fake.base(), json!({})), &pctx);
+    fake.script(
+        207,
+        &[],
+        r#"{"success": ["urn:a"], "errors": [{"entityId": "urn:other",
+            "error": {"type": "x", "title": "Bad Request", "detail": "no id"}}]}"#,
+    );
+    let out = run(
+        &p,
+        &pctx,
+        vec![
+            part(entity("urn:a")),
+            part(json!({"type": "Vehicle", "speed": {"type": "Property", "value": 1}})),
+        ],
+    )
+    .await;
+    assert_eq!(out[0].meta_get_str("jc_refused_write_0"), "[]");
+    assert!(
+        out[1].meta_get_str("jc_refused_write_0").contains("no id"),
+        "{}",
+        out[1].meta_get_str("jc_refused_write_0")
+    );
+}
+
+#[tokio::test]
+async fn messages_the_operation_cannot_send_are_refused_whole_locally() {
+    use ekiben_bloblang::Value as BValue;
+    let fake = FakeBroker::start().await;
+    let (_s, pctx, _stop) = ctx("org-a", true);
+    let delete = processor(conf(&fake.base(), json!({"operation": "delete"})), &pctx);
+    let out = run(&delete, &pctx, vec![part(json!([{"type": "T"}]))]).await;
+    assert_eq!(
+        out[0].meta_get_str("jc_failed"),
+        "item 0 of the message names no entity id to delete"
+    );
+
+    let nan = || {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("id".to_string(), BValue::String("urn:n".into()));
+        m.insert("type".to_string(), BValue::String("T".into()));
+        m.insert("speed".to_string(), BValue::Float(f64::NAN));
+        Part::from_structured(BValue::Object(m.into()))
+    };
+    for op in ["upsert", "temporal_append"] {
+        let p = processor(conf(&fake.base(), json!({"operation": op})), &pctx);
+        let out = run(&p, &pctx, vec![nan()]).await;
+        assert_eq!(
+            out[0].meta_get_str("jc_failed"),
+            "entity 0 holds a number JSON cannot carry (NaN or infinity)",
+            "{op}"
+        );
+    }
+    assert!(fake.posts().is_empty());
+}
+
+#[tokio::test]
+async fn ids_decide_packing_and_deletes() {
+    let fake = FakeBroker::start().await;
+    let (_s, pctx, _stop) = ctx("org-a", true);
+    let p = processor(conf(&fake.base(), json!({})), &pctx);
+    let out = run(&p, &pctx, vec![part(json!("urn:a"))]).await;
+    assert_eq!(
+        out[0].meta_get_str("jc_failed"),
+        "the message is a string where an NGSI-LD entity or an array of entities is expected"
+    );
+    // An empty id is no id: two of them never split a request as duplicates.
+    run(
+        &p,
+        &pctx,
+        vec![part(
+            json!([{"id": "", "type": "T"}, {"id": "", "type": "T"}]),
+        )],
+    )
+    .await;
+    assert_eq!(fake.posts().len(), 1);
+
+    let delete = processor(conf(&fake.base(), json!({"operation": "delete"})), &pctx);
+    let out = run(&delete, &pctx, vec![part(json!([""]))]).await;
+    assert_eq!(
+        out[0].meta_get_str("jc_failed"),
+        "item 0 of the message names no entity id to delete"
+    );
+    let out = run(&delete, &pctx, vec![part(json!("urn:d"))]).await;
+    assert!(out[0].meta_get("jc_failed").is_none());
+    let posts = fake.posts();
+    assert_eq!(posts.len(), 2);
+    assert_eq!(posts[1].json(), json!(["urn:d"]));
+    assert_eq!(
+        metrics::latency_key("write_0"),
+        "write_0.ngsi_ld_request_latency_ns"
+    );
+    let timings = pctx.metrics.snapshot_json(0);
+    assert!(
+        timings.get("write_0.ngsi_ld_request_latency_ns").is_some(),
+        "each request's latency is recorded: {timings}"
+    );
+}
+
+#[tokio::test]
+async fn the_output_error_names_ten_refusals_and_marks_the_rest() {
+    let fake = FakeBroker::start().await;
+    let (sctx, _p, _stop) = ctx("org-a", true);
+    let out = NgsiLdOutput::from_config(&component(conf(&fake.base(), json!({})), "sink"), &sctx)
+        .expect("output builds");
+    for (n, more) in [(10, false), (11, true)] {
+        let ids: Vec<String> = (0..n).map(|i| format!("urn:r{i}")).collect();
+        for id in &ids {
+            fake.refuse(id, "bad");
+        }
+        let msg = part(JsonValue::Array(ids.iter().map(|i| entity(i)).collect()));
+        let Err(CoreError::Batch(err)) = out.write_batch(&sctx, vec![msg]).await else {
+            panic!("refusals are an indexed error");
+        };
+        let text = err.part_errors.get(&0).cloned().unwrap_or_default();
+        assert!(
+            text.starts_with(&format!(
+                "the broker refused {n} of the message's entities: urn:r0: bad"
+            )),
+            "{text}"
+        );
+        assert_eq!(text.ends_with("; ..."), more, "{text}");
+        assert_eq!(text.matches(": bad").count(), 10);
+    }
 }
 
 #[tokio::test]
@@ -519,6 +766,9 @@ async fn configs_the_platform_refuses_are_refused_at_build() {
             json!({"tls": {"enabled": true, "skip_cert_verify": true}}),
         ),
         conf(&base, json!({"operation": "create", "options": "replace"})),
+        conf(&base, json!({"max_in_flight": 0})),
+        conf(&base, json!({"max_in_flight": 65})),
+        conf(&base, json!({"max_batch_bytes": 1})),
         conf(&base, json!({"not_a_field": 1})),
         conf(
             &format!("http://user:pw@{}/api/endpoint/test/ngsi-ld/v1", fake.addr),
@@ -534,6 +784,84 @@ async fn configs_the_platform_refuses_are_refused_at_build() {
         let built = NgsiLdProcessor::from_config(&component(c.clone(), "w"), &pctx);
         assert!(built.is_err(), "{c} must be refused");
     }
+    let ok = conf(
+        &base,
+        json!({"max_in_flight": 64, "max_batch_bytes": "4MiB"}),
+    );
+    assert!(NgsiLdProcessor::from_config(&component(ok, "w"), &pctx).is_ok());
+    let e = NgsiLdProcessor::from_config(&component(json!({}), "w"), &pctx)
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(e.contains("field url is required"), "{e}");
+}
+
+#[tokio::test]
+async fn the_writer_names_its_operation_and_url() {
+    let fake = FakeBroker::start().await;
+    let (_s, pctx, _stop) = ctx("org-a", true);
+    for (c, url) in [
+        (
+            json!({"operation": "update", "options": "noOverwrite"}),
+            "entityOperations/update?options=noOverwrite",
+        ),
+        (json!({"operation": "temporal_append"}), "temporal/entities"),
+        (json!({"operation": "delete"}), "entityOperations/delete"),
+    ] {
+        let p = processor(conf(&fake.base(), c.clone()), &pctx);
+        assert_eq!(p.writer().url(), format!("{}/{url}", fake.base()), "{c}");
+        let op = format!("{:?}", p.writer().operation()).to_ascii_lowercase();
+        let name = c["operation"].as_str().unwrap_or_default().replace('_', "");
+        assert_eq!(op, name);
+        assert_eq!(p.label(), "write_0");
+        assert_eq!(p.processor_type(), "ngsi_ld");
+    }
+    let (sctx, _p, _stop2) = ctx("org-a", true);
+    let unnamed = NgsiLdOutput::from_config(&component(conf(&fake.base(), json!({})), ""), &sctx)
+        .expect("output");
+    assert_eq!(unnamed.label(), "ngsi_ld");
+    assert_eq!(unnamed.output_type(), "ngsi_ld");
+    let named = NgsiLdProcessor::from_config(&component(conf(&fake.base(), json!({})), ""), &pctx)
+        .expect("processor");
+    assert_eq!(named.label(), "ngsi_ld");
+}
+
+#[tokio::test]
+async fn the_registry_builds_the_processor_and_the_output_under_their_labels() {
+    let fake = FakeBroker::start().await;
+    let (sctx, pctx, _stop) = ctx("org-a", true);
+    for label in ["", "sink"] {
+        let p = sctx
+            .registry
+            .build_processor(&component(conf(&fake.base(), json!({})), label), &pctx, "0")
+            .expect("processor");
+        assert_eq!(p.processor_type(), "ngsi_ld");
+        let o = sctx
+            .registry
+            .build_output(&component(conf(&fake.base(), json!({})), label), &sctx)
+            .expect("output");
+        assert_eq!(o.output_type(), "ngsi_ld");
+        assert_eq!(o.label(), if label.is_empty() { "ngsi_ld" } else { label });
+        assert!(p
+            .process_batch(&pctx, Vec::new())
+            .await
+            .expect("empty")
+            .is_empty());
+        assert!(o.write_batch(&sctx, Vec::new()).await.is_ok());
+    }
+    assert!(fake.requests().is_empty(), "an empty batch sends nothing");
+    let i = sctx.registry.build_input(
+        &ComponentConfig {
+            label: String::new(),
+            component_type: "ngsi_ld".into(),
+            config: conf(&fake.base(), json!({"type": "T"})),
+            processors: Vec::new(),
+        },
+        &sctx,
+    );
+    let i = i.expect("input");
+    assert_eq!(i.input_type(), "ngsi_ld");
+    assert_eq!(i.label(), "ngsi_ld");
 }
 
 #[tokio::test]

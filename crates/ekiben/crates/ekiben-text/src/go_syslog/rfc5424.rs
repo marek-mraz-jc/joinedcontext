@@ -160,3 +160,68 @@ pub fn parse(input: &[u8], best_effort: bool) -> (Option<SyslogMessage>, Option<
     }
     (Some(out.export()), None)
 }
+
+#[cfg(test)]
+mod chart_tests {
+    use super::*;
+    use crate::go_syslog::chart;
+
+    /// With best effort a failed parse keeps a partial message only when it has a priority and a version.
+    #[test]
+    fn best_effort_keeps_only_a_minimally_valid_partial_message() {
+        let (m, e) = parse(b"<1>1 - h", true);
+        assert!(m.is_some() && e.is_some());
+        let (m, e) = parse(b"<1>1 - h", false);
+        assert!(m.is_none() && e.is_some());
+        let (m, e) = parse(b"<1>", true);
+        assert!(m.is_none() && e.is_some());
+        // a complete message is whole either way
+        for input in [
+            &b"<1>1 - - - - - -"[..],
+            b"<1>1 - - - - - - x",
+            b"<1>1 - h a p m [x a=\"b\"]",
+        ] {
+            for best_effort in [true, false] {
+                let (m, e) = parse(input, best_effort);
+                assert!(m.is_some() && e.is_none(), "{input:?} {best_effort}");
+            }
+        }
+    }
+
+    /// The machine over `input` with its EOF actions off (eof is never reached).
+    fn step(input: &[u8]) -> (i32, Option<String>) {
+        let mut m = Machine {
+            data: input,
+            cs: START,
+            p: 0,
+            pe: isize::try_from(input.len()).expect("short input"),
+            eof: -1,
+            pb: 0,
+            err: None,
+            currentelem: String::new(),
+            currentparam: String::new(),
+            msgat: 0,
+            backslashat: Vec::new(),
+        };
+        machine::exec(&mut m, &mut Output::default());
+        (m.cs, m.err)
+    }
+
+    #[test]
+    fn the_parity_corpus_takes_every_transition_of_the_chart() {
+        let processor = serde_json::json!({"parse_log": {"format": "syslog_rfc5424"}});
+        let missing = chart::missing(
+            &step,
+            &chart::corpus(&processor),
+            &processor,
+            "parse_log rfc5424",
+        );
+        assert!(
+            missing.is_empty(),
+            "{} transitions no parity case takes; add these to tests/parity/cases.json and record them \
+             with scripts/record-text-parity.py:\n{}",
+            missing.len(),
+            missing.join("\n")
+        );
+    }
+}

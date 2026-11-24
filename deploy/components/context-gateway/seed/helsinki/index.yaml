@@ -116,6 +116,7 @@ helsinki-role-model-editor.yaml: users/roles/model-editor.yaml
 helsinki-role-pipeline-editor.yaml: users/roles/pipeline-editor.yaml
 helsinki-role-endpoint-editor.yaml: users/roles/endpoint-editor.yaml
 helsinki-role-app-editor.yaml: users/roles/app-editor.yaml
+helsinki-role-portal-editor.yaml: users/roles/portal-editor.yaml
 helsinki-role-editor.yaml: users/roles/editor.yaml
 helsinki-role-approver.yaml: users/roles/approver.yaml
 helsinki-role-viewer.yaml: users/roles/viewer.yaml

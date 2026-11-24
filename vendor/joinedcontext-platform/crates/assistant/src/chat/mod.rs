@@ -6,6 +6,7 @@
 //! `/internal/v1/projects/{project}/knowledge/deployments/{deployment}/chat` (API/05 §1.7,
 //! AG-115).
 
+pub mod across;
 pub mod admin;
 pub mod agent;
 pub mod brief;
@@ -14,6 +15,7 @@ pub mod clock;
 pub mod context;
 pub mod data;
 pub mod documents;
+pub mod map_source;
 pub mod mcp;
 pub mod model;
 pub mod publishers;
@@ -115,6 +117,8 @@ pub struct ChatState {
     pub contexts: std::sync::Mutex<context::Held>,
     /// Visitors' answers held for a resume after a page change (T-4685).
     pub turns: resume::Turns,
+    /// Visitors' map sources (T-7755).
+    pub map_sources: map_source::Sources,
 }
 
 /// The most keys [`Limits`] counts at once (T-3314).
@@ -424,6 +428,10 @@ pub fn router(state: Arc<ChatState>) -> Router {
         .route(
             "/api/v1/d/{public_id}/turns/{turn}/resume",
             get(resume).options(preflight),
+        )
+        .route(
+            "/api/v1/d/{public_id}/map/{id}",
+            get(map_page).options(preflight),
         )
         .route(
             "/api/v1/d/{public_id}/feedback",
@@ -1192,6 +1200,11 @@ fn utc_second(at: time::OffsetDateTime) -> String {
     )
 }
 
+/// Whether a step's filter names an entity by its URN, which a visitor is never shown (T-4654).
+fn names_an_id(filter: &str) -> bool {
+    filter.to_ascii_lowercase().contains("urn:")
+}
+
 /// One event as the stream sends it. An anonymous channel's visitor gets no internals (T-4654):
 /// no Endpoint slug on a tool or a table, and a `done` without tokens, calls, providers or cost;
 /// those stay in the log, the usage and the timings (`record`).
@@ -1208,10 +1221,24 @@ fn sse(event: &Event, anonymous: bool) -> SseEvent {
             }
             ("tool", data)
         }
-        Event::Stage { stage, topic } => {
-            let mut data = json!({"stage": stage});
-            if let Some(topic) = topic {
+        Event::Stage {
+            stage,
+            topic,
+            detail,
+        } => {
+            let mut data = json!(detail);
+            data["stage"] = json!(stage);
+            // A schema step's topic is its Endpoint's slug: a visitor reads its title (T-7753).
+            if let Some(topic) = topic
+                .as_ref()
+                .filter(|_| !(anonymous && *stage == "schema"))
+            {
                 data["topic"] = json!(topic);
+            }
+            if anonymous && detail.filter.as_deref().is_some_and(names_an_id) {
+                if let Some(d) = data.as_object_mut() {
+                    d.remove("filter");
+                }
             }
             ("stage", data)
         }
@@ -1229,7 +1256,15 @@ fn sse(event: &Event, anonymous: bool) -> SseEvent {
         Event::Answer(text) => ("answer", json!({"text": text})),
         Event::Citations(citations) => ("citations", json!(citations)),
         Event::Followups(questions) => ("followups", json!({"questions": questions})),
-        Event::Step(step) => ("step", json!(step)),
+        Event::Step(step) => {
+            let mut data = json!(step);
+            if anonymous && step.q.as_deref().is_some_and(names_an_id) {
+                if let Some(d) = data.as_object_mut() {
+                    d.remove("q");
+                }
+            }
+            ("step", data)
+        }
         Event::Error {
             status,
             title,
@@ -1566,6 +1601,113 @@ async fn replay(
     let h = response.headers_mut();
     h.insert("x-accel-buffering", HeaderValue::from_static("no"));
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MapPage {
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+/// `GET /api/v1/d/{publicId}/map/{id}?cursor=` (T-7755): the next page of a visitor's map
+/// source as a GeoJSON FeatureCollection, `next` the cursor of the page after it and `capped`
+/// on the last page a source may read. Each page is read as anyone from the public Endpoint,
+/// so its Policy holds on every page.
+async fn map_page(
+    State(state): State<Arc<ChatState>>,
+    Path((public_id, id)): Path<(String, String)>,
+    query: Result<Query<MapPage>, QueryRejection>,
+    headers: HeaderMap,
+) -> Response {
+    let (_, origin) = match placed(&state, &public_id, &headers) {
+        Ok(placed) => placed,
+        Err(refused) => return *refused,
+    };
+    let response = match query {
+        Ok(Query(MapPage { cursor })) if cursor.as_deref().is_none_or(map_source::cursor_ok) => {
+            map_features(&state, &public_id, &id, cursor.as_deref(), &headers).await
+        }
+        _ => problem(
+            400,
+            "cursor: the previous page's next, passed back as given",
+        ),
+    };
+    with_cors(response, origin)
+}
+
+async fn map_features(
+    state: &ChatState,
+    public_id: &str,
+    id: &str,
+    cursor: Option<&str>,
+    headers: &HeaderMap,
+) -> Response {
+    let token = headers
+        .get(VISITOR_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let mut limits = state.limits.lock().await;
+    if limits
+        .signer
+        .visitor(public_id, token, unix_now())
+        .is_none()
+    {
+        return problem(
+            401,
+            "Overenie prehliadača vypršalo. Obnovte stránku a skúste to znova.",
+        );
+    }
+    let visitor = limits.visitor(&client_of(headers), today());
+    let key = format!("{public_id}\u{0}{visitor}\u{0}map");
+    let admitted = limits.admit(
+        &[(&key, map_source::PAGES_PER_MINUTE, MINUTE)],
+        Instant::now(),
+    );
+    drop(limits);
+    if let Err(retry) = admitted {
+        return too_many(
+            retry,
+            "Z tejto siete prišlo veľa žiadostí o mapu za krátky čas. Počkajte chvíľu a skúste to znova.",
+        );
+    }
+    let (read, last) = match state
+        .map_sources
+        .page(public_id, &visitor, id, Instant::now())
+    {
+        map_source::Found::Page(read, last) => (read, last),
+        map_source::Found::Spent => {
+            return problem(409, "Every page of this map was read already; ask again.")
+        }
+        map_source::Found::Missing => {
+            return problem(404, "This map can no longer be loaded; ask again.")
+        }
+    };
+    let surface = mcp::Surface {
+        gateway: state.gateway.clone(),
+        slug: read.slug.clone(),
+        timeout: read.timeout,
+        token: None,
+    };
+    let answered = surface
+        .call(&state.http, "query_entities", read.arguments(cursor))
+        .await;
+    let page = answered.ok().and_then(|text| read.page(&text));
+    let Some((features, next)) = page else {
+        tracing::info!(public_id, "a map page could not be read");
+        return problem(502, "The map's data could not be read just now; try again.");
+    };
+    let mut body = json!({"type": "FeatureCollection", "features": features});
+    match next {
+        Some(_) if last => body["capped"] = json!(true),
+        Some(next) => body["next"] = json!(next),
+        None => {}
+    }
+    let mut response = Json(body).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
 }
 
@@ -2146,7 +2288,17 @@ async fn ask(
         };
         let forwarding = async {
             let mut seen = transcript::Seen::default();
-            while let Some(event) = passing.recv().await {
+            while let Some(mut event) = passing.recv().await {
+                // A visitor's map of part of a read gets its source here, bound to this
+                // deployment and address (T-7755).
+                if let (Event::Data(table), true) = (&mut event, held.is_some()) {
+                    if let Some(read) = table.map_read.take() {
+                        table.map_source = state
+                            .map_sources
+                            .hold(&deployment.spec.public_id, &client_hash, read, Instant::now())
+                            .map(|id| format!("/api/v1/d/{}/map/{id}", deployment.spec.public_id));
+                    }
+                }
                 seen.see(&event);
                 trace.visual(&event);
                 if let Some(turn) = &held {
@@ -2407,6 +2559,92 @@ mod tests {
             format!("{:?}", sse(&table, true)).contains("ovzdusie"),
             "the dataset link stays"
         );
+    }
+
+    /// T-7753: each step kind's stage carries what it does in words, and a visitor's stream keeps
+    /// no Endpoint slug or URN in it (T-4654), one assertion per step kind.
+    #[test]
+    fn each_step_says_what_it_does_and_a_visitor_sees_no_internal_id() {
+        let staged =
+            |stage: &'static str, topic: Option<&str>, detail: agent::Detail| Event::Stage {
+                stage,
+                topic: topic.map(str::to_owned),
+                detail,
+            };
+        let shown = |event: &Event, anonymous: bool| {
+            format!("{:?}", sse(event, anonymous)).replace('\\', "")
+        };
+        let counted = |count: u64| agent::Detail {
+            count: Some(count),
+            ..Default::default()
+        };
+        let read = agent::Detail {
+            source: Some("BBSK bridge register".into()),
+            filter: Some("yearBuilt<1950".into()),
+            ..Default::default()
+        };
+        let searching = staged("searching", Some("bridges BBSK"), counted(412));
+        assert!(shown(&searching, true).contains(r#""count":412"#));
+        assert!(shown(&searching, true).contains("bridges BBSK"));
+        let reading = staged("reading", Some("Bridge"), read.clone());
+        for anonymous in [true, false] {
+            let line = shown(&reading, anonymous);
+            assert!(
+                line.contains("BBSK bridge register") && line.contains("yearBuilt<1950"),
+                "{line}"
+            );
+        }
+        let by_id = agent::Detail {
+            filter: Some("refBridge==\"urn:ngsi-ld:Bridge:42\"".into()),
+            ..read.clone()
+        };
+        for stage in ["reading", "history"] {
+            let event = staged(stage, Some("Bridge"), by_id.clone());
+            assert!(
+                !shown(&event, true).contains("urn:"),
+                "{}",
+                shown(&event, true)
+            );
+            assert!(shown(&event, false).contains("urn:ngsi-ld:Bridge:42"));
+        }
+        let schema = staged("schema", Some("mosty-bbsk"), read.clone());
+        assert!(
+            !shown(&schema, true).contains("mosty-bbsk"),
+            "{}",
+            shown(&schema, true)
+        );
+        assert!(shown(&schema, true).contains("BBSK bridge register"));
+        assert!(shown(&schema, false).contains("mosty-bbsk"));
+        let checking = staged(
+            "checking",
+            None,
+            agent::Detail {
+                verdict: Some("answers"),
+                ..counted(6)
+            },
+        );
+        assert!(shown(&checking, true).contains(r#""verdict":"answers""#));
+        assert!(shown(&checking, true).contains(r#""count":6"#));
+        let answering = staged("answering", None, counted(3));
+        assert!(shown(&answering, true).contains(r#""count":3"#));
+        let mut end = agent::Step {
+            source: Some("BBSK bridge register".into()),
+            entity_type: Some("Bridge".into()),
+            q: Some("id==\"urn:ngsi-ld:Bridge:42\"".into()),
+            count: Some(1651),
+            ms: Some(800),
+            ..Default::default()
+        };
+        let step = Event::Step(end.clone());
+        assert!(shown(&step, true).contains(r#""ms":800"#));
+        assert!(
+            !shown(&step, true).contains("urn:"),
+            "{}",
+            shown(&step, true)
+        );
+        assert!(shown(&step, false).contains("urn:ngsi-ld:Bridge:42"));
+        end.q = Some("yearBuilt<1950".into());
+        assert!(shown(&Event::Step(end), true).contains("yearBuilt<1950"));
     }
 
     /// T-3059: the per-client key is the address the edge appended, past the cluster's own

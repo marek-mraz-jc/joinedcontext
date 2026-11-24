@@ -27,7 +27,6 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use dataroom_core::auth::constant_time_eq;
 use dataroom_core::ops::{all_operations, execute_operation, OpContext, OperationDef};
 use dataroom_core::{
     validate_and_sanitise_logo, Action, ActivityRow, Authorizer, BrandingBlock, Catalogue,
@@ -76,7 +75,7 @@ pub fn installed_id(name: &str) -> Option<String> {
 pub fn requires_publisher(id: &str) -> bool {
     dataroom_rdf::DcatProfile::by_id(id).is_some_and(dataroom_rdf::DcatProfile::requires_publisher)
 }
-use dataroom_search::search_datasets;
+use dataroom_search::search_store;
 use dataroom_shacl::ProfileRegistry;
 use dataroom_web::dashboards::{is_dashboard, render_dashboard_list_page, render_dashboard_page};
 use dataroom_web::helpers::{jc_robots_txt, jc_sitemap_xml};
@@ -87,63 +86,30 @@ use dataroom_web::{
     render_portal_page, render_resource_page, render_static_page, PageInputs, JC_ENUMS_JSON,
     JC_LOGO_SVG, JC_THEME_CSS,
 };
+use portals::{read, write};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
-/// Token entry mapping a bearer/API token to a verified [`Subject`].
-#[derive(Clone)]
-pub struct TokenBinding {
-    pub token: String,
-    pub subject: Subject,
-}
-
-/// The token never prints: a binding lands in panics and logs.
-impl std::fmt::Debug for TokenBinding {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TokenBinding")
-            .field("token", &"<redacted>")
-            .field("subject", &self.subject)
-            .finish()
-    }
-}
+/// The audience of a token that may write here: the module's name, as kaisatsu's scope maps it.
+pub const AUDIENCE: &str = "dataroom";
 
 /// The principal the Portal's CKAN publisher acts as (PORTAL-CALLS.md).
 pub use dataroom_core::auth::PORTAL_PUBLISHER;
 
-/// The shortest Portal publisher token accepted: a guessable token would let anyone publish.
-pub const MIN_PORTAL_TOKEN_LEN: usize = 32;
-
-/// The Portal's CKAN publisher on one catalogue: `token` bound to [`PORTAL_PUBLISHER`] and the
-/// one grant its calls need. `Read` and `Propose` are all of it: `package_delete` is a
-/// withdrawal (`dataset.withdraw`), and `organization_*`/`package_*`/`resource_view_*` are
-/// proposals; `Delete` (purge) and `Admin` stay out. Errors never repeat the token.
-pub fn portal_publisher(
-    token: &str,
-    org_id: OrgId,
-    catalogue_id: CatalogueId,
-) -> Result<(TokenBinding, GrantRule)> {
-    let token = token.trim();
-    if token.len() < MIN_PORTAL_TOKEN_LEN || !token.bytes().all(|b| b.is_ascii_graphic()) {
-        return Err(DataroomError::field_error(
-            "portalToken",
-            format!(
-                "the Portal publisher token must be at least {MIN_PORTAL_TOKEN_LEN} printable \
-                 ASCII characters without spaces"
-            ),
-        ));
-    }
-    let binding = TokenBinding {
-        token: token.to_owned(),
-        subject: Subject {
-            actor_id: Some(PORTAL_PUBLISHER.into()),
-            organizations: vec![org_id],
-            groups: Vec::new(),
-            client_id: Some("joinedcontext-portal".into()),
-            read_only: false,
-        },
+/// The Portal's CKAN publisher on one catalogue: who a caller with a verified service token
+/// ([`DataroomState::with_verifier`]) is there, and the one grant its calls need. `Read` and
+/// `Propose` are all of it: `package_delete` is a withdrawal (`dataset.withdraw`), and
+/// `organization_*`/`package_*`/`resource_view_*` are proposals; `Delete` and `Admin` stay out.
+pub fn portal_publisher(org_id: OrgId, catalogue_id: CatalogueId) -> (Subject, GrantRule) {
+    let subject = Subject {
+        actor_id: Some(PORTAL_PUBLISHER.into()),
+        organizations: vec![org_id],
+        groups: Vec::new(),
+        client_id: Some("joinedcontext-portal".into()),
+        read_only: false,
     };
     let grant = GrantRule {
         org_id,
@@ -152,7 +118,7 @@ pub fn portal_publisher(
         actions: vec![Action::Read, Action::Propose],
         publisher_id: None,
     };
-    Ok((binding, grant))
+    (subject, grant)
 }
 
 /// The Portal's CKAN publisher on one Organization's catalogue of a deployment with several:
@@ -160,36 +126,23 @@ pub fn portal_publisher(
 /// no other catalogue's grant names it, and with the grant scoped to `publisher`, the CKAN
 /// organisation of the JC Organization: the Portal publishes there and creates no other.
 pub fn portal_publisher_on(
-    token: &str,
     org_id: OrgId,
     catalogue_id: CatalogueId,
     publisher: &str,
-) -> Result<(TokenBinding, GrantRule)> {
-    let (mut binding, mut grant) = portal_publisher(token, org_id, catalogue_id)?;
+) -> (Subject, GrantRule) {
+    let (mut subject, mut grant) = portal_publisher(org_id, catalogue_id);
     let principal = format!("{PORTAL_PUBLISHER}:{catalogue_id}");
-    binding.subject.actor_id = Some(principal.clone());
+    subject.actor_id = Some(principal.clone());
     grant.principal = principal;
     grant.publisher_id = Some(publisher.to_owned());
-    Ok((binding, grant))
+    (subject, grant)
 }
 
-/// [`portal_publisher`] with the token read from `path`, the secret file the host mounts.
-pub fn portal_publisher_from_file(
-    path: &std::path::Path,
-    org_id: OrgId,
-    catalogue_id: CatalogueId,
-) -> Result<(TokenBinding, GrantRule)> {
-    let token = std::fs::read_to_string(path).map_err(|e| {
-        DataroomError::Storage(format!(
-            "the Portal publisher token file {} could not be read: {}",
-            path.display(),
-            e.kind()
-        ))
-    })?;
-    portal_publisher(&token, org_id, catalogue_id)
-}
+/// The catalogues that admit the Portal's publisher, each with who it is there.
+pub type Publishers = BTreeMap<(OrgId, CatalogueId), Subject>;
 
-/// Optional host-supplied subject resolver when mounted in-process inside the Portal (G1).
+/// The caller as a host that mounts the router verified it (G1): its `None` leaves the request
+/// to the service token.
 pub type SubjectResolver = Arc<dyn Fn(&HeaderMap) -> Option<Subject> + Send + Sync>;
 
 /// The public Dashboards a catalogue's home shows, in the page's language (UIX-16, T-6780):
@@ -208,7 +161,9 @@ pub struct DataroomState {
     pub default_org_id: OrgId,
     pub default_catalogue_id: CatalogueId,
     /// Swapped at runtime by the catalogue writer (ODP-11), like the two maps below.
-    pub tokens: Arc<std::sync::RwLock<Vec<TokenBinding>>>,
+    pub publishers: Arc<std::sync::RwLock<Publishers>>,
+    /// Verifies a service's token; without one every presented credential is refused.
+    pub verifier: Option<Arc<jc_door::Verifier>>,
     pub installation_branding: Arc<BrandingBlock>,
     pub mount_prefix: String,
     /// The default catalogue's public URL (scheme, host, mount prefix), when the installation
@@ -316,7 +271,8 @@ impl DataroomState {
             harvester,
             default_org_id,
             default_catalogue_id,
-            tokens: Arc::default(),
+            publishers: Arc::default(),
+            verifier: None,
             installation_branding: Arc::new(BrandingBlock::default()),
             mount_prefix: String::new(),
             public_base: None,
@@ -383,8 +339,15 @@ impl DataroomState {
         request_origin().map_or_else(|| self.mount_prefix.clone(), |o| o.path_prefix)
     }
 
-    pub fn with_tokens(mut self, tokens: Vec<TokenBinding>) -> Self {
-        self.tokens = Arc::new(std::sync::RwLock::new(tokens));
+    /// The catalogues that admit the Portal's publisher.
+    pub fn with_publishers(mut self, publishers: Publishers) -> Self {
+        self.publishers = Arc::new(std::sync::RwLock::new(publishers));
+        self
+    }
+
+    /// Admits the tokens `verifier` verifies for [`AUDIENCE`].
+    pub fn with_verifier(mut self, verifier: Arc<jc_door::Verifier>) -> Self {
+        self.verifier = Some(verifier);
         self
     }
 
@@ -452,7 +415,7 @@ impl DataroomState {
     }
 
     /// Resolves the [`RequestCtx`] from the `Host` header (or verified default) and `Authorization`
-    /// token (using constant-time token comparison). Never trusts client `x-jc-*` headers.
+    /// token. Never trusts client `x-jc-*` headers.
     pub async fn resolve_context(&self, headers: &HeaderMap) -> Result<(RequestCtx, Catalogue)> {
         // Behind a host router the host is the one it resolved (a trusted proxy's), never the
         // raw header; standalone, the `Host` header.
@@ -516,7 +479,18 @@ impl DataroomState {
             None => origin.as_ref().map(RequestOrigin::base),
         };
 
-        let raw_token = headers
+        let subject = self.caller(headers, &cat).await?;
+        let ctx = RequestCtx::new(cat.org_id, cat.id, subject);
+        Ok((ctx, cat))
+    }
+
+    /// Who calls `cat`: the subject the host verified, the publisher of `cat` for a service
+    /// token of [`AUDIENCE`], nobody without a credential. Any other credential is refused.
+    async fn caller(&self, headers: &HeaderMap, cat: &Catalogue) -> Result<Subject> {
+        if let Some(subject) = self.subject_resolver.as_ref().and_then(|r| r(headers)) {
+            return Ok(subject);
+        }
+        let presented = headers
             .get(header::AUTHORIZATION)
             .or_else(|| headers.get("X-CKAN-API-Key"))
             .and_then(|v| v.to_str().ok())
@@ -525,60 +499,21 @@ impl DataroomState {
             .map(|t| match t.get(..7) {
                 Some(scheme) if scheme.eq_ignore_ascii_case("bearer ") => t[7..].trim(),
                 _ => t,
-            });
-
-        let subject = if let Some(ref resolver) = self.subject_resolver {
-            if let Some(s) = resolver(headers) {
-                s
-            } else {
-                match raw_token.filter(|t| !t.is_empty()) {
-                    Some(tok) => {
-                        let matched = read(&self.tokens)
-                            .iter()
-                            .find(|b| constant_time_eq(&b.token, tok))
-                            .cloned();
-                        match matched {
-                            Some(binding) => binding.subject,
-                            None => {
-                                return Err(DataroomError::Unauthorized(
-                                    "invalid or unknown API token".into(),
-                                ));
-                            }
-                        }
-                    }
-                    None => Subject::anonymous(),
-                }
-            }
-        } else {
-            match raw_token.filter(|t| !t.is_empty()) {
-                Some(tok) => {
-                    let matched = read(&self.tokens)
-                        .iter()
-                        .find(|b| constant_time_eq(&b.token, tok))
-                        .cloned();
-                    match matched {
-                        Some(binding) => binding.subject,
-                        None => {
-                            return Err(DataroomError::Unauthorized(
-                                "invalid or unknown API token".into(),
-                            ));
-                        }
-                    }
-                }
-                None => Subject::anonymous(),
-            }
+            })
+            .filter(|t| !t.is_empty());
+        let Some(token) = presented else {
+            return Ok(Subject::anonymous());
         };
-
-        let ctx = RequestCtx::new(cat.org_id, cat.id, subject);
-        Ok((ctx, cat))
+        let refused = || DataroomError::Unauthorized("invalid or unknown API token".into());
+        let verifier = self.verifier.as_ref().ok_or_else(refused)?;
+        verifier.prepare(token).await;
+        verifier.client(token, AUDIENCE).ok_or_else(refused)?;
+        // A verified token is nobody on a catalogue that admits no publisher.
+        read(&self.publishers)
+            .get(&(cat.org_id, cat.id))
+            .cloned()
+            .ok_or_else(refused)
     }
-}
-
-/// A read of one of the state's runtime-swapped tables; a poisoned lock still holds the last
-/// complete table (every writer replaces whole entries).
-fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
-    lock.read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Returns all registered operations in `dataroom` (G1, F1).
@@ -712,6 +647,7 @@ pub fn router(state: DataroomState) -> Router {
         .route("/files/{sha256}/{name}", get(handle_serve_file))
         // Built-in theme static assets
         .route("/jc-theme.css", get(handle_jc_theme_css))
+        .route("/portal-css/{file}", get(handle_portal_css))
         .route("/jc-enums.json", get(handle_jc_enums_json))
         .route("/jc-logo.svg", get(handle_jc_logo_svg))
         .route("/logo.svg", get(handle_logo_svg))
@@ -779,15 +715,6 @@ async fn handle_portal_catalogue(
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let datasets = match state.store.list_datasets(&ctx).await {
-        Ok(d) => d,
-        Err(e) => return problem_response(e),
-    };
-    let publishers = match state.store.list_publishers(&ctx).await {
-        Ok(p) => p,
-        Err(e) => return problem_response(e),
-    };
-
     let page = params.page.unwrap_or(1).max(1);
     let mut filter = DatasetFilter {
         q: params.q.unwrap_or_default(),
@@ -815,26 +742,21 @@ async fn handle_portal_catalogue(
     }
 
     // The datasets `package_show` would show this caller: a `jc_hide` one only to its editors.
-    let pub_map: BTreeMap<&str, &Publisher> = publishers
-        .iter()
-        .flat_map(|p| [(p.id.as_str(), p), (p.name.as_str(), p)])
-        .collect();
-    let datasets: Vec<Dataset> = datasets
-        .into_iter()
-        .filter(|ds| {
-            let pub_rec = pub_map.get(ds.publisher_id.as_str()).copied();
-            dataset_shown(&state, &ctx, &cat, ds, pub_rec)
-        })
-        .collect();
-    let outcome = match search_datasets(
+    let shown = |ds: &Dataset, publishers: &[Publisher]| {
+        dataset_shown(&state, &ctx, &cat, ds, publisher_of(publishers, ds))
+    };
+    let outcome = match search_store(
+        state.store.as_ref(),
         &ctx,
         state.authorizer.as_ref(),
-        &datasets,
-        &publishers,
         &filter,
         &cat.default_language,
-    ) {
-        Ok(o) => o,
+        &shown,
+        None,
+    )
+    .await
+    {
+        Ok((o, _)) => o,
         Err(e) => return problem_response(e),
     };
 
@@ -1151,11 +1073,7 @@ async fn handle_upload_logo(
         Err(e) => return problem_response(e),
     };
     let fname = asset.url_path.trim_start_matches("/assets/").to_owned();
-    state
-        .assets
-        .write()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(fname, asset.clone());
+    write(&state.assets).insert(fname, asset.clone());
     // The logo is one member of the catalogue: a concurrent write of another member makes the
     // write read the catalogue again, three tries at most (S11-25); the activity row commits
     // with it (AUD-02).
@@ -1210,12 +1128,7 @@ async fn handle_serve_asset(
     State(state): State<DataroomState>,
     Path(name): Path<String>,
 ) -> Response {
-    let found = state
-        .assets
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&name)
-        .cloned();
+    let found = read(&state.assets).get(&name).cloned();
     match found {
         Some(asset) => (
             StatusCode::OK,
@@ -1240,10 +1153,7 @@ async fn handle_serve_asset(
 /// The file stores a request's catalogue reads: its own, then its Organization's own catalogue's
 /// (an Organization-wide file). Never another Organization's.
 fn file_keys(state: &DataroomState, ctx: &RequestCtx) -> Vec<(OrgId, CatalogueId)> {
-    let own = state
-        .organization_catalogues
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
+    let own = read(&state.organization_catalogues)
         .values()
         .find(|(org, _)| *org == ctx.org_id)
         .map(|(_, cat)| *cat);
@@ -1293,12 +1203,11 @@ async fn portal_page(
         let Some(d) = datasets.iter().find(|d| d.name == name) else {
             continue;
         };
-        let mut all = Vec::new();
-        for dist in &d.distributions {
-            if let Ok(v) = state.store.list_resource_views(ctx, &dist.id).await {
-                all.extend(v);
-            }
-        }
+        let all = state
+            .store
+            .list_views_of(ctx, &distribution_ids(d))
+            .await
+            .unwrap_or_default();
         views.insert(name, all);
     }
     render_portal_page(
@@ -1385,6 +1294,36 @@ async fn handle_jc_theme_css() -> Response {
         JC_THEME_CSS,
     )
         .into_response()
+}
+
+/// The stylesheet of the portal this host serves (T-7745), `{hash}.css` as its pages link it;
+/// another portal's hash, or a portal without one, is 404. The text is the one jc-core checked
+/// and scoped when jc handed over the portal's branding.
+async fn handle_portal_css(
+    State(state): State<DataroomState>,
+    headers: HeaderMap,
+    Path(file): Path<String>,
+) -> Response {
+    let (_, cat) = match state.resolve_context(&headers).await {
+        Ok(v) => v,
+        Err(e) => return problem_response(e),
+    };
+    let branding = state.branding_of(&cat);
+    match branding.layout.stylesheet {
+        Some(sheet) if file.strip_suffix(".css") == Some(sheet.hash.as_str()) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ],
+            sheet.css,
+        )
+            .into_response(),
+        _ => problem_response(DataroomError::NotFound(
+            "no such stylesheet on this portal".into(),
+        )),
+    }
 }
 
 /// One route per theme script (`dataroom_web::JC_SCRIPTS`): a fixed list, so no path reaches a
@@ -1737,10 +1676,37 @@ async fn map_shown(state: &DataroomState, ctx: &RequestCtx, cat: &Catalogue, ds:
     ds.state != RecordState::Withdrawn && dataset_shown(state, ctx, cat, ds, pub_rec.as_ref())
 }
 
+/// The ids of a dataset's distributions, in its order.
+pub(crate) fn distribution_ids(ds: &Dataset) -> Vec<String> {
+    ds.distributions.iter().map(|d| d.id.clone()).collect()
+}
+
 fn publisher_of<'a>(publishers: &'a [Publisher], ds: &Dataset) -> Option<&'a Publisher> {
     publishers
         .iter()
         .find(|p| p.id == ds.publisher_id || p.name == ds.publisher_id)
+}
+
+/// The `jc_hide` rule of the search routes: a hidden dataset is listed only to an editor of its
+/// publisher (`plugin.py` lines 168-197, D2, G2).
+pub(crate) fn listed_to(
+    state: &DataroomState,
+    ctx: &RequestCtx,
+    cat: &Catalogue,
+    ds: &Dataset,
+    publishers: &[Publisher],
+) -> bool {
+    if !cat.hidden_datasets.contains_key(&ds.name) {
+        return true;
+    }
+    if ctx.subject.is_anonymous() {
+        return false;
+    }
+    let target = ObjectTarget::from_dataset(ds, publisher_of(publishers, ds));
+    state
+        .authorizer
+        .check(ctx, Action::Propose, &target)
+        .allowed
 }
 
 /// The dashboards of the catalogue the reader may see (T-6790).
@@ -1752,7 +1718,7 @@ async fn shown_dashboards(
 ) -> Vec<Dataset> {
     state
         .store
-        .list_datasets(ctx)
+        .list_datasets_of_type(ctx, dataroom_web::dashboards::DASHBOARD_TYPE)
         .await
         .unwrap_or_default()
         .into_iter()
@@ -1857,33 +1823,6 @@ async fn dispatch_ui_route(
         }
         // D2: Dataset list & search (`/dataset`, `/dataset/`)
         ["dataset"] => {
-            let mut all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
-            all_ds.retain(|d| !is_dashboard(d));
-            let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
-            let pub_map: BTreeMap<String, Publisher> = publishers
-                .iter()
-                .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p.clone())])
-                .collect();
-
-            // `jc_hide` rule: hidden datasets are hidden from the public, visible to editors of the publisher
-            let visible_ds: Vec<Dataset> = all_ds
-                .into_iter()
-                .filter(|ds| {
-                    if !cat.hidden_datasets.contains_key(&ds.name) {
-                        return true;
-                    }
-                    if ctx.subject.is_anonymous() {
-                        return false;
-                    }
-                    let pub_rec = pub_map.get(&ds.publisher_id);
-                    let target = ObjectTarget::from_dataset(ds, pub_rec);
-                    state
-                        .authorizer
-                        .check(&ctx, Action::Propose, &target)
-                        .allowed
-                })
-                .collect();
-
             let page = q_params
                 .get("page")
                 .and_then(|s| s.parse::<usize>().ok())
@@ -1932,20 +1871,30 @@ async fn dispatch_ui_route(
                 filter.spatial.push(sp.clone());
             }
 
-            let outcome = search_datasets(
+            let listed = |ds: &Dataset, publishers: &[Publisher]| {
+                !is_dashboard(ds) && listed_to(&state, &ctx, &cat, ds, publishers)
+            };
+            let (outcome, publishers) = search_store(
+                state.store.as_ref(),
                 &ctx,
                 state.authorizer.as_ref(),
-                &visible_ds,
-                &publishers,
                 &filter,
                 &lang,
+                &listed,
+                None,
             )
-            .unwrap_or_else(|_| dataroom_search::SearchOutcome {
-                total: 0,
-                offset: 0,
-                limit: 20,
-                datasets: Vec::new(),
-                facets: Default::default(),
+            .await
+            .unwrap_or_else(|_| {
+                (
+                    dataroom_search::SearchOutcome {
+                        total: 0,
+                        offset: 0,
+                        limit: 20,
+                        datasets: Vec::new(),
+                        facets: Default::default(),
+                    },
+                    Vec::new(),
+                )
             });
 
             let html = render_dataset_list_page(
@@ -2018,7 +1967,10 @@ async fn dispatch_ui_route(
                     let checked = tokio::task::spawn_blocking({
                         let (state, cat, ds) = (state.clone(), cat.clone(), ds.clone());
                         let (publisher, stack) = (pub_rec.clone(), selected.stack.clone());
-                        move || feeds::dataset_gaps(&state, &cat, &ds, publisher.as_ref(), &stack)
+                        move || {
+                            let page = state.feed_conformance.page_key(&stack, &cat);
+                            feeds::dataset_gaps(&state, &cat, &ds, publisher.as_ref(), &stack, page)
+                        }
                     });
                     let missing = match checked.await {
                         Ok(missing) => missing,
@@ -2043,6 +1995,7 @@ async fn dispatch_ui_route(
                     pub_rec.as_ref(),
                     rdf_fmt,
                     selected.stack.renderer,
+                    &branding.dataset_fields,
                 );
                 return (
                     StatusCode::OK,
@@ -2056,12 +2009,11 @@ async fn dispatch_ui_route(
                     .into_response();
             }
 
-            let mut all_views = Vec::new();
-            for d in &ds.distributions {
-                if let Ok(v) = state.store.list_resource_views(&ctx, &d.id).await {
-                    all_views.extend(v);
-                }
-            }
+            let all_views = state
+                .store
+                .list_views_of(&ctx, &distribution_ids(&ds))
+                .await
+                .unwrap_or_default();
             let can_edit = state
                 .authorizer
                 .check(&ctx, Action::Propose, &target)
@@ -2075,20 +2027,9 @@ async fn dispatch_ui_route(
             } else {
                 Vec::new()
             };
-            // ponytail: one catalogue listing per dataset page; a store query by type when
-            // catalogues hold thousands of packages.
-            let dashboards: Vec<Dataset> = state
-                .store
-                .list_datasets(&ctx)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|d| {
-                    is_dashboard(d)
-                        && d.state != RecordState::Withdrawn
-                        && dataset_shown(&state, &ctx, &cat, d, None)
-                })
-                .collect();
+            // A dashboard of a withdrawn publisher is linked nowhere, as its own page is not found.
+            let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
+            let dashboards = shown_dashboards(&state, &ctx, &cat, &publishers).await;
             let html = dataroom_web::render_dataset_page_linked(
                 &cat,
                 Some(&state.branding_of(&cat)),
@@ -2133,12 +2074,11 @@ async fn dispatch_ui_route(
                     "dashboard '{name}' not found"
                 )));
             };
-            let mut views = Vec::new();
-            for d in &ds.distributions {
-                if let Ok(v) = state.store.list_resource_views(&ctx, &d.id).await {
-                    views.extend(v);
-                }
-            }
+            let views = state
+                .store
+                .list_views_of(&ctx, &distribution_ids(&ds))
+                .await
+                .unwrap_or_default();
             let mut datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
             datasets.retain(|d| !is_dashboard(d));
             let html = render_dashboard_page(
@@ -2242,12 +2182,6 @@ async fn dispatch_ui_route(
                     "publisher '{name}' not found"
                 )));
             }
-            let mut all_ds = state.store.list_datasets(&ctx).await.unwrap_or_default();
-            all_ds.retain(|d| !is_dashboard(d));
-            let visible_ds: Vec<Dataset> = all_ds
-                .into_iter()
-                .filter(|d| !cat.hidden_datasets.contains_key(&d.name))
-                .collect();
             let q = q_params.get("q").cloned().unwrap_or_default();
             let sort = q_params
                 .get("sort")
@@ -2275,14 +2209,20 @@ async fn dispatch_ui_route(
             if let Some(l) = q_params.get("license_id") {
                 filter.licences.push(l.clone());
             }
-            let outcome = search_datasets(
+            let listed = |d: &Dataset, _: &[Publisher]| {
+                !is_dashboard(d) && !cat.hidden_datasets.contains_key(&d.name)
+            };
+            let outcome = search_store(
+                state.store.as_ref(),
                 &ctx,
                 state.authorizer.as_ref(),
-                &visible_ds,
-                std::slice::from_ref(&pub_rec),
                 &filter,
                 &lang,
+                &listed,
+                Some(std::slice::from_ref(&pub_rec)),
             )
+            .await
+            .map(|(o, _)| o)
             .unwrap_or_else(|_| dataroom_search::SearchOutcome {
                 total: 0,
                 offset: 0,
@@ -2466,5 +2406,20 @@ async fn dispatch_ui_route(
         _ => problem_response(DataroomError::NotFound(format!(
             "route '{raw_path}' not found"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_redirect_to_a_target_no_header_can_carry_is_refused_not_a_panic() {
+        let ok = safe_redirect(StatusCode::SEE_OTHER, "/sk/dataset/air");
+        assert_eq!(ok.status(), StatusCode::SEE_OTHER);
+        assert_eq!(ok.headers()[header::LOCATION], "/sk/dataset/air");
+        let refused = safe_redirect(StatusCode::SEE_OTHER, "/sk/\r\nSet-Cookie: x=1");
+        assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.headers().get(header::LOCATION).is_none());
     }
 }

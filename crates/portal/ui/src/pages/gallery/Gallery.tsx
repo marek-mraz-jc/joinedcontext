@@ -386,6 +386,7 @@ export function Gallery(): JSX.Element {
             searchLabel="Search endpoints"
             rows={GRID_ROWS}
             rowKey={(row) => row.name}
+            query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
             name={{ id: "name", label: "Name", text: (row) => row.name }}
             columns={[
               { id: "audience", label: "Audience", filter: true, text: (row) => row.audience },
@@ -402,7 +403,7 @@ export function Gallery(): JSX.Element {
             searchLabel="Search endpoints"
             rows={[] as typeof GRID_ROWS}
             rowKey={(row) => row.name}
-            query={{ isPending: true }}
+            query={{ isPending: true, isError: false, error: null, refetch: () => undefined }}
             name={{ id: "name", label: "Name", text: (row) => row.name }}
             columns={[{ id: "audience", label: "Audience", text: (row) => row.audience }]}
             empty={<EmptyState bare title="No endpoints yet" />}

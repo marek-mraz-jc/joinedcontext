@@ -174,4 +174,16 @@ describe("drift on the space page (T-2867)", () => {
     expect(within(drift).queryByText(en.drift.section.clean)).toBeNull();
     expect(within(drift).queryByText(en.drift.section.notYet)).toBeNull();
   });
+
+  it("reads the drift again on Retry, and shows the answer once it comes", async () => {
+    const answer: Answer = { status: 503, body: { title: "Service Unavailable", detail: "the scan store is down" } };
+    const calls = renderSpace(answer);
+    const drift = await section();
+    const retry = await within(drift).findByRole("button", { name: en.app.error.retry });
+    answer.status = 200;
+    answer.body = list([]);
+    await userEvent.click(retry);
+    expect(await within(drift).findByText(en.drift.section.clean)).toBeInTheDocument();
+    expect(calls.filter((call) => call === "GET /api/v1/projects/banskabystrica/drift")).toHaveLength(2);
+  });
 });

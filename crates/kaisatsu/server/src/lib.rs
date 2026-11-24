@@ -170,10 +170,9 @@ pub fn load_realm_files_from_path(
     let mut out = Vec::new();
     if path.is_file() {
         out.push(read_realm_file(path)?);
-    } else if path.is_dir() {
-        let canonical_dir = path.canonicalize().map_err(|e| {
-            kaisatsu_core::KaisatsuError::BadRequest(format!("{}: {e}", path.display()))
-        })?;
+    } else if let Ok(canonical_dir) = path.canonicalize()
+        && canonical_dir.is_dir()
+    {
         let entries = std::fs::read_dir(path).map_err(|e| {
             kaisatsu_core::KaisatsuError::BadRequest(format!("{}: {e}", path.display()))
         })?;
@@ -339,13 +338,9 @@ pub async fn poll_import_dir_once(
         return Ok(false);
     }
     let files = load_realm_files_from_path(dir)?;
-    let opts = kaisatsu_import::ApplyOptions {
-        mode: kaisatsu_import::ApplyMode::NoDelete,
-        dry_run: false,
-        allow_literal_secrets: false,
-        ..Default::default()
-    }
-    .with_process_env();
+    // The default options never prune (`ApplyMode::NoDelete`), write for real and refuse literal
+    // secrets; the K17 test pins that a watch never prunes.
+    let opts = kaisatsu_import::ApplyOptions::default().with_process_env();
     for realm_files in group_files_by_realm(files) {
         let plan = kaisatsu_import::create_plan(store, &realm_files, &opts).await?;
         kaisatsu_import::apply_plan(store, &plan, &opts).await?;

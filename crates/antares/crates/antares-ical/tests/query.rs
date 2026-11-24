@@ -329,6 +329,23 @@ async fn the_preview_renders_a_whole_preset_with_its_filter_sort_and_limit() {
         Some(1),
         "limit 1 keeps one"
     );
+    let (status, answer) = send(&app, "POST", PREVIEW, &preset(json!({"limit": 1})), true).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let answer: Value = serde_json::from_str(&answer).expect("json");
+    assert_eq!(
+        answer["events"].as_array().map(Vec::len),
+        Some(1),
+        "a limit without a sort keeps its limit: {answer}"
+    );
+    let earliest = json!({"sort": "start", "limit": 1});
+    let (status, answer) = send(&app, "POST", PREVIEW, &preset(earliest), true).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let answer: Value = serde_json::from_str(&answer).expect("json");
+    assert_eq!(
+        answer["events"].as_array().map(Vec::len),
+        Some(1),
+        "an ascending sort keeps its limit too: {answer}"
+    );
     for (body, why) in [
         (preset(json!({"limit": 0})), "limit"),
         (preset(json!({"timezone": "Mars/Base"})), "timezone"),
@@ -338,6 +355,7 @@ async fn the_preview_renders_a_whole_preset_with_its_filter_sort_and_limit() {
             "one of them",
         ),
         (json!({}).to_string(), "one of them"),
+        (json!({"output": 5}).to_string(), "the output does not hold"),
     ] {
         let (status, answer) = send(&app, "POST", PREVIEW, &body, true).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {answer}");
@@ -369,6 +387,11 @@ async fn a_preview_over_its_bounds_or_with_a_bad_mapping_is_refused() {
             "x".repeat(antares_ical::MAX_PREVIEW_BYTES + 1),
             StatusCode::PAYLOAD_TOO_LARGE,
         ),
+        // a body of a few kilobytes is well under the bound: its own 400, not a 413
+        (
+            format!("{}{}", json!({"mapping": {}, "limit": 0}), " ".repeat(4096)),
+            StatusCode::BAD_REQUEST,
+        ),
     ] {
         let (status, answer) = send(&app, "POST", PREVIEW, &body, true).await;
         assert_eq!(status, want, "{}: {answer}", &body[..body.len().min(60)]);
@@ -395,6 +418,12 @@ async fn attrs_select_what_the_feed_reads_and_a_bad_bound_or_view_segment_is_ref
     assert!(uids(&ics).is_empty(), "no SUMMARY without name: {ics}");
     let (status, _) = send(&app, "GET", &format!("{FEED}?to=later"), "", false).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = send(&app, "GET", &format!("{FEED}?count=true"), "", false).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a parameter the feed does not read: {body}"
+    );
     let (status, _) = send(&app, "GET", "/x/views/%FF/ical/v1/events.ics", "", false).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }

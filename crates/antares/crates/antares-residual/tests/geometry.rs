@@ -184,6 +184,36 @@ fn a_value_past_the_vertex_bound_is_unknown() -> Result<(), Error> {
         truth(Spatial::Intersects, &entity, &rect(0.0, 0.0, 2.0, 2.0))?,
         Truth::Unknown
     );
+    // exactly at the bound still relates
+    let at_bound = located(&json!({"type": "LineString", "coordinates": long.get(1..)}));
+    assert_eq!(
+        truth(Spatial::Intersects, &at_bound, &rect(0.0, 0.0, 2.0, 2.0))?,
+        Truth::True
+    );
+    Ok(())
+}
+
+/// RFC 7946 3.1.1: a position may carry an altitude; only longitude and latitude relate, and a
+/// position whose extra member is not a finite number is no position. A Polygon without rings
+/// is an empty geometry, which intersects nothing.
+#[test]
+fn an_altitude_is_ignored_and_a_bad_one_is_no_position() -> Result<(), Error> {
+    let square = rect(0.0, 0.0, 2.0, 2.0);
+    let high = json!({"type": "Point", "coordinates": [1, 1, 300]});
+    assert_eq!(
+        truth(Spatial::Within, &located(&high), &square)?,
+        Truth::True
+    );
+    let bad = json!({"type": "Point", "coordinates": [1, 1, "300"]});
+    assert_eq!(
+        truth(Spatial::Within, &located(&bad), &square)?,
+        Truth::Unknown
+    );
+    let empty = json!({"type": "Polygon", "coordinates": []});
+    assert_eq!(
+        truth(Spatial::Intersects, &located(&empty), &square)?,
+        Truth::False
+    );
     Ok(())
 }
 

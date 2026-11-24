@@ -63,6 +63,33 @@ async fn apps_are_placed_on_the_emptiest_shard_and_stay_there() {
     assert_ne!(b, app_id(&w.project("p-place"), "c"));
 }
 
+/// AP-143, AP-149: no shard, or more than Postgres can count, places nothing; an id that is not an
+/// App id reaches no schema name.
+#[tokio::test]
+async fn no_shard_and_a_malformed_id_are_refused_before_any_sql() {
+    let w = world("refuse").await;
+    for shards in [0, u32::MAX] {
+        let db = joinedcontext_portal::apps::apps_db::AppsDb {
+            shards,
+            ..w.db.clone()
+        };
+        assert!(
+            matches!(db.place(&w.project("p-refuse"), "a").await, Err(Error::NoShards(n)) if n == shards),
+            "{shards}"
+        );
+    }
+    for id in ["0123", "0123456789ABCDEF", "app_x; DROP SCHEMA"] {
+        assert!(
+            matches!(w.db.migrate(id, &[]).await, Err(Error::NotAnId(_))),
+            "{id}"
+        );
+        assert!(
+            matches!(w.db.export(id).await, Err(Error::NotAnId(_))),
+            "{id}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn migrations_run_in_order_once_and_the_host_reads_and_writes_but_never_creates() {
     let w = world("migrate").await;
@@ -536,4 +563,84 @@ async fn a_failed_export_leaves_everything_in_place() {
         Some(shard),
         "the App stays placed"
     );
+}
+
+/// A retired `wasm` App of `project`, as the repository holds it.
+fn retired_wasm(project: &str) -> jcctl::loader::RawManifest {
+    serde_json::from_value(serde_json::json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "App",
+        "metadata": { "name": "notes", "namespace": project },
+        "spec": {
+            "kind": "wasm",
+            "source": { "path": "./src" },
+            "build": { "node": "22" },
+            "visibility": "project",
+            "lifecycle": "retired",
+            "dataNeeds": [{
+                "contextSpaceRef": { "kind": "ContextSpace", "name": project },
+                "types": ["Note"],
+                "operations": ["queryEntity"]
+            }]
+        },
+    }))
+    .expect("the fixture is a manifest")
+}
+
+/// AP-150: the converger exports and drops a retired `wasm` App's schema before its objects go; a
+/// failed export stops there and the cluster is not touched.
+#[tokio::test]
+async fn the_converger_retires_a_wasm_app_only_after_its_export() {
+    use joinedcontext_portal::apps::converge::{ConvergeError, Converger, Outcome};
+    let w = world("converge").await;
+    let project = w.project("p-converge");
+    let (id, shard) = published(&w, &project, "notes").await;
+    let cluster = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("DELETE"))
+        .respond_with(wiremock::ResponseTemplate::new(200))
+        .mount(&cluster)
+        .await;
+    let settings = joinedcontext_portal::apps::reconciler::Settings {
+        host: "bb.example.com".into(),
+        apex: "bb.example.com".into(),
+        gateway_url: None,
+        service_url: None,
+        namespace: "joinedcontext".into(),
+        org_domain: "banskabystrica.sk".into(),
+        apisix_namespace: "apisix".into(),
+        image_repository: None,
+        pull_secret: None,
+        basemap_base: None,
+        release: Some("dev".into()),
+        service_account: Some("portal".into()),
+    };
+    let converger = |store: &wiremock::MockServer| {
+        Converger::new(
+            joinedcontext_portal::apps::kube::KubeClient::with_token(&cluster.uri(), "t")
+                .expect("a client"),
+            settings.clone(),
+        )
+        .with_wasm_apps(Some(std::sync::Arc::new(wasm_apps(&w, store))))
+    };
+
+    let failing = store_with_one_file(shard, &id, 500).await;
+    let refused = converger(&failing)
+        .converge_one(&retired_wasm(&project))
+        .await
+        .expect_err("a failed export stops the retirement");
+    assert!(matches!(refused, ConvergeError::Wasm(_)), "{refused:?}");
+    assert_eq!(schema_left(&w, &id).await, 1, "the schema stays");
+    assert!(cluster
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .is_empty());
+
+    let store = store_with_one_file(shard, &id, 200).await;
+    let outcome = converger(&store)
+        .converge_one(&retired_wasm(&project))
+        .await
+        .expect("retired");
+    assert_eq!(outcome, Outcome::Deleted);
+    assert_eq!(schema_left(&w, &id).await, 0, "dropped after the export");
 }

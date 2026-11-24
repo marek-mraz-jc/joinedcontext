@@ -279,8 +279,9 @@ fn verb_through_connector(
     if !matches!(caller.via, super::Via::Mcp) {
         return Ok(());
     }
-    let ceiling = crate::connectors::Ceiling::of(&state.mirror, &caller.identity);
-    if ceiling.honours(connector) || ceiling.allows_change(project, kind, name, verb) {
+    let ceiling =
+        crate::connectors::Ceiling::of(&state.mirror, &caller.identity).with_approved(connector);
+    if ceiling.allows_change(project, kind, name, verb) {
         return Ok(());
     }
     Err(denied(format!(
@@ -1296,7 +1297,7 @@ async fn apply(
     let mut opened = opened;
     if let (Some(connector), None) = (connector, workspace) {
         let waiting = if connector.autonomous {
-            approve_autonomously(state, caller, project, &connector.name, &mut opened).await
+            approve_autonomously(state, caller, project, connector, &mut opened).await
         } else {
             opened.clone()
         };
@@ -1321,9 +1322,23 @@ async fn approve_autonomously(
     state: &AppState,
     caller: &Caller,
     project: &str,
-    connector: &str,
+    connector: &crate::connectors::Connector,
     opened: &mut [Value],
 ) -> Vec<Value> {
+    // The ceiling as it is at this apply, not as it was when the connector was made (AG-150,
+    // T-7541).
+    if !crate::connectors::Ceiling::of(&state.mirror, &caller.identity)
+        .with_approved(connector)
+        .allows_autonomous(project)
+    {
+        for row in opened.iter_mut() {
+            row["waits"] = json!(format!(
+                "autonomous: your DelegationPolicy does not let a connector approve its own changes in project {project}; an approver decides this one"
+            ));
+        }
+        return opened.to_vec();
+    }
+    let connector = connector.name.as_str();
     let mut waiting = Vec::new();
     for row in opened.iter_mut() {
         let Some(id) = row["id"].as_str().map(str::to_owned) else {
@@ -2252,6 +2267,7 @@ mod tests {
             state: "active".into(),
             created_at: TimestampTz::now(),
             granted_at: TimestampTz::now(),
+            over: vec![],
             last_used_at: None,
             url: "https://portal.test/c/c1".into(),
             limits: crate::connectors::DEFAULT_LIMITS,
@@ -2276,6 +2292,63 @@ mod tests {
             .plans
             .take(&id, "sub-jana", "doprava", Some("c1"), TimestampTz::now())
             .is_some());
+    }
+
+    /// T-7541 (S1-14): an autonomous connector approves nothing at an apply its owner's ceiling
+    /// does not allow; under one that does, the approval page's own checks decide.
+    #[tokio::test]
+    async fn an_autonomous_apply_waits_when_the_ceiling_refuses() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let connector: crate::connectors::Connector = state
+            .connectors
+            .create(
+                "sub-jana",
+                serde_json::from_value(json!({
+                    "name": "auto", "segments": ["context"], "writes": true, "autonomous": true,
+                    "scope": [{ "project": "doprava", "access": "write" }],
+                    "expiresAt": "2999-01-01T00:00:00Z",
+                }))
+                .expect("request"),
+                Default::default(),
+                "https://portal.test",
+            )
+            .await
+            .expect("kept");
+        let envelope = |kind: &str, spec: Value| crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(
+                "stewards",
+                crate::permissions::ORG_NAMESPACE,
+            ),
+            spec,
+            status: None,
+        };
+        state.mirror.upsert(envelope(
+            "Group",
+            json!({ "members": [{ "user": "jana" }] }),
+        ));
+        let policy = |autonomous: bool| {
+            envelope(
+                "DelegationPolicy",
+                json!({ "subjects": [{ "kind": "Group", "name": "stewards" }],
+                        "projects": ["doprava"], "segments": ["context"],
+                        "writes": true, "autonomous": autonomous }),
+            )
+        };
+        let applied = |state: AppState, connector: crate::connectors::Connector| async move {
+            let mut opened = vec![json!({ "id": "chg-00000001" })];
+            approve_autonomously(&state, &caller(None), "doprava", &connector, &mut opened).await
+        };
+        state.mirror.upsert(policy(false));
+        let waiting = applied(state.clone(), connector.clone()).await;
+        let why = waiting[0]["waits"].as_str().expect("waits");
+        assert!(why.starts_with("autonomous:"), "{why}");
+        // Allowed, it reaches the approval path, which has no forge to merge on here.
+        state.mirror.upsert(policy(true));
+        let waiting = applied(state.clone(), connector).await;
+        let why = waiting[0]["waits"].as_str().expect("waits");
+        assert!(!why.starts_with("autonomous:"), "{why}");
     }
 
     /// T-6302: create or edit is judged from the forge, never from the client's `op`; a

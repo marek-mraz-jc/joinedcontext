@@ -8,6 +8,7 @@
  * component hands it.
  */
 import { render, screen, act } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 const props: Record<string, unknown>[] = [];
@@ -147,6 +148,89 @@ describe("the Monaco source view while a person types (T-5066)", () => {
     rerender(view("name: other"));
     expect(editor.text).toBe("name: other");
     expect(editor.edits).toEqual(["name: other"]);
+    vi.unstubAllGlobals();
+  });
+
+  type Given = { onMount: (e: unknown, m: unknown) => void; onChange: (v: string | undefined) => void };
+
+  /** A Monaco that records what the view registers: the hover provider, the markers, the dispose hook. */
+  function recording() {
+    const registered: { provideHover?: (model: unknown, position: unknown) => unknown } = {};
+    const markers: unknown[][] = [];
+    let disposed = 0;
+    let onDispose: () => void = () => undefined;
+    const fake = {
+      languages: {
+        registerHoverProvider: (_: string, provider: typeof registered) => {
+          Object.assign(registered, provider);
+          return { dispose: () => (disposed += 1) };
+        },
+      },
+      editor: { setModelMarkers: (_: unknown, __: string, list: unknown[]) => markers.push(list) },
+      MarkerSeverity: { Error: 8 },
+    };
+    return { fake, registered, markers, disposed: () => disposed, onDispose: () => onDispose(), setDispose: (listen: () => void) => (onDispose = listen) };
+  }
+
+  it("describes the field under the pointer, says nothing elsewhere, and lets go of the hover on dispose", () => {
+    stubTheme(false);
+    props.length = 0;
+    const describeField = vi.fn((path: (string | number)[]) => (path.join(".") === "spec.slug" ? "The address segment." : null));
+    const marks = [{ line: 2, message: "slug is required" }];
+    render(
+      <MonacoSourceView value={"spec:\n  slug: a\n  other: b\n"} onChange={() => undefined} onMount={() => undefined} height="24rem" describeField={describeField} marks={marks} />,
+    );
+    const given = props.at(-1) as unknown as Given;
+    const text = "spec:\n  slug: a\n  other: b\n";
+    const own = { getValue: () => text, getOffsetAt: (at: { offset: number }) => at.offset, getFullModelRange: () => ({}) };
+    const editor = { ...fakeEditor(text), getModel: () => own, onDidDispose: (listen: () => void) => recordingNow.setDispose(listen) };
+    const recordingNow = recording();
+    act(() => given.onMount(editor, recordingNow.fake));
+    expect(recordingNow.markers.at(-1)).toEqual([{ severity: 8, message: "slug is required", startLineNumber: 2, endLineNumber: 2, startColumn: 1, endColumn: 1000 }]);
+
+    const hover = recordingNow.registered.provideHover as (model: unknown, position: unknown) => unknown;
+    expect(hover(own, { offset: text.indexOf("slug") + 1 })).toEqual({ contents: [{ value: "**spec.slug**" }, { value: "The address segment." }] });
+    expect(hover(own, { offset: text.indexOf("other") + 1 })).toBeNull();
+    expect(hover({ getValue: () => "", getOffsetAt: () => 0 }, { offset: 0 })).toBeNull();
+    expect(recordingNow.disposed()).toBe(0);
+    recordingNow.onDispose();
+    expect(recordingNow.disposed()).toBe(1);
+    vi.unstubAllGlobals();
+  });
+
+  it("writes into the editor the text that changed while it loaded, and passes on an emptied change as the empty text", () => {
+    stubTheme(false);
+    props.length = 0;
+    const changes: string[] = [];
+    const { rerender } = render(<MonacoSourceView value="first" onChange={(next) => changes.push(next)} onMount={() => undefined} height="24rem" />);
+    rerender(<MonacoSourceView value="second" onChange={(next) => changes.push(next)} onMount={() => undefined} height="24rem" />);
+    const given = props.at(-1) as unknown as Given;
+    const editor = fakeEditor("first");
+    act(() => given.onMount(editor, recording().fake));
+    expect(editor.text).toBe("second");
+    act(() => given.onChange(undefined));
+    expect(changes).toEqual([""]);
+    vi.unstubAllGlobals();
+  });
+
+  it("replaces the whole text of a read-only editor when the value changes from outside", () => {
+    stubTheme(false);
+    props.length = 0;
+    const view = (value: string) => <MonacoSourceView value={value} readOnly onChange={() => undefined} onMount={() => undefined} height="24rem" />;
+    const { rerender } = render(view("a: 1"));
+    const given = props.at(-1) as unknown as Given;
+    const editor = fakeEditor("a: 1");
+    act(() => given.onMount(editor, recording().fake));
+    rerender(view("a: 2"));
+    expect(editor.text).toBe("a: 2");
+    expect(editor.edits).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
+  it("is light where it is rendered on a server, which cannot ask the browser", () => {
+    stubTheme(true);
+    const html = renderToString(<MonacoSourceView value="name: fleet" onChange={() => undefined} onMount={() => undefined} height="24rem" />);
+    expect(html).toContain('data-theme="vs"');
     vi.unstubAllGlobals();
   });
 });

@@ -1417,6 +1417,555 @@ mod effort_tests {
 }
 
 #[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn chat(content: &str) -> Value {
+        json!({ "choices": [{ "message": { "role": "assistant", "content": content } }] })
+    }
+
+    async fn driver_at(server: &MockServer, provider: &str) -> Driver {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.proxy_base = server.uri();
+        driver.provider = provider.into();
+        driver
+    }
+
+    async fn calls(server: &MockServer) -> Vec<Value> {
+        server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .iter()
+            .map(|request| serde_json::from_slice(&request.body).expect("a JSON body"))
+            .collect()
+    }
+
+    /// T-2997, AG-97: a 429 that names a profile limit or a daily budget is said at once and never
+    /// asked again; a plain busy 429 is asked once more and then said as busy.
+    #[tokio::test]
+    async fn a_429_naming_a_limit_stops_at_once_and_a_busy_one_is_asked_twice() {
+        for (detail, kind, said) in [
+            ("stepsPerRun of 30 reached", "about:blank", "its step limit"),
+            ("token budget spent", "about:blank", "its token budget"),
+            (
+                "Jana's daily budget is spent until 00:00 UTC",
+                "https://jc/problems/daily-budget",
+                "Jana's daily budget is spent until 00:00 UTC",
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(
+                    ResponseTemplate::new(429)
+                        .set_body_json(json!({ "type": kind, "detail": detail })),
+                )
+                .mount(&server)
+                .await;
+            let driver = driver_at(&server, "openrouter").await;
+            let err = driver
+                .complete_once("rules", "hi", 100, false, &[])
+                .await
+                .expect_err("a limit");
+            assert!(err.said(100).contains(said), "{detail}");
+            assert_eq!(calls(&server).await.len(), 1, "{detail}: never asked again");
+        }
+        assert_eq!(run_limit_reached(r#"{"detail":"slow down"}"#), None);
+        assert_eq!(run_limit_reached("not json"), None);
+        assert_eq!(run_limit_reached(r#"{"title":"no detail"}"#), None);
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "0"))
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "openrouter").await;
+        let err = driver
+            .complete_once("rules", "hi", 100, false, &[])
+            .await
+            .expect_err("busy");
+        assert_eq!(
+            err.said(100),
+            refusal(reqwest::StatusCode::TOO_MANY_REQUESTS)
+        );
+        assert_eq!(
+            calls(&server).await.len(),
+            2,
+            "a busy provider is asked once more"
+        );
+    }
+
+    /// T-2772: a gateway failure is asked once more and the second answer stands; a refusal that
+    /// is not worth a retry is said after one call.
+    #[tokio::test]
+    async fn a_failing_gateway_is_asked_once_more_and_a_refusal_is_not() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(502).insert_header("retry-after", "0"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat("Second time.")))
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "openrouter").await;
+        let text = driver
+            .complete_once("rules", "hi", 100, false, &[])
+            .await
+            .expect("the retry answers");
+        assert_eq!(text, "Second time.");
+        assert_eq!(calls(&server).await.len(), 2);
+
+        for (status, calls_made) in [(503, 2), (401, 1), (400, 1)] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(
+                    ResponseTemplate::new(status)
+                        .insert_header("retry-after", "0")
+                        .set_body_json(json!({ "error": { "message": "see https://keys" } })),
+                )
+                .mount(&server)
+                .await;
+            let driver = driver_at(&server, "anthropic").await;
+            let err = driver
+                .complete_once("rules", "hi", 100, false, &[])
+                .await
+                .expect_err("refused");
+            let said = err.said(100);
+            assert_eq!(
+                said,
+                refusal(reqwest::StatusCode::from_u16(status).expect("a status"))
+            );
+            assert!(!said.contains("https://"), "never the provider's body");
+            assert_eq!(calls(&server).await.len(), calls_made, "{status}");
+        }
+    }
+
+    #[test]
+    fn retry_after_is_the_providers_capped_and_else_a_second() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        assert_eq!(backoff(&headers).as_millis(), u128::from(RETRY_AFTER_MS));
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            " 2 ".parse().expect("a header"),
+        );
+        assert_eq!(backoff(&headers).as_millis(), 2000);
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "3600".parse().expect("a header"),
+        );
+        assert_eq!(
+            backoff(&headers).as_millis(),
+            u128::from(RETRY_AFTER_MAX_MS)
+        );
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "soon".parse().expect("a header"),
+        );
+        assert_eq!(backoff(&headers).as_millis(), u128::from(RETRY_AFTER_MS));
+        for status in [408, 425, 429, 500, 502, 503, 504] {
+            assert!(retryable(
+                reqwest::StatusCode::from_u16(status).expect("a status")
+            ));
+        }
+        for status in [400, 401, 402, 404, 501] {
+            assert!(!retryable(
+                reqwest::StatusCode::from_u16(status).expect("a status")
+            ));
+        }
+    }
+
+    /// A proxy nothing listens on is asked once more and then said as unreachable; a call that
+    /// timed out is said at once, never asked again.
+    #[tokio::test]
+    async fn an_unreachable_proxy_and_a_timed_out_call_say_what_happened() {
+        let closed = tokio::net::TcpSocket::new_v4().expect("a socket");
+        closed
+            .bind("127.0.0.1:0".parse().expect("an address"))
+            .expect("bound");
+        let port = closed.local_addr().expect("an address").port();
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.proxy_base = format!("http://127.0.0.1:{port}");
+        let err = driver
+            .complete_once("rules", "hi", 100, false, &[])
+            .await
+            .expect_err("unreachable");
+        assert!(err.said(100).contains("could not be reached"));
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(chat("late"))
+                    .set_delay(std::time::Duration::from_secs(5)),
+            )
+            .mount(&server)
+            .await;
+        let mut driver = driver_at(&server, "openrouter").await;
+        driver.http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(100))
+            .build()
+            .expect("a client");
+        let err = driver
+            .complete_once("rules", "hi", 100, false, &[])
+            .await
+            .expect_err("timed out");
+        assert!(err.said(100).contains("did not answer in time"));
+        assert_eq!(calls(&server).await.len(), 1);
+    }
+
+    /// A 402 that names what the key can still pay for is asked again within it; one too small
+    /// to be worth a call, or with no figure, is said as the credit running out.
+    #[tokio::test]
+    async fn short_credit_is_asked_again_within_it_and_else_said() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(402).set_body_json(
+                json!({ "error": { "message": "This request can only afford 10000 tokens" } }),
+            ))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat("Within credit.")))
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "openrouter").await;
+        let text = driver
+            .complete_within_as("rules", "hi", 20_000, false, &[])
+            .await
+            .expect("an answer within the credit");
+        assert_eq!(text, "Within credit.");
+        let budgets: Vec<Value> = calls(&server)
+            .await
+            .iter()
+            .map(|body| body["max_tokens"].clone())
+            .collect();
+        assert_eq!(budgets, [json!(20_000), json!(9_500)]);
+
+        for (body, said) in [
+            (
+                json!({ "error": { "message": "can only afford 100 tokens" } }),
+                "about 100 more output tokens",
+            ),
+            (
+                json!({ "error": { "message": "no credit" } }),
+                "has run out;",
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(ResponseTemplate::new(402).set_body_json(body))
+                .mount(&server)
+                .await;
+            let driver = driver_at(&server, "openrouter").await;
+            let err = driver
+                .complete_within_as("rules", "hi", 20_000, false, &[])
+                .await
+                .expect_err("no credit");
+            assert!(err.contains(said), "{err}");
+            assert_eq!(calls(&server).await.len(), 1);
+        }
+    }
+
+    /// An empty answer is asked once more, by the whole call and by the tool call alike.
+    #[tokio::test]
+    async fn an_empty_answer_is_asked_once_more() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "content": [] })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "content": [{ "type": "text", "text": "Now." }] })),
+            )
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "anthropic").await;
+        assert_eq!(
+            driver
+                .complete_within_as("rules", "hi", 100, false, &[])
+                .await
+                .expect("an answer"),
+            "Now."
+        );
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat("  ")))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(402).set_body_json(
+                    json!({ "error": { "message": "can only afford 5000 tokens" } }),
+                ),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "openrouter").await;
+        let messages = [json!({ "role": "user", "content": "hi" })];
+        let err = driver
+            .complete_tools("rules", &messages, &[], 20_000)
+            .await
+            .expect_err("credit after the empty answer");
+        assert!(
+            matches!(
+                err,
+                CallError::Credit {
+                    affordable: Some(5000)
+                }
+            ),
+            "{err:?}"
+        );
+        assert_eq!(calls(&server).await.len(), 2);
+    }
+
+    /// A tool call short of credit is asked again within it.
+    #[tokio::test]
+    async fn a_tool_call_short_of_credit_is_asked_again_within_it() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(402).set_body_json(
+                    json!({ "error": { "message": "can only afford 8000 tokens" } }),
+                ),
+            )
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{ "message": { "tool_calls": [
+                    { "id": "c1", "function": { "name": "jc_list", "arguments": "{\"kind\":\"View\"}" } },
+                    { "id": "c2", "function": { "name": "jc_raw", "arguments": { "a": 1 } } },
+                    { "id": "c3", "function": { "name": "jc_broken", "arguments": "{" } }
+                ] } }],
+                "usage": { "prompt_tokens": 7, "completion_tokens": 3 },
+            })))
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "openrouter").await;
+        let messages = [json!({ "role": "user", "content": "hi" })];
+        let answer = driver
+            .complete_tools("rules", &messages, &[], 20_000)
+            .await
+            .expect("an answer");
+        assert_eq!(answer.text, None);
+        let inputs: Vec<(&str, &Value)> = answer
+            .calls
+            .iter()
+            .map(|call| (call.name.as_str(), &call.input))
+            .collect();
+        assert_eq!(
+            inputs,
+            [
+                ("jc_list", &json!({ "kind": "View" })),
+                ("jc_raw", &json!({ "a": 1 })),
+                ("jc_broken", &Value::Null)
+            ]
+        );
+        assert_eq!(
+            (
+                answer.input_tokens,
+                answer.output_tokens,
+                answer.usage_tokens
+            ),
+            (7, 3, 10)
+        );
+        assert_eq!(calls(&server).await[1]["max_tokens"], json!(7_600));
+    }
+
+    /// An Anthropic tool answer keeps its text parts and its tool uses; an answer with neither is
+    /// empty.
+    #[tokio::test]
+    async fn an_anthropic_tool_answer_keeps_its_text_and_its_tool_uses() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "content": [
+                    { "type": "text", "text": "Reading." },
+                    { "type": "tool_use", "id": "t1", "name": "jc_get", "input": { "n": 1 } },
+                    { "type": "tool_use" },
+                    { "type": "image" }
+                ],
+                "usage": { "input_tokens": 4, "output_tokens": 2 },
+            })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "content": [] })))
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "anthropic").await;
+        let messages = [json!({ "role": "user", "content": "hi" })];
+        let answer = driver
+            .complete_tools_once("rules", &messages, &[], 100)
+            .await
+            .expect("an answer");
+        assert_eq!(answer.text.as_deref(), Some("Reading."));
+        assert_eq!(answer.calls.len(), 2);
+        assert_eq!(
+            (answer.calls[0].id.as_str(), answer.calls[0].name.as_str()),
+            ("t1", "jc_get")
+        );
+        assert_eq!(
+            (answer.calls[1].name.as_str(), &answer.calls[1].input),
+            ("", &Value::Null)
+        );
+        assert_eq!(answer.usage_tokens, 6);
+        assert!(matches!(
+            driver
+                .complete_tools_once("rules", &messages, &[], 100)
+                .await,
+            Err(CallError::Empty)
+        ));
+    }
+
+    fn sse(frames: &[Value]) -> String {
+        frames
+            .iter()
+            .map(|frame| format!("data: {frame}\n\n"))
+            .chain(std::iter::once("data: [DONE]\n\n".to_owned()))
+            .collect()
+    }
+
+    async fn streamed(body: String) -> Result<String, CallError> {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "openrouter").await;
+        let tools = [ToolSpec {
+            name: "jc_list".into(),
+            description: "lists".into(),
+            input_schema: json!({ "type": "object" }),
+        }];
+        let answer = driver.complete_once("rules", "hi", 100, true, &tools).await;
+        let body = &calls(&server).await[0];
+        assert_eq!(body["stream"], json!(true));
+        assert_eq!(body["parallel_tool_calls"], json!(true));
+        assert_eq!(body["tools"][0]["function"]["name"], json!("jc_list"));
+        answer
+    }
+
+    /// ADR-N-032: a streamed answer is its deltas joined with its tool calls as blocks, writing
+    /// the prose as a partial; an error inside it, a cut and an empty stream each say so.
+    #[tokio::test]
+    async fn a_streamed_answer_is_joined_and_its_failures_are_said() {
+        let delta = |content: &str| json!({ "choices": [{ "delta": { "content": content } }] });
+        let text = streamed(sse(&[
+            delta("Reading "),
+            delta("the list."),
+            json!({ "choices": [{ "delta": { "tool_calls": [
+                { "index": 0, "function": { "name": "jc_list", "arguments": "{\"kind\":\"View\"}" } }
+            ] } }] }),
+        ]))
+        .await
+        .expect("an answer");
+        assert!(text.starts_with("Reading the list."), "{text}");
+        assert_eq!(
+            tools_registry::calls(&text)[0].arguments,
+            json!({ "kind": "View" })
+        );
+
+        let err = streamed(sse(&[json!({ "error": { "message": "overloaded" } })]))
+            .await
+            .expect_err("stopped");
+        assert!(err.said(100).contains("stopped its answer part way"));
+
+        let err = streamed(sse(&[
+            json!({ "choices": [{ "delta": { "content": "half" }, "finish_reason": "length" }] }),
+        ]))
+        .await
+        .expect_err("cut");
+        assert!(err.said(100).contains("output budget of 100 tokens"));
+
+        assert!(matches!(streamed(sse(&[])).await, Err(CallError::Empty)));
+    }
+
+    /// An upstream asked to stream that answers whole is read whole.
+    #[tokio::test]
+    async fn a_stream_answered_whole_is_read_whole() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{ "message": { "tool_calls": [
+                    { "function": { "name": "search_catalog", "arguments": "{\"q\":\"bikes\"}" } }
+                ] } }],
+            })))
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "openrouter").await;
+        let text = driver
+            .complete_once("rules", "hi", 100, true, &[])
+            .await
+            .expect("an answer");
+        assert_eq!(data_query::search_calls(&text), ["bikes"]);
+    }
+
+    /// An answer that is not JSON, or that the provider cut, is said as such.
+    #[test]
+    fn a_broken_or_cut_whole_answer_is_said() {
+        let err = whole_answer("<html>", 10).expect_err("not JSON");
+        assert!(err.said(10).contains("not JSON"));
+        let err = whole_answer(r#"{"stop_reason":"max_tokens"}"#, 10).expect_err("cut");
+        assert!(err.said(10).contains("budget of 10 tokens"));
+        assert!(whole_answer(r#"{"stop_reason":"end_turn"}"#, 10).is_ok());
+        assert!(matches!(
+            chat_content(&json!({ "choices": [] })),
+            Err(CallError::Empty)
+        ));
+        assert!(matches!(messages_text(&json!({})), Err(CallError::Empty)));
+        let text = messages_text(&json!({ "content": [
+            { "text": "untyped " },
+            { "type": "tool_use", "name": "search_catalog", "input": { "q": "x" } }
+        ] }))
+        .expect("an answer");
+        assert!(text.starts_with("untyped "), "{text}");
+        assert_eq!(data_query::search_calls(&text), ["x"]);
+        assert_eq!(
+            fence("search_catalog", json!("bare")),
+            fence("search_catalog", json!({}))
+        );
+    }
+
+    /// A page the proxy refuses is its status and the start of its body.
+    #[tokio::test]
+    async fn a_refused_read_is_its_status_and_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("x".repeat(500)))
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "openrouter").await;
+        let err = driver
+            .read_entities(&format!("{}/page", server.uri()))
+            .await
+            .expect_err("refused");
+        assert_eq!(err, format!("403 Forbidden: {}", "x".repeat(200)));
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.proxy_base = server.uri();
+        assert!(driver.read_entities("http://127.0.0.1:1/").await.is_err());
+    }
+}
+
+#[cfg(test)]
 mod personal_tests {
     use super::*;
     use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};

@@ -81,25 +81,25 @@ fn look_for(app: &str, others: &[String]) -> Look {
     let mut names: Vec<&str> = others
         .iter()
         .map(String::as_str)
-        .filter(|n| *n != app)
+        .filter(|n| *n < app)
         .collect();
-    names.push(app);
     names.sort_unstable();
     names.dedup();
-    let mut taken = Vec::with_capacity(names.len());
-    for name in names {
+    // More Apps than looks: the rest start over, sharing looks as little as they can.
+    let free = |name: &str, taken: &[usize]| {
         let start = start_of(name);
-        // More Apps than looks: the rest start over, sharing looks as little as they can.
-        let free = (0..LOOKS)
+        (0..LOOKS)
             .map(|step| (start + step) % LOOKS)
             .find(|index| !taken.contains(index) || taken.len() >= LOOKS)
-            .unwrap_or(start);
-        if name == app {
-            return Look::of(free);
-        }
-        taken.push(free);
+            .unwrap_or(start)
+    };
+    // The Apps named before this one, in order, have taken their looks first.
+    let mut taken = Vec::with_capacity(names.len());
+    for name in names {
+        let look = free(name, &taken);
+        taken.push(look);
     }
-    Look::of(start_of(app))
+    Look::of(free(app, &taken))
 }
 
 fn hex([r, g, b]: [u8; 3]) -> String {
@@ -267,7 +267,7 @@ mod tests {
         tokens
             .pointer(path)
             .and_then(Value::as_str)
-            .unwrap_or_else(|| panic!("{path} in {tokens}"))
+            .expect(path)
             .to_owned()
     }
 
@@ -372,12 +372,13 @@ mod tests {
                             .iter()
                             .map(|(k, v)| (format!("{root}/{k}"), v))
                             .collect(),
-                        Value::Array(items) => items
+                        other => other
+                            .as_array()
+                            .expect("a section is a map or a list")
                             .iter()
                             .enumerate()
                             .map(|(i, v)| (format!("{root}/{i}"), v))
                             .collect(),
-                        _ => Vec::new(),
                     };
                     values
                 })
@@ -413,5 +414,12 @@ mod tests {
             turn.abs() <= 24.5,
             "the accent turned {turn:.1}° from the brand"
         );
+    }
+
+    #[test]
+    fn a_contrast_no_colour_reaches_stops_at_nearly_black() {
+        let out = readable("#3b82f6", &["#ffffff"], 22.0);
+        assert!(ratio(&out, "#ffffff") > 15.0, "{out}");
+        assert!(ratio(&out, "#ffffff") < 22.0, "{out}");
     }
 }

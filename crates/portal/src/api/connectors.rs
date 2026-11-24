@@ -313,8 +313,8 @@ async fn own(state: &AppState, identity: &Identity, id: &str) -> Result<Connecto
 
 /// The "narrowed by policy" marks of a live connector: what its owner's ceiling takes away today.
 fn marked(mut connector: Connector, ceiling: &Ceiling) -> Connector {
-    if connector.is_active() && !ceiling.honours(&connector) {
-        connector.narrowed_by = ceiling.narrowing(&connector);
+    if connector.is_active() {
+        connector.narrowed_by = ceiling.with_approved(&connector).narrowing(&connector);
     }
     connector
 }
@@ -644,7 +644,7 @@ pub async fn create_connector(
             return Ok(Json(serde_json::json!({
                 "valid": true,
                 "pending": !above.is_empty(),
-                "aboveCeiling": above,
+                "aboveCeiling": above.lines,
             }))
             .into_response());
         }
@@ -717,6 +717,8 @@ pub async fn edit_connector(
     let identity = &user.0.identity;
     in_the_portal(&state, identity)?;
     let current = own(&state, identity, &id).await?;
+    // What the approval judged: the patch is compared with it.
+    let held = current.clone();
     let Json(patch) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
     let new = NewConnector {
         name: current.name,
@@ -730,7 +732,7 @@ pub async fn edit_connector(
     };
     // Decided (worker-t5953, owner may override): an edit is judged against today's ceiling like a
     // create; above it under a queueing policy the connector waits again unless its approval
-    // already covers every line, because an approval covers what was asked then; options: keep
+    // already covers every value, because an approval covers what was asked then; options: keep
     // any approval (an edit would widen past it), refuse every edit above the ceiling.
     let above = connectors::validate(
         &new,
@@ -739,9 +741,8 @@ pub async fn edit_connector(
     )?;
     reachable(&state, &user.0, &headers, &new).await?;
     may_be_autonomous(&state, identity, &new)?;
-    let approval = current
-        .approval
-        .filter(|_| !above.is_empty() && above.iter().all(|l| current.above_ceiling.contains(l)));
+    let covered = held.approval_covers(&new, &above);
+    let approval = current.approval.filter(|_| covered);
     if !state
         .connectors
         .update(&id, &identity.subject, new, above, approval)
@@ -790,7 +791,7 @@ pub async fn revoke_connector(
     get,
     path = "/api/v1/connectors/{id}/activity",
     summary = "My Connector's Calls",
-    description = "Every call through the connector, newest first, at most 200 of the last 30 days: person, client, tool, target, verdict, duration; never a token or an input value (AG-147).",
+    description = "Every call through the connector, newest first, the latest 200 the installation still keeps: person, client, tool, target, verdict, duration; never a token or an input value (AG-147).",
     tag = "connectors",
     params(("id" = String, Path, description = "The connector id")),
     responses(
@@ -846,6 +847,10 @@ fn within_own_rights(
             let mut verbs = vec![Verb::Read];
             if item.access == connectors::ItemAccess::Write {
                 verbs.push(Verb::Propose);
+                // Its changes are approved as they open, so its approver holds that too (PF-51).
+                if connector.autonomous {
+                    verbs.push(Verb::Approve);
+                }
                 if connector.may_verb(kind, "", ConnectorVerb::Delete).is_ok() {
                     verbs.push(Verb::Delete);
                 }
@@ -941,7 +946,11 @@ pub async fn approve_connector(
         ));
     }
     within_own_rights(&state, identity, &connector)?;
-    if !state.connectors.approve(&id, &identity.subject).await? {
+    if !state
+        .connectors
+        .approve(&id, &identity.subject, connector.granted_at)
+        .await?
+    {
         return Err(not_found());
     }
     state
@@ -1136,7 +1145,12 @@ fn in_a_browser(state: &AppState, identity: &Identity) -> Result<(), ApiError> {
 }
 
 /// One row of the connector's audit for its tab: who paired or let it go.
-async fn audit_tab(state: &AppState, identity: &Identity, id: &str, tool: &str) {
+async fn audit_tab(
+    state: &AppState,
+    identity: &Identity,
+    id: &str,
+    tool: &str,
+) -> Result<(), ApiError> {
     let call = Call {
         at: jc_time::TimestampTz::now(),
         subject: identity.subject.clone(),
@@ -1146,9 +1160,7 @@ async fn audit_tab(state: &AppState, identity: &Identity, id: &str, tool: &str) 
         verdict: "allowed".to_owned(),
         duration_ms: 0,
     };
-    if let Err(err) = state.connectors.record(id, call).await {
-        tracing::warn!(connector = %id, error = %err, "a tab pairing is not in its connector's audit");
-    }
+    state.connectors.record(id, call).await
 }
 
 #[utoipa::path(
@@ -1179,13 +1191,14 @@ pub async fn pair_tab(
             connector.name, connector.state
         )));
     }
+    // On record before the tab takes a client's actions (AUD-02).
+    audit_tab(&state, &session.identity, &connector.id, "tab/connect").await?;
     let tab = state.paired_tabs.pair(
         &connector.id,
         &session.identity.subject,
         session.started_at(),
         session.expires_at,
     );
-    audit_tab(&state, &session.identity, &connector.id, "tab/connect").await;
     let until = jc_time::TimestampTz::from_second(session.expires_at).unwrap_or_default();
     Ok((
         StatusCode::CREATED,
@@ -1221,7 +1234,7 @@ pub async fn unpair_tab(
     in_a_browser(&state, identity)?;
     let connector = own(&state, identity, &id).await?;
     if state.paired_tabs.unpair(&connector.id, &identity.subject) {
-        audit_tab(&state, identity, &connector.id, "tab/disconnect").await;
+        audit_tab(&state, identity, &connector.id, "tab/disconnect").await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1449,7 +1462,7 @@ mod tests {
             .create(
                 "sub-jana@hel.fi",
                 new,
-                vec!["writes: above".into()],
+                above_writes(),
                 "https://portal.test",
             )
             .await
@@ -1477,6 +1490,35 @@ mod tests {
         // Nobody holds anything in a project no binding names.
         let nobody = person("eva@hel.fi");
         assert!(within_own_rights(&state, &nobody, &reads).is_err());
+    }
+
+    /// T-7541 (S1-14): a connector that approves its own changes is approved by who holds
+    /// `approve` there.
+    #[tokio::test]
+    async fn an_approver_without_approve_does_not_approve_an_autonomous_connector() {
+        let state = world();
+        let grant = |verbs: Value| {
+            manifest(
+                "Role",
+                "reader",
+                json!({ "rules": [{ "kinds": ["Endpoint", "ContextSpace", "DataModel"], "verbs": verbs }] }),
+            )
+        };
+        state
+            .mirror
+            .upsert(grant(json!(["read", "propose", "delete"])));
+        let mut connector = asked(&state, "write", true).await;
+        connector.autonomous = true;
+        let petra = person("petra@hel.fi");
+        match within_own_rights(&state, &petra, &connector) {
+            Err(ApiError::Denied(why)) => assert!(why.contains("Approve"), "{why}"),
+            other => panic!("approved autonomous without approve: {other:?}"),
+        }
+        state
+            .mirror
+            .upsert(grant(json!(["read", "propose", "delete", "approve"])));
+        let ok = within_own_rights(&state, &petra, &connector);
+        assert!(ok.is_ok(), "{ok:?}");
     }
 
     /// JC2-17: a write item whose connector may delete a kind needs `delete` from the approver;
@@ -1511,7 +1553,7 @@ mod tests {
                     .create(
                         "sub-jana@hel.fi",
                         new,
-                        vec!["writes: above".into()],
+                        above_writes(),
                         "https://portal.test",
                     )
                     .await
@@ -1907,7 +1949,7 @@ mod tests {
             .expect("new");
             let ceiling = Ceiling::of(&state.mirror, &user("reader@hel.fi").0.identity);
             connectors::validate(&new, &ceiling, jc_time::TimestampTz::now())
-                .map(|above| above.len())
+                .map(|above| above.lines.len())
         };
         assert_eq!(ask(CLAUDE_AI).ok(), Some(0));
         assert!(
@@ -2076,7 +2118,12 @@ mod tests {
         .expect("new");
         let created = state
             .connectors
-            .create("f:1:reader@hel.fi", new, Vec::new(), "https://portal.test")
+            .create(
+                "f:1:reader@hel.fi",
+                new,
+                Default::default(),
+                "https://portal.test",
+            )
             .await
             .expect("created");
         let edit = |body| {
@@ -2088,22 +2135,29 @@ mod tests {
                 patch(body),
             )
         };
-        let Json(longer) = edit(json!({ "expiresAt": days(20) })).await.expect("kept");
+        let twenty = days(20);
+        let Json(longer) = edit(json!({ "expiresAt": twenty })).await.expect("kept");
         assert_eq!(longer.state, "pending");
         assert_eq!(longer.above_ceiling.len(), 1, "{:?}", longer.above_ceiling);
+        // An approval judged on the grant as it was before this edit takes nothing.
+        assert!(!state
+            .connectors
+            .approve(&created.id, "sub-admin", created.granted_at)
+            .await
+            .expect("judged before the edit"));
         assert!(state
             .connectors
-            .approve(&created.id, "sub-admin")
+            .approve(&created.id, "sub-admin", longer.granted_at)
             .await
             .expect("approved"));
         // The same ask again keeps the approval; a new line above the ceiling waits again.
-        let Json(again) = edit(json!({ "expiresAt": days(20) })).await.expect("kept");
+        let Json(again) = edit(json!({ "expiresAt": twenty })).await.expect("kept");
         assert!(
             again.approval.is_some() && again.state != "pending",
             "{again:?}"
         );
         let both = json!([{ "project": "helsinki", "access": "read" }, { "project": "espoo", "access": "read" }]);
-        let Json(wider) = edit(json!({ "scope": both, "expiresAt": days(20) }))
+        let Json(wider) = edit(json!({ "scope": both, "expiresAt": twenty }))
             .await
             .expect("kept");
         assert_eq!(wider.state, "pending");
@@ -2117,6 +2171,74 @@ mod tests {
             inside.state != "pending" && inside.above_ceiling.is_empty(),
             "{inside:?}"
         );
+    }
+
+    /// T-7541 (S1-13): an approval of espoo keeps espoo and nothing else: a project the policy
+    /// drops later is taken from the approved connector as from any other.
+    #[tokio::test]
+    async fn an_approval_covers_only_what_was_approved() {
+        let state = reader_world();
+        let policy = |project: &str| {
+            envelope(
+                "DelegationPolicy",
+                "readers",
+                ORG_NAMESPACE,
+                json!({ "subjects": [{ "kind": "Group", "name": "readers" }],
+                        "projects": [project], "aboveCeiling": "queue" }),
+            )
+        };
+        state.mirror.upsert(policy("helsinki"));
+        state.mirror.upsert(envelope(
+            "Group",
+            "readers",
+            ORG_NAMESPACE,
+            json!({ "members": [{ "user": "reader@hel.fi" }] }),
+        ));
+        state.mirror.upsert(envelope(
+            "RoleBinding",
+            "reader-espoo",
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": "reader@hel.fi" }], "role": "reader", "scope": { "project": "espoo" } }),
+        ));
+        let ask = serde_json::from_value(json!({
+            "name": "air", "segments": ["data-read"],
+            "expiresAt": (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(48)).to_rfc3339(),
+            "scope": [{ "project": "helsinki", "access": "read" }, { "project": "espoo", "access": "read" }],
+        }))
+        .expect("new");
+        create_connector(
+            user("reader@hel.fi"),
+            State(state.clone()),
+            HeaderMap::new(),
+            Query(CreateParams { dry_run: None }),
+            Ok(Json(ask)),
+        )
+        .await
+        .expect("queued");
+        let mine = |state: AppState| async move {
+            let Json(list) = list_connectors(user("reader@hel.fi"), State(state))
+                .await
+                .expect("mine");
+            list.items.into_iter().next().expect("one")
+        };
+        let pending = mine(state.clone()).await;
+        assert_eq!(pending.state, "pending");
+        let _ = approve_connector(
+            administrator_user(),
+            State(state.clone()),
+            Path(pending.id.clone()),
+        )
+        .await
+        .expect("approved");
+        assert!(mine(state.clone()).await.narrowed_by.is_empty());
+        state.mirror.upsert(policy("vantaa"));
+        assert_eq!(mine(state.clone()).await.narrowed_by, ["project helsinki"]);
+    }
+
+    fn above_writes() -> connectors::Above {
+        let mut above = connectors::Above::default();
+        above.lines.push("writes: above".into());
+        above
     }
 
     fn administrator_user() -> CurrentUser {
@@ -2134,7 +2256,7 @@ mod tests {
         let new = body("ana-asks").expect("body").0;
         let made = state
             .connectors
-            .create("f:1:ana", new, vec!["writes: above".into()], "")
+            .create("f:1:ana", new, above_writes(), "")
             .await
             .expect("kept");
         assert_eq!(made.state, "pending");
@@ -2169,7 +2291,7 @@ mod tests {
         let new = body("ana-asks").expect("body").0;
         let made = state
             .connectors
-            .create("f:1:ana", new, vec!["writes: above".into()], "")
+            .create("f:1:ana", new, above_writes(), "")
             .await
             .expect("kept");
         let approve =
@@ -2193,7 +2315,7 @@ mod tests {
         let new = body("ana-reads").expect("body").0;
         let made = state
             .connectors
-            .create("f:1:ana", new, Vec::new(), "")
+            .create("f:1:ana", new, Default::default(), "")
             .await
             .expect("created");
         for verdict in std::iter::repeat_n("refused: outside the scope", 10).chain(["allowed"]) {

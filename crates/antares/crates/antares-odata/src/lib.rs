@@ -788,11 +788,11 @@ mod tests {
     /// T-5895: the shares the broker sets are what the model caches take.
     #[test]
     fn the_set_shares_are_kept() {
+        let share = DEFAULT_MODEL_CACHE_BYTES.saturating_add(1);
+        set_model_cache_bytes(share, linkml_model::cache::MAX_BYTES);
+        let kept = MODEL_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed);
         set_model_cache_bytes(DEFAULT_MODEL_CACHE_BYTES, linkml_model::cache::MAX_BYTES);
-        assert_eq!(
-            MODEL_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed),
-            DEFAULT_MODEL_CACHE_BYTES
-        );
+        assert_eq!(kept, share);
     }
 
     #[test]
@@ -825,8 +825,8 @@ mod tests {
         let deep: Arc<[u8]> = deep.into_bytes().into();
         let (strict, _) = linkml_model::cache::read(9_002, &deep, &linkml_model::SURFACE_LIMITS);
         assert!(strict.is_err());
-        let loose = linkml_model::Model::read(&deep, &SCHEMA_LIMITS).is_ok();
-        assert_eq!(parsed(9_002, &deep).is_some(), loose);
+        assert!(linkml_model::Model::read(&deep, &SCHEMA_LIMITS).is_ok());
+        assert!(parsed(9_002, &deep).is_some());
     }
 
     #[test]

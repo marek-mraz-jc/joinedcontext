@@ -330,6 +330,21 @@ mod tests {
         assert_eq!(c.get(&2), Some(10), "the queue holds no stale key");
     }
 
+    /// A refused over-budget entry leaves the other residents in the FIFO
+    /// queue: the next insert past the budget still evicts the oldest.
+    #[test]
+    fn a_refused_entry_keeps_the_others_queued_for_eviction() {
+        let c = weighed(10);
+        c.insert(0, 4);
+        c.insert(1, 4);
+        c.insert(2, 11);
+        c.insert(3, 4);
+        assert_eq!(
+            (c.get(&0), c.get(&1), c.get(&3), c.weighted_size()),
+            (None, Some(4), Some(4), 8)
+        );
+    }
+
     /// Re-inserting a key with a new weight charges the new weight, and
     /// invalidating returns it to the budget.
     #[test]
@@ -370,6 +385,27 @@ mod tests {
         c.invalidate("a");
         assert_eq!(c.get("a"), None);
         assert_eq!(c.entry_count(), 0);
+    }
+
+    /// A panic while another thread held the lock poisons it; the cache keeps
+    /// serving reads and writes instead of failing every later request.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_poisoned_lock_keeps_serving() {
+        let c = std::sync::Arc::new(Cache::<String, u32>::new(4));
+        c.insert("a".to_owned(), 1);
+        let held = std::sync::Arc::clone(&c);
+        let panicked = std::thread::spawn(move || {
+            let _guard = held.inner.lock().expect("first lock");
+            panic!("poison the cache lock");
+        })
+        .join();
+        assert!(panicked.is_err());
+        assert!(c.inner.is_poisoned());
+        assert_eq!(c.get("a"), Some(1));
+        c.insert("b".to_owned(), 2);
+        assert_eq!(c.get("b"), Some(2));
+        assert_eq!(c.entry_count(), 2);
     }
 
     /// The bound is enforced under the lock, so it holds no matter how the

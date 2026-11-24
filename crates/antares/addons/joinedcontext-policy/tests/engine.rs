@@ -173,6 +173,33 @@ async fn the_engine_holds_the_policy_contract() {
     run_policy_contract(&JoinedcontextPolicy::new()).await;
 }
 
+/// S4-17: the identity the broker stores for a Channel is the subject's own names and its
+/// read-only marker, read through the engine; an anonymous caller has none to store.
+#[test]
+fn the_engine_hands_the_broker_the_callers_identity() {
+    let subject = |headers: &[(&str, &str)]| antares_api::policy::Subject {
+        tenant: antares_model::TenantId::default(),
+        headers: headers
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect(),
+    };
+    let engine = JoinedcontextPolicy::new();
+    assert_eq!(
+        engine.identity(&subject(&[
+            ("x-jc-subject", "ana"),
+            ("x-jc-client", "app-1"),
+            ("x-jc-read-only", "")
+        ])),
+        Some(vec![
+            ("x-jc-subject".to_owned(), "ana".to_owned()),
+            ("x-jc-client".to_owned(), "app-1".to_owned()),
+            ("x-jc-read-only".to_owned(), "true".to_owned()),
+        ])
+    );
+    assert_eq!(engine.identity(&subject(&[])), None);
+}
+
 #[tokio::test]
 async fn an_empty_policy_set_denies() -> Res {
     let (st, engine) = broker(doc(&[])).await?;

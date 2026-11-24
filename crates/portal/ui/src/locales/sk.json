@@ -719,6 +719,7 @@
       "proposeAll": "Navrhnúť všetko",
       "open": "Otvoriť",
       "noDrafts": "Zatiaľ nie sú doplnené žiadne návrhy.",
+      "unreadable": "Služba odpovedala niečím, čo nie je doplnenie priestoru. Skúste to znova; ak sa to opakuje, povedzte to správcovi.",
       "needInput": "Zadajte URL endpointu alebo pridajte súbor.",
       "filesHint": "Ukážka údajov ako CSV, Excel (.xlsx), JSON alebo GeoJSON, s manifestmi, README alebo .env, ktoré opisujú zdroj; spolu do 10 MB. Príklad: stanice.xlsx.",
       "review": {
@@ -7676,7 +7677,6 @@
     "file": "Archív alebo manifesty",
     "fileHelp": "ZIP z exportu, alebo YAML prúd či JSON manifest.",
     "fileMissing": "Najprv vyberte súbor.",
-    "noFile": "Najprv vyberte súbor.",
     "noUrl": "Nahrajte balík ako súbor; Portál ho zo zadanej adresy nesťahuje.",
     "pastedSecret": "Tento balík má prihlasovací údaj napísaný priamo ({keys}). Nahraďte ho odkazom secretRef a vyberte súbor znova; import ho aj tak odmietne.",
     "namespace": "Projekt, do ktorého sa importuje",
@@ -9920,7 +9920,15 @@
         "contactBoth": "Uveďte meno aj e-mail kontaktu, alebo ani jedno.",
         "email": "Zadajte e-mailovú adresu, napríklad opendata@example.org.",
         "period": "Koniec obdobia nemôže byť pred jeho začiatkom. Vyberte dátum konca po začiatku.",
-        "title": "Zadajte názov datasetu."
+        "title": "Zadajte názov datasetu.",
+        "fieldRequired": "Vaša organizácia toto pole vyžaduje: vyplňte ho.",
+        "field": {
+          "text": "Napíšte jeden riadok textu.",
+          "number": "Napíšte číslo.",
+          "date": "Vyberte dátum.",
+          "url": "Napíšte adresu https://.",
+          "enum": "Vyberte jednu z ponúknutých hodnôt."
+        }
       },
       "datasetTitle": "Názov datasetu",
       "datasetTitleHelp": "Názov, pod ktorým ho katalóg uvádza, v jazyku {language}.",
@@ -9948,7 +9956,17 @@
         "dcat": "Záznam DCAT-AP (JSON-LD)"
       },
       "inCatalogue": "Už v katalógu",
-      "typeNew": "V katalógu nič nezodpovedá: napíšte nový a vyberte „Nové“."
+      "typeNew": "V katalógu nič nezodpovedá: napíšte nový a vyberte „Nové“.",
+      "orgFields": "Polia vašej organizácie",
+      "orgFieldsHelp": "Ďalšie údaje, ktoré vaša organizácia žiada pri každom datasete. Portál otvorených dát ich ukáže v tabuľke O datasete.",
+      "fieldHint": {
+        "text": "Jeden riadok textu, napríklad: Financované mestom",
+        "number": "Číslo, napríklad: 12.5",
+        "date": "Dátum, napríklad: 2026-11-23",
+        "url": "Adresa https://, napríklad: https://example.org/sprava",
+        "enum": "Vyberte jednu z hodnôt, ktoré určila vaša organizácia."
+      },
+      "fieldRefused": "Vaša organizácia odmietla pole „{field}“ ({reason}). Vráťte sa, opravte ho a navrhnite znova."
     },
     "licence": {
       "CC_BY_4_0": "Creative Commons Attribution 4.0",
@@ -12207,7 +12225,7 @@
     "lastCall": "Posledné volanie",
     "setupTitle": "Pridajte ho do svojho AI klienta",
     "activityLoading": "Načítavajú sa volania",
-    "noCalls": "Za posledných 30 dní cez tento konektor neprišlo žiadne volanie.",
+    "noCalls": "Žiadne volanie cez tento konektor nie je uchované. Každé jeho volanie sa zobrazí tu.",
     "activityOf": "Volania cez {name}",
     "noProjects": "Zatiaľ nečítate žiadny projekt a nič s vami nie je zdieľané, takže konektor nemá na čo siahať. Požiadajte vlastníka projektu alebo správcu organizácie o prístup.",
     "accessOf": "Prístup pre {what}",
@@ -13365,10 +13383,12 @@
     "tabs": {
       "label": "Pohľady portálu",
       "settings": "Nastavenia",
+      "appearance": "Vzhľad",
       "sources": "Zdroje",
       "datasets": "Datasety",
       "files": "Súbory",
-      "layout": "Rozloženie"
+      "layout": "Rozloženie",
+      "display": "Zobrazenie"
     },
     "sources": {
       "empty": "Zatiaľ žiadny zdroj",
@@ -13746,6 +13766,205 @@
       "refused": "Profil {profile} sa neuložil. {reason}",
       "unknownTitle": "Poskytované profily sa nepodarilo načítať",
       "retry": "Načítať znova"
+    },
+    "display": {
+      "heading": "Čo portál otvorených dát zobrazuje",
+      "lead": "Vyberte, ktoré časti stránky datasetu sa zobrazia a v akom poradí, riadky tabuľky O datasete a čo ukazuje zoznam datasetov. Každý zoznam sa preberá z Organizácie alebo zo vstavanej stránky, kým ho tento portál nenastaví sám. Zverejnenie navrhne Zmenu na schválenie.",
+      "refused": "Zobrazenie bolo odmietnuté",
+      "refusedHint": "Opravte uvedené pole a zverejnite znova. Odmietnutý nadpis sa otvorí nižšie.",
+      "reset": "Obnoviť zdedené",
+      "list": {
+        "sections": "Časti stránky datasetu",
+        "about": "Riadky tabuľky O datasete",
+        "fields": "Polia zoznamu datasetov"
+      },
+      "from": {
+        "portal": "Nastavené na tomto portáli",
+        "organization": "Zdedené z Organizácie",
+        "builtIn": "Zdedené z predvolieb inštalácie"
+      },
+      "hint": {
+        "sections": "Zaškrtnite časti, ktoré sa zobrazia, a posuňte ich šípkami, napr. O datasete pred Zdrojmi. Vydavateľ a Odber zostávajú hore a dajú sa len skryť.",
+        "about": "Zaškrtnite riadky tabuľky O datasete v poradí, napr. najprv Licencia. Doplnok datasetu pridáte podľa kľúča.",
+        "fields": "Zaškrtnite, čo každý dataset v zozname ukáže za názvom, napr. Formát a Aktualizované.",
+        "heading": "Prázdne ponechá vstavaný nadpis, napr. O dátach. Obyčajný text, najviac 120 znakov.",
+        "extra": "Kľúč doplnku datasetu, malé písmená, číslice, _ alebo -, napr. x_kraj."
+      },
+      "why": {
+        "inherited": "Tento zoznam je už zdedený.",
+        "first": "Už je prvý.",
+        "last": "Už je posledný.",
+        "extra": "Najprv napíšte nový kľúč doplnku, napr. x_kraj.",
+        "nothing": "Zatiaľ sa nič nezmenilo."
+      },
+      "up": "Posunúť {name} vyššie",
+      "down": "Posunúť {name} nižšie",
+      "headingIn": "Nadpis ({lang})",
+      "headingToggle": "Zmeniť nadpis",
+      "extra": "Kľúč doplnku datasetu",
+      "addExtra": "Pridať riadok",
+      "extraRow": "Doplnok: {key}",
+      "fault": {
+        "empty": "Zobrazte aspoň jednu položku alebo obnovte zdedený zoznam.",
+        "extra": "Kľúč doplnku má 1 až 64 malých písmen, číslic, _ alebo -, napr. x_kraj.",
+        "heading": "Nadpis je obyčajný text najviac 120 znakov bez < a >."
+      },
+      "unpublished": "Nezverejnené zmeny: zverejnením ich navrhnete na schválenie.",
+      "published": "Zobrazenie je zverejnené.",
+      "discard": "Zahodiť",
+      "publish": "Zverejniť",
+      "sections": {
+        "publisher": "Vydavateľ",
+        "subscribe": "Odber",
+        "explorer": "Prieskumník dát",
+        "map": "Mapa",
+        "visualizations": "Vizualizácie",
+        "dashboards": "Dashboardy",
+        "about": "O datasete",
+        "live": "API živých dát",
+        "mcp": "Konektor pre asistenta (MCP)",
+        "resources": "Zdroje",
+        "additional-info": "Ďalšie informácie",
+        "shacl": "Kontrola SHACL (len editori)"
+      },
+      "about": {
+        "publisher": "Vydavateľ",
+        "license": "Licencia",
+        "rights": "Uvedenie autora",
+        "source": "Zdroj",
+        "keyword": "Kľúčové slová",
+        "accrualPeriodicity": "Frekvencia aktualizácie",
+        "issued": "Vytvorené",
+        "modified": "Posledná aktualizácia",
+        "nextUpdate": "Ďalšia aktualizácia",
+        "spatial": "Pokrytie",
+        "temporal": "Obdobie",
+        "contactPoint": "Kontakt",
+        "identifier": "Identifikátor",
+        "conformsTo": "Zodpovedá štandardu"
+      },
+      "fields": {
+        "notes": "Popis",
+        "format": "Formát",
+        "publisher": "Vydavateľ",
+        "modified": "Aktualizované"
+      }
+    },
+    "appearance": {
+      "heading": "Ako portál otvorených dát vyzerá",
+      "lead": "Názvy, farby, písma a rozloženie tohto portálu. Prázdne pole ukáže hodnotu Organizácie, potom predvoľbu inštalácie; Obnoviť pole k nej vráti. Zverejnenie navrhne Zmenu na schválenie.",
+      "refused": "Vzhľad bol odmietnutý",
+      "refusedHint": "Opravte uvedené pole a zverejnite znova.",
+      "fix": "Niektoré polia treba opraviť",
+      "fixHint": "Opravte označené polia ({count}) a zverejnite znova.",
+      "reset": "Obnoviť",
+      "resetField": "Obnoviť {field} na zdedené",
+      "inheritOption": "Zdedené ({value})",
+      "default": "predvolené",
+      "why": "Zatiaľ sa nič nezmenilo.",
+      "unpublished": "Nezverejnené zmeny: zverejnením ich navrhnete na schválenie.",
+      "published": "Vzhľad je zverejnený.",
+      "discard": "Zahodiť",
+      "publish": "Zverejniť",
+      "group": {
+        "names": "Názvy a kontakt",
+        "colours": "Farby",
+        "type": "Písmo a rozloženie"
+      },
+      "from": {
+        "portal": "Nastavené na tomto portáli",
+        "organization": "Z Organizácie",
+        "builtIn": "Predvoľba inštalácie"
+      },
+      "field": {
+        "instanceName": "Celý názov",
+        "shortName": "Krátky názov",
+        "city": "Mesto alebo región",
+        "publisher": "Vydavateľ",
+        "contactEmail": "Kontaktný e-mail",
+        "licenseDefault": "Predvolená licencia",
+        "colours": {
+          "primary": "Hlavná farba",
+          "secondary": "Doplnková farba",
+          "accent": "Zvýrazňujúca farba",
+          "background": "Pozadie",
+          "text": "Farba textu",
+          "link": "Farba odkazov",
+          "headerBackground": "Pozadie hlavičky",
+          "headerText": "Text hlavičky",
+          "footerBackground": "Pozadie päty",
+          "footerText": "Text päty"
+        },
+        "headingFont": "Písmo nadpisov",
+        "bodyFont": "Písmo textu",
+        "fontSize": "Veľkosť textu (px)",
+        "width": "Šírka obsahu",
+        "radius": "Zaoblenie rohov (px)",
+        "buttonStyle": "Tlačidlá",
+        "cardShadow": "Tieň kariet",
+        "datasetList": "Zoznam datasetov"
+      },
+      "hint": {
+        "instanceName": "Zobrazí sa v názvoch stránok, napr. Mesto Banská Bystrica.",
+        "shortName": "Zobrazí sa v kartách prehliadača, napr. BB.",
+        "city": "Územie, ktoré portál pokrýva, napr. Banská Bystrica.",
+        "publisher": "Právny vydavateľ v päte, napr. Mesto Banská Bystrica.",
+        "contactEmail": "Kam čitatelia píšu, napr. opendata@banskabystrica.sk.",
+        "licenseDefault": "Identifikátor SPDX, napr. CC-BY-4.0.",
+        "colours_primary": "Tlačidlá a aktívne karty, napr. #0b5394.",
+        "colours_secondary": "Doplnkové akcenty, napr. #0f766e.",
+        "colours_accent": "Zvýraznenia, napr. #f59e0b.",
+        "colours_background": "Pozadie stránky, napr. #ffffff.",
+        "colours_text": "Text, aspoň 4,5:1 voči pozadiu, napr. #0f172a.",
+        "colours_link": "Odkazy, aspoň 4,5:1 voči pozadiu, napr. #1d4ed8.",
+        "colours_headerBackground": "Horná lišta, napr. #0b5394.",
+        "colours_headerText": "Text v hornej lište, aspoň 4,5:1 voči jej pozadiu, napr. #ffffff.",
+        "colours_footerBackground": "Päta stránky, napr. #0f172a.",
+        "colours_footerText": "Text v päte, aspoň 4,5:1 voči jej pozadiu, napr. #ffffff.",
+        "headingFont": "Nadpisy, systémové písmo, nič sa nesťahuje odinakiaľ, napr. Pätkové.",
+        "bodyFont": "Text, napr. Systémové.",
+        "fontSize": "14 až 18, napr. 16.",
+        "width": "Ako široko obsah siaha, napr. Bežná.",
+        "radius": "0 až 24, napr. 8.",
+        "buttonStyle": "Plné alebo obrysové, napr. Plné.",
+        "cardShadow": "Karty s tieňom alebo bez, napr. Jemný.",
+        "datasetList": "Karty s popisom alebo kompaktná tabuľka, napr. Tabuľka."
+      },
+      "choice": {
+        "system": "Systémové",
+        "humanist": "Humanistické",
+        "serif": "Pätkové",
+        "mono": "Neproporcionálne",
+        "narrow": "Úzka",
+        "normal": "Bežná",
+        "wide": "Široká",
+        "filled": "Plné",
+        "outline": "Obrysové",
+        "none": "Žiadny",
+        "soft": "Jemný",
+        "cards": "Karty",
+        "table": "Tabuľka"
+      },
+      "fault": {
+        "text": "Obyčajný text s 1 až 120 znakmi bez < a >.",
+        "email": "E-mailová adresa ako opendata@mesto.sk.",
+        "licence": "Identifikátor SPDX ako CC-BY-4.0.",
+        "colour": "Hexadecimálna farba ako #0b5394.",
+        "choice": "Vyberte jednu z ponúknutých hodnôt.",
+        "number": "Celé číslo v uvedenom rozsahu.",
+        "contrast": "Málo kontrastu: vyberte farbu s kontrastom aspoň 4,5:1 voči pozadiu (WCAG AA)."
+      },
+      "css": {
+        "heading": "Vlastný štýl",
+        "lead": "CSS len pre stránky tohto portálu, najviac 32 KiB. Každé pravidlo platí len na tomto portáli; riadky s licenciou a vydavateľom zostávajú vždy viditeľné.",
+        "label": "Štýl (CSS)",
+        "hint": "Len pravidlá štýlu a @media, napr. {example}. Obrázky: {file} podľa karty Súbory. Odmietne sa: @import, @font-face, content, position, z-index, display: none, {important}, :has() a porovnania atribútov ako [href^=…].",
+        "none": "Žiadny: len téma",
+        "fault": {
+          "size": "Najviac 32 KiB.",
+          "markup": "Odstráňte </: štýl neobsahuje značky."
+        }
+      }
     }
   },
   "assistantGuides": {

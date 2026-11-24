@@ -589,6 +589,22 @@ mod tests {
     }
 
     #[test]
+    fn the_ceiling_takes_bytes_up_to_it_and_refuses_one_more() {
+        let over = Arc::new(AtomicBool::new(false));
+        let mut file = Bounded {
+            bytes: Vec::new(),
+            written: 0,
+            max: 3,
+            over: over.clone(),
+        };
+        assert_eq!(file.write(b"abc").ok(), Some(3));
+        assert!(!over.load(Ordering::Relaxed));
+        assert!(file.write(b"d").is_err());
+        assert!(over.load(Ordering::Relaxed));
+        assert_eq!((file.bytes.as_slice(), file.written), (&b"abc"[..], 3));
+    }
+
+    #[test]
     fn a_writer_error_below_the_ceiling_stays_what_it_is() {
         let e = refused(
             &AtomicBool::new(false),

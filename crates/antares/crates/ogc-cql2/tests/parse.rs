@@ -259,6 +259,11 @@ fn identifiers_strings_and_numbers() {
         Expr::Op(Op::Eq, vec![prop("a"), Expr::Num(0.01)])
     );
     assert_eq!(text("NOT NOT a = 1").to_string(), "NOT (NOT (a = 1))");
+    // A call is an operand as it stands; only an operator is parenthesised.
+    assert_eq!(
+        text("S_INTERSECTS(g, LINESTRING(0 0, 1 1)) AND a = 1").to_string(),
+        "S_INTERSECTS(g, LINESTRING(0 0, 1 1)) AND (a = 1)"
+    );
     assert_eq!(
         text("a=1 and b=2 or c=3"),
         text("(a = 1 AND b = 2) OR c = 3"),
@@ -493,6 +498,17 @@ fn depth_and_size_bounded() {
         "the filter is longer than the limit"
     );
 
+    // The ceilings themselves are allowed: MAX_LEN bytes, and MAX_NODES nodes (the `IN`, its
+    // property and its list hold three, so 4093 items fill the budget exactly).
+    let edge = format!("a = '{}'", "x".repeat(MAX_LEN - 6));
+    assert_eq!(edge.len(), MAX_LEN);
+    assert!(parse(Lang::Text, &edge).is_ok());
+    let list = |n: usize| format!("a IN ({})", vec!["1"; n].join(","));
+    assert!(parse(Lang::Text, &list(4_093)).is_ok());
+    assert_eq!(
+        refused(Lang::Text, &list(4_094)).what,
+        "the filter has more nodes than the limit"
+    );
     let many = format!("a IN ({})", vec!["1"; 5_000].join(","));
     assert!(many.len() < MAX_LEN);
     assert_eq!(

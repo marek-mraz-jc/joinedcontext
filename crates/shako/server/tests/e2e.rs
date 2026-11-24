@@ -1432,6 +1432,73 @@ async fn a_secret_ref_never_reaches_another_repositorys_secret() {
     }
 }
 
+/// Each API commit adds a pack; the write that reaches the threshold compacts them (S6-42), and
+/// every commit stays readable.
+#[tokio::test]
+async fn api_commits_are_compacted_once_the_packs_reach_the_threshold() {
+    let world = setup_world().await;
+    create_repo(&world, "busy").await;
+    let commits = shako_git::AUTO_COMPACT_PACK_THRESHOLD + 4;
+    for n in 0..commits {
+        let (st, body) = send_json(
+            &world.app,
+            "PUT",
+            &format!("/api/v1/repos/joinedcontext/busy/contents/file-{n}.txt"),
+            Some("portal-token"),
+            Some(json!({
+                "branch": "main",
+                "message": format!("commit {n}"),
+                "content": STANDARD.encode(format!("{n}\n")),
+            })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "commit {n}: {body}");
+    }
+    let repo = world
+        .state
+        .store()
+        .list_repos(world.state.default_instance_id, world.org_a)
+        .await
+        .expect("repos")
+        .into_iter()
+        .find(|r| r.name == "busy")
+        .expect("busy");
+    let disk = shako_core::repo_disk_path(world.state.repo_root(), repo.instance_id, repo.id)
+        .expect("disk path");
+    let packs = std::fs::read_dir(disk.join("objects/pack"))
+        .expect("pack dir")
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "pack"))
+        // A superseded pack stays an hour without its index, for readers that loaded it.
+        .filter(|e| e.path().with_extension("idx").is_file())
+        .count();
+    assert!(
+        packs < shako_git::AUTO_COMPACT_PACK_THRESHOLD / 2,
+        "{packs} packs after {commits} commits"
+    );
+    assert!(
+        shako_git::fsck_repository(&disk)
+            .expect("fsck")
+            .verified_refs
+            >= 1
+    );
+    for n in [0, commits - 1] {
+        let (st, file) = send_json(
+            &world.app,
+            "GET",
+            &format!("/api/v1/repos/joinedcontext/busy/contents/file-{n}.txt?ref=main"),
+            Some("portal-token"),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "file-{n} after compaction");
+        assert_eq!(
+            file["content"].as_str().map(|c| c.replace('\n', "")),
+            Some(STANDARD.encode(format!("{n}\n")))
+        );
+    }
+}
+
 /// A commit status names a known state and a full commit id; an unknown state never reads as
 /// green.
 #[tokio::test]
@@ -1688,6 +1755,230 @@ fn standalone_fsck_and_compact_fail_when_they_find_no_repository() {
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains("found no repository"), "{cmd}: {err}");
     }
+}
+
+/// The standalone binary refuses a token file it cannot use and a repository root it cannot
+/// create, naming each; `check -f` reads a manifest without a repository root of its own.
+#[test]
+fn standalone_refuses_a_bad_token_file_or_root_and_checks_a_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_shako"))
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let path = |name: &str| dir.path().join(name).to_str().unwrap().to_owned();
+    let (code, err) = run(&["serve", "--token-file", &path("missing-token")]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("cannot read token file"), "{err}");
+    std::fs::write(path("empty-token"), "  \n").unwrap();
+    let (code, err) = run(&["serve", "--token-file", &path("empty-token")]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("token file is empty"), "{err}");
+    // A usable token file gets as far as the mount, which refuses a prefix escaping its root.
+    std::fs::write(path("token"), "standalone-admin-token\n").unwrap();
+    let (code, err) = run(&[
+        "serve",
+        "--token-file",
+        &path("token"),
+        "--path-prefix",
+        "/git/../admin",
+    ]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("invalid mount"), "{err}");
+    assert!(!err.contains("standalone-admin-token"), "{err}");
+
+    std::fs::write(path("not-a-dir"), "x").unwrap();
+    let (code, err) = run(&["compact", "--repo-root", &path("not-a-dir")]);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(err.contains("create repo root"), "{err}");
+
+    let manifest = json!({"apiVersion": "joinedcontext.com/v1alpha1", "kind": "ForgeManifest",
+        "repositories": [{"owner": "city", "name": "roads"}]});
+    std::fs::write(path("ok.json"), manifest.to_string()).unwrap();
+    let (code, err) = run(&["check", "-f", &path("ok.json")]);
+    assert_eq!(code, Some(0), "{err}");
+    let mut wrong = manifest.clone();
+    wrong["kind"] = json!("Other");
+    std::fs::write(path("wrong.json"), wrong.to_string()).unwrap();
+    let (code, err) = run(&["check", "-f", &path("wrong.json")]);
+    assert_eq!(code, Some(2), "{err}");
+    assert!(err.contains("kind 'ForgeManifest'"), "{err}");
+}
+
+/// A manifest sets the instance's limits, a repository's default branch defaults to `main`, and
+/// its mirrors and webhooks are written once however often it is applied; compact and fsck then
+/// visit every repository of the organization.
+#[tokio::test]
+async fn a_manifest_writes_instance_mirrors_and_webhooks_once_and_maintenance_visits_each_repo() {
+    let world = setup_world().await;
+    let manifest: ShakoManifestBundle = serde_json::from_value(json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "ForgeManifest",
+        "instance": {"host": "git.city.example", "maxRepos": 7, "maxStorageBytes": 1048576},
+        "repositories": [{
+            "owner": "joinedcontext", "name": "mirrored",
+            "mirrors": [{"remoteName": "github", "remoteAddress": "https://github.com/joinedcontext-apps/mirrored.git",
+                         "credentialSecretRef": "github-push-token"}],
+            "webhooks": [{"url": "https://portal.city.example/api/v1/webhooks/shako", "secretRef": "portal-webhook-secret"}]
+        }]
+    }))
+    .expect("manifest");
+    assert_eq!(manifest.repositories[0].default_branch, "main");
+    // An instance without limits gets the defaults.
+    let bare: ShakoManifestBundle = serde_json::from_value(json!({
+        "apiVersion": "joinedcontext.com/v1alpha1", "kind": "ForgeManifest",
+        "instance": {"host": "git.city.example"}
+    }))
+    .expect("bare manifest");
+    apply_manifest_bundle(&world.state, world.org_a, &bare)
+        .await
+        .expect("apply bare");
+    let defaults = shako_core::InstanceRecord::default_for(
+        world.state.default_instance_id,
+        world.org_a,
+        "git.city.example",
+    );
+    let held = world
+        .state
+        .store()
+        .get_instance(world.state.default_instance_id, world.org_a)
+        .await
+        .unwrap()
+        .expect("instance");
+    assert_eq!(
+        (held.max_repos, held.max_storage_bytes),
+        (defaults.max_repos, defaults.max_storage_bytes)
+    );
+    for _ in 0..2 {
+        let res = apply_manifest_bundle(&world.state, world.org_a, &manifest)
+            .await
+            .expect("apply");
+        assert_eq!(res, json!({"status": "applied", "repositories": 1}));
+    }
+    let store = world.state.store();
+    let inst = store
+        .get_instance(world.state.default_instance_id, world.org_a)
+        .await
+        .unwrap()
+        .expect("instance");
+    assert_eq!((inst.max_repos, inst.max_storage_bytes), (7, 1_048_576));
+    let repo = store
+        .get_repo_by_name(
+            world.state.default_instance_id,
+            world.org_a,
+            "joinedcontext",
+            "mirrored",
+        )
+        .await
+        .unwrap()
+        .expect("repo");
+    assert_eq!(repo.default_branch, "main");
+    let hooks = store
+        .list_webhooks(world.state.default_instance_id, world.org_a, Some(repo.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        hooks.len(),
+        1,
+        "a webhook already there is not written twice"
+    );
+    let mirrors = store
+        .list_push_mirrors(world.state.default_instance_id, world.org_a, Some(repo.id))
+        .await
+        .unwrap();
+    assert!(
+        mirrors
+            .iter()
+            .all(|m| m.credential_secret_ref == "github-push-token")
+    );
+    assert!(!mirrors.is_empty());
+
+    let mut wrong = manifest.clone();
+    wrong.api_version = "v1".into();
+    let err = apply_manifest_bundle(&world.state, world.org_a, &wrong)
+        .await
+        .expect_err("wrong apiVersion");
+    assert!(err.to_string().contains("apiVersion"), "{err}");
+
+    let repos = store
+        .list_repos(world.state.default_instance_id, world.org_a)
+        .await
+        .unwrap()
+        .len();
+    assert_eq!(
+        shako_server::compact_all_repositories(&world.state, world.org_a)
+            .await
+            .unwrap(),
+        repos
+    );
+    assert_eq!(
+        shako_server::fsck_all_repositories(&world.state, world.org_a)
+            .await
+            .unwrap(),
+        repos
+    );
+}
+
+/// Every answer carries the security headers; a public base that is no valid header value (a
+/// host holding a control character) is left out rather than failing the answer.
+#[tokio::test]
+async fn a_host_no_header_can_carry_drops_only_the_public_base_header() {
+    let world = setup_world().await;
+    let mount = Mount::new("shako", "https", "city\u{7f}.example", "").expect("mount");
+    let app = router(world.state.clone(), mount);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(
+        resp.headers()["x-shako-cookie-name"],
+        "__Host-wk_shako_session"
+    );
+    assert!(resp.headers().get("x-shako-public-base").is_none());
+}
+
+/// The MCP doors over HTTP: both refuse a request without a token, a tool answers its result,
+/// and an unknown tool is an error, never a 200.
+#[tokio::test]
+async fn the_mcp_http_doors_need_a_token_and_name_unknown_tools() {
+    let world = setup_world().await;
+    let (st, _) = send_json(&world.app, "GET", "/mcp/tools", None, None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let call = json!({"name": "jc_forge_repositories_list", "arguments": {}});
+    let (st, _) = send_json(&world.app, "POST", "/mcp/call", None, Some(call.clone())).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let (st, body) = send_json(
+        &world.app,
+        "POST",
+        "/mcp/call",
+        Some("portal-token"),
+        Some(call),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(body.get("result").is_some(), "{body}");
+    let (st, body) = send_json(
+        &world.app,
+        "POST",
+        "/mcp/call",
+        Some("portal-token"),
+        Some(json!({"name": "jc_forge_no_such_tool"})),
+    )
+    .await;
+    assert!(st.is_client_error(), "{st} {body}");
 }
 
 /// Contract S8, S9, S13, S18, S19, S21: OData 4.01 service, OCI registry + cosign signing,

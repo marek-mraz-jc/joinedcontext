@@ -4,7 +4,7 @@
  * 31N and a status translated to the model's values. The step it writes reads back, and axe finds
  * nothing on the open editors.
  */
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
@@ -168,6 +168,42 @@ describe("the G-18 mapper sources, with no Bloblang typed", () => {
 
     const found = await axe.run(container, { rules: { region: { enabled: false } } });
     expect(found.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)).toEqual([]);
+  });
+
+  it("reads a location from one field holding GeoJSON", async () => {
+    await i18n.changeLanguage("en");
+    const user = userEvent.setup();
+    show();
+    await pickType(user);
+    const location = await screen.findByTestId("mapper-attribute-location");
+    await user.selectOptions(within(location).getByRole("combobox", { name: /Source of location/ }), "geojson");
+    expect(within(location).getByRole("combobox", { name: /Source of location/ })).toHaveValue("geojson");
+    await waitFor(() => expect(written.at(-1)).toContain(".parse_json()"));
+    await user.selectOptions(within(location).getByRole("combobox", { name: /GeoJSON field/ }), "Y");
+    await waitFor(() => expect(written.at(-1)).toContain("this.Y.type()"));
+  });
+
+  it("removes a language and clears a translated value again", async () => {
+    await i18n.changeLanguage("en");
+    const user = userEvent.setup();
+    show();
+    await pickType(user);
+    const name = await screen.findByTestId("mapper-attribute-name");
+    await user.selectOptions(within(name).getByRole("combobox", { name: /Source of name/ }), "languages");
+    await user.click(within(name).getByRole("button", { name: "Add a language" }));
+    expect(within(name).getAllByRole("combobox", { name: /^Language/ })).toHaveLength(2);
+    await user.click(within(name).getByRole("button", { name: "Remove the language en" }));
+    expect(within(name).getAllByRole("combobox", { name: /^Language/ })).toHaveLength(1);
+
+    const status = screen.getByTestId("mapper-attribute-status");
+    await user.selectOptions(within(status).getByRole("combobox", { name: /Source of status/ }), "field:ESTAT");
+    await user.selectOptions(within(status).getByRole("combobox", { name: /Change the value/ }), "trim");
+    await user.selectOptions(within(status).getByRole("combobox", { name: /Change the value/ }), "lower");
+    await user.selectOptions(within(status).getByRole("combobox", { name: /Change the value/ }), "lookup");
+    await user.selectOptions(within(status).getByRole("combobox", { name: /“bo” becomes/ }), "working");
+    await waitFor(() => expect(written.at(-1)).toContain('"bo" => "working"'));
+    await user.selectOptions(within(status).getByRole("combobox", { name: /“bo” becomes/ }), "");
+    await waitFor(() => expect(written.at(-1)).not.toContain('"bo" => "working"'));
   });
 
   it("lists a lookup's sample values once each and offers the cities' languages", () => {

@@ -145,6 +145,21 @@ describe("the temporal audit of a space (T-4844)", () => {
     expect(screen.queryByRole("button", { name: /OK rows/ })).not.toBeInTheDocument();
   });
 
+  it("words history off, kept forever, and a keeping it cannot read as written", async () => {
+    renderAudit(() =>
+      json({
+        rows: [row({ attribute: "a1", history: "off" }), row({ attribute: "a2", history: "forever" }), row({ attribute: "a3", history: "R5/P1Y" })],
+        unread: [],
+        verdicts: { ok: 3 },
+      }),
+    );
+    // Every row is OK: nothing is folded.
+    const table = await screen.findByRole("table", { name: T.caption });
+    expect(within(within(table).getByRole("row", { name: /a1/ })).getByText(`History ${en.spaces.retention.offShown}`)).toBeInTheDocument();
+    expect(within(within(table).getByRole("row", { name: /a2/ })).getByText(`History ${en.spaces.retention.forever}`)).toBeInTheDocument();
+    expect(within(within(table).getByRole("row", { name: /a3/ })).getByText("History R5/P1Y")).toBeInTheDocument();
+  });
+
   it("says so when no readable pipeline writes the space", async () => {
     renderAudit(() => json({ rows: [], unread: [], verdicts: {} }));
     expect(await screen.findByText(T.empty)).toBeInTheDocument();

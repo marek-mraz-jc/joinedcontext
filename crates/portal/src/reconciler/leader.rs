@@ -90,6 +90,8 @@ impl Leadership {
     pub async fn acquire(&self) -> Result<bool, sqlx::Error> {
         let mut held = self.held.lock().await;
 
+        // The session stays in its slot while it is asked: a resign that aborts the heartbeat
+        // mid-query must still find it, unlock it and close it, never see it dropped into the pool.
         if let Some(connection) = held.as_mut() {
             match sqlx::query("SELECT 1").execute(&mut **connection).await {
                 Ok(_) => return Ok(true),
@@ -139,6 +141,7 @@ impl Leadership {
             loop {
                 tokio::time::sleep(period).await;
                 let mut guard = held.lock().await;
+                // in its slot while asked, so an abort here leaves it for resign (see acquire)
                 let Some(connection) = guard.as_mut() else {
                     return;
                 };
@@ -230,10 +233,11 @@ mod tests {
         assert_eq!(RECONCILER_LOCK_KEY.to_be_bytes(), *b"jc_recon");
     }
 
-    fn database_url() -> Option<String> {
+    /// The database `JC_PORTAL_TEST_DATABASE_URL` names. A missing variable fails, never skips
+    /// (as `tests/common::on_database`).
+    fn database_url() -> String {
         std::env::var("JC_PORTAL_TEST_DATABASE_URL")
-            .ok()
-            .filter(|url| !url.trim().is_empty())
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates")
     }
 
     /// A key of this test alone, so parallel tests on one database never share a lock.
@@ -247,10 +251,7 @@ mod tests {
     /// proxy, must not keep the lock: the next replica leads once the lease is over.
     #[tokio::test]
     async fn a_silent_leader_loses_the_lock_after_its_lease() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = crate::db::connect(&url).await.expect("connect and migrate");
         let key = private_key(1);
         let silent = Leadership::with_lease(pool.clone(), key, SHORT);
@@ -273,10 +274,7 @@ mod tests {
     /// A live leader keeps the lock across many leases without reconciling in between.
     #[tokio::test]
     async fn a_beating_leader_keeps_the_lock_past_its_lease() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = crate::db::connect(&url).await.expect("connect and migrate");
         let key = private_key(2);
         let leader = Leadership::with_lease(pool.clone(), key, SHORT);
@@ -304,10 +302,7 @@ mod tests {
     /// every time, not only once the closed session's backend has gone (T-2977).
     #[tokio::test]
     async fn the_lock_is_free_the_moment_resign_returns() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = crate::db::connect(&url).await.expect("connect and migrate");
         let key = private_key(4);
         let (one, other) = (
@@ -330,14 +325,128 @@ mod tests {
         }
     }
 
+    /// The backend of `leader`'s lock session, ended from another session as a failover or an
+    /// operator's `pg_terminate_backend` ends it.
+    async fn kill_session(leader: &Leadership, pool: &PgPool) {
+        let pid: i32 = {
+            let mut held = leader.held.lock().await;
+            let connection = held.as_mut().expect("the leader holds a session");
+            sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut **connection)
+                .await
+                .expect("pid")
+        };
+        let ended: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1, 5000)")
+            .bind(pid)
+            .fetch_one(pool)
+            .await
+            .expect("terminate");
+        assert!(ended);
+    }
+
+    /// A lock session the server ended demotes the leader at its next election, which then
+    /// takes the freed lock again on a new session; a resignation on a dead session still
+    /// leaves the replica a follower.
+    #[tokio::test]
+    async fn a_leader_whose_session_died_is_demoted_and_elected_again() {
+        let url = database_url();
+        let pool = crate::db::connect(&url).await.expect("connect and migrate");
+        let leader = Leadership::with_lease(pool.clone(), private_key(5), Duration::from_secs(60));
+        assert!(leader.acquire().await.expect("election"));
+        kill_session(&leader, &pool).await;
+        assert!(
+            leader
+                .acquire()
+                .await
+                .expect("an election on a dead session"),
+            "the lock died with the session, so this replica wins it again"
+        );
+        kill_session(&leader, &pool).await;
+        leader.resign().await;
+        assert!(!leader.is_leader());
+        assert!(leader.held.lock().await.is_none());
+    }
+
+    /// The heartbeat notices a dead lock session and demotes the leader before the next election.
+    #[tokio::test]
+    async fn a_failed_heartbeat_demotes_the_leader() {
+        let url = database_url();
+        let pool = crate::db::connect(&url).await.expect("connect and migrate");
+        let leader =
+            Leadership::with_lease(pool.clone(), private_key(6), Duration::from_millis(600));
+        assert!(leader.acquire().await.expect("election"));
+        kill_session(&leader, &pool).await;
+        tokio::time::sleep(Duration::from_millis(900)).await;
+        assert!(!leader.is_leader(), "demoted by the heartbeat");
+        assert!(leader.held.lock().await.is_none());
+    }
+
+    /// A lease the server refuses (past idle_session_timeout's range) is an error and no lead:
+    /// the session that won the lock is closed, so the lock is free for the next replica.
+    #[tokio::test]
+    async fn a_lease_the_server_refuses_is_an_error_and_no_lead() {
+        let url = database_url();
+        let pool = crate::db::connect(&url).await.expect("connect and migrate");
+        let key = private_key(7);
+        let refused = Leadership::with_lease(pool.clone(), key, Duration::from_secs(1 << 40));
+        assert!(refused.acquire().await.is_err());
+        assert!(!refused.is_leader());
+        let next = Leadership::with_lease(pool.clone(), key, SHORT);
+        assert!(
+            next.acquire().await.expect("election"),
+            "the refused session let the lock go"
+        );
+        next.resign().await;
+    }
+
+    /// A panic while the heartbeat slot was held costs no election, and the claim reads as its
+    /// key and whether it leads; no database is reached.
+    #[tokio::test]
+    async fn a_poisoned_heartbeat_slot_still_starts_and_stops() {
+        let pool = PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").expect("lazy pool");
+        let leader = Leadership::with_lease(pool, private_key(8), SHORT);
+        std::thread::scope(|scope| {
+            let _ = scope
+                .spawn(|| {
+                    let _held = leader.heartbeat.lock();
+                    panic!("poison the heartbeat slot");
+                })
+                .join();
+        });
+        assert!(leader.heartbeat.is_poisoned());
+        leader.resign().await;
+        assert!(
+            !leader.is_leader(),
+            "a follower's resignation changes nothing"
+        );
+        leader.start_heartbeat();
+        leader.start_heartbeat();
+        // a heartbeat that finds no lock session (a follower's) ends at its first beat
+        tokio::time::sleep(SHORT / 3 + SHORT / 4).await;
+        let ended = leader
+            .heartbeat
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished);
+        assert!(ended, "the heartbeat of no session ends");
+        leader.stop_heartbeat();
+        assert!(leader
+            .heartbeat
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_none());
+        assert_eq!(
+            format!("{leader:?}"),
+            format!("Leadership {{ key: {}, leader: false }}", private_key(8))
+        );
+    }
+
     /// The lease never leaks into the pool: after a resignation the pool's sessions carry the
     /// server's default idle_session_timeout.
     #[tokio::test]
     async fn a_resigned_lock_session_is_not_pooled_with_its_lease() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = crate::db::connect(&url).await.expect("connect and migrate");
         let leader = Leadership::with_lease(pool.clone(), private_key(3), SHORT);
         assert!(leader.acquire().await.expect("election"));

@@ -19,6 +19,9 @@ edm = ["dep:odata-csdl"]
 odata-csdl = { path = "../odata-csdl", optional = true }
 
 [dev-dependencies]
+# The `edm` module and its tests take part in this crate's own test run (`cargo test -p odata-url`,
+# and cargo mutants per package), not only in a workspace run that unifies the feature in.
+odata-url = { path = ".", features = ["edm"] }
 proptest = { workspace = true }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 

@@ -77,6 +77,11 @@ pub struct Catalog {
     /// dataset of the whole Endpoint.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub datasets: Vec<crate::kinds::catalog_datasets::CatalogDataset>,
+    /// The values of the Organization's own dataset fields by name, such as
+    /// `{funding: eu, reviewed: 2026-11-23}` (T-7746); the Portal checks each against the
+    /// Organization's `spec.datasetFields` at propose.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
 }
 
 /// The publisher's statement about personal data in a dataset (API/08 section 5).
@@ -677,6 +682,7 @@ impl Catalog {
             iri("spec.catalog.applicableLegislation", law)?;
         }
         crate::kinds::catalog_datasets::validate(&self.datasets)?;
+        crate::kinds::dataset_fields::validate_values(&self.fields)?;
         // EP-139, EP-177: a list the feeds leave out would be datasets in CKAN alone.
         if !self.harvested() && !self.datasets.is_empty() {
             return Err(Error::Name {

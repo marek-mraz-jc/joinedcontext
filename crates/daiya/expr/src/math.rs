@@ -1210,6 +1210,106 @@ mod tests {
         assert_eq!(null_check, vec![ExprValue::Scalar(Some(1.0))]);
     }
 
+    /// A series keeps its notices when it becomes a frame, as a number does.
+    #[test]
+    fn a_series_frame_carries_its_notices() {
+        let notice = daiya_model::Notice {
+            severity: daiya_model::NoticeSeverity::Warning,
+            text: "gap filled".into(),
+        };
+        let series = ExprValue::Series {
+            name: String::new(),
+            labels: BTreeMap::new(),
+            points: vec![(1000, Some(1.0))],
+            notices: vec![notice.clone()],
+        };
+        let frame = series.to_frame("A");
+        assert_eq!(frame.meta.notices, vec![notice]);
+        assert_eq!(frame.name, "A");
+    }
+
+    /// Each two-character operator is one token, wherever it stands; its one-character
+    /// prefix alone, last in the input, is its own token or a named refusal.
+    #[test]
+    fn two_character_operators_tokenize_at_any_position() {
+        use Token::*;
+        let n = Number;
+        for (text, op) in [
+            ("1**2", Pow),
+            ("1!=2", Ne),
+            ("1==2", Eq),
+            ("1>=2", Ge),
+            ("1<=2", Le),
+            ("1&&2", And),
+            ("1||2", Or),
+        ] {
+            assert_eq!(
+                tokenize(text).unwrap(),
+                vec![n(1.0), op.clone(), n(2.0)],
+                "{text}"
+            );
+            let spaced = format!("1 + 1 {}", &text[1..]);
+            assert_eq!(
+                tokenize(&spaced).unwrap(),
+                vec![n(1.0), Plus, n(1.0), op, n(2.0)],
+                "{spaced}"
+            );
+        }
+        for (text, last) in [("1*", Mul), ("!", Not), ("1>", Gt), ("1<", Lt)] {
+            assert_eq!(tokenize(text).unwrap().last(), Some(&last), "{text}");
+        }
+        for text in ["1=", "1&", "1|", "1=2"] {
+            assert!(tokenize(text).is_err(), "{text}");
+        }
+    }
+
+    /// An empty side of a binary operation gives nothing, even against a lone NoData.
+    #[test]
+    fn an_empty_side_of_a_binary_operation_gives_nothing() {
+        let vars = HashMap::from([
+            ("E".to_owned(), Vec::new()),
+            ("N".to_owned(), vec![ExprValue::NoData]),
+        ]);
+        assert_eq!(
+            eval_math_on_vars("C", "$E + $N", &vars, 100).unwrap(),
+            vec![]
+        );
+    }
+
+    /// A union that pairs every item drops nothing and says nothing about drops.
+    #[test]
+    fn a_full_union_carries_no_dropped_notice() {
+        let one = |v: f64| ExprValue::Number {
+            name: "A".into(),
+            labels: BTreeMap::from([("host".to_owned(), "a".to_owned())]),
+            value: Some(v),
+            notices: Vec::new(),
+        };
+        let vars = HashMap::from([
+            ("A".to_owned(), vec![one(1.0)]),
+            ("B".to_owned(), vec![one(2.0)]),
+        ]);
+        let out = eval_math_on_vars("C", "$A + $B", &vars, 100).unwrap();
+        let [ExprValue::Number { value, notices, .. }] = out.as_slice() else {
+            panic!("{out:?}");
+        };
+        assert_eq!((*value, notices.len()), (Some(3.0), 0));
+    }
+
+    /// The nesting budget counts depth, not length: sibling groups and chains each give back
+    /// what they took, so three 40-operator chains and two 60-deep groups side by side parse.
+    #[test]
+    fn sibling_groups_give_their_depth_back() {
+        let chain = vec!["1"; 41].join("+");
+        MathExpr::parse(&format!("({chain})+({chain})+({chain})")).expect("wide chains");
+        let deep = format!("{}1{}", "(".repeat(60), ")".repeat(60));
+        MathExpr::parse(&format!("{deep}+{deep}")).expect("two deep groups");
+        assert_eq!(
+            tokenize("1 + x").unwrap().last(),
+            Some(&Token::Ident("x".into()))
+        );
+    }
+
     #[test]
     fn deeply_nested_expression_exceeding_cap_is_refused() {
         let deep = format!("{}$A{}", "(".repeat(105), ")".repeat(105));

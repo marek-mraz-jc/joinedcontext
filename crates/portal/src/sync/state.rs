@@ -217,6 +217,11 @@ mod tests {
         let states = States::new(None);
         assert_eq!(states.get("bb", "regional").await, Stored::default());
         assert!(!states.is_durable());
+        assert_eq!(
+            format!("{states:?}"),
+            "States { durable: false, .. }",
+            "the debug form names no row"
+        );
     }
 
     #[tokio::test]

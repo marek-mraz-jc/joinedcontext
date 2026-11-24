@@ -2,7 +2,11 @@
 """Loads a public CKAN dump (package_search rows=1000 + organization_list all_fields) into a
 rehearsal's dataroom, so the catalogue pages compare on the same datasets.
 
-  ckan_fixture.py --dump <dir with packages.json, orgs.json> --base http://127.0.0.1:<port> --token-file <state>/catalogue-token
+  ckan_fixture.py --dump <dir with packages.json, orgs.json> --base http://127.0.0.1:<port> --token-file <file>
+
+The token file holds a service token for dataroom's audience that the rehearsal's `[door]` issuer
+signed for an admitted client (S11-23: dataroom refuses a static bearer), e.g. a kaisatsu
+client-credentials token with scope `dataroom`.
 
 A UI-parity fixture only: on a real swap the Portal publishes the datasets from the Endpoints. Writes
 go only to a loopback base. Prints one line per refusal and a summary.

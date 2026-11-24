@@ -20,6 +20,8 @@ use uuid::Uuid;
 const ORG: u128 = 0x0A;
 const DEFAULT: u128 = 0xD0;
 const OTHER: u128 = 0xE0;
+/// A catalogue the deployment names whose row no longer exists.
+const GAMMA: u128 = 0xF0;
 
 async fn state() -> DataroomState {
     let org = OrgId::from_uuid(Uuid::from_u128(ORG));
@@ -192,6 +194,129 @@ async fn call(
     (status, String::from_utf8_lossy(&body).into_owned())
 }
 
+/// A pin names the version a feed answers in; an empty one takes the newest upload. An upload's
+/// URI goes into Content-Profile only when a header can carry it as a value.
+#[tokio::test]
+async fn a_feed_answers_in_the_pinned_version_and_names_it_only_when_a_header_can() {
+    let state = state().await;
+    let org = OrgId::from_uuid(Uuid::from_u128(ORG));
+    let own = CatalogueId::from_uuid(Uuid::from_u128(DEFAULT));
+    let ctx = RequestCtx::new(
+        org,
+        own,
+        dataroom_core::Subject::authenticated("seed", vec![org], Vec::new()),
+    );
+    let mut cat = state.store.get_catalogue(org, own).await.unwrap().unwrap();
+    // Version 2 asks every Dataset for a property none has; version 1 asks nothing.
+    let never = "@prefix sh: <http://www.w3.org/ns/shacl#> .
+    @prefix dcat: <http://www.w3.org/ns/dcat#> .
+    <urn:own:Shape> a sh:NodeShape ; sh:targetClass dcat:Dataset ;
+      sh:property [ sh:path <urn:own:never> ; sh:minCount 1 ] .";
+    let nothing = "@prefix sh: <http://www.w3.org/ns/shacl#> .
+    <urn:own:Shape> a sh:NodeShape .";
+    for (id, version, uri, shapes) in [
+        (
+            "own-draft",
+            "1.0.0",
+            "https://profiles.example.org/own-draft/1",
+            nothing,
+        ),
+        (
+            "own-draft",
+            "2.0.0",
+            "https://profiles.example.org/own-draft/2",
+            never,
+        ),
+        (
+            "third",
+            "1.0.0",
+            "https://profiles.example.org/third/1",
+            nothing,
+        ),
+        (
+            "third",
+            "2.0.0",
+            "https://profiles.example.org/third/2",
+            nothing,
+        ),
+        (
+            "angled",
+            "3.0.0",
+            "https://profiles.example.org/<angled>",
+            nothing,
+        ),
+    ] {
+        let record: dataroom_core::ProfileRecord = serde_json::from_value(serde_json::json!({
+            "id": id, "version": version, "uri": uri,
+            "title": {"en": id}, "builtIn": false, "shapesTurtle": shapes,
+        }))
+        .expect("profile");
+        let (saved, _) = state
+            .profiles
+            .upload_and_dry_run(record, &cat, &[], &Default::default())
+            .expect("upload");
+        state.store.upsert_profile(&ctx, saved).await.unwrap();
+    }
+    let profile_of = |path: &'static str, state: DataroomState| async move {
+        let req = Request::get(path)
+            .header(header::HOST, "data.city.test")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router(state).oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        resp.headers()
+            .get("content-profile")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    for (pinned, want) in [("1.0.0", "own-draft/1"), ("", "own-draft/2")] {
+        cat.active_profiles = vec![
+            serde_json::from_value(
+                serde_json::json!({"profileId": "own-draft", "version": pinned}),
+            )
+            .unwrap(),
+            serde_json::from_value(serde_json::json!({"profileId": "angled", "version": ""}))
+                .unwrap(),
+            serde_json::from_value(serde_json::json!({"profileId": "third", "version": ""}))
+                .unwrap(),
+        ];
+        state.store.upsert_catalogue(cat.clone()).await.unwrap();
+        let named = profile_of("/profiles/own-draft/catalog.ttl", state.clone()).await;
+        assert!(named.ends_with(want), "pin {pinned:?}: {named}");
+        // Another profile's pinned version is never this one's.
+        let third = profile_of("/profiles/third/catalog.ttl", state.clone()).await;
+        assert!(third.ends_with("third/2"), "pin {pinned:?}: {third}");
+    }
+    let angled = profile_of("/profiles/angled/catalog.ttl", state.clone()).await;
+    assert!(
+        !angled.contains("angled") && angled.starts_with("http"),
+        "an upload's URI with angle brackets gives way to its renderer's: {angled}"
+    );
+    // The admin report judges each pin in its version: own-draft 1.0.0 asks nothing, and the
+    // unversioned pin of angled is its newest upload, installed.
+    cat.active_profiles[0].version = "1.0.0".into();
+    let dataset: dataroom_core::Dataset = serde_json::from_value(serde_json::json!({
+        "orgId": org, "catalogueId": own, "id": "id-air", "name": "air",
+        "title": {"en": "Air"}, "description": {}, "publisherId": "nobody",
+        "visibility": "public", "state": "active",
+        "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
+    }))
+    .expect("dataset");
+    let gaps = dataroom_api::feeds::profile_gaps(
+        &state,
+        &cat,
+        &[dataset],
+        &std::collections::BTreeMap::new(),
+    );
+    let named: Vec<&str> = gaps[0].iter().map(|(id, _)| id.as_str()).collect();
+    assert!(
+        !named.contains(&"own-draft") && !named.contains(&"angled"),
+        "{:?}",
+        gaps[0]
+    );
+}
+
 /// Two Organizations, `com_alpha` on the default catalogue and `com_beta` on the other, each
 /// with its canonical base: the default one https under a prefix, the other http on its host.
 async fn two_organizations() -> DataroomState {
@@ -207,10 +332,43 @@ async fn two_organizations() -> DataroomState {
             [
                 ("com_alpha".to_owned(), (org, a)),
                 ("com_beta".to_owned(), (org, b)),
+                // An Organization whose catalogue row is gone is never a new home.
+                (
+                    "com_gamma".to_owned(),
+                    (org, CatalogueId::from_uuid(Uuid::from_u128(GAMMA))),
+                ),
+                // Nor one whose catalogue has no configured base.
+                (
+                    "com_delta".to_owned(),
+                    (org, CatalogueId::from_uuid(Uuid::from_u128(0xF1))),
+                ),
             ]
             .into(),
         )
-        .with_catalogue_bases([(b, "http://other.city.test".to_owned())].into())
+        .with_catalogue_bases(
+            [
+                (b, "http://other.city.test".to_owned()),
+                (
+                    CatalogueId::from_uuid(Uuid::from_u128(GAMMA)),
+                    "http://gamma.city.test".to_owned(),
+                ),
+            ]
+            .into(),
+        )
+}
+
+/// The installation's public base names the default catalogue only: another catalogue of the
+/// same Organization, with no base of its own, keeps the host it is read on.
+#[tokio::test]
+async fn the_public_base_is_the_default_catalogues_alone() {
+    let state = state()
+        .await
+        .with_public_base("https://data.city.test/opendata");
+    let (_, body) = get(state.clone(), "other.city.test", None, "/catalog.jsonld").await;
+    assert!(body.contains("https://other.city.test"), "{body}");
+    assert!(!body.contains("data.city.test/opendata"), "{body}");
+    let (_, body) = get(state, "data.city.test", None, "/catalog.jsonld").await;
+    assert!(body.contains("https://data.city.test/opendata"), "{body}");
 }
 
 /// `name` from the Endpoint `slug`, `visibility`, in `catalogue` of `state`'s store; withdrawn
@@ -300,6 +458,73 @@ async fn an_old_dataset_address_redirects() {
         let (status, location) = on_alpha(state.clone(), &format!("/dataset/{kept}")).await;
         assert_eq!((status, location), (StatusCode::NOT_FOUND, None), "{kept}");
     }
+    // A copy withdrawn there too is no new home.
+    seed(&state, DEFAULT, ("tram", "tramslug", "public"), true).await;
+    seed(&state, OTHER, ("tram", "tramslug", "public"), true).await;
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/tram").await,
+        (StatusCode::NOT_FOUND, None)
+    );
+    // Moved the other way, into the default catalogue: its base is the installation's public base.
+    seed(&state, OTHER, ("bus", "busslug", "public"), true).await;
+    seed(&state, DEFAULT, ("bus", "busslug", "public"), false).await;
+    let mut req = Request::get("/dataset/bus").body(Body::empty()).unwrap();
+    req.extensions_mut()
+        .insert(mount("https", "city.test", "/com_beta/opendata"));
+    req.extensions_mut()
+        .insert(jc_router::Organization("com_beta".to_owned()));
+    let resp = router(state.clone()).oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::MOVED_PERMANENTLY);
+    assert_eq!(
+        resp.headers()[header::LOCATION],
+        "https://data.city.test/opendata/dataset/bus"
+    );
+    // A new home that hides the dataset, or whose publisher is withdrawn, is no new home.
+    let beta = CatalogueId::from_uuid(Uuid::from_u128(OTHER));
+    let mut cat = state
+        .store
+        .get_catalogue(state.default_org_id, beta)
+        .await
+        .unwrap()
+        .unwrap();
+    // A catalogue with no base of its own is no new home, though the installation has one.
+    let mut delta = cat.clone();
+    delta.id = CatalogueId::from_uuid(Uuid::from_u128(0xF1));
+    delta.name = "delta".into();
+    delta.host = "delta.city.test".into();
+    state.store.upsert_catalogue(delta).await.unwrap();
+    seed(&state, DEFAULT, ("van", "vanslug", "public"), true).await;
+    seed(&state, 0xF1, ("van", "vanslug", "public"), false).await;
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/van").await,
+        (StatusCode::NOT_FOUND, None)
+    );
+    seed(&state, GAMMA, ("air", "airslug", "public"), false).await;
+    cat.hidden_datasets.insert("air".into(), "kept out".into());
+    state.store.upsert_catalogue(cat.clone()).await.unwrap();
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/air").await,
+        (StatusCode::NOT_FOUND, None)
+    );
+    cat.hidden_datasets.clear();
+    state.store.upsert_catalogue(cat).await.unwrap();
+    let ctx = RequestCtx::new(
+        state.default_org_id,
+        beta,
+        dataroom_core::Subject::authenticated("seed", vec![state.default_org_id], Vec::new()),
+    );
+    let publisher = serde_json::from_value(serde_json::json!({
+        "orgId": state.default_org_id, "catalogueId": beta, "id": "city", "name": "city",
+        "title": {"en": "City"}, "description": {}, "uri": "https://city.test/publisher",
+        "state": "withdrawn", "editorGrants": [],
+        "created": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z",
+    }))
+    .expect("publisher");
+    state.store.upsert_publisher(&ctx, publisher).await.unwrap();
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/air").await,
+        (StatusCode::NOT_FOUND, None)
+    );
 }
 
 /// T-6797: every absolute id and link names the catalogue's canonical base, whichever
@@ -393,23 +618,30 @@ async fn organization_show_of_one_organization_lists_no_dataset_of_another() {
         CatalogueId::from_uuid(Uuid::from_u128(DEFAULT)),
         CatalogueId::from_uuid(Uuid::from_u128(OTHER)),
     );
-    let (token_a, token_b) = ("a".repeat(40), "b".repeat(40));
-    let (bind_a, grant_a) = portal_publisher_on(&token_a, org, a, "com_alpha").unwrap();
-    let (bind_b, grant_b) = portal_publisher_on(&token_b, org, b, "com_beta").unwrap();
-    let state = two_organizations().await.with_tokens(vec![bind_a, bind_b]);
+    let issuer = jc_door::testing::Issuer::start("https://id.city.test", "k1").await;
+    let clients = ["portal-publisher".to_owned()];
+    let verifier = jc_door::Verifier::new(&issuer.issuer, &issuer.jwks_url, &clients).unwrap();
+    // One service token: who it is follows from the catalogue the address names.
+    let token = issuer.token("portal-publisher", "dataroom", 300);
+    let (subject_a, grant_a) = portal_publisher_on(org, a, "com_alpha");
+    let (subject_b, grant_b) = portal_publisher_on(org, b, "com_beta");
+    let state = two_organizations()
+        .await
+        .with_verifier(Arc::new(verifier))
+        .with_publishers([((org, a), subject_a), ((org, b), subject_b)].into());
     let state = DataroomState {
         authorizer: Arc::new(PolicyAuthorizer::new(vec![grant_a, grant_b])),
         ..state
     };
     let on = |org: &str| mount("https", "city.test", &format!("/{org}/opendata"));
-    for (who, token) in [("com_alpha", &token_a), ("com_beta", &token_b)] {
+    for who in ["com_alpha", "com_beta"] {
         let (status, body) = call(
             state.clone(),
             on(who),
             Some(who),
             "POST",
             "/api/3/action/organization_create",
-            Some(token),
+            Some(&token),
             Some(serde_json::json!({ "name": who, "title": who })),
         )
         .await;
@@ -420,7 +652,7 @@ async fn organization_show_of_one_organization_lists_no_dataset_of_another() {
             Some(who),
             "POST",
             "/api/3/action/package_create",
-            Some(token),
+            Some(&token),
             Some(serde_json::json!({
                 "name": format!("{who}-budget"), "title": "Budget", "notes": "Budget",
                 "owner_org": who, "license_id": "cc-by",
@@ -430,6 +662,18 @@ async fn organization_show_of_one_organization_lists_no_dataset_of_another() {
         assert_eq!(status, StatusCode::OK, "{who}: {body}");
     }
     for (who, other) in [("com_alpha", "com_beta"), ("com_beta", "com_alpha")] {
+        // The token writes as the publisher of the catalogue it was sent to, and as no other's.
+        let (status, body) = call(
+            state.clone(),
+            on(who),
+            Some(who),
+            "POST",
+            "/api/3/action/organization_create",
+            Some(&token),
+            Some(serde_json::json!({ "name": other, "title": other })),
+        )
+        .await;
+        assert!(status.is_client_error(), "{who} creates {other}: {body}");
         let (status, body) = call(
             state.clone(),
             on(who),
@@ -504,12 +748,10 @@ fn the_portal_grant_of_one_catalogue_writes_no_other() {
         CatalogueId::from_uuid(Uuid::from_u128(DEFAULT)),
         CatalogueId::from_uuid(Uuid::from_u128(OTHER)),
     );
-    let token_a = "a".repeat(40);
-    let token_b = "b".repeat(40);
-    let (bind_a, grant_a) = portal_publisher_on(&token_a, org, a, "alpha").unwrap();
-    let (bind_b, grant_b) = portal_publisher_on(&token_b, org, b, "beta").unwrap();
+    let (as_a, grant_a) = portal_publisher_on(org, a, "alpha");
+    let (as_b, grant_b) = portal_publisher_on(org, b, "beta");
     // The installation's default publisher beside them, on catalogue a.
-    let (bind_d, grant_d) = portal_publisher(&"d".repeat(40), org, a).unwrap();
+    let (as_d, grant_d) = portal_publisher(org, a);
     let auth = PolicyAuthorizer::new(vec![grant_a, grant_b, grant_d]);
     let dataset = |cat, publisher: &str| ObjectTarget::Publisher {
         org_id: org,
@@ -522,13 +764,13 @@ fn the_portal_grant_of_one_catalogue_writes_no_other() {
         auth.check(&ctx, Action::Propose, &dataset(cat, publisher))
             .allowed
     };
-    assert!(may(&bind_a.subject, a, "alpha"));
-    assert!(may(&bind_b.subject, b, "beta"));
+    assert!(may(&as_a, a, "alpha"));
+    assert!(may(&as_b, b, "beta"));
     // Not the other catalogue, under any publisher; not another publisher in its own.
-    assert!(!may(&bind_a.subject, b, "beta"));
-    assert!(!may(&bind_a.subject, b, "alpha"));
-    assert!(!may(&bind_b.subject, a, "alpha"));
-    assert!(!may(&bind_a.subject, a, "hel-fi"));
+    assert!(!may(&as_a, b, "beta"));
+    assert!(!may(&as_a, b, "alpha"));
+    assert!(!may(&as_b, a, "alpha"));
+    assert!(!may(&as_a, a, "hel-fi"));
     // The default publisher, catalogue-wide on a, reaches nothing of b.
-    assert!(!may(&bind_d.subject, b, "beta"));
+    assert!(!may(&as_d, b, "beta"));
 }

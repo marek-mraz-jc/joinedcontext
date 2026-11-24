@@ -4,4 +4,311 @@
 # on the line above it. A branch whose new mutant survives either adds the test that kills it or
 # lists it here with the reason; a reviewer reads every entry.
 exclude_re = [
+  # dataroom-store-memory odata_table: only Catalogues rows lack catalogue_id (every other entity set declares it
+  # required in odata_defs), so `set_name == "Catalogues" || no catalogue_id` and its `&&` admit the same rows (T-7624).
+  'dataroom/store-memory/src/lib\.rs:\d+:\d+: replace \|\| with && in <impl Store for MemoryStore>::odata_table',
+  # shako-store-pg trim_log: under the tenant's lock a batch deletes every entry it picked (gone == picked), so `>` only
+  # runs one more, empty batch and answers the same count (T-7664).
+  'shako/store-pg/src/lib\.rs:\d+:\d+: replace < with > in PgStore::trim_log',
+  # shako-store-pg mark_ready: a cache of the tenants this process caught up; without it each request catches up again
+  # from the log and answers the same rows (T-7664).
+  'shako/store-pg/src/lib\.rs:\d+:\d+: replace PgStore::mark_ready with \(\)',
+  # shako-store-pg PACKAGE_VERSION read: PackageVersionRecord has no manifest field and ignores unknown keys, so the whole
+  # row reads as the same record; the narrow read only spares loading the column's bytes (T-7664).
+  'shako/store-pg/src/tables\.rs:\d+:\d+: delete field read from struct Table expression',
+  # shako-store-pg put: every row comes from to_row of a shako record, whose keys are non-empty snake_case field names,
+  # so a check accepting non-empty or valid names refuses nothing more (T-7664).
+  'shako/store-pg/src/tables\.rs:\d+:\d+: replace && with \|\| in put',
+  # shako-store-memory claim_outbox: a retry due at exactly the Instant the claim reads; two reads of the monotonic
+  # clock in one test never tie, so `>` and `>=` cannot be told apart (T-7664).
+  'shako/store-memory/src/lib\.rs:\d+:\d+: replace > with >= in <impl Store for MemoryStore>::claim_outbox',
+  # jc-chart Canvas::rect: set() drops a pixel past the edge, so a clamp one wider (or none) draws
+  # the same; the clamp only bounds the loop (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace - with (\+|/) in Canvas::rect',
+  # jc-chart Canvas::line: on an axis the line does not move along, the step's sign is never used
+  # (dx or dy is 0 and Bresenham never steps that way), so < and <= draw alike (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace < with <= in Canvas::line',
+  # jc-chart Canvas::disc: the offsets run -r..=r, so cx - x covers the same pixels as cx + x (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace \+ with - in Canvas::disc',
+  # jc-chart check: Instant::now() equal to the deadline to the nanosecond is never observed (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace > with >= in check',
+  # jc-chart canvas: with no legend (0 px) the swatch loop runs for at most one colour and draws it
+  # past the right edge, which set() drops (T-7622).
+  'jc-chart/src/raster\.rs:\d+:\d+: replace > with >= in canvas',
+  # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
+  # skipping them by name or not is alike; the @context half is held by a test (T-7622).
+  'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
+  # T-7632 ekiben-io-ngsild status_text: a body of exactly ERROR_BODY_BYTES is cut at its own length either way.
+  'ekiben-io-ngsild/src/client\.rs:\d+:\d+: replace > with >= in status_text',
+  # T-7632 ekiben-io-ngsild: the next pass due exactly now sleeps zero either way; an equal timestamp
+  # sets the watermark (or the newest time) to the value it already holds.
+  'ekiben-io-ngsild/src/input\.rs:\d+:\d+: replace > with >= in (QueryReader|TemporalReader)::read',
+  'ekiben-io-ngsild/src/input\.rs:\d+:\d+: replace > with >= in Watermark::settle',
+  'ekiben-io-ngsild/src/input\.rs:\d+:42: replace > with >= in newest_observed::walk',
+  # T-7632 ekiben-io-ngsild TokenSource::token: Instant::now() equal to refresh_at to the nanosecond is never
+  # observed.
+  'ekiben-io-ngsild/src/token\.rs:\d+:\d+: replace < with <= in TokenSource::token',
+  # T-7632 ekiben-io-ngsild Writer::write: a message with no entities has no whole_text (None either way),
+  # and adding zero local refusals to the counter changes nothing.
+  'ekiben-io-ngsild/src/writer\.rs:\d+:(31|27): replace > with >= in Writer::write',
+  # T-7632 ekiben-io-ngsild request_body: the sum only sizes the Vec's capacity; the body is the same.
+  'ekiben-io-ngsild/src/writer\.rs:\d+:\d+: replace \+ with (-|\*) in request_body',
+  # T-7669 json_schema type_of: an integer is i64 or u64 and its f64 has no fraction, so any one test answers
+  # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
+  'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',
+  'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: delete match arm Json::Bool\(true\) in Validator<.*>::validate',
+  # T-7748 executor: EmptyBatch::part_bytes answers an empty slice, borrowed or owned alike.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace <impl MessageBatch for EmptyBatch>::part_bytes -> Cow<.*> with Cow::(Borrowed|Owned)\(Vec::leak\(Vec::new\(\)\).*',
+  # T-7748 executor: the parser builds every Executor with an empty annotation.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace Executor::annotation -> &str with ""',
+  # T-7748 executor: stacker::maybe_grow's red zone and segment sizes only decide when a new stack
+  # segment is allocated, never a value.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace \* with (\+|/) in (EvalContext<.*>::(exec_named_map|eval_expr)|exec_statement)',
+  # T-7748 executor slice_items: a zero step is refused before the walk, so > 0 and >= 0 pick alike.
+  'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace > with >= in slice_items',
+  # T-7668 gorand seedrand: 48271 * x mod (2^31 - 1) is never 0 for a seed in range, so x < 0 and
+  # x <= 0 add int32max to the same values.
+  'ekiben-bloblang/src/gorand\.rs:\d+:\d+: replace < with <= in seedrand',
+  # T-7668 gorand int63n: for a power of two n the slow path (max = 2^63 - 1, no redraw, v % n) gives
+  # int63() & (n - 1), so a power-of-two test that never fires (|, ^, n / 1) answers the same; a draw
+  # exactly equal to max (one in 2^63) is the only one > and >= tell apart.
+  'ekiben-bloblang/src/gorand\.rs:\d+:14: replace & with (\||\^) in GoRand::int63n',
+  'ekiben-bloblang/src/gorand\.rs:\d+:19: replace - with / in GoRand::int63n',
+  'ekiben-bloblang/src/gorand\.rs:\d+:\d+: replace > with >= in GoRand::int63n',
+  # T-7669 msgpack len_header and Reader::uint: the fix base (0xa0, 0x90, 0x80) has its low bits zero and
+  # the length is below the fix limit; `acc << 8` has its low byte zero: `|` and `^` add the same bits.
+  'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace \| with \^ in (len_header|Reader<.*>::uint)',
+  # T-7669 msgpack Reader::len: a length between what is left and buf.len() + pos passes the looser bound and
+  # then take() answers the same "unexpected EOF"; collect() over a Result reserves nothing up front.
+  'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace - with \+ in Reader<.*>::len',
+  # jc-types from_b32: `n << 5` has its low five bits zero and `v` is below 32, so `|` and `^` add the same bits.
+  'jc-types/src/lib\.rs:\d+:\d+: replace \| with \^ in from_b32',
+  # jc-http carried_v4 (T-7623): `high << 16` has its low 16 bits zero and `low` fits in them, so `|` and `^` add the same bits.
+  'jc-http/src/lib\.rs:\d+:\d+: replace \| with \^ in carried_v4',
+  # jc-time from_system_time (T-7623): the comparison picks the clamp only when jiff refuses the instant; at exactly
+  # UNIX_EPOCH jiff never refuses, so `<` and `<=` cannot be told apart.
+  'jc-time/src/lib\.rs:\d+:\d+: replace < with <= in from_system_time',
+  # jc-types cache: an entry expiring at exactly this Instant: two reads of the monotonic clock in one test never tie, so `>` and `>=` cannot be told apart.
+  'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in Inner<K, V>::expire',
+  'jc-types/src/cache\.rs:\d+:\d+: replace > with >= in BoundedCache<K, V>::entries_of',
+  # dataroom-shacl derive_form_layout: `<=` differs from `<` only when the two orders are equal, and
+  # then both keep the same order (T-7625).
+  'dataroom/shacl/src/registry\.rs:\d+:\d+: replace < with <= in derive_form_layout',
+  # dataroom-plugin fragment_is_safe: `end * 1` restarts the scan at the tag's own `>`, which holds no `<` and is text either way.
+  'dataroom/plugin/src/lib\.rs:\d+:\d+: replace \+ with \* in fragment_is_safe',
+  # Every Store sets org_id and catalogue_id from the request ctx on upsert (store-memory, store-pg), so the copy's own fields
+  # never reach a row; a dataset copy still naming the source catalogue only rewrites identical content.
+  'dataroom/server/src/writer\.rs:\d+:\d+: delete field (org_id|catalogue_id) from struct (Dataset|Publisher) expression in CatalogueWriter::list_from',
+  # T-7539: the cached token differs only when Instant::now() equals its expiry to the nanosecond.
+  'crates/embedder/src/client\.rs:\d+:\d+: replace < with <= in Remote::token',
+  # T-7539: the pinned model always answers a [1, tokens, 384] tensor, so neither half of the shape check is ever true.
+  'crates/embedder/src/model\.rs:\d+:\d+: replace \|\| with && in Engine::embed',
+  # T-7539: tokenizers 0.23.2 defaults max_length to 512, which is MAX_TOKENS.
+  'crates/embedder/src/model\.rs:\d+:\d+: delete field max_length from struct TruncationParams expression in Embedder::load',
+  # antares-bus NatsBus::ensure_streams -> Ok(()): get_or_create keeps a stream that exists, and a
+  # live-NATS test cannot delete the shared streams under the other tests (nextest runs the binaries
+  # side by side), so only a fresh server tells; streams_and_bucket_carry_their_contract pins the
+  # configs it creates (T-7530).
+  'antares-bus/src/nats\.rs:.*replace NatsBus::ensure_streams -> Result<\(\), BusError> with Ok\(\(\)\)',
+  # odata-table git.rs segments() (T-7597): an empty pattern or one starting with `/` also yields an empty
+  # segment, which the segment rule refuses with the same error, so `||` and `&&` between those two
+  # checks answer alike; both checks stay as the root guard (integrator bounce 2026-11-23).
+  'odata-table/src/git\.rs:90:9: replace \|\| with && in segments',
+  # dataroom-api handle_odata `/{set}/$count`: top 0 only spares the rows the answer never
+  # carries; without it the count is the same, the page is built and dropped (T-7627).
+  'dataroom/api/src/odata_routes\.rs:\d+:\d+: delete field top from struct QueryOptions expression in handle_odata',
+  # dataroom-api handle_odata `/{set}/$export?`: odata_url parses `Datasets?` as `Datasets`, so
+  # an empty query string adds nothing either way (routes.rs pins the answer, T-7627).
+  'dataroom/api/src/odata_routes\.rs:\d+:\d+: replace match guard !q\.is_empty\(\) with true in handle_odata',
+  # ekiben-js fuzzing::run is compiled only with the `fuzzing` feature, which no test build turns
+  # on; cargo fuzz runs it from crates/ekiben/crates/ekiben-js/fuzz (T-7584).
+  'ekiben-js/src/lib\.rs:.*fuzzing::run',
+  # ekiben-io-amqp read_batch: RabbitMQ refuses a message over its max_message_size (16 MiB by
+  # default) at publish, so no test broker can deliver one past MAX_MESSAGE_BYTES (64 MiB); the
+  # size guard and its reject serve brokers configured above 64 MiB (T-7580).
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: replace match guard d\.data\.len\(\) > MAX_MESSAGE_BYTES with false in <impl Input for AmqpInput>::read_batch',
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: replace > with (==|>=) in <impl Input for AmqpInput>::read_batch',
+  'ekiben-io-amqp/src/lib.rs:\d+:\d+: delete ! in <impl Input for AmqpInput>::read_batch',
+  # ekiben-text go-syslog machines: generated by scripts/ragel-go-to-rust.py from go-syslog v3.0.0's Ragel
+  # output, so a mutant is a change to generated code, not to code anyone writes. The parity corpus takes
+  # every transition of both charts (chart_tests) and Bento 1.22.0 recorded every expected output; a
+  # sample of every 150th mutant per file is the evidence of what it kills (T-7677). A relational mutant
+  # inside a byte-range test survives when the one byte per class the corpus takes lies outside the
+  # changed range; the upgrade is the min and max byte of each run per class (about three times the corpus).
+  'ekiben-text/src/go_syslog/rfc(3164|5424)/machine\.rs:',
+  # ekiben-text go_regex push_range (T-7676): a one-character range `a-a` is the class of `a`, so `l < h` and `l <= h`
+  # write the same class.
+  'ekiben-text/src/go_regex\.rs:\d+:\d+: replace < with <= in push_range',
+  # ekiben-text grok atoi and parse_float (T-7676): ParseTyped's caller drops a cast's error and only its Err counts;
+  # atoi's syntax check picks Go's "invalid syntax" text over parse's "out of range", and parse_float's character check
+  # refuses nothing Rust's f64 parser accepts (decimal text, inf, infinity, nan in any case), so either way is Err alike.
+  'ekiben-text/src/processor_grok\.rs:\d+:\d+: replace \|\| with && in atoi',
+  'ekiben-text/src/processor_grok\.rs:\d+:\d+: replace && with \|\| in parse_float',
+  'ekiben-text/src/processor_grok\.rs:\d+:\d+: replace match guard ok with true in parse_float',
+  # ekiben-text rfc5424 Output::minimal: the machine reads the version only after a priority, so a version in range
+  # without a priority never occurs and `priority_set || priority <= 191` before `&& version` admits the same (T-7676).
+  'ekiben-text/src/go_syslog/rfc5424\.rs:\d+:27: replace && with \|\| in Output::minimal',
+  # ngsild-residual compare: an ordered comparison with a Boolean on one side is Unknown either
+  # way, since order() has no ordering between a Boolean and any other kind (T-7599).
+  'antares-residual/src/eval.rs:\d+:\d+: replace \|\| with && in compare',
+  # ngsild-residual pow: the exact 1/b^e arm exists for platforms whose powf is not correctly
+  # rounded; on glibc powf gives the same bits for every integer case (T-7599).
+  'antares-residual/src/eval.rs:\d+:\d+: delete match arm \(Val::Int\(b\), Val::Int\(e\)\) in call',
+  # ngsild-residual translate: a `]` outside a class pushes `]` and leaves the class off either
+  # way, so the guard `if class` changes nothing observable (T-7599).
+  'antares-residual/src/pattern.rs:\d+:\d+: replace match guard class with true in translate',
+  # joinedcontext-policy read_filter: every rule names one type (rules() and the per-type loop), so with no
+  # type refused and no rule dropped the block keeps every rule and adds none; < and <= read alike (T-7672).
+  'addons/joinedcontext-policy/src/decide\.rs:\d+:\d+: replace < with <= in read_filter',
+  # joinedcontext-policy Information::narrowed: without `attributes` (or for a schema read, which every
+  # capability gives) the general path keeps every listed Attribute, so the early return answers the same (T-7672).
+  'addons/joinedcontext-policy/src/document\.rs:\d+:\d+: replace \|\| with && in Information::narrowed',
+  # kaisatsu-import apply_realm_files: listing a re-applied person's groups when the file names none only adds a read;
+  # `in_every_group` over an empty file list is true either way, so the plan and the writes are the same.
+  'crates/kaisatsu/import/src/lib\.rs:.*replace match guard !file_groups\.is_empty\(\) with true in apply_realm_files',
+  # daiya-expr classic_reduce avg: with no valid value the mean is never read (all_null answers None),
+  # so dividing by a zero count or not is alike (T-7633).
+  'daiya/expr/src/classic\.rs:\d+:\d+: replace > with >= in classic_reduce',
+  # daiya-expr classic_reduce median: for an odd count (len - 1) / 2 and len / 2 name the same index (T-7633).
+  'daiya/expr/src/classic\.rs:\d+:\d+: replace - with / in classic_reduce',
+  # daiya-expr union_values: an empty label set is contained in every other, so the subset arms that
+  # follow pick the same labels the "either side empty" test picks (T-7633).
+  'daiya/expr/src/math\.rs:\d+:\d+: replace \|\| with && in union_values',
+  # daiya-expr reduce_slice Sum: a NaN added to the sum makes it NaN, which the guard answers too (T-7633).
+  'daiya/expr/src/reduce\.rs:\d+:\d+: replace match guard !x\.is_nan\(\) with true in reduce_slice',
+  # daiya-expr tx_calculate_field row index: with no rows the 0..row_cnt map never runs, so the
+  # `row_cnt > 0` guard of the percentile division decides nothing (T-7633).
+  'daiya/expr/src/tx\.rs:\d+:\d+: replace > with >= in tx_calculate_field',
+  # daiya-expr tx_limit: a frame of exactly the limit is truncated (or drained) to its own length (T-7633).
+  'daiya/expr/src/tx\.rs:\d+:\d+: replace > with >= in tx_limit',
+  # ngsild-residual decode_base64 and base64url: `acc << 6`, `b0 << 4` and `low << 2` have their low
+  # bits zero and the other operand fits in them, so `|` and `^` add the same bits (T-7693).
+  'antares-residual/src/binary\.rs:\d+:\d+: replace \| with \^ in (decode_base64|base64url)',
+  # ngsild-jsonld compact_entity(_shallow): `id`, `scope` and the four system dates fall to the `_`
+  # arm unchanged when their arm is deleted: no context term has the IRI "id", "scope" or "createdAt"
+  # (expansion keeps them under their own names), so compact_iri answers the key, and a string value
+  # or a one-element scope array compacts to what the arm writes (T-7693).
+  'antares-jsonld/src/compact\.rs:\d+:\d+: delete match arm "(id|scope|createdAt)".* in compact_entity',
+  # ngsild-jsonld loader: these functions are cfg(target_arch = "wasm32") (the browser build's
+  # SendWrapper, timers and builder); the native test run does not compile them. Each native arm
+  # has the same name, so the lines are pinned: a move makes the mutant read as missed, never hidden (T-7693).
+  'antares-jsonld/src/loader\.rs:(398|539|560|579|598):5: replace (http_interaction|client_builder|with_timeouts|pause|io_deadline) ',
+  # ngsild-jsonld slow_factor: only the sanitizer workflow sets ANTARES_TEST_SANITIZER, so the factor is 1
+  # in every run that measures mutants (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace slow_factor -> u64 with 1',
+  # ngsild-jsonld ip_is_local_host and ip_is_private: ::1 and :: are also the IPv4-compatible
+  # spellings of 0.0.0.1 and 0.0.0.0, which embedded_v4 already judges local and private, so the
+  # explicit loopback/unspecified tests decide nothing alone (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace \|\| with && in EgressPolicy::ip_is_(local_host|private)',
+  # ngsild-jsonld embedded_v4: `hi << 16` has its low 16 bits zero, so `|` and `^` add the same bits (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace \| with \^ in EgressPolicy::embedded_v4',
+  # ngsild-jsonld Loader::merge_entry: joining an absolute http(s) URL against the base answers that
+  # URL, which reqwest normalises the same way when it fetches, so the scheme test only saves a parse (T-7693).
+  'antares-jsonld/src/loader\.rs:\d+:\d+: replace \|\| with && in Loader::merge_entry',
+  # ngsild-jsonld expand_common_members: a non-null observedAt/expiresAt copied by the null pass is
+  # overwritten by the validated value (or the validation fails) in the block right after it (T-7693).
+  'antares-jsonld/src/expand\.rs:\d+:\d+: replace && with \|\| in expand_common_members',
+  # ngsild-matcher is_active and throttled: an expiresAt or a throttling window ending at exactly the
+  # millisecond the clock reads is never observed by a test that reads the clock twice (T-7693).
+  'antares-matcher/src/lib\.rs:\d+:\d+: replace < with <= in (is_active|throttled)',
+  # kaisatsu-store-pg: push_email_match picks the bare email_lower column only so the unique index serves an
+  # exact non-empty match; coalesce(email_lower, '') selects the same rows for every operator and value (a NULL
+  # never equals, contains or starts with a non-empty value, and an empty value takes coalesce either way).
+  'crates/kaisatsu/store-pg/src/lib\.rs:.*replace == with != in push_email_match',
+  # kaisatsu-store-pg: list_groups' search query keeps only the matches and their ancestors (keep CTE), so the
+  # Rust prune after it finds no node to drop; kept as a second check on the search result.
+  'crates/kaisatsu/store-pg/src/lib\.rs:.*replace matches_or_has_matching_child -> bool with true',
+  # kaisatsu-store-pg: lock_grants orders a grant write against a cascading delete in another transaction
+  # (advisory lock); a single-connection test commits one after the other, so no test observes the lock.
+  'crates/kaisatsu/store-pg/src/lib\.rs:.*replace lock_grants -> Result<\(\)> with Ok\(\(\)\)',
+  # kaisatsu-crypto: Kek's Drop zeroizes the key bytes on drop; no safe code can read freed memory, so no
+  # test tells a zeroizing drop from an empty one (the zeroize crate's own tests hold it).
+  'crates/kaisatsu/crypto/src/keys\.rs:.*replace <impl Drop for Kek>::drop with \(\)',
+  # kaisatsu-crypto: aws-lc-rs hands every generated P-256 public key back as the 65-byte uncompressed point,
+  # so the format guard in generate_es256 never sees another shape and `||` and `&&` refuse the same keys.
+  'crates/kaisatsu/crypto/src/keys\.rs:.*replace \|\| with && in KeyManager::generate_es256',
+  # kaisatsu-crypto: compute_hotp_at joins four bytes shifted to disjoint bit ranges (24, 16, 8, 0), where `|`
+  # and `^` give the same word.
+  'crates/kaisatsu/crypto/src/totp\.rs:.*replace \| with \^ in compute_hotp_at',
+  # kaisatsu-crypto: compute_hotp_at hashes every algorithm name other than SHA1 and SHA512 with SHA-256,
+  # so a default of "", "xyzzy" or "HmacSHA256" computes the same code.
+  'crates/kaisatsu/crypto/src/totp\.rs:.*replace default_alg -> String with ',
+  # kaisatsu-crypto: AUTH_DATA_FLAG_UP is `1 << 0`, and `1 >> 0` is the same 1.
+  'crates/kaisatsu/crypto/src/webauthn\.rs:35:.*replace << with >>',
+  # kaisatsu-crypto: decode_cbor refuses an input over 64 KiB before decoding, so no byte or text string of
+  # exactly 64 KiB (head included) reaches the per-string cap, where `>` and `>=` differ only at that length.
+  'crates/kaisatsu/crypto/src/webauthn\.rs:(200|212):.*replace > with >= in CborReader',
+  # daiya-store-memory: insert_plan drops plans whose expires_at is before `now`, read inside the call; a
+  # plan expiring at that exact microsecond is the only one `>` and `>=` treat apart, and no test can pin it.
+  'crates/daiya/store-memory/src/lib\.rs:.*replace > with >= in <impl DaiyaStore for MemoryStore>::insert_plan',
+  # daiya-api execute_public_dashboard_query: a span exactly at the organization's maximum is capped to
+  # to - max, which is the `from` it already has, so `>` and `>=` give the same range (T-7684).
+  'crates/daiya/api/src/public\.rs:\d+:\d+: replace > with >= in execute_public_dashboard_query',
+  # daiya-api SetTable::read: daiya's Scope carries permissions and no row restriction, so scope.cond() is
+  # always true and And(true, filter) reads the rows filter alone reads (T-7684).
+  'crates/daiya/api/src/sets\.rs:\d+:\d+: replace != with == in SetTable<.a>::read',
+  # daiya-api page_reader: every caller with an actor but no Authorization header is a host's server-admin
+  # check on another header, and an Authorization header without an actor is a 401 before the page; the
+  # reader `&&` would install reads the same organization's same panels (T-7684).
+  'crates/daiya/api/src/page\.rs:\d+:\d+: replace \|\| with && in page_reader',
+  # daiya-api check_rate_limit: a full table drops windows older than the window; `<` and `<=` differ only for
+  # a window that started exactly one window length before this call, an instant no test can pin (T-7684).
+  'crates/daiya/api/src/public\.rs:\d+:\d+: replace < with <= in PublicRateLimiter::check_rate_limit',
+  # antares-notifier: the retry jitter is 1 + j * (2n - 1) with n uniform clock noise in [0, 1); 1 - j * (2n - 1)
+  # has the same distribution over the same range [1 - j, 1 + j], so no test can tell the two apart.
+  'crates/antares-notifier/src/lib\.rs:\d+:26: replace \+ with - in DeliveryPolicy::next_delay',
+  # antares-notifier: page_sink is cfg(target_arch = "wasm32"); the native test run does not compile it, so its mutants
+  # change nothing the native tests build (the browser build of antares-wasm registers and calls it).
+  'crates/antares-notifier/src/http\.rs:\d+:\d+: replace .*page_sink::',
+  # antares-wasm browser.rs and opfs.rs are cfg(target_arch = "wasm32"), as are the globalThis reads in
+  # Broker::with_store_alias (ANTARES_PUBLIC_URL, ANTARES_TEMPORAL_INSTANCE_LIMIT, ANTARES_SWEEP_SECS): the native
+  # test run does not compile them, so their mutants change nothing it builds (the browser build runs them; T-7673).
+  'crates/antares-wasm/src/(browser|opfs)\.rs:',
+  # antares-icsr Internal::deliver: Grant::allows(false) is `!false || ...`, true for every grant, so the guard
+  # replaced with true reads alike; the guard stays as the read-access statement of the delivery (T-7673).
+  'crates/antares-icsr/src/lib\.rs:\d+:\d+: replace match guard g\.allows\(false\) with true in Internal::deliver',
+  # antares-ical Zone::local: the year test picks the fallback end only when jiff cannot convert the instant, which
+  # happens below -9999 or above 9999, never at year 0, so `<` and `<=` answer alike (T-7673).
+  'crates/antares-ical/src/zone\.rs:\d+:\d+: replace < with <= in Zone::local',
+  # antares-icsr SelfUrls::matching: an URL with a user or a password serialises with its userinfo, and no self URL
+  # holds one, so no prefix matches either way; the explicit refusal stays (T-7673).
+  'crates/antares-icsr/src/self_url\.rs:\d+:\d+: replace \|\| with && in SelfUrls::matching',
+  # antares-ws mqtt packet: the length byte is `n & 0x7f`, its top bit zero, so `| 0x80` and `^ 0x80` set the
+  # same continuation bit (T-7675).
+  'crates/antares-ws/src/mqtt\.rs:\d+:\d+: replace \| with \^ in packet',
+  # antares-ws READ_BUFFER_BYTES sizes the socket's read buffer only; any size reads the same frames (T-7675).
+  'crates/antares-ws/src/lib\.rs:\d+:\d+: replace \* with (\+|/)$',
+  # antares-ws leased: a wish equal to now + lease to the millisecond is never observed; both arms then answer the
+  # same instant (T-7675).
+  'crates/antares-ws/src/socket\.rs:\d+:\d+: replace < with <= in leased',
+  # antares-ws Session::tick: a pong exactly `pong_within` old to the nanosecond is never observed (T-7675).
+  'crates/antares-ws/src/socket\.rs:552:44: replace > with >= in Session::tick',
+  # antares-ws Session::tick idle and the STA MQTT tick's CONNECT deadline and keep alive: an age exactly the limit to
+  # the nanosecond is never observed at a tick (T-7675).
+  'crates/antares-ws/src/socket\.rs:555:82: replace > with >= in Session::tick',
+  'crates/antares-ws/src/sta_mqtt\.rs:(710:58|715:61): replace > with >= in Session::tick',
+  # antares-ws Conn::is_attached: the resume wakes the connection and the old socket, already waiting, drains first and
+  # ends because Conn::next answers None to a generation no longer attached; the heartbeat's check covers a wake the
+  # new socket takes first, an ordering no test can force (T-7675).
+  'crates/antares-ws/src/hub\.rs:\d+:\d+: replace Conn::is_attached -> bool with true',
+  # antares-ws show_changes: a showChanges Subscription's update notifications carry previousValue, which already
+  # keeps them out of coalescing (Forwarded::changes); the recorded flag only differs for two queued notifications
+  # of one Entity that both lack a previous value, an order the notifier gives no test a way to force (T-7675).
+  'crates/antares-ws/src/socket\.rs:\d+:\d+: replace show_changes -> Option<bool> with (None|Some\(false\))',
+  # antares-views union run: `live` only sizes the chunk each view is asked for per refill (ROWS_HELD shared out);
+  # the merged page, its order and its cursor are the same for any chunk of at least one row (T-7673).
+  'crates/antares-views/src/union\.rs:319:40: delete ! in run',
+  # antares-views union run: without count, the first refill and the loop's first refill ask the same parts for the
+  # same chunk, so skipping the first one when limit > 0 answers alike (T-7673).
+  'crates/antares-views/src/union\.rs:326:18: replace > with < in run',
+  'crates/antares-wasm/src/lib\.rs:\d+:\d+: (delete !|replace \S+ with \S+) in Broker::with_store_alias',
+  # antares-notifier: the pump-finished guard after a successful publish only decides whether a connection whose broker
+  # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection
+  # is replaced by the next publish's retry (a_dead_pooled_connection_is_replaced_by_one_retry). No test can order it.
+  'crates/antares-notifier/src/mqtt\.rs:\d+:\d+: replace match guard !conn\.pump\.is_finished\(\) with true in MqttSink::publish_message',
+  # T-7740 odata-json visit_unit: serde_json's Value::default() is Value::Null, the value it answers.
+  'crates/odata-json/src/json\.rs:\d+:\d+: replace <impl Visitor<.de> for Node<._, ._>>::visit_unit -> Result<Value, E> with Ok\(Default::default\(\)\)',
+  # T-7740 odata-url strength: only `not` and `-` bind at 7; a parent offers its operands at most 7 (an arithmetic right
+  # operand) and `not` offers its own strength, so 7 and 8 parenthesise every expression the same.
+  'crates/odata-url/src/display\.rs:\d+:\d+: delete match arm Expr::Not\(_\) \| Expr::Neg\(_\) in strength',
 ]

@@ -15,15 +15,10 @@ import { recordCard } from "../ui";
 
 export type { DataColumn };
 
-/** A grid's read: a list the page reads itself, or only the wait of rows the page gathers. */
-export type GridQuery =
-  | { isPending: boolean; isError?: false }
-  | { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
-
 export interface AdminGridProps<T> {
   /** The list's read: the skeleton while it runs, the API's reason and a retry when it fails;
    * absent for rows the page already holds (a sample, a result the assistant returned). */
-  query?: GridQuery;
+  query?: { isPending: boolean; isError: boolean; error: unknown; refetch?: () => unknown };
   caption: string;
   rows: readonly T[];
   columns: readonly DataColumn<T>[];
@@ -80,9 +75,7 @@ export function AdminGrid<T>({
         query?.isError ? (
           <PageFailed
             error={query.error}
-            onRetry={() => {
-              void query.refetch();
-            }}
+            onRetry={query.refetch ? () => void query.refetch?.() : undefined}
           />
         ) : undefined
       }

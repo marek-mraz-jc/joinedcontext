@@ -53,6 +53,43 @@ async fn create_then_retrieve_round_trips() {
     assert_eq!(doc["speed"]["value"], 42);
 }
 
+/// A trailing '/' reaches the same route with its query kept (antares_api::router
+/// trims it for every host); a bare "/" stays the root.
+#[tokio::test(flavor = "current_thread")]
+async fn a_trailing_slash_reaches_the_same_route_with_its_query() {
+    let broker = Broker::default();
+    let resp = broker
+        .handle(req("POST", "/ngsi-ld/v1/entities/", ENTITY))
+        .await;
+    assert_eq!(
+        resp.status(),
+        201,
+        "{}",
+        String::from_utf8_lossy(resp.body())
+    );
+    let resp = broker
+        .handle(req(
+            "GET",
+            "/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:wasm-1/?options=keyValues",
+            "",
+        ))
+        .await;
+    assert_eq!(
+        resp.status(),
+        200,
+        "{}",
+        String::from_utf8_lossy(resp.body())
+    );
+    let doc: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+    assert_eq!(doc["speed"], 42, "keyValues came through: {doc}");
+    // "/" stays the root and an authority-form target has no path to trim:
+    // both reach the router as they came
+    for target in ["/", "example.org:443"] {
+        let resp = broker.handle(req("GET", target, "")).await;
+        assert_eq!(resp.status(), 404, "{target}");
+    }
+}
+
 /// Cross-tenant federation inside ONE broker. Tenant `space-a` holds a
 /// Context Source Registration whose endpoint is a real loopback listener
 /// feeding the SAME broker instance and whose `tenant` member (5.2.9) names

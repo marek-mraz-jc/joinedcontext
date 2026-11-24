@@ -24,7 +24,7 @@ pub mod s3;
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -72,7 +72,7 @@ pub struct Target {
     pub updated_by: String,
     /// RFC 3339.
     pub updated_at: String,
-    /// RFC 3339; the start of the last scheduled or manual run.
+    /// RFC 3339; the end of the last scheduled or manual run that succeeded.
     pub last_run_at: Option<String>,
     /// The Organization's reserved project key, set by the store that read the target; `None`
     /// for a target no store has saved yet, which then has no object key.
@@ -164,7 +164,57 @@ fn rfc3339(at: time::OffsetDateTime) -> String {
 }
 
 /// The targets by (organization, kind) and the log, when the Portal runs without a database.
-type MemoryRows = (BTreeMap<(String, String), Target>, Vec<LogEntry>);
+/// The targets, the audit log and each held lease (its token and until when).
+type MemoryRows = (
+    BTreeMap<(String, String), Target>,
+    Vec<LogEntry>,
+    BTreeMap<(String, String), (String, time::OffsetDateTime)>,
+);
+
+/// How long a run's lease holds before another replica may take the target over: the running
+/// replica renews it every [`LEASE_RENEW`], so only a replica that died lets it lapse.
+pub const LEASE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// How often a running backup renews its lease.
+pub const LEASE_RENEW: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// How long a failed run waits before the schedule tries it again; `last_run_at` stays as it was.
+pub const RETRY: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// How many scheduled backups one replica runs at once (CMP-09, LOP-07): each builds one
+/// Organization's archive, so the bound keeps an appliance's memory flat while one slow archive
+/// no longer holds every other Organization back.
+/// ponytail: a constant; a deployment knob when a larger profile needs more.
+pub const SCHEDULED_RUNS: usize = 2;
+
+/// A held run of one target: the token fences the lease, so a run whose lease lapsed and was
+/// taken over can neither renew nor finish the other replica's.
+#[derive(Debug, Clone)]
+pub struct Lease {
+    pub organization: String,
+    pub kind: String,
+    token: String,
+}
+
+fn secs(duration: std::time::Duration) -> f64 {
+    duration.as_secs_f64()
+}
+
+fn later(duration: std::time::Duration) -> time::OffsetDateTime {
+    time::OffsetDateTime::now_utc() + duration
+}
+
+fn lease_of(target: &Target, token: String) -> Lease {
+    Lease {
+        organization: target.organization.clone(),
+        kind: target.kind.clone(),
+        token,
+    }
+}
+
+fn in_progress(organization: &str, kind: &str) -> ApiError {
+    ApiError::Conflict(format!(
+        "a {kind} backup of {organization} is running now; wait for it to finish and read its \
+         entry in the log"
+    ))
+}
 
 enum Inner {
     Postgres(sqlx::PgPool),
@@ -380,18 +430,24 @@ impl BackupStore {
         }
     }
 
-    /// Claims the scheduled run of every enabled target whose last run is older than its
-    /// interval, stamping `last_run_at` in the same statement: of several Portal replicas only
-    /// the one whose UPDATE took the row runs it.
-    pub async fn claim_due(&self) -> Result<Vec<Target>, ApiError> {
+    /// Claims, for one replica, up to `limit` enabled targets whose last successful run is older
+    /// than their interval and whose lease is free (none, lapsed, or a failure's backoff over).
+    /// Each claimed target is leased for [`LEASE`] under a fresh token: of several Portal
+    /// replicas only the one whose UPDATE took the row runs it, and `last_run_at` moves only when
+    /// that run succeeds ([`BackupStore::finished`]).
+    pub async fn claim_due(&self, limit: usize) -> Result<Vec<(Target, Lease)>, ApiError> {
+        let mut due = Vec::new();
         match &self.inner {
             Inner::Memory(rows) => {
                 let mut rows = rows
                     .write()
                     .map_err(|_| ApiError::Internal("the backup store is poisoned".into()))?;
                 let now = time::OffsetDateTime::now_utc();
-                let mut due = Vec::new();
-                for target in rows.0.values_mut() {
+                let (targets, _, leases) = &mut *rows;
+                for (key, target) in targets.iter() {
+                    if due.len() >= limit {
+                        break;
+                    }
                     let last = target.last_run_at.as_deref().and_then(|at| {
                         time::OffsetDateTime::parse(
                             at,
@@ -402,12 +458,13 @@ impl BackupStore {
                     let ripe = last.is_none_or(|last| {
                         now - last >= time::Duration::hours(i64::from(target.every_hours))
                     });
-                    if target.enabled && ripe {
-                        target.last_run_at = Some(rfc3339(now));
-                        due.push(target.clone());
+                    let free = leases.get(key).is_none_or(|(_, until)| *until <= now);
+                    if target.enabled && ripe && free {
+                        let token = jc_types::ProjectId::mint().to_string();
+                        leases.insert(key.clone(), (token.clone(), later(LEASE)));
+                        due.push((target.clone(), lease_of(target, token)));
                     }
                 }
-                Ok(due)
             }
             Inner::Postgres(pool) => {
                 // One keyed transaction per Organization of the registry (ARCH/STO-07): no
@@ -418,56 +475,191 @@ impl BackupStore {
                 .fetch_all(pool)
                 .await
                 .map_err(db)?;
-                let mut due = Vec::new();
                 for organization in organizations {
+                    let room = limit.saturating_sub(due.len());
+                    if room == 0 {
+                        break;
+                    }
                     let Some((key, mut tx)) = keyed_with(pool, &organization).await? else {
                         continue;
                     };
+                    let token = jc_types::ProjectId::mint().to_string();
                     let rows: Vec<TargetRow> = sqlx::query_as(
-                        "UPDATE organization_backup_targets SET last_run_at = now() \
-                     WHERE organization = $1 AND enabled AND (last_run_at IS NULL \
-                     OR last_run_at <= now() - make_interval(hours => every_hours)) \
-                     RETURNING organization, kind, endpoint, region, bucket, prefix, \
-                     access_key_id, sealed_secret, enabled, every_hours, keep_days, recipients, \
-                     updated_by, updated_at, last_run_at",
+                        "UPDATE organization_backup_targets \
+                         SET lease_until = now() + make_interval(secs => $2), lease_token = $3 \
+                         WHERE organization = $1 AND kind IN (SELECT kind \
+                         FROM organization_backup_targets WHERE organization = $1 AND enabled \
+                         AND (last_run_at IS NULL \
+                         OR last_run_at <= now() - make_interval(hours => every_hours)) \
+                         AND (lease_until IS NULL OR lease_until <= now()) \
+                         ORDER BY kind LIMIT $4 FOR UPDATE SKIP LOCKED) \
+                         RETURNING organization, kind, endpoint, region, bucket, prefix, \
+                         access_key_id, sealed_secret, enabled, every_hours, keep_days, \
+                         recipients, updated_by, updated_at, last_run_at",
                     )
                     .bind(&organization)
+                    .bind(secs(LEASE))
+                    .bind(&token)
+                    .bind(i64::try_from(room).unwrap_or(i64::MAX))
                     .fetch_all(&mut *tx)
                     .await
                     .map_err(db)?;
                     tx.commit().await.map_err(db)?;
-                    due.extend(rows.into_iter().map(|row| Target {
-                        key: Some(key),
-                        ..target_of(row)
+                    due.extend(rows.into_iter().map(|row| {
+                        let target = Target {
+                            key: Some(key),
+                            ..target_of(row)
+                        };
+                        let lease = lease_of(&target, token.clone());
+                        (target, lease)
                     }));
                 }
-                Ok(due)
             }
         }
+        Ok(due)
     }
 
-    /// Stamps a manual run's start, which the schedule then counts from.
-    pub async fn ran_now(&self, organization: &str, kind: &str) -> Result<(), ApiError> {
+    /// Claims a manual run of one target, due or not: refused while another run holds it, taken
+    /// during a failure's backoff, which only holds the schedule back.
+    pub async fn claim(&self, organization: &str, kind: &str) -> Result<Lease, ApiError> {
+        let token = jc_types::ProjectId::mint().to_string();
+        let taken = match &self.inner {
+            Inner::Memory(rows) => {
+                let mut rows = rows
+                    .write()
+                    .map_err(|_| ApiError::Internal("the backup store is poisoned".into()))?;
+                let key = (organization.to_owned(), kind.to_owned());
+                let now = time::OffsetDateTime::now_utc();
+                let free = rows
+                    .2
+                    .get(&key)
+                    .is_none_or(|(held, until)| held.is_empty() || *until <= now);
+                if free {
+                    rows.2.insert(key, (token.clone(), later(LEASE)));
+                }
+                free
+            }
+            Inner::Postgres(pool) => {
+                let mut tx = keyed(pool, organization)
+                    .await?
+                    .ok_or_else(|| unregistered(organization))?;
+                let taken = sqlx::query(
+                    "UPDATE organization_backup_targets \
+                     SET lease_until = now() + make_interval(secs => $3), lease_token = $4 \
+                     WHERE organization = $1 AND kind = $2 \
+                     AND (lease_token IS NULL OR lease_until <= now())",
+                )
+                .bind(organization)
+                .bind(kind)
+                .bind(secs(LEASE))
+                .bind(&token)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?
+                .rows_affected()
+                    == 1;
+                tx.commit().await.map_err(db)?;
+                taken
+            }
+        };
+        if !taken {
+            return Err(in_progress(organization, kind));
+        }
+        Ok(Lease {
+            organization: organization.to_owned(),
+            kind: kind.to_owned(),
+            token,
+        })
+    }
+
+    /// Extends a running backup's lease by [`LEASE`]; false when the lease is no longer this
+    /// run's (it lapsed and another replica took the target), so the run stops.
+    pub async fn renew(&self, lease: &Lease) -> Result<bool, ApiError> {
         match &self.inner {
             Inner::Memory(rows) => {
                 let mut rows = rows
                     .write()
                     .map_err(|_| ApiError::Internal("the backup store is poisoned".into()))?;
-                if let Some(target) = rows.0.get_mut(&(organization.to_owned(), kind.to_owned())) {
-                    target.last_run_at = Some(rfc3339(time::OffsetDateTime::now_utc()));
+                Ok(
+                    match rows
+                        .2
+                        .get_mut(&(lease.organization.clone(), lease.kind.clone()))
+                    {
+                        Some((token, until)) if *token == lease.token => {
+                            *until = later(LEASE);
+                            true
+                        }
+                        _ => false,
+                    },
+                )
+            }
+            Inner::Postgres(pool) => {
+                let Some(mut tx) = keyed(pool, &lease.organization).await? else {
+                    return Ok(false);
+                };
+                let renewed = sqlx::query(
+                    "UPDATE organization_backup_targets \
+                     SET lease_until = now() + make_interval(secs => $4) \
+                     WHERE organization = $1 AND kind = $2 AND lease_token = $3",
+                )
+                .bind(&lease.organization)
+                .bind(&lease.kind)
+                .bind(&lease.token)
+                .bind(secs(LEASE))
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?
+                .rows_affected()
+                    == 1;
+                tx.commit().await.map_err(db)?;
+                Ok(renewed)
+            }
+        }
+    }
+
+    /// Ends the run holding `lease`: a success stamps `last_run_at` and frees the target, a
+    /// failure leaves `last_run_at` as it was and holds the schedule back for [`RETRY`]. A lease
+    /// another replica took over is that replica's to end, so nothing changes.
+    pub async fn finished(&self, lease: &Lease, ok: bool) -> Result<(), ApiError> {
+        match &self.inner {
+            Inner::Memory(rows) => {
+                let mut rows = rows
+                    .write()
+                    .map_err(|_| ApiError::Internal("the backup store is poisoned".into()))?;
+                let key = (lease.organization.clone(), lease.kind.clone());
+                if rows
+                    .2
+                    .get(&key)
+                    .is_none_or(|(token, _)| *token != lease.token)
+                {
+                    return Ok(());
+                }
+                if ok {
+                    rows.2.remove(&key);
+                    if let Some(target) = rows.0.get_mut(&key) {
+                        target.last_run_at = Some(rfc3339(time::OffsetDateTime::now_utc()));
+                    }
+                } else {
+                    rows.2.insert(key, (String::new(), later(RETRY)));
                 }
                 Ok(())
             }
             Inner::Postgres(pool) => {
-                let Some(mut tx) = keyed(pool, organization).await? else {
+                let Some(mut tx) = keyed(pool, &lease.organization).await? else {
                     return Ok(());
                 };
+                // A success binds no retry: `last_run_at` moves and the lease clears whole.
+                let retry = if ok { None } else { Some(secs(RETRY)) };
                 sqlx::query(
-                    "UPDATE organization_backup_targets SET last_run_at = now() \
-                     WHERE organization = $1 AND kind = $2",
+                    "UPDATE organization_backup_targets \
+                     SET last_run_at = CASE WHEN $4::float8 IS NULL THEN now() ELSE last_run_at END, \
+                     lease_until = now() + make_interval(secs => $4), lease_token = NULL \
+                     WHERE organization = $1 AND kind = $2 AND lease_token = $3",
                 )
-                .bind(organization)
-                .bind(kind)
+                .bind(&lease.organization)
+                .bind(&lease.kind)
+                .bind(&lease.token)
+                .bind(retry)
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
@@ -1133,9 +1325,52 @@ pub async fn require_versioning(
     )))
 }
 
-/// One run: versioning checked, the bundle built and uploaded, noncurrent versions past the
-/// target's retention removed, the outcome logged. Answers the log entry's message.
+/// A manual run of `target`: claimed like a scheduled one, so it never runs beside another run
+/// of the same target (409 while one holds it), then run as [`held`] runs it.
 pub async fn run(state: &AppState, target: &Target, actor: &str) -> Result<LogEntry, ApiError> {
+    let lease = state
+        .org_backups
+        .claim(&target.organization, &target.kind)
+        .await?;
+    held(state, target, &lease, actor).await
+}
+
+/// One run under `lease`: renewed every [`LEASE_RENEW`] while it runs and stopped if another
+/// replica took the lease over, then ended by [`BackupStore::finished`], which stamps
+/// `last_run_at` only on success.
+async fn held(
+    state: &AppState,
+    target: &Target,
+    lease: &Lease,
+    actor: &str,
+) -> Result<LogEntry, ApiError> {
+    let job = attempt(state, target, actor);
+    tokio::pin!(job);
+    let mut renew =
+        tokio::time::interval_at(tokio::time::Instant::now() + LEASE_RENEW, LEASE_RENEW);
+    let outcome = loop {
+        tokio::select! {
+            outcome = &mut job => break outcome,
+            _ = renew.tick() => match state.org_backups.renew(lease).await {
+                Ok(true) => {}
+                Ok(false) => break Err(ApiError::Conflict(
+                    "this backup run's lease lapsed and another Portal replica runs the backup \
+                     now; read its entry in the log".into(),
+                )),
+                // The lease still holds for its rest; the next tick tries again.
+                Err(err) => tracing::warn!(organization = %target.organization, error = %err, "backup lease not renewed"),
+            },
+        }
+    };
+    if let Err(err) = state.org_backups.finished(lease, outcome.is_ok()).await {
+        tracing::warn!(organization = %target.organization, error = %err, "backup run not recorded as ended; its lease lapses and the run is tried again");
+    }
+    outcome
+}
+
+/// One attempt: versioning checked, the bundle built and uploaded, noncurrent versions past the
+/// target's retention removed, the outcome logged. Answers the log entry's message.
+async fn attempt(state: &AppState, target: &Target, actor: &str) -> Result<LogEntry, ApiError> {
     let outcome = upload(state, target, actor).await;
     let (ok, bytes, key, version, message, sha256) = match &outcome {
         Ok((bytes, key, version, pruned, sha256)) => (
@@ -1291,8 +1526,8 @@ async fn prune(
     Ok(removed)
 }
 
-/// Runs every due backup once a minute, on every replica; [`BackupStore::claim_due`] hands each
-/// due target to one of them.
+/// Runs every due backup, checked once a minute on every replica; [`BackupStore::claim_due`]
+/// hands each due target to one of them, and each replica runs at most [`SCHEDULED_RUNS`] at once.
 pub fn spawn_schedule(state: AppState) {
     tokio::spawn(async move {
         // Seals from before T-7268 are bound to their record before any run unseals one.
@@ -1303,29 +1538,160 @@ pub fn spawn_schedule(state: AppState) {
                 tracing::warn!(error = %err, "sealed secrets not bound; retried at the next start")
             }
         }
+        let slots = Arc::new(tokio::sync::Semaphore::new(SCHEDULED_RUNS));
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             tick.tick().await;
-            let due = match state.org_backups.claim_due().await {
-                Ok(due) => due,
-                Err(err) => {
-                    tracing::warn!(error = %err, "organization backups not scheduled this minute");
-                    continue;
-                }
-            };
-            for target in due {
-                if let Err(err) = run(&state, &target, "schedule").await {
-                    tracing::warn!(organization = %target.organization, error = %err, "scheduled organization backup failed");
-                }
-            }
+            schedule(&state, &slots).await;
         }
     });
+}
+
+/// One turn of the schedule: claims as many due targets as `slots` has free and starts each on a
+/// task of its own holding one slot, so a slow archive delays no other Organization. Answers the
+/// started runs.
+pub async fn schedule(
+    state: &AppState,
+    slots: &Arc<tokio::sync::Semaphore>,
+) -> Vec<tokio::task::JoinHandle<()>> {
+    let free = slots.available_permits();
+    if free == 0 {
+        return Vec::new();
+    }
+    let due = match state.org_backups.claim_due(free).await {
+        Ok(due) => due,
+        Err(err) => {
+            tracing::warn!(error = %err, "organization backups not scheduled this minute");
+            return Vec::new();
+        }
+    };
+    let mut started = Vec::new();
+    for (target, lease) in due {
+        // Only this turn takes slots and it claimed no more than were free.
+        let Ok(slot) = Arc::clone(slots).try_acquire_owned() else {
+            break;
+        };
+        let state = state.clone();
+        started.push(tokio::spawn(async move {
+            let _slot = slot;
+            match held(&state, &target, &lease, "schedule").await {
+                Ok(_) => tracing::info!(organization = %target.organization, kind = %target.kind, "scheduled organization backup ran"),
+                Err(err) => tracing::warn!(organization = %target.organization, kind = %target.kind, error = %err, "scheduled organization backup failed; tried again after the backoff"),
+            }
+        }));
+    }
+    started
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    fn due_target(organization: &str) -> Target {
+        Target {
+            organization: organization.into(),
+            kind: CONFIGURATION.into(),
+            endpoint: "https://s3.example".into(),
+            region: "eu-central-1".into(),
+            bucket: "backups".into(),
+            prefix: "jc/".into(),
+            access_key_id: "AKID".into(),
+            sealed_secret: String::new(),
+            enabled: true,
+            every_hours: 24,
+            keep_days: 30,
+            recipients: Vec::new(),
+            updated_by: "ada@hel.fi".into(),
+            updated_at: String::new(),
+            last_run_at: None,
+            key: None,
+        }
+    }
+
+    /// Moves every lease and backoff of the store into the past, as a lapse or the backoff's end.
+    fn lapse(store: &BackupStore) {
+        let Inner::Memory(rows) = &store.inner else {
+            unreachable!("a memory store")
+        };
+        for (_, until) in rows.write().expect("rows").2.values_mut() {
+            *until = time::OffsetDateTime::now_utc() - time::Duration::seconds(1);
+        }
+    }
+
+    async fn stamped(store: &BackupStore) -> bool {
+        store
+            .target("alfa", CONFIGURATION)
+            .await
+            .expect("read")
+            .expect("saved")
+            .last_run_at
+            .is_some()
+    }
+
+    /// A failed run keeps `last_run_at`, holds the schedule back for the backoff and is claimed
+    /// again once the backoff is over (S1-24).
+    #[tokio::test]
+    async fn a_failed_run_is_retried_after_the_backoff() {
+        let store = BackupStore::new(None);
+        store.save(&due_target("alfa")).await.expect("saved");
+        let (_, lease) = store.claim_due(4).await.expect("claim").pop().expect("due");
+        store.finished(&lease, false).await.expect("ended");
+        assert!(!stamped(&store).await, "a failed run is not stamped");
+        assert!(
+            store.claim_due(4).await.expect("claim").is_empty(),
+            "backoff"
+        );
+        lapse(&store);
+        let again = store.claim_due(4).await.expect("claim");
+        assert_eq!(again.len(), 1, "retried after the backoff");
+        store.finished(&again[0].1, true).await.expect("ended");
+        assert!(stamped(&store).await, "a run that succeeded is stamped");
+        assert!(
+            store.claim_due(4).await.expect("claim").is_empty(),
+            "not due"
+        );
+    }
+
+    /// A lease that lapsed and was taken over fences its first run out: it neither renews nor
+    /// stamps, and a manual run waits while the new holder runs.
+    #[tokio::test]
+    async fn a_lapsed_lease_fences_out_its_first_run() {
+        let store = BackupStore::new(None);
+        store.save(&due_target("alfa")).await.expect("saved");
+        let (_, first) = store.claim_due(4).await.expect("claim").pop().expect("due");
+        assert!(store.claim_due(4).await.expect("claim").is_empty(), "held");
+        lapse(&store);
+        let (_, second) = store
+            .claim_due(4)
+            .await
+            .expect("claim")
+            .pop()
+            .expect("taken over");
+        assert!(!store.renew(&first).await.expect("renew"), "fenced out");
+        store.finished(&first, true).await.expect("ended");
+        assert!(!stamped(&store).await, "a fenced run stamps nothing");
+        assert!(store.renew(&second).await.expect("renew"));
+        let refused = store.claim("alfa", CONFIGURATION).await.expect_err("held");
+        assert!(matches!(refused, ApiError::Conflict(_)), "{refused}");
+        store.finished(&second, false).await.expect("ended");
+        store
+            .claim("alfa", CONFIGURATION)
+            .await
+            .expect("a backoff holds only the schedule back");
+    }
+
+    /// One claim takes no more than `limit` targets.
+    #[tokio::test]
+    async fn a_claim_takes_no_more_than_its_limit() {
+        let store = BackupStore::new(None);
+        for organization in ["alfa", "bravo", "charlie"] {
+            store.save(&due_target(organization)).await.expect("saved");
+        }
+        assert_eq!(store.claim_due(2).await.expect("claim").len(), 2);
+        assert_eq!(store.claim_due(2).await.expect("claim").len(), 1);
+        assert!(store.claim_due(2).await.expect("claim").is_empty());
+    }
 
     /// A run refuses a sealed archive a restore would not read back, and takes one at the bound.
     #[test]

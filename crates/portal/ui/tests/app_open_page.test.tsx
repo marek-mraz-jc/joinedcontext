@@ -15,6 +15,7 @@ import { expectDenied } from "./checks";
 import { AuthProvider } from "../src/auth/AuthProvider";
 import { BrandingProvider } from "../src/branding";
 import {
+  appAddress,
   appFrameOrigin,
   AppOpenPage,
   FRAME_ANSWER_MS,
@@ -292,6 +293,26 @@ describe("AppOpenPage", () => {
     expect(document.querySelector("iframe")).toBeNull();
   });
 
+  it("asks the API again from the failed page and goes back to the applications", async () => {
+    renderAt(`/projects/${PROJECT}/apps/city-bikes/open`, { status: 500 });
+    const reads = () =>
+      vi.mocked(fetch).mock.calls.filter(([input]) => (input as Request).url.endsWith("/apps/city-bikes")).length;
+    await userEvent.click(await screen.findByRole("button", { name: en.app.error.retry }));
+    await waitFor(() => expect(reads()).toBe(2));
+    expect(document.querySelector("iframe")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: en.apps.back }));
+    await waitFor(() => expect(window.location.pathname).toBe(`/projects/${PROJECT}/apps`));
+  });
+
+  it("goes to the App's details from the bar", async () => {
+    renderAt(`/projects/${PROJECT}/apps/city-bikes/open`);
+    await screen.findByTitle("City bikes, the application");
+    await userEvent.click(screen.getByRole("button", { name: en.apps.openPage.details }));
+    await waitFor(() => expect(window.location.pathname).toBe(`/projects/${PROJECT}/apps/city-bikes`));
+    expect(await screen.findByRole("link", { name: "Open app" })).toBeTruthy();
+  });
+
   it("takes the whole window through the login and back to this page when asked", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { ...window.location, assign, pathname: `/projects/${PROJECT}/apps/city-bikes/open`, search: "" });
@@ -433,6 +454,23 @@ describe("AppOpenPage when the App stays silent", () => {
     expect(prompt()).toBeNull();
   });
 
+  it("claims nothing when the check frame's address cannot be read", async () => {
+    await loadedFrame();
+    wait();
+    const hidden = check() as HTMLIFrameElement;
+    Object.defineProperty(hidden, "contentWindow", {
+      configurable: true,
+      value: {
+        get location(): never {
+          throw new DOMException("Blocked a frame from accessing a cross-origin frame.", "SecurityError");
+        },
+      },
+    });
+    fireEvent.load(hidden);
+    expect(check()).not.toBeNull();
+    expect(prompt()).toBeNull();
+  });
+
   it("reads only the realm's answer on the Portal's own check page", () => {
     expect(ssoAnswer(undefined)).toBeNull();
     expect(ssoAnswer("not a url")).toBeNull();
@@ -444,6 +482,11 @@ describe("AppOpenPage when the App stays silent", () => {
     expect(ssoAnswer(`${done}#code=x`)).toBe("signedIn");
     expect(ssoAnswer(`${done}#error=invalid_request&code=x`)).toBe("unknown");
     expect(ssoAnswer(done)).toBe("unknown");
+  });
+
+  it("keeps the path on the Portal's host for an Apps origin that is not a web address", () => {
+    expect(appAddress("city-bikes", "ftp://example.org")).toBe("/apps/city-bikes/");
+    expect(appAddress("city-bikes", "https://example.org")).toBe("https://city-bikes.apps.example.org/");
   });
 
   it("expects the App's own origin on another host and the opaque one on the Portal's", () => {

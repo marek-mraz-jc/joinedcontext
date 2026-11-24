@@ -117,6 +117,18 @@ describe("the History column", () => {
     expect(within(row("speed")).queryByRole("combobox", { name: "Row at least every, for speed" })).toBeNull();
   });
 
+  it("writes the time slot and the heartbeat a person picks, and clears the time back to the mapped one", () => {
+    const onHistory = vi.fn();
+    const history: History[] = [{ type: "Vehicle", attributes: [{ names: ["location"], keep: "changes", heartbeat: "PT1H" }] }];
+    inI18n(<TargetCard space="helsinki" type="Vehicle" target={TARGET} history={history} onHistory={onHistory} timeSlots={["observedOn"]} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Time of a row of location" }), { target: { value: "observedOn" } });
+    expect(onHistory).toHaveBeenLastCalledWith([{ type: "Vehicle", attributes: [{ names: ["location"], keep: "changes", heartbeat: "PT1H", observedAt: "observedOn" }] }]);
+    fireEvent.change(screen.getByRole("combobox", { name: "Time of a row of location" }), { target: { value: "" } });
+    expect(onHistory).toHaveBeenLastCalledWith([{ type: "Vehicle", attributes: [{ names: ["location"], keep: "changes", heartbeat: "PT1H" }] }]);
+    fireEvent.change(screen.getByRole("combobox", { name: "Row at least every, for location" }), { target: { value: "P1D" } });
+    expect(onHistory).toHaveBeenLastCalledWith([{ type: "Vehicle", attributes: [{ names: ["location"], keep: "changes", heartbeat: "P1D" }] }]);
+  });
+
   it("is absent where the card edits no plan", () => {
     inI18n(<TargetCard space="helsinki" type="Vehicle" target={TARGET} />);
     expect(screen.queryByRole("columnheader", { name: "History" })).toBeNull();

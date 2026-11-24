@@ -393,6 +393,55 @@ mod tests {
     }
 
     #[test]
+    fn the_stylesheet_version_is_its_fnv1a_hash() {
+        assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(fnv1a(b"foobar"), 0x8594_4171_f739_67e8);
+        assert_eq!(LOGIN_CSS_VERSION, fnv1a(LOGIN_CSS.as_bytes()));
+    }
+
+    #[test]
+    fn the_organization_falls_back_by_whose_block_it_is() {
+        let bundle = Bundle::for_locale("en");
+        let mut realm = RealmConfig {
+            display_name: "City".into(),
+            ..RealmConfig::default()
+        };
+        let mut branding = crate::branding::BrandingBlock {
+            organisation: " ".into(),
+            instance_name: "Instance".into(),
+            ..Default::default()
+        };
+        let org = |realm: &RealmConfig, branding: &crate::branding::BrandingBlock| {
+            Shell {
+                bundle: &bundle,
+                realm,
+                branding,
+                path_prefix: "",
+                app: "",
+                locale_base_url: "",
+            }
+            .org()
+        };
+        assert_eq!(
+            org(&realm, &branding),
+            "City",
+            "the realm names jc's own page"
+        );
+        branding.org_id = Some("org-1".into());
+        assert_eq!(
+            org(&realm, &branding),
+            "Instance",
+            "an organization's block first"
+        );
+        branding.instance_name = String::new();
+        assert_eq!(org(&realm, &branding), "City");
+        realm.display_name = "  ".into();
+        assert_eq!(org(&realm, &branding), "this platform");
+        assert_eq!(org(&realm, &branding), bundle.get("jcOrganizationFallback"));
+    }
+
+    #[test]
     fn cap_first_capitalises_one_letter() {
         assert_eq!(cap_first("the Portal"), "The Portal");
         assert_eq!(cap_first(""), "");

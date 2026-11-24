@@ -122,6 +122,24 @@ mod tests {
             json!({ "organization": "hel" })
         );
         assert_eq!(organization["metadata"]["name"], "3f2a9c1e-steward-hel");
+
+        // A space's name with runs of other characters folds them into one dash; a validity
+        // window is kept as given.
+        let mut space = grant(json!({ "contextSpace": "Bike  Hire!!" }));
+        space.validity = Some(
+            serde_json::from_value(json!({ "notAfter": "2026-12-31T00:00:00Z" }))
+                .expect("validity"),
+        );
+        let binding = manifest(&space, "hel.fi").expect("binding");
+        assert_eq!(binding["metadata"]["name"], "3f2a9c1e-steward-bike-hire");
+        assert_eq!(
+            binding["spec"]["scope"],
+            json!({ "contextSpace": "Bike  Hire!!" })
+        );
+        assert_eq!(
+            binding["spec"]["validity"]["notAfter"],
+            "2026-12-31T00:00:00Z"
+        );
     }
 
     #[test]

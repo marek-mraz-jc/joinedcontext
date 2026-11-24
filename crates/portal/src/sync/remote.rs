@@ -505,6 +505,423 @@ mod tests {
         crate::sync::schema_api::PeerSchemaApi::new().expect("the schema client");
     }
 
+    /// An https origin on this host (`super::super::tls_test`) before a wiremock server.
+    struct Origin {
+        mock: wiremock::MockServer,
+        base: String,
+        remote: Arc<HttpRemote>,
+    }
+
+    async fn origin() -> Origin {
+        let mock = wiremock::MockServer::start().await;
+        let base = crate::sync::tls_test::front(*mock.address()).await;
+        let http = crate::sync::tls_test::client(TIMEOUT, MAX_REDIRECTS);
+        Origin {
+            mock,
+            base,
+            remote: Arc::new(HttpRemote { http }),
+        }
+    }
+
+    impl Origin {
+        async fn serves(&self, at: &str, status: u16, body: Vec<u8>) {
+            wiremock::Mock::given(wiremock::matchers::method("GET"))
+                .and(wiremock::matchers::path(at))
+                .respond_with(wiremock::ResponseTemplate::new(status).set_body_bytes(body))
+                .mount(&self.mock)
+                .await;
+        }
+
+        async fn revision(&self, origin: SyncOrigin) -> Result<String, RemoteError> {
+            let remote = self.remote.clone();
+            tokio::task::spawn_blocking(move || remote.revision(&origin))
+                .await
+                .expect("the blocking call")
+        }
+
+        async fn checkout(
+            &self,
+            origin: SyncOrigin,
+            revision: &str,
+            into: &Path,
+        ) -> Result<(), RemoteError> {
+            let (remote, revision, into) =
+                (self.remote.clone(), revision.to_owned(), into.to_path_buf());
+            tokio::task::spawn_blocking(move || remote.checkout(&origin, &revision, &into))
+                .await
+                .expect("the blocking call")
+        }
+
+        fn git(&self, git_ref: &str, path: Option<&str>) -> SyncOrigin {
+            SyncOrigin {
+                git: Some(GitOrigin {
+                    url: format!("{}/udp/models.git", self.base),
+                    git_ref: git_ref.to_owned(),
+                    path: path.map(str::to_owned),
+                    secret_ref: None,
+                }),
+                bundle: None,
+                platform_api: None,
+            }
+        }
+
+        fn bundle(&self, at: &str) -> SyncOrigin {
+            SyncOrigin {
+                git: None,
+                bundle: Some(jc_core::kinds::BundleOrigin {
+                    url: format!("{}{at}", self.base),
+                    secret_ref: None,
+                }),
+                platform_api: None,
+            }
+        }
+
+        fn platform(&self) -> SyncOrigin {
+            SyncOrigin {
+                git: None,
+                bundle: None,
+                platform_api: Some(jc_core::kinds::PlatformApiOrigin {
+                    base_url: format!("{}/", self.base),
+                    project: "doprava".to_owned(),
+                    secret_ref: None,
+                }),
+            }
+        }
+    }
+
+    const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_git_origin_is_read_at_its_advertised_commit_and_unpacked_from_its_archive() {
+        let o = origin().await;
+        let advertisement =
+            format!("001e# service=git-upload-pack\n0000{SHA} refs/heads/main\0side-band\n");
+        o.serves("/udp/models.git/info/refs", 200, advertisement.into_bytes())
+            .await;
+        assert_eq!(o.revision(o.git("main", None)).await, Ok(SHA.to_owned()));
+        match o.revision(o.git("release", None)).await {
+            Err(RemoteError::Refused(why)) => {
+                assert!(why.ends_with("advertises no ref named `release`"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            o.revision(o.git("abcdef0", None)).await,
+            Ok("abcdef0".to_owned()),
+            "a pinned commit is its own revision"
+        );
+        let archive = zipped(&[
+            ("models-main/models/air.yaml", "kind: DataModel\n"),
+            ("models-main/README.md", "readme"),
+        ]);
+        o.serves(&format!("/udp/models/archive/{SHA}.zip"), 200, archive)
+            .await;
+        let into = scratch("git-checkout");
+        o.checkout(o.git("main", Some("models")), SHA, &into)
+            .await
+            .expect("the checkout");
+        assert_eq!(
+            std::fs::read_to_string(into.join("air.yaml")).expect("unpacked"),
+            "kind: DataModel\n"
+        );
+        assert!(!into.join("README.md").exists());
+        let _ = std::fs::remove_dir_all(&into);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_bundle_is_its_digest_and_unpacks_as_an_archive_or_one_yaml() {
+        let o = origin().await;
+        o.serves("/bundle.yaml", 200, b"kind: Role\n".to_vec())
+            .await;
+        o.serves(
+            "/bundle.zip",
+            200,
+            zipped(&[("roles/a.yaml", "kind: Role\n")]),
+        )
+        .await;
+        assert_eq!(
+            o.revision(o.bundle("/bundle.yaml")).await,
+            Ok(digest(b"kind: Role\n"))
+        );
+        let yaml = scratch("bundle-yaml");
+        o.checkout(o.bundle("/bundle.yaml"), "any", &yaml)
+            .await
+            .expect("a yaml bundle");
+        assert_eq!(
+            std::fs::read(yaml.join("bundle.yaml")).expect("written"),
+            b"kind: Role\n"
+        );
+        let zip = scratch("bundle-zip");
+        o.checkout(o.bundle("/bundle.zip"), "any", &zip)
+            .await
+            .expect("a zipped bundle");
+        assert!(zip.join("roles/a.yaml").exists());
+        match o.revision(o.bundle("/gone.yaml")).await {
+            Err(RemoteError::Refused(why)) => {
+                assert!(why.ends_with("/gone.yaml answered 404"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        for dir in [yaml, zip] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_platform_origin_reads_its_newest_revision_and_its_export() {
+        let o = origin().await;
+        let list = serde_json::json!({ "items": [{ "sha": "0a1b2c3d4e5f" }] });
+        o.serves(
+            "/api/v1/projects/doprava/revisions",
+            200,
+            list.to_string().into_bytes(),
+        )
+        .await;
+        assert_eq!(
+            o.revision(o.platform()).await,
+            Ok("0a1b2c3d4e5f".to_owned())
+        );
+        o.serves(
+            "/api/v1/projects/doprava/export",
+            200,
+            b"not a zip".to_vec(),
+        )
+        .await;
+        let into = scratch("platform");
+        match o.checkout(o.platform(), "0a1b2c3d4e5f", &into).await {
+            Err(RemoteError::Refused(why)) => {
+                assert!(why.ends_with("did not answer with an archive"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&into);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_platform_origin_with_no_revision_or_no_list_is_refused() {
+        let o = origin().await;
+        o.serves(
+            "/api/v1/projects/doprava/revisions",
+            200,
+            br#"{"items": []}"#.to_vec(),
+        )
+        .await;
+        match o.revision(o.platform()).await {
+            Err(RemoteError::Refused(why)) => {
+                assert!(
+                    why.contains("lists no revision, so project `doprava`"),
+                    "{why}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+        let o = origin().await;
+        o.serves(
+            "/api/v1/projects/doprava/revisions",
+            200,
+            b"<html>".to_vec(),
+        )
+        .await;
+        match o.revision(o.platform()).await {
+            Err(RemoteError::Refused(why)) => {
+                assert!(why.contains("is not a revision list"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let o = origin().await;
+        let archive = zipped(&[("spaces/air.yaml", "kind: ContextSpace\n")]);
+        o.serves("/api/v1/projects/doprava/export", 200, archive)
+            .await;
+        let into = scratch("platform-zip");
+        o.checkout(o.platform(), "0a1b2c3d4e5f", &into)
+            .await
+            .expect("the export");
+        assert!(into.join("spaces/air.yaml").exists());
+        let _ = std::fs::remove_dir_all(&into);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_origin_that_redirects_to_plain_http_or_cannot_be_reached_is_named_so() {
+        let o = origin().await;
+        wiremock::Mock::given(wiremock::matchers::path("/moved.yaml"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(302)
+                    .insert_header("location", "http://example.org/bundle.yaml"),
+            )
+            .mount(&o.mock)
+            .await;
+        match o.revision(o.bundle("/moved.yaml")).await {
+            Err(RemoteError::Refused(why)) => assert!(why.ends_with("answered 302"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let closed = crate::sync::tls_test::closed();
+        let port = closed.local_addr().expect("address").port();
+        let unreachable = SyncOrigin {
+            git: None,
+            bundle: Some(jc_core::kinds::BundleOrigin {
+                url: format!("https://localhost:{port}/bundle.yaml"),
+                secret_ref: None,
+            }),
+            platform_api: None,
+        };
+        assert_eq!(
+            o.revision(unreachable).await,
+            Err(RemoteError::Unavailable(
+                "the origin could not be reached".to_owned()
+            ))
+        );
+        drop(closed);
+        let silent = crate::sync::tls_test::front(crate::sync::tls_test::silent().await).await;
+        let impatient = HttpRemote {
+            http: crate::sync::tls_test::client(Duration::from_millis(300), MAX_REDIRECTS),
+        };
+        let at = format!("{silent}/bundle.yaml");
+        let slow = tokio::task::spawn_blocking(move || impatient.body(&at))
+            .await
+            .expect("the blocking call");
+        assert_eq!(
+            slow,
+            Err(RemoteError::Unavailable(
+                "the origin did not answer in time".to_owned()
+            ))
+        );
+        let none = SyncOrigin {
+            git: None,
+            bundle: None,
+            platform_api: None,
+        };
+        let refused = RemoteError::Refused("the source names no origin".to_owned());
+        assert_eq!(o.revision(none.clone()).await, Err(refused.clone()));
+        assert_eq!(o.checkout(none, SHA, &scratch("none")).await, Err(refused));
+    }
+
+    struct Broken;
+    impl Read for Broken {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("the disk went away"))
+        }
+    }
+
+    #[test]
+    fn an_advertisement_skips_lines_that_name_no_commit() {
+        let text = format!(
+            "lonely\nnothex{} refs/heads/main\nabc refs/heads/main\n{SHA} refs/heads/main\n",
+            "z".repeat(34)
+        );
+        assert_eq!(advertised(&text, "main"), Some(SHA.to_owned()));
+        assert_eq!(object_name("abc"), None);
+        assert_eq!(object_name(SHA), Some(SHA.to_owned()));
+        assert!(is_commit("abcdef0") && !is_commit("abcdef") && !is_commit(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn an_archive_that_is_not_one_or_holds_too_much_is_refused() {
+        let into = scratch("refused-archives");
+        match unpack(b"not a zip", &into, None, false) {
+            Err(RemoteError::Refused(why)) => {
+                assert!(why.starts_with("the archive did not open"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let names: Vec<String> = (0..=MAX_ENTRIES).map(|i| format!("{i}.yaml")).collect();
+        let many: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "")).collect();
+        match unpack(&zipped(&many), &into, None, false) {
+            Err(RemoteError::Refused(why)) => {
+                assert!(why.contains("past the 10000 entry limit"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut buffer = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buffer));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .large_file(true);
+            zip.add_directory("models/", options).expect("a directory");
+            zip.start_file("models/huge.yaml", options)
+                .expect("an entry");
+            std::io::copy(&mut std::io::repeat(b' ').take(MAX_ENTRY + 1), &mut zip)
+                .expect("the body");
+            zip.finish().expect("the archive");
+        }
+        match unpack(&buffer, &into, None, false) {
+            Err(RemoteError::Refused(why)) => assert!(
+                why == format!("models/huge.yaml is larger than the {MAX_ENTRY} bytes one file of a source may have"),
+                "{why}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        let only_dirs = {
+            let mut buffer = Vec::new();
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buffer));
+            zip.add_directory("models/", zip::write::SimpleFileOptions::default())
+                .expect("a directory");
+            zip.finish().expect("the archive");
+            buffer
+        };
+        assert_eq!(
+            unpack(&only_dirs, &into, None, false),
+            Err(RemoteError::Refused(
+                "the source carries no files".to_owned()
+            ))
+        );
+        // The subtree's own name is no file to write; what is inside it is.
+        let archive = zipped(&[("models", "x"), ("models/air.yaml", "kind: DataModel\n")]);
+        unpack(&archive, &into, Some("/models/"), false).expect("the subtree");
+        assert!(into.join("air.yaml").exists());
+        let _ = std::fs::remove_dir_all(&into);
+    }
+
+    #[test]
+    fn one_file_that_climbs_reads_badly_or_grows_past_its_ceiling_is_refused() {
+        let into = scratch("entries");
+        match write_entry(
+            &into,
+            Path::new("../x.yaml"),
+            &mut "x".as_bytes(),
+            MAX_CHECKOUT,
+        ) {
+            Err(RemoteError::Refused(why)) => {
+                assert!(why.contains("does not stay inside"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        match write_entry(&into, Path::new("a.yaml"), &mut Broken, MAX_CHECKOUT) {
+            Err(RemoteError::Unavailable(why)) => assert_eq!(why, "a.yaml: the disk went away"),
+            other => panic!("{other:?}"),
+        }
+        let mut huge = std::io::repeat(b' ').take(MAX_ENTRY + 1);
+        match write_entry(&into, Path::new("a.yaml"), &mut huge, MAX_CHECKOUT) {
+            Err(RemoteError::Refused(why)) => assert_eq!(
+                why,
+                format!("a.yaml unpacks to more than the {MAX_ENTRY} bytes one file of a source may have")
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            write_entry(&into, Path::new("b.yaml"), &mut "four".as_bytes(), 10),
+            Ok(6),
+            "the budget left is what the file did not take"
+        );
+        match bounded(Broken, 10, "https://x.example/b") {
+            Err(RemoteError::Unavailable(why)) => {
+                assert_eq!(why, "https://x.example/b: the disk went away")
+            }
+            other => panic!("{other:?}"),
+        }
+        // A parent that is a file cannot hold a directory, and a directory is no file to write.
+        assert!(matches!(
+            write(&into.join("b.yaml").join("c.yaml"), b"x"),
+            Err(RemoteError::Unavailable(_))
+        ));
+        std::fs::create_dir_all(into.join("dir")).expect("a directory");
+        assert!(matches!(
+            write(&into.join("dir"), b"x"),
+            Err(RemoteError::Unavailable(_))
+        ));
+        let _ = std::fs::remove_dir_all(&into);
+    }
+
     #[test]
     fn a_platform_origin_lists_a_commit_or_no_revision() {
         let list = |sha: &str| serde_json::json!({ "items": [{ "sha": sha }] });

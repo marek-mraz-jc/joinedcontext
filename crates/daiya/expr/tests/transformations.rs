@@ -156,6 +156,12 @@ fn organize_filters_orders_and_renames() {
         Some("PM10"),
         "empty rename is ignored"
     );
+    // an includeByName that names nothing as included filters nothing
+    let all = tx_organize(
+        vec![f.clone()],
+        &json!({ "includeByName": { "station": false } }),
+    );
+    assert_eq!(names(&all[0]), names(&f));
 
     // excludeByName by display name; fields without an index keep their order after indexed ones.
     let out = tx_organize(
@@ -281,6 +287,7 @@ fn filter_by_value_matchers_include_and_exclude_rows() {
         rows(one("greater", json!({ "value": 15 }))),
         [Some(30.0), Some(20.0)]
     );
+    assert_eq!(rows(one("greater", json!({ "value": 20 }))), [Some(30.0)]);
     assert_eq!(
         rows(one("greaterOrEqual", json!({ "value": 20 }))),
         [Some(30.0), Some(20.0)]
@@ -668,6 +675,11 @@ fn join_by_field_outer_joins_sorted_and_inner_keeps_shared_keys() {
         ],
     );
     let out = tx_join_by_field(vec![a.clone(), b.clone()], &json!({}));
+    // an empty byField names no field: the default join
+    assert_eq!(
+        tx_join_by_field(vec![a.clone(), b.clone()], &json!({ "byField": "" })),
+        out
+    );
     let j = &out[0];
     assert_eq!(j.name, "joined");
     assert_eq!(names(j), ["Time", "temp", "hum"]);
@@ -952,6 +964,15 @@ fn edge_cases_of_names_replacements_and_join_keys() {
         calc(json!({ "mode": "binary", "binary": { "left": "a", "operator": "?", "right": {} } }));
     assert_eq!(f.fields.last().unwrap().name, "a ? ");
     assert_eq!(floats(f.fields.last().unwrap())[0], Some(6.0));
+    let f = calc(
+        json!({ "mode": "binary", "binary": { "left": "a", "operator": "?", "right": { "fixed": 2 } } }),
+    );
+    assert_eq!(
+        f.fields.last().unwrap().name,
+        "a ? 2",
+        "a fixed number names itself"
+    );
+    assert_eq!(floats(f.fields.last().unwrap())[0], Some(8.0));
 
     // $10 reads group 10 when it exists; a group that does not exist and a lone $ stay text.
     let g = frame("g", vec![nums("abcdefghij", &[Some(1.0)])]);
@@ -961,10 +982,16 @@ fn edge_cases_of_names_replacements_and_join_keys() {
     );
     assert_eq!(names(&out[0]), ["ja-a1"]);
     let out = tx_rename_by_regex(
-        vec![g],
+        vec![g.clone()],
         &json!({ "regex": "(abc)(.*)", "renamePattern": "$2.$9 $" }),
     );
     assert_eq!(names(&out[0]), ["defghij.$9 $"]);
+    // `$$` is one dollar anywhere; a `$` before a letter is text, digits after the letter too
+    let out = tx_rename_by_regex(
+        vec![g],
+        &json!({ "regex": "(abc)(.*)", "renamePattern": "x$$y$x1$z$3$&!" }),
+    );
+    assert_eq!(names(&out[0]), ["x$y$x1$z$3abcdefghij!"]);
 
     // A null key sorts before the numbers of an outer join.
     let k1 = frame(

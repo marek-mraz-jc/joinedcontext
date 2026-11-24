@@ -589,7 +589,7 @@ export interface paths {
         };
         /**
          * My Connector's Calls
-         * @description Every call through the connector, newest first, at most 200 of the last 30 days: person, client, tool, target, verdict, duration; never a token or an input value (AG-147).
+         * @description Every call through the connector, newest first, the latest 200 the installation still keeps: person, client, tool, target, verdict, duration; never a token or an input value (AG-147).
          */
         get: operations["connector_activity"];
         put?: never;
@@ -10122,6 +10122,13 @@ export interface components {
             attributes: components["schemas"]["DraftAttribute"][];
             /** @description The drafted `spec.catalog` (EP-78), or the one the Endpoint already declares. */
             catalog: Record<string, never>;
+            /**
+             * @description The project's own Organization's dataset fields (`spec.datasetFields`, T-7746), which the
+             *     form fills into `catalog.fields`; never another Organization's.
+             */
+            datasetFields?: {
+                [key: string]: unknown;
+            }[];
             endpoint: string;
             /** @description The Endpoint's audience is not `public`: the proposal makes it public, in the red lane. */
             makesPublic: boolean;
@@ -10760,7 +10767,7 @@ export interface components {
             target?: string | null;
             /** @description The tool, or the MCP method of a call that names none. */
             tool: string;
-            /** @description `allowed`, `refused: <why>` or `error`. */
+            /** @description `allowed`, `refused: <why>`, `error`, or `started` where the outcome was not recorded. */
             verdict: string;
         };
         ConnectorCalls: {
@@ -13268,6 +13275,12 @@ export interface components {
          * @description `spec.appearance` (UIX-16).
          */
         OrganizationAppearance: {
+            /** @description The body text's typeface over `font`, from the same fixed set, e.g. `system`. */
+            bodyFont?: ("system" | "humanist" | "serif" | "mono") | null;
+            /** @description How buttons look: `filled` (the default) or `outline`. */
+            buttonStyle?: ("filled" | "outline") | null;
+            /** @description Whether cards carry a shadow: `soft` (the default) or `none`. */
+            cardShadow?: ("none" | "soft") | null;
             /** @description The city or region the Organization serves, e.g. `Banská Bystrica`. */
             city?: string | null;
             /** @description The colour tokens, each a hex colour such as `#0b5394`. */
@@ -13276,6 +13289,16 @@ export interface components {
                 accent?: string | null;
                 /** @description Page background, e.g. `#ffffff`. */
                 background?: string | null;
+                /** @description The page footer, six hex digits after a hash, such as 0f172a. */
+                footerBackground?: string | null;
+                /** @description Text and links in the footer, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff. */
+                footerText?: string | null;
+                /** @description The open data portal's header bar, six hex digits after a hash, such as 0b5394. */
+                headerBackground?: string | null;
+                /** @description Text and links in the header bar, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff. */
+                headerText?: string | null;
+                /** @description Links in the page, at least 4.5:1 on the background, six hex digits after a hash, such as 1d4ed8 (T-7744). */
+                link?: string | null;
                 /** @description Primary action colour, e.g. `#0b5394`. */
                 primary?: string | null;
                 /** @description Secondary colour for links and focus, e.g. `#0f766e`. */
@@ -13285,12 +13308,41 @@ export interface components {
             };
             /** @description The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`. */
             contactEmail?: string | null;
+            /** @description A `kind: Portal`'s own stylesheet for its open data portal, at most 32 KiB (T-7745): style rules and `@media` alone, every selector scoped to that portal's pages, properties from a fixed list without `content`, positioning, `z-index` or hiding, `url()` only of `/files/{sha256}/{name}` of the portal's files; e.g. `.site-header { background: navy }`. An Organization's appearance refuses it: each portal carries its own. */
+            css?: string | null;
             /** @description How the open data portal lists datasets: `cards` (the default) or a compact `table`. */
             datasetList?: ("cards" | "table") | null;
+            /** @description Which parts of the open data portal's dataset and dataset list pages show, in which order and under which heading (T-7743); a page left out shows the level above's. */
+            display?: {
+                /** @description The dataset page. */
+                dataset?: {
+                    /** @description The about table's rows in order, each at most once; a row left out is hidden. A DCAT field name (`publisher`, `license`, `rights`, `source`, `keyword`, `accrualPeriodicity`, `issued`, `modified`, `nextUpdate`, `spatial`, `temporal`, `contactPoint`, `identifier`, `conformsTo`) or a dataset extra as `extras.<key>`, e.g. `[license, publisher, modified]`. */
+                    about?: string[];
+                    /** @description The sections that show, in order, each at most once; a section left out is hidden. One of `publisher`, `subscribe`, `explorer`, `map`, `visualizations`, `dashboards`, `about`, `live`, `mcp`, `resources`, `additional-info`, `shacl`, e.g. `[{name: about}, {name: resources}]`. */
+                    sections?: {
+                        /** @description Its heading per language in place of the built-in one, plain text, e.g. `{sk: O dátach, en: About the data}`; a Portal's languages are those of `spec.languages`. */
+                        heading?: {
+                            [key: string]: string;
+                        };
+                        /** @description The section, e.g. `about`. */
+                        name: string;
+                    }[];
+                };
+                /** @description The dataset list. */
+                datasetList?: {
+                    /** @description What each dataset shows after its title, in order, as a table column or a card line: `notes`, `format`, `publisher`, `modified`, e.g. `[format, modified]`; empty shows the level above's. */
+                    fields?: string[];
+                };
+            };
             /** @description The favicon as an SVG document of at most 64 KiB, under the same rules as the logo. */
             faviconSvg?: string | null;
             /** @description The open data portal's typeface, one of a fixed set of system font stacks, so no font is fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410). */
             font?: ("system" | "humanist" | "serif" | "mono") | null;
+            /**
+             * Format: uint8
+             * @description The base text size in pixels, 14 to 18, e.g. `16`.
+             */
+            fontSize?: number | null;
             /** @description Links the open data portal's footer adds after its own, under the same rules. */
             footerLinks?: {
                 /** @description The text of the link, e.g. `Mesto`. */
@@ -13298,6 +13350,8 @@ export interface components {
                 /** @description An `https://` or `http://` address or a path on the portal starting `/`, e.g. `https://www.banskabystrica.sk`. */
                 url: string;
             }[];
+            /** @description The headings' typeface over `font`, from the same fixed set, e.g. `serif` (T-7744). */
+            headingFont?: ("system" | "humanist" | "serif" | "mono") | null;
             /** @description The open data portal's home hero: its title and an introduction in Markdown. */
             hero?: {
                 /** @description The introduction under it in Markdown of at most 2 KiB, e.g. `Dáta mesta na **jednom mieste**.`; raw HTML shows as text. */
@@ -13340,6 +13394,8 @@ export interface components {
             radius?: number | null;
             /** @description Short name on sidebars and tabs, e.g. `BB`. */
             shortName?: string | null;
+            /** @description How wide the content runs: `narrow`, `normal` (the default) or `wide`. */
+            width?: ("narrow" | "normal" | "wide") | null;
         };
         /**
          * @description Where the forge mirror's Organizations and the registry's active ones disagree (T-7319): jc-prod
@@ -15781,7 +15837,7 @@ export interface components {
             /** Format: int32 */
             keepDays: number;
             kind: string;
-            /** @description RFC 3339; the start of the last scheduled or manual run. */
+            /** @description RFC 3339; the end of the last scheduled or manual run that succeeded. */
             lastRunAt?: string | null;
             organization: string;
             /** @description The folder of the bucket every object of this backup lands under, e.g. `jc/`. */
@@ -19609,7 +19665,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description No target, or its bucket's versioning is off */
+            /** @description No target, its bucket's versioning is off, or another run of this backup is in progress */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -20073,7 +20129,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description No target or recipients, or its bucket's versioning is off */
+            /** @description No target or recipients, its bucket's versioning is off, or another run of this backup is in progress */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -27469,7 +27525,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description The source is no webhook, `pipeline` reads no such source, or `body` is empty or over the cap */
+            /** @description The source is no webhook or names no single credential, `pipeline` reads no such source, or `body` is empty or over the cap */
             422: {
                 headers: {
                     [name: string]: unknown;

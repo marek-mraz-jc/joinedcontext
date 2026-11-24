@@ -14,10 +14,10 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use shako_core::{
     AuditRecord, BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId,
-    OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
-    PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId, RepoRecord, ReviewRecord,
-    SecretStore, ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId,
-    WebhookRecord,
+    OutboxClaim, OutboxEvent, PackageFileRecord, PackageRecord, PackageVersionRecord,
+    ProtectionRuleRecord, PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId,
+    RepoRecord, ReviewRecord, SecretStore, ShakoError, ShakoResult, Store, StoreFuture,
+    TagProtectionRecord, WebhookId, WebhookRecord,
 };
 use sqlx::Row;
 use sqlx::postgres::{PgConnectOptions, PgPool};
@@ -36,6 +36,7 @@ pub const MIGRATION_0001_SQL: &str = include_str!("../migrations/0001_init.sql")
 pub const MIGRATION_0002_SQL: &str = include_str!("../migrations/0002_store_log.sql");
 pub const MIGRATION_0003_SQL: &str = include_str!("../migrations/0003_secrets.sql");
 pub const JOBS_0001_SQL: &str = include_str!("../migrations/jobs/0001_mirror_sync.sql");
+pub const JOBS_0002_SQL: &str = include_str!("../migrations/jobs/0002_outbox_retry.sql");
 /// In a ledger of its own, which a previous release never reads (T-7508).
 pub const PROJECTION_0001_SQL: &str = include_str!("../migrations/projection/0001_projection.sql");
 
@@ -44,6 +45,8 @@ pub const KEYS_0001_SQL: &str = include_str!("../migrations/keys/0001_org_keys.s
 
 /// The audit rows (S6-20), in a ledger of its own for the same reason.
 pub const AUDIT_0001_SQL: &str = include_str!("../migrations/audit/0001_audit.sql");
+/// T-7564: the store log is trimmed once the tables hold it and the rollback window passed.
+pub const TRIM_0001_SQL: &str = include_str!("../migrations/trim/0001_trim.sql");
 
 /// How long a claimed event is this process's to send; after it another may claim it again, so
 /// an event is sent once, or again when its sender died or took longer.
@@ -236,44 +239,56 @@ impl PgStore {
                 false,
             )
         };
-        let mut migrator = Migrator::with_migrations(vec![
-            migration(1, "init", MIGRATION_0001_SQL),
-            migration(2, "store_log", MIGRATION_0002_SQL),
-            migration(3, "secrets", MIGRATION_0003_SQL),
-        ]);
-        migrator.create_schema("shako_migrations");
-        migrator.dangerous_set_table_name("shako_migrations._sqlx_migrations");
-        migrator
-            .run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("migration failed: {e}")))?;
-        let mut projection =
-            Migrator::with_migrations(vec![migration(1, "projection", PROJECTION_0001_SQL)]);
-        projection.create_schema("shako_projection_migrations");
-        projection.dangerous_set_table_name("shako_projection_migrations._sqlx_migrations");
-        projection
-            .run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("projection migration failed: {e}")))?;
-        let mut jobs = Migrator::with_migrations(vec![migration(1, "mirror_sync", JOBS_0001_SQL)]);
-        jobs.create_schema("shako_jobs_migrations");
-        jobs.dangerous_set_table_name("shako_jobs_migrations._sqlx_migrations");
-        jobs.run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("jobs migration failed: {e}")))?;
-        let mut keys = Migrator::with_migrations(vec![migration(1, "org_keys", KEYS_0001_SQL)]);
-        keys.create_schema("shako_key_migrations");
-        keys.dangerous_set_table_name("shako_key_migrations._sqlx_migrations");
-        keys.run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("key migration failed: {e}")))?;
-        let mut audit = Migrator::with_migrations(vec![migration(1, "audit", AUDIT_0001_SQL)]);
-        audit.create_schema("shako_audit_migrations");
-        audit.dangerous_set_table_name("shako_audit_migrations._sqlx_migrations");
-        audit
-            .run(migrate_pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("audit migration failed: {e}")))?;
+        // Each set keeps its applied versions in a schema of its own; a release adds a set,
+        // never a version to a set a release before it ran.
+        let sets = [
+            (
+                "shako_migrations",
+                "migration",
+                vec![
+                    migration(1, "init", MIGRATION_0001_SQL),
+                    migration(2, "store_log", MIGRATION_0002_SQL),
+                    migration(3, "secrets", MIGRATION_0003_SQL),
+                ],
+            ),
+            (
+                "shako_projection_migrations",
+                "projection migration",
+                vec![migration(1, "projection", PROJECTION_0001_SQL)],
+            ),
+            (
+                "shako_jobs_migrations",
+                "jobs migration",
+                vec![
+                    migration(1, "mirror_sync", JOBS_0001_SQL),
+                    migration(2, "outbox_retry", JOBS_0002_SQL),
+                ],
+            ),
+            (
+                "shako_key_migrations",
+                "key migration",
+                vec![migration(1, "org_keys", KEYS_0001_SQL)],
+            ),
+            (
+                "shako_audit_migrations",
+                "audit migration",
+                vec![migration(1, "audit", AUDIT_0001_SQL)],
+            ),
+            (
+                "shako_trim_migrations",
+                "trim migration",
+                vec![migration(1, "store_log_trim", TRIM_0001_SQL)],
+            ),
+        ];
+        for (schema, what, migrations) in sets {
+            let mut migrator = Migrator::with_migrations(migrations);
+            migrator.create_schema(schema);
+            migrator.dangerous_set_table_name(format!("{schema}._sqlx_migrations"));
+            migrator
+                .run(migrate_pool)
+                .await
+                .map_err(|e| ShakoError::Storage(format!("{what} failed: {e}")))?;
+        }
         Ok(())
     }
 
@@ -290,6 +305,28 @@ impl PgStore {
         jc_audit::commit(tx).await.map_err(tables::failed)?;
         self.mark_ready(tenant).await;
         Ok(count)
+    }
+
+    /// Deletes the store log entries of tenant `(instance_id, org_id)` that its typed tables hold
+    /// and that a rollback can no longer need (the `trim_projected` policy decides which: 30 days
+    /// since the tenant's first projection and since the entry). Oldest first, in batches of
+    /// their own transaction under the tenant's lock, so no request waits behind one long
+    /// delete. Answers how many went.
+    // ponytail: run once per start; a periodic run when replicas live for weeks.
+    pub async fn trim_log(&self, instance_id: InstanceId, org_id: OrgId) -> ShakoResult<u64> {
+        let tenant = (instance_id, org_id);
+        let mut trimmed = 0;
+        loop {
+            let mut tx = self.begin_tenant_tx(instance_id, org_id).await?;
+            projection::lock(&mut tx, tenant).await?;
+            let (picked, gone) = projection::trim(&mut tx, tenant).await?;
+            jc_audit::commit(tx).await.map_err(tables::failed)?;
+            trimmed += gone;
+            // An entry the policy keeps ends the run: every later one is younger.
+            if gone < picked || picked == 0 {
+                return Ok(trimmed);
+            }
+        }
     }
 
     /// Marks `tenant`'s tables caught up, once that stands: a request's unit that rolls back
@@ -410,6 +447,7 @@ impl SecretStore for PgSecretStore {
         secret_ref: &'a str,
     ) -> StoreFuture<'a, Option<String>> {
         Box::pin(async move {
+            let failed = |e: sqlx::Error| ShakoError::Storage(format!("secret read failed: {e}"));
             let mut tx = self.tenant_tx(org_id).await?;
             let sealed: Option<Vec<u8>> = sqlx::query_scalar(
                 "SELECT sealed FROM shako.secret WHERE instance_id = $1 AND org_id = $2 AND secret_ref = $3",
@@ -419,10 +457,8 @@ impl SecretStore for PgSecretStore {
             .bind(secret_ref)
             .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| ShakoError::Storage(format!("secret read failed: {e}")))?;
-            jc_audit::commit(tx)
-                .await
-                .map_err(|e| ShakoError::Storage(format!("secret read failed: {e}")))?;
+            .map_err(failed)?;
+            jc_audit::commit(tx).await.map_err(failed)?;
             let Some(sealed) = sealed else {
                 return Ok(None);
             };
@@ -454,6 +490,7 @@ impl SecretStore for PgSecretStore {
                 .seal
                 .encrypt(&self.aad(org_id, secret_ref), value.as_bytes())
                 .map_err(|_| ShakoError::Storage("the secret could not be sealed".into()))?;
+            let failed = |e: sqlx::Error| ShakoError::Storage(format!("secret write failed: {e}"));
             let mut tx = self.tenant_tx(org_id).await?;
             sqlx::query(
                 "INSERT INTO shako.secret (instance_id, org_id, secret_ref, sealed) VALUES ($1, $2, $3, $4)
@@ -465,10 +502,8 @@ impl SecretStore for PgSecretStore {
             .bind(sealed)
             .execute(&mut *tx)
             .await
-            .map_err(|e| ShakoError::Storage(format!("secret write failed: {e}")))?;
-            jc_audit::commit(tx)
-                .await
-                .map_err(|e| ShakoError::Storage(format!("secret write failed: {e}")))
+            .map_err(failed)?;
+            jc_audit::commit(tx).await.map_err(failed)
         })
     }
 }
@@ -1357,16 +1392,23 @@ impl Store for PgStore {
         &self,
         instance_id: InstanceId,
         org_id: OrgId,
-    ) -> StoreFuture<'_, Option<OutboxEvent>> {
+    ) -> StoreFuture<'_, Option<OutboxClaim>> {
         Box::pin(async move {
             let mut tx = self.read_tx((instance_id, org_id)).await?;
-            // The oldest alone, so events keep their order. A second claimer waits on the row,
-            // then finds it claimed and takes nothing.
+            // The oldest alone, so a repository's events keep their order. One waiting for a
+            // retry holds back its repository's later events only. A second claimer waits on
+            // the row, then finds it claimed and takes nothing.
             let row: Option<serde_json::Value> = sqlx::query_scalar(
                 "WITH head AS (
-                     SELECT id FROM shako.outbox
-                     WHERE instance_id = $1 AND org_id = $2 AND NOT dispatched
-                     ORDER BY position, created_at, id LIMIT 1)
+                     SELECT o.id FROM shako.outbox o
+                     WHERE o.instance_id = $1 AND o.org_id = $2 AND NOT o.dispatched
+                       AND (o.retry_at IS NULL OR o.retry_at <= now())
+                       AND NOT EXISTS (
+                           SELECT 1 FROM shako.outbox p
+                           WHERE p.instance_id = $1 AND p.org_id = $2 AND NOT p.dispatched
+                             AND p.repo_id IS NOT DISTINCT FROM o.repo_id
+                             AND (p.position, p.created_at, p.id) < (o.position, o.created_at, o.id))
+                     ORDER BY o.position, o.created_at, o.id LIMIT 1)
                  UPDATE shako.outbox t SET claimed_until = now() + make_interval(secs => $3)
                  FROM head
                  WHERE t.id = head.id AND t.instance_id = $1 AND t.org_id = $2 AND NOT t.dispatched
@@ -1381,10 +1423,42 @@ impl Store for PgStore {
             .map_err(tables::failed)?;
             jc_audit::commit(tx).await.map_err(tables::failed)?;
             row.map(|row| {
-                serde_json::from_value(tables::to_record(&tables::OUTBOX, row)?)
-                    .map_err(|e| ShakoError::Storage(e.to_string()))
+                let attempts = row
+                    .get("attempts")
+                    .and_then(serde_json::Value::as_u64)
+                    .map_or(0, |n| u32::try_from(n).unwrap_or(u32::MAX));
+                let event = serde_json::from_value(tables::to_record(&tables::OUTBOX, row)?)
+                    .map_err(|e| ShakoError::Storage(e.to_string()))?;
+                Ok(OutboxClaim { event, attempts })
             })
             .transpose()
+        })
+    }
+
+    fn retry_outbox(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        event_id: uuid::Uuid,
+        after: Duration,
+    ) -> StoreFuture<'_, bool> {
+        Box::pin(async move {
+            let mut tx = self.read_tx((instance_id, org_id)).await?;
+            let done = sqlx::query(
+                "UPDATE shako.outbox
+                 SET attempts = attempts + 1, claimed_until = NULL,
+                     retry_at = now() + make_interval(secs => $4)
+                 WHERE instance_id = $1 AND org_id = $2 AND id = $3 AND NOT dispatched",
+            )
+            .bind(instance_id.as_uuid())
+            .bind(org_id.as_uuid())
+            .bind(event_id)
+            .bind(after.as_secs_f64())
+            .execute(&mut *tx)
+            .await
+            .map_err(tables::failed)?;
+            jc_audit::commit(tx).await.map_err(tables::failed)?;
+            Ok(done.rows_affected() > 0)
         })
     }
 

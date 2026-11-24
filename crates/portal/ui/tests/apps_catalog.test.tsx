@@ -9,6 +9,7 @@ import { App } from "../src/App";
 import { draftState, openBlockedReason } from "../src/pages/apps/AppsCatalog";
 import type { Manifest } from "../src/api/manifest";
 import { renderRoute } from "./pageHarness";
+import { findFormPage } from "./formPage";
 import { deniedReason } from "../src/components/ui/PermissionGuard";
 
 const IDENTITY = {
@@ -62,6 +63,9 @@ const CHANGE = {
 /** What the App probe last said, per project (AP-136); each test starts with none. */
 let APP_CHECKS: unknown[] = [];
 
+/** How many reads of the apps list fail before one answers; each test starts with none. */
+let LIST_FAILURES = 0;
+
 /** What the dry run before a write answers: green unless a test asks for a red check (PF-57). */
 const GREEN = { valid: true, verdict: { ok: true, findings: [] } };
 
@@ -92,8 +96,22 @@ function renderCatalog(
     if (path.endsWith("/permissions/me") && permissions) {
       return json(permissions);
     }
+    if (path.endsWith("/apps") && request.method === "GET" && LIST_FAILURES > 0) {
+      LIST_FAILURES -= 1;
+      return json({ title: "Internal Server Error", status: 500, detail: "the project store is restarting" }, 500);
+    }
     if (path.endsWith("/apps") && request.method === "GET") {
       return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: apps });
+    }
+    const one = /\/apps\/([^/]+)$/.exec(path);
+    if (one && request.method === "GET") {
+      const found = apps.find((candidate) => (candidate as { metadata: { name: string } }).metadata.name === one[1]);
+      return found ? json(found) : json({ title: "Not Found", status: 404 }, 404);
+    }
+    const run = /\/agent-runs\/([^/]+)$/.exec(path);
+    if (run && request.method === "GET") {
+      const found = runs.find((candidate) => (candidate as { id: string }).id === run[1]);
+      return found ? json(found) : json({ title: "Not Found", status: 404 }, 404);
     }
     const build = /\/apps\/([^/]+)\/build$/.exec(path);
     if (build && request.method === "GET") {
@@ -169,6 +187,7 @@ describe("apps catalog", () => {
     await i18n.changeLanguage("en");
     window.history.pushState({}, "", "/projects/banskabystrica/apps");
     APP_CHECKS = [];
+    LIST_FAILURES = 0;
   });
 
   afterEach(() => {
@@ -545,6 +564,19 @@ describe("apps catalog", () => {
     expect(frame).toHaveAttribute("src", "/apps/mapa-ovzdusia/?preview=9f1c2ab");
   });
 
+  it("leaves the preview for the catalogue with the way back", async () => {
+    const user = userEvent.setup();
+    renderCatalog([app(), app({ name: "hluk", title: { en: "Noise" } })]);
+
+    await choose(user, "Air quality map", en.apps.previewAction);
+    await screen.findByTitle("Preview of Air quality map");
+    expect(screen.queryByText("Noise")).toBeNull();
+    await user.click(screen.getByRole("button", { name: en.apps.back }));
+
+    expect(await screen.findByText("Noise")).toBeInTheDocument();
+    expect(screen.queryByTitle("Preview of Air quality map")).toBeNull();
+  });
+
   it("says why an app that refuses framing has no preview (AP-12)", async () => {
     const user = userEvent.setup();
     renderCatalog([app({}, { embeddable: false })]);
@@ -625,6 +657,86 @@ describe("apps catalog", () => {
     );
   });
 
+  it("says why the list could not be read and reads it again on Retry", async () => {
+    LIST_FAILURES = 1;
+    renderCatalog([app()]);
+
+    expect(await screen.findByText(/the project store is restarting/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: en.apps.title })).toBeInTheDocument();
+    expect(screen.queryByText("Air quality map")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByText("Air quality map")).toBeInTheDocument();
+    expect(screen.queryByText(/the project store is restarting/)).toBeNull();
+  });
+
+  it("reopens the run the address names, and closing it takes ?run= out of the address and shows the catalogue", async () => {
+    const run = {
+      id: "run-9",
+      project: "banskabystrica",
+      appName: "mapa-vystavby",
+      appClass: "ui",
+      visibility: "project",
+      prompt: "A map of the building permits",
+      status: "building",
+      steps: 12,
+      tokensUsed: 48_210,
+      createdBy: "jana.kovacova",
+      createdAt: "2026-09-12T08:00:00Z",
+    };
+    window.history.pushState({}, "", "/projects/banskabystrica/apps?run=run-9");
+    const fetchMock = renderCatalog([app()], undefined, [run]);
+
+    await screen.findByRole("heading", { name: "Mapa vystavby" });
+    expect(screen.queryByText("Air quality map")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: en.agentRun.back }));
+    expect(await screen.findByText("Air quality map")).toBeInTheDocument();
+    expect(window.location.search).toBe("");
+    const runsRead = () =>
+      fetchMock.mock.calls.filter((call) => (call[0] as Request).url.includes("/agent-runs") && !(call[0] as Request).url.includes("run-9")).length;
+    await waitFor(() => expect(runsRead()).toBeGreaterThan(1));
+  });
+
+  it("says the forge's reason when a rebuild is refused, and nothing was started", async () => {
+    const user = userEvent.setup();
+    renderCatalog(
+      [built(app({ name: "bikes", title: { en: "Bikes" } }, { lifecycle: "published" }))],
+      { body: { title: "Conflict", status: 409, detail: "a build of bikes is already running" }, status: 409 },
+      [],
+      GREEN,
+      { bikes: { repositoryUrl: "https://forge.example/r", run: null, rebuild: { allowed: true } } },
+    );
+
+    await choose(user, "Bikes", en.apps.rebuildAction);
+
+    expect(await screen.findByText("a build of bikes is already running")).toBeInTheDocument();
+    expect(screen.queryByText(en.apps.build.started)).toBeNull();
+  });
+
+  it("edits an app in its own form and proposes it with the stored lifecycle and metadata kept", async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderCatalog([
+      app({}, { lifecycle: "published", source: { path: "mapa-ovzdusia" }, build: { node: "22" } }),
+    ]);
+
+    await choose(user, "Air quality map", en.resourceEdit.button);
+    const form = await findFormPage();
+    expect(await within(form).findByLabelText(/^Name/)).toHaveValue("mapa-ovzdusia");
+    await user.click(within(form).getByRole("button", { name: en.resourceEdit.propose }));
+
+    await waitFor(() => {
+      expect(
+        writes(fetchMock).some((request) => request.method === "PUT" && request.url.includes("/apps/mapa-ovzdusia")),
+      ).toBe(true);
+    });
+    const sent = writes(fetchMock).filter((request) => request.method === "PUT" && !request.url.includes("dryRun"));
+    const body = (await sent[0].clone().json()) as { kind: string; metadata: { name: string }; spec: { lifecycle: string; visibility: string } };
+    expect(body.kind).toBe("App");
+    expect(body.metadata.name).toBe("mapa-ovzdusia");
+    expect(body.spec.lifecycle).toBe("published");
+    expect(body.spec.visibility).toBe("project");
+  });
+
   it("an empty catalogue says so instead of showing an empty grid", async () => {
     renderCatalog([]);
     expect(await screen.findByText(en.apps.empty)).toBeInTheDocument();
@@ -662,6 +774,21 @@ describe("apps catalog", () => {
     expect(draftState("cancelled")).toBe("failed");
     expect(draftState("expired")).toBe("failed");
     expect(draftState("published")).toBeNull();
+    expect(draftState("something-new")).toBeNull();
+  });
+
+  it("draws no tile for a build whose status it does not know", async () => {
+    const run = (id: string, appName: string, status: string) => ({
+      id,
+      project: "banskabystrica",
+      appName,
+      status,
+      createdAt: "2026-09-12T08:00:00Z",
+    });
+    renderCatalog([], undefined, [run("r1", "mapa-nova", "something-new"), run("r2", "mapa-vystavby", "building")]);
+
+    expect(await screen.findByRole("heading", { name: "Mapa vystavby" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Mapa nova" })).toBeNull();
   });
 
   /// T-2772: a build whose change waits for an approver says so on its tile and once above the

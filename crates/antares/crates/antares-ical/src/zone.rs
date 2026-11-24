@@ -272,10 +272,45 @@ mod tests {
         let z: Zone = "Europe/Bratislava".parse()?;
         assert_eq!(z.name(), "Europe/Bratislava");
         assert_eq!(z, "Europe/Bratislava".parse()?);
+        assert_ne!(z, "Europe/Prague".parse()?, "zones are told apart by name");
+        assert_eq!(
+            year(Timestamp::from_second(1_790_000_000).unwrap_or_default()),
+            2026
+        );
         assert!("europe/bratislava".parse::<Zone>().is_err());
         assert!("Mars/Olympus".parse::<Zone>().is_err());
         assert_eq!("US/Eastern".parse::<Zone>()?.name(), "US/Eastern");
         assert_eq!(Zone::utc().name(), "UTC");
+        let refused = "Mars/Olympus".parse::<Zone>().err();
+        assert_eq!(
+            refused.map(|e| e.to_string()).as_deref(),
+            Some("unknown time zone Mars/Olympus")
+        );
+        assert_eq!(format!("{z} {z:?}"), "Europe/Bratislava Europe/Bratislava");
+        Ok(())
+    }
+
+    /// A UTC wall time jiff cannot place takes the offset of the nearest end of its range:
+    /// Bratislava's local mean time (+0:57:44) before year -9999, and the max stays put.
+    #[test]
+    fn a_wall_time_outside_jiffs_range_takes_the_offset_of_the_nearest_end(
+    ) -> Result<(), UnknownZone> {
+        let z: Zone = "Europe/Bratislava".parse()?;
+        let early = z.local(DateTime::MIN);
+        let lmt = z.0.tz.to_offset(Timestamp::MIN).seconds();
+        assert_eq!(lmt, 3464, "Bratislava's local mean time, +0:57:44");
+        assert_eq!(
+            early,
+            DateTime::MIN
+                .checked_add(SignedDuration::from_secs(i64::from(lmt)))
+                .unwrap_or(DateTime::MIN)
+        );
+        assert_eq!(
+            z.local(DateTime::MAX),
+            DateTime::MAX,
+            "no wall time past the max"
+        );
+        assert_eq!(Zone::utc().local(DateTime::MIN), DateTime::MIN);
         Ok(())
     }
 
@@ -313,10 +348,7 @@ mod tests {
 
     #[test]
     fn bratislava_changes_twice_a_year_on_the_last_sundays() {
-        let lines = vtimezone(
-            "Europe/Bratislava".parse().unwrap_or_else(|_| Zone::utc()),
-            2026,
-        );
+        let lines = vtimezone("Europe/Bratislava".parse().unwrap_or(Zone::utc()), 2026);
         let text = lines.join("\n");
         assert!(text.contains("TZID:Europe/Bratislava"), "{text}");
         // 2026-03-29 01:00Z: 02:00 CET becomes 03:00 CEST
@@ -371,9 +403,7 @@ mod wire_golden {
             ("Asia/Kolkata", 2026),
         ]
         .iter()
-        .map(|(name, year)| {
-            vtimezone(name.parse().unwrap_or_else(|_| Zone::utc()), *year).join("\n")
-        })
+        .map(|(name, year)| vtimezone(name.parse().unwrap_or(Zone::utc()), *year).join("\n"))
         .collect();
         assert_eq!(
             got.join("\n--\n").trim(),

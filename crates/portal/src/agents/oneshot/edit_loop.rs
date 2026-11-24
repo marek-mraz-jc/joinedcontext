@@ -2081,3 +2081,111 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod function_tool_tests {
+    use super::*;
+
+    fn run(files: Value) -> AgentRun {
+        serde_json::from_value(json!({
+            "id": "test-run",
+            "project": "helsinki",
+            "appName": "city-bikes",
+            "title": "City bikes",
+            "endpointName": "helsinki-bikes",
+            "endpointSlug": "s",
+            "profile": "app-builder",
+            "kind": "application",
+            "unattended": false,
+            "appClass": "ui",
+            "visibility": "project",
+            "prompt": "p",
+            "promptDigest": "d",
+            "dataNeeds": [],
+            "allowsWrite": false,
+            "branch": "agent/app-city-bikes/test-run",
+            "pathPrefix": "",
+            "status": "previewing",
+            "ticketHash": "",
+            "steps": 0,
+            "tokensUsed": 0,
+            "createdBy": "test-user@hel.fi",
+            "createdAt": "2026-09-21T06:00:00Z",
+            "expiresAt": "2099-09-21T06:00:00Z",
+            "files": files
+        }))
+        .expect("a run")
+    }
+
+    fn driver() -> Driver {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        Driver::for_tests(state, "helsinki")
+    }
+
+    /// SDK-18: a function the run does not hold, or whose files do not build, is said to the
+    /// model as such and never reported as a success; a run that is gone calls nothing.
+    #[tokio::test]
+    async fn a_missing_or_broken_function_is_said_and_never_a_success() {
+        let driver = driver();
+        let input = json!({ "name": "count", "query": { "limit": 5, "q": "x" } });
+        assert_eq!(
+            driver.call_function_tool(&input).await,
+            ("the run is gone".to_owned(), false)
+        );
+        driver
+            .state
+            .agents
+            .create_run(&run(json!({ "src/App.tsx": "export {}" })))
+            .await
+            .expect("stored");
+        assert_eq!(
+            driver.call_function_tool(&input).await,
+            ("no function 'count' in functions/".to_owned(), false)
+        );
+
+        let driver = self::driver();
+        driver
+            .state
+            .agents
+            .create_run(&run(
+                json!({ "functions/count.ts": "export default function (" }),
+            ))
+            .await
+            .expect("stored");
+        let (said, ok) = driver.call_function_tool(&input).await;
+        assert!(said.starts_with("the functions do not build:\n"), "{said}");
+        assert!(!ok);
+    }
+
+    /// SDK-14: the frame's errors since the version on screen, the newest window of them with
+    /// how many older ones were left out; none is said as none.
+    #[tokio::test]
+    async fn preview_errors_are_the_newest_window_with_the_older_ones_counted() {
+        let driver = driver();
+        assert_eq!(
+            driver.preview_errors_tool(0).await,
+            (NO_PREVIEW_ERRORS.to_owned(), true)
+        );
+        driver
+            .event("thought", json!({ "text": "not an error" }))
+            .await
+            .expect("stored");
+        for n in 0..ERROR_WINDOW + 2 {
+            driver
+                .event("preview_error", json!({ "message": format!("boom {n}") }))
+                .await
+                .expect("stored");
+        }
+        let (said, ok) = driver.preview_errors_tool(0).await;
+        assert!(ok);
+        let lines: Vec<&str> = said.lines().collect();
+        assert_eq!(lines[0], "(2 older errors not shown)");
+        assert_eq!(lines.len(), ERROR_WINDOW + 1);
+        assert!(
+            lines[1].contains("boom 2") && lines[ERROR_WINDOW].contains("boom 21"),
+            "{said}"
+        );
+        let (recent, _) = driver.preview_errors_tool(ERROR_WINDOW as i64).await;
+        assert!(!recent.contains("older errors"), "{recent}");
+    }
+}

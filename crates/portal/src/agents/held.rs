@@ -99,10 +99,10 @@ pub fn writes(needs: &[Value]) -> bool {
 pub fn beyond(run_endpoints: &[RunEndpoint], held: &[Held], needs: &[Value]) -> Vec<String> {
     let mut violations = Vec::new();
     for (idx, need) in needs.iter().enumerate() {
-        let Some(&at) = endpoints::of_need(run_endpoints, need).first() else {
-            continue;
-        };
-        let (Some(endpoint), Some(held)) = (run_endpoints.get(at), held.get(at)) else {
+        let found = endpoints::of_need(run_endpoints, need)
+            .first()
+            .and_then(|&at| Some((run_endpoints.get(at)?, held.get(at)?)));
+        let Some((endpoint, held)) = found else {
             continue;
         };
         let types = need["types"].as_array().into_iter().flatten();
@@ -437,5 +437,183 @@ mod tests {
             }
             other => panic!("a read of an unreadable endpoint passed: {other:?}"),
         }
+    }
+
+    #[test]
+    fn an_entry_without_a_type_and_a_need_without_an_endpoint_or_document_count_for_nothing() {
+        let held = Held::from_document(&document(
+            json!([{ "resource": {}, "actions": ["queryEntity"] }, { "resource": { "type": "Alert" }, "actions": ["queryEntity"] }]),
+            json!([{ "actions": ["queryEntity"] }]),
+        ));
+        assert!(held.holds("Alert", "queryEntity"));
+        let wide = [need("traffic", &["Alert"], &["updateAttrs"])];
+        // No run endpoint at all, or no document read for it: nothing to compare against.
+        assert!(beyond(&[], &[held], &wide).is_empty());
+        assert!(beyond(&endpoints(), &[], &wide).is_empty());
+    }
+
+    async fn gateway(status: u16, body: &str) -> wiremock::MockServer {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/api/endpoint/s1/access"))
+            .and(wiremock::matchers::header(
+                "authorization",
+                "Bearer person-token",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(status).set_body_string(body))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    async fn checked_at(server: &wiremock::MockServer, needs: &[Value]) -> Result<(), ApiError> {
+        let only_alerts = &endpoints()[..1];
+        let base = format!("{}/", server.uri());
+        check(
+            &reqwest::Client::new(),
+            Some(&base),
+            Some("person-token"),
+            only_alerts,
+            needs,
+            &|_: &RunEndpoint| true,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn the_gateways_access_document_decides_what_a_token_may_ask_for() {
+        let doc = document(
+            json!([{ "resource": { "type": "Alert" }, "actions": ["queryEntity"] }]),
+            json!([]),
+        );
+        let server = gateway(200, &doc.to_string()).await;
+        assert!(
+            checked_at(&server, &[need("traffic", &["Alert"], &["queryEntity"])])
+                .await
+                .is_ok()
+        );
+        let refused = checked_at(&server, &[need("traffic", &["Alert"], &["updateAttrs"])]).await;
+        assert!(
+            matches!(&refused, Err(ApiError::Invalid { errors, .. })
+                if errors.len() == 1 && errors[0].contains("you may not updateAttrs Alert on endpoint 'alerts'")),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_caller_the_gateway_does_not_admit_holds_nothing_on_that_endpoint() {
+        for status in [401, 403, 404] {
+            let server = gateway(status, "").await;
+            let refused =
+                checked_at(&server, &[need("traffic", &["Alert"], &["queryEntity"])]).await;
+            assert!(
+                matches!(refused, Err(ApiError::Invalid { .. })),
+                "HTTP {status}: {refused:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_gateway_that_fails_or_answers_no_json_makes_the_check_unavailable() {
+        for (status, body) in [(500, "{}"), (200, "not json")] {
+            let server = gateway(status, body).await;
+            let refused =
+                checked_at(&server, &[need("traffic", &["Alert"], &["queryEntity"])]).await;
+            assert!(
+                matches!(&refused, Err(ApiError::Unavailable(reason))
+                    if reason.contains("endpoint 's1'") && !reason.contains("person-token")),
+                "HTTP {status} {body}: {refused:?}"
+            );
+        }
+        // A port held bound but never listening refuses the connection: the send itself fails.
+        let closed = tokio::net::TcpSocket::new_v4().expect("a socket");
+        closed
+            .bind("127.0.0.1:0".parse().expect("an address"))
+            .expect("a port");
+        let base = format!("http://{}", closed.local_addr().expect("an address"));
+        let refused = check(
+            &reqwest::Client::new(),
+            Some(&base),
+            Some("person-token"),
+            &endpoints()[..1],
+            &[need("traffic", &["Alert"], &["queryEntity"])],
+            &|_: &RunEndpoint| true,
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(ApiError::Unavailable(_))),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn one_client_serves_every_access_read() {
+        assert!(std::ptr::eq(client(), client()));
+    }
+
+    fn envelope(
+        kind: &str,
+        name: &str,
+        namespace: &str,
+        spec: Value,
+    ) -> crate::resource::ResourceEnvelope {
+        crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, namespace),
+            spec,
+            status: None,
+        }
+    }
+
+    /// F-POR1-004: without a token the Portal's own grants judge each run Endpoint: one the
+    /// person may read passes, one they may not and one the mirror does not hold do not.
+    #[test]
+    fn the_portals_own_grants_judge_a_run_endpoint_without_a_token() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        for (name, space) in [("alerts", "traffic"), ("stations", "air")] {
+            state.mirror.upsert(envelope(
+                "Endpoint",
+                name,
+                "helsinki",
+                json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": space }, "slug": name }),
+            ));
+        }
+        // A space binding reaches the project that holds the space.
+        state
+            .mirror
+            .upsert(envelope("ContextSpace", "traffic", "helsinki", json!({})));
+        state.mirror.upsert(envelope(
+            "Role",
+            "alerts-reader",
+            "org",
+            json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+        ));
+        state.mirror.upsert(envelope(
+            "RoleBinding",
+            "dev-alerts",
+            "org",
+            json!({ "role": "alerts-reader", "subjects": [{ "user": "dev@hel.fi" }], "scope": { "contextSpace": "traffic" } }),
+        ));
+        let person = crate::auth::Identity {
+            client: None,
+            subject: "dev@hel.fi".to_owned(),
+            username: "dev@hel.fi".to_owned(),
+            email: Some("dev@hel.fi".to_owned()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        let reads = portal_reads(&state, &person, "helsinki");
+        let [alerts, stations] = <[RunEndpoint; 2]>::try_from(endpoints()).expect("two endpoints");
+        assert!(reads(&alerts));
+        assert!(!reads(&stations));
+        let gone = RunEndpoint {
+            name: "gone".into(),
+            slug: "s3".into(),
+            space: "traffic".into(),
+        };
+        assert!(!reads(&gone));
     }
 }

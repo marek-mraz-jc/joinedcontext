@@ -321,7 +321,7 @@ use antares_ops::outputs::{is_name, is_plain};
 /// database lacked it, which `default_zone_is_bratislava` rules out).
 #[must_use]
 pub fn default_zone() -> Tz {
-    "Europe/Bratislava".parse().unwrap_or_else(|_| Tz::utc())
+    "Europe/Bratislava".parse().unwrap_or(Tz::utc())
 }
 
 /// The text of a `languageMap` for `want`: its exact tag, the same tag in another case, a tag
@@ -1344,7 +1344,7 @@ mod wire_golden {
     }
 
     fn zone(name: &str) -> Tz {
-        name.parse().unwrap_or_else(|_| Tz::utc())
+        name.parse().unwrap_or(Tz::utc())
     }
 
     /// T-7248: the `DTSTART`/`DTEND` texts a feed writes from what `When::parse` reads, in

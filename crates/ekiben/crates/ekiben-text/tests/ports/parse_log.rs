@@ -103,10 +103,27 @@ async fn parse_log_errors_and_config_refusals() {
             "failed to lookup timezone UTC - unknown time zone Mars/Base",
         ),
         ("parse_log:\n  format: syslog_rfc3164\n  nope: 1\n", "field nope not recognised"),
+        ("parse_log:\n  best_effort: true\n", "field 'format' is required"),
+        (
+            "parse_log:\n  format: syslog_rfc3164\n  default_year: '99999999999999999999'\n",
+            "failed to convert year 99999999999999999999 into integer:  strconv.Atoi: parsing \"99999999999999999999\": value out of range",
+        ),
     ] {
         let err = build_yaml(yaml).err().expect(yaml).to_string();
         assert!(err.contains(want), "{yaml}: {err}");
     }
+    // go-syslog answers neither a message nor an error here; Bento would dereference nil
+    let out = run(
+        "parse_log:\n  format: syslog_rfc3164\n  best_effort: false\n",
+        &["<34>Oct 11 22:14:15"],
+    )
+    .await;
+    assert_eq!(
+        out[0][0].error_get().map(|e| e.to_string()),
+        Some("parsing error: incomplete syslog message".to_string())
+    );
+    let (p, _) = build_yaml("parse_log:\n  format: syslog_rfc5424\n").expect("builds");
+    assert_eq!(p.processor_type(), "parse_log");
 }
 
 #[tokio::test]

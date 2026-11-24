@@ -202,12 +202,12 @@ async fn only_the_administrator_reads_and_a_member_or_stranger_never_reaches_the
 
     let records = recorded(&state).await;
     assert_eq!(records.len(), 2, "{records:?}");
-    assert!(records.iter().any(|r| r["actor"] == "eva"
+    assert!(records.iter().any(|r| r["actor"] == "sub-eva"
         && r["of"]["status"] == "timeout"
         && r["of"]["sort"] == "costUsd"));
     assert!(records
         .iter()
-        .any(|r| r["actor"] == "anna" && r["of"] == ONE));
+        .any(|r| r["actor"] == "sub-anna" && r["of"] == ONE));
 }
 
 #[tokio::test]
@@ -330,7 +330,7 @@ async fn the_sixty_first_call_in_a_minute_waits_and_twenty_one_misses_are_a_reco
         1,
         "one record for the probe, not one per miss: {probes:?}"
     );
-    assert_eq!(probes[0]["actor"], "probing-admin");
+    assert_eq!(probes[0]["actor"], "sub-probing-admin");
     let other = common::send(
         &state,
         approver("calm-admin"),
@@ -396,12 +396,12 @@ async fn the_usage_summary_and_the_export_are_the_administrators_alone_and_recor
     assert_eq!(file.text, csv, "the CSV is passed on byte for byte");
 
     let records = recorded(&state).await;
-    assert!(records.iter().any(|r| r["actor"] == "eva"
+    assert!(records.iter().any(|r| r["actor"] == "sub-eva"
         && r["action"] == "summarized the stored conversations"
         && r["of"]["route"] == "data"));
     assert!(records
         .iter()
-        .any(|r| r["actor"] == "anna" && r["action"] == "exported the stored conversations"));
+        .any(|r| r["actor"] == "sub-anna" && r["action"] == "exported the stored conversations"));
 }
 
 /// The assistant's refusal of a range reaches the caller as the same 400, never as a CSV.

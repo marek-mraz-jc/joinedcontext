@@ -115,7 +115,8 @@ pub fn resolve_request_language(
         if avail.contains(&d) || SHIPPED_LANGUAGES.contains(&d.as_str()) {
             d
         } else {
-            avail.first().cloned().unwrap_or_else(|| "en".into())
+            // `available_languages` is never empty: it falls back to `en` itself.
+            avail.first().cloned().unwrap_or_default()
         }
     };
 
@@ -166,9 +167,8 @@ pub fn resolve_request_language(
         let mut candidates: Vec<(String, f32)> = Vec::new();
         for item in al.split(',') {
             let mut parts = item.trim().split(';');
-            let Some(tag) = parts.next() else {
-                continue;
-            };
+            // `split` yields at least one piece.
+            let tag = parts.next().unwrap_or_default();
             let code = normalize_lang_code(tag);
             let mut q = 1.0_f32;
             for param in parts {
@@ -1284,6 +1284,14 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "Népszerű kulcsszavak",
     );
     add(
+        "col_description",
+        "Description",
+        "Popis",
+        "Popis",
+        "Beschreibung",
+        "Leírás",
+    );
+    add(
         "updated",
         "Updated",
         "Aktualizované",
@@ -2136,12 +2144,10 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
 pub fn jc_t(key: &str, lang: &str) -> String {
     let code = normalize_lang_code(lang);
     let table = string_table();
-    if let Some(row) = table.get(key) {
-        if let Some(v) = row.get(code.as_str()).or_else(|| row.get("en")) {
-            return (*v).to_owned();
-        }
-    }
-    key.to_owned()
+    table
+        .get(key)
+        .and_then(|row| row.get(code.as_str()).or_else(|| row.get("en")))
+        .map_or_else(|| key.to_owned(), |v| (*v).to_owned())
 }
 
 /// Formats an integer with thin-space (`\u{202f}`) thousands separator (`jc_number` in `plugin.py`).

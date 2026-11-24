@@ -16,7 +16,8 @@
 //! - Revoke = token rotation (`rotate_public_dashboard_token`): old token immediately answers 404.
 
 use crate::render::{
-    datasource_revision, execute_targets_with_authorizer, find_panel_in_slice, parse_time_str_ms,
+    TimeEdge, attach_notices, datasource_revision, execute_targets_with_authorizer,
+    find_panel_in_slice, parse_time_str_ms, saved_time_ms, transform_panel_frames,
 };
 use crate::state::{DaiyaState, OrgCtx, audit, error_response, unit};
 use axum::extract::{Extension, Path, State};
@@ -24,7 +25,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use daiya_expr::{apply_transformations, is_expression_datasource_uid};
+use daiya_expr::is_expression_datasource_uid;
 use daiya_model::{
     Action, CanonicalJson, CrError, CrResult, DashboardDocument, DashboardRecord, FrameSet,
     ObjectTarget, PanelSpec, PublicDashboardAuthorizer, PublicDashboardRecord, RequestCtx,
@@ -815,28 +816,22 @@ pub async fn execute_public_dashboard_query(
     let dash_from = doc.time.as_ref().map(|t| t.from.as_str());
     let dash_to = doc.time.as_ref().map(|t| t.to.as_str());
 
-    let (mut from_ms, to_ms) = if pubdash.time_selection_enabled {
-        let f_str = req
-            .time_range
-            .as_ref()
-            .map(|tr| tr.from.as_str())
-            .filter(|s| !s.is_empty())
-            .or(dash_from);
-        let t_str = req
-            .time_range
-            .as_ref()
-            .map(|tr| tr.to.as_str())
-            .filter(|s| !s.is_empty())
-            .or(dash_to);
-        (
-            parse_time_str_ms(f_str, -6 * 3_600_000),
-            parse_time_str_ms(t_str, 0),
-        )
-    } else {
-        (
-            parse_time_str_ms(dash_from, -6 * 3_600_000),
-            parse_time_str_ms(dash_to, 0),
-        )
+    // A viewer's own range that does not parse is a 400 naming the field; a saved one falls back
+    // to the default with a notice on the answer (S9-21).
+    let mut notices = Vec::new();
+    let own = req
+        .time_range
+        .as_ref()
+        .filter(|_| pubdash.time_selection_enabled);
+    let own_from = own.map(|tr| tr.from.as_str()).filter(|s| !s.is_empty());
+    let own_to = own.map(|tr| tr.to.as_str()).filter(|s| !s.is_empty());
+    let mut from_ms = match own_from {
+        Some(t) => parse_time_str_ms(Some(t), TimeEdge::From)?,
+        None => saved_time_ms(dash_from, TimeEdge::From, &mut notices),
+    };
+    let to_ms = match own_to {
+        Some(t) => parse_time_str_ms(Some(t), TimeEdge::To)?,
+        None => saved_time_ms(dash_to, TimeEdge::To, &mut notices),
     };
 
     if to_ms <= from_ms {
@@ -951,14 +946,9 @@ pub async fn execute_public_dashboard_query(
     .await
     .map_err(public_query_error)?;
 
-    if let Some(txs) = &panel.transformations
-        && !txs.is_empty()
-    {
-        for fs in &mut frame_sets {
-            let outcome = apply_transformations(std::mem::take(&mut fs.frames), txs);
-            fs.frames = outcome.frames;
-        }
-    }
+    frame_sets =
+        transform_panel_frames(frame_sets, panel.transformations.as_deref().unwrap_or(&[]));
+    attach_notices(&mut frame_sets, notices);
 
     // Sanitize frames for public viewer (R7: strip query text unless show_query_text is true)
     for fs in &mut frame_sets {
@@ -1102,4 +1092,92 @@ pub fn public_router() -> Router<DaiyaState> {
             "/api/dashboards/uid/{dashboardUid}/public-dashboards/{uid}",
             patch(http_update_public_dashboard),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn an_access_token_is_32_to_64_hex_characters() {
+        for ok in ["a".repeat(32), "0F".repeat(32)] {
+            assert!(is_valid_access_token_format(&ok), "{ok}");
+        }
+        for bad in [
+            "a".repeat(31),
+            "a".repeat(65),
+            format!("{}g", "a".repeat(31)),
+        ] {
+            assert!(!is_valid_access_token_format(&bad), "{bad}");
+        }
+    }
+
+    /// A rate refusal keeps its 429 for the anonymous viewer; any other failure reads as fixed
+    /// text that names nothing of the datasource.
+    #[test]
+    fn a_public_query_error_hides_the_cause_but_keeps_a_rate_refusal() {
+        let err = public_query_error(CrError::RateLimited("slow down".into()));
+        assert!(
+            matches!(err, CrError::RateLimited(ref why) if why == "slow down"),
+            "{err}"
+        );
+        let err = public_query_error(CrError::Forbidden("10.0.0.1 refused".into()));
+        assert!(
+            matches!(err, CrError::Forbidden(ref why) if why == SOURCE_REFUSED),
+            "{err}"
+        );
+        let err = public_query_error(CrError::Internal("pg: connection refused".into()));
+        assert!(
+            matches!(err, CrError::OutboundFailed(ref why) if !why.contains("pg")),
+            "{err}"
+        );
+    }
+
+    /// A full table first drops the windows that ended: the live ones stay counted.
+    #[test]
+    fn a_full_table_drops_ended_windows_and_keeps_live_ones() {
+        let limiter = PublicRateLimiter::new(1, 1);
+        let addr = |i: usize| {
+            IpAddr::V4(Ipv4Addr::from(
+                0x0a00_0000 + u32::try_from(i).unwrap_or(u32::MAX),
+            ))
+        };
+        let half = PublicRateLimiter::MAX_TRACKED_ADDRESSES / 2;
+        for i in 0..half {
+            limiter.check_rate_limit(addr(i)).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(1100));
+        for i in half..PublicRateLimiter::MAX_TRACKED_ADDRESSES {
+            limiter.check_rate_limit(addr(i)).unwrap();
+        }
+        limiter
+            .check_rate_limit(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)))
+            .unwrap();
+        assert_eq!(limiter.buckets.lock().len(), half + 1);
+        assert!(
+            limiter
+                .check_rate_limit(addr(PublicRateLimiter::MAX_TRACKED_ADDRESSES - 1))
+                .is_err(),
+            "a live window keeps its count"
+        );
+    }
+
+    /// A newcomer to a full table takes the place of the oldest window: the table never grows
+    /// past its bound.
+    #[test]
+    fn a_full_table_stays_at_its_bound() {
+        let limiter = PublicRateLimiter::new(5, 60);
+        for i in 0..PublicRateLimiter::MAX_TRACKED_ADDRESSES {
+            let addr = Ipv4Addr::from(0x0a00_0000 + u32::try_from(i).unwrap_or(u32::MAX));
+            limiter.check_rate_limit(IpAddr::V4(addr)).unwrap();
+        }
+        limiter
+            .check_rate_limit(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)))
+            .unwrap();
+        assert_eq!(
+            limiter.buckets.lock().len(),
+            PublicRateLimiter::MAX_TRACKED_ADDRESSES
+        );
+    }
 }

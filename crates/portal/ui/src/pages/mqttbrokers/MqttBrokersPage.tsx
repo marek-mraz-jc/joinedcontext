@@ -237,7 +237,7 @@ export function Connections({ project, brokers, bare }: { project: string; broke
   ];
   const table = (
     <AdminGrid
-      query={{ isPending: lists.some((query) => query.isPending) }}
+      query={{ isPending: lists.some((query) => query.isPending), isError: false, error: null, refetch: () => undefined }}
       caption={t("mqttbrokers.connections.title")}
       rows={edges}
       rowKey={(edge) => `${edge.kind}-${edge.from}-${edge.to}-${edges.indexOf(edge)}`}

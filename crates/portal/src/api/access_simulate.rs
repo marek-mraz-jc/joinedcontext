@@ -62,14 +62,25 @@ pub struct Resolved {
 }
 
 impl Resolved {
-    /// Whom a record names: the person, the ServiceAccount, a group or role member, or the public.
+    /// Whom a record names: the person by id, the ServiceAccount, a group or role member with
+    /// neither named (OBS-01, T-7542), or the public.
     pub(crate) fn label(&self) -> String {
         self.user
             .clone()
             .or_else(|| self.service_account.clone())
-            .or_else(|| self.groups.first().map(|g| format!("a member of {g}")))
-            .or_else(|| self.roles.first().map(|r| format!("a holder of {r}")))
+            .or_else(|| (!self.groups.is_empty()).then(|| "a member of a group".to_owned()))
+            .or_else(|| (!self.roles.is_empty()).then(|| "a holder of a role".to_owned()))
             .unwrap_or_else(|| "the public".to_owned())
+    }
+
+    /// The subject as a record keeps it: ids, and how many groups and roles, never their names.
+    pub(crate) fn on_record(&self) -> serde_json::Value {
+        json!({
+            "user": self.user,
+            "serviceAccount": self.service_account,
+            "groups": self.groups.len(),
+            "roles": self.roles.len(),
+        })
     }
 }
 
@@ -296,7 +307,7 @@ async fn record(
         source: "portal".to_owned(),
         summary: format!(
             "{} tried {} on {endpoint}: {} {}",
-            identity.username,
+            identity.subject,
             named,
             request.action,
             if simulated.decision {
@@ -308,8 +319,8 @@ async fn record(
         severity: "info".to_owned(),
         correlation_id: None,
         details: json!({
-            "actor": identity.username,
-            "subject": subject,
+            "actor": identity.subject,
+            "subject": subject.on_record(),
             "endpoint": endpoint,
             "action": request.action,
             "type": request.entity_type,

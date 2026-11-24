@@ -78,11 +78,7 @@ pub async fn device_authorization(
     mount_ext: Option<Extension<Mount>>,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = crate::handlers::named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
     ensure_device_enabled(&client)?;
@@ -143,8 +139,9 @@ pub async fn device_authorization(
             Err(e) => return Err(e),
         }
     }
-    let (device_code, user_code) =
-        issued.ok_or_else(|| KaisatsuError::Storage("no free user code".into()))?;
+    let Some((device_code, user_code)) = issued else {
+        return Err(KaisatsuError::Storage("no free user code".into()));
+    };
     let verification = format!("{}/device", mount.realm_issuer(&realm.realm));
     let body = json!({
         "device_code": device_code,
@@ -351,11 +348,7 @@ pub async fn device_page(
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = crate::handlers::named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let user_code = q
         .user_code
@@ -445,11 +438,7 @@ pub async fn device_submit(
     client_ip: crate::client_ip::ClientIp,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> Result<Response> {
-    let realm = state
-        .store
-        .get_realm(&realm_name)
-        .await?
-        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = crate::handlers::named_realm(&state, &realm_name).await?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let action = page_path(&mount, &realm);
     let Some(sso) = signed_in(&state, &realm, &headers).await? else {
@@ -605,59 +594,54 @@ pub async fn device_submit(
             } else {
                 rec.status = DeviceStatus::Denied;
             }
-            if !state.store.decide_device_code(rec).await? {
-                return render(
-                    &state,
-                    &mount,
-                    &realm,
-                    &headers,
-                    StatusCode::CONFLICT,
-                    "info",
-                    "oauth2DeviceVerificationFailedHeader",
-                    |b, p| {
-                        p.instructions
-                            .push(b.get("oauth2DeviceExpiredUserCodeMessage").to_owned());
-                    },
-                )
-                .await;
-            }
-            state
-                .store
-                .append_event(AuditEvent {
-                    id: uuid::Uuid::now_v7().to_string(),
-                    realm_id: realm.id.clone(),
-                    org_id: None,
-                    time: now.as_millis(),
-                    event_type: if allow {
-                        "OAUTH2_DEVICE_VERIFY_USER_CODE".into()
-                    } else {
-                        "OAUTH2_DEVICE_VERIFY_USER_CODE_ERROR".into()
-                    },
-                    client_id: Some(client.client_id.clone()),
-                    user_id: Some(sso.user_id.clone()),
-                    session_id: Some(sso.id.clone()),
-                    ip_address: client_ip.for_audit(),
-                    error: (!allow).then(|| "consent_denied".into()),
-                    details: BTreeMap::new(),
-                })
-                .await?;
-            let (heading, text) = if allow {
+            // A code another tab or the device's expiry settled since the page read it.
+            let (status, heading, text) = if !state.store.decide_device_code(rec).await? {
                 (
-                    "oauth2DeviceVerificationCompleteHeader",
-                    "oauth2DeviceVerificationCompleteMessage",
+                    StatusCode::CONFLICT,
+                    "oauth2DeviceVerificationFailedHeader",
+                    "oauth2DeviceExpiredUserCodeMessage",
                 )
             } else {
-                (
-                    "oauth2DeviceVerificationFailedHeader",
-                    "oauth2DeviceConsentDeniedMessage",
-                )
+                state
+                    .store
+                    .append_event(AuditEvent {
+                        id: uuid::Uuid::now_v7().to_string(),
+                        realm_id: realm.id.clone(),
+                        org_id: None,
+                        time: now.as_millis(),
+                        event_type: if allow {
+                            "OAUTH2_DEVICE_VERIFY_USER_CODE".into()
+                        } else {
+                            "OAUTH2_DEVICE_VERIFY_USER_CODE_ERROR".into()
+                        },
+                        client_id: Some(client.client_id.clone()),
+                        user_id: Some(sso.user_id.clone()),
+                        session_id: Some(sso.id.clone()),
+                        ip_address: client_ip.for_audit(),
+                        error: (!allow).then(|| "consent_denied".into()),
+                        details: BTreeMap::new(),
+                    })
+                    .await?;
+                if allow {
+                    (
+                        StatusCode::OK,
+                        "oauth2DeviceVerificationCompleteHeader",
+                        "oauth2DeviceVerificationCompleteMessage",
+                    )
+                } else {
+                    (
+                        StatusCode::OK,
+                        "oauth2DeviceVerificationFailedHeader",
+                        "oauth2DeviceConsentDeniedMessage",
+                    )
+                }
             };
             render(
                 &state,
                 &mount,
                 &realm,
                 &headers,
-                StatusCode::OK,
+                status,
                 "info",
                 heading,
                 |b, p| {

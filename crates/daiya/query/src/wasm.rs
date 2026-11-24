@@ -161,6 +161,12 @@ impl WasmPluginHost {
         digest
     }
 
+    /// How many Organizations hold a concurrency limit, one per Organization with a loaded adapter.
+    #[must_use]
+    pub fn organizations_held(&self) -> usize {
+        self.org_semaphores.lock().len()
+    }
+
     /// Loads a [`WasmPluginAdapter`] for a datasource whose manifest pins `pinned_digest` (R5).
     /// An unknown or mismatched digest is refused immediately!
     pub fn instantiate(
@@ -217,12 +223,15 @@ impl WasmPluginHost {
             .or_insert_with(|| Arc::new(Semaphore::new(self.limits.per_plugin_concurrency)))
             .clone();
 
-        let org_sem = self
-            .org_semaphores
-            .lock()
-            .entry(org_id)
-            .or_insert_with(|| Arc::new(Semaphore::new(self.limits.per_org_concurrency)))
-            .clone();
+        let org_sem = {
+            let mut held = self.org_semaphores.lock();
+            // An Organization no adapter holds has no permit out: its entry goes (PRF-01), so the
+            // map follows the loaded adapters, not every Organization ever seen.
+            held.retain(|_, sem| Arc::strong_count(sem) > 1);
+            held.entry(org_id)
+                .or_insert_with(|| Arc::new(Semaphore::new(self.limits.per_org_concurrency)))
+                .clone()
+        };
 
         Ok(WasmPluginAdapter {
             kind: plugin_kind,
@@ -308,8 +317,10 @@ impl Datasource for WasmPluginAdapter {
         Box::pin(async move {
             let _permits = self.permits()?;
 
-            let req_json =
-                serde_json::to_string(queries).map_err(|e| DsError::Wasm(e.to_string()))?;
+            let req_json = match serde_json::to_string(queries) {
+                Ok(json) => json,
+                Err(e) => return Err(DsError::Wasm(e.to_string())),
+            };
             self.check_limits(req_json.len())?;
 
             let imports = WasmHostImports {
@@ -373,8 +384,10 @@ impl Datasource for WasmPluginAdapter {
         r: ResourceReq,
     ) -> DsFuture<'a, Result<ResourceResp, DsError>> {
         Box::pin(async move {
-            let params_json =
-                serde_json::to_string(&r.params).map_err(|e| DsError::Wasm(e.to_string()))?;
+            let params_json = match serde_json::to_string(&r.params) {
+                Ok(json) => json,
+                Err(e) => return Err(DsError::Wasm(e.to_string())),
+            };
             self.check_limits(params_json.len() + r.path.len())?;
             let _permits = self.permits()?;
             let imports = WasmHostImports {
@@ -412,7 +425,7 @@ impl Datasource for WasmPluginAdapter {
     }
 
     fn import(&self, grafana_target: &Value) -> Result<ImportOutcome, DsError> {
-        let s = serde_json::to_string(grafana_target).map_err(|e| DsError::Wasm(e.to_string()))?;
+        let s = grafana_target.to_string();
         self.check_limits(s.len())?;
         let out = self.guest.export_import_target(&s).map_err(DsError::Wasm)?;
         if out.len() > self.host.limits.response_bytes {

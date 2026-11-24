@@ -1368,7 +1368,7 @@
       contains: ['ContextSpace', 'doprava', 'PendingApproval', 'pulls/42']
     - proves: expect
       call: jc_activity_list
-      contains: ['jc_change_list', 'scn.steward@hel.fi']
+      contains: ['jc_change_list', 'sub-scn-steward']
 - id: S-43
   segment: operate
   as: steward

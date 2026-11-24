@@ -271,6 +271,54 @@ async fn memberships_and_a_pinned_session_organization_shape_the_login() {
     );
 }
 
+/// With two organizations the login asks which one; a choice outside them is refused (400)
+/// and a listed one ends in the code.
+#[tokio::test]
+async fn an_organization_outside_the_choices_is_refused_and_a_listed_one_signs_in() {
+    let (app, store) = app().await;
+    let member = user(&store, MEMBER).await;
+    let orgs: Vec<Organization> = ["espoo", "vantaa"]
+        .into_iter()
+        .map(|id| Organization {
+            id: id.into(),
+            realm_id: "dev".into(),
+            name: id.into(),
+            alias: id.into(),
+            enabled: true,
+            description: String::new(),
+            domains: Vec::new(),
+            attributes: Default::default(),
+            managed_by: None,
+        })
+        .collect();
+    for org in &orgs {
+        store.upsert_organization(org.clone()).await.unwrap();
+    }
+    for (i, org) in orgs.iter().take(2).enumerate() {
+        store
+            .upsert_membership(Membership {
+                id: format!("m-member-{i}"),
+                realm_id: "dev".into(),
+                org_id: org.id.clone(),
+                person_id: member.id.clone(),
+                org_roles: Vec::new(),
+                created_at: TimestampTz::now(),
+            })
+            .await
+            .unwrap();
+    }
+    let a = start(&app, None).await;
+    let (_, _, html) = a
+        .post(&app, &[("username", MEMBER), ("password", MEMBER_PW)])
+        .await;
+    assert_eq!(page_id(&html), "org-choice", "{html}");
+    let (st, _, _) = a.post(&app, &[("org_id", "not-an-organization")]).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let org = extract_hidden_input(&html, "org_id");
+    let (st, h, html) = a.post(&app, &[("org_id", &org)]).await;
+    assert!(is_code(st, &h), "{st} {html}");
+}
+
 /// A person deleted while their login waits on a step is refused at that step (401), never
 /// signed in as a ghost.
 #[tokio::test]
@@ -411,6 +459,395 @@ async fn malformed_webauthn_json_is_refused() {
         .post(&app, &[("webauthn_register_response", "{not json")])
         .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+/// A form of an earlier step meets keycloak.v2's expired page, which offers both ways on: back
+/// to the current step or a fresh start.
+#[tokio::test]
+async fn a_form_of_an_earlier_step_meets_the_expired_page_with_both_ways_on() {
+    let (app, _) = app().await;
+    let a = start(&app, None).await;
+    let (st, _, html) = a
+        .post(&app, &[("step", "login-otp"), ("otp", "123456")])
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "expired", "{html}");
+    assert!(html.contains("id=\"loginContinueLink\""), "{html}");
+    assert!(html.contains("id=\"loginRestartLink\""), "{html}");
+    assert!(html.contains(&a.session), "{html}");
+}
+
+/// The reset page opened from a sign-in keeps its language and its way back, refuses a foreign
+/// CSRF token, and sends the person back to that sign-in with the address filled in.
+#[tokio::test]
+async fn the_reset_page_opened_from_a_sign_in_goes_back_to_it() {
+    let (app, store) = app().await;
+    let a = start(&app, None).await;
+    let reset = format!(
+        "/realms/dev/login-actions/reset-credentials?session_code={}&client_id=edge",
+        a.session
+    );
+    let (st, _, html) = send(
+        &app,
+        Method::GET,
+        &format!("{reset}&kc_locale=sk"),
+        None,
+        Some(&a.cookie),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(html.contains("lang=\"sk\""), "{html}");
+    assert!(html.contains("kc-back-to-login"), "{html}");
+    assert_eq!(extract_hidden_input(&html, "csrf_token"), a.csrf);
+
+    let (st, _, _) = send(
+        &app,
+        Method::POST,
+        &reset,
+        Some(&[("csrf_token", "forged"), ("username", MEMBER)]),
+        Some(&a.cookie),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _, html) = send(
+        &app,
+        Method::POST,
+        &reset,
+        Some(&[("csrf_token", a.csrf.as_str()), ("username", MEMBER)]),
+        Some(&a.cookie),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "login", "{html}");
+    assert!(html.contains(&format!("value=\"{MEMBER}\"")), "{html}");
+    let member = user(&store, MEMBER).await;
+    let mut queued = Vec::new();
+    for _ in 0..50 {
+        queued = store.list_outbox_rows("dev", None).await.unwrap();
+        if !queued.is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].user_id, member.id);
+    assert_eq!(queued[0].client_id.as_deref(), Some("edge"));
+
+    // Without e-mail sign-in the page asks for the username.
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.login_with_email_allowed = false;
+    store.upsert_realm(realm).await.unwrap();
+    let (st, _, html) = send(
+        &app,
+        Method::GET,
+        "/realms/dev/login-actions/reset-credentials",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        html.contains(Bundle::for_locale("en").get("emailInstructionUsername")),
+        "{html}"
+    );
+}
+
+/// The password form of an action link: a browser without the link's cookie meets the expired
+/// page, a forged CSRF token 403, a session without its person 400; a mismatched confirmation
+/// and a password the policy refuses come back on the form (400) with the reason; a good password
+/// with "sign out other devices" ends the person's other sessions and returns to the app.
+#[tokio::test]
+async fn action_link_password_forms_refuse_and_then_finish() {
+    let (app, store) = app().await;
+    let member = user(&store, MEMBER).await;
+    let open = |link: String| {
+        let app = app.clone();
+        async move {
+            let (st, h, html) = open_action_link(&app, &link).await;
+            assert_eq!(st, StatusCode::OK, "{html}");
+            (
+                first_cookie(&h),
+                extract_hidden_input(&html, "csrf_token"),
+                extract_hidden_input(&html, "session_code"),
+            )
+        }
+    };
+    let (cookie, csrf, session) = open(mint(&store, &member.id, &["UPDATE_PASSWORD"]).await).await;
+    let post = |fields: Vec<(&'static str, String)>, cookie: Option<String>| {
+        let app = app.clone();
+        async move {
+            let pairs: Vec<(&str, &str)> = fields.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            send(
+                &app,
+                Method::POST,
+                ACTION,
+                Some(&pairs),
+                cookie.as_deref(),
+                None,
+            )
+            .await
+        }
+    };
+    let base = |extra: &[(&'static str, &str)]| {
+        let mut f = vec![
+            ("csrf_token", csrf.clone()),
+            ("session_code", session.clone()),
+        ];
+        f.extend(extra.iter().map(|(k, v)| (*k, (*v).to_owned())));
+        f
+    };
+    let (st, _, html) = post(base(&[("new_password", NEW_PW)]), None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(page_id(&html), "expired");
+    let mut forged = base(&[("new_password", NEW_PW)]);
+    forged[0].1 = "forged".into();
+    assert_eq!(
+        post(forged, Some(cookie.clone())).await.0,
+        StatusCode::FORBIDDEN
+    );
+
+    let (st, _, html) = post(
+        base(&[
+            ("new_password", NEW_PW),
+            ("password_confirm", "Something-Else-1!"),
+        ]),
+        Some(cookie.clone()),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(page_id(&html), "action-token-form");
+    // The page escapes the apostrophe of "Passwords don't match."
+    assert!(html.contains("Passwords don&#x27;t match."), "{html}");
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    let policy = std::mem::replace(&mut realm.password_policy, "length(40)".into());
+    store.upsert_realm(realm.clone()).await.unwrap();
+    let (st, _, html) = post(base(&[("new_password", NEW_PW)]), Some(cookie.clone())).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(html.contains("40"), "{html}");
+    realm.password_policy = policy;
+    store.upsert_realm(realm).await.unwrap();
+
+    let other = store
+        .list_user_sso_sessions("dev", &member.id)
+        .await
+        .unwrap()
+        .len();
+    let a = start(&app, None).await;
+    let (st, h, _) = a
+        .post(&app, &[("username", MEMBER), ("password", MEMBER_PW)])
+        .await;
+    assert!(is_code(st, &h));
+    assert_eq!(
+        store
+            .list_user_sso_sessions("dev", &member.id)
+            .await
+            .unwrap()
+            .len(),
+        other + 1
+    );
+    with_actions(&store, MEMBER, &["UPDATE_PASSWORD"]).await;
+    let (st, h, _) = post(
+        base(&[("new_password", NEW_PW), ("logout-sessions", "on")]),
+        Some(cookie.clone()),
+    )
+    .await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    assert_eq!(h[header::LOCATION], CALLBACK);
+    assert!(
+        store
+            .list_user_sso_sessions("dev", &member.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(user(&store, MEMBER).await.required_actions.is_empty());
+
+    // An action session that lost its person's id.
+    let (cookie, csrf, session) = open(mint(&store, &member.id, &["UPDATE_PASSWORD"]).await).await;
+    let mut s = store
+        .get_auth_session_by_id("dev", &session)
+        .await
+        .unwrap()
+        .unwrap();
+    s.user_id = None;
+    store.put_auth_session(s).await.unwrap();
+    let fields = vec![
+        ("csrf_token", csrf),
+        ("session_code", session),
+        ("new_password", NEW_PW.to_owned()),
+    ];
+    assert_eq!(post(fields, Some(cookie)).await.0, StatusCode::BAD_REQUEST);
+}
+
+/// A link minted without a way back ends on "Your account is updated." with a link back to
+/// the app the client names.
+#[tokio::test]
+async fn an_action_link_without_a_redirect_ends_on_the_updated_page_with_the_app() {
+    let (app, store) = app().await;
+    let member = user(&store, MEMBER).await;
+    let mut edge = store
+        .get_client_by_client_id("dev", "edge")
+        .await
+        .unwrap()
+        .unwrap();
+    edge.base_url = Some("https://portal.dev.example.test/".into());
+    store.upsert_client(edge).await.unwrap();
+    let dynstore: Arc<dyn Store> = store.clone();
+    let token = EmailSender::mint_action_token(
+        &dynstore,
+        store.kek(),
+        "dev",
+        ISSUER,
+        &member.id,
+        vec!["TERMS_AND_CONDITIONS".into()],
+        Some("edge".into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let (st, _, html) = send(
+        &app,
+        Method::POST,
+        ACTION,
+        Some(&[("key", token.as_str())]),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "account-updated", "{html}");
+    assert!(html.contains("id=\"backToApplication\""), "{html}");
+    assert!(html.contains("https://portal.dev.example.test/"), "{html}");
+}
+
+/// The passkey steps on the sign-in page: registration without a challenge shows the step
+/// again, a valid registration completes it, and the next sign-in asks for that passkey as the
+/// second factor, which again needs its challenge and then signs in; a passkey sign-in whose
+/// challenge is gone is refused.
+#[tokio::test]
+async fn passkey_steps_need_their_challenge_and_complete_with_a_valid_response() {
+    let (app, store) = app().await;
+    with_actions(&store, MEMBER, &["webauthn-register"]).await;
+    let rp_id = "idm.dev.example.test";
+    let challenge_of = |session: String| {
+        let store = store.clone();
+        async move {
+            store
+                .get_auth_session_by_id("dev", &session)
+                .await
+                .unwrap()
+                .unwrap()
+                .webauthn_challenge
+        }
+    };
+    let clear = |session: String| {
+        let store = store.clone();
+        async move {
+            let mut s = store
+                .get_auth_session_by_id("dev", &session)
+                .await
+                .unwrap()
+                .unwrap();
+            s.webauthn_challenge = None;
+            store.put_auth_session(s).await.unwrap();
+        }
+    };
+
+    let a = start(&app, None).await;
+    let (_, _, html) = a
+        .post(&app, &[("username", MEMBER), ("password", MEMBER_PW)])
+        .await;
+    assert_eq!(page_id(&html), "webauthn-register");
+    clear(a.session.clone()).await;
+    let (st, _, html) = a.post(&app, &[("webauthn_register_response", "{}")]).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "webauthn-register");
+    let challenge = challenge_of(a.session.clone()).await.unwrap();
+    let pk = passkey(b"page-cred-1", rp_id);
+    let reg = registration_json(&pk, &challenge, &format!("https://{rp_id}")).to_string();
+    let (st, h, html) = a
+        .post(
+            &app,
+            &[("webauthn_register_response", &reg), ("label", "Laptop")],
+        )
+        .await;
+    assert!(is_code(st, &h), "{st} {html}");
+    let member = user(&store, MEMBER).await;
+    assert!(member.required_actions.is_empty());
+    let handle = member.attributes["webauthn.user.handle"][0].clone();
+
+    let b = start(&app, None).await;
+    let (_, _, html) = b
+        .post(&app, &[("username", MEMBER), ("password", MEMBER_PW)])
+        .await;
+    assert_eq!(page_id(&html), "webauthn-authenticate", "{html}");
+    clear(b.session.clone()).await;
+    let (st, _, html) = b.post(&app, &[("webauthn_assertion_response", "{}")]).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "webauthn-authenticate");
+    let (st, _, _) = b
+        .post(&app, &[("webauthn_assertion_response", "{not json")])
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let challenge = challenge_of(b.session.clone()).await.unwrap();
+    let assertion = assertion_json(&pk, &challenge, rp_id, Some(&handle)).to_string();
+    let (st, h, html) = b
+        .post(&app, &[("webauthn_assertion_response", &assertion)])
+        .await;
+    assert!(is_code(st, &h), "{st} {html}");
+
+    let c = start(&app, None).await;
+    let (_, _, html) = c.post(&app, &[("switch_to", "passkey")]).await;
+    assert_eq!(page_id(&html), "webauthn-authenticate");
+    clear(c.session.clone()).await;
+    let (st, _, _) = c
+        .post(&app, &[("webauthn_assertion_response", &assertion)])
+        .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+/// A recovery-code step whose codes were removed meanwhile counts a failure and says the
+/// code is wrong; once the failures reach the realm's limit the step is locked.
+#[tokio::test]
+async fn a_recovery_code_without_stored_codes_is_refused_on_the_page() {
+    let (app, store) = app().await;
+    let a = start(&app, None).await;
+    a.post(&app, &[("username", STEWARD), ("password", STEWARD_PW)])
+        .await;
+    let (_, _, html) = a.post(&app, &[("switch_to", "recovery_code")]).await;
+    assert_eq!(page_id(&html), "recovery-code", "{html}");
+    let steward = user(&store, STEWARD).await;
+    for c in store.list_credentials("dev", &steward.id).await.unwrap() {
+        if c.credential_type == "recovery-authn-codes" {
+            store
+                .delete_credential("dev", &steward.id, &c.id)
+                .await
+                .unwrap();
+        }
+    }
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.failure_factor = 1;
+    store.upsert_realm(realm).await.unwrap();
+    let (st, _, html) = a.post(&app, &[("recovery_code", "ABCD-EFGH")]).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "recovery-code");
+    assert!(html.contains("role=\"alert\""), "{html}");
+    // That failure reached the realm's limit: the next try is refused before any code check.
+    let locked = store
+        .get_login_failure("dev", &format!("user:{}", steward.id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(locked.locked_until.is_some());
+    let (st, _, html) = a.post(&app, &[("recovery_code", "ABCD-EFGH")]).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(page_id(&html), "recovery-code");
+    assert!(html.contains("role=\"alert\""), "{html}");
 }
 
 async fn mint(store: &Arc<MemoryStore>, user_id: &str, actions: &[&str]) -> String {
@@ -583,7 +1020,7 @@ async fn unusable_action_links_name_the_cause_and_the_next_step_for_their_action
 #[tokio::test]
 async fn action_link_forms_need_a_valid_code_a_person_and_a_pending_secret() {
     let (app, store) = app().await;
-    let member = user(&store, MEMBER).await;
+    let member = with_actions(&store, MEMBER, &["CONFIGURE_TOTP"]).await;
     let open = |link: String| {
         let app = app.clone();
         async move {
@@ -644,6 +1081,7 @@ async fn action_link_forms_need_a_valid_code_a_person_and_a_pending_secret() {
     assert_eq!(h[header::LOCATION], CALLBACK);
     let creds = store.list_credentials("dev", &member.id).await.unwrap();
     assert!(creds.iter().any(|c| c.credential_type == "otp"));
+    assert!(user(&store, MEMBER).await.required_actions.is_empty());
 
     // A TOTP form whose pending secret is gone.
     let link = mint(&store, &member.id, &["CONFIGURE_TOTP"]).await;
@@ -955,6 +1393,24 @@ async fn passkey_helpers_refuse_every_broken_input() {
         1
     );
 
+    // An http mount still allows the https origin of its RP id; a configured RP id wins over
+    // the mount's host, for passkey login and second factor alike.
+    let http = Mount::new("kaisatsu", "http", "idm.dev.example.test:8080", "").unwrap();
+    assert_eq!(
+        allowed_origins_for_realm(&realm, &http)[..2],
+        [
+            "http://idm.dev.example.test:8080".to_owned(),
+            "https://idm.dev.example.test".to_owned()
+        ]
+    );
+    let mut configured = realm.clone();
+    configured.web_authn_policy_rp_id = " Hel.Example.Test ".into();
+    assert_eq!(effective_rp_id(&configured, &m, false), "hel.example.test");
+    assert_eq!(
+        effective_rp_id(&realm, &http, false),
+        "idm.dev.example.test"
+    );
+
     let rp_id = "idm.dev.example.test";
     let mut member = user(&mem, MEMBER).await;
     let handle = ensure_user_handle(&store, "dev", &mut member)
@@ -997,6 +1453,19 @@ async fn passkey_helpers_refuse_every_broken_input() {
     .await
     .unwrap();
     assert_eq!(rec.user_label.as_deref(), Some("Passkey"));
+    let again = complete_passkey_registration(
+        &store,
+        &m,
+        &realm,
+        &mut member,
+        &challenge,
+        &reg,
+        None,
+        true,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(again, KaisatsuError::Conflict(_)), "{again}");
 
     let opts = build_creation_options(&store, &m, &realm, &mut member, "opts-challenge")
         .await
@@ -1004,6 +1473,13 @@ async fn passkey_helpers_refuse_every_broken_input() {
     assert_eq!(opts["user"]["id"], handle.as_str());
     assert_eq!(opts["excludeCredentials"][0]["id"], pk.cred_id_b64.as_str());
     assert_eq!(opts["challenge"], "opts-challenge");
+    let mut unnamed = realm.clone();
+    unnamed.web_authn_policy_passwordless_rp_entity_name = String::new();
+    unnamed.display_name = "Helsinki ID".into();
+    let opts = build_creation_options(&store, &m, &unnamed, &mut member, "opts-challenge")
+        .await
+        .unwrap();
+    assert_eq!(opts["rp"]["name"], "Helsinki ID");
 
     let ch = URL_SAFE_NO_PAD.encode(b"login-challenge-1");
     let auth = |expected: Option<String>, body: serde_json::Value| {
@@ -1043,6 +1519,14 @@ async fn passkey_helpers_refuse_every_broken_input() {
             .is_err(),
         "usernameless needs userHandle"
     );
+    // A passkey stored before it ever verified the person learns it at its first verified use.
+    let mut stored = store
+        .get_webauthn_by_credential_id("dev", &pk.cred_id_b64)
+        .await
+        .unwrap()
+        .unwrap();
+    stored.uv_initialized = false;
+    store.update_webauthn_credential(stored).await.unwrap();
     let (u, uv) = auth(
         Some(member.id.clone()),
         assertion_json(&pk, &ch, rp_id, Some(&handle)),
@@ -1051,6 +1535,14 @@ async fn passkey_helpers_refuse_every_broken_input() {
     .unwrap();
     assert_eq!(u.id, member.id);
     assert!(uv);
+    assert!(
+        store
+            .get_webauthn_by_credential_id("dev", &pk.cred_id_b64)
+            .await
+            .unwrap()
+            .unwrap()
+            .uv_initialized
+    );
 
     let mut disabled = user(&mem, MEMBER).await;
     disabled.enabled = false;

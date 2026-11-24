@@ -2,7 +2,10 @@
 //! Turtle (`.ttl`) and N-Triples (`.nt`) parser (backed by `oxttl`) and serializer with
 //! streaming resource limits (A1).
 
-use crate::graph::{iri_text, ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple};
+use crate::graph::{
+    base_iri_error, iri_text, ns, LiteralValue, RdfGraph, RdfLimits, SubjectNode, Term, Triple,
+    BASE_IRI,
+};
 use dataroom_core::{DataroomError, Result};
 use oxttl::{NTriplesParser, TurtleParser};
 use std::collections::BTreeMap;
@@ -150,8 +153,8 @@ pub fn parse_turtle_bytes(bytes: &[u8], limits: &RdfLimits) -> Result<RdfGraph> 
     check_turtle_nesting_depth(bytes, limits.max_depth)?;
 
     let parser = TurtleParser::new()
-        .with_base_iri("https://dataroom.local/")
-        .map_err(|e| DataroomError::Rdf(format!("base IRI error: {e}")))?;
+        .with_base_iri(BASE_IRI)
+        .map_err(base_iri_error)?;
 
     let mut graph = RdfGraph::new();
     for item in parser.for_slice(bytes) {
@@ -640,13 +643,17 @@ ex:s ex:a "[[[(((\"]]]" ; ex:b '[[[' ; ex:c """[[[
             ttl.find("<https://e.org/ds>").unwrap() < ttl.find("_:a2").unwrap(),
             "named subjects first"
         );
-        let back =
-            parse_turtle(&ttl, &RdfLimits::default()).unwrap_or_else(|e| panic!("{e}\n{ttl}"));
+        let back = match parse_turtle(&ttl, &RdfLimits::default()) {
+            Ok(v) => v,
+            Err(e) => panic!("{e}\n{ttl}"),
+        };
         assert_eq!(unlabelled(&back), unlabelled(&g), "{ttl}");
 
         let nt = serialize_ntriples(&g);
-        let back = parse_ntriples_bytes(nt.as_bytes(), &RdfLimits::default())
-            .unwrap_or_else(|e| panic!("{e}\n{nt}"));
+        let back = match parse_ntriples_bytes(nt.as_bytes(), &RdfLimits::default()) {
+            Ok(v) => v,
+            Err(e) => panic!("{e}\n{nt}"),
+        };
         assert_eq!(unlabelled(&back), unlabelled(&g), "{nt}");
     }
 }

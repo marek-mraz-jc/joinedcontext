@@ -81,6 +81,16 @@ fn reducers_match_grafana_on_numbers_nulls_and_nan() {
         assert_eq!(reduce_slice(ReducerId::Count, &with_bad), Some(3.0));
         assert_eq!(reduce_slice(ReducerId::Last, &with_bad), Some(2.0));
     }
+    // the NaN is found wherever it stands, the first value included
+    assert!(is_nan(reduce_slice(
+        ReducerId::Median,
+        &[Some(f64::NAN), Some(1.0), Some(2.0)]
+    )));
+    // of equal minima or maxima the first stays (the sign of a zero shows which)
+    for r in [ReducerId::Min, ReducerId::Max] {
+        let got = reduce_slice(r, &[Some(0.0), Some(-0.0)]).expect("a value");
+        assert!(got == 0.0 && got.is_sign_positive(), "{r:?}: {got:?}");
+    }
     // last returns the last point as it is, null included.
     assert_eq!(reduce_slice(ReducerId::Last, &[Some(1.0), None]), None);
 }

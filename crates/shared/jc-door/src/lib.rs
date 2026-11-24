@@ -29,11 +29,15 @@ const ALGORITHMS: [Algorithm; 3] = [Algorithm::ES256, Algorithm::RS256, Algorith
 
 /// An HTTP client with a timeout that follows no redirect.
 pub fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    match reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|e| format!("cannot build an HTTP client: {e}"))
+    {
+        Ok(client) => Ok(client),
+        // Only a TLS backend that cannot start fails here.
+        Err(e) => Err(format!("cannot build an HTTP client: {e}")),
+    }
 }
 
 /// Reads at most `cap` bytes of an answer.
@@ -248,5 +252,7 @@ pub async fn fetch_token(
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "issuer")]
+pub mod issuer;
 #[cfg(feature = "testing")]
 pub mod testing;
