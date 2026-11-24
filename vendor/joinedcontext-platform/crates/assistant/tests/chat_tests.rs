@@ -4415,8 +4415,13 @@ async fn a_scoped_project_s_public_endpoint_is_read_and_nothing_else_of_it() {
     for slug in [REGION_SLUG, HIDDEN_SLUG, ELSEWHERE_SLUG] {
         recorded_air(&w.gateway, slug).await;
     }
-    script(&w.proxy, vec![
+    // Matched by what each call is told: under a loaded run the first round's judge may ask
+    // before the router does.
+    script_routed(&w.proxy, vec![
         completion(json!({"role": "assistant", "content": "{\"route\": \"data\", \"data\": [{\"endpoint\": \"helsinki/kraj\", \"type\": \"AirQualityObserved\"}, {\"endpoint\": \"bbsk/spisy\", \"type\": \"AirQualityObserved\"}, {\"endpoint\": \"bbsk/kraj\", \"type\": \"AirQualityObserved\"}]}"}), 400),
+    ], vec![
+        completion(json!({"role": "assistant", "content": "{\"answers\": true}"}), 100),
+    ], vec![
         streamed(&["NO2 je 21 [1]."], 900, 30),
     ]).await;
     let (status, events, _) = answer_of(
@@ -4437,7 +4442,8 @@ async fn a_scoped_project_s_public_endpoint_is_read_and_nothing_else_of_it() {
         data[0]["download"],
         format!("https://data.hronov.example/api/endpoint/{REGION_SLUG}/ngsi-ld/v1/entities?type=AirQualityObserved&limit=1000")
     );
-    let router = text_of(&model_calls(&w.proxy).await[0].1["messages"][1]);
+    let calls = model_calls(&w.proxy).await;
+    let router = text_of(&calls_of(&calls, Some(ROUTER))[0]["messages"][1]);
     assert!(
         router.contains("- bbsk/kraj: AirQualityObserved"),
         "{router}"
