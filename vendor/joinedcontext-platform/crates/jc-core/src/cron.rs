@@ -46,19 +46,19 @@ pub fn matches(
     weekday: u32,
 ) -> Option<bool> {
     let [m, h, d, mo, wd] = fields(cron)?;
+    // Every field is read before any is combined, so a field that is not cron is `None` whatever
+    // minute is asked (a `&&` chain left the fields after a missed minute unread).
     let weekday_ok =
         field_matches(wd, weekday, 0, 7)? || (weekday == 0 && field_matches(wd, 7, 0, 7)?);
     let day_ok = field_matches(d, day, 1, 31)?;
+    let minute_ok = field_matches(m, minute, 0, 59)?;
+    let hour_ok = field_matches(h, hour, 0, 23)?;
+    let month_ok = field_matches(mo, month, 1, 12)?;
     let day_and_weekday = match (d == "*", wd == "*") {
         (false, false) => day_ok || weekday_ok,
         _ => day_ok && weekday_ok,
     };
-    Some(
-        field_matches(m, minute, 0, 59)?
-            && field_matches(h, hour, 0, 23)?
-            && field_matches(mo, month, 1, 12)?
-            && day_and_weekday,
-    )
+    Some(minute_ok && hour_ok && month_ok && day_and_weekday)
 }
 
 /// Whether `cron` is five valid fields.
@@ -123,6 +123,10 @@ mod tests {
             "*/0 * * * *",
             "5-1 * * * *",
             "a * * * *",
+            // fuzz (T-7766): a minute that misses the probe left the later fields unread
+            "5 99 * * *",
+            "5 * * 13 *",
+            "5 0 * 0 *",
         ] {
             assert!(!is_valid(bad), "{bad}");
             assert_eq!(shortest_gap_minutes(bad), None, "{bad}");
