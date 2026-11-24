@@ -167,45 +167,52 @@ fn wire_now(wiring: impl std::future::Future<Output = ()>) -> bool {
 mod tests {
     use super::wire_now;
 
+    /// The events logged while it is the default subscriber, as (level, message).
     #[derive(Clone, Default)]
-    struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-    impl std::io::Write for Buf {
-        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().expect("lock").extend_from_slice(b);
-            Ok(b.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
+    struct Seen(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Seen {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut message = String::new();
+            event.record(
+                &mut |_: &tracing::field::Field, value: &dyn std::fmt::Debug| {
+                    message += &format!("{value:?}");
+                },
+            );
+            let level = *event.metadata().level();
+            self.0.lock().expect("lock").push((level, message));
         }
     }
 
     /// `wire_now` on `wiring` with the log captured: (finished, what it logged).
-    fn wired(wiring: impl std::future::Future<Output = ()>) -> (bool, String) {
-        let buf = Buf::default();
-        let writer = buf.clone();
-        let log = tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_writer(move || writer.clone())
-            .finish();
+    fn wired(
+        wiring: impl std::future::Future<Output = ()>,
+    ) -> (bool, Vec<(tracing::Level, String)>) {
+        use tracing_subscriber::layer::SubscriberExt;
+        let seen = Seen::default();
+        let log = tracing_subscriber::registry().with(seen.clone());
         let done = tracing::subscriber::with_default(log, || wire_now(wiring));
-        let logged = String::from_utf8(buf.0.lock().expect("lock").clone()).expect("utf-8");
-        (done, logged)
+        let events = seen.0.lock().expect("lock").clone();
+        (done, events)
     }
 
     #[test]
     fn a_wiring_that_completes_on_its_first_poll_is_kept_silently() {
-        let (done, logged) = wired(async {});
+        let (done, events) = wired(async {});
         assert!(done);
-        assert_eq!(logged, "");
+        assert!(events.is_empty(), "{events:?}");
     }
 
     #[test]
     fn a_wiring_that_suspends_is_dropped_with_an_error_naming_the_fallback() {
-        let (done, logged) = wired(std::future::pending());
+        let (done, events) = wired(std::future::pending());
         assert!(!done);
         assert!(
-            logged.contains("ERROR") && logged.contains("falls back to a store scan"),
-            "{logged}"
+            matches!(&events[..], [(tracing::Level::ERROR, m)] if m.contains("falls back to a store scan")),
+            "{events:?}"
         );
     }
 }
