@@ -102,14 +102,9 @@ EOF
   if [ "$state" != green ]; then
     say "ff-main: main left as is: $of is $state (after ${waited}s)"; return 0
   fi
-  # A newer trunk head with a smoke run of its own moves main itself, and its push run lets main's
-  # ci reuse the passed jobs: moving main to this older commit first would ship a full extra run.
-  if [ -n "$by" ]; then
-    head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/jc-portal-1" --jq .object.sha)
-    if [ "$head" != "$sha" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/smoke.yml/runs?head_sha=$head&event=push&branch=jc-portal-1&per_page=5" --jq .total_count)" != 0 ]; then
-      say "ff-main: main left as is: $of is green, and the trunk head $head has its own smoke run, which moves main"; return 0
-    fi
-  fi
+  # No deferral to a newer trunk head's smoke run: smoke.yml's one concurrency group keeps that run
+  # pending until this one ends, and every push replaces it, so deferring starved main for 4 h on
+  # 2026-11-23/24 (7aa3713ad green at 02:13Z, main stayed at c126f1ed0). An extra main ci run is cheaper.
   old=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
   if [ "$old" = "$sha" ]; then say "ff-main: main already at $sha"; return 0; fi
   rel=$(gh api "repos/$GITHUB_REPOSITORY/compare/$old...$sha" --jq .status)
@@ -173,9 +168,9 @@ if [ "${1:-}" = --selftest ]; then
     printf '{"status":"completed","conclusion":"%s","event":"push","head_sha":"%s","head_branch":"jc-portal-1","created_at":"%s","path":".github/workflows/ci.yml","repository":{"full_name":"o/r"},"head_repository":{"full_name":"o/r"}}' \
       "$2" "$1" "$3"
   }
-  # desc: <completed trunk runs json> <trunk head> <smoke runs on the head>: sets $MOVED (PATCH count) and $OUT (ff's lines)
+  # desc: <completed trunk runs json>: sets $MOVED (PATCH count) and $OUT (ff's lines)
   desc() {
-    TRUNK=$1 HEAD=$2 SMOKE=$3 CALLS=
+    TRUNK=$1 CALLS=
     gh() {
       CALLS="$CALLS|$*"
       case "$*" in
@@ -186,8 +181,6 @@ if [ "${1:-}" = --selftest ]; then
         *"/compare/$A...$P"*) echo behind ;;
         *"/compare/$A...$D"* | *"/compare/$A...$E"*) echo ahead ;;
         *"/compare/"*) echo ahead ;;
-        *"git/ref/heads/jc-portal-1 --jq"*) echo "$HEAD" ;;
-        *"/workflows/smoke.yml/runs?head_sha=$HEAD&"*) echo "$SMOKE" ;;
         *"git/ref/heads/main --jq"*) echo "$M" ;;
         "api -X PATCH repos/o/r/git/refs/heads/main -f sha=$A -F force=false") ;;
         *"/dispatches"*) ;;
@@ -199,16 +192,16 @@ if [ "${1:-}" = --selftest ]; then
   }
   dg=$(trun $D success 2026-11-23T00:21:00Z) dr=$(trun $D failure 2026-11-23T00:21:00Z)
   eg=$(trun $E success 2026-11-23T00:22:00Z) pg=$(trun $P success 2026-11-23T00:10:00Z)
-  desc "$eg,$dg,$pg" $E 1; want "cancelled, green descendant, head has its own smoke run: the head moves main" "$MOVED" 0
-  echo "$OUT" | grep -q "cancelled while pending; its descendant $D is green, and the trunk head $E has its own smoke" || { echo "FAIL: superseded line: $OUT"; exit 1; }
-  desc "$dg,$pg" $D 0; want "cancelled, green descendant, head without smoke (docs-only): moves main" "$MOVED" 1
+  desc "$eg,$dg,$pg"; want "cancelled, green descendant, head has its own smoke run: moves main, no deferral" "$MOVED" 1
+  echo "$OUT" | grep -q "gated by the green ci of its descendant $D" || { echo "FAIL: no-deferral line: $OUT"; exit 1; }
+  desc "$dg,$pg"; want "cancelled, green descendant, head without smoke (docs-only): moves main" "$MOVED" 1
   echo "$OUT" | grep -q "gated by the green ci of its descendant $D" || { echo "FAIL: move line names no descendant: $OUT"; exit 1; }
-  desc "$eg,$dr,$pg" $E 0; want "cancelled, red nearest descendant: main left (red), a later green does not hide it" "$MOVED" 0
+  desc "$eg,$dr,$pg"; want "cancelled, red nearest descendant: main left (red), a later green does not hide it" "$MOVED" 0
   echo "$OUT" | grep -q "its descendant $D is red" || { echo "FAIL: red line: $OUT"; exit 1; }
-  desc "$pg" $A 0; want "cancelled, no descendant run yet (only an ancestor's): waits, then main left" "$MOVED" 0
+  desc "$pg"; want "cancelled, no descendant run yet (only an ancestor's): waits, then main left" "$MOVED" 0
   echo "$OUT" | grep -q "is pending" || { echo "FAIL: no-descendant line: $OUT"; exit 1; }
-  desc "$eg,$(trun $D cancelled 2026-11-23T00:21:00Z)" $E 1; want "cancelled, a cancelled descendant is skipped for the next completed one" "$MOVED" 0
-  echo "$OUT" | grep -q "its descendant $E is green" || { echo "FAIL: skip cancelled descendant: $OUT"; exit 1; }
+  desc "$eg,$(trun $D cancelled 2026-11-23T00:21:00Z)"; want "cancelled, a cancelled descendant is skipped for the next completed one" "$MOVED" 1
+  echo "$OUT" | grep -q "gated by the green ci of its descendant $E" || { echo "FAIL: skip cancelled descendant: $OUT"; exit 1; }
   want "cancelled and failed runs on the commit read red, not cancelled" "$(case_ "$(run completed '"cancelled"' push jc-portal-1 o/r),$red" $M ahead)" 0
   if ff "not-a-sha" > /dev/null 2>&1; then echo "FAIL: a bad sha passed"; exit 1; fi
   # await: <runs json> -> the ok= line deploy-pin's pin job reads
