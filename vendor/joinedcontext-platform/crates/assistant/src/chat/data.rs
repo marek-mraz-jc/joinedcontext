@@ -176,8 +176,6 @@ pub struct Start {
 pub struct Answered {
     pub text: String,
     pub citations: Vec<Citation>,
-    /// Whether its call ended on its own.
-    pub whole: bool,
     /// How many tables with rows it cites; when any, every table read was sent before it returned.
     pub tables: usize,
 }
@@ -331,7 +329,6 @@ pub async fn answer(
             return Some(Answered {
                 text,
                 citations,
-                whole: completion.whole(),
                 tables: cited,
             });
         }
