@@ -89,6 +89,8 @@ enum Fail {
     Other(&'static str),
     /// A batch error naming these indexes of the batch.
     Indexed(&'static str, Vec<usize>),
+    /// A batch error over the batch sent twice, naming each copy of its first part.
+    Doubled(&'static str),
 }
 
 #[derive(Default)]
@@ -155,6 +157,14 @@ impl Output for RecOutput {
                 for i in idx {
                     e.failed(i, format!("part {i} failed"));
                 }
+                Err(CoreError::Batch(e))
+            }
+            Some(Fail::Doubled(m)) => {
+                let n = batch.len();
+                let twice = batch.iter().chain(&batch).cloned().collect();
+                let mut e = BatchError::new(twice, m.to_string());
+                e.failed(0, "first copy");
+                e.failed(n, "second copy");
                 Err(CoreError::Batch(e))
             }
         }
@@ -670,6 +680,9 @@ async fn generate_refuses_a_cron_schedule_that_never_fires_and_stops_on_shutdown
     )
     .expect("builds");
     let _ = i.read_batch(&c).await.expect("the first tick is free");
+    // a change that is not a stop leaves the wait running
+    tx.send(false).expect("no stop");
+    tokio::time::sleep(Duration::from_millis(50)).await;
     tx.send(true).expect("signal");
     let r = tokio::time::timeout(Duration::from_secs(5), i.read_batch(&c))
         .await
@@ -748,6 +761,15 @@ async fn a_file_input_dropped_mid_file_stops_its_reader() {
     let c = ctx();
     let mut i = input(&c, json!({"file": {"paths": [path.to_str()]}})).expect("builds");
     assert_eq!(texts(&i.read_batch(&c).await.expect("first").0), ["l"]);
+    drop(i);
+    let docs = tmp.path().join("docs.json");
+    std::fs::write(&docs, "{}".repeat(64)).expect("write");
+    let mut i = input(
+        &c,
+        json!({"file": {"paths": [docs.to_str()], "scanner": {"json_documents": {}}}}),
+    )
+    .expect("builds");
+    assert_eq!(texts(&i.read_batch(&c).await.expect("first").0), ["{}"]);
     drop(i);
     // the reader thread sees the closed channel and ends; the file is left as it was
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -1057,9 +1079,11 @@ async fn a_file_output_names_the_path_it_cannot_resolve_create_or_open() {
     )
     .expect("builds");
     assert!(!refusal(o.write_batch(&c, parts(&["x"])).await).is_empty());
-    // a directory does not open as a file
-    let o = output(&c, json!({"file": {"path": tmp.path().to_str()}})).expect("builds");
-    assert!(refusal(o.write_batch(&c, parts(&["x"])).await).contains("failed to open"));
+    // a directory does not open as a file, the root directory included
+    for dir in [tmp.path().to_str().expect("utf8"), "/"] {
+        let o = output(&c, json!({"file": {"path": dir}})).expect("builds");
+        assert!(refusal(o.write_batch(&c, parts(&["x"])).await).contains("failed to open"));
+    }
     // a full device refuses the bytes
     let o = output(
         &c,
@@ -1114,9 +1138,11 @@ async fn a_file_output_appends_lines_and_a_truncating_codec_keeps_the_last_messa
         .await
         .expect("written");
     o.write_batch(&c, parts(&["a"])).await.expect("written");
+    // the next batch to the last file appends to the file held open
+    o.write_batch(&c, parts(&["a"])).await.expect("written");
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("out/a.txt")).expect("a"),
-        "aaa"
+        "aaaa"
     );
     assert_eq!(
         std::fs::read_to_string(tmp.path().join("out/b.txt")).expect("b"),
@@ -1321,6 +1347,31 @@ async fn fallback_marks_the_whole_batch_and_answers_the_last_tier_error() {
     assert_eq!(second.marks(), [vec!["whole batch", "whole batch"]]);
     assert_eq!(third.bodies(), [vec!["a"]]);
     assert_eq!(third.marks(), [vec!["part 0 failed"]]);
+    // an index past the batch narrows nothing: every part goes on with the batch error
+    rec("fbo-1", vec![Fail::Indexed("out of range", vec![9])], false);
+    let next = rec("fbo-2", vec![], false);
+    let o = output(
+        &c,
+        json!({"fallback": [{"rec": "fbo-1"}, {"rec": "fbo-2"}]}),
+    )
+    .expect("builds");
+    o.write_batch(&c, parts(&["a", "b"]))
+        .await
+        .expect("second tier");
+    assert_eq!(next.marks(), [vec!["out of range", "out of range"]]);
+    // a part the child sent twice goes on once
+    rec("fbd-1", vec![Fail::Doubled("twice")], false);
+    let next = rec("fbd-2", vec![], false);
+    let o = output(
+        &c,
+        json!({"fallback": [{"rec": "fbd-1"}, {"rec": "fbd-2"}]}),
+    )
+    .expect("builds");
+    o.write_batch(&c, parts(&["a", "b"]))
+        .await
+        .expect("second tier");
+    assert_eq!(next.bodies(), [vec!["a"]]);
+    assert_eq!(next.marks(), [vec!["first copy"]]);
     let only = rec("fbw-only", vec![], false);
     let o = output(&c, json!({"fallback": [{"rec": "fbw-only"}]})).expect("builds");
     o.write_batch(&c, parts(&["x"])).await.expect("first tier");

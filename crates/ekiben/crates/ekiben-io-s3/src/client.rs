@@ -293,7 +293,7 @@ async fn read_capped(mut resp: reqwest::Response, max: usize) -> Result<Bytes, C
 
 /// The text of every `<tag>` element, XML entities decoded; S3's answers nest no element of the
 /// same name, so a flat scan is exact for Key, IsTruncated, NextContinuationToken and Code.
-fn xml_values(xml: &str, tag: &str) -> Vec<String> {
+pub fn xml_values(xml: &str, tag: &str) -> Vec<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
     let mut out = Vec::new();

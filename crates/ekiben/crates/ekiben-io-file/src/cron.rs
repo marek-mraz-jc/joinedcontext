@@ -485,6 +485,10 @@ mod tests {
             parse("0 0 0 * *").expect_err("refused"),
             "beginning of range (0) below minimum (1): 0"
         );
+        assert_eq!(
+            parse("*/-1 * * * *").expect_err("refused"),
+            "negative number (-1) not allowed: -1"
+        );
         assert!(parse("0 0 30 2 *")
             .expect("parses")
             .next(at("2026-01-01T00:00:00Z"))

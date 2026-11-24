@@ -141,6 +141,56 @@ async fn put(s: &Server, pin: &str, c: &StreamContext, path: &str, body: &str) {
     f.shutdown().await.expect("close");
 }
 
+/// Every log message of this test binary: the warnings are the input's behaviour on failures it
+/// rides out.
+fn logs() -> &'static Mutex<Vec<String>> {
+    static LOGS: std::sync::OnceLock<Mutex<Vec<String>>> = std::sync::OnceLock::new();
+    let logs = LOGS.get_or_init(Mutex::default);
+    static SET: std::sync::Once = std::sync::Once::new();
+    SET.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(Recorder);
+    });
+    logs
+}
+
+fn logged(part: &str) -> bool {
+    logs()
+        .lock()
+        .expect("lock")
+        .iter()
+        .any(|m| m.contains(part))
+}
+
+struct Recorder;
+
+struct Message(String);
+
+impl tracing::field::Visit for Message {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = format!("{value:?}");
+        }
+    }
+}
+
+impl tracing::Subscriber for Recorder {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut m = Message(String::new());
+        event.record(&mut m);
+        logs().lock().expect("lock").push(m.0);
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
 fn lines(b: &ekiben_core::Batch) -> Vec<String> {
     b.iter()
         .map(|p| String::from_utf8_lossy(&p.as_bytes_ref()).into_owned())
@@ -291,6 +341,7 @@ async fn files_past_the_cap_are_skipped_or_refused_and_an_empty_file_is_passed_o
         eprintln!("SFTP_TEST_ADDRESS unset: skipped");
         return;
     };
+    logs();
     let c = ctx(Arc::default());
     let pin = pin(&s, &c).await;
     let dir = format!("/upload/cap-{}", std::process::id());
@@ -332,6 +383,9 @@ async fn files_past_the_cap_are_skipped_or_refused_and_an_empty_file_is_passed_o
         .collect();
     left.sort();
     assert_eq!(left, ["a.csv", "b.csv", "big.csv"]);
+    assert!(logged(&format!(
+        "{dir}/big.csv (13 bytes) is larger than max_file_bytes (4) and is skipped"
+    )));
     i.close().await.expect("closes");
     assert!(!i.is_connected());
 
@@ -374,6 +428,7 @@ async fn files_past_the_cap_are_skipped_or_refused_and_an_empty_file_is_passed_o
         del.read_batch(&c).await,
         Err(CoreError::EndOfInput)
     ));
+    assert!(logged(&format!("deleting {dir}/a.csv after ack failed")));
 }
 
 /// A cache whose deletes fail, to show a failed forget is only logged.
@@ -402,6 +457,7 @@ async fn a_watcher_rides_out_a_vanished_file_and_a_missing_directory() {
         eprintln!("SFTP_TEST_ADDRESS unset: skipped");
         return;
     };
+    logs();
     let cache = Arc::new(MemCache::default());
     let c = ctx(cache.clone());
     let pin = pin(&s, &c).await;
@@ -434,6 +490,7 @@ async fn a_watcher_rides_out_a_vanished_file_and_a_missing_directory() {
         .expect("f.csv again");
     assert_eq!(lines(&b), ["f1"]);
     assert!(!cache.exists(&format!("{dir}/g.csv")).await.expect("cache"));
+    assert!(logged(&format!("reading {dir}/g.csv")) && logged("reconnecting"));
 
     // a watched directory that does not exist is listed again and again, never an error
     let sticky: Arc<dyn Cache> = Arc::new(StickyCache::default());
@@ -467,5 +524,69 @@ async fn a_watcher_rides_out_a_vanished_file_and_a_missing_directory() {
             .await
             .is_err(),
         "the file stays seen: the cache kept it"
+    );
+    assert!(logged(&format!("listing {dir}/none")));
+    assert!(logged(&format!(
+        "forgetting {dir}/f.csv after a nack: cache down"
+    )));
+}
+
+#[tokio::test]
+async fn register_all_builds_the_input_and_lints_its_config() {
+    let registry = Registry::new();
+    ekiben_io_sftp::register_all(&registry);
+    let c = ctx(Arc::default());
+    let conf = |config: JsonValue| ComponentConfig {
+        label: String::new(),
+        component_type: "sftp".into(),
+        config,
+        processors: Vec::new(),
+    };
+    let good = json!({
+        "address": "127.0.0.1:22",
+        "host_key_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "credentials": {"username": "city", "password": "hunter2"},
+        "paths": ["/upload/*.csv"],
+    });
+    assert!(registry
+        .lint_component("input", &conf(good.clone()))
+        .is_empty());
+    let input = registry.build_input(&conf(good), &c).expect("builds");
+    assert_eq!(input.input_type(), "sftp");
+    let bad = json!({"address": "x", "paths": ["/upload/*.csv"]});
+    let errs = registry
+        .lint_component("input", &conf(bad.clone()))
+        .join("; ");
+    assert!(errs.contains("host_key_fingerprint"), "{errs}");
+    match registry.build_input(&conf(bad), &c) {
+        Ok(_) => panic!("built without a pin"),
+        Err(e) => assert!(e.to_string().contains("host_key_fingerprint"), "{e}"),
+    }
+}
+
+#[tokio::test]
+async fn a_watcher_keeps_dialling_a_refused_server_with_a_growing_pause() {
+    logs();
+    // a port whose listener is gone refuses every connection
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = closed.local_addr().expect("addr").port();
+    drop(closed);
+    let s = Server {
+        address: format!("127.0.0.1:{port}"),
+        user: "city".into(),
+        password: "hunter2".into(),
+    };
+    let c = ctx(Arc::default());
+    let mut w = input(
+        &s,
+        "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        json!({"paths": ["/upload/*.csv"], "watcher": {"enabled": true, "cache": "seen"}}),
+        &c,
+    );
+    let r = tokio::time::timeout(Duration::from_millis(800), w.read_batch(&c)).await;
+    assert!(r.is_err(), "the watcher stopped dialling");
+    assert!(!w.is_connected());
+    assert!(
+        logged("connect failed, retrying in 100ms") && logged("connect failed, retrying in 200ms")
     );
 }

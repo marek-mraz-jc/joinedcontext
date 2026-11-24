@@ -169,6 +169,16 @@ mod tests {
     }
 
     #[test]
+    fn a_mismatched_end_tag_is_a_syntax_error() {
+        let conf = serde_json::json!({"operator": "to_json"});
+        let e = XmlDocumentScanner::from_config(conf.as_object().expect("object"))
+            .expect("scanner")
+            .documents(b"<a></b>")
+            .expect_err("refused");
+        assert!(e.to_string().starts_with("XML syntax error"), "{e}");
+    }
+
+    #[test]
     fn a_cast_that_is_not_a_bool_is_refused_and_a_bool_is_read_as_bento_reads_it() {
         let obj = |v: serde_json::Value| v.as_object().expect("object").clone();
         let e = XmlDocumentScanner::from_config(&obj(

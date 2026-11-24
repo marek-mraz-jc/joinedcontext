@@ -351,10 +351,8 @@ pub async fn connect(target: &SftpTarget, org: &OrgContext) -> Result<Session, C
         )));
     }
     let channel = step("session", ssh.channel_open_session().await)?;
-    step(
-        "sftp subsystem",
-        channel.request_subsystem(true, "sftp").await,
-    )?;
+    let subsystem = channel.request_subsystem(true, "sftp").await;
+    step("sftp subsystem", subsystem)?;
     let sftp = step("sftp", SftpSession::new(channel.into_stream()).await)?;
     Ok(Session { sftp, _ssh: ssh })
 }
@@ -432,12 +430,11 @@ impl SftpInput {
         let what = format!("reading {path}");
         let file = step(&what, sftp.open(path.to_string()).await)?;
         let mut body = Vec::new();
-        step(
-            &what,
-            file.take(self.s.max_file_bytes as u64 + 1)
-                .read_to_end(&mut body)
-                .await,
-        )?;
+        let read = file
+            .take(self.s.max_file_bytes as u64 + 1)
+            .read_to_end(&mut body)
+            .await;
+        step(&what, read)?;
         if body.len() > self.s.max_file_bytes {
             return Err(CoreError::other(format!(
                 "sftp input: {path} is larger than max_file_bytes ({} bytes)",

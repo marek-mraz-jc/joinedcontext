@@ -118,20 +118,29 @@ impl Output for StdoutOutput {
     }
 
     async fn write_batch(&self, _ctx: &StreamContext, mut batch: Batch) -> Result<(), CoreError> {
-        let mut stdout = std::io::stdout().lock();
-        for part in &mut batch {
-            let bytes = part.as_bytes();
-            stdout
-                .write_all(&bytes)
-                .map_err(|e| CoreError::other(e.to_string()))?;
-            if self.codec == "lines" && !bytes.ends_with(b"\n") {
-                stdout
-                    .write_all(b"\n")
-                    .map_err(|e| CoreError::other(e.to_string()))?;
-            }
-        }
-        stdout.flush().map_err(|e| CoreError::other(e.to_string()))
+        write_out(
+            &mut std::io::stdout().lock(),
+            &mut batch,
+            self.codec == "lines",
+        )
+        .map_err(io_error)
     }
+}
+
+/// Writes each part's bytes, with `lines` a newline after each that lacks one, and flushes.
+fn write_out(w: &mut dyn Write, batch: &mut Batch, lines: bool) -> std::io::Result<()> {
+    for part in batch {
+        let bytes = part.as_bytes();
+        w.write_all(&bytes)?;
+        if lines && !bytes.ends_with(b"\n") {
+            w.write_all(b"\n")?;
+        }
+    }
+    w.flush()
+}
+
+fn io_error(e: std::io::Error) -> CoreError {
+    CoreError::other(e.to_string())
 }
 
 /// Implements `file` output (`internal/impl/io/output_file.go`).
@@ -220,11 +229,9 @@ impl Output for FileOutput {
                         continue;
                     }
                 }
+                // a bare file name's parent is empty, which create_dir_all takes as done
                 if let Some(parent) = path.parent() {
-                    if !parent.as_os_str().is_empty() {
-                        std::fs::create_dir_all(parent)
-                            .map_err(|e| CoreError::other(e.to_string()))?;
-                    }
+                    std::fs::create_dir_all(parent).map_err(io_error)?;
                 }
                 let mut file = std::fs::OpenOptions::new()
                     .create(true)
@@ -235,8 +242,7 @@ impl Output for FileOutput {
                     .map_err(|e| {
                         CoreError::other(format!("failed to open '{}': {e}", path.display()))
                     })?;
-                file.write_all(&bytes)
-                    .map_err(|e| CoreError::other(e.to_string()))?;
+                file.write_all(&bytes).map_err(io_error)?;
                 if append_mode {
                     *held = Some((path, file));
                 }
@@ -244,7 +250,8 @@ impl Output for FileOutput {
             Ok(())
         })
         .await
-        .map_err(|e| CoreError::other(e.to_string()))?
+        .map_err(std::io::Error::from)
+        .map_err(io_error)?
     }
 }
 
@@ -886,4 +893,68 @@ async fn close_all<'a>(
         }
     }
     first.map_or(Ok(()), Err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Takes `room` bytes, then refuses; a flush fails when `flush_fails`.
+    struct Tight {
+        room: usize,
+        flush_fails: bool,
+        got: Vec<u8>,
+    }
+
+    impl Write for Tight {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.room == 0 {
+                return Err(std::io::Error::other("no room"));
+            }
+            let n = buf.len().min(self.room);
+            self.room -= n;
+            self.got.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.flush_fails {
+                return Err(std::io::Error::other("flush failed"));
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn write_out_ends_lines_and_stops_at_the_first_failure() {
+        let batch = || vec![Part::from_str("a"), Part::from_str("b\n")];
+        let mut w = Tight {
+            room: 64,
+            flush_fails: false,
+            got: Vec::new(),
+        };
+        write_out(&mut w, &mut batch(), true).expect("written");
+        assert_eq!(w.got, b"a\nb\n");
+        let mut w = Tight {
+            room: 64,
+            flush_fails: false,
+            got: Vec::new(),
+        };
+        write_out(&mut w, &mut batch(), false).expect("written");
+        assert_eq!(w.got, b"ab\n");
+        // the body, the added newline and the flush each fail by themselves
+        for (room, flush_fails, want) in [
+            (0, false, "no room"),
+            (1, false, "no room"),
+            (64, true, "flush failed"),
+        ] {
+            let mut w = Tight {
+                room,
+                flush_fails,
+                got: Vec::new(),
+            };
+            let e = write_out(&mut w, &mut batch(), true).expect_err("refused");
+            assert_eq!(io_error(e).to_string(), want);
+        }
+    }
 }

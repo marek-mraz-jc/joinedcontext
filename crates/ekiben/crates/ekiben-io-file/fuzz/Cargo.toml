@@ -1,0 +1,61 @@
+# Fuzzes what ekiben-io-file, ekiben-io-sftp and ekiben-io-s3 read from outside (T-7581): file
+# and stream bytes through every scanner, scanner configs, cron expressions, sftp and aws_s3
+# configs and S3 listing answers. Any input must end in a value or an error, never a panic, a
+# hang or an allocation the input did not pay for. Run by hand:
+# cargo +nightly fuzz run <target> -- -max_total_time=300 -rss_limit_mb=2048. Not a member of
+# the ekiben workspace.
+[package]
+name = "ekiben-io-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+jiff = "0.2"
+ekiben-core = { path = "../../ekiben-core" }
+ekiben-io-file = { path = ".." }
+ekiben-io-s3 = { path = "../../ekiben-io-s3" }
+ekiben-io-sftp = { path = "../../ekiben-io-sftp" }
+
+[[bin]]
+name = "scan"
+path = "fuzz_targets/scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scanner_config"
+path = "fuzz_targets/scanner_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cron"
+path = "fuzz_targets/cron.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "connector_config"
+path = "fuzz_targets/connector_config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "s3_listing"
+path = "fuzz_targets/s3_listing.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

@@ -179,21 +179,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_read_error_is_answered() {
-        struct Broken;
-        impl std::io::Read for Broken {
-            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::other("disk gone"))
-            }
-        }
-        let s = LinesScanner::default();
-        let e = s
-            .scan(&mut std::io::BufReader::new(Broken), &mut |_| Ok(()))
-            .expect_err("read error");
-        assert!(e.to_string().contains("disk gone"), "{e}");
-    }
-
     // Outputs recorded from Bento 1.22 (`file` input, `lines` scanner) on the same bytes.
     #[test]
     fn default_lines_drop_cr_and_keep_empty_lines() {

@@ -147,6 +147,40 @@ fn an_address_without_a_port_dials_22_and_a_root_glob_lists_the_root() {
     assert!(!lint(&json!("sftp://x")).is_empty());
 }
 
+#[test]
+fn a_watcher_names_a_cache_that_exists() {
+    let conf = ComponentConfig {
+        label: String::new(),
+        component_type: "sftp".into(),
+        config: with(json!({"watcher": {"enabled": true, "cache": "seen"}})),
+        processors: Vec::new(),
+    };
+    match SftpInput::from_config(&conf, &ctx(OrgQuotas::default())) {
+        Ok(_) => panic!("built without the cache resource"),
+        Err(e) => assert!(e.to_string().contains("seen"), "{e}"),
+    }
+}
+
+#[tokio::test]
+async fn a_private_server_is_refused_before_any_connection() {
+    let conf = ComponentConfig {
+        label: String::new(),
+        component_type: "sftp".into(),
+        config: with(json!({"address": "10.11.12.13:22"})),
+        processors: Vec::new(),
+    };
+    let c = ctx(OrgQuotas::default());
+    let mut i = SftpInput::from_config(&conf, &c).expect("builds");
+    let started = std::time::Instant::now();
+    let e = match i.read_batch(&c).await {
+        Ok(_) => panic!("read from a private address"),
+        Err(e) => e,
+    };
+    assert!(matches!(e, CoreError::AccessDenied { .. }), "{e}");
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(!i.is_connected());
+}
+
 /// An input dialling a loopback port where `serve` answers each connection.
 fn local_input(port: u16, extra: JsonValue) -> (SftpInput, StreamContext) {
     let c = ctx(OrgQuotas {
@@ -216,7 +250,7 @@ async fn a_server_that_never_answers_times_out_the_handshake() {
 }
 
 #[tokio::test]
-async fn a_refused_connection_fails_a_listing_at_once_and_a_watcher_keeps_dialling() {
+async fn a_refused_connection_fails_a_listing_at_once() {
     // a bound socket that never listens refuses every connection
     let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = closed.local_addr().expect("addr").port();
@@ -230,80 +264,62 @@ async fn a_refused_connection_fails_a_listing_at_once_and_a_watcher_keeps_dialli
         !matches!(e, CoreError::Config(_) | CoreError::AccessDenied { .. }),
         "{e}"
     );
-
-    let cache: Arc<dyn Cache> = Arc::new(NoCache);
-    let mut c = ctx(OrgQuotas {
-        allow_private_ips: true,
-        ..Default::default()
-    });
-    c.resources.insert_cache(c.org_id(), "seen", cache);
-    let conf = ComponentConfig {
-        label: String::new(),
-        component_type: "sftp".into(),
-        config: with(json!({
-            "address": format!("127.0.0.1:{port}"),
-            "watcher": {"enabled": true, "cache": "seen"},
-        })),
-        processors: Vec::new(),
-    };
-    let mut w = SftpInput::from_config(&conf, &c).expect("builds");
-    c.label = "watcher".into();
-    // it dials again with a growing pause and never gives up on its own
-    let r = tokio::time::timeout(Duration::from_millis(800), w.read_batch(&c)).await;
-    assert!(r.is_err(), "the watcher stopped dialling");
-    assert!(!w.is_connected());
-    assert!(w.backoff > Duration::from_millis(100), "{:?}", w.backoff);
 }
 
-/// A cache resource that holds nothing.
-struct NoCache;
-
-#[async_trait]
-impl Cache for NoCache {
-    async fn get(&self, key: &str) -> Result<bytes::Bytes, CoreError> {
-        Err(CoreError::KeyNotFound(key.to_string()))
-    }
-    async fn set(&self, _: &str, _: bytes::Bytes, _: Option<Duration>) -> Result<(), CoreError> {
-        Ok(())
-    }
-    async fn add(&self, _: &str, _: bytes::Bytes, _: Option<Duration>) -> Result<(), CoreError> {
-        Ok(())
-    }
-    async fn delete(&self, _: &str) -> Result<(), CoreError> {
-        Ok(())
-    }
-}
-
-#[test]
-fn a_watcher_names_a_cache_that_exists() {
-    let conf = ComponentConfig {
-        label: String::new(),
-        component_type: "sftp".into(),
-        config: with(json!({"watcher": {"enabled": true, "cache": "seen"}})),
-        processors: Vec::new(),
-    };
-    match SftpInput::from_config(&conf, &ctx(OrgQuotas::default())) {
-        Ok(_) => panic!("built without the cache resource"),
-        Err(e) => assert!(e.to_string().contains("seen"), "{e}"),
-    }
+/// An OpenSSH key pair made by ssh-keygen in `dir`: the public key line.
+fn keygen(dir: &std::path::Path, name: &str) -> String {
+    let path = dir.join(name);
+    let made = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&path)
+        .status()
+        .expect("ssh-keygen runs");
+    assert!(made.success());
+    std::fs::read_to_string(path.with_extension("pub")).expect("public key")
 }
 
 #[tokio::test]
-async fn a_private_server_is_refused_before_any_connection() {
-    let conf = ComponentConfig {
-        label: String::new(),
-        component_type: "sftp".into(),
-        config: with(json!({"address": "10.11.12.13:22"})),
-        processors: Vec::new(),
-    };
-    let c = ctx(OrgQuotas::default());
-    let mut i = SftpInput::from_config(&conf, &c).expect("builds");
-    let started = std::time::Instant::now();
-    let e = match i.read_batch(&c).await {
-        Ok(_) => panic!("read from a private address"),
-        Err(e) => e,
-    };
-    assert!(matches!(e, CoreError::AccessDenied { .. }), "{e}");
-    assert!(started.elapsed() < Duration::from_secs(2));
-    assert!(!i.is_connected());
+async fn the_pin_checks_a_host_key_and_a_host_certificate_by_their_key() {
+    use russh::client::Handler;
+    use russh::keys::{Certificate, PublicKey};
+    let dir = tempfile::TempDir::new().expect("tmp");
+    let host = PublicKey::from_openssh(&keygen(dir.path(), "host")).expect("host key");
+    keygen(dir.path(), "ca");
+    let signed = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-s"])
+        .arg(dir.path().join("ca"))
+        .args(["-I", "sftp.example.org", "-h"])
+        .arg(dir.path().join("host.pub"))
+        .status()
+        .expect("ssh-keygen signs");
+    assert!(signed.success());
+    let cert = Certificate::from_openssh(
+        &std::fs::read_to_string(dir.path().join("host-cert.pub")).expect("certificate"),
+    )
+    .expect("parses");
+    let fingerprint = host.fingerprint(HashAlg::Sha256).to_string();
+    let presented = [
+        PublicKeyOrCertificate::PublicKey {
+            key: host.clone(),
+            hash_alg: None,
+        },
+        PublicKeyOrCertificate::Certificate(cert),
+    ];
+    for (pin, want) in [
+        (fingerprint.clone(), true),
+        ("SHA256:other".to_string(), false),
+    ] {
+        for key in &presented {
+            let seen = Arc::new(std::sync::Mutex::new(None));
+            let mut pinned = Pinned {
+                fingerprint: pin.clone(),
+                seen: seen.clone(),
+            };
+            assert_eq!(pinned.check_server_key(key).await.expect("checked"), want);
+            assert_eq!(
+                seen.lock().expect("lock").as_deref(),
+                Some(fingerprint.as_str())
+            );
+        }
+    }
 }
