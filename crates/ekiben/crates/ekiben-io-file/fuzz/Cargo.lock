@@ -843,13 +843,10 @@ dependencies = [
  "lz4_flex",
  "quick-xml",
  "regex",
- "serde",
  "serde_json",
  "snap",
  "tar",
- "thiserror",
  "tokio",
- "tracing",
  "zstd",
 ]
 
