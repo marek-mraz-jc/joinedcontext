@@ -1245,6 +1245,472 @@ async fn odata_reads_by_key_name_and_expansion_and_refuse_what_names_nothing() {
     );
 }
 
+/// The REST surface's refusals and variants a Gitea client meets: a migrate is a copy on the same
+/// forge only, a file update answers 200, the combined commit state is its worst status, a branch
+/// rule patch keeps its name, a pull request reopens, an archive names its format, and a hook
+/// takes only what the forge serves.
+#[tokio::test]
+async fn the_rest_surface_refuses_bad_input_and_answers_each_variant() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let app = world(tmp.path());
+    let unprocessable = StatusCode::UNPROCESSABLE_ENTITY;
+    let (st, _) = send(
+        &app,
+        "POST",
+        "/api/v1/orgs/joinedcontext/repos",
+        ADMIN,
+        Some(json!({ "name": "site", "auto_init": true, "default_branch": "main" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+
+    // Migrate: an intra-forge copy only.
+    let migrate = |clone_addr: &str, owner: &str, name: &str, mirror: bool| {
+        json!({
+        "clone_addr": clone_addr, "repo_owner": owner, "repo_name": name, "mirror": mirror })
+    };
+    for (body, want) in [
+        (
+            migrate(
+                "http://localhost/joinedcontext/site.git",
+                "bad name!",
+                "copy",
+                false,
+            ),
+            unprocessable,
+        ),
+        (
+            migrate(
+                "http://localhost/joinedcontext/site.git",
+                "joinedcontext",
+                "bad name!",
+                false,
+            ),
+            unprocessable,
+        ),
+        (
+            migrate(
+                "http://localhost/joinedcontext/site.git",
+                "joinedcontext",
+                "copy",
+                true,
+            ),
+            unprocessable,
+        ),
+        (
+            migrate("not a url", "joinedcontext", "copy", false),
+            unprocessable,
+        ),
+        (
+            migrate(
+                "https://github.com/joinedcontext/site.git",
+                "joinedcontext",
+                "copy",
+                false,
+            ),
+            unprocessable,
+        ),
+        (
+            migrate("http://localhost/site.git", "joinedcontext", "copy", false),
+            unprocessable,
+        ),
+        (
+            migrate(
+                "http://localhost/joinedcontext/site.git",
+                "joinedcontext",
+                "copy",
+                false,
+            ),
+            StatusCode::CREATED,
+        ),
+        (
+            migrate(
+                "http://shako.forge.svc.cluster.local/joinedcontext/site",
+                "joinedcontext",
+                "copy2",
+                false,
+            ),
+            StatusCode::CREATED,
+        ),
+    ] {
+        let (st, got) = send(
+            &app,
+            "POST",
+            "/api/v1/repos/migrate",
+            ADMIN,
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(st, want, "{body}: {got}");
+    }
+
+    // Contents: an update with the blob's sha answers 200; a bad path, base64 or branch is refused.
+    let put = |content: &str, sha: Option<&str>, branch: Option<&str>, new_branch: Option<&str>| {
+        json!({ "content": STANDARD.encode(content), "message": "m", "sha": sha,
+            "branch": branch, "new_branch": new_branch })
+    };
+    let (st, made) = send(
+        &app,
+        "PUT",
+        &format!("{R}/contents/a.txt"),
+        ADMIN,
+        Some(put("a", None, None, None)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{made}");
+    let (_, got) = send(&app, "GET", &format!("{R}/contents/a.txt"), READER, None).await;
+    let blob = got["sha"].as_str().unwrap_or_default().to_owned();
+    assert!(!blob.is_empty(), "{made} {got}");
+    let (st, updated) = send(
+        &app,
+        "PUT",
+        &format!("{R}/contents/a.txt"),
+        ADMIN,
+        Some(put("b", Some(&blob), None, None)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{updated}");
+    let (st, _) = send(
+        &app,
+        "PUT",
+        &format!("{R}/contents/..%2Fx"),
+        ADMIN,
+        Some(put("b", None, None, None)),
+    )
+    .await;
+    assert_eq!(st.as_u16() / 100, 4, "a path outside the tree");
+    let (st, _) = send(
+        &app,
+        "PUT",
+        &format!("{R}/contents/c.txt"),
+        ADMIN,
+        Some(put("c", None, Some("nowhere"), Some("fresh"))),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "a new branch cut from none");
+    let (st, _) = send(
+        &app,
+        "DELETE",
+        &format!("{R}/contents/a.txt"),
+        ADMIN,
+        Some(json!({ "message": "m", "sha": blob, "branch": "nowhere", "new_branch": "fresh" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = send(
+        &app,
+        "POST",
+        &format!("{R}/contents"),
+        ADMIN,
+        Some(json!({ "message": "m", "files": [], "branch": "nowhere", "new_branch": "fresh" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, e) = send(
+        &app,
+        "POST",
+        &format!("{R}/contents"),
+        ADMIN,
+        Some(json!({ "message": "m", "files": [] })),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "a commit changes at least one file: {e}");
+    let (st, e) = send(&app, "POST", &format!("{R}/contents"), ADMIN,
+        Some(json!({ "message": "m", "files": [{ "operation": "create", "path": "d.txt", "content": "*" }] }))).await;
+    assert_eq!(st, unprocessable, "invalid base64: {e}");
+    let (st, _) = send(&app, "POST", &format!("{R}/contents"), ADMIN,
+        Some(json!({ "message": "m", "branch": "nowhere",
+            "files": [{ "operation": "create", "path": "d.txt", "content": STANDARD.encode("d") }] }))).await;
+    assert_eq!(
+        st,
+        StatusCode::NOT_FOUND,
+        "a commit onto a branch that does not exist"
+    );
+
+    // Commits: a page past the walk is refused.
+    let (st, _) = send(
+        &app,
+        "GET",
+        &format!("{R}/commits?page=10001&limit=1"),
+        READER,
+        None,
+    )
+    .await;
+    assert_eq!(st, unprocessable);
+
+    // The combined state is the worst status.
+    let sha = updated["commit"]["sha"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let state_of = || {
+        let (app, sha) = (app.clone(), sha.clone());
+        async move {
+            send(
+                &app,
+                "GET",
+                &format!("{R}/commits/{sha}/status"),
+                READER,
+                None,
+            )
+            .await
+            .1["state"]
+                .clone()
+        }
+    };
+    for (context, state, combined) in [
+        ("a", "success", "success"),
+        ("b", "unknown-state", "pending"),
+        ("c", "failure", "failure"),
+        ("d", "error", "error"),
+    ] {
+        let (st, e) = send(
+            &app,
+            "POST",
+            &format!("{R}/statuses/{sha}"),
+            ADMIN,
+            Some(json!({ "state": state, "context": context })),
+        )
+        .await;
+        if st == StatusCode::CREATED {
+            assert_eq!(state_of().await, json!(combined), "after {state}");
+        } else {
+            assert_eq!(st, unprocessable, "{state}: {e}");
+        }
+    }
+
+    // A branch rule patch keeps its name and its type.
+    let (st, _) = send(
+        &app,
+        "POST",
+        &format!("{R}/branch_protections"),
+        ADMIN,
+        Some(json!({ "rule_name": "main" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send(
+        &app,
+        "PATCH",
+        &format!("{R}/branch_protections/main"),
+        ADMIN,
+        Some(json!({ "rule_name": "other" })),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "rule_name cannot change");
+    let (st, _) = send(
+        &app,
+        "PATCH",
+        &format!("{R}/branch_protections/main"),
+        ADMIN,
+        Some(json!({ "required_approvals": "two" })),
+    )
+    .await;
+    assert_eq!(st, unprocessable, "invalid branch rule");
+    let (st, _) = send(
+        &app,
+        "PATCH",
+        &format!("{R}/branch_protections/none"),
+        ADMIN,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, rule) = send(
+        &app,
+        "PATCH",
+        &format!("{R}/branch_protections/main"),
+        ADMIN,
+        Some(json!({ "protected_file_patterns": "*.lock", "unprotected_file_patterns": "docs/*" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{rule}");
+    let (st, _) = send(
+        &app,
+        "DELETE",
+        &format!("{R}/branch_protections/main"),
+        ADMIN,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let (st, _) = send(
+        &app,
+        "DELETE",
+        &format!("{R}/branch_protections/main"),
+        ADMIN,
+        None,
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::NO_CONTENT,
+        "a second delete finds nothing to do"
+    );
+
+    // A pull request closes, reopens with a new title and body, and a merged one keeps its base.
+    let (_, _) = send(
+        &app,
+        "POST",
+        &format!("{R}/branches"),
+        ADMIN,
+        Some(json!({ "new_branch_name": "f" })),
+    )
+    .await;
+    let (_, _) = send(
+        &app,
+        "PUT",
+        &format!("{R}/contents/f.txt"),
+        ADMIN,
+        Some(put("f", None, Some("f"), None)),
+    )
+    .await;
+    let (st, pr) = send(
+        &app,
+        "POST",
+        &format!("{R}/pulls"),
+        ADMIN,
+        Some(json!({ "head": "f", "base": "main", "title": "t" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{pr}");
+    let n = pr["number"].as_u64().unwrap_or_default();
+    let (st, closed) = send(
+        &app,
+        "PATCH",
+        &format!("{R}/pulls/{n}"),
+        ADMIN,
+        Some(json!({ "state": "closed" })),
+    )
+    .await;
+    assert_eq!(
+        (st, closed["state"].clone()),
+        (StatusCode::OK, json!("closed")),
+        "{closed}"
+    );
+    let (st, _) = send(
+        &app,
+        "POST",
+        &format!("{R}/pulls/{n}/merge"),
+        ADMIN,
+        Some(json!({ "Do": "merge" })),
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::CONFLICT,
+        "a closed pull request does not merge"
+    );
+    let (st, open) = send(
+        &app,
+        "PATCH",
+        &format!("{R}/pulls/{n}"),
+        ADMIN,
+        Some(json!({ "state": "open", "title": "t2", "body": "b2" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{open}");
+    assert_eq!(
+        (
+            open["state"].clone(),
+            open["title"].clone(),
+            open["body"].clone()
+        ),
+        (json!("open"), json!("t2"), json!("b2"))
+    );
+    let (st, _) = send(
+        &app,
+        "POST",
+        &format!("{R}/pulls/{n}/merge"),
+        ADMIN,
+        Some(json!({ "Do": "merge" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = send(
+        &app,
+        "PATCH",
+        &format!("{R}/pulls/{n}"),
+        ADMIN,
+        Some(json!({ "base": "f" })),
+    )
+    .await;
+    assert_eq!(
+        st, unprocessable,
+        "a merged pull request keeps its base branch"
+    );
+    let (st, _) = send(&app, "POST", &format!("{R}/pulls/{n}/update"), ADMIN, None).await;
+    assert_eq!(
+        st.as_u16() / 100,
+        4,
+        "a merged pull request has no branch to update"
+    );
+
+    // Archives name their format.
+    for (ext, ok) in [
+        ("tar.gz", true),
+        ("zip", true),
+        ("bundle", true),
+        ("rar", false),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("{R}/archive/main.{ext}"))
+                    .header("authorization", format!("token {READER}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answer");
+        assert_eq!(resp.status().is_success(), ok, "{ext}: {}", resp.status());
+    }
+    let (st, _) = send(
+        &app,
+        "GET",
+        &format!("{R}/archive/nowhere.zip"),
+        READER,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // Hooks take only what the forge serves.
+    for body in [
+        json!({ "type": "gitea", "branch_filter": "main", "config": { "url": "https://github.com/h", "content_type": "json" } }),
+        json!({ "type": "slack", "config": { "url": "https://github.com/h", "content_type": "json" } }),
+        json!({ "type": "gitea", "config": { "url": "https://github.com/h", "content_type": "form" } }),
+        json!({ "type": "gitea", "config": { "url": "https://github.com/h", "content_type": "json", "http_method": "get" } }),
+        json!({ "url": "https://github.com/h", "secret_ref": "" }),
+        json!({ "url": "https://github.com/h", "secret_ref": "repo:someone-else:hook" }),
+    ] {
+        let (st, e) = send(
+            &app,
+            "POST",
+            &format!("{R}/hooks"),
+            ADMIN,
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(st.as_u16() / 100, 4, "{body}: {e}");
+    }
+
+    // A malformed Authorization header is no credential.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("{R}"))
+                .header("authorization", "token")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("answer");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn every_odata_set_answers_a_reader_and_refuses_the_anonymous() {
     let tmp = tempfile::tempdir().expect("tempdir");
