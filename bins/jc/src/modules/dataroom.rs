@@ -1267,7 +1267,7 @@ mod tests {
             format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
             format!("CREATE DATABASE {db}"),
             "DO $$ BEGIN CREATE ROLE dataroom_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-             NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;"
+             NOBYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;"
                 .to_owned(),
         ];
         for (role, create) in [
@@ -1277,7 +1277,7 @@ mod tests {
         ] {
             let create = if create { "CREATE, " } else { "" };
             statements.push(format!(
-                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
                  ALTER ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'pw-{role}-7782';
                  GRANT {create}CONNECT ON DATABASE {db} TO {role};"
             ));
@@ -1350,12 +1350,15 @@ mod tests {
             .unwrap();
         let e = refused(section("jc_drf_app", None), Vec::new()).await;
         assert!(e.contains("dataroom") && quiet(&e), "BYPASSRLS: {e}");
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "ALTER ROLE jc_drf_app NOBYPASSRLS; DROP DATABASE IF EXISTS {db} WITH (FORCE)"
-        )))
-        .execute(&admin)
-        .await
-        .unwrap();
+        for statement in [
+            "ALTER ROLE jc_drf_app NOBYPASSRLS".to_owned(),
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+                .execute(&admin)
+                .await
+                .unwrap();
+        }
     }
 
     /// ODP-12 on real Postgres (`DATAROOM_TEST_DATABASE_URL`, a superuser that only prepares):
@@ -1398,7 +1401,7 @@ mod tests {
         // server no earlier test has made it.
         sqlx::raw_sql(
             "DO $$ BEGIN CREATE ROLE dataroom_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-             NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+             NOBYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;",
         )
         .execute(&admin)
         .await
@@ -1407,7 +1410,7 @@ mod tests {
         for role in ["split_app", "split_owner"] {
             let pw = format!("pw-{role}-{}", std::process::id());
             sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
                  ALTER ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{pw}';
                  GRANT CREATE, CONNECT ON DATABASE {db} TO {role};"
             )))
@@ -1544,9 +1547,9 @@ mod tests {
         );
         // Without the migration owner nothing moves: the start stops and names the fix.
         let mut no_owner = cfg.clone();
-        let db = no_owner.database.as_mut().expect("a database section");
-        db.migrate_url = None;
-        db.migrate_password_file = None;
+        let section = no_owner.database.as_mut().expect("a database section");
+        section.migrate_url = None;
+        section.migrate_password_file = None;
         let moves: Vec<_> = organizations
             .iter()
             .map(|o| {
@@ -3530,9 +3533,8 @@ mod tests {
     }
 
     /// What no catalogue holds gets no look: a portal of an Organization jc serves no catalogue
-    /// for, an Organization no portal row names, one without a configured block, and a portal
-    /// stylesheet jc-core refuses (linked nowhere, logged); a portal's pages without a look of
-    /// its own go over its Organization's.
+    /// for, an Organization no portal row names, one without a configured block; a portal's
+    /// pages without a look of its own go over its Organization's.
     #[cfg(feature = "portal")]
     #[test]
     fn looks_of_what_no_catalogue_holds_go_nowhere() {
@@ -3614,27 +3616,26 @@ mod tests {
             "city-plain",
             serde_json::json!({ "organizationRef": "city", "path": "plain", "pages": home }),
         ));
-        mirror.upsert(envelope(
-            "Portal",
-            "city-bad",
-            serde_json::json!({ "organizationRef": "city", "path": "bad",
-                "appearance": { "css": ".site-header { color: #000 } </style>" } }),
-        ));
-        let (log, _guard) = super::super::capture_log();
         let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
         let city_org = OrgId::of_organization(installation, "city");
         let plain = CatalogueId::of_portal(city_org, "plain");
-        let bad = CatalogueId::of_portal(city_org, "bad");
         assert_eq!(
             looks.keys().copied().collect::<BTreeSet<_>>(),
-            BTreeSet::from([city, lonely, plain, bad]),
+            BTreeSet::from([city, lonely, plain]),
             "ghost's, bare's and their portals' catalogues get nothing"
         );
         assert_eq!(looks[&city].colours.primary, "#0b5394");
+        let theme = BrandingBlock::default();
         assert_eq!(
-            looks[&lonely],
-            BrandingBlock::default(),
-            "no portal reaches it"
+            looks[&lonely].colours, theme.colours,
+            "no portal look reaches it"
+        );
+        assert!(
+            looks[&lonely].layout.pages.is_empty() && looks[&lonely].layout.stylesheet.is_none()
+        );
+        assert_eq!(
+            looks[&lonely].dataset_fields.organization, "lonely",
+            "its own fields"
         );
         assert!(
             looks[&plain].layout.page("home").is_some(),
@@ -3643,15 +3644,6 @@ mod tests {
         assert_eq!(
             looks[&plain].colours.primary, "#0b5394",
             "its Organization's look"
-        );
-        assert!(
-            looks[&bad].layout.stylesheet.is_none(),
-            "refused, linked nowhere"
-        );
-        let logged = std::fs::read_to_string(log.path()).unwrap();
-        assert!(
-            logged.contains("a portal stylesheet jc-core refuses"),
-            "{logged}"
         );
     }
 

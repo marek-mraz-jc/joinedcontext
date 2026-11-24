@@ -391,9 +391,9 @@ mod tests {
             // The cluster-wide roles shako's first migration makes when they are missing, made
             // by the superuser as a deployment does: the NOCREATEROLE owner cannot.
             "DO $$ BEGIN CREATE ROLE shako_migrate NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-             NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$; \
+             NOBYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
              DO $$ BEGIN CREATE ROLE shako_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-             NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;"
+             NOBYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;"
                 .to_owned(),
         ] {
             sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
@@ -406,7 +406,7 @@ mod tests {
             let file = tmp.path().join(role);
             std::fs::write(&file, &pw).unwrap();
             let statement = format!(
-                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
                  ALTER ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE PASSWORD '{pw}';
                  {grants}"
             );
@@ -492,7 +492,7 @@ mod tests {
             "packageType": "container", "packageName": "image", "version": "old",
             "digest": digest, "mediaType": "application/vnd.oci.image.manifest.v1+json",
             "subjectDigest": null, "artifactType": null, "sizeBytes": bytes.len(),
-            "signed": false, "createdAt": "2026-11-01T00:00:00Z", "manifestBytes": bytes,
+            "signed": false, "createdAt": "2026-11-01T00:00:00Z", "manifestBytes": bytes.to_vec(),
         });
         let in_db = PgPoolOptions::new()
             .max_connections(1)
@@ -542,12 +542,15 @@ mod tests {
             .expect("BYPASSRLS refused")
             .to_string();
         assert!(e.contains("shako"), "{e}");
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "ALTER ROLE jc_shako_app NOBYPASSRLS; DROP DATABASE IF EXISTS {db} WITH (FORCE)"
-        )))
-        .execute(&server)
-        .await
-        .unwrap();
+        for statement in [
+            "ALTER ROLE jc_shako_app NOBYPASSRLS".to_owned(),
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+                .execute(&server)
+                .await
+                .unwrap();
+        }
     }
 
     /// Every file under `dir`.
