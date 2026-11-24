@@ -85,10 +85,34 @@ exclude_re = [
   'ekiben-io-ngsild/src/writer\.rs:\d+:(31|27): replace > with >= in Writer::write',
   # T-7632 ekiben-io-ngsild request_body: the sum only sizes the Vec's capacity; the body is the same.
   'ekiben-io-ngsild/src/writer\.rs:\d+:\d+: replace \+ with (-|\*) in request_body',
+  # T-7581 ekiben-io-file cron: bits() sets bits 0..=62 once each and STAR is bit 63, so `|` and `^` build the same
+  # set in descriptor, range and bits.
+  'ekiben-io-file/src/cron\.rs:\d+:\d+: replace \| with \^ in (descriptor|range|bits)',
+  # T-7581 ekiben-io-file Spec::next: the year limit only bounds the search; a spec that never fires answers None either
+  # way (year * 5 runs past jiff's year 9999 and plus() ends the search).
+  'ekiben-io-file/src/cron\.rs:\d+:30: replace \+ with \* in Spec::next',
+  # T-7581 ekiben-io-file Spec::next earliest_local guard: the first candidate is now + 1 s and a fold's earliest instant
+  # comes before the later one, so an activation equal to now never comes up.
+  'ekiben-io-file/src/cron\.rs:\d+:44: replace > with >= in Spec::next',
+  # T-7581 ekiben-io-file mark_failed: a batch error without part errors marks every part with its message, the same
+  # parts and marks as the whole-batch path, so `||` and `>= 0` on indexed_errors answer the same batch.
+  'ekiben-io-file/src/outputs\.rs:\d+:28: replace && with \|\| in mark_failed',
+  'ekiben-io-file/src/outputs\.rs:\d+:54: replace > with >= in mark_failed',
+  # T-7581 ekiben-io-file SCAN_BUFFER only sizes the read buffer of a scanned file; a line or row spans several fills,
+  # so a smaller buffer yields the same parts.
+  'ekiben-io-file/src/inputs\.rs:\d+:\d+: replace \* with \+$',
+  # T-7581 ekiben-io-file LinesScanner memchr only picks how many bytes to take per step; the line ends where
+  # ends_with(delim) says and the size check counts the same bytes, so any other split yields the same lines.
+  'ekiben-io-file/src/scanner_lines\.rs:\d+:\d+: replace memchr -> Option<usize> with Some\(0\)',
   # T-7669 json_schema type_of: an integer is i64 or u64 and its f64 has no fraction, so any one test answers
   # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: delete match arm Json::Bool\(true\) in Validator<.*>::validate',
+  # T-7576 go_fmt fmt_float: a width equal to the number's length inserts zero zeros after the sign, the same text.
+  'ekiben-bloblang/src/go_fmt\.rs:\d+:\d+: replace > with >= in fmt_float',
+  # T-7576 go_fmt format_float %g: p == dp takes p = nd, and nd <= p (digits are rounded to p), so (p - dp).max(0)
+  # is 0 either way.
+  'ekiben-bloblang/src/go_fmt\.rs:\d+:\d+: replace > with >= in format_float',
   # T-7748 executor: EmptyBatch::part_bytes answers an empty slice, borrowed or owned alike.
   'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace <impl MessageBatch for EmptyBatch>::part_bytes -> Cow<.*> with Cow::(Borrowed|Owned)\(Vec::leak\(Vec::new\(\)\).*',
   # T-7748 executor: the parser builds every Executor with an empty annotation.

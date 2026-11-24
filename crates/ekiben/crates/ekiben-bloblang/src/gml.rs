@@ -366,17 +366,8 @@ fn pos_list(el: &El, ax: Axes) -> Result<Vec<Pos>, String> {
             nums.len()
         ));
     }
-    nums.chunks(dim)
-        .map(|c| {
-            position(
-                c.to_vec(),
-                Axes {
-                    dim: Some(dim),
-                    ..ax
-                },
-            )
-        })
-        .collect()
+    // Every chunk holds dim numbers, which position() accepts under ax.dim or its 2-3 default.
+    nums.chunks(dim).map(|c| position(c.to_vec(), ax)).collect()
 }
 
 /// Every position of a point list (LineString, LinearRing, a curve segment), in order.

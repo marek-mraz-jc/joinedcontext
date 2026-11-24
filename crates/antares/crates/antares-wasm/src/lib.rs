@@ -65,12 +65,7 @@ impl Broker {
         // would mean this composition grew a step no browser build has: the
         // matcher then takes the store-scan fallback `wire` documents
         // instead of the page losing its broker.
-        if futures_util::FutureExt::now_or_never(antares_api::wire(&mut state)).is_none() {
-            tracing::error!(
-                "wiring did not complete synchronously; \
-                 matching falls back to a store scan per change"
-            );
-        }
+        wire_now(antares_api::wire(&mut state));
         // 5.8.1.4: distributed subscriptions hand this URL to the remote
         // broker as the notification callback. wasm32 has no process env
         // (the native default reads ANTARES_PUBLIC_URL + appends the port),
@@ -152,6 +147,73 @@ impl Broker {
             .map(|c| c.to_bytes().to_vec())
             .unwrap_or_default();
         http::Response::from_parts(parts, bytes)
+    }
+}
+
+/// Poll the wiring once and report whether it finished. A wiring that suspends is dropped
+/// and logged: the matcher then takes the store-scan fallback `wire` documents.
+fn wire_now(wiring: impl std::future::Future<Output = ()>) -> bool {
+    let done = futures_util::FutureExt::now_or_never(wiring).is_some();
+    if !done {
+        tracing::error!(
+            "wiring did not complete synchronously; \
+             matching falls back to a store scan per change"
+        );
+    }
+    done
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wire_now;
+
+    /// The events logged while it is the default subscriber, as (level, message).
+    #[derive(Clone, Default)]
+    struct Seen(std::sync::Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Seen {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut message = String::new();
+            event.record(
+                &mut |_: &tracing::field::Field, value: &dyn std::fmt::Debug| {
+                    message += &format!("{value:?}");
+                },
+            );
+            let level = *event.metadata().level();
+            self.0.lock().expect("lock").push((level, message));
+        }
+    }
+
+    /// `wire_now` on `wiring` with the log captured: (finished, what it logged).
+    fn wired(
+        wiring: impl std::future::Future<Output = ()>,
+    ) -> (bool, Vec<(tracing::Level, String)>) {
+        use tracing_subscriber::layer::SubscriberExt;
+        let seen = Seen::default();
+        let log = tracing_subscriber::registry().with(seen.clone());
+        let done = tracing::subscriber::with_default(log, || wire_now(wiring));
+        let events = seen.0.lock().expect("lock").clone();
+        (done, events)
+    }
+
+    #[test]
+    fn a_wiring_that_completes_on_its_first_poll_is_kept_silently() {
+        let (done, events) = wired(async {});
+        assert!(done);
+        assert!(events.is_empty(), "{events:?}");
+    }
+
+    #[test]
+    fn a_wiring_that_suspends_is_dropped_with_an_error_naming_the_fallback() {
+        let (done, events) = wired(std::future::pending());
+        assert!(!done);
+        assert!(
+            matches!(&events[..], [(tracing::Level::ERROR, m)] if m.contains("falls back to a store scan")),
+            "{events:?}"
+        );
     }
 }
 

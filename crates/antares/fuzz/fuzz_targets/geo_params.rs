@@ -4,7 +4,9 @@ use libfuzzer_sys::fuzz_target;
 use std::collections::HashMap;
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(s) = std::str::from_utf8(data) else { return };
+    let Ok(s) = std::str::from_utf8(data) else {
+        return;
+    };
     let mut parts = s.splitn(3, '\n');
     let mut params: HashMap<String, String> = HashMap::new();
     if let Some(v) = parts.next() {

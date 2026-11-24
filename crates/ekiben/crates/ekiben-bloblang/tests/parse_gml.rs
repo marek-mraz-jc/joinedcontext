@@ -209,12 +209,29 @@ fn from_names_the_crs_of_a_gml_without_srs_name() {
     )
     .unwrap();
     assert_eq!(positional, g);
+    for bad in ["EPSG:no", "urn:ogc:def:crs:EPSG::99999"] {
+        let err = parse_gml(&p, Some(bad), Some("EPSG:4326")).unwrap_err();
+        assert!(
+            err.starts_with("parameter from: parse_gml: srsName"),
+            "{bad}: {err}"
+        );
+    }
+    // A from given beside a srsName is ignored: the GML's own CRS wins.
+    let named = text(
+        r#"<gml:Point srsName="EPSG:3879"><gml:pos>25497363.07 6672958.39</gml:pos></gml:Point>"#,
+    );
+    assert_eq!(
+        parse_gml(&named, Some("EPSG:no"), Some("EPSG:4326")).unwrap(),
+        g
+    );
 }
 
 #[test]
 fn malformed_gml_is_an_error_naming_the_fault() {
     let cases: &[(&str, &str)] = &[
         (r#"<!DOCTYPE x [<!ENTITY e "1">]><gml:Point><gml:pos>&e; 2</gml:pos></gml:Point>"#, "forbidden"),
+        (r#"<!DOCTYPE x><gml:Point><gml:pos>1 2</gml:pos></gml:Point>"#, "DTD and entity declarations are forbidden"),
+        (r#"<gml:Point><!ENTITY e "1"><gml:pos>1 2</gml:pos></gml:Point>"#, "DTD and entity declarations are forbidden"),
         ("<gml:Point><gml:pos>1 &bogus;</gml:pos></gml:Point>", "unknown entity"),
         ("<gml:Point><gml:pos>NaN 2</gml:pos></gml:Point>", "finite"),
         ("<gml:Point><gml:pos>inf 2</gml:pos></gml:Point>", "finite"),
@@ -340,6 +357,56 @@ fn every_gml_shape_and_fault_reads_as_named() {
 }
 
 #[test]
+fn coordinates_separators_must_be_given_and_distinct() {
+    let refused = "parse_gml: gml:coordinates needs distinct cs, ts and decimal";
+    for attrs in [
+        r#"cs="""#,
+        r#"ts="""#,
+        r#"decimal="""#,
+        r#"cs=";" ts=";""#,
+        r#"decimal=",""#,
+        r#"decimal=" ""#,
+    ] {
+        let gml = format!("<gml:Point><gml:coordinates {attrs}>1,2</gml:coordinates></gml:Point>");
+        assert_eq!(
+            parse_gml(&text(&gml), None, None),
+            Err(refused.to_string()),
+            "{attrs}"
+        );
+    }
+}
+
+#[test]
+fn a_pos_list_cut_short_of_its_dimension_is_refused() {
+    let gml =
+        r#"<gml:LineString srsDimension="3"><gml:posList>1 2 3 4 5</gml:posList></gml:LineString>"#;
+    assert_eq!(
+        parse_gml(&text(gml), None, None),
+        Err("parse_gml: gml:posList holds 5 numbers, not a multiple of srsDimension 3".to_string())
+    );
+}
+
+#[test]
+fn curves_join_shared_ends_keep_disjoint_ones_and_refuse_even_arcs() {
+    let curve = r#"<gml:Curve><gml:segments><gml:LineStringSegment><gml:posList>0 0 1 1</gml:posList></gml:LineStringSegment><gml:LineStringSegment><gml:posList>1 1 2 2</gml:posList></gml:LineStringSegment><gml:LineStringSegment><gml:posList>5 5 6 6</gml:posList></gml:LineStringSegment></gml:segments></gml:Curve>"#;
+    let g = parse_gml(&text(curve), None, None).unwrap();
+    let pts: Vec<(f64, f64)> = items(coords(&g)).iter().map(xy).collect();
+    assert_eq!(
+        pts,
+        vec![(0.0, 0.0), (1.0, 1.0), (2.0, 2.0), (5.0, 5.0), (6.0, 6.0)]
+    );
+    let even = r#"<gml:Curve><gml:segments><gml:ArcString><gml:posList>0 0 1 1 2 0 3 1</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#;
+    assert_eq!(
+        parse_gml(&text(even), None, None),
+        Err("parse_gml: an arc string holds 2n+1 positions, n at least 1".to_string())
+    );
+    // gml:coord names its axes: two of them under a 3-dimensional parent are a 2D position.
+    let coord = r#"<gml:Point srsDimension="3"><gml:coord><gml:X>1</gml:X><gml:Y>2</gml:Y></gml:coord></gml:Point>"#;
+    let p = parse_gml(&text(coord), None, None).unwrap();
+    assert_eq!(xy(coords(&p)), (1.0, 2.0));
+}
+
+#[test]
 fn deep_nesting_is_refused_without_a_stack_overflow() {
     let deep = |n: usize| {
         format!(
@@ -356,6 +423,19 @@ fn deep_nesting_is_refused_without_a_stack_overflow() {
     assert!(parse_gml(&text(&elements), None, None)
         .unwrap_err()
         .contains("nest deeper than 32"));
+    let mut member = json!({ "Point": { "pos": "1 2" } });
+    // 20 levels of one field and one array item each: 40 elements deep, past 32 only when the
+    // array items count.
+    for _ in 0..20 {
+        member = json!({ "MultiGeometry": { "geometryMember": [member] } });
+    }
+    let arrays = Value::from_json_value(json!({ "MultiGeometry": { "geometryMember": [member] } }));
+    let got = parse_gml(&arrays, None, None);
+    assert!(
+        got.as_ref()
+            .is_err_and(|e| e.contains("nest deeper than 32")),
+        "{got:?}"
+    );
 }
 
 #[test]

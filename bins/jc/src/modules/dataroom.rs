@@ -218,7 +218,8 @@ pub async fn build_with_writer(
     // ODP-12: each Organization's catalogue lives under its own OrgId, so row level security and
     // the cross-organization harvest check keep Organizations apart; the deployment-wide
     // catalogue stays under `[dataroom] org_id`, the installation's own.
-    let mut own_org = BTreeMap::new();
+    // Each Organization's tenant and catalogue, by the name jc's host registry decides.
+    let mut by_organization = BTreeMap::new();
     let mut moves = Vec::new();
     for org in organizations {
         let own = OrgId::of_organization(org_id, &org.name);
@@ -232,7 +233,7 @@ pub async fn build_with_writer(
                 org.name
             )));
         }
-        own_org.insert(org.name.clone(), own);
+        by_organization.insert(org.name.clone(), (own, id));
         moves.push((org_id, own, id));
     }
     let store = open_store(cfg, &moves).await?;
@@ -257,8 +258,7 @@ pub async fn build_with_writer(
     let mut by_catalogue = BTreeMap::new();
     for org in organizations {
         // Distinct from the default catalogue: checked in the loop above.
-        let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?;
-        let tenant = own_org[&org.name];
+        let (tenant, id) = by_organization[&org.name];
         let host = bare_host(org.hosts.opendata_host());
         dataroom_server::ensure_catalogue(store.as_ref(), tenant, id, &org.name, host)
             .await
@@ -277,12 +277,7 @@ pub async fn build_with_writer(
         );
     }
     let mut catalogues = vec![(org_id, catalogue_id)];
-    for org in organizations {
-        catalogues.push((
-            own_org[&org.name],
-            CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?,
-        ));
-    }
+    catalogues.extend(organizations.iter().map(|org| by_organization[&org.name]));
     for &(o, c) in &catalogues {
         grants.push(dataroom_harvest::harvest_principal(o, c).1);
     }
@@ -304,22 +299,23 @@ pub async fn build_with_writer(
     scheduler.spawn();
     #[cfg(feature = "portal")]
     let configured = by_catalogue.clone();
-    // Each Organization's catalogue, by the name jc's host registry decides, and its canonical
-    // address: the Organization's open data host, whichever registered host reads it.
-    let mut by_organization = BTreeMap::new();
-    let mut bases = BTreeMap::new();
-    for org in organizations {
-        let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?;
-        by_organization.insert(org.name.clone(), (own_org[&org.name], id));
-        bases.insert(id, format!("{}://{}", mount.scheme, org.opendata_base()));
-    }
+    // Each catalogue's canonical address: the Organization's open data host, whichever
+    // registered host reads it.
+    let bases: BTreeMap<_, _> = organizations
+        .iter()
+        .map(|org| {
+            let (_, id) = by_organization[&org.name];
+            (id, format!("{}://{}", mount.scheme, org.opendata_base()))
+        })
+        .collect();
     #[cfg(feature = "portal")]
     let by_configured = by_organization.clone();
     #[cfg(feature = "portal")]
     let followed = portal_orgs(
         cfg,
+        (org_id, catalogue_id),
         organizations,
-        &own_org,
+        &by_organization,
         &mount,
         own_gateway.as_ref().map(|(public, _)| public.clone()),
     );
@@ -344,17 +340,16 @@ pub async fn build_with_writer(
         )))
         .with_mount_prefix(mount.path_prefix);
     #[cfg(feature = "portal")]
-    let state = with_dashboards(organizations, state).map_err(|e| err(&e))?;
+    let state = with_dashboards(&by_configured, state);
     #[cfg(feature = "portal")]
     follow_appearances(
-        organizations,
+        &by_configured,
         followed.clone(),
         configured,
         &state,
         shutdown,
         tasks,
-    )
-    .map_err(|e| err(&e))?;
+    );
     #[cfg(not(feature = "portal"))]
     let _ = (shutdown, tasks);
     let writer = dataroom_server::CatalogueWriter::new(state.clone(), authorizer, harvested);
@@ -409,12 +404,12 @@ fn publisher_verifier(
 #[cfg(feature = "portal")]
 fn portal_orgs(
     cfg: &DataroomSection,
+    (org_id, default_catalogue): (OrgId, CatalogueId),
     organizations: &[OrganizationSection],
-    own_org: &BTreeMap<String, OrgId>,
+    by_organization: &BTreeMap<String, (OrgId, CatalogueId)>,
     mount: &Mount,
     own_gateway: Option<String>,
 ) -> Vec<super::portals::OrganizationPortals> {
-    let default_catalogue = CatalogueId::parse_verified(&cfg.catalogue_id).ok();
     let entry = |name: &str, org_id, catalogue_id, opendata: String, listed| {
         super::portals::OrganizationPortals {
             name: name.to_owned(),
@@ -429,11 +424,6 @@ fn portal_orgs(
         }
     };
     if organizations.is_empty() {
-        let (Ok(org_id), Some(catalogue_id)) =
-            (OrgId::parse_verified(&cfg.org_id), default_catalogue)
-        else {
-            return Vec::new();
-        };
         let base = mount.public_base();
         let opendata = base
             .split_once("://")
@@ -441,24 +431,22 @@ fn portal_orgs(
         return vec![super::portals::OrganizationPortals::installation(entry(
             "",
             org_id,
-            catalogue_id,
+            default_catalogue,
             opendata.trim_end_matches('/').to_owned(),
             Vec::new(),
         ))];
     }
     organizations
         .iter()
-        .filter_map(|org| {
-            let catalogue_id = CatalogueId::parse_verified(&org.catalogue_id)
-                .ok()
-                .or(default_catalogue)?;
-            Some(entry(
+        .map(|org| {
+            let (tenant, catalogue_id) = by_organization[&org.name];
+            entry(
                 &org.name,
-                own_org[&org.name],
+                tenant,
                 catalogue_id,
                 org.opendata_base(),
                 org.hosts.portals.clone(),
-            ))
+            )
         })
         .collect()
 }
@@ -698,20 +686,19 @@ impl RunTime {
 /// `configured` again; a removed portal look falls back to the installation's.
 #[cfg(feature = "portal")]
 fn follow_appearances(
-    organizations: &[OrganizationSection],
+    by_organization: &BTreeMap<String, (OrgId, CatalogueId)>,
     portals: Vec<super::portals::OrganizationPortals>,
     configured: BTreeMap<CatalogueId, BrandingBlock>,
     state: &DataroomState,
     shutdown: &tokio_util::sync::CancellationToken,
     tasks: &tokio_util::task::TaskTracker,
-) -> Result<(), String> {
-    let mut catalogue = BTreeMap::new();
-    for org in organizations {
-        let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| e.to_string())?;
-        catalogue.insert(org.name.clone(), id);
-    }
+) {
+    let catalogue: BTreeMap<String, CatalogueId> = by_organization
+        .iter()
+        .map(|(name, &(_, id))| (name.clone(), id))
+        .collect();
     if catalogue.is_empty() {
-        return Ok(());
+        return;
     }
     let shared = state.catalogue_branding.clone();
     let shutdown = shutdown.clone();
@@ -744,7 +731,6 @@ fn follow_appearances(
             }
         }
     });
-    Ok(())
 }
 
 /// Each catalogue's branding as `mirror` has it now: every Organization's catalogue its
@@ -898,22 +884,21 @@ fn dataset_fields_in(
 /// (UIX-16, T-6780): a catalogue without an Organization shows none.
 #[cfg(feature = "portal")]
 fn with_dashboards(
-    organizations: &[OrganizationSection],
+    by_organization: &BTreeMap<String, (OrgId, CatalogueId)>,
     state: DataroomState,
-) -> Result<DataroomState, String> {
-    let mut organization = BTreeMap::new();
-    for org in organizations {
-        let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| e.to_string())?;
-        organization.insert(id, org.name.clone());
-    }
-    Ok(state.with_dashboard_resolver(move |catalogue, lang| {
+) -> DataroomState {
+    let organization: BTreeMap<CatalogueId, String> = by_organization
+        .iter()
+        .map(|(name, &(_, id))| (id, name.clone()))
+        .collect();
+    state.with_dashboard_resolver(move |catalogue, lang| {
         match (organization.get(catalogue), super::PORTAL_STATE.get()) {
             (Some(name), Some(state)) => {
                 super::appearance::dashboard_cards(&state.mirror, name, lang)
             }
             _ => Vec::new(),
         }
-    }))
+    })
 }
 
 /// `block` with an Organization's appearance over it, member by member; a logo that fails the
@@ -1255,6 +1240,16 @@ mod tests {
                 .await
                 .unwrap();
         }
+        // The cluster-wide role dataroom's first migration creates when it is missing, made
+        // by the superuser as a deployment does: the NOCREATEROLE owner cannot, and on a fresh
+        // server no earlier test has made it.
+        sqlx::raw_sql(
+            "DO $$ BEGIN CREATE ROLE dataroom_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+             NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+        )
+        .execute(&admin)
+        .await
+        .unwrap();
         let mut urls = Vec::new();
         for role in ["split_app", "split_owner"] {
             let pw = format!("pw-{role}-{}", std::process::id());
@@ -1394,6 +1389,28 @@ mod tests {
             tokio_util::sync::CancellationToken::new(),
             tokio_util::task::TaskTracker::new(),
         );
+        // Without the migration owner nothing moves: the start stops and names the fix.
+        let mut no_owner = cfg.clone();
+        if let Some(db) = no_owner.database.as_mut() {
+            db.migrate_url = None;
+            db.migrate_password_file = None;
+        }
+        let moves: Vec<_> = organizations
+            .iter()
+            .map(|o| {
+                (
+                    installation,
+                    OrgId::of_organization(installation, &o.name),
+                    CatalogueId::parse_verified(&o.catalogue_id).unwrap(),
+                )
+            })
+            .collect();
+        let e = open_store(&no_owner, &moves)
+            .await
+            .err()
+            .expect("a catalogue still under the installation's OrgId")
+            .to_string();
+        assert!(e.contains("still sits under [dataroom] org_id"), "{e}");
         let router = build(
             &cfg,
             &organizations,
@@ -1497,6 +1514,181 @@ mod tests {
         .expect("the module starts");
         shutdown.cancel();
         built
+    }
+
+    fn organization(name: &str, catalogue_id: &str) -> OrganizationSection {
+        OrganizationSection {
+            name: name.into(),
+            id: None,
+            hosts: crate::config::OrganizationHosts {
+                portal: format!("smartcity.{name}.sk"),
+                opendata: Some(format!("data.{name}.sk")),
+                ..Default::default()
+            },
+            host: None,
+            same_site_apps: false,
+            catalogue_id: catalogue_id.into(),
+            portal_token_file: None,
+            first_admin: None,
+        }
+    }
+
+    /// The start of a memory-store dataroom with `organizations`, beside the Portal when
+    /// `portal`: its refusal, if any.
+    async fn start(
+        organizations: &[OrganizationSection],
+        portal: bool,
+    ) -> Result<(Router, dataroom_server::CatalogueWriter), String> {
+        let (setup, secrets) = (
+            crate::setup::Setup::default(),
+            crate::config::Secrets::default(),
+        );
+        let mut siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        if portal {
+            siblings.insert_loopback(Module::Portal, "127.0.0.1:1".parse().unwrap());
+        }
+        let ctx = crate::modules::BuildCtx {
+            setup: &setup,
+            siblings: &siblings,
+            secrets: &secrets,
+            door: None,
+            portal_internal: None,
+        };
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let tasks = tokio_util::task::TaskTracker::new();
+        let built = build_with_writer(
+            &DataroomSection::default(),
+            organizations,
+            ctx,
+            Mount::default(),
+            None,
+            &shutdown,
+            &tasks,
+        )
+        .await
+        .map_err(|e| e.to_string());
+        shutdown.cancel();
+        built
+    }
+
+    /// Two Organizations on one catalogue id would move each other's catalogue: the start
+    /// stops and names the Organization; so does an id that is no UUID.
+    #[tokio::test]
+    async fn a_catalogue_id_held_twice_or_not_a_uuid_refuses_the_start() {
+        let default = DataroomSection::default().catalogue_id;
+        let e = start(&[organization("bbsk", &default)], true)
+            .await
+            .err()
+            .expect("the default catalogue's id");
+        assert!(e.contains("[[organizations]] bbsk"), "{e}");
+        assert!(e.contains("already [dataroom] catalogue_id"), "{e}");
+        let shared = "00000000-0000-7000-8000-00000000c0de";
+        let e = start(
+            &[organization("one", shared), organization("two", shared)],
+            true,
+        )
+        .await
+        .err()
+        .expect("another Organization's id");
+        assert!(e.contains("[[organizations]] two"), "{e}");
+        let e = start(&[organization("bad", "not-a-uuid")], true)
+            .await
+            .err()
+            .expect("no UUID");
+        assert!(e.contains("dataroom"), "{e}");
+        let (router, _) = start(
+            &[
+                organization("one", "00000000-0000-7000-8000-000000000a01"),
+                organization("two", "00000000-0000-7000-8000-000000000a02"),
+            ],
+            true,
+        )
+        .await
+        .expect("distinct ids start");
+        for host in ["data.one.sk", "data.two.sk"] {
+            assert_eq!(
+                action(&router, host, None, "package_list", None).await,
+                axum::http::StatusCode::OK,
+                "{host}"
+            );
+        }
+    }
+
+    /// Without the Portal beside it and without `[door]` nobody issues service tokens: the
+    /// module starts, and the Portal's publisher token is refused on every catalogue.
+    #[tokio::test]
+    async fn without_a_token_issuer_no_catalogue_admits_the_publisher() {
+        let (router, _) = start(&[], false).await.expect("starts without an issuer");
+        let status = action(
+            &router,
+            "localhost",
+            Some(&bearer()),
+            "package_create",
+            Some(package("refused")),
+        )
+        .await;
+        assert!(
+            matches!(
+                status,
+                axum::http::StatusCode::UNAUTHORIZED | axum::http::StatusCode::FORBIDDEN
+            ),
+            "{status}"
+        );
+    }
+
+    fn unreachable_database(dir: &std::path::Path, migrate: bool) -> crate::pg::DatabaseSection {
+        let password = dir.join("password");
+        std::fs::write(&password, "pw").unwrap();
+        crate::pg::DatabaseSection {
+            url: "postgres://dataroom_app@127.0.0.1:1/dataroom".into(),
+            password_file: password.clone(),
+            max_connections: None,
+            migrate_url: migrate.then(|| "postgres://dataroom_owner@127.0.0.1:1/dataroom".into()),
+            migrate_password_file: migrate.then_some(password),
+            maintenance_url: None,
+            maintenance_password_file: None,
+        }
+    }
+
+    /// A refused server or an unreadable password file stops the start with a module error;
+    /// no memory store stands in for the configured database.
+    #[tokio::test]
+    async fn a_database_that_cannot_be_reached_or_read_refuses_the_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        for migrate in [false, true] {
+            let cfg = DataroomSection {
+                database: Some(unreachable_database(tmp.path(), migrate)),
+                ..DataroomSection::default()
+            };
+            let e = open_store(&cfg, &[])
+                .await
+                .err()
+                .expect("refused")
+                .to_string();
+            assert!(
+                e.contains("cannot connect to Postgres"),
+                "migrate {migrate}: {e}"
+            );
+        }
+        for migrate in [false, true] {
+            let mut db = unreachable_database(tmp.path(), migrate);
+            if migrate {
+                db.migrate_password_file = Some(tmp.path().join("missing"));
+            } else {
+                db.password_file = tmp.path().join("missing");
+            }
+            let cfg = DataroomSection {
+                database: Some(db),
+                ..DataroomSection::default()
+            };
+            let e = open_store(&cfg, &[])
+                .await
+                .err()
+                .expect("unreadable")
+                .to_string();
+            assert!(e.contains("dataroom"), "migrate {migrate}: {e}");
+            assert!(!e.contains("cannot connect"), "nothing dialed: {e}");
+        }
     }
 
     /// The catalogue of a Portal `name` of one Organization, its publisher admitted.
@@ -2764,6 +2956,8 @@ mod tests {
     #[cfg(feature = "portal")]
     #[test]
     fn style_tokens_reach_the_catalogue_and_unreadable_pairs_give_way() {
+        let _log =
+            tracing::subscriber::set_default(tracing_subscriber::fmt().with_test_writer().finish());
         let look = |v: serde_json::Value| -> jc_core::kinds::OrganizationAppearance {
             serde_json::from_value(v).expect("an appearance")
         };
@@ -3252,6 +3446,8 @@ mod tests {
     /// `catalogue.propose` set on the default catalogue.
     #[tokio::test]
     async fn the_configured_host_replaces_a_proposed_one() {
+        let _log =
+            tracing::subscriber::set_default(tracing_subscriber::fmt().with_test_writer().finish());
         let (store, org, cat, _) = stored_default("opendata.city.example").await;
         let mut proposed = store.get_catalogue(org, cat).await.unwrap().unwrap();
         proposed.host = "proposed.example".into();
@@ -3260,6 +3456,66 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(host_of(&store, org, cat).await, "opendata.city.example");
+    }
+
+    #[tokio::test]
+    async fn a_hidden_list_for_a_catalogue_that_is_not_there_is_refused() {
+        let (store, ctx) = catalogue().await;
+        let other = CatalogueId::parse_verified("00000000-0000-7000-8000-00000000dead").unwrap();
+        let hidden = BTreeMap::from([("a".to_owned(), "gate".to_owned())]);
+        let e = seed_hidden(&store, ctx.org_id, other, &hidden)
+            .await
+            .unwrap_err();
+        assert!(matches!(e, DataroomError::NotFound(_)), "{e}");
+    }
+
+    #[cfg(feature = "portal")]
+    #[test]
+    fn converted_datasets_move_to_the_site_and_a_bad_file_names_the_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("od-datasets.json");
+        let e = converted_datasets(&path, None, "https://data.city.test")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("converted_file"), "{e}");
+        std::fs::write(&path, "{not json").unwrap();
+        let e = converted_datasets(&path, None, "https://data.city.test")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("converted_file"), "{e}");
+        std::fs::write(
+            &path,
+            r#"{"air": {"endpoint": "air", "type": "AirQualityObserved",
+                "dataset": "https://old.example/dataset/air"}}"#,
+        )
+        .unwrap();
+        let moved = converted_datasets(
+            &path,
+            Some("https://old.example/"),
+            "https://data.city.test/",
+        )
+        .unwrap();
+        assert_eq!(moved["air"].dataset, "https://data.city.test/dataset/air");
+        assert!(moved["air"].filtered, "the default holds");
+        for base in [None, Some("")] {
+            let kept = converted_datasets(&path, base, "https://data.city.test").unwrap();
+            assert_eq!(
+                kept["air"].dataset, "https://old.example/dataset/air",
+                "{base:?}"
+            );
+        }
+    }
+
+    #[cfg(feature = "portal")]
+    #[test]
+    fn the_hero_intro_keeps_a_heading_as_level_two_and_shows_raw_html_as_text() {
+        let with = hero_intro("# Data <b>&</b> city\n\nOpen *data*.");
+        assert!(with.starts_with("<h2>"), "{with}");
+        assert!(!with.contains("<b>"), "{with}");
+        assert!(with.contains("<em>data</em>"), "{with}");
+        let without = hero_intro("Just <script>x</script> text.");
+        assert!(!without.contains("<h2>"), "{without}");
+        assert!(!without.contains("<script>"), "{without}");
     }
 
     #[tokio::test]

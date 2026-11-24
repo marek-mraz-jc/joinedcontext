@@ -1,0 +1,6 @@
+ngsi-ld/v1/entities/urn:ngsi-ld:V:1/attrs
+Content-Type: application/json
+Link: <https://example.org/c.jsonld>; rel="http://www.w3.org/ns/json-ld#context"
+NGSILD-Tenant: t1
+
+{"speed":{"type":"Property","value":2}}
