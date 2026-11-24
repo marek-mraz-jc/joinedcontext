@@ -13,7 +13,7 @@ const FORMATS: &[&str] = &[
     "zip",
     "csv",
     "csv:;",
-    "spreadsheet",
+    "xlsx:Sheet1",
     "xlsx",
     "ods",
     "shapefile",
