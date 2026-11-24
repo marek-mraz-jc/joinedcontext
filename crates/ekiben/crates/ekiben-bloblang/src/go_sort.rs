@@ -337,7 +337,7 @@ fn reverse_range<T, F: FnMut(usize, &T, usize, &T) -> bool>(
 
 #[cfg(test)]
 mod tests {
-    use super::{heap_sort, pdqsort, sort_slice, Data};
+    use super::{heap_sort, partial_insertion_sort, pdqsort, sort_slice, Data};
 
     #[test]
     fn equal_keys_land_where_go_puts_them() {
@@ -530,6 +530,26 @@ mod tests {
             probe,
             vec![(3618, 3583), (3296, 3282), (3253, 1522), (3437, 3437)]
         );
+    }
+
+    #[test]
+    fn partial_insertion_sort_shifts_from_fifty_elements_on() {
+        // One swapped pair: 50 elements are short enough to fix in place, 49 give up at once.
+        for (n, fixed) in [(50i64, true), (49, false)] {
+            let mut v: Vec<i64> = (0..n).collect();
+            v.swap(10, 11);
+            let mut less = |_: usize, a: &i64, _: usize, b: &i64| a < b;
+            let mut d = Data {
+                v: &mut v,
+                less: &mut less,
+            };
+            assert_eq!(
+                partial_insertion_sort(&mut d, 0, n as usize),
+                fixed,
+                "n {n}"
+            );
+            assert_eq!(v.windows(2).all(|w| w[0] <= w[1]), fixed, "n {n}");
+        }
     }
 
     #[test]

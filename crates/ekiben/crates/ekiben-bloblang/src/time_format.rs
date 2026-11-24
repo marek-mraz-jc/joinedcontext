@@ -1076,10 +1076,8 @@ pub fn parse_go_duration_nanos(input: &str) -> Result<i64, String> {
         v *= mult;
         if frac > 0 {
             // float64 as Go computes it; the fraction is below one unit.
+            // The sum below refuses a v past LIMIT.
             v += (frac as f64 * (mult as f64 / scale)) as u64;
-            if v > LIMIT {
-                return Err(invalid());
-            }
         }
         total = total
             .checked_add(v)

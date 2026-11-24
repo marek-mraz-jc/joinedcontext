@@ -201,6 +201,23 @@ fn an_arc_through_three_points_stays_on_its_circle() {
             "{i}: {x} {y} {z}"
         );
     }
+    // Clockwise through a middle position 30 degrees after the start (same circle, start at 6 8).
+    let (b, e) = (t0 - 30f64.to_radians(), t0 - 57.5f64.to_radians());
+    let cw = format!(
+        "<gml:Curve><gml:segments><gml:ArcString><gml:posList>6 8 {} {} {} {}</gml:posList></gml:ArcString></gml:segments></gml:Curve>",
+        10.0 * b.cos(), 10.0 * b.sin(), 10.0 * e.cos(), 10.0 * e.sin()
+    );
+    let g = parse_gml(&text(&cw), None, None).unwrap();
+    let ps = items(coords(&g));
+    assert_eq!(ps.len(), 13, "57.5 degrees in 12 chords");
+    for (i, p) in ps.iter().enumerate() {
+        let (x, y) = xy(p);
+        let t = t0 - 57.5f64.to_radians() * i as f64 / 12.0;
+        assert!(
+            (x - 10.0 * t.cos()).abs() < 1e-9 && (y - 10.0 * t.sin()).abs() < 1e-9,
+            "{i}: {x} {y}"
+        );
+    }
     // Three collinear positions are a straight line.
     let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:ArcString><gml:posList>0 0 1 1 2 2</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#), None, None).unwrap();
     assert_eq!(items(coords(&g)).len(), 3);
