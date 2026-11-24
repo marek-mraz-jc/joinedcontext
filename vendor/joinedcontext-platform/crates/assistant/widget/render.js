@@ -23,8 +23,14 @@ var JCRender = (function () {
         var words = inline(match[4], known, linkable);
         // A link off the allowlist is its words alone (T-4149): an address a passage planted is
         // never one click away. `![alt](url)` is a "!" and the same link or words: never an image.
-        if (linkable(match[5])) out.push({ tag: "a", href: match[5], children: words });
-        else out = out.concat(words);
+        if (linkable(match[5])) {
+          out.push({ tag: "a", href: match[5], children: words });
+          // The model chooses a link's words: where it leads stands beside them unless they say
+          // so (F-R2UI3-002), in both shells (T-7790).
+          if (!namesHost(match[4], domain(match[5]))) out.push(" (" + domain(match[5]) + ")");
+        } else {
+          out = out.concat(words);
+        }
       } else if (match[6] !== undefined) {
         var numbers = match[6].split(",").map(function (n) { return Number(n.trim()); })
           .filter(function (n) { return known(n); });
@@ -194,6 +200,13 @@ var JCRender = (function () {
       }
     }
     return lines.concat([last]).join("\n");
+  }
+
+  // Whether one host-shaped word of a link's text is the host itself: "hel.fi" does not name
+  // el.fi, nor "mybank.com.example" bank.com (F-R2UI3-002 review).
+  function namesHost(text, host) {
+    var words = String(text).toLowerCase().match(/[a-z0-9-]+(?:\.[a-z0-9-]+)+/g) || [];
+    return words.some(function (word) { return word.replace(/^www\./, "") === host.toLowerCase(); });
   }
 
   function domain(url) {

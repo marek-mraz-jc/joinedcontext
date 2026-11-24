@@ -90,9 +90,19 @@ test("an http(s) link is a link; any other scheme stays text", () => {
   assert.deepEqual(markdown("[the city](https://hel.fi/x) [bad](javascript:alert(1)) [ftp](ftp://x)", undefined, anyHost), [
     { tag: "p", children: [
       { tag: "a", href: "https://hel.fi/x", children: ["the city"] },
+      " (hel.fi)",
       " [bad](javascript:alert(1)) [ftp](ftp://x)",
     ] },
   ]);
+});
+
+test("where a link leads stands beside words that do not say it (F-R2UI3-002, T-7790)", () => {
+  const one = (text) => markdown(text, undefined, anyHost)[0].children;
+  assert.deepEqual(one("see [hel.fi](https://evil.example/login)"), ["see ", { tag: "a", href: "https://evil.example/login", children: ["hel.fi"] }, " (evil.example)"]);
+  assert.deepEqual(one("[hel.fi](https://el.fi/login)"), [{ tag: "a", href: "https://el.fi/login", children: ["hel.fi"] }, " (el.fi)"]);
+  assert.deepEqual(one("[Pay at mybank.com.example](https://bank.com)"), [{ tag: "a", href: "https://bank.com", children: ["Pay at mybank.com.example"] }, " (bank.com)"]);
+  assert.deepEqual(one("[Open HEL.FI events](https://hel.fi/x)"), [{ tag: "a", href: "https://hel.fi/x", children: ["Open HEL.FI events"] }]);
+  assert.deepEqual(one("[www.hel.fi](https://www.hel.fi/x)"), [{ tag: "a", href: "https://www.hel.fi/x", children: ["www.hel.fi"] }]);
 });
 
 test("HTML and a script tag in the answer stay text", () => {
@@ -358,6 +368,7 @@ test("a link off the allowlist is its words alone, never a link", () => {
     markdown("[radnica](https://www.banskabystrica.sk/kontakt) [výhra](https://evil.example/claim)", undefined, city),
     [{ tag: "p", children: [
       { tag: "a", href: "https://www.banskabystrica.sk/kontakt", children: ["radnica"] },
+      " (banskabystrica.sk)",
       " ",
       "výhra",
     ] }],

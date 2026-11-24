@@ -738,6 +738,7 @@ jobs:
       # The OData client's types are generated from the org-admin $metadata snapshot, which the
       # Portal's test sdk_metadata_snapshot_is_the_org_admins_metadata keeps current (T-6816).
       - run: cd sdk && node scripts/odata-gen.mjs --check
+      - run: cd ui && node scripts/assistant-render.mjs --check
       - run: cd ui && pnpm install --frozen-lockfile
       - run: cd ui && pnpm lint
       # `pnpm build` also writes the open-data explorer, the Portal's grid in one bundle, which jc
@@ -753,7 +754,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.root == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
@@ -767,6 +768,16 @@ jobs:
           node --test --experimental-test-coverage --test-coverage-include=render.js --test-coverage-include=visitor.js
           --test-coverage-include=widget.js --test-coverage-lines=100 --test-coverage-functions=100
           render.test.js widget.test.js app/app.test.mjs
+      # The Portal chat's render core is generated from render.js and the field labels (T-7790): a
+      # copy that differs from what the script writes fails here, as odata-gen --check does.
+      - run: cd crates/portal/ui && node scripts/assistant-render.mjs --check
+      # The widget in Chromium at a desktop, a tablet and a phone (T-4283), with the Portal UI's
+      # Playwright and its pinned browser; its own small server stands in for jc-assistant (T-7790).
+      - working-directory: vendor/joinedcontext-platform/crates/assistant/widget
+        run: >-
+          ln -s ../../../../../crates/portal/ui/node_modules node_modules
+          && node_modules/.bin/playwright install --with-deps chromium
+          && node_modules/.bin/playwright test -c layout.config.mjs
       - working-directory: vendor/viz
         run: >-
           node --test --experimental-test-coverage --test-coverage-include=site/refuse.js --test-coverage-include=site/host.js
