@@ -1,8 +1,10 @@
 # Fuzzes what dataroom-core and dataroom-server read from outside (T-7624): branding overrides
 # (JSON, YAML, colours, fonts, addresses), uploaded logos, CKAN payloads, file names and bytes,
-# slugs, language tags, ids and vocabulary IRIs, and a whole CKAN dump through the import. Any
-# input must end in a value or an error, never a panic, a hang or an allocation the input did not
-# pay for. Run by hand: cargo +nightly fuzz run <target> -- -max_total_time=300 -rss_limit_mb=2048.
+# slugs, language tags, ids and vocabulary IRIs, a whole CKAN dump through the import (T-7624);
+# operations, harvested remote pages and outbound URLs, Turtle, RDF/XML, JSON-LD and DCAT, SHACL
+# shapes and data, search terms, CKAN actions and read routes, request languages and list links
+# (T-7801). Any input must end in a value or an error, never a panic, a hang or an allocation the
+# input did not pay for. Run by hand: cargo +nightly fuzz run <target> -- -max_total_time=300 -rss_limit_mb=2048.
 # Not a member of the root workspace.
 [package]
 name = "dataroom-fuzz"
