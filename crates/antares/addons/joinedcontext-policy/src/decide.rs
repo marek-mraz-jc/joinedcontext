@@ -938,6 +938,15 @@ mod tests {
             }
         }
         let read: Vec<&str> = CLAUSES.into_iter().filter(|c| reads(c)).collect();
+        // the reads by name, so a change to `reads` cannot move both sides of this test
+        assert_eq!(
+            read,
+            [
+                "5.7.1", "5.7.2", "5.7.3", "5.7.4", "5.7.5", "5.7.6", "5.7.7", "5.7.8", "5.7.9",
+                "5.7.10", "5.8.3", "5.8.4", "5.10.1", "5.10.2", "5.11.4", "5.11.5", "5.13.3",
+                "5.13.4", "5.14.4", "5.14.5"
+            ]
+        );
         assert_eq!(
             refused.len(),
             CLAUSES.len().saturating_sub(read.len()),
@@ -1166,10 +1175,26 @@ mod tests {
     /// T-3729: a narrowed read carries the caller's wish to be told.
     #[test]
     fn a_read_carries_the_callers_restriction() -> Result<(), String> {
-        let t = table(&json!({"operations": ["5.7.2"]}))?;
+        let t = table(&json!({"operations": ["5.7.2", "5.13.3"]}))?;
+        let whole = compile(&json!({"policies": [
+            {"id": "all", "assignee": {"kind": "role", "id": "r"}, "operations": ["5.7.2"]},
+            {"id": "no-vin", "effect": "prohibit", "assignee": {"kind": "role", "id": "r"},
+             "operations": ["5.7.2"],
+             "information": [{"entities": [{"type": "Car"}], "propertyNames": ["vin"]}]}]}))?;
         for restricted in [true, false] {
             let Decision::Filter(f) = with(&t, "5.7.2", &car(), &[], None, restricted) else {
                 return Err("a read by selector is a filter".into());
+            };
+            assert_eq!(f.restricted, restricted);
+            // a whole grant that a prohibition takes an Attribute back from says so too
+            let Decision::Filter(f) = with(&whole, "5.7.2", &car(), &[], None, restricted) else {
+                return Err("a whole read with an Attribute taken back is a filter".into());
+            };
+            assert_eq!(f.restricted, restricted);
+            assert!(!f.omit_by_type.is_empty());
+            // the core-@context answer of a caller without a whole grant says so too
+            let Decision::Filter(f) = with(&t, "5.13.3", &[], &[], None, restricted) else {
+                return Err("a narrowed @context list is a filter".into());
             };
             assert_eq!(f.restricted, restricted);
         }
@@ -1338,6 +1363,32 @@ mod tests {
         assert_eq!(
             on(&t, "5.6.1", Some(&at(5.0))),
             Decision::Deny(NOT_GRANTED.into())
+        );
+        Ok(())
+    }
+
+    /// GW16: a write by id whose body carries a location outside the area is refused before
+    /// the stored Entity is asked; one inside is held to the area's rule on the stored Entity.
+    #[test]
+    fn a_write_by_id_that_moves_out_of_the_area_is_refused() -> Result<(), String> {
+        let t = table(&json!({"operations": ["5.6.3"], "geoQ": AREA}))?;
+        let at = |x: f64| {
+            json!({ context().expand_key("location"): [{"type": "GeoProperty",
+                "value": {"type": "Point", "coordinates": [x, 0.5]}}] })
+        };
+        let by_id = |body: &Value| {
+            let op = Operation {
+                ids: &["urn:ngsi-ld:Car:1"],
+                body: Some(body),
+                ..Operation::new("5.6.3")
+            };
+            decide(Some(&t), &caller(), &op, Timestamp::now())
+        };
+        assert_eq!(by_id(&at(5.0)), Decision::Deny(NOT_GRANTED.into()));
+        assert!(
+            matches!(by_id(&at(0.5)), Decision::AllowIf(_)),
+            "{:?}",
+            by_id(&at(0.5))
         );
         Ok(())
     }
@@ -1631,6 +1682,65 @@ mod tests {
         Ok(())
     }
 
+    /// DM-140: a whole grant to `role: public` reads every Entity unfiltered, and still never
+    /// passes `modifiedBy.actor` or `provenance`: the allow becomes a filter of members alone.
+    #[test]
+    fn a_whole_public_grant_reads_everything_but_the_actor_and_the_provenance() -> Result<(), String>
+    {
+        let t = compile(
+            &json!({"policies": [{"id": "all", "assignee": {"kind": "role", "id": "public"},
+                                              "operations": ["5.7.2"]}]}),
+        )?;
+        let public = Caller::Platform(Platform {
+            roles: ["public".to_owned()].into(),
+            ..Platform::default()
+        });
+        let types = car();
+        let op = Operation {
+            types: &types,
+            ..Operation::new("5.7.2")
+        };
+        let Decision::Filter(f) = decide(Some(&t), &public, &op, Timestamp::now()) else {
+            return Err("a whole public read is a filter of members".into());
+        };
+        let got = f.metadata.clone().ok_or("no members")?;
+        assert!(got.rest.contains("observedAt") && got.rest.contains("modifiedBy.organization"));
+        assert!(!got.rest.contains("modifiedBy.actor") && !got.rest.contains("provenance"));
+        assert_eq!(
+            *f,
+            Filter {
+                metadata: Some(got),
+                ..Filter::default()
+            },
+            "nothing else narrowed"
+        );
+        Ok(())
+    }
+
+    /// A permission's `*` block passes its members to each Attribute it selects by name; a
+    /// prohibition's names add no Attribute of their own.
+    #[test]
+    fn a_star_block_reaches_each_attribute_the_permission_names() -> Result<(), String> {
+        let t = compile(&json!({"policies": [
+            {"id": "a", "assignee": {"kind": "role", "id": "r"}, "operations": ["5.7.2"],
+             "information": [{"entities": [{"type": "Car"}], "propertyNames": ["speed", "colour"],
+                              "attributes": {"*": {"metadata": ["observedAt"]}}}]},
+            {"id": "n", "effect": "prohibit", "assignee": {"kind": "role", "id": "r"},
+             "operations": ["5.7.2"],
+             "information": [{"entities": [{"type": "Car"}], "propertyNames": ["vin"]}]}]}))?;
+        let got = match on(&t, "5.7.2", None) {
+            Decision::Filter(f) => f.metadata.clone().ok_or("no members")?,
+            other => return Err(format!("{other:?}")),
+        };
+        let only = BTreeSet::from(["observedAt".to_owned()]);
+        assert_eq!(
+            got.named,
+            BTreeMap::from([(iri("colour"), only.clone()), (iri("speed"), only)]),
+            "{got:?}"
+        );
+        Ok(())
+    }
+
     /// A permission on another type, or on other Attributes of the type, leaves the members
     /// one permission narrows for its own Attribute as they are.
     #[test]
@@ -1671,6 +1781,14 @@ mod tests {
         );
         assert!(text.contains(" more were not queried"), "{text}");
         assert_eq!(warning(&[]), None);
+        // a line of exactly the bound fits
+        let one = warning(&["x".to_owned()])
+            .ok_or("no warning")?
+            .texts()
+            .join("");
+        let name = "x".repeat(Warning::MAX_LEN - (one.len() - 1));
+        let full = warning(&[name]).ok_or("a line of the bound is a warning")?;
+        assert_eq!(full.texts().join("").len(), Warning::MAX_LEN);
         assert_eq!(
             warning(&["x".repeat(300)]),
             None,

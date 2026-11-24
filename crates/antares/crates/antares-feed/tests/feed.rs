@@ -552,6 +552,16 @@ async fn a_list_of_more_than_twenty_outputs_or_a_repeated_name_serves_nobody() {
             "the reason is the gateway's to tell: {body}"
         );
     }
+    // e1 and e2 are created back to back, so their modifiedAt can tie: touch e2 to make it newer
+    let touch = json!({"name": {"type": "Property", "value": "Futbal"}});
+    let (status, body) = send(
+        &app,
+        "PATCH",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Event:e2/attrs",
+        &touch.to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     let (status, body) = send(&app, "GET", "/x/views/broken/feed/v1/x/atom.xml", "").await;
     assert_eq!(
         status,
