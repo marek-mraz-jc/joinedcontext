@@ -884,7 +884,7 @@ mod tests {
     /// `JC_PG_TEST_DATABASE_URL` names a superuser connection.
     #[tokio::test]
     async fn a_store_that_refuses_a_read_stops_the_run() {
-        let Ok(admin) = std::env::var("JC_PG_TEST_DATABASE_URL") else {
+        let Some(admin) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
             println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
             return;
         };

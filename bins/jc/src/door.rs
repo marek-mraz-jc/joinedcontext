@@ -54,31 +54,29 @@ pub fn credential_header(module: Module, setup: &Setup) -> Option<HeaderValue> {
 
 /// Whether `got` is `module`'s service credential `value` in a form a Portal client sends it:
 /// HTTP Basic for daiya, else the bare value (CKAN) or after `Bearer`/`token` (Gitea). Compared
-/// in constant time.
+/// byte for byte in constant time, so a credential holding any byte a header carries matches.
 #[must_use]
 pub fn is_credential(module: Module, got: &HeaderValue, value: &str) -> bool {
-    let Ok(got) = got.to_str() else {
-        return false;
-    };
-    let got = got.trim();
+    let got = got.as_bytes().trim_ascii();
     if module == Module::Daiya {
-        let Some(encoded) = got.strip_prefix("Basic ") else {
+        let Some(encoded) = got.strip_prefix(b"Basic ") else {
             return false;
         };
         let expected = format!("{DASHBOARDS_USER}:{value}");
         return base64::engine::general_purpose::STANDARD
-            .decode(encoded.trim())
+            .decode(encoded.trim_ascii())
             .is_ok_and(|raw| jc_secret::constant_time_eq(&raw, expected.as_bytes()));
     }
-    let bare = match got.split_once(' ') {
-        Some((scheme, rest))
-            if scheme.eq_ignore_ascii_case("bearer") || scheme.eq_ignore_ascii_case("token") =>
+    let bare = match got.iter().position(|b| *b == b' ') {
+        Some(at)
+            if got[..at].eq_ignore_ascii_case(b"bearer")
+                || got[..at].eq_ignore_ascii_case(b"token") =>
         {
-            rest.trim()
+            got[at + 1..].trim_ascii()
         }
         _ => got,
     };
-    jc_secret::constant_time_eq(bare.as_bytes(), value.as_bytes())
+    jc_secret::constant_time_eq(bare, value.as_bytes())
 }
 
 /// The verifier of a module container's door ([`jc_door::Verifier`] over `[door]`).
@@ -405,9 +403,13 @@ mod tests {
         assert!(!is_credential(Module::Shako, &h("Bearer other"), "s3cret"));
         assert!(!is_credential(Module::Shako, &h("Basic s3cret"), "s3cret"));
         assert!(!is_credential(Module::Shako, &h(""), "s3cret"));
-        // Not visible ASCII: never equal.
+        // Bytes past ASCII compare as bytes: another byte never matches, the same ones do
+        // (found by the door_credential fuzz target: such a credential never matched).
         let opaque = HeaderValue::from_bytes(b"\xffs3cret").unwrap();
         assert!(!is_credential(Module::Shako, &opaque, "s3cret"));
+        let wide = HeaderValue::from_str("Bearer 66666\u{99}").unwrap();
+        assert!(is_credential(Module::Shako, &wide, "66666\u{99}"));
+        assert!(!is_credential(Module::Shako, &wide, "66666"));
         // daiya: HTTP Basic of the dashboards user only.
         let basic = |user: &str, pw: &str| {
             let enc = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pw}"));

@@ -227,6 +227,17 @@ fn check_url(key: &str, raw: &str) -> Result<(), String> {
     if url.username().is_empty() {
         return Err(format!("{key} must name the database role"));
     }
+    // The driver also takes the role and the password from the query: a `password` there is a
+    // secret in the config file, a `user` a login other than the one checked here.
+    if let Some((name, _)) = url
+        .query_pairs()
+        .find(|(name, _)| matches!(name.as_ref(), "password" | "user"))
+    {
+        return Err(format!(
+            "{key} must not set `{name}` in its query: name the role before the @ and put the \
+             password in the password file"
+        ));
+    }
     PgConnectOptions::from_str(raw).map_err(|_| format!("{key} is not a Postgres URL"))?;
     Ok(())
 }
@@ -285,6 +296,16 @@ mod tests {
             ("postgres://db/jc", "must name the database role"),
             ("mysql://shako@db/jc", "postgres:// scheme"),
             ("not a url", "is not a URL"),
+            // Found by the pg_section fuzz target: the driver reads both from the query.
+            (
+                "postgres://shako@db/jc?password=leaked",
+                "must not set `password`",
+            ),
+            (
+                "postgres://shako@db/jc?sslmode=disable&user=postgres",
+                "must not set `user`",
+            ),
+            ("postgres://shako@db/jc?user=", "must not set `user`"),
         ] {
             let err = section(bad).validate().unwrap_err();
             assert!(err.contains(says), "{bad}: {err}");
@@ -417,7 +438,7 @@ mod tests {
     /// `JC_PG_TEST_DATABASE_URL` names a superuser connection (as tests/restart_pg.rs).
     #[tokio::test]
     async fn every_unsafe_request_login_is_refused_with_its_reason() {
-        let Ok(admin_url) = std::env::var("JC_PG_TEST_DATABASE_URL") else {
+        let Some(admin_url) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
             println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
             return;
         };
