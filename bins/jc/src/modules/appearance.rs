@@ -86,15 +86,17 @@ pub(crate) fn follow_installation<F, Fut>(
     });
 }
 
-/// Calls `apply` with each of `names` and its appearance at the first look and whenever it or
-/// the installation's look it goes over changes, until `shutdown`.
-pub(crate) fn follow<F, Fut>(
-    names: Vec<String>,
+/// Calls `apply` with each Organization of `names`, what the caller keeps for it, and its
+/// appearance at the first look and whenever it or the installation's look it goes over
+/// changes, until `shutdown`.
+pub(crate) fn follow<K, F, Fut>(
+    names: BTreeMap<String, K>,
     shutdown: &CancellationToken,
     tasks: &TaskTracker,
     mut apply: F,
 ) where
-    F: FnMut(String, Option<OrganizationAppearance>) -> Fut + Send + 'static,
+    K: Clone + Send + Sync + 'static,
+    F: FnMut(String, K, Option<OrganizationAppearance>) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send,
 {
     if names.is_empty() {
@@ -109,13 +111,13 @@ pub(crate) fn follow<F, Fut>(
         let mut seen: BTreeMap<String, Seen> = BTreeMap::new();
         loop {
             let under = installation();
-            for name in &names {
+            for (name, kept) in &names {
                 let now = super::PORTAL_STATE
                     .get()
                     .and_then(|state| in_mirror(&state.mirror, name));
                 let both = (under.clone(), now.clone());
                 if seen.get(name) != Some(&both) {
-                    apply(name.clone(), now).await;
+                    apply(name.clone(), kept.clone(), now).await;
                     seen.insert(name.clone(), both);
                 }
             }

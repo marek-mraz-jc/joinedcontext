@@ -562,8 +562,9 @@ async fn apply_set(
 /// the set's hosts whose realm exists (T-7284), so a sign-in host never answers without its
 /// realm, and a removed one is refused from the next request on, under the issuer of the
 /// registry's host. `linked` takes the pinned Organizations for the Endpoint scope linker. A set
-/// published while an older one is still applying wins: the older one pins nothing.
-fn follow_sign_ins(
+/// published while an older one is still applying wins: the older one pins nothing. Answers the
+/// follower `build` hands to [`super::sign_in::follow`].
+fn sign_in_follower(
     store: Arc<dyn Store>,
     files: Option<OrganizationRealmFiles>,
     pins: kaisatsu_server::RealmHostsSwap,
@@ -571,7 +572,7 @@ fn follow_sign_ins(
     scheme: String,
     linked: Linked,
     tasks: &TaskTracker,
-) {
+) -> impl Fn(&[super::sign_in::SignIn]) + Send + Sync + 'static {
     let tasks = tasks.clone();
     // Every realm pinned in this process: one the registry drops stays refused (`close`).
     let pinned = Arc::new(std::sync::Mutex::new(
@@ -581,7 +582,7 @@ fn follow_sign_ins(
             .collect::<std::collections::BTreeSet<String>>(),
     ));
     let latest = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    super::sign_in::follow("kaisatsu", move |set| {
+    move |set| {
         let generation = latest.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let (store, files, pins, scheme) = (
             Arc::clone(&store),
@@ -610,19 +611,14 @@ fn follow_sign_ins(
             if latest.load(std::sync::atomic::Ordering::SeqCst) != generation {
                 return;
             }
-            match realm_hosts(&ready, &scheme) {
-                Ok(hosts) => pins.replace(ever.iter().fold(hosts, |hosts, r| hosts.close(r))),
-                Err(e) => {
-                    tracing::error!(error = %e, "kaisatsu: sign-in hosts kept");
-                    return;
-                }
-            }
+            let hosts = realm_hosts(&ready, &scheme);
+            pins.replace(ever.iter().fold(hosts, |hosts, r| hosts.close(r)));
             *linked
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) =
                 ready.into_iter().map(|own| own.organization).collect();
         });
-    });
+    }
 }
 
 /// The Organizations whose realm the Endpoint scope linker keeps beside the installation's
@@ -910,16 +906,13 @@ fn follow_appearances(
         .collect();
     let (store, base) = (store.clone(), base.clone());
     super::appearance::follow(
-        hosts.keys().cloned().collect(),
+        hosts,
         shutdown,
         tasks,
-        move |name, look| {
-            let (store, host) = (store.clone(), hosts.get(&name).cloned());
+        move |name, (host, own_realm), look| {
+            let store = store.clone();
             let base = with_look(base.clone(), super::appearance::installation().as_ref());
             async move {
-                let Some((host, own_realm)) = host else {
-                    return;
-                };
                 let block = organization_block(base, &host, look.as_ref());
                 if own_realm {
                     own_realm_branding(&store, &name, &block).await;
@@ -977,21 +970,19 @@ async fn realm_branding(
     let Some(realm) = store.get_realm(realm).await? else {
         return Ok(None);
     };
-    let base = if from_file {
+    let stored = if from_file {
         store.get_branding(&realm.id, None).await?
     } else {
         None
     };
-    let base = base.unwrap_or_default();
+    let id = stored
+        .as_ref()
+        .map_or_else(|| format!("{}:installation", realm.id), |b| b.id.clone());
     Ok(Some(kaisatsu_core::BrandingBlock {
-        id: if base.id.is_empty() {
-            format!("{}:installation", realm.id)
-        } else {
-            base.id.clone()
-        },
+        id,
         realm_id: realm.id,
         org_id: None,
-        ..base
+        ..stored.unwrap_or_default()
     }))
 }
 
@@ -1079,6 +1070,16 @@ fn outbound_guard(cfg: &KaisatsuSection) -> OutboundGuard {
     })
 }
 
+/// The key-encryption key first-start setup holds for kaisatsu.
+fn kek(ctx: BuildCtx<'_>) -> Result<Kek, StartError> {
+    let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
+    let kek = ctx
+        .setup
+        .value(setup::Secret::KaisatsuKek)
+        .ok_or_else(|| err(&"no key-encryption key"))?;
+    Kek::from_raw_bytes(kek.as_bytes()).map_err(|e| err(&e))
+}
+
 pub async fn build(
     cfg: &KaisatsuSection,
     organizations: &[crate::config::OrganizationSection],
@@ -1087,13 +1088,22 @@ pub async fn build(
     shutdown: &CancellationToken,
     tasks: &TaskTracker,
 ) -> Result<Router, StartError> {
+    let store = open_kaisatsu_store(cfg, kek(ctx)?).await?;
+    serve(store, cfg, organizations, ctx, mount, shutdown, tasks).await
+}
+
+/// kaisatsu on `store`: the realms applied, the background loops started, the router mounted.
+async fn serve(
+    store: Arc<dyn Store>,
+    cfg: &KaisatsuSection,
+    organizations: &[crate::config::OrganizationSection],
+    ctx: BuildCtx<'_>,
+    mount: Mount,
+    shutdown: &CancellationToken,
+    tasks: &TaskTracker,
+) -> Result<Router, StartError> {
     let err = |e: &dyn std::fmt::Display| StartError::module(Module::Kaisatsu, e);
-    let kek = ctx
-        .setup
-        .value(setup::Secret::KaisatsuKek)
-        .ok_or_else(|| err(&"no key-encryption key"))?;
-    let kek = Kek::from_raw_bytes(kek.as_bytes()).map_err(|e| err(&e))?;
-    let store = open_kaisatsu_store(cfg, kek.clone()).await?;
+    let kek = kek(ctx)?;
     let realm = &ctx.setup.realm;
     let existed_before = store
         .get_realm(realm.as_str())
@@ -1166,15 +1176,18 @@ pub async fn build(
             crate::config::SecondFactorFloor::Optional => kaisatsu_server::SecondFactor::Optional,
             crate::config::SecondFactorFloor::Required => kaisatsu_server::SecondFactor::Required,
         })
-        .with_realm_hosts(realm_hosts(&sign_ins, &mount.scheme).map_err(|e| err(&e))?);
-    follow_sign_ins(
-        state.store().clone(),
-        realm_files,
-        state.realm_hosts(),
-        &sign_ins,
-        mount.scheme.clone(),
-        linked,
-        tasks,
+        .with_realm_hosts(realm_hosts(&sign_ins, &mount.scheme));
+    super::sign_in::follow(
+        "kaisatsu",
+        sign_in_follower(
+            state.store().clone(),
+            realm_files,
+            state.realm_hosts(),
+            &sign_ins,
+            mount.scheme.clone(),
+            linked,
+            tasks,
+        ),
     );
     Ok(router(state, mount))
 }
@@ -1182,20 +1195,21 @@ pub async fn build(
 /// Each Organization with a sign-in host of its own signs in there, in the realm named like it
 /// (T-7001), under `{scheme}://{host}`; the sibling modules reach that realm's back channel on
 /// loopback.
-fn realm_hosts(
-    sign_ins: &[super::sign_in::SignIn],
-    scheme: &str,
-) -> Result<RealmHosts, jc_router::RouterError> {
-    let mut hosts = ["localhost", "127.0.0.1", "[::1]"]
+fn realm_hosts(sign_ins: &[super::sign_in::SignIn], scheme: &str) -> RealmHosts {
+    let hosts = ["localhost", "127.0.0.1", "[::1]"]
         .into_iter()
         .fold(RealmHosts::default(), RealmHosts::internal);
-    for own in sign_ins {
-        hosts = hosts.pin(
+    sign_ins.iter().fold(hosts, |hosts, own| {
+        hosts.pin(
             &own.organization,
-            Mount::new("kaisatsu", scheme, &own.host, "")?,
-        );
-    }
-    Ok(hosts)
+            Mount {
+                module: "kaisatsu".into(),
+                scheme: scheme.into(),
+                host: own.host.clone(),
+                path_prefix: String::new(),
+            },
+        )
+    })
 }
 
 #[cfg(test)]
@@ -1586,7 +1600,7 @@ mod tests {
             host: host.into(),
             portals: Vec::new(),
         };
-        pins.replace(realm_hosts(&[own("a", "idm.a.test")], "https").unwrap());
+        pins.replace(realm_hosts(&[own("a", "idm.a.test")], "https"));
         let served = discover("idm.a.test").await.unwrap();
         assert_eq!(served.status(), StatusCode::OK);
         let body = axum::body::to_bytes(served.into_body(), 1 << 20)
@@ -1599,11 +1613,7 @@ mod tests {
             StatusCode::NOT_FOUND,
             "a pinned realm answers on its own host alone"
         );
-        pins.replace(
-            realm_hosts(&[own("b", "idm.a.test")], "https")
-                .unwrap()
-                .close("a"),
-        );
+        pins.replace(realm_hosts(&[own("b", "idm.a.test")], "https").close("a"));
         assert_eq!(
             discover("idm.a.test").await.unwrap().status(),
             StatusCode::NOT_FOUND,
@@ -1778,9 +1788,7 @@ mod tests {
             OutboundGuard::default(),
             Arc::new(LocalAuthorizer),
         );
-        state
-            .realm_hosts()
-            .replace(realm_hosts(&ready, "https").unwrap());
+        state.realm_hosts().replace(realm_hosts(&ready, "https"));
         let idm = |h: &str| Mount::new("kaisatsu", "https", h, "").unwrap();
         let app = router(state, idm("login.city.test"));
         let discover = |realm: &str| {
@@ -1903,6 +1911,1232 @@ mod tests {
         active_rs256(&[es.clone(), rs], "dev").unwrap();
         let e = active_rs256(&[es, retired], "dev").unwrap_err();
         assert!(e.contains("no ACTIVE RS256 key"), "{e}");
+    }
+
+    /// The store under test and the handle that makes its calls fail (T-7637).
+    fn faulty() -> (
+        Arc<crate::modules::faulty_store::FaultyStore>,
+        Arc<dyn Store>,
+    ) {
+        let inner: Arc<dyn Store> =
+            Arc::new(MemoryStore::new(Kek::from_raw_bytes(&[7; 32]).unwrap()));
+        let faults = Arc::new(crate::modules::faulty_store::FaultyStore::new(inner));
+        let store: Arc<dyn Store> = faults.clone();
+        (faults, store)
+    }
+
+    fn refused(e: impl std::fmt::Display) {
+        let e = e.to_string();
+        assert!(e.contains(crate::modules::faulty_store::REFUSED), "{e}");
+    }
+
+    async fn with_realm(store: &Arc<dyn Store>, name: &str) {
+        store
+            .upsert_realm(kaisatsu_core::RealmConfig {
+                id: name.into(),
+                realm: name.into(),
+                enabled: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+
+    /// A realm holding an `edge` client that pins RS256 for both its tokens.
+    async fn with_edge(store: &Arc<dyn Store>) -> setup::Realm {
+        with_realm(store, "dev").await;
+        let mut client = edge(&[
+            ("id.token.signed.response.alg", "RS256"),
+            ("access.token.signed.response.alg", "RS256"),
+        ]);
+        client.realm_id = "dev".into();
+        client.id = uuid_like();
+        store.upsert_client(client).await.unwrap();
+        setup::Realm::parse("dev").unwrap()
+    }
+
+    /// The edge check passes on a realm without the realm or without `edge`, makes the realm's
+    /// RS256 key on its first start, refuses an edge pinning another algorithm, and stops the
+    /// start on every store call that fails.
+    #[tokio::test]
+    async fn the_edge_check_makes_its_key_and_stops_on_a_store_failure() {
+        let (_, store) = faulty();
+        let dev = setup::Realm::parse("dev").unwrap();
+        check_edge_client(&store, &dev).await.unwrap();
+        with_realm(&store, "dev").await;
+        check_edge_client(&store, &dev).await.unwrap();
+        let (_, store) = faulty();
+        let dev = with_edge(&store).await;
+        check_edge_client(&store, &dev).await.unwrap();
+        let keys = store.list_signing_keys("dev").await.unwrap();
+        assert!(
+            keys.iter()
+                .any(|k| k.algorithm == "RS256" && k.status == "ACTIVE"),
+            "the first start makes the edge's key"
+        );
+        let mut es = store
+            .get_client_by_client_id("dev", EDGE_CLIENT)
+            .await
+            .unwrap()
+            .unwrap();
+        es.attributes
+            .insert("access.token.signed.response.alg".into(), "ES256".into());
+        store.upsert_client(es).await.unwrap();
+        let e = check_edge_client(&store, &dev)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("ES256"), "{e}");
+        for method in [
+            "get_realm",
+            "get_client_by_client_id",
+            "ensure_signing_key",
+            "list_signing_keys",
+        ] {
+            let (faults, store) = faulty();
+            let dev = with_edge(&store).await;
+            faults.fail(method);
+            refused(check_edge_client(&store, &dev).await.unwrap_err());
+        }
+    }
+
+    /// The linker writes nothing in a realm that is not there, and a pass whose store call fails
+    /// answers the store's error, so the loop logs it and tries again.
+    #[tokio::test]
+    async fn a_link_pass_answers_the_store_error_of_each_call() {
+        let (_, store) = faulty();
+        let dev = setup::Realm::parse("dev").unwrap();
+        assert_eq!(link_pass(&store, &dev).await.unwrap(), 0, "no realm");
+        for method in [
+            "get_realm",
+            "list_client_scopes",
+            "get_client_by_client_id",
+            "upsert_client",
+        ] {
+            let (faults, store) = faulty();
+            with_realm(&store, "dev").await;
+            let mut air = scope("endpoint:air", Some("joinedcontext"), false);
+            air.realm_id = "dev".into();
+            store.upsert_client_scope(air).await.unwrap();
+            store
+                .upsert_client(ClientRepresentation {
+                    id: uuid_like(),
+                    realm_id: "dev".into(),
+                    client_id: "mcp-hub".into(),
+                    ..ClientRepresentation::default()
+                })
+                .await
+                .unwrap();
+            faults.fail(method);
+            refused(link_pass(&store, &dev).await.unwrap_err());
+        }
+    }
+
+    /// The Endpoint scope loop keeps running past a failing pass, links an Organization's realm
+    /// it is handed, skips a name no realm can carry, and stops on shutdown.
+    #[tokio::test]
+    async fn the_scope_loop_survives_a_failing_pass_and_follows_the_linked_realms() {
+        let (faults, store) = faulty();
+        let _ = &faults;
+        for realm in ["dev", "org"] {
+            with_realm(&store, realm).await;
+            let mut air = scope("endpoint:air", Some("joinedcontext"), false);
+            air.realm_id = realm.into();
+            store.upsert_client_scope(air).await.unwrap();
+            store
+                .upsert_client(ClientRepresentation {
+                    id: uuid_like(),
+                    realm_id: realm.into(),
+                    client_id: "jcctl".into(),
+                    ..ClientRepresentation::default()
+                })
+                .await
+                .unwrap();
+        }
+        let linked: Linked = Arc::new(std::sync::Mutex::new(vec![
+            "org".into(),
+            "Not A Realm!".into(),
+        ]));
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        follow_endpoint_scopes(
+            store.clone(),
+            setup::Realm::parse("dev").unwrap(),
+            linked,
+            &shutdown,
+            &tasks,
+        );
+        let jcctl = |realm: &'static str| {
+            let store = store.clone();
+            async move {
+                store
+                    .get_client_by_client_id(realm, "jcctl")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .optional_client_scopes
+            }
+        };
+        let air = "endpoint:air".to_owned();
+        for _ in 0..100 {
+            if jcctl("org").await.contains(&air) && jcctl("dev").await.contains(&air) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            jcctl("org").await.contains(&air),
+            "the linked realm's scope"
+        );
+        assert!(
+            jcctl("dev").await.contains(&air),
+            "the installation's scope"
+        );
+        drop(faults);
+        let logs = logs();
+        let (failing, broken) = faulty();
+        failing.fail("get_realm");
+        follow_endpoint_scopes(
+            broken,
+            setup::Realm::parse("dev").unwrap(),
+            Arc::new(std::sync::Mutex::new(Vec::new())),
+            &shutdown,
+            &tasks,
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            logs.text().contains("Endpoint scopes not linked"),
+            "{}",
+            logs.text()
+        );
+        shutdown.cancel();
+        tasks.close();
+        tokio::time::timeout(Duration::from_secs(10), tasks.wait())
+            .await
+            .expect("the loop stops on shutdown");
+    }
+
+    /// The sweeper and the outbox keep running when their store call fails, and stop on
+    /// shutdown.
+    #[tokio::test]
+    async fn the_sweeper_and_the_outbox_survive_a_failing_store() {
+        let (faults, store) = faulty();
+        faults.fail("sweep_expired");
+        faults.fail("list_realms");
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        sweep_expired_rows(store.clone(), Duration::from_millis(5), &shutdown, &tasks);
+        send_queued_mail(
+            store,
+            Kek::from_raw_bytes(&[7; 32]).unwrap(),
+            OutboundGuard::default(),
+            Mount::new("kaisatsu", "https", "login.city.test", "").unwrap(),
+            Duration::from_millis(5),
+            &shutdown,
+            &tasks,
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        shutdown.cancel();
+        tasks.close();
+        tokio::time::timeout(Duration::from_secs(10), tasks.wait())
+            .await
+            .expect("both loops stop on shutdown");
+    }
+
+    /// The Organization hosts of an imported realm: nothing to add when the Portal's clients are
+    /// not there, and a failing read or write stops the start with the store's error.
+    #[tokio::test]
+    async fn adding_organization_hosts_answers_the_store_error() {
+        let (_, store) = faulty();
+        let realm = setup::Realm::parse("smartcity").unwrap();
+        let bases = ["https://smartcity.a.test/".to_owned()];
+        assert_eq!(
+            add_organization_hosts(&store, &realm, &bases)
+                .await
+                .unwrap(),
+            0,
+            "no Portal client in the realm"
+        );
+        for method in ["get_client_by_client_id", "upsert_client"] {
+            let (faults, store) = faulty();
+            with_realm(&store, "smartcity").await;
+            store
+                .upsert_client(ClientRepresentation {
+                    id: uuid_like(),
+                    realm_id: "smartcity".into(),
+                    client_id: setup::PORTAL_CLIENT.into(),
+                    ..ClientRepresentation::default()
+                })
+                .await
+                .unwrap();
+            faults.fail(method);
+            refused(
+                add_organization_hosts(&store, &realm, &bases)
+                    .await
+                    .unwrap_err(),
+            );
+        }
+    }
+
+    /// The first administrators: an Organization realm without the installation's password is
+    /// refused with what to do, and a failing read stops the apply; the installation's seed
+    /// stops on a failing read too.
+    #[tokio::test]
+    async fn seeding_a_first_administrator_answers_a_missing_password_and_store_errors() {
+        let (_, store) = faulty();
+        let a = setup::Realm::parse("a").unwrap();
+        let (mut files, mut env) = (Vec::new(), BTreeMap::new());
+        let e = seed_organization_admin_once(
+            &store,
+            &a,
+            "admin@a.test",
+            &BTreeMap::new(),
+            &mut files,
+            &mut env,
+        )
+        .await
+        .unwrap_err();
+        assert!(e.contains("run jc setup again"), "{e}");
+        assert!(files.is_empty() && env.is_empty());
+        for (method, held) in [
+            ("get_realm", false),
+            ("get_user_by_username_or_email", true),
+        ] {
+            let (faults, store) = faulty();
+            if held {
+                with_realm(&store, "a").await;
+            }
+            faults.fail(method);
+            let e = seed_organization_admin_once(
+                &store,
+                &a,
+                "admin@a.test",
+                &BTreeMap::new(),
+                &mut files,
+                &mut env,
+            )
+            .await
+            .unwrap_err();
+            refused(e);
+        }
+        let (faults, store) = faulty();
+        faults.fail("get_user_by_username_or_email");
+        refused(
+            seed_first_admin_once(&store, &a, &mut files)
+                .await
+                .unwrap_err(),
+        );
+    }
+
+    /// The realms of the Organizations: nothing without realm files, an Organization with no
+    /// served working host stops the start, and a set whose realm read fails keeps the pins.
+    #[tokio::test]
+    async fn the_organization_realms_refuse_an_unserved_host_and_a_failing_store() {
+        let (faults, store) = faulty();
+        apply_organization_realms(&store, None, &[own("a")])
+            .await
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let setup = setup::Setup::prepare(dir.path(), &Module::ALL, &Default::default()).unwrap();
+        let files = OrganizationRealmFiles {
+            env_vars: setup::realm_env(&setup),
+            gateway: true,
+            assistant: true,
+            scheme: "https".into(),
+            first_admins: BTreeMap::from([("a".to_owned(), "admin@a.test".to_owned())]),
+        };
+        let mut unserved = own("a");
+        unserved.portals.clear();
+        let e = apply_organization_realms(&store, Some(&files), &[unserved])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("no working host is served"), "{e}");
+        assert_eq!(apply_set(&store, None, &[]).await.unwrap(), []);
+        faults.fail("get_realm");
+        refused(apply_set(&store, None, &[own("a")]).await.unwrap_err());
+        refused(files.apply(&store, &own("a")).await.unwrap_err());
+    }
+
+    /// An Organization's realm with the gateway and the assistant: their clients are applied
+    /// beside the Portal's, and its first administrator is created with the realm.
+    #[tokio::test]
+    async fn an_organization_realm_carries_the_gateway_the_assistant_and_its_first_admin() {
+        let (_, store) = faulty();
+        let dir = tempfile::tempdir().unwrap();
+        let setup = setup::Setup::prepare(dir.path(), &Module::ALL, &Default::default()).unwrap();
+        let files = OrganizationRealmFiles {
+            env_vars: setup::realm_env(&setup),
+            gateway: true,
+            assistant: true,
+            scheme: "https".into(),
+            first_admins: BTreeMap::from([("a".to_owned(), "admin@a.test".to_owned())]),
+        };
+        files.apply(&store, &own("a")).await.unwrap();
+        let realm = store.get_realm("a").await.unwrap().expect("a's realm");
+        for client in [
+            setup::PORTAL_CLIENT,
+            setup::GATEWAY_CLIENT,
+            setup::ASSISTANT_CLIENT,
+        ] {
+            assert!(
+                store
+                    .get_client_by_client_id(&realm.id, client)
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "{client}"
+            );
+        }
+        assert!(
+            store
+                .get_user_by_username_or_email("a", None, "admin@a.test")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let e = files
+            .apply(
+                &store,
+                &crate::modules::sign_in::SignIn {
+                    organization: "Not A Realm!".into(),
+                    host: "idm.x.test".into(),
+                    portals: vec!["x.test".into()],
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(!e.is_empty());
+    }
+
+    /// The KEK store's URL file: one that cannot be read or holds only blanks stops the start
+    /// naming the file.
+    #[tokio::test]
+    async fn an_unreadable_or_empty_database_url_file_is_refused_with_its_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let section = |file: std::path::PathBuf| KaisatsuSection {
+            kek_file: None,
+            import_dir: None,
+            import_secrets_dir: None,
+            database_url_file: Some(file),
+            db_password_file: None,
+            db_max_connections: None,
+            database: None,
+            branding_file: None,
+            second_factor: Default::default(),
+            outbound_private_hosts: Vec::new(),
+        };
+        let kek = || Kek::from_raw_bytes(&[7; 32]).unwrap();
+        let missing = dir.path().join("missing");
+        let e = open_kaisatsu_store(&section(missing), kek())
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            e.contains("cannot read database_url_file") && e.contains("missing"),
+            "{e}"
+        );
+        let blank = dir.path().join("blank");
+        std::fs::write(&blank, " \n").unwrap();
+        let e = open_kaisatsu_store(&section(blank), kek())
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(e.contains("is empty") && e.contains("blank"), "{e}");
+    }
+
+    /// A realm file naming no realm joins the one realm the others name, is refused while the
+    /// directory holds several, and a file that is no JSON stops the start.
+    #[tokio::test]
+    async fn an_unnamed_realm_file_joins_the_one_realm_or_is_refused() {
+        let kek = Kek::from_raw_bytes(&[7u8; 32]).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek));
+        let dev = setup::Realm::parse("dev").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("10-realm.json"),
+            r#"{"realm": "dev", "enabled": true}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("20-clients.json"),
+            format!(
+                r#"{{"clients": [{{"clientId": "{}", "enabled": true}}]}}"#,
+                setup::PORTAL_CLIENT
+            ),
+        )
+        .unwrap();
+        assert!(
+            apply_import_dir(&store, dir.path(), None, &[], &dev)
+                .await
+                .unwrap(),
+            "the unnamed file's Portal client is the configured realm's"
+        );
+        std::fs::write(
+            dir.path().join("30-other.json"),
+            r#"{"realm": "other", "enabled": true}"#,
+        )
+        .unwrap();
+        let e = apply_import_dir(&store, dir.path(), None, &[], &dev)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("20-clients.json") && e.contains("several"),
+            "{e}"
+        );
+        let broken = tempfile::tempdir().unwrap();
+        std::fs::write(broken.path().join("realm.json"), "{ not json").unwrap();
+        assert!(
+            apply_import_dir(&store, broken.path(), None, &[], &dev)
+                .await
+                .is_err()
+        );
+    }
+
+    /// The kept realm owner: a file that cannot be read (a directory in its place) and a state
+    /// directory that cannot be written stop the start naming the path.
+    #[test]
+    fn an_unreadable_or_unwritable_owner_file_stops_the_start() {
+        let dev = setup::Realm::parse("dev").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(owner_file(dir.path(), &dev)).unwrap();
+        let e = realm_owner(dir.path(), &dev, false, false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("cannot read") && e.contains("realm-owner-dev"),
+            "{e}"
+        );
+        let gone = dir.path().join("gone");
+        let e = realm_owner(&gone, &dev, false, false)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("cannot write") && e.contains("realm-owner-dev"),
+            "{e}"
+        );
+    }
+
+    /// The installation realm's block: none without the realm, the platform defaults under the
+    /// realm's own id without a branding file, the stored block with one; a failing read
+    /// answers the store's error.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn the_realm_branding_is_the_stored_block_or_the_defaults() {
+        let (faults, store) = faulty();
+        assert!(realm_branding(&store, "dev", true).await.unwrap().is_none());
+        with_realm(&store, "dev").await;
+        let plain = realm_branding(&store, "dev", false).await.unwrap().unwrap();
+        assert_eq!(
+            (plain.id.as_str(), plain.realm_id.as_str(), plain.org_id),
+            ("dev:installation", "dev", None)
+        );
+        store
+            .upsert_branding(kaisatsu_core::BrandingBlock {
+                id: "kept".into(),
+                realm_id: "dev".into(),
+                city: "Kept City".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let stored = realm_branding(&store, "dev", true).await.unwrap().unwrap();
+        assert_eq!(
+            (stored.id.as_str(), stored.city.as_str()),
+            ("kept", "Kept City")
+        );
+        let plain = realm_branding(&store, "dev", false).await.unwrap().unwrap();
+        assert_ne!(
+            plain.city, "Kept City",
+            "without a file the stored block is not the base"
+        );
+        faults.fail("get_branding");
+        refused(realm_branding(&store, "dev", true).await.unwrap_err());
+        faults.fail("get_realm");
+        refused(realm_branding(&store, "dev", false).await.unwrap_err());
+    }
+
+    /// An Organization's look as its own realm's block: stored under the realm's id, nothing for
+    /// a realm not made yet, and a failing read or write leaves the store as it was.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn an_organizations_own_realm_takes_its_look_or_is_left_alone() {
+        let look = kaisatsu_core::BrandingBlock {
+            id: "dev:portal.a.test".into(),
+            realm_id: "dev".into(),
+            org_id: Some("portal.a.test".into()),
+            city: "A Town".into(),
+            ..Default::default()
+        };
+        let (faults, store) = faulty();
+        own_realm_branding(&store, "a", &look).await;
+        assert!(
+            store.get_branding("a", None).await.unwrap().is_none(),
+            "no realm a yet"
+        );
+        with_realm(&store, "a").await;
+        faults.fail("upsert_branding");
+        own_realm_branding(&store, "a", &look).await;
+        assert!(
+            store.get_branding("a", None).await.unwrap().is_none(),
+            "write refused"
+        );
+        let (faults, store) = faulty();
+        with_realm(&store, "a").await;
+        own_realm_branding(&store, "a", &look).await;
+        let own = store
+            .get_branding("a", None)
+            .await
+            .unwrap()
+            .expect("a's block");
+        assert_eq!(
+            (
+                own.id.as_str(),
+                own.realm_id.as_str(),
+                own.org_id,
+                own.city.as_str()
+            ),
+            ("a", "a", None, "A Town")
+        );
+        faults.fail("get_realm");
+        own_realm_branding(
+            &store,
+            "a",
+            &kaisatsu_core::BrandingBlock {
+                city: "Other".into(),
+                ..look
+            },
+        )
+        .await;
+        assert_eq!(
+            store.get_branding("a", None).await.unwrap().unwrap().city,
+            "A Town"
+        );
+    }
+
+    /// What a test's tracing subscriber wrote.
+    #[derive(Clone, Default)]
+    struct Buffer(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Buffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The log lines (DEBUG and up) of this thread, kept while the value lives (T-7637): a
+    /// warning the start writes is behaviour the operator reads.
+    struct Logs(
+        Buffer,
+        #[allow(dead_code)] tracing::subscriber::DefaultGuard,
+    );
+
+    fn logs() -> Logs {
+        let buf = Buffer::default();
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .finish();
+        Logs(buf, tracing::subscriber::set_default(subscriber))
+    }
+
+    impl Logs {
+        fn text(&self) -> String {
+            std::io::Write::flush(&mut self.0.clone()).unwrap();
+            String::from_utf8_lossy(
+                &self
+                    .0
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            )
+            .into_owned()
+        }
+    }
+
+    /// A first start's state for `roles`, with the Portal (`portal`) and kaisatsu beside it.
+    struct Started {
+        _dir: tempfile::TempDir,
+        setup: setup::Setup,
+        siblings: crate::siblings::Siblings,
+        secrets: crate::config::Secrets,
+    }
+
+    impl Started {
+        fn new(roles: &[Module], portal: Option<&str>, kaisatsu: bool) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let setup = setup::Setup::prepare(dir.path(), roles, &Default::default()).unwrap();
+            let mut siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+            if let Some(portal) = portal {
+                siblings.insert_remote(
+                    Module::Portal,
+                    crate::siblings::Sibling::direct(portal.into(), portal.into()),
+                );
+            }
+            if kaisatsu {
+                siblings.insert_remote(
+                    Module::Kaisatsu,
+                    crate::siblings::Sibling::direct(
+                        "https://login.city.test".into(),
+                        "http://127.0.0.1:1".into(),
+                    ),
+                );
+            }
+            Self {
+                _dir: dir,
+                setup,
+                siblings,
+                secrets: Default::default(),
+            }
+        }
+
+        fn ctx(&self) -> BuildCtx<'_> {
+            BuildCtx {
+                setup: &self.setup,
+                siblings: &self.siblings,
+                secrets: &self.secrets,
+                door: None,
+                portal_internal: None,
+            }
+        }
+    }
+
+    async fn has_client(store: &Arc<dyn Store>, realm: &str, client: &str) -> bool {
+        store
+            .get_client_by_client_id(realm, client)
+            .await
+            .unwrap()
+            .is_some()
+    }
+
+    /// The Portal's realm: nothing without the Portal beside kaisatsu; jc's own realm carries
+    /// the gateway's, the assistant's and the account console's clients only when those run.
+    #[tokio::test]
+    async fn the_portals_realm_carries_only_the_clients_of_what_runs() {
+        let (_, store) = faulty();
+        let bare = Started::new(&[Module::Kaisatsu], None, false);
+        apply_portal_realm(&store, bare.ctx(), false, false)
+            .await
+            .unwrap();
+        assert!(store.list_realms().await.unwrap().is_empty(), "no Portal");
+        let logs = logs();
+        let only = Started::new(
+            &[Module::Portal, Module::Kaisatsu],
+            Some("https://portal.city.test"),
+            false,
+        );
+        apply_portal_realm(&store, only.ctx(), false, false)
+            .await
+            .unwrap();
+        let realm = store
+            .get_realm(only.setup.realm.as_str())
+            .await
+            .unwrap()
+            .expect("the Portal's realm");
+        assert!(has_client(&store, &realm.id, setup::PORTAL_CLIENT).await);
+        for absent in [
+            setup::GATEWAY_CLIENT,
+            setup::ASSISTANT_CLIENT,
+            kaisatsu_server::ACCOUNT_CONSOLE_CLIENT,
+        ] {
+            assert!(!has_client(&store, &realm.id, absent).await, "{absent}");
+        }
+        assert!(
+            logs.text().contains("the Portal's realm is applied"),
+            "{}",
+            logs.text()
+        );
+        let (_, store) = faulty();
+        let all = Started::new(&Module::ALL, Some("https://portal.city.test"), true);
+        apply_portal_realm(&store, all.ctx(), false, false)
+            .await
+            .unwrap();
+        let realm = store
+            .get_realm(all.setup.realm.as_str())
+            .await
+            .unwrap()
+            .unwrap();
+        for present in [
+            setup::GATEWAY_CLIENT,
+            setup::ASSISTANT_CLIENT,
+            kaisatsu_server::ACCOUNT_CONSOLE_CLIENT,
+        ] {
+            assert!(has_client(&store, &realm.id, present).await, "{present}");
+        }
+    }
+
+    /// A Portal realm the deployment imports gets only its Organizations' hosts added; a failing
+    /// read stops the start, and so does every failing step of jc's own realm and a Portal base
+    /// that breaks the realm file.
+    #[tokio::test]
+    async fn an_imported_portal_realm_gets_hosts_and_a_failing_step_stops_the_start() {
+        let logs = logs();
+        let mut imported = Started::new(
+            &[Module::Portal, Module::Kaisatsu],
+            Some("https://portal.city.test"),
+            false,
+        );
+        imported.siblings.organization_portals = vec!["https://smartcity.a.test/".into()];
+        let realm = imported.setup.realm.as_str().to_owned();
+        let portal_client = || ClientRepresentation {
+            id: uuid_like(),
+            realm_id: realm.clone(),
+            client_id: setup::PORTAL_CLIENT.into(),
+            ..ClientRepresentation::default()
+        };
+        let (faults, store) = faulty();
+        with_realm(&store, &realm).await;
+        store.upsert_client(portal_client()).await.unwrap();
+        apply_portal_realm(&store, imported.ctx(), true, true)
+            .await
+            .unwrap();
+        let client = store
+            .get_client_by_client_id(&realm, setup::PORTAL_CLIENT)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            client
+                .redirect_uris
+                .contains(&"https://smartcity.a.test/api/v1/auth/callback".to_owned()),
+            "{:?}",
+            client.redirect_uris
+        );
+        assert!(
+            logs.text()
+                .contains("the deployment brings the Portal's realm")
+        );
+        assert_eq!(
+            std::fs::read_to_string(owner_file(&imported.setup.dir, &imported.setup.realm))
+                .unwrap(),
+            "import\n"
+        );
+        faults.fail("get_client_by_client_id");
+        refused(
+            apply_portal_realm(&store, imported.ctx(), true, true)
+                .await
+                .unwrap_err(),
+        );
+        for method in ["get_user_by_username_or_email", "upsert_realm"] {
+            let (faults, store) = faulty();
+            let own = Started::new(
+                &[Module::Portal, Module::Kaisatsu],
+                Some("https://portal.city.test"),
+                false,
+            );
+            faults.fail(method);
+            refused(
+                apply_portal_realm(&store, own.ctx(), false, false)
+                    .await
+                    .unwrap_err(),
+            );
+        }
+        let (_, store) = faulty();
+        let quoted = Started::new(
+            &[Module::Portal, Module::Kaisatsu],
+            Some("https://portal.city.test\"x"),
+            false,
+        );
+        assert!(
+            apply_portal_realm(&store, quoted.ctx(), false, false)
+                .await
+                .is_err()
+        );
+        assert!(
+            store.list_realms().await.unwrap().is_empty(),
+            "nothing applied"
+        );
+    }
+
+    /// The sign-in follower pins each published set's realms that exist and closes the ones it
+    /// dropped; of two sets published back to back the later one wins; a set whose realm read
+    /// fails keeps the pins and the linked realms.
+    #[tokio::test]
+    async fn the_sign_in_follower_pins_the_latest_set_and_keeps_the_pins_on_a_failure() {
+        let logs = logs();
+        let (faults, store) = faulty();
+        for realm in ["a", "b"] {
+            with_realm(&store, realm).await;
+        }
+        let pins = kaisatsu_server::RealmHostsSwap::default();
+        pins.replace(realm_hosts(&[own("a")], "https"));
+        let linked: Linked = Arc::new(std::sync::Mutex::new(vec!["a".into()]));
+        let tasks = TaskTracker::new();
+        let follow = sign_in_follower(
+            store.clone(),
+            None,
+            pins.clone(),
+            &[own("a")],
+            "https".into(),
+            Arc::clone(&linked),
+            &tasks,
+        );
+        let settle = || async {
+            tasks.close();
+            tasks.wait().await;
+            tasks.reopen();
+        };
+        let linked_now = || {
+            linked
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        };
+        follow(&[own("b"), own("missing")]);
+        settle().await;
+        assert_eq!(
+            linked_now(),
+            ["b"],
+            "a realm that is not there is not pinned"
+        );
+        let pinned = format!("{:?}", pins.current());
+        assert!(
+            pinned.contains("idm.b.test") && !pinned.contains("idm.a.test"),
+            "{pinned}"
+        );
+        follow(&[own("a")]);
+        follow(&[own("b")]);
+        settle().await;
+        assert_eq!(linked_now(), ["b"], "the later set wins");
+        faults.fail("get_realm");
+        follow(&[own("a")]);
+        settle().await;
+        assert_eq!(linked_now(), ["b"]);
+        assert!(format!("{:?}", pins.current()).contains("idm.b.test"));
+        assert!(
+            logs.text().contains("sign-in hosts kept"),
+            "{}",
+            logs.text()
+        );
+    }
+
+    fn organizations(text: &str) -> Vec<crate::config::OrganizationSection> {
+        let file = Config::parse_file(std::path::Path::new("jc.toml"), text).expect("parses");
+        Config::merge(Cli::default(), file)
+            .expect("merges")
+            .organizations
+    }
+
+    /// Organization `a` with a sign-in host of its own and `b` without.
+    fn two_organizations() -> Vec<crate::config::OrganizationSection> {
+        organizations(
+            "base_host = \"city.test\"\n\
+             [[organizations]]\nname = \"a\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+             hosts = { portal = \"portal.a.test\", idm = \"idm.a.test\" }\n\
+             [[organizations]]\nname = \"b\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a2\"\n\
+             hosts = { portal = \"portal.b.test\" }\n",
+        )
+    }
+
+    /// The sign-in pages follow the looks: the installation's block, one block per Organization
+    /// under its Portal host, and the own realm's block of an Organization with its own sign-in
+    /// host; a refused write is logged and leaves the pages as they were.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn the_sign_in_pages_follow_the_looks_and_log_a_refused_write() {
+        let logs = logs();
+        let (faults, store) = faulty();
+        for realm in ["dev", "a"] {
+            with_realm(&store, realm).await;
+        }
+        let base = realm_branding(&store, "dev", false).await.unwrap().unwrap();
+        let orgs = two_organizations();
+        let run = || async {
+            let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+            follow_installation_look(&store, &base, &shutdown, &tasks);
+            follow_appearances(&store, &base, &orgs, &shutdown, &tasks);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            shutdown.cancel();
+            tasks.close();
+            tasks.wait().await;
+        };
+        run().await;
+        let block = |realm: &'static str, org: Option<&'static str>| {
+            let store = store.clone();
+            async move { store.get_branding(realm, org).await.unwrap() }
+        };
+        assert_eq!(block("dev", None).await.unwrap().id, "dev:installation");
+        for host in ["portal.a.test", "portal.b.test"] {
+            assert_eq!(
+                block("dev", Some(host)).await.unwrap().id,
+                format!("dev:{host}")
+            );
+        }
+        assert_eq!(block("a", None).await.unwrap().id, "a", "a's own realm");
+        let text = logs.text();
+        assert!(
+            text.contains("sign-in pages follow the Organization"),
+            "{text}"
+        );
+        assert!(
+            text.contains("sign-in pages follow the installation's look"),
+            "{text}"
+        );
+        faults.fail("upsert_branding");
+        run().await;
+        let text = logs.text();
+        for line in [
+            "Organization branding not stored",
+            "the installation's look not stored",
+            "Organization realm branding not stored",
+        ] {
+            assert!(text.contains(line), "{line}: {text}");
+        }
+    }
+
+    fn section() -> KaisatsuSection {
+        KaisatsuSection {
+            kek_file: None,
+            import_dir: None,
+            import_secrets_dir: None,
+            database_url_file: None,
+            db_password_file: None,
+            db_max_connections: None,
+            database: None,
+            branding_file: None,
+            second_factor: Default::default(),
+            outbound_private_hosts: Vec::new(),
+        }
+    }
+
+    /// kaisatsu inside jc: refused without its key; with the Portal beside it the router
+    /// answers the realm's discovery, a broken branding file and an unreadable realm block
+    /// leave the pages plain with a log line, and a store that fails at the first read stops
+    /// the start.
+    #[tokio::test]
+    async fn kaisatsu_starts_with_its_key_and_stops_on_a_failing_store() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+        let logs = logs();
+        let mount = || Mount::new("kaisatsu", "https", "login.city.test", "").unwrap();
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        let keyless = Started::new(&[Module::Portal], None, false);
+        let e = build(&section(), &[], keyless.ctx(), mount(), &shutdown, &tasks)
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(e.contains("no key-encryption key"), "{e}");
+        let started = Started::new(
+            &[Module::Portal, Module::Kaisatsu],
+            Some("https://portal.city.test"),
+            true,
+        );
+        let mut cfg = section();
+        cfg.second_factor = crate::config::SecondFactorFloor::Required;
+        cfg.outbound_private_hosts = vec!["db.internal.test:5432".into()];
+        cfg.branding_file = Some(started.setup.dir.join("no-such-branding.json"));
+        let app = build(
+            &cfg,
+            &two_organizations(),
+            started.ctx(),
+            mount(),
+            &shutdown,
+            &tasks,
+        )
+        .await
+        .unwrap();
+        let discovery = format!(
+            "/realms/{}/.well-known/openid-configuration",
+            started.setup.realm
+        );
+        let answer = app
+            .oneshot(
+                Request::get(&discovery)
+                    .extension(mount())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(answer.status(), StatusCode::OK);
+        assert!(logs.text().contains("kaisatsu branding file not applied"));
+        let branded = Started::new(
+            &[Module::Portal, Module::Kaisatsu],
+            Some("https://portal.city.test"),
+            false,
+        );
+        let mut cfg = section();
+        let import = tempfile::tempdir().unwrap();
+        cfg.import_dir = Some(import.path().to_owned());
+        let file = branded.setup.dir.join("branding.yaml");
+        std::fs::write(&file, "city: Branded City\n").unwrap();
+        cfg.branding_file = Some(file);
+        build(&cfg, &[], branded.ctx(), mount(), &shutdown, &tasks)
+            .await
+            .unwrap();
+        assert!(
+            logs.text().contains("kaisatsu branding file applied"),
+            "{}",
+            logs.text()
+        );
+        let (faults, store) = faulty();
+        faults.fail("get_branding");
+        serve(store, &cfg, &[], started.ctx(), mount(), &shutdown, &tasks)
+            .await
+            .unwrap();
+        assert!(
+            logs.text().contains("realm branding unreadable"),
+            "{}",
+            logs.text()
+        );
+        let (_, store) = faulty();
+        let alone = Started::new(&[Module::Kaisatsu], None, false);
+        serve(
+            store,
+            &section(),
+            &[],
+            alone.ctx(),
+            mount(),
+            &shutdown,
+            &tasks,
+        )
+        .await
+        .unwrap();
+        assert!(
+            logs.text().contains("no installation realm"),
+            "{}",
+            logs.text()
+        );
+        let (faults, store) = faulty();
+        faults.fail("get_realm");
+        refused(
+            serve(
+                store,
+                &section(),
+                &[],
+                alone.ctx(),
+                mount(),
+                &shutdown,
+                &tasks,
+            )
+            .await
+            .err()
+            .unwrap(),
+        );
+        shutdown.cancel();
+        tasks.close();
+        tasks.wait().await;
+    }
+
+    /// The outgoing calls' guard admits each configured private host that parses and drops one
+    /// that does not, as the config check already refused it.
+    #[test]
+    fn the_outbound_guard_takes_the_configured_private_hosts() {
+        let mut cfg = section();
+        cfg.outbound_private_hosts = vec!["db.internal.test:5432".into(), "bad:port".into()];
+        let guard = format!("{:?}", outbound_guard(&cfg).policy.private_hosts);
+        assert!(guard.contains("db.internal.test"), "{guard}");
+        assert!(!guard.contains("bad"), "{guard}");
+    }
+
+    /// Without a database kaisatsu runs on the in-memory store and says so once.
+    #[tokio::test]
+    async fn without_a_database_kaisatsu_warns_and_runs_in_memory() {
+        let logs = logs();
+        let store = open_kaisatsu_store(&section(), Kek::from_raw_bytes(&[7; 32]).unwrap())
+            .await
+            .unwrap();
+        assert!(store.list_realms().await.unwrap().is_empty());
+        assert!(
+            logs.text().contains("in-memory store (demo/test only)"),
+            "{}",
+            logs.text()
+        );
+    }
+
+    /// The import dir: a realm file's unknown field is applied with a logged warning, a file
+    /// that is no object stops the start, and so does a store that refuses the realm.
+    #[tokio::test]
+    async fn an_import_dir_logs_its_warnings_and_stops_on_a_broken_file_or_store() {
+        let logs = logs();
+        let dev = setup::Realm::parse("dev").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("10-realm.json"),
+            r#"{"realm": "dev", "enabled": true, "notAField": 1}"#,
+        )
+        .unwrap();
+        let (faults, store) = faulty();
+        assert!(
+            !apply_import_dir(&store, dir.path(), None, &[], &dev)
+                .await
+                .unwrap()
+        );
+        assert!(logs.text().contains("notAField"), "{}", logs.text());
+        faults.fail("upsert_realm");
+        let fresh = tempfile::tempdir().unwrap();
+        std::fs::write(fresh.path().join("10-realm.json"), r#"{"realm": "fresh"}"#).unwrap();
+        assert!(
+            apply_import_dir(&store, fresh.path(), None, &[], &dev)
+                .await
+                .is_err()
+        );
+        std::fs::write(dir.path().join("20-list.json"), "[1, 2]").unwrap();
+        let (_, store) = faulty();
+        assert!(
+            apply_import_dir(&store, dir.path(), None, &[], &dev)
+                .await
+                .is_err()
+        );
+    }
+
+    /// An Organization's realm stops on a working host that breaks the realm file and on a store
+    /// that refuses the realm.
+    #[tokio::test]
+    async fn an_organization_realm_stops_on_a_broken_host_or_a_refusing_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let setup = setup::Setup::prepare(dir.path(), &Module::ALL, &Default::default()).unwrap();
+        let files = OrganizationRealmFiles {
+            env_vars: setup::realm_env(&setup),
+            gateway: false,
+            assistant: false,
+            scheme: "https".into(),
+            first_admins: BTreeMap::new(),
+        };
+        let (faults, store) = faulty();
+        let mut quoted = own("a");
+        quoted.portals = vec!["portal.a.test\"x".into()];
+        assert!(files.apply(&store, &quoted).await.is_err());
+        assert!(store.get_realm("a").await.unwrap().is_none());
+        faults.fail("upsert_realm");
+        assert!(files.apply(&store, &own("a")).await.is_err());
+    }
+
+    /// The key-encryption key must be 32 bytes: a shorter one stops the start.
+    #[test]
+    fn a_short_key_encryption_key_stops_the_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let given = BTreeMap::from([(
+            setup::Secret::KaisatsuKek,
+            setup::Given {
+                secret: jc_secret::Secret::new("too-short".into()),
+                source: jc_secret::Source::Env,
+                path: None,
+            },
+        )]);
+        let setup = setup::Setup::prepare(dir.path(), &[Module::Kaisatsu], &given).unwrap();
+        let siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let secrets = crate::config::Secrets::default();
+        let ctx = BuildCtx {
+            setup: &setup,
+            siblings: &siblings,
+            secrets: &secrets,
+            door: None,
+            portal_internal: None,
+        };
+        assert!(kek(ctx).is_err());
     }
 
     /// An empty import dir (first start) applies nothing; a realm file in it is applied.
@@ -2179,12 +3413,97 @@ mod tests {
             .await
             .unwrap();
         drop(store);
-        let again = open_kaisatsu_store(&app, kek).await.unwrap();
+        let again = open_kaisatsu_store(&app, kek.clone()).await.unwrap();
         assert!(
             again.get_realm("k16").await.unwrap().is_some(),
             "persisted in PostgreSQL"
         );
         drop(again);
+
+        // 3. `[kaisatsu.database]`: migrated as kaisatsu_migrate (applied versions are kept, so
+        // a second start changes nothing), then served as kaisatsu_app.
+        let pw_file = |name: &str, pw: &str| {
+            let file = dir.path().join(format!("db-{name}"));
+            std::fs::write(&file, pw).unwrap();
+            file
+        };
+        let shared =
+            |app: (&str, &str), migrate: Option<(&str, std::path::PathBuf)>| KaisatsuSection {
+                database: Some(crate::pg::DatabaseSection {
+                    url: format!("postgres://{}@{host}/{}", app.0, app.1),
+                    password_file: pw_file(app.0, &app_pw),
+                    max_connections: Some(2),
+                    migrate_url: migrate
+                        .as_ref()
+                        .map(|(user, _)| format!("postgres://{user}@{host}/{}", app.1)),
+                    migrate_password_file: migrate.map(|(_, file)| file),
+                    maintenance_url: None,
+                    maintenance_password_file: None,
+                }),
+                ..KaisatsuSection::default()
+            };
+        let mig_file = pw_file("migrate", &mig_pw);
+        let empty = format!("kaisatsu_jc_{}", uuid_like());
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE DATABASE {empty} OWNER kaisatsu_migrate"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
+        let served = shared(
+            ("kaisatsu_app", &db),
+            Some(("kaisatsu_migrate", mig_file.clone())),
+        );
+        let store = open_kaisatsu_store(&served, kek.clone()).await.unwrap();
+        assert!(
+            store.get_realm("k16").await.unwrap().is_some(),
+            "the same database"
+        );
+        drop(store);
+        // Each step that fails stops the start: a missing password file, a role that cannot log
+        // in, a migration the role may not run, a request role the boot check refuses.
+        let gone = dir.path().join("no-such-password");
+        for (section, step) in [
+            (
+                shared(
+                    ("kaisatsu_app", &db),
+                    Some(("kaisatsu_migrate", gone.clone())),
+                ),
+                "migrate password file",
+            ),
+            (
+                shared(
+                    ("kaisatsu_app", &db),
+                    Some(("kaisatsu_nobody", mig_file.clone())),
+                ),
+                "migrate login",
+            ),
+            (
+                shared(
+                    ("kaisatsu_app", &empty),
+                    Some(("kaisatsu_app", pw_file("app-as-migrate", &app_pw))),
+                ),
+                "migration as the request role",
+            ),
+            (shared(("kaisatsu_migrate", &db), None), "request role"),
+        ] {
+            assert!(
+                open_kaisatsu_store(&section, kek.clone()).await.is_err(),
+                "{step}"
+            );
+        }
+        let mut no_app_pw = shared(("kaisatsu_app", &db), None);
+        no_app_pw.database = no_app_pw.database.map(|d| crate::pg::DatabaseSection {
+            password_file: gone,
+            ..d
+        });
+        assert!(open_kaisatsu_store(&no_app_pw, kek.clone()).await.is_err());
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {empty} WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE {db} WITH (FORCE)"
         )))
