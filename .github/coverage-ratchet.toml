@@ -63,12 +63,15 @@
 "ekiben-text" = { lines = 99.94, functions = 99.61 }
 "jc-audit" = { lines = 100.00, functions = 100.00 }
 "jc-chart" = { lines = 99.75, functions = 100.00 }
+"jc-dcat" = { lines = 97.56, functions = 97.76 }
 "jc-door" = { lines = 97.40, functions = 100.00 }
 "jc-http" = { lines = 100.00, functions = 100.00 }
 "jc-limits" = { lines = 100.00, functions = 100.00 }
+"jc-manifest" = { lines = 94.69, functions = 91.11 }
 "jc-pool" = { lines = 100.00, functions = 100.00 }
 "jc-router" = { lines = 99.87, functions = 100.00 }
 "jc-secret" = { lines = 99.00, functions = 100.00 }
+"jc-tabular" = { lines = 100.00, functions = 100.00 }
 "jc-time" = { lines = 100.00, functions = 100.00 }
 "jc-types" = { lines = 99.20, functions = 100.00 }
 "jcctl" = { lines = 92.00, functions = 86.80 }

@@ -273,3 +273,44 @@ for (const [label, locks] of [["in one frame", null], ["across frames (Web Locks
     assert.equal(most, 4);
   });
 }
+
+// T-7591: the reads and the spec forms the toolbar tests in host-page.test.mjs do not reach.
+test("a csv source is read as text and counted by its lines; an ogc source follows its next link on the Endpoint", async () => {
+  const csv = await host.load(view({ source: "csv", type: "WeatherObserved" }), API, "en", async () => answer("id,t\nurn:a,1\nurn:b,2\n"), NOW);
+  assert.deepEqual(csv, { format: "csv", text: "id,t\nurn:a,1\nurn:b,2\n" });
+  const asked = [];
+  const next = `${base}ogc/features/collections/AirQualityObserved/items?limit=1000&offset=1000`;
+  const ogc = await host.load(view({ source: "ogc", collection: "AirQualityObserved" }), API, "en", async (url) => {
+    asked.push(url);
+    if (url === next) return answer({ features: [{ id: "urn:b", geometry: null }] });
+    return answer({ features: [{ id: "urn:a", geometry: { type: "Point", coordinates: [19, 48] }, properties: { pm10: 3 } }], links: [{ rel: "self", href: "x" }, { rel: "next", href: next }] });
+  }, NOW);
+  assert.deepEqual(ogc, { format: "json", rows: [{ id: "urn:a", geometry: { type: "Point", coordinates: [19, 48] }, pm10: 3 }, { id: "urn:b", geometry: null }] });
+  assert.equal(asked[1], next);
+});
+
+test("an answer without Content-Length is stopped once it passes 20 MB", async () => {
+  let cancelled = false;
+  const big = { ok: true, status: 200, headers: { get: () => null },
+    body: { getReader() { return { read: async () => ({ done: false, value: new Uint8Array(21 * 1024 * 1024) }), cancel() { cancelled = true; } }; } } };
+  await assert.rejects(host.load(view({ source: "csv", type: "WeatherObserved" }), API, "en", async () => big, NOW), /over 20 MB/);
+  assert.equal(cancelled, true);
+  const declared = { ...big, headers: { get: (name) => (name === "Content-Length" ? String(21 * 1024 * 1024) : null) } };
+  await assert.rejects(host.load(view({ source: "csv", type: "WeatherObserved" }), API, "en", async () => declared, NOW), /over 20 MB/);
+});
+
+test("a spec that is not one temporal view keeps its own form, at the container's width unless it composes", () => {
+  const opts = { attr: "t", measure: { title: "T (°C)" }, lang: "en", width: 600 };
+  const layered = host.interactive({ layer: [{ mark: "line" }], encoding: { y: { field: "t" } } }, opts);
+  assert.equal(layered.width, "container");
+  assert.equal(layered.encoding.y.title, "T (°C)");
+  const stacked = host.interactive({ vconcat: [{ mark: "line" }] }, opts);
+  assert.equal(stacked.width, undefined, "a composed spec sizes its own parts");
+  assert.equal(host.interactive({ mark: "bar", width: 300, encoding: { x: { field: "d", type: "nominal" } } }, opts).width, 300);
+});
+
+test("an attribute no model names is spelt out from its camelCase, with the answer's unit", () => {
+  assert.deepEqual(host.measure("soilMoisture", "MMT", "en", []), { label: "Soil Moisture", unit: "mm", percent: false, title: "Soil Moisture (mm)" });
+  assert.deepEqual(host.measure("x", undefined, "sk", []), { label: "X", unit: "", percent: false, title: "X" });
+  assert.equal(host.measure("relativeHumidity", "P1", "sk", [0.5, null, 2]).percent, false, "a value past 1.5 is no fraction");
+});

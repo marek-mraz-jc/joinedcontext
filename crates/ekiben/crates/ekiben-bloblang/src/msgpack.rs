@@ -20,7 +20,7 @@ pub fn encode(v: &Value) -> Vec<u8> {
 
 fn len_header(out: &mut Vec<u8>, len: usize, fix: Option<(u8, usize)>, codes: [u8; 3]) {
     match fix {
-        Some((base, max)) if len < max => out.push(base | len as u8),
+        Some((base, max)) if len < max => out.push(base + len as u8),
         _ if len <= 0xff && codes[0] != 0 => out.extend([codes[0], len as u8]),
         _ if len <= 0xffff => {
             out.push(codes[1]);
@@ -129,7 +129,7 @@ impl Reader<'_> {
         Ok(self
             .take(n)?
             .iter()
-            .fold(0u64, |acc, b| (acc << 8) | u64::from(*b)))
+            .fold(0u64, |acc, b| (acc << 8) + u64::from(*b)))
     }
 
     fn int(&mut self, n: usize) -> Result<i64, String> {

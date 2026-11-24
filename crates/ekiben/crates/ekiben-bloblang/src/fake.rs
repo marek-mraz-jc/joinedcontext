@@ -498,6 +498,44 @@ mod tests {
     }
 
     #[test]
+    fn coordinates_and_amounts_follow_the_draws_of_a_seeded_stream() {
+        for seed in 0..50 {
+            let fresh = || Faker {
+                rng: GoRand::new(seed),
+                card: None,
+            };
+            let mut probe = GoRand::new(seed);
+            let frac32 = |r: &mut GoRand| r.int63n(1 << 24) as f32 / (1 << 24) as f32;
+            let lat = f64::from(frac32(&mut probe) * 180.0 - 90.0);
+            assert_eq!(
+                fresh().generate("latitude"),
+                Some(Value::Float(lat)),
+                "seed {seed}"
+            );
+            let mut probe = GoRand::new(seed);
+            let lon = f64::from(frac32(&mut probe) * 360.0 - 180.0);
+            assert_eq!(
+                fresh().generate("longitude"),
+                Some(Value::Float(lon)),
+                "seed {seed}"
+            );
+            let mut probe = GoRand::new(seed);
+            let scale = 10f64.powi(probe.int63n(8) as i32);
+            let raw = probe.int63n(1 << 53) as f64 / (1u64 << 53) as f64 * scale;
+            let div = 10f64.powi(probe.int63n(2) as i32 + 1);
+            let amount = (raw * div).trunc() / div;
+            let currency = CURRENCIES[probe.int63n(CURRENCIES.len() as i64) as usize];
+            assert_eq!(
+                fresh()
+                    .generate("amount_with_currency")
+                    .map(|v| v.to_string_coerced()),
+                Some(format!("{currency} {amount:.6}")),
+                "seed {seed}"
+            );
+        }
+    }
+
+    #[test]
     fn a_name_takes_the_female_lists_exactly_when_the_draw_is_over_50() {
         let mut boundary = 0;
         for seed in 0..1000 {

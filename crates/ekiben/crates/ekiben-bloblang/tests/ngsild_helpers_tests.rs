@@ -46,6 +46,11 @@ fn point_checks_ranges_and_spots_a_swap() {
     );
     let lat = run("root = ngsild_point(91, 10)").unwrap_err();
     assert!(lat.contains("latitude is out of range"), "{lat}");
+    // A latitude outside even the longitude range is not a swap.
+    assert_eq!(
+        run("root = ngsild_point(200, 10)").unwrap_err(),
+        "failed assignment (line 1): latitude is out of range -90..90"
+    );
     let swapped = run("root = ngsild_point(120.5, 48.7)").unwrap_err();
     assert!(swapped.contains("swapped"), "{swapped}");
     let lon = run("root = ngsild_point(48.7, 190.5)").unwrap_err();
