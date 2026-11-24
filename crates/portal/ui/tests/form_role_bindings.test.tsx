@@ -316,3 +316,97 @@ describe("the role list (T-1759)", () => {
     });
   });
 });
+
+describe("the grant dialog's remaining ways (T-7588)", () => {
+  it("grants_a_group_until_a_date", async () => {
+    const bodies: unknown[] = [];
+    const user = userEvent.setup();
+    renderPage(dialog(), {
+      path: `/projects/${PROJECT}`,
+      answer: async (url, request) => {
+        const own = reads()(url);
+        if (own) return own;
+        if (url.pathname === "/api/v1/projects/org/groups") {
+          return json(list([{ apiVersion: API, kind: "Group", metadata: { name: "stewards", namespace: "org" }, spec: {} }]));
+        }
+        if (url.pathname === BINDINGS) {
+          bodies.push(await request.json());
+          return json({ apiVersion: API, kind: "Change", metadata: { name: "chg-2" } }, 201);
+        }
+        return undefined;
+      },
+    });
+    await user.selectOptions(await screen.findByLabelText(/Give it to/), "group");
+    await user.type(screen.getByLabelText(/Group name/), "stew");
+    await user.click(await screen.findByRole("option", { name: /stewards/ }));
+    await user.selectOptions(screen.getByLabelText(/^Role/), "reader");
+    await user.type(screen.getByLabelText(/^Until/), "2027-03-31");
+    await user.click(screen.getByRole("button", { name: /Propose grant/ }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({
+      spec: { subjects: [{ group: "stewards" }], role: "reader", validity: { notAfter: "2027-03-31T23:59:59.000Z" } },
+    });
+  });
+
+  it("keeps_the_form_when_the_discard_question_is_dismissed", async () => {
+    const user = userEvent.setup();
+    const closed = vi.fn();
+    renderPage(<GrantRoleDialog project={PROJECT} open onOpenChange={closed} prefill={null} />, { path: `/projects/${PROJECT}`, answer: reads() });
+    await screen.findByRole("option", { name: /steward/ });
+    await user.selectOptions(screen.getByLabelText(/^Role/), "steward");
+    await user.click(screen.getByRole("button", { name: /Cancel/ }));
+    expect(await screen.findByRole("alertdialog", { name: /Discard this grant/ })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(screen.getByLabelText(/^Role/)).toHaveValue("steward");
+    expect(closed).not.toHaveBeenCalledWith(false);
+  });
+
+  it("opens_on_a_draft_scoped_to_one_space", async () => {
+    const draft = { spec: { subjects: [{ user: "tomas.kral@example.sk" }], role: "steward", scope: { contextSpace: "citybikes" } } };
+    renderPage(<GrantRoleDialog project={PROJECT} open onOpenChange={() => {}} prefill={draft} />, { path: `/projects/${PROJECT}`, answer: reads() });
+    await waitFor(() => expect(screen.getByLabelText(/Where it applies/)).toHaveValue("space:citybikes"));
+  });
+
+  it("offers_only_close_to_a_person_who_may_not_propose", async () => {
+    mayPropose = false;
+    const user = userEvent.setup();
+    const closed = vi.fn();
+    renderPage(<GrantRoleDialog project={PROJECT} open onOpenChange={closed} prefill={null} />, { path: `/projects/${PROJECT}`, answer: reads() });
+    await screen.findByText(/Your role lets you look at these/);
+    // The footer's Close, the last of the two (the header has its own).
+    await user.click(screen.getAllByRole("button", { name: /^Close$/ }).at(-1) as HTMLElement);
+    expect(closed).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("the role list's remaining states (T-7588)", () => {
+  const page = () => <RoleBindings project={PROJECT} />;
+
+  it("reads_the_spaces_and_the_bindings_again_on_retry", async () => {
+    const user = userEvent.setup();
+    let spaces = 0;
+    let bindings = 0;
+    renderPage(page(), {
+      path: `/projects/${PROJECT}`,
+      answer: (url) => {
+        if (url.pathname === SPACES) return ++spaces === 1 ? problem(503, "The space list is not available right now.") : json(list([space("citybikes")]));
+        if (url.pathname === BINDINGS) return ++bindings === 1 ? problem(500, "The role bindings could not be read.") : json(list([binding("org-wide", { organization: "org" })]));
+        return undefined;
+      },
+    });
+    await screen.findByText(/The role bindings could not be read\./);
+    for (const retry of screen.getAllByRole("button", { name: /Retry/ })) await user.click(retry);
+    expect(await screen.findByText("jana.kovacova@example.sk")).toBeInTheDocument();
+    await waitFor(() => expect(spaces).toBeGreaterThan(1));
+    expect(bindings).toBeGreaterThan(1);
+  });
+
+  it("opens_the_grant_form_from_the_empty_list", async () => {
+    const user = userEvent.setup();
+    renderPage(page(), { path: `/projects/${PROJECT}`, answer: reads() });
+    const grants = await screen.findAllByRole("button", { name: /Grant a role/ });
+    await user.click(grants.at(-1) as HTMLElement);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+});
