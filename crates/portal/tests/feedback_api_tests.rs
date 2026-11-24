@@ -3,8 +3,13 @@
 
 mod common;
 
+use axum::body::Body;
+use axum::http::{header, Request};
 use base64::Engine as _;
+use common::csrf_echo::EchoCsrf;
+use joinedcontext_portal::server;
 use serde_json::{json, Value};
+use tower::ServiceExt;
 
 use common::{envelope, person, send};
 use joinedcontext_portal::config::Config;
@@ -114,6 +119,18 @@ async fn a_feedback_arrives_scrubbed_without_its_author_and_an_administrator_rea
     )
     .await;
     assert_eq!(shot.status.as_u16(), 200);
+    // a page cursor that is no number, or a parameter the list does not take, is a 400
+    for query in ["?after=first", "?limit=5"] {
+        let refused = send(
+            &state,
+            person("admin"),
+            "GET",
+            &format!("/api/v1/organization/feedback{query}"),
+            None,
+        )
+        .await;
+        assert_eq!(refused.status.as_u16(), 400, "{query}: {}", refused.text);
+    }
     let after = send(
         &state,
         person("admin"),
@@ -126,6 +143,34 @@ async fn a_feedback_arrives_scrubbed_without_its_author_and_an_administrator_rea
         serde_json::from_str::<Value>(&after.text).expect("json")["items"],
         json!([])
     );
+}
+
+/// A feedback store that does not answer is a 500 on every route, never an empty list or a 202
+/// for a feedback that was not kept, and the answer names no database address.
+#[tokio::test]
+async fn a_feedback_store_that_is_down_says_so_on_every_route() {
+    // port 1 is privileged and nothing in a test container listens there
+    let down = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy("postgres://portal:portal@127.0.0.1:1/portal")
+        .expect("a lazy pool");
+    let state = world().with_db(down);
+    let (status, body) = post(&state, "jana", json!({ "text": "x", "page": "/" })).await;
+    // the store's error stays in the log; the person reads the generic internal error
+    assert_eq!(status, 500, "{body}");
+    assert_eq!(body["detail"], "Unexpected internal error", "{body}");
+    for path in [
+        "/api/v1/organization/feedback",
+        "/api/v1/organization/feedback/1/screenshot",
+    ] {
+        let answer = send(&state, person("admin"), "GET", path, None).await;
+        assert_eq!(answer.status.as_u16(), 500, "{path}: {}", answer.text);
+        assert!(
+            !answer.text.contains("127.0.0.1"),
+            "{path}: {}",
+            answer.text
+        );
+    }
 }
 
 #[tokio::test]
@@ -222,4 +267,31 @@ async fn a_person_sends_ten_an_hour_and_the_eleventh_is_told_when_to_try_again()
     .await;
     assert_eq!(answer.status.as_u16(), 429, "{}", answer.text);
     assert!(answer.text.contains("minutes"), "{}", answer.text);
+    // the refusal names the seconds to wait, within the hour, for a client to retry by
+    let response = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/feedback")
+                .header(
+                    header::COOKIE,
+                    common::cookie(&state.config, person("burst")),
+                )
+                .echo_csrf()
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "text": "again", "page": "/" }).to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status().as_u16(), 429);
+    let wait: u64 = response
+        .headers()
+        .get(header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .expect("a Retry-After in seconds");
+    assert!((1..=3600).contains(&wait), "{wait}");
 }

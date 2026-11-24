@@ -151,3 +151,26 @@ pub fn router() -> axum::Router<AppState> {
         .route("/branding", axum::routing::get(get_branding))
         .route("/branding/{asset}", axum::routing::get(get_asset))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::media_type;
+
+    #[test]
+    fn only_image_types_are_named_and_anything_else_downloads() {
+        for (name, kind) in [
+            ("logo.svg", "image/svg+xml"),
+            ("logo.png", "image/png"),
+            ("photo.jpg", "image/jpeg"),
+            ("photo.jpeg", "image/jpeg"),
+            ("logo.webp", "image/webp"),
+            ("favicon.ico", "image/vnd.microsoft.icon"),
+            ("page.html", "application/octet-stream"),
+            ("logo.SVG", "application/octet-stream"),
+            ("no-extension", "application/octet-stream"),
+            ("", "application/octet-stream"),
+        ] {
+            assert_eq!(media_type(name), kind, "{name}");
+        }
+    }
+}

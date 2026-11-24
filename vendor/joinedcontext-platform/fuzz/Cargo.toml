@@ -1,0 +1,49 @@
+# Fuzzing the platform's parsers of outside input under libFuzzer (T-7794): broker pages into CSV
+# (jc-tabular), manifest YAML (jc-manifest), DCAT records (jc-dcat) and model JSON Schemas.
+# `cargo +nightly fuzz run <target> fuzz/corpus/<target> fuzz/seeds/<target>`. Not a workspace member.
+[package]
+name = "jc-platform-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+serde_norway = "0.9"
+jc-tabular = { path = "../crates/jc-tabular" }
+jc-manifest = { path = "../crates/jc-manifest" }
+jc-dcat = { path = "../crates/jc-dcat", features = ["dcat-ap-sk", "dcat-ap-cz"] }
+
+[[bin]]
+name = "tabular_csv"
+path = "fuzz_targets/tabular_csv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest_yaml"
+path = "fuzz_targets/manifest_yaml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dcat_record"
+path = "fuzz_targets/dcat_record.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "model_schema"
+path = "fuzz_targets/model_schema.rs"
+test = false
+doc = false
+bench = false

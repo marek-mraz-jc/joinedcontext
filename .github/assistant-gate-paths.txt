@@ -1,0 +1,25 @@
+# Paths whose change can break the public assistant's answers (T-7788). A jc range from the last
+# prod pin to a candidate that touches one of them needs a PASS of the assistant gate
+# (bins/jc/smoke/assistant-gate) on jc-dev for the candidate's image digest before prod.
+# Syntax (.github/scripts/assistant-gate.py): one glob per line, `**` any number of folders, `*`
+# within one name, a leading `!` takes matches of earlier lines back out; `#` starts a comment.
+# Its selftest checks every line still matches a tracked file.
+vendor/joinedcontext-platform/crates/assistant/**
+!vendor/joinedcontext-platform/crates/assistant/tests/**
+!vendor/joinedcontext-platform/crates/assistant/*.md
+vendor/joinedcontext-platform/crates/context-gateway/**
+vendor/joinedcontext-platform/crates/jc-core/**
+vendor/joinedcontext-platform/crates/agent-proxy/**
+vendor/viz/**
+crates/antares/**
+bins/jc/src/modules/assistant.rs
+bins/jc/src/modules/gateway.rs
+bins/jc/src/modules/viz.rs
+bins/jc/src/setup.rs
+crates/portal/ui/src/pages/knowledge/**
+crates/portal/ui/src/components/panels/**
+deploy/components/jc/values/server/**
+deploy/components/jc/values/functions/**
+deploy/components/ai/**
+# The gate itself: a change to its questions, judge or runner is proven by a run.
+bins/jc/smoke/assistant-gate/**

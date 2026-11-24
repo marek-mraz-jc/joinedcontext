@@ -23,7 +23,8 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
     let mut i = 0;
     let mut arg = 0;
     let mut reordered = false;
-    while i < bytes.len() {
+    // Ends at the `i >= bytes.len()` break below, after the last literal run.
+    loop {
         let start = i;
         while i < bytes.len() && bytes[i] != b'%' {
             i += 1;
@@ -60,7 +61,7 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
             }
             arg += 1;
         } else {
-            f.wid = number(bytes, &mut i);
+            f.wid = Some(number(bytes, &mut i));
         }
         if i < bytes.len() && bytes[i] == b'.' {
             i += 1;
@@ -74,7 +75,7 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
                 }
                 arg += 1;
             } else {
-                f.prec = Some(number(bytes, &mut i).unwrap_or(0));
+                f.prec = Some(number(bytes, &mut i));
             }
         }
         if f.minus {
@@ -150,8 +151,8 @@ fn arg_number(
     }
 }
 
-fn number(b: &[u8], i: &mut usize) -> Option<usize> {
-    let start = *i;
+/// The decimal at `i`, 0 when there is none: a missing width or precision acts as 0.
+fn number(b: &[u8], i: &mut usize) -> usize {
     let mut n: usize = 0;
     while *i < b.len() && b[*i].is_ascii_digit() {
         n = n
@@ -159,7 +160,7 @@ fn number(b: &[u8], i: &mut usize) -> Option<usize> {
             .saturating_add(usize::from(b[*i] - b'0'));
         *i += 1;
     }
-    (*i > start).then_some(n.min(1_000_000))
+    n.min(1_000_000)
 }
 
 fn star(v: &Value) -> Option<i64> {
@@ -694,13 +695,9 @@ fn fmt_f(s: &mut String, digs: &[u8], dp: i64, prec: usize) {
     if prec > 0 {
         s.push('.');
         for i in 1..=prec as i64 {
-            let at = dp + i - 1;
-            let d = if zero || at < 0 {
-                b'0'
-            } else {
-                *digs.get(at as usize).unwrap_or(&b'0')
-            };
-            s.push(char::from(d));
+            // A zero's digits are "0" and a place left of the first digit has no index: both pad '0'.
+            let at = usize::try_from(dp + i - 1).ok();
+            s.push(char::from(*at.and_then(|at| digs.get(at)).unwrap_or(&b'0')));
         }
     }
 }
@@ -770,6 +767,19 @@ mod tests {
             ),
             "   ab|ab|int64|%!d(MISSING)"
         );
+        // Zero padding needs the 0 flag and a width; a sign is kept in front.
+        assert_eq!(
+            s(
+                "%8.2f|%0.2f|%+0.1f",
+                vec![Value::Float(-3.5), Value::Float(-3.5), Value::Float(2.5)]
+            ),
+            "   -3.50|-3.50|+2.5"
+        );
+        // A two-digit exponent takes no pad zero.
+        assert_eq!(
+            s("%e|%e", vec![Value::Float(1e10), Value::Float(1e-10)]),
+            "1.000000e+10|1.000000e-10"
+        );
         assert_eq!(
             s("%v", vec![Value::Int(1), Value::Int(2)]),
             "1%!(EXTRA int64=2)"
@@ -815,6 +825,7 @@ mod tests {
             ("%*d", vec![Value::Uint(2_000_000), i(1)], "%!(BADWIDTH)1"),
             // An index without its closing bracket is a bad index.
             ("%[1d", vec![i(5)], "%!d(BADINDEX)"),
+            ("%.[9]d", vec![i(5)], "%!d(BADINDEX)"),
             // A precision turns the zero flag off: Go pads with spaces then.
             (
                 "%08.3d|%-08d|%8.2f|%08.2f",
@@ -845,6 +856,7 @@ mod tests {
                 vec![st("zz"), st("zz")],
                 "        7a7a|7a7a        |",
             ),
+            ("%10x|", vec![st("abc")], "    616263|"),
             (
                 "%# 14x|%#8x|% 8x|",
                 vec![st("zz"), st("zz"), st("zz")],
@@ -968,6 +980,12 @@ mod tests {
                     st("😀"),
                 ],
                 "\"\\a\\b\\f\\n\\r\\t\\v\\\\\"|\"\\x01\"|\"\\u200b\"|\"\\U0001f600\"|\"😀\"",
+            ),
+            // An even code point prints; a plane's last two (noncharacters) do not.
+            (
+                "%q|%q",
+                vec![st("è"), st("\u{1fffe}")],
+                "\"è\"|\"\\U0001fffe\"",
             ),
             (
                 "%v|%s|%d",

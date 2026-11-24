@@ -119,8 +119,9 @@ def merged_files(data):
     return out
 
 
-def per_file(exports):
-    """{absolute file: summary}; a file two exports measured keeps the better-covered record."""
+def per_file(exports, origin=None):
+    """{absolute file: summary}; a file two exports measured keeps the better-covered record
+    (and `origin`, when given, maps the file to the export that record came from)."""
     files = {}
     for export in exports:
         for data in read_export(export)["data"]:
@@ -132,13 +133,21 @@ def per_file(exports):
                 old = files.get(f["filename"])
                 if old is None or s["lines"]["covered"] > old["lines"]["covered"]:
                     files[f["filename"]] = s
+                    if origin is not None:
+                        origin[f["filename"]] = export
     return files
 
 
-def per_crate(exports, root):
-    """{crate: {"lines": (count, covered), "functions": (count, covered)}} of files inside `root`."""
-    crates, cache = {}, {}
-    for name, s in per_file(exports).items():
+def tests_failed(export):
+    """Whether an export comes from a run with failing tests (coverage.yml names it tests-failed-<ws>)."""
+    return pathlib.Path(export).name.startswith("tests-failed-")
+
+
+def per_crate(exports, root, failed=None):
+    """{crate: {"lines": (count, covered), "functions": (count, covered)}} of files inside `root`;
+    `failed`, when given, collects the crates with a file whose record comes from a tests-failed export."""
+    crates, cache, origin = {}, {}, {}
+    for name, s in per_file(exports, origin).items():
         path = pathlib.Path(name)
         if not path.is_relative_to(root):
             continue
@@ -146,6 +155,8 @@ def per_crate(exports, root):
         if crate is None or NOT_MEASURED & set(path.relative_to(root).parts):
             continue
         acc = crates.setdefault(crate, {m: [0, 0] for m in METRICS})
+        if failed is not None and tests_failed(origin[name]):
+            failed.add(crate)
         for m in METRICS:
             acc[m][0] += s[m]["count"]
             acc[m][1] += s[m]["covered"]
@@ -172,11 +183,15 @@ def missed_mutants(outcome_files):
     return missed
 
 
-def table(crates, missed):
+def table(crates, missed, failed=frozenset()):
     rows = ["| crate | lines | functions | missed mutants |", "|---|---:|---:|---:|"]
     for c in sorted(crates):
         cells = [f"{percent(*crates[c][m]):.2f} % ({crates[c][m][1]}/{crates[c][m][0]})" for m in METRICS]
-        rows.append(f"| {c} | {cells[0]} | {cells[1]} | {missed.get(c, 'not run')} |")
+        name = f"{c} (tests failed)" if c in failed else c
+        rows.append(f"| {name} | {cells[0]} | {cells[1]} | {missed.get(c, 'not run')} |")
+    if failed:
+        rows += ["", ("(tests failed): measured in a run where tests failed, so the number lacks what those tests"
+                 " cover; the ratchet does not judge it (ci.yml is the test gate).")]
     return "\n".join(rows) + "\n"
 
 
@@ -255,9 +270,10 @@ def main(argv):
     if not args:
         print("coverage-ratchet: no llvm-cov export given", file=sys.stderr)
         return 2
-    crates = per_crate(args, root)
+    failed = set()
+    crates = per_crate(args, root, failed)
     if command == "table":
-        text = table(crates, missed_mutants(mutants))
+        text = table(crates, missed_mutants(mutants), failed)
         print(text, end="")
         if md:
             pathlib.Path(md).write_text(text)
@@ -266,6 +282,8 @@ def main(argv):
                       for c, v in crates.items()}
             for c, n in missed_mutants(mutants).items():
                 report.setdefault(c, {})["missed_mutants"] = n
+            for c in failed:
+                report[c]["tests_failed"] = True
             pathlib.Path(js).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
         return 0
     floors = load_ratchet(ratchet)
@@ -371,6 +389,21 @@ def selftest():
             {"scenario": {"Mutant": {"package": "alpha"}}, "summary": "CaughtMutant"},
             {"scenario": {"Mutant": {"package": "beta"}}, "summary": "Unviable"}]}))
         judge("missed mutants count per package", missed_mutants([outcomes]), {"alpha": 1, "beta": 0})
+        broken = root / "tests-failed-ws.json"
+        export(broken, {b: (3, 3, 3, 3)})
+        marked = set()
+        per_crate([first, broken], root, marked)
+        judge("a crate whose record comes from a tests-failed export is marked, the other not", marked, {"beta"})
+        judge("the table names the mark", "| beta (tests failed) |" in table(per_crate([first, broken], root), {}, marked)
+              and "| alpha |" in table(per_crate([first, broken], root), {}, marked), True)
+        export(second, {b: (3, 1, 3, 3)})
+        marked = set()
+        per_crate([second, broken], root, marked)
+        judge("a failed run's better record marks the crate", marked, {"beta"})
+        export(broken, {b: (3, 0, 3, 0)})
+        marked = set()
+        per_crate([second, broken], root, marked)
+        judge("a green export's better record is not marked", marked, set())
     if failed:
         print("coverage-ratchet selftest FAILED:\n  " + "\n  ".join(failed))
         return 1

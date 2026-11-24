@@ -235,8 +235,225 @@ pub(crate) mod tests {
             .is_err());
     }
 
+    /// A bearer header that is not a token names nobody; a bearer token or a cookie session on
+    /// a Portal with no Keycloak client is an error a person can read, holding no token.
+    #[tokio::test]
+    async fn a_portal_without_a_client_refuses_the_exchange_and_a_non_token_names_nobody() {
+        let state = AppState::new(Config::for_tests(), None);
+        let mut basic = HeaderMap::new();
+        basic.insert(
+            axum::http::header::AUTHORIZATION,
+            "Basic eDp5".parse().expect("header"),
+        );
+        assert_eq!(endpoint_token(&state, &basic, "closedslug").await, Ok(None));
+        let mut bearer = HeaderMap::new();
+        bearer.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {KEPT}").parse().expect("header"),
+        );
+        let refused = endpoint_token(&state, &bearer, "closedslug").await;
+        let message = refused.expect_err("no client to exchange at");
+        assert!(message.contains("no Keycloak client"), "{message}");
+        assert!(!message.contains(KEPT), "{message}");
+        let cookie = cookie_session(&state, &signed_in(), Some(KEPT));
+        let message = endpoint_token(&state, &cookie, "closedslug")
+            .await
+            .expect_err("no client to exchange at");
+        assert!(message.contains("no Keycloak client"), "{message}");
+    }
+
+    /// A realm that refuses the exchange (a person the Endpoint's scope is not for) is an error
+    /// that carries no token, and nothing is kept, so the next read asks the realm again.
+    #[tokio::test]
+    async fn a_refused_exchange_is_an_error_and_is_not_kept() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        let realm = realm(&mut state, 0).await;
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": "access_denied", "error_description": "scope endpoint:other"
+            })))
+            .expect(2)
+            .mount(&realm)
+            .await;
+        let headers = cookie_session(&state, &signed_in(), Some(KEPT));
+        for _ in 0..2 {
+            let message = endpoint_token(&state, &headers, "other")
+                .await
+                .expect_err("refused");
+            assert!(!message.contains(KEPT), "{message}");
+        }
+    }
+
+    /// An exchanged token already inside its expiry margin is handed out once and never kept:
+    /// the next read exchanges again rather than reuse a token about to be refused.
+    #[tokio::test]
+    async fn an_exchanged_token_about_to_expire_is_not_kept() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        let realm = crate::auth::oidc::tests::mock_realm().await;
+        let short = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &json!({ "sub": "sub-pia", "exp": session::now_unix() + 10 }),
+            &jsonwebtoken::EncodingKey::from_secret(b"unverified-here"),
+        )
+        .expect("token");
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": short, "token_type": "Bearer", "expires_in": 10
+            })))
+            .expect(2)
+            .mount(&realm)
+            .await;
+        let client = crate::auth::oidc::OidcClient::discover(
+            &crate::auth::oidc::tests::config_for(&realm),
+            "https://portal.test/cb",
+        )
+        .await
+        .expect("discovery");
+        state.oidc = Some(std::sync::Arc::new(client));
+        let headers = cookie_session(&state, &signed_in(), Some(KEPT));
+        for _ in 0..2 {
+            assert_eq!(
+                endpoint_token(&state, &headers, "closedslug").await,
+                Ok(Some(short.clone()))
+            );
+        }
+    }
+
     /// A session whose access token this process does not hold (a restart, another replica), a
     /// logged-out one, a revoked one and a request with no session name nobody: no exchange.
+    fn bearer(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            value.parse().expect("header"),
+        );
+        headers
+    }
+
+    /// A bearer caller's own token is exchanged for the Endpoint, every call (nothing is kept
+    /// for a token the Portal does not hold); a header that is no bearer names nobody.
+    #[tokio::test]
+    async fn a_bearer_callers_token_is_exchanged_and_a_non_bearer_names_nobody() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        let _realm = realm(&mut state, 2).await;
+        let headers = bearer(&format!("Bearer {KEPT}"));
+        for _ in 0..2 {
+            assert_eq!(
+                endpoint_token(&state, &headers, "closedslug").await,
+                Ok(Some(EXCHANGED.to_owned()))
+            );
+        }
+        for nobody in ["Basic cGlhOnB3", "Bearer ", "Bearer    "] {
+            assert_eq!(
+                endpoint_token(&state, &bearer(nobody), "closedslug").await,
+                Ok(None),
+                "{nobody:?}"
+            );
+        }
+    }
+
+    /// A refused exchange is an error naming no token, for a bearer and for a cookie session; a
+    /// Portal with no client to exchange at says so.
+    #[tokio::test]
+    async fn a_refused_or_impossible_exchange_is_an_error_without_the_token() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        let _realm = realm(&mut state, 0).await;
+        // The realm exchanges only `KEPT`: any other token is answered 404 by the mock.
+        let foreign = "foreign-access-token-5521";
+        let refused = endpoint_token(&state, &bearer(&format!("Bearer {foreign}")), "closedslug")
+            .await
+            .expect_err("refused");
+        assert!(!refused.contains(foreign), "{refused}");
+        let session = signed_in();
+        let headers = cookie_session(&state, &session, Some(foreign));
+        let refused = endpoint_token(&state, &headers, "closedslug")
+            .await
+            .expect_err("refused");
+        assert!(!refused.contains(foreign), "{refused}");
+
+        state.oidc = None;
+        for headers in [
+            bearer(&format!("Bearer {KEPT}")),
+            cookie_session(&state, &session, Some(KEPT)),
+        ] {
+            let error = endpoint_token(&state, &headers, "closedslug")
+                .await
+                .expect_err("no client");
+            assert!(error.contains("no Keycloak client"), "{error}");
+            assert!(!error.contains(KEPT), "{error}");
+        }
+    }
+
+    /// A session whose sign-in or access token is over names nobody, even with a token kept.
+    #[tokio::test]
+    async fn an_expired_session_or_access_token_names_nobody() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        let _realm = realm(&mut state, 0).await;
+        let now = session::now_unix();
+        let mut access_over = signed_in();
+        access_over.access_expires_at = now - 1;
+        let mut session_over = signed_in();
+        session_over.expires_at = now - 1;
+        for session in [access_over, session_over] {
+            let headers = cookie_session(&state, &session, Some(KEPT));
+            assert_eq!(
+                endpoint_token(&state, &headers, "closedslug").await,
+                Ok(None)
+            );
+        }
+    }
+
+    /// An exchanged JWT is kept until 30 s before its `exp` and never past the session; one that
+    /// is already inside that margin is used once and exchanged again on the next read.
+    #[tokio::test]
+    async fn an_exchanged_token_is_kept_by_its_exp_and_not_once_inside_the_margin() {
+        use base64::Engine as _;
+        let jwt = |exp: i64| {
+            let b64 = |v: &serde_json::Value| {
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string())
+            };
+            format!(
+                "{}.{}.sig",
+                b64(&json!({"alg": "none"})),
+                b64(&json!({"exp": exp}))
+            )
+        };
+        let now = session::now_unix();
+        for (exp, exchanges) in [(now + 600, 1), (now + 10, 2)] {
+            let mut state = AppState::new(Config::for_tests(), None);
+            let realm = crate::auth::oidc::tests::mock_realm().await;
+            Mock::given(method("POST"))
+                .and(path("/realms/bb/protocol/openid-connect/token"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "access_token": jwt(exp), "token_type": "Bearer", "expires_in": 300
+                })))
+                .expect(exchanges)
+                .mount(&realm)
+                .await;
+            state.oidc = Some(std::sync::Arc::new(
+                crate::auth::oidc::OidcClient::discover(
+                    &crate::auth::oidc::tests::config_for(&realm),
+                    "https://portal.test/cb",
+                )
+                .await
+                .expect("discovery"),
+            ));
+            let session = signed_in();
+            let headers = cookie_session(&state, &session, Some(KEPT));
+            for _ in 0..2 {
+                assert_eq!(
+                    endpoint_token(&state, &headers, "closedslug").await,
+                    Ok(Some(jwt(exp)))
+                );
+            }
+            // Another Endpoint is its own exchange, never the first one's token.
+            assert_eq!(state.session_exchanged(&session, "otherslug", now), None);
+            drop(realm);
+        }
+    }
+
     #[tokio::test]
     async fn a_session_without_a_live_kept_token_names_nobody() {
         let mut state = AppState::new(Config::for_tests(), None);

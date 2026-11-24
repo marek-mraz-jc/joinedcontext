@@ -394,10 +394,8 @@ impl Authorizer for PolicyAuthorizer {
 
         // 2. A dataset the caller may not read stays hidden for every action, so a refused
         //    write never reveals that the record exists (C11, F2).
-        if let ObjectTarget::Dataset { .. } = object {
-            if !self.dataset_readable(ctx, object) {
-                return Decision::deny_hidden("dataset is not visible to caller");
-            }
+        if !self.dataset_readable(ctx, object) {
+            return Decision::deny_hidden("dataset is not visible to caller");
         }
 
         // 3. Read-only connectors cannot perform writes.
@@ -550,5 +548,255 @@ impl Authorizer for LiveAuthorizer {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .check(ctx, action, object)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn ids(n: u128) -> (OrgId, CatalogueId) {
+        (
+            OrgId::from_uuid(Uuid::from_u128(n)),
+            CatalogueId::from_uuid(Uuid::from_u128(n + 100)),
+        )
+    }
+
+    fn member(org: OrgId, cat: CatalogueId) -> RequestCtx {
+        RequestCtx::new(
+            org,
+            cat,
+            Subject::authenticated("ana", vec![org], vec!["editors".into()]),
+        )
+    }
+
+    fn rule(org: OrgId, cat: CatalogueId, actions: Vec<Action>) -> GrantRule {
+        GrantRule {
+            org_id: org,
+            catalogue_id: Some(cat),
+            principal: "editors".into(),
+            actions,
+            publisher_id: None,
+        }
+    }
+
+    #[test]
+    fn an_object_of_another_organization_or_catalogue_is_a_hidden_denial() {
+        let (org, cat) = ids(1);
+        let (other_org, other_cat) = ids(2);
+        let policy = PolicyAuthorizer::new(vec![rule(org, cat, vec![Action::Admin])]);
+        let ctx = member(org, cat);
+        for target in [
+            ObjectTarget::Catalogue {
+                org_id: other_org,
+                catalogue_id: cat,
+            },
+            ObjectTarget::Catalogue {
+                org_id: org,
+                catalogue_id: other_cat,
+            },
+        ] {
+            let d = policy.check(&ctx, Action::Read, &target);
+            assert!(!d.allowed && !d.visible, "{d:?}");
+            assert_eq!(
+                d.reason,
+                "object is outside the request's organization or catalogue"
+            );
+        }
+        // the same catalogue of the caller's own organization is granted
+        let own = ObjectTarget::Catalogue {
+            org_id: org,
+            catalogue_id: cat,
+        };
+        assert!(policy.check(&ctx, Action::Propose, &own).allowed);
+    }
+
+    #[test]
+    fn subjects_name_themselves_and_their_principals() {
+        let (org, cat) = ids(6);
+        let anon = RequestCtx::anonymous(org, cat);
+        assert!(anon.subject.is_anonymous());
+        assert_eq!(anon.actor_name(), "anonymous");
+        assert!(anon.subject.principals().is_empty());
+        let ana = member(org, cat);
+        assert!(!ana.subject.is_anonymous());
+        assert_eq!(ana.actor_name(), "ana");
+        assert_eq!(ana.subject.principals(), ["ana", "editors"]);
+        let names: Vec<_> = [
+            Action::Read,
+            Action::Propose,
+            Action::Approve,
+            Action::Delete,
+            Action::Harvest,
+            Action::Admin,
+        ]
+        .map(Action::as_str)
+        .into();
+        assert_eq!(
+            names,
+            ["read", "propose", "approve", "delete", "harvest", "admin"]
+        );
+    }
+
+    /// An internal dataset is read by a member holding Read on its publisher alone, or on the
+    /// whole catalogue; a member with neither does not see it.
+    #[test]
+    fn an_internal_dataset_is_read_with_a_publisher_or_catalogue_read_rule() {
+        let (org, cat) = ids(7);
+        let target = ObjectTarget::Dataset {
+            org_id: org,
+            catalogue_id: cat,
+            dataset_id: "d-1".into(),
+            publisher_id: "city".into(),
+            visibility: Visibility::Internal,
+            restricted_grants: Vec::new(),
+            publisher_editor_grants: Vec::new(),
+        };
+        let mut scoped = rule(org, cat, vec![Action::Read]);
+        scoped.publisher_id = Some("city".into());
+        let other = GrantRule {
+            publisher_id: Some("dept".into()),
+            ..scoped.clone()
+        };
+        for (rules, readable) in [
+            (vec![scoped], true),
+            (vec![rule(org, cat, vec![Action::Read])], true),
+            (vec![other], false),
+            (Vec::new(), false),
+        ] {
+            let d = PolicyAuthorizer::new(rules.clone()).check(
+                &member(org, cat),
+                Action::Read,
+                &target,
+            );
+            assert_eq!(d.allowed, readable, "{rules:?}: {d:?}");
+        }
+    }
+
+    /// A Propose rule on a publisher makes its holder that publisher's editor: they approve and
+    /// delete its datasets too. A Propose rule alone suffices on a profile, as Admin does.
+    #[test]
+    fn a_publisher_propose_rule_makes_an_editor_and_a_profile_needs_its_own_or_admin() {
+        let (org, cat) = ids(8);
+        let mut scoped = rule(org, cat, vec![Action::Propose]);
+        scoped.publisher_id = Some("city".into());
+        let policy = PolicyAuthorizer::new(vec![scoped]);
+        let ctx = member(org, cat);
+        let dataset = ObjectTarget::Dataset {
+            org_id: org,
+            catalogue_id: cat,
+            dataset_id: "d-1".into(),
+            publisher_id: "city".into(),
+            visibility: Visibility::Public,
+            restricted_grants: Vec::new(),
+            publisher_editor_grants: Vec::new(),
+        };
+        for action in [Action::Propose, Action::Approve, Action::Delete] {
+            assert!(policy.check(&ctx, action, &dataset).allowed, "{action:?}");
+        }
+        assert!(!policy.check(&ctx, Action::Admin, &dataset).allowed);
+        let internal = ObjectTarget::Dataset {
+            org_id: org,
+            catalogue_id: cat,
+            dataset_id: "d-2".into(),
+            publisher_id: "city".into(),
+            visibility: Visibility::Internal,
+            restricted_grants: Vec::new(),
+            publisher_editor_grants: Vec::new(),
+        };
+        assert!(
+            policy.check(&ctx, Action::Read, &internal).allowed,
+            "an editor reads it"
+        );
+        let profile = ObjectTarget::Profile {
+            org_id: org,
+            catalogue_id: cat,
+            profile_id: "p".into(),
+        };
+        let proposer = PolicyAuthorizer::new(vec![rule(org, cat, vec![Action::Propose])]);
+        assert!(proposer.check(&ctx, Action::Propose, &profile).allowed);
+        assert!(!proposer.check(&ctx, Action::Approve, &profile).allowed);
+        let admin = PolicyAuthorizer::new(vec![rule(org, cat, vec![Action::Admin])]);
+        assert!(admin.check(&ctx, Action::Approve, &profile).allowed);
+    }
+
+    #[test]
+    fn a_read_only_connector_reads_but_never_writes() {
+        let (org, cat) = ids(3);
+        let policy = PolicyAuthorizer::new(vec![rule(org, cat, vec![Action::Admin])]);
+        let mut ctx = member(org, cat);
+        ctx.subject.read_only = true;
+        let publisher = ObjectTarget::Publisher {
+            org_id: org,
+            catalogue_id: cat,
+            publisher_id: "mesto".into(),
+            editor_grants: vec!["editors".into()],
+        };
+        let d = policy.check(&ctx, Action::Read, &publisher);
+        assert_eq!(
+            (d.allowed, d.reason.as_str()),
+            (true, "publishers are readable")
+        );
+        for action in [
+            Action::Propose,
+            Action::Approve,
+            Action::Delete,
+            Action::Admin,
+        ] {
+            let d = policy.check(&ctx, action, &publisher);
+            assert!(!d.allowed && d.visible, "{action:?}: {d:?}");
+            assert_eq!(d.reason, "connector is read-only");
+        }
+        // an anonymous caller reads a publisher as well
+        let anon = RequestCtx::anonymous(org, cat);
+        assert!(policy.check(&anon, Action::Read, &publisher).allowed);
+    }
+
+    #[test]
+    fn the_live_authorizer_swaps_one_catalogue_and_survives_a_poisoned_lock() {
+        let (org, cat) = ids(4);
+        let (_, other_cat) = ids(5);
+        let live = std::sync::Arc::new(LiveAuthorizer::new(vec![
+            rule(org, other_cat, vec![Action::Propose]),
+            rule(org, cat, vec![Action::Admin]),
+        ]));
+        let held = std::sync::Arc::clone(&live);
+        let _ = std::thread::spawn(move || {
+            let _g = held.policy.write().unwrap();
+            panic!("poison the policy lock");
+        })
+        .join();
+        assert!(live.policy.is_poisoned());
+        let ctx = member(org, cat);
+        let target = ObjectTarget::Catalogue {
+            org_id: org,
+            catalogue_id: cat,
+        };
+        assert!(live.check(&ctx, Action::Admin, &target).allowed);
+        // the old Admin rule goes; a rule naming another catalogue is dropped, never widened to this one
+        live.replace_catalogue(
+            org,
+            cat,
+            vec![
+                rule(org, cat, vec![Action::Propose]),
+                rule(org, other_cat, vec![Action::Admin]),
+            ],
+        );
+        assert!(live.check(&ctx, Action::Propose, &target).allowed);
+        assert!(!live.check(&ctx, Action::Admin, &target).allowed);
+        let other_ctx = member(org, other_cat);
+        let other = ObjectTarget::Catalogue {
+            org_id: org,
+            catalogue_id: other_cat,
+        };
+        assert!(
+            live.check(&other_ctx, Action::Propose, &other).allowed,
+            "kept"
+        );
+        assert!(
+            !live.check(&other_ctx, Action::Admin, &other).allowed,
+            "not widened"
+        );
     }
 }

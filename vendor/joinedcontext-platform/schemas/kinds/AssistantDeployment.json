@@ -1,0 +1,1331 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AccessLevel": {
+      "description": "How a caller reaches an Endpoint, the levels of the per-caller catalogue (T-4503).",
+      "oneOf": [
+        {
+          "description": "Anyone, signed in or not.",
+          "enum": [
+            "public"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Every member of the organization.",
+          "enum": [
+            "organization"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The members of the projects the Endpoint admits.",
+          "enum": [
+            "project"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The ServiceAccounts a grant names.",
+          "enum": [
+            "grant"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "AnswerSpec": {
+      "additionalProperties": false,
+      "description": "How the deployment answers.",
+      "properties": {
+        "maxDataSeconds": {
+          "description": "The seconds after the question in which the loop may still call a tool; 1 to 60, default 20 (T-4294).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxDataSteps": {
+          "description": "The most tool calls a data question's loop makes, the router's reads included; 1 to 25, default 10 (T-4294).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "routes": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Routes"
+            }
+          ],
+          "default": "both",
+          "description": "What one answer may use; default `both`."
+        }
+      },
+      "type": "object"
+    },
+    "AssistantDeploymentSpec": {
+      "additionalProperties": false,
+      "description": "Desired specification of an [`AssistantDeployment`][crate::kinds::AssistantDeployment] (MF-52).",
+      "properties": {
+        "allowedOrigins": {
+          "description": "The pages it may be placed on, each `https://host[:port]`; no wildcard, no path.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "answer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AnswerSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How it answers: what one answer may use."
+        },
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Budget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How much it may spend; required on every channel but `internal`."
+        },
+        "categories": {
+          "description": "EU data-theme codes it is about, for display (MF-60); `theme` is the chat's look.",
+          "items": {
+            "$ref": "#/definitions/DataTheme"
+          },
+          "type": "array"
+        },
+        "channel": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Channel"
+            }
+          ],
+          "description": "`public`, `internal`, `ckan` or `iframe`."
+        },
+        "connectors": {
+          "description": "The Endpoints of this project whose MCP tools it may call.",
+          "items": {
+            "$ref": "#/definitions/Connector"
+          },
+          "type": "array"
+        },
+        "disclaimer": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The line under the chat that says answers are machine-written, per language.",
+          "type": "object"
+        },
+        "enabled": {
+          "default": true,
+          "description": "Whether it answers at all; `false` makes every chat request answer `503`. Default true.",
+          "type": "boolean"
+        },
+        "exclude": {
+          "description": "Endpoints it never reads, named as a connector names one (MF-59).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "feedback": {
+          "default": true,
+          "description": "Whether the chat shows the helpful/unhelpful buttons under an answer; default true.",
+          "type": "boolean"
+        },
+        "languages": {
+          "description": "The languages it answers in, as ISO 639-1 codes.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mcpServer": {
+          "description": "The named MCP server whose reach it reads, `{project}/{name}` or `org/{name}` (MF-56, ADR-N-043 §7.6); on every channel but `internal` a `public` one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ModelChoice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The router and answer models; the service's default when absent."
+        },
+        "privacy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Privacy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whom a visitor asks about their data (T-4670)."
+        },
+        "publicId": {
+          "description": "The id in the widget's address, `/w/{publicId}`; a DNS label.",
+          "type": "string"
+        },
+        "rateLimit": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RateLimit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How often it answers; required on every channel but `internal`."
+        },
+        "sandbox": {
+          "default": false,
+          "description": "Whether it may filter a large tool result with a script in `jc-functions`; default false.",
+          "type": "boolean"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AssistantScope"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What it reaches beyond its own project."
+        },
+        "select": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Select"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Endpoints it reads beside its connectors, picked by the McpServer grammar (MF-58, ADR-N-055 §2.2); resolved inside the project's reach by [`crate::reach::resolve_connectors`]."
+        },
+        "sources": {
+          "description": "The `KnowledgeSource`s it answers from: one of this project by its name, one of a project in `scope.projects` as `{project}/{source}` (T-4281).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "suggestions": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": "Questions the chat offers before the first one, per language of `languages`.",
+          "type": "object"
+        },
+        "systemPrompt": {
+          "description": "What the assistant is told before every conversation; at most 8,000 characters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "theme": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Theme"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the chat looks."
+        },
+        "transcriptRedaction": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TranscriptRedaction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What is masked in a turn before it is stored; `secrets` when absent (AG-99, T-4681)."
+        },
+        "transcriptRetention": {
+          "description": "How long each turn of a conversation is kept, `P{n}D` with `n` 0 to 365; `P90D` when absent, `P0D` keeps none (AG-99, T-4670, T-4681).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "widget": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ChatWidget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the chat picks its language and whether it shows the toggle (T-4343)."
+        }
+      },
+      "required": [
+        "channel",
+        "publicId"
+      ],
+      "type": "object"
+    },
+    "AssistantScope": {
+      "additionalProperties": false,
+      "description": "What a deployment reaches beyond its own project.",
+      "properties": {
+        "projects": {
+          "description": "Other projects whose `audience: public` Endpoints its connectors, and whose `KnowledgeSource`s its sources, may name; at most 10, never its own and never `*`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Budget": {
+      "additionalProperties": false,
+      "description": "How many model tokens the deployment may spend; `jc-agent-proxy` holds it to this.",
+      "properties": {
+        "costPerConversationUsd": {
+          "description": "What all model calls of one conversation may cost, in US dollars; 0.01 to `costPerDayUsd`, no cap when absent. No call starts once the conversation has spent it (AG-107, T-4737).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "costPerDayUsd": {
+          "default": 3.0,
+          "description": "What the deployment's model calls may cost per day, in US dollars; 0.01 to 1,000, default 3. Past it an answer lists the matching sources' links only (AG-107).",
+          "format": "double",
+          "type": "number"
+        },
+        "messagesPerConversation": {
+          "default": 30,
+          "description": "The most questions one conversation may ask; 1 to 200, default 30.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "outputTokensPerAnswer": {
+          "default": 700,
+          "description": "The most tokens one answer may have; 100 to 4,000, default 700.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "questionChars": {
+          "default": 1000,
+          "description": "The longest question, in characters; 100 to 4,000, default 1,000.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tokensPerConversation": {
+          "description": "Tokens one conversation may spend; at least 1 and no more than a day's.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tokensPerDay": {
+          "description": "Tokens per day across all conversations; 1 to 100,000,000.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "visitorSharePercent": {
+          "default": 10,
+          "description": "The percent of `costPerDayUsd` one visitor, or all callers without an `Origin` together, may spend a day; 1 to 100, default 10. Past it their questions are refused until UTC midnight while others still get answers (T-4653, T-5928).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tokensPerConversation",
+        "tokensPerDay"
+      ],
+      "type": "object"
+    },
+    "Build": {
+      "additionalProperties": false,
+      "description": "The artifact one build of an `App` published, as the build lane writes it back (AP-13a).",
+      "properties": {
+        "builtAt": {
+          "description": "When the build lane published it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit of the source the artifact was built from, 7 to 40 lowercase hexadecimal characters.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The digest of a `wasm` App's server component, taken from the checked bundle and stored by it in the object store; what the WASM host loads and checks (AP-151).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "description": "The artifact's digest, `sha256:` and 64 lowercase hexadecimal characters. The reconciler deploys this and nothing else (AP-72).",
+          "type": "string"
+        },
+        "sdkVersion": {
+          "description": "The version of the app SDK the artifact was built against.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "builtAt",
+        "commit",
+        "digest",
+        "sdkVersion"
+      ],
+      "type": "object"
+    },
+    "Channel": {
+      "description": "Where a deployment answers.",
+      "oneOf": [
+        {
+          "description": "Anyone, on the allowed origins.",
+          "enum": [
+            "public"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Signed-in people of the organization, in the Portal.",
+          "enum": [
+            "internal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Visitors of the CKAN catalogue.",
+          "enum": [
+            "ckan"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An iframe on the allowed origins.",
+          "enum": [
+            "iframe"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ChatWidget": {
+      "additionalProperties": false,
+      "description": "How the chat behaves where it is placed (T-4343).",
+      "properties": {
+        "language": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/WidgetLanguage"
+            }
+          ],
+          "default": "browser",
+          "description": "How it picks its language; `browser` by default."
+        },
+        "languageToggle": {
+          "default": true,
+          "description": "Whether the header shows the language toggle; default true.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "Status condition entry.",
+      "properties": {
+        "lastTransitionTime": {
+          "description": "Last transition timestamp.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Machine-readable reason code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status value (\"True\", \"False\", \"Unknown\").",
+          "type": "string"
+        },
+        "type": {
+          "description": "Type of condition (e.g. Reconciled, Ready).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Connector": {
+      "additionalProperties": false,
+      "description": "One Endpoint of the project whose MCP tools the assistant may call.",
+      "properties": {
+        "endpoint": {
+          "description": "The Endpoint's `metadata.name` in this project, or `{project}/{name}` for a public Endpoint of a project in `scope.projects`.",
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "default": 20,
+          "description": "How long one tool call may take, in seconds; 1 to 120, default 20.",
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "tools": {
+          "description": "The tools of its MCP surface the assistant may call; at least one.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "endpoint",
+        "tools"
+      ],
+      "type": "object"
+    },
+    "DataTheme": {
+      "description": "A theme of the EU data-theme table.",
+      "oneOf": [
+        {
+          "description": "Agriculture, fisheries, forestry and food.",
+          "enum": [
+            "AGRI"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Economy and finance.",
+          "enum": [
+            "ECON"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Education, culture and sport.",
+          "enum": [
+            "EDUC"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Energy.",
+          "enum": [
+            "ENER"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Environment.",
+          "enum": [
+            "ENVI"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Government and public sector.",
+          "enum": [
+            "GOVE"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Health.",
+          "enum": [
+            "HEAL"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "International issues.",
+          "enum": [
+            "INTR"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Justice, legal system and public safety.",
+          "enum": [
+            "JUST"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Regions and cities.",
+          "enum": [
+            "REGI"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Population and society.",
+          "enum": [
+            "SOCI"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Science and technology.",
+          "enum": [
+            "TECH"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Transport.",
+          "enum": [
+            "TRAN"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Localised": {
+      "anyOf": [
+        {
+          "description": "One string, in the deployment's first language.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "A language of `languages` to its string.",
+          "type": "object"
+        }
+      ],
+      "description": "A text the chat shows: one string in the deployment's first language, or one per language of `languages` (T-4365)."
+    },
+    "ModelChoice": {
+      "additionalProperties": false,
+      "description": "The models a deployment names for `jc-agent-proxy` (MF-52): the router and answer calls.",
+      "properties": {
+        "answer": {
+          "description": "The model that writes the answer, `vendor/name`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProviderRouting"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The OpenRouter providers both calls are asked on (T-4292); OpenRouter's fastest when absent (T-4360)."
+        },
+        "reasoning": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/StageReasoning"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The reasoning effort of each call (T-4360); `low` when absent."
+        },
+        "router": {
+          "description": "The model that picks the tools and sources of a question, `vendor/name`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "MultiLanguageMap": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Multi-language map keyed by ISO 639-1 two-letter lowercase language codes",
+      "propertyNames": {
+        "pattern": "^[a-z]{2}$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "ObjectMeta": {
+      "additionalProperties": false,
+      "description": "Metadata envelope attached to every platform resource (MF-02).",
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value annotations for provenance and ownership (MF-08).",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable description: one string, or the legacy map per locale (UI-50, PF-24)."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value labels for filtering (MF-10).",
+          "type": "object"
+        },
+        "name": {
+          "description": "Resource name (DNS-1123 label).",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Resource namespace (\"org\" or project slug).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable title: one string, or the legacy map per locale (UI-50, PF-24)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Phase": {
+      "description": "Lifecycle phase enumeration.",
+      "oneOf": [
+        {
+          "description": "Resource manifest is in draft state.",
+          "enum": [
+            "Draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is pending review or approval.",
+          "enum": [
+            "Pending"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource deployment is in progress.",
+          "enum": [
+            "Deploying"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is live and active in cluster.",
+          "enum": [
+            "Live"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reconciliation error.",
+          "enum": [
+            "Error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The platform holds something the repository does not declare, or no longer holds what it does (CC-21, UI-25). Configuration cannot reach this phase — every component reads it from the repository (CC-72) — so it is a space whose seed entities the broker answers differently, and the two resolutions of UI-26 are what a person does about it.",
+          "enum": [
+            "Drifted"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Privacy": {
+      "additionalProperties": false,
+      "description": "Whom a visitor of an assistant asks about their data, shown in the widget's privacy panel (API/05 §1.6, T-4670).",
+      "properties": {
+        "contact": {
+          "description": "An e-mail address, at most 254 characters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "documentsUrl": {
+          "description": "An `https` page of the operator's privacy documents, at most 2,000 characters.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ProviderRouting": {
+      "additionalProperties": false,
+      "description": "OpenRouter provider routing, sent as its `provider` request field (T-4292, MF-52).",
+      "properties": {
+        "allowFallbacks": {
+          "description": "Whether another provider may answer when these fail; default `true`.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "order": {
+          "description": "Provider slugs, tried in this order, e.g. `cerebras`, `groq`; 1 to 8.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "sort": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProviderSort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How OpenRouter ranks the providers `order` does not pin (T-4360)."
+        }
+      },
+      "type": "object"
+    },
+    "ProviderSort": {
+      "description": "OpenRouter's `provider.sort` (T-4360).",
+      "oneOf": [
+        {
+          "description": "The provider that answers first.",
+          "enum": [
+            "latency"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The provider that writes the most tokens a second.",
+          "enum": [
+            "throughput"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The cheapest provider.",
+          "enum": [
+            "price"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "RateLimit": {
+      "additionalProperties": false,
+      "description": "How often the deployment answers.",
+      "properties": {
+        "perClientPerDay": {
+          "default": 200,
+          "description": "Questions per day from one client; 1 to 100,000, default 200.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "perClientPerHour": {
+          "default": 60,
+          "description": "Questions per hour from one client; 1 to 7,200, default 60.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "perClientPerMinute": {
+          "description": "Questions per minute from one client; 1 to 120.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "perClientPerMonth": {
+          "default": 300,
+          "description": "Questions per UTC calendar month from one client; 1 to 100,000, default 300 (T-4286).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "requestsPerMinute": {
+          "description": "Questions per minute across everyone; 1 to 600.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "streamsPerClient": {
+          "default": 2,
+          "description": "Answers one client may have streaming at once; 1 to 10, default 2.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "perClientPerMinute",
+        "requestsPerMinute"
+      ],
+      "type": "object"
+    },
+    "ReasoningEffort": {
+      "description": "A reasoning effort, from none to high (T-4360).",
+      "oneOf": [
+        {
+          "description": "No reasoning: sent as `reasoning.enabled: false`.",
+          "enum": [
+            "none"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The least the model allows.",
+          "enum": [
+            "minimal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Short thinking, the answer keeps its room (T-3203).",
+          "enum": [
+            "low"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "More thinking, slower.",
+          "enum": [
+            "medium"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The most thinking, the slowest.",
+          "enum": [
+            "high"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Routes": {
+      "description": "What one answer may use (T-4281).",
+      "oneOf": [
+        {
+          "description": "The sources and the connectors, as the router picks.",
+          "enum": [
+            "both"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The sources alone: no connector is offered and no tool called.",
+          "enum": [
+            "rag"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The connectors alone: no search round.",
+          "enum": [
+            "data"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Select": {
+      "additionalProperties": false,
+      "description": "Which Endpoints a server selects beside its members (MF-55). An Endpoint is selected when it matches every field given, one value of a field being enough; `select: {}` selects every Endpoint the caller's token and the server's audience admit. The gateway resolves it per call from the caller's own reach, so it only narrows.",
+      "properties": {
+        "accessLevel": {
+          "description": "How the caller reaches the Endpoint; no wider than the server's audience admits.",
+          "items": {
+            "$ref": "#/definitions/AccessLevel"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "domains": {
+          "description": "Smart Data Models domains of the Endpoint's classification, e.g. `Environment` (T-4498).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "projects": {
+          "description": "Project names.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "spaces": {
+          "description": "Context Spaces as `{project}/{space}`.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "themes": {
+          "description": "EU data themes of that classification, e.g. `ENVI`.",
+          "items": {
+            "$ref": "#/definitions/DataTheme"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "types": {
+          "description": "NGSI-LD entity types the Endpoint serves, e.g. `OffStreetParking` (MF-61).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "StageReasoning": {
+      "additionalProperties": false,
+      "description": "The reasoning effort of the router, judge and answer calls apart; each `low` when absent.",
+      "properties": {
+        "answer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The answer call, and each step of the data loop."
+        },
+        "judge": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The judge call, which reads the first passages and says whether they answer."
+        },
+        "router": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The router call, which picks the route and the queries."
+        }
+      },
+      "type": "object"
+    },
+    "Status": {
+      "additionalProperties": false,
+      "description": "Server-computed lifecycle and reconciliation status (MF-04). Never stored in Git.",
+      "properties": {
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Build"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the build lane published for an `App`, and the only place its artifact is named (AP-13a). Written back by the build lane in the commit that publishes the artifact; an App without it renders no pod, and no other principal may set it (AP-73)."
+        },
+        "conditions": {
+          "description": "Reconciler condition transitions.",
+          "items": {
+            "$ref": "#/definitions/Condition"
+          },
+          "type": "array"
+        },
+        "observedRevision": {
+          "description": "Git commit revision observed during reconciliation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Phase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current lifecycle phase."
+        },
+        "shard": {
+          "description": "The shard of the WASM host a `wasm` App runs on, recorded at its first publish and kept; the edge's route to the App's server is rendered from it (AP-149).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Text": {
+      "anyOf": [
+        {
+          "description": "The form every new manifest writes.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MultiLanguageMap"
+            }
+          ],
+          "description": "The legacy `{locale: text}` map."
+        }
+      ],
+      "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+    },
+    "Theme": {
+      "additionalProperties": false,
+      "description": "How the chat looks where it is placed.",
+      "properties": {
+        "font": {
+          "description": "A CSS `font-family` list of family names the chat's text uses, at most 200 characters; the system font when absent. No font file is loaded (T-4740).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "greeting": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Localised"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The first line the chat shows, at most 500 characters."
+        },
+        "primaryColor": {
+          "description": "The accent colour, `#rrggbb`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subtitle": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Localised"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The line under the title, at most 80 characters; the word Assistant when absent (T-4740)."
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Localised"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The body's name in the chat's header, beside its monogram; at most 60 characters."
+        }
+      },
+      "type": "object"
+    },
+    "TranscriptRedaction": {
+      "description": "What a stored turn has masked (AG-99, T-4681).",
+      "oneOf": [
+        {
+          "description": "Access tokens, API keys, passwords, private keys and card numbers; the rest verbatim.",
+          "enum": [
+            "secrets"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Those and e-mail addresses, phone numbers, IBANs and birth numbers.",
+          "enum": [
+            "personal"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "WidgetLanguage": {
+      "description": "How the chat picks the language it opens in (T-4343).",
+      "oneOf": [
+        {
+          "description": "The page's `?lang=`, the visitor's toggle pick, the browser's languages, then the first of `languages`.",
+          "enum": [
+            "browser"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The panel asks on its first open in a browser.",
+          "enum": [
+            "ask"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Always the first of `languages`, or the page's `?lang=`.",
+          "enum": [
+            "fixed"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "description": "Kubernetes-style resource envelope (MF-01..MF-04).",
+  "properties": {
+    "apiVersion": {
+      "description": "API version: [`API_VERSION`], or a version [`serves`] accepts for this kind.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Resource kind name (must match [`Kind::KIND`]).",
+      "type": "string"
+    },
+    "metadata": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ObjectMeta"
+        }
+      ],
+      "description": "Metadata identifying and labeling the resource."
+    },
+    "spec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/AssistantDeploymentSpec"
+        }
+      ],
+      "description": "Desired spec state."
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Status"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Server-computed status. Stripped during export and serialization."
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "ResourceEnvelope_for_AssistantDeploymentSpec",
+  "type": "object"
+}

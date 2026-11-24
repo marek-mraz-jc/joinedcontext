@@ -113,3 +113,162 @@ pub fn type_lines(kind: &str, attributes: &[QueryAttribute], shared: &[String]) 
     }
     lines
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn attr(slot: &str, written: &str, example: Option<&str>) -> QueryAttribute {
+        QueryAttribute {
+            slot: slot.to_owned(),
+            written: written.to_owned(),
+            example: example.map(str::to_owned),
+        }
+    }
+
+    fn two_types() -> BTreeMap<String, Vec<QueryAttribute>> {
+        BTreeMap::from([
+            (
+                "AirQualityObserved".to_owned(),
+                vec![
+                    attr("name", "name", None),
+                    attr("pm10", "pm10:float[ug/m3]", Some("pm10>0")),
+                ],
+            ),
+            (
+                "WeatherObserved".to_owned(),
+                vec![attr("name", "name", None), attr("t", "t:float", None)],
+            ),
+        ])
+    }
+
+    #[test]
+    fn tokens_count_characters_not_bytes() {
+        assert_eq!(tokens(""), 0);
+        assert_eq!(tokens(&"a".repeat(37)), 10);
+        assert_eq!(tokens(&"č".repeat(37)), 10, "a multibyte character is one");
+    }
+
+    #[test]
+    fn a_card_offering_every_read_names_each_tool_and_its_rules() {
+        let card = card("p/air", Some("Air"), |_| true, &two_types(), false);
+        assert!(card.starts_with("NGSI-LD Endpoint p/air (Air), ETSI GS CIM 009"));
+        assert!(card.contains(
+            "Read it with query_entities (type, q, georel, pick), query_temporal (history), summarize (aggregates)."
+        ));
+        assert!(card.contains("\nq: attr==value"));
+        assert!(card.contains("\nHistory: lastN"));
+        assert!(card.contains("\nGeo: georel"));
+        assert!(card.contains("\nEvery type also has: name."));
+        assert!(card.contains("\nAirQualityObserved: pm10:float[ug/m3]\n  e.g. q=pm10>0"));
+        assert!(card.contains("\nWeatherObserved: t:float"));
+        assert!(!card.contains("come with your first query"));
+    }
+
+    #[test]
+    fn a_card_without_reads_or_title_holds_only_the_endpoint_line_and_types() {
+        let card = card("p/air", None, |_| false, &BTreeMap::new(), false);
+        assert_eq!(
+            card,
+            "NGSI-LD Endpoint p/air, ETSI GS CIM 009 / TS 104 175."
+        );
+    }
+
+    #[test]
+    fn summarize_alone_names_no_query_rules() {
+        let card = card("p/a", None, |t| t == "summarize", &BTreeMap::new(), false);
+        assert!(card.contains("Read it with summarize (aggregates)."));
+        assert!(!card.contains("\nq:") && !card.contains("History") && !card.contains("Geo"));
+    }
+
+    #[test]
+    fn history_alone_gives_the_q_rules_and_the_history_line_without_geo() {
+        let card = card(
+            "p/a",
+            None,
+            |t| t == "query_temporal",
+            &BTreeMap::new(),
+            false,
+        );
+        assert!(card.contains("\nq: attr==value") && card.contains("\nHistory:"));
+        assert!(!card.contains("\nGeo:"));
+    }
+
+    #[test]
+    fn a_brief_card_counts_each_types_attributes() {
+        let card = card("p/air", None, |_| true, &two_types(), true);
+        assert!(card.contains("\nAirQualityObserved: 2 attributes"));
+        assert!(card.contains("\nWeatherObserved: 2 attributes"));
+        assert!(card.ends_with("\nA type's attributes come with your first query on it."));
+        assert!(!card.contains("e.g. q="));
+    }
+
+    #[test]
+    fn one_type_shares_nothing() {
+        let mut one = two_types();
+        one.remove("WeatherObserved");
+        assert!(shared(&one).is_empty());
+        assert!(shared(&BTreeMap::new()).is_empty());
+        assert_eq!(shared(&two_types()), ["name"]);
+    }
+
+    #[test]
+    fn type_lines_leave_out_the_shared_attributes_and_name_the_first_example() {
+        let attributes = [
+            attr("a", "a", None),
+            attr("b", "b:a|b", Some("b==\"a\"")),
+            attr("c", "c:float", Some("c>0")),
+        ];
+        assert_eq!(
+            type_lines("T", &attributes, &["a".to_owned()]),
+            "\nT: b:a|b, c:float\n  e.g. q=b==\"a\""
+        );
+        assert_eq!(type_lines("T", &[], &[]), "\nT: ");
+    }
+
+    const MODEL: &str = r"
+id: https://example.org/air
+name: air
+default_range: string
+slots:
+  name: {}
+  pm10: { range: float }
+classes:
+  AirQualityObserved:
+    slots: [name, pm10]
+";
+
+    #[test]
+    fn served_without_a_model_or_with_a_broken_one_gives_the_rules_alone() {
+        let none = served("p/a", None, |_| true, None);
+        assert!(none.contains("\nq: attr==value") && !none.contains("AirQualityObserved"));
+        assert_eq!(served("p/a", None, |_| true, Some("classes: [")), none);
+    }
+
+    #[test]
+    fn served_gives_the_whole_card_of_a_small_model() {
+        let card = served("p/a", None, |_| true, Some(MODEL));
+        assert!(card.contains("\nAirQualityObserved: "), "{card}");
+        assert!(!card.contains("attributes come with"), "{card}");
+    }
+
+    #[test]
+    fn served_turns_brief_past_the_token_budget() {
+        let mut model =
+            String::from("id: https://example.org/big\nname: big\ndefault_range: string\nslots:\n");
+        for i in 0..400 {
+            model.push_str(&format!("  attribute_with_a_long_name_{i}: {{}}\n"));
+        }
+        model.push_str("classes:\n  Big:\n    slots: [");
+        model.push_str(
+            &(0..400)
+                .map(|i| format!("attribute_with_a_long_name_{i}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        model.push_str("]\n");
+        let card = served("p/a", None, |_| true, Some(&model));
+        assert!(card.contains("\nBig: 400 attributes"), "{card}");
+        assert!(tokens(&card) <= CARD_TOKENS);
+    }
+}

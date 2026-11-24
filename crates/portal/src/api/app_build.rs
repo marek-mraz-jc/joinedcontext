@@ -72,7 +72,8 @@ fn records(state: &AppState) -> Option<&sqlx::PgPool> {
 }
 
 fn store(err: sqlx::Error) -> ApiError {
-    ApiError::Internal(format!("the build store: {err}"))
+    tracing::warn!(error = %err, "the build store did not answer");
+    ApiError::from_db(&err, "build")
 }
 
 /// A build as the App page shows a run: `queued`, `in_progress` or `completed` with its
@@ -660,4 +661,59 @@ pub async fn build_log(
         text,
     )
         .into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(state: &str, id: i64) -> Record {
+        let at: jc_time::TimestampTz = "2026-11-24T10:00:00Z".parse().expect("a time");
+        Record {
+            id,
+            project: "ovzdusie".into(),
+            app: "air-map".into(),
+            commit: "c0ffee".into(),
+            class: "ui".into(),
+            trigger: "merge".into(),
+            requested_by: None,
+            state: state.into(),
+            expires_at: None,
+            created_at: at,
+            started_at: Some(at),
+            finished_at: None,
+            digest: None,
+            reason: None,
+        }
+    }
+
+    /// Each build state reads as the run the App page shows; any state it does not know is a
+    /// failed run, never one still going.
+    #[test]
+    fn each_build_state_is_one_run_status_and_an_unknown_one_failed() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        for (build, status, conclusion) in [
+            ("pending", "queued", None),
+            ("running", "in_progress", None),
+            ("verifying", "in_progress", None),
+            ("succeeded", "completed", Some("success")),
+            ("failed", "completed", Some("failure")),
+            ("refused", "completed", Some("failure")),
+        ] {
+            let run = as_run(&state, &record(build, 7));
+            assert_eq!(run.status, status, "{build}");
+            assert_eq!(run.conclusion.as_deref(), conclusion, "{build}");
+        }
+        let run = as_run(&state, &record("running", 7));
+        assert_eq!(run.number, Some(7));
+        assert_eq!(run.started_at.as_deref(), Some("2026-11-24T10:00:00Z"));
+        assert_eq!(run.completed_at, None);
+        assert!(
+            run.url
+                .ends_with("/api/v1/projects/ovzdusie/apps/air-map/builds/7/log"),
+            "{}",
+            run.url
+        );
+        assert_eq!(as_run(&state, &record("pending", -1)).number, None);
+    }
 }

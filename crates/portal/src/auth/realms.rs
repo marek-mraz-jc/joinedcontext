@@ -190,10 +190,9 @@ impl AppState {
             &self.organization_hosts.current(),
         )?;
         if let Some(addr) = reach {
+            // `parse` admits only key URLs with a host.
             for s in &settings {
-                if let Some(host) = s.jwks_url.host_str() {
-                    crate::reach::add(host, addr);
-                }
+                crate::reach::add(s.jwks_url.host_str().unwrap_or_default(), addr);
             }
         }
         let held = self.organization_realms.current();
@@ -338,9 +337,8 @@ pub fn here(state: &AppState) -> Option<Arc<OrganizationRealm>> {
 pub fn of_app(state: &AppState, app: &str) -> Option<Arc<OrganizationRealm>> {
     let project = state
         .mirror
-        .find(|env| env.kind == "App" && env.metadata.name == app)?
-        .metadata
-        .namespace?;
+        .find(|env| env.kind == "App" && env.metadata.name == app)
+        .and_then(|env| env.metadata.namespace)?;
     let organization = crate::permissions::organization_of(&state.mirror, &project)?;
     state.organization_realms.get(&organization)
 }
@@ -527,8 +525,8 @@ mod tests {
     fn each_realm_signs_in_with_its_own_secret() {
         use crate::auth::client_auth::ClientAuth;
         let secret = |auth: &ClientAuth| match auth {
-            ClientAuth::Secret(s) => s.clone(),
-            _ => panic!("a client secret"),
+            ClientAuth::Secret(s) => Some(s.clone()),
+            _ => None,
         };
         let admin = (
             "portal-reconciler".to_owned(),
@@ -549,23 +547,385 @@ mod tests {
         };
         let (hel, ba) = (realm("hel"), realm("ba"));
         let derived = jc_core::Secret::new("s").for_realm("hel", "portal-api");
-        assert_eq!(secret(&hel.config.auth), derived.expose());
+        assert_eq!(secret(&hel.config.auth).as_deref(), Some(derived.expose()));
         assert_ne!(secret(&hel.config.auth), secret(&ba.config.auth));
-        assert_ne!(secret(&hel.config.auth), "s", "the installation's secret");
+        assert_ne!(
+            secret(&hel.config.auth).as_deref(),
+            Some("s"),
+            "the installation's secret"
+        );
         // The reconciler's syncers sign in to the realm with its own admin secret (T-7288).
         let (id, auth) = hel.admin_auth(&admin);
         assert_eq!(id, "portal-reconciler");
         assert_eq!(
-            secret(&auth),
-            jc_core::Secret::new("r")
-                .for_realm("hel", "portal-reconciler")
-                .expose()
+            secret(&auth).as_deref(),
+            Some(
+                jc_core::Secret::new("r")
+                    .for_realm("hel", "portal-reconciler")
+                    .expose()
+            )
         );
         assert_ne!(secret(&auth), secret(&ba.admin_auth(&admin).1));
         // A federated assertion names no secret and stays as it is.
         let path = std::path::PathBuf::from("/var/run/secrets/token");
         let federated = own_auth(&ClientAuth::Assertion(path.clone()), "hel", "portal-api");
-        assert!(matches!(federated, ClientAuth::Assertion(p) if p == path));
+        assert!(matches!(&federated, ClientAuth::Assertion(p) if *p == path));
+        assert_eq!(secret(&federated), None);
+    }
+
+    /// The realm of `org` with its issuer at `idm` (`https://idm.hel.test`), as `parse` takes it.
+    fn realm_at(org: &str, idm: &str) -> OrganizationRealm {
+        let raw = format!(
+            "[{}]",
+            row(
+                org,
+                &format!("{idm}/realms/{org}"),
+                &format!("{idm}/realms/{org}/protocol/openid-connect/certs"),
+            )
+        );
+        let setting = parse(&raw, Some(&installation()), &hosts()).expect("valid");
+        let base: Url = format!("https://portal.{org}.test").parse().expect("url");
+        OrganizationRealm::new(&setting[0], &installation(), &base, None)
+    }
+
+    fn set_of(realms: Vec<OrganizationRealm>) -> OrganizationRealms {
+        OrganizationRealms::new(
+            realms
+                .into_iter()
+                .map(|r| (r.organization.clone(), Arc::new(r)))
+                .collect(),
+        )
+    }
+
+    /// A realm's sign-in configuration: its public issuer, the installation's client, its own
+    /// secret and the back channel's origin as the admin URL; no admin client, no people.
+    #[test]
+    fn a_realm_signs_in_at_its_issuer_and_posts_to_its_back_channel() {
+        let hel = realm_at("hel", "https://idm.hel.test");
+        let oidc = hel.oidc();
+        assert_eq!(oidc.issuer.as_str(), "https://idm.hel.test/realms/hel");
+        assert_eq!(hel.issuer(), "https://idm.hel.test/realms/hel");
+        assert_eq!(oidc.client_id, "portal-api");
+        assert_eq!(
+            oidc.admin_url.as_ref().map(Url::as_str),
+            Some("https://idm.hel.test/")
+        );
+        assert_eq!(hel.backchannel, "https://idm.hel.test/realms/hel");
+        assert!(hel.people.is_none());
+    }
+
+    /// The set keeps what `retain` names and nothing else, and a lock a panicking writer
+    /// poisoned is still read and replaced: a crashed request never takes the realms away.
+    #[test]
+    fn the_set_is_narrowed_by_retain_and_survives_a_poisoned_lock() {
+        let realms = set_of(vec![
+            realm_at("hel", "https://idm.hel.test"),
+            realm_at("ba", "https://idm.ba.test"),
+        ]);
+        assert_eq!(realms.keys(), ["ba", "hel"]);
+        assert_eq!(realms.values().len(), 2);
+        realms.retain(&["hel".to_owned(), "zz".to_owned()]);
+        assert_eq!(realms.keys(), ["hel"]);
+        assert!(realms.get("ba").is_none());
+        assert_eq!(
+            realms.get("hel").map(|r| r.organization.clone()).as_deref(),
+            Some("hel")
+        );
+
+        let held = realms.clone();
+        let poisoned = std::thread::spawn(move || {
+            let _guard = held.0.write().expect("first writer");
+            panic!("a writer dies holding the lock");
+        })
+        .join();
+        assert!(poisoned.is_err() && realms.0.is_poisoned());
+        assert_eq!(realms.keys(), ["hel"]);
+        realms.retain(&[]);
+        assert!(realms.keys().is_empty());
+        assert!(realms.values().is_empty());
+    }
+
+    /// A realm that does not answer discovery costs that sign-in a 503 naming the Organization;
+    /// one that answers is discovered once and its client kept.
+    #[tokio::test]
+    async fn a_realm_is_discovered_on_first_use_and_a_silent_one_is_unavailable() {
+        // Port 9 refuses at once.
+        let silent = realm_at("hel", "http://127.0.0.1:9");
+        let refused = silent.client().await.map(|_| ());
+        assert!(
+            matches!(&refused, Err(ApiError::Unavailable(why)) if why.contains("hel")),
+            "{refused:?}"
+        );
+        let server = crate::auth::oidc::tests::mock_realm().await;
+        let raw = format!(
+            "[{}]",
+            row(
+                "ba",
+                &format!("{}/realms/bb", server.uri()),
+                &format!("{}/realms/bb/protocol/openid-connect/certs", server.uri()),
+            )
+        );
+        let setting = parse(&raw, Some(&installation()), &hosts()).expect("valid");
+        let base: Url = "https://portal.ba.test".parse().expect("url");
+        let ba = OrganizationRealm::new(&setting[0], &installation(), &base, None);
+        let first = ba.client().await.expect("discovered");
+        let again = ba.client().await.expect("kept");
+        assert!(Arc::ptr_eq(&first, &again));
+    }
+
+    /// T-7180: a realm the registry serves after start is dialed at jc's listener: its key
+    /// host is reached at the address given, so its keys load though no DNS names the host.
+    #[tokio::test]
+    async fn a_realm_served_at_run_time_is_dialed_at_the_listener() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let listener = MockServer::start().await;
+        let (_, set) = crate::auth::bearer::tests::keypair("reached");
+        Mock::given(method("GET"))
+            .and(path("/realms/hel/protocol/openid-connect/certs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&set))
+            .expect(1)
+            .mount(&listener)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.oidc = Some(installation());
+        config.organization_hosts = hosts();
+        let state = AppState::new(config, None);
+        let port = listener.address().port();
+        let raw = format!(
+            "[{}]",
+            row(
+                "hel",
+                "https://idm-reach-7605.hel.test/realms/hel",
+                &format!("http://idm-reach-7605.hel.test:{port}/realms/hel/protocol/openid-connect/certs"),
+            )
+        );
+        assert_eq!(
+            state.replace_organization_realms(&raw, Some(*listener.address())),
+            Ok(1)
+        );
+        let hel = state.organization_realms.get("hel").expect("served");
+        assert_eq!(hel.bearer.refresh().await.ok(), Some(1));
+        assert!(
+            state.replace_organization_realms("[{", None).is_err(),
+            "a garbled list"
+        );
+        assert_eq!(
+            state.organization_realms.keys(),
+            ["hel"],
+            "a refused list changes nothing"
+        );
+    }
+
+    /// T-7165: an App signs its people in at its project's Organization's realm, read off the
+    /// mirror; an App of a project with no Organization realm, or no App at all, uses the
+    /// installation's. Each realm's token is refused on the other's App (T-7133).
+    #[tokio::test]
+    async fn an_apps_token_is_verified_by_its_organizations_realm_alone() {
+        use crate::auth::bearer::tests::{keypair, now, sign, ISSUER};
+        use crate::resource::{ObjectMeta, ResourceEnvelope};
+        let envelope =
+            |kind: &str, name: &str, namespace: &str, spec: serde_json::Value| ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.into(),
+                kind: kind.into(),
+                metadata: ObjectMeta {
+                    name: name.into(),
+                    namespace: Some(namespace.into()),
+                    ..Default::default()
+                },
+                spec,
+                status: None,
+            };
+        let mut config = crate::config::Config::for_tests();
+        config.oidc = Some(installation());
+        let mut state = AppState::new(config, None);
+        let org = crate::permissions::ORG_NAMESPACE;
+        state.mirror.upsert(envelope(
+            "Project",
+            "air",
+            org,
+            serde_json::json!({ "organizationRef": { "name": "hel" } }),
+        ));
+        state
+            .mirror
+            .upsert(envelope("Project", "free", org, serde_json::json!({})));
+        state
+            .mirror
+            .upsert(envelope("App", "dash", "air", serde_json::json!({})));
+        state
+            .mirror
+            .upsert(envelope("App", "plain", "free", serde_json::json!({})));
+
+        let (installation_key, installation_set) = keypair("inst");
+        let installation_verifier = BearerVerifier::with_jwks_url(
+            &ISSUER.parse().expect("issuer"),
+            "portal-api",
+            "http://127.0.0.1:9/certs".parse().expect("jwks"),
+        );
+        installation_verifier.install(&installation_set);
+        state.bearer = Some(Arc::new(installation_verifier));
+        let hel = realm_at("hel", "https://idm.hel.test");
+        let (hel_key, hel_set) = keypair("hel");
+        hel.bearer.install(&hel_set);
+        state.organization_realms = set_of(vec![hel]);
+
+        assert_eq!(
+            of_app(&state, "dash")
+                .map(|r| r.organization.clone())
+                .as_deref(),
+            Some("hel")
+        );
+        assert!(of_app(&state, "plain").is_none());
+        assert!(of_app(&state, "ghost").is_none());
+        assert_eq!(
+            app_oidc(&state, "dash")
+                .map(|c| c.issuer.to_string())
+                .as_deref(),
+            Some("https://idm.hel.test/realms/hel")
+        );
+        assert_eq!(
+            app_oidc(&state, "plain")
+                .map(|c| c.issuer.to_string())
+                .as_deref(),
+            Some("https://idm.example.test/realms/jc"),
+            "the installation's realm"
+        );
+        let mut orphan = envelope("App", "orphan", "free", serde_json::json!({}));
+        orphan.metadata.namespace = None;
+        state.mirror.upsert(orphan);
+        assert!(
+            of_app(&state, "orphan").is_none(),
+            "the mirror leaves out an App of no project"
+        );
+
+        let token = |key: &jsonwebtoken::EncodingKey, kid: &str, iss: &str, app: &str| {
+            let client = crate::reconciler::app_clients::client_id(app);
+            sign(
+                key,
+                kid,
+                &serde_json::json!({
+                    "iss": iss, "typ": "Bearer", "aud": client, "azp": client, "sub": "pia",
+                    "exp": now() + 60, "iat": now(),
+                    "resource_access": { client.clone(): { "roles": ["editor"] } },
+                }),
+            )
+        };
+        let hel_issuer = "https://idm.hel.test/realms/hel";
+        let (_, roles) =
+            verify_app_token(&state, "dash", &token(&hel_key, "hel", hel_issuer, "dash"))
+                .await
+                .expect("the App's realm");
+        assert_eq!(roles, ["editor"]);
+        let (_, roles) = verify_app_token(
+            &state,
+            "plain",
+            &token(&installation_key, "inst", ISSUER, "plain"),
+        )
+        .await
+        .expect("the installation's realm");
+        assert_eq!(roles, ["editor"]);
+        for (app, signed) in [
+            ("dash", token(&installation_key, "inst", ISSUER, "dash")),
+            ("plain", token(&hel_key, "hel", hel_issuer, "plain")),
+            ("dash", token(&hel_key, "hel", hel_issuer, "plain")),
+        ] {
+            assert!(
+                matches!(
+                    verify_app_token(&state, app, &signed).await,
+                    Err(ApiError::Unauthorized)
+                ),
+                "{app}"
+            );
+        }
+        state.bearer = None;
+        assert!(matches!(
+            verify_app_token(
+                &state,
+                "plain",
+                &token(&installation_key, "inst", ISSUER, "plain")
+            )
+            .await,
+            Err(ApiError::Unauthorized)
+        ));
+    }
+
+    /// T-7133, T-7142: on an Organization's host its realm checks and exchanges the tokens it
+    /// issued; the installation's tokens, and any token off that host, go to the installation.
+    #[tokio::test]
+    async fn a_token_is_checked_and_exchanged_by_the_realm_that_issued_it() {
+        use crate::organization_host::scope;
+        use base64::Engine as _;
+        let jwt = |iss: &str| {
+            let b64 = |v: serde_json::Value| {
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string())
+            };
+            format!(
+                "{}.{}.sig",
+                b64(serde_json::json!({ "alg": "ES256" })),
+                b64(serde_json::json!({ "iss": iss }))
+            )
+        };
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.organization_realms = set_of(vec![realm_at("hel", "http://127.0.0.1:9")]);
+        let hel_token = jwt("http://127.0.0.1:9/realms/hel/");
+        let installation_token = jwt("https://idm.example.test/realms/jc");
+        assert_eq!(
+            issuer_of(&hel_token).as_deref(),
+            Some("http://127.0.0.1:9/realms/hel")
+        );
+        assert_eq!(issuer_of("not-a-jwt"), None);
+        let host = hosts()
+            .into_iter()
+            .find(|h| h.organization == "hel")
+            .expect("hel");
+
+        let (on_hel, foreign, here_org) = scope(host.clone(), {
+            let state = state.clone();
+            let (hel_token, installation_token) = (hel_token.clone(), installation_token.clone());
+            async move {
+                (
+                    of_token(&state, &hel_token).map(|r| r.organization.clone()),
+                    of_token(&state, &installation_token).is_some(),
+                    here(&state).map(|r| r.organization.clone()),
+                )
+            }
+        })
+        .await;
+        assert_eq!(on_hel.as_deref(), Some("hel"));
+        assert!(!foreign);
+        assert_eq!(here_org.as_deref(), Some("hel"));
+        assert!(
+            of_token(&state, &hel_token).is_none(),
+            "off the Organization's host"
+        );
+        assert!(here(&state).is_none());
+
+        let realm = state.organization_realms.get("hel").expect("hel");
+        assert!(std::ptr::eq(
+            verifier(&state, Some(&realm)).expect("the realm's"),
+            &realm.bearer
+        ));
+        assert!(
+            verifier(&state, None).is_none(),
+            "a Portal with no realm verifies nothing"
+        );
+
+        // The realm that issued it is asked, and it does not answer: a 503 naming it, never the
+        // installation's client.
+        let exchanged = scope(host, {
+            let state = state.clone();
+            async move { exchanger(&state, &hel_token).await.map(|_| ()) }
+        })
+        .await;
+        assert!(
+            matches!(&exchanged, Err(ApiError::Unavailable(why)) if why.contains("hel")),
+            "{exchanged:?}"
+        );
+        let refused = exchanger(&state, &installation_token).await.map(|_| ());
+        assert!(
+            matches!(&refused, Err(ApiError::Unavailable(why)) if why.contains("no Keycloak client")),
+            "{refused:?}"
+        );
     }
 
     #[test]

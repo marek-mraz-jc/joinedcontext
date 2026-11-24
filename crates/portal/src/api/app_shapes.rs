@@ -91,8 +91,7 @@ pub async fn rename_shapes(
     let mut lane = Lane::Green;
     let mut files = Vec::with_capacity(apps.len());
     for app in &apps {
-        let body = serde_json::to_value(app)
-            .map_err(|e| ApiError::Internal(format!("the App did not serialise: {e}")))?;
+        let body = serde_json::to_value(app).map_err(ApiError::internal)?;
         // The single-manifest door, as a dry run: permission on this App, its invariants, its
         // name, its lane. A refusal names the App, so the person knows which one to open.
         let checked = propose_with_identity(
@@ -126,8 +125,7 @@ pub async fn rename_shapes(
         }
         let path = resource::repository_path(info, &project, None, &app.metadata.name)
             .map_err(ApiError::BadRequest)?;
-        let content = serde_norway::to_string(app)
-            .map_err(|e| ApiError::Internal(format!("the App did not serialise: {e}")))?;
+        let content = serde_norway::to_string(app).map_err(ApiError::internal)?;
         files.push((path, content));
     }
 
@@ -173,5 +171,31 @@ fn refused(app: &str, err: ApiError) -> ApiError {
             errors,
         },
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_door_refusal_names_the_app_and_any_other_error_passes_unchanged() {
+        assert!(matches!(
+            refused("air-map", ApiError::BadRequest("kind is not ui".into())),
+            ApiError::BadRequest(why) if why == "App 'air-map': kind is not ui"
+        ));
+        let invalid = ApiError::Invalid {
+            detail: "the door refuses".into(),
+            errors: vec!["spec.kind: x".into()],
+        };
+        assert!(matches!(
+            refused("air-map", invalid),
+            ApiError::Invalid { detail, errors }
+                if detail == "App 'air-map': the door refuses" && errors == ["spec.kind: x"]
+        ));
+        assert!(matches!(
+            refused("air-map", ApiError::Denied("no".into())),
+            ApiError::Denied(why) if why == "no"
+        ));
     }
 }

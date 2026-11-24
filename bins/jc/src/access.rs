@@ -382,7 +382,7 @@ mod tests {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             self.0
                 .lock()
-                .map_err(|_| std::io::ErrorKind::Other)?
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .extend_from_slice(bytes);
             Ok(bytes.len())
         }
@@ -429,6 +429,7 @@ mod tests {
             .with_ansi(false)
             .finish();
         tracing::subscriber::with_default(subscriber, f);
+        buf.clone().flush().expect("flush");
         String::from_utf8(buf.0.lock().expect("log").clone()).expect("utf8")
     }
 
@@ -654,6 +655,16 @@ mod tests {
         assert!(line.len() < 1024, "{line}");
     }
 
+    /// A path cut inside a multi-byte character keeps the whole characters before it.
+    #[test]
+    fn a_long_path_is_cut_on_a_character_boundary() {
+        let path = format!("/{}é", "a".repeat(LOGGED_PATH - 2));
+        assert_eq!(path.len(), LOGGED_PATH + 1);
+        assert_eq!(logged(&path), &path[..LOGGED_PATH - 1]);
+        assert_eq!(logged("/short"), "/short");
+        assert_eq!(logged(""), "");
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn the_hop_logs_only_refusals_and_its_lines_keep_the_callers_id() {
         let hop = || hop_layer("antares", module());
@@ -745,6 +756,9 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn a_forged_mark_is_an_ordinary_call() {
+        // Without the layer the mark reaches the module: the probe sees it.
+        let (bare, _) = probe_call(probed(), "/s/a", "0123456789abcdef").await;
+        assert_eq!(bare, "marked");
         let app = layer("t7474-forged", probed());
         let mut log = String::new();
         for slug in ["a", "b"] {

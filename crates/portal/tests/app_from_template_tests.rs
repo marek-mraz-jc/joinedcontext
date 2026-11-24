@@ -364,6 +364,42 @@ async fn a_bad_or_taken_name_is_a_422_naming_the_field_and_an_unknown_template_a
     nothing_created(&server).await;
 }
 
+/// A project that is no name is not there, and a Portal with no forge says so instead of
+/// creating half an App.
+#[tokio::test]
+async fn no_project_and_no_forge_are_refused_before_anything_lands() {
+    let (server, state) = world().await;
+    let nameless = send(
+        &state,
+        person("ema"),
+        "POST",
+        "/api/v1/projects/Not_A_Project/app-templates/citizen-map/apps",
+        Some(json!({ "name": "bike-finder", "endpointName": "bikes" })),
+    )
+    .await;
+    assert_eq!(nameless.status, StatusCode::NOT_FOUND, "{}", nameless.text);
+    let mut unforged = state.clone();
+    unforged.shako = None;
+    let answer = create(
+        &unforged,
+        "ema",
+        json!({ "name": "bike-finder", "endpointName": "bikes" }),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("forge is not configured"),
+        "{}",
+        answer.text
+    );
+    nothing_created(&server).await;
+}
+
 #[tokio::test]
 async fn a_repository_already_in_the_forge_is_never_adopted() {
     let (server, state) = world().await;

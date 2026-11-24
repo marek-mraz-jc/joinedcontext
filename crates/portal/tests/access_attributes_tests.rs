@@ -227,6 +227,24 @@ async fn a_policy_reader_reads_the_policy_that_refused_them() {
     );
 }
 
+/// A decision no Policy took (no grant at all) names none and hides none: there is nothing the
+/// reader could be shown.
+#[tokio::test]
+async fn a_decision_without_a_policy_names_none_and_hides_none() {
+    let r = rig().await;
+    Mock::given(method("POST"))
+        .and(path(GATEWAY))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "decision": false })))
+        .mount(&r.gateway)
+        .await;
+    let answer = common::send(&r.state, who("steward"), "GET", ROUTE, None).await;
+    assert_eq!(answer.status, 200, "{}", answer.text);
+    let answer = body(&answer);
+    assert_eq!(answer["reason"], "no_grant", "{answer}");
+    assert_eq!(answer["policy"], Value::Null, "{answer}");
+    assert_eq!(answer["policyHidden"], false, "{answer}");
+}
+
 /// A caller who may read no Policy learns only that one decided; the gateway is not asked.
 #[tokio::test]
 async fn a_caller_without_policy_read_gets_no_name_and_no_question() {
@@ -280,6 +298,11 @@ async fn a_caller_who_may_not_read_the_endpoint_is_refused() {
     prohibiting(&r.gateway).await;
     let answer = common::send(&r.state, who("outsider"), "GET", ROUTE, None).await;
     assert_eq!(answer.status, 403, "{}", answer.text);
+    // Someone who reads nothing of the project learns nothing of its Endpoints: a 404 that reads
+    // as a name never created.
+    let stranger = common::send(&r.state, common::person("stranger"), "GET", ROUTE, None).await;
+    assert_eq!(stranger.status, 404, "{}", stranger.text);
+    assert!(!stranger.text.contains("may not read"), "{}", stranger.text);
     assert!(asked(&r.gateway).await.is_empty());
 }
 

@@ -1096,6 +1096,273 @@ mod tests {
         ));
     }
 
+    /// The two variables every start needs, plus `extra`: what [`Config::from_vars`] reads.
+    fn with_vars(extra: &[(&'static str, &'static str)]) -> Result<Config, ConfigError> {
+        let extra = extra.to_vec();
+        Config::from_vars(move |name| {
+            extra
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+                .or_else(|| match name {
+                    "JC_GATEWAY_BROKER_URL" => Some("http://broker:1026".to_owned()),
+                    "JC_GATEWAY_ORG_DOMAIN" => Some("hel.fi".to_owned()),
+                    _ => None,
+                })
+        })
+    }
+
+    /// T-7767: each value the gateway cannot use refuses the start and names its own variable,
+    /// so an operator reads which line of the deployment to fix.
+    #[test]
+    fn every_unusable_value_refuses_the_start_and_names_its_variable() {
+        let key = "k".repeat(crate::oauth::MIN_KEY_BYTES);
+        let key: &'static str = Box::leak(key.into_boxed_str());
+        let cases: [(&[(&'static str, &'static str)], &str); 17] = [
+            (&[("JC_GATEWAY_BIND", "not-an-address")], "JC_GATEWAY_BIND"),
+            (
+                &[("JC_GATEWAY_INTERNAL_BIND", "inside:80")],
+                "JC_GATEWAY_INTERNAL_BIND",
+            ),
+            (
+                &[("JC_GATEWAY_BROKER_URL_TEMPLATE", "ftp://x")],
+                "JC_GATEWAY_BROKER_URL_TEMPLATE",
+            ),
+            (
+                &[("JC_OIDC_ISSUER", "https://kc/realms/hel")],
+                "JC_OIDC_ISSUER",
+            ),
+            (
+                &[("JC_OIDC_JWKS_URL", "https://kc/certs")],
+                "JC_OIDC_ISSUER",
+            ),
+            (
+                &[
+                    ("JC_OIDC_CLIENT_SECRET", "s"),
+                    ("JC_OIDC_CLIENT_ASSERTION_FILE", "/t"),
+                ],
+                "JC_OIDC_CLIENT_ASSERTION_FILE",
+            ),
+            (
+                &[("JC_GATEWAY_DOMAIN_VERIFICATION", "sometimes")],
+                "JC_GATEWAY_DOMAIN_VERIFICATION",
+            ),
+            (
+                &[("JC_GATEWAY_URN_OWNER_PREFIX", "%%")],
+                "JC_GATEWAY_URN_OWNER_PREFIX",
+            ),
+            (&[("JC_TENANT_NAMES", "=")], "JC_TENANT_NAMES"),
+            (
+                &[("JC_GATEWAY_WRITE_BUDGET_MIB", "0")],
+                "JC_GATEWAY_WRITE_BUDGET_MIB",
+            ),
+            (
+                &[("JC_GATEWAY_MAX_IN_FLIGHT", "-1")],
+                "JC_GATEWAY_MAX_IN_FLIGHT",
+            ),
+            (
+                &[("JC_GATEWAY_MAX_IN_FLIGHT_PER_CALLER", "many")],
+                "JC_GATEWAY_MAX_IN_FLIGHT_PER_CALLER",
+            ),
+            (
+                &[("JC_GATEWAY_MAX_DOWNLOADS", "0")],
+                "JC_GATEWAY_MAX_DOWNLOADS",
+            ),
+            (
+                &[("JC_GATEWAY_LOADTEST_IN_FLIGHT", "x")],
+                "JC_GATEWAY_LOADTEST_IN_FLIGHT",
+            ),
+            (
+                &[("JC_GATEWAY_PUBLIC_MAX_AGE", "forever")],
+                "JC_GATEWAY_PUBLIC_MAX_AGE",
+            ),
+            (&[("JC_GATEWAY_OAUTH_KEY", "short")], "JC_GATEWAY_OAUTH_KEY"),
+            (&[("JC_GATEWAY_OAUTH_KEY", key)], "JC_GATEWAY_PUBLIC_URL"),
+        ];
+        for (vars, named) in cases {
+            let refused = with_vars(vars).expect_err(named);
+            let name = match &refused {
+                ConfigError::Invalid { name, .. } | ConfigError::Missing(name) => *name,
+            };
+            assert_eq!(name, named, "{vars:?}: {refused}");
+            assert!(refused.to_string().starts_with(named), "{refused}");
+        }
+        assert!(matches!(
+            with_vars(&[("JC_GATEWAY_DOMAIN_VERIFICATION", "enforce")]),
+            Err(ConfigError::Missing("JC_GATEWAY_DOMAIN_VERIFICATIONS_URL"))
+        ));
+        assert!(matches!(
+            Config::from_vars(|_| None),
+            Err(ConfigError::Missing("JC_GATEWAY_BROKER_URL"))
+        ));
+        assert!(matches!(
+            Config::from_vars(
+                |name| (name == "JC_GATEWAY_BROKER_URL").then(|| "http://b".to_owned())
+            ),
+            Err(ConfigError::Missing("JC_GATEWAY_ORG_DOMAIN"))
+        ));
+    }
+
+    /// T-7767: every optional value a deployment sets is read, trimmed of what would make it a
+    /// different name, and a blank one is the default.
+    #[test]
+    fn every_optional_value_is_read_and_a_blank_one_is_the_default() {
+        let key = "k".repeat(crate::oauth::MIN_KEY_BYTES);
+        let key: &'static str = Box::leak(key.into_boxed_str());
+        let config = with_vars(&[
+            ("JC_GATEWAY_BIND", "127.0.0.1:9000"),
+            ("JC_GATEWAY_INTERNAL_BIND", "127.0.0.1:9001"),
+            ("JC_GATEWAY_BROKER_URL_TEMPLATE", "http://{broker}:1026"),
+            ("JC_OIDC_ISSUER", "https://kc/realms/hel"),
+            ("JC_OIDC_JWKS_URL", "https://kc/realms/hel/certs"),
+            ("JC_OIDC_REQUIRE_PROJECT", "true"),
+            ("JC_OIDC_CLIENT_ID", "context-gateway"),
+            ("JC_OIDC_CLIENT_ASSERTION_FILE", "/var/run/token"),
+            ("JC_OIDC_TOKEN_URL", "https://kc/token"),
+            ("JC_GATEWAY_DOMAIN_VERIFICATION", "enforce"),
+            (
+                "JC_GATEWAY_DOMAIN_VERIFICATIONS_URL",
+                "http://portal/verifications",
+            ),
+            ("JC_GATEWAY_WRITE_BUDGET_MIB", " 7 "),
+            ("JC_GATEWAY_MAX_IN_FLIGHT", "11"),
+            ("JC_GATEWAY_MAX_IN_FLIGHT_PER_CALLER", "3"),
+            ("JC_GATEWAY_MAX_DOWNLOADS", "2"),
+            ("JC_GATEWAY_LOADTEST_IN_FLIGHT", "5"),
+            ("JC_GATEWAY_LOADTEST_CLIENT", " k6 "),
+            ("JC_GATEWAY_PUBLIC_MAX_AGE", "60"),
+            ("JC_GATEWAY_PUBLIC_URL", "https://gw.hel.fi/"),
+            ("JC_GATEWAY_OAUTH_KEY", key),
+            (
+                "JC_GATEWAY_OAUTH_REDIRECT_HOSTS",
+                " App.Hel.fi , ,claude.ai",
+            ),
+            ("JC_GATEWAY_MQTT_RUNNER_HOST", " runner "),
+            ("JC_GATEWAY_MQTT_PORTAL_HOST", "portal"),
+            ("JC_GATEWAY_MQTT_BROKER_HOST", "mqtt"),
+            ("JC_GATEWAY_MQTT_PORTAL_IDENTITY", "portal.jc"),
+            ("JC_GATEWAY_REPO_DIR", "/repo"),
+            ("JC_GATEWAY_PROJECTS_DIR", "/projects"),
+            ("JC_GATEWAY_ASSEMBLY_DIR", "/assembly"),
+            ("JC_GATEWAY_PREVIEWS_URL", "http://previews"),
+            ("JC_GATEWAY_CONNECTORS_URL", "http://connectors"),
+            ("JC_GATEWAY_USAGE_URL", "http://usage"),
+            ("JC_GATEWAY_ACTIVITY_URL", "http://activity"),
+            ("JC_GATEWAY_ASSISTANT_URL", "http://assistant"),
+            ("JC_GATEWAY_HUB_KNOWLEDGE_SOURCES", "docs"),
+            ("JC_GATEWAY_PREVIEWS_DIR", "/previews"),
+            ("JC_GATEWAY_EGRESS_CA_BUNDLE", "/ca.pem"),
+            ("JC_GATEWAY_EGRESS_PRIVATE_HOSTS", " Minio.Local ,,"),
+            ("JC_GATEWAY_PERSONAL_KEYS", "/keys"),
+            (
+                "JC_GATEWAY_REVOCATIONS_URL",
+                "http://portal/internal/revocations",
+            ),
+        ])
+        .expect("every value usable");
+        assert_eq!(config.bind, "127.0.0.1:9000".parse().expect("an address"));
+        assert_eq!(
+            config.internal_bind,
+            Some("127.0.0.1:9001".parse().expect("an address"))
+        );
+        assert!(config.broker_url_template.is_some());
+        assert!(config.oidc_require_project);
+        assert!(matches!(
+            config.oidc_client.as_ref(),
+            Some((id, Credential::Assertion(path))) if id == "context-gateway" && path == &PathBuf::from("/var/run/token")
+        ));
+        assert_eq!(config.token_url().as_deref(), Some("https://kc/token"));
+        assert_eq!(
+            config.domain_verification,
+            crate::domain_gate::Mode::Enforce
+        );
+        assert_eq!(
+            (
+                config.write_budget_mib,
+                config.max_in_flight,
+                config.max_in_flight_per_caller
+            ),
+            (7, 11, 3)
+        );
+        assert_eq!((config.max_downloads, config.loadtest_in_flight), (2, 5));
+        assert_eq!(config.loadtest_client.as_deref(), Some("k6"));
+        assert_eq!(config.public_max_age, 60);
+        assert_eq!(config.public_url.as_deref(), Some("https://gw.hel.fi"));
+        assert_eq!(
+            config.oauth_redirect_hosts,
+            vec!["app.hel.fi".to_owned(), "claude.ai".to_owned()]
+        );
+        assert_eq!(config.mqtt_runner_host.as_deref(), Some("runner"));
+        assert_eq!(config.mqtt_portal_host.as_deref(), Some("portal"));
+        assert_eq!(config.mqtt_broker_host.as_deref(), Some("mqtt"));
+        assert_eq!(config.mqtt_portal_identity.as_deref(), Some("portal.jc"));
+        assert_eq!(config.repo_dir, Some(PathBuf::from("/repo")));
+        assert_eq!(config.projects_dir, Some(PathBuf::from("/projects")));
+        assert_eq!(config.assembly_dir, PathBuf::from("/assembly"));
+        assert_eq!(config.previews_dir, PathBuf::from("/previews"));
+        for (got, want) in [
+            (&config.previews_url, "http://previews"),
+            (&config.connectors_url, "http://connectors"),
+            (&config.usage_url, "http://usage"),
+            (&config.activity_url, "http://activity"),
+            (&config.assistant_url, "http://assistant"),
+        ] {
+            assert_eq!(got.as_deref(), Some(want));
+        }
+        assert_eq!(config.hub_knowledge_sources, "docs");
+        assert_eq!(config.egress_ca_bundle, Some(PathBuf::from("/ca.pem")));
+        assert_eq!(config.egress_private_hosts, vec!["minio.local".to_owned()]);
+        assert_eq!(config.personal_keys, Some(PathBuf::from("/keys")));
+        assert_eq!(
+            config.revocations_url.as_deref(),
+            Some("http://portal/internal/revocations")
+        );
+
+        let blank = with_vars(&[
+            ("JC_GATEWAY_INTERNAL_BIND", " "),
+            ("JC_GATEWAY_LOADTEST_CLIENT", " "),
+            ("JC_GATEWAY_PUBLIC_URL", "/"),
+            ("JC_GATEWAY_MQTT_RUNNER_HOST", " "),
+            ("JC_GATEWAY_MQTT_PORTAL_HOST", " "),
+            ("JC_GATEWAY_MQTT_BROKER_HOST", " "),
+            ("JC_GATEWAY_MQTT_PORTAL_IDENTITY", "Not A Mesh Name"),
+            ("JC_GATEWAY_PROJECTS_DIR", " "),
+            ("JC_GATEWAY_ASSEMBLY_DIR", " "),
+            ("JC_GATEWAY_PREVIEWS_DIR", " "),
+            ("JC_GATEWAY_EGRESS_CA_BUNDLE", " "),
+            ("JC_OIDC_TOKEN_URL", " "),
+        ])
+        .expect("blank values are defaults");
+        assert_eq!(blank.internal_bind, None);
+        assert_eq!(blank.loadtest_client, None);
+        assert_eq!(blank.public_url, None);
+        assert_eq!(blank.mqtt_runner_host, None);
+        assert_eq!(blank.mqtt_portal_host, None);
+        assert_eq!(blank.mqtt_broker_host, None);
+        assert_eq!(blank.mqtt_portal_identity, None);
+        assert_eq!(blank.projects_dir, None);
+        assert_eq!(blank.assembly_dir, PathBuf::from("/tmp/jc-assembly"));
+        assert_eq!(blank.previews_dir, PathBuf::from("/tmp/jc-previews"));
+        assert_eq!(blank.egress_ca_bundle, None);
+        assert_eq!(
+            blank.oauth_redirect_hosts.len(),
+            crate::oauth::DEFAULT_REDIRECT_HOSTS.len()
+        );
+        assert_eq!(blank.public_max_age, 0);
+    }
+
+    /// T-7767: the binary reads the same variables from its process environment.
+    #[test]
+    fn the_process_environment_is_one_lookup_like_any_other() {
+        // No test sets JC_GATEWAY_BROKER_URL in the process, so the start is refused naming it.
+        if std::env::var_os("JC_GATEWAY_BROKER_URL").is_none() {
+            assert!(matches!(
+                Config::from_env(),
+                Err(ConfigError::Missing("JC_GATEWAY_BROKER_URL"))
+            ));
+        }
+    }
+
     /// ARCH/IDN-02 (T-7194): the project requirement is off unless switched on, and a value
     /// other than true or false refuses the start instead of guessing.
     #[test]

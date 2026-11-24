@@ -37,10 +37,9 @@ fn readable(
             crate::api::pipelines::readable_pipeline(state, user, project, target).map(|_| ())
         }
         Scope::Space => crate::api::entity_trash::readable(state, user, project, target),
+        // `checked` refused a type target without its `{space}/` before this reads it.
         Scope::Type => {
-            let (space, _) = target
-                .split_once('/')
-                .ok_or_else(|| ApiError::BadRequest("a type is named `{space}/{Type}`".into()))?;
+            let space = target.split('/').next().unwrap_or_default();
             crate::api::entity_trash::readable(state, user, project, space)
         }
         Scope::Agent => agent_readable(state, user, project, target),

@@ -121,32 +121,6 @@ pub fn now_line(utc: OffsetDateTime, zone: Option<Zone>) -> String {
     )
 }
 
-/// The clock readings of `line` an answer may quote, `HH:MM` in UTC and in local time: an answer
-/// that holds one told the time and is never kept for the next asker.
-pub fn readings(utc: OffsetDateTime, zone: Option<Zone>) -> Vec<String> {
-    let utc = utc.to_offset(UtcOffset::UTC);
-    let mut at = vec![format!("{:02}:{:02}", utc.hour(), utc.minute())];
-    if let Some(zone) = zone {
-        let local = utc.to_offset(zone.offset(utc));
-        at.push(format!("{}:{:02}", local.hour(), local.minute()));
-        at.push(format!("{:02}:{:02}", local.hour(), local.minute()));
-    }
-    at
-}
-
-/// Whether `text` quotes one of the [`readings`] as a time of its own: "8:00" inside "18:00" is
-/// another time (T-7290: a library's "do 18:00" was never kept while the clock read 8:00).
-pub fn quotes_reading(utc: OffsetDateTime, zone: Option<Zone>, text: &str) -> bool {
-    readings(utc, zone).iter().any(|at| {
-        text.match_indices(at.as_str()).any(|(i, _)| {
-            let before = text[..i].chars().next_back();
-            let after = text[i + at.len()..].chars().next();
-            !before.is_some_and(|c| c.is_ascii_digit())
-                && !after.is_some_and(|c| c.is_ascii_digit())
-        })
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,34 +213,5 @@ mod tests {
         assert_eq!(Zone::of(&langs(&["cs", "en"])), Some(Zone::Prague));
         assert_eq!(Zone::of(&langs(&["en", "de"])), None);
         assert_eq!(Zone::of(&[]), None);
-    }
-
-    #[test]
-    fn the_readings_are_the_utc_and_local_clock() {
-        assert_eq!(
-            readings(datetime!(2026-10-16 07:05 UTC), Some(Zone::Bratislava)),
-            vec!["07:05", "9:05", "09:05"]
-        );
-        assert_eq!(
-            readings(datetime!(2026-10-16 07:05 UTC), None),
-            vec!["07:05"]
-        );
-    }
-
-    #[test]
-    fn a_reading_inside_another_time_is_not_quoted() {
-        // 07:00 UTC is 8:00 in Bratislava in November.
-        let at = datetime!(2026-11-19 07:00 UTC);
-        let zone = Some(Zone::Bratislava);
-        assert!(!quotes_reading(
-            at,
-            zone,
-            "Knižnica je otvorená od 9:00 do 18:00 [1]."
-        ));
-        assert!(!quotes_reading(at, zone, "Vlak ide o 07:001."));
-        assert!(quotes_reading(at, zone, "Je 8:00."));
-        assert!(quotes_reading(at, zone, "Teraz je 08:00 [1]."));
-        assert!(quotes_reading(at, zone, "07:00 UTC"));
-        assert!(!quotes_reading(at, None, "Je 8:00."));
     }
 }

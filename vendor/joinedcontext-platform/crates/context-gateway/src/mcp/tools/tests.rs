@@ -1,9 +1,110 @@
 use super::{
-    anonymous_bounds, anonymous_may, anonymous_refusal, duration_seconds, keep_anonymous, Shape,
-    Tool, ANONYMOUS_TOOLS, TOOLS,
+    anonymous_bounds, anonymous_may, anonymous_refusal, broken_rule, broker, duration_seconds,
+    keep_anonymous, opt, req, Kind, Shape, Tool, ANONYMOUS_TOOLS, TOOLS,
 };
 use jc_core::kinds::Operation;
 use serde_json::{json, Map, Value};
+
+/// T-7767 (GW31, AG-21): each schema rule an argument breaks is named by its rule and limit,
+/// never by the value the caller sent.
+#[test]
+fn every_broken_rule_is_named_without_the_value_sent() {
+    let secret = "s3cr3t-typed-by-the-caller";
+    let cases = [
+        (
+            json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            json!({"x": secret}),
+            "no argument of this tool is called x",
+        ),
+        (
+            json!({"type": "object", "required": ["id"]}),
+            json!({}),
+            "\"id\" is required",
+        ),
+        (
+            json!({"anyOf": [{"required": ["id"]}, {"required": ["type"]}]}),
+            json!({"q": secret}),
+            "names none of id, type: one of them is required",
+        ),
+        (
+            json!({"anyOf": [{"type": "string"}, {"type": "integer"}]}),
+            json!([secret]),
+            "matches none of the shapes the schema allows",
+        ),
+        (
+            json!({"type": "integer"}),
+            json!(secret),
+            "is not of the type the schema declares",
+        ),
+        (
+            json!({"type": "string", "pattern": "^[a-z]+$"}),
+            json!("S3CR3T!"),
+            "does not match ^[a-z]+$",
+        ),
+        (
+            json!({"type": "string", "maxLength": 3}),
+            json!(secret),
+            "is longer than 3 characters",
+        ),
+        (
+            json!({"type": "string", "minLength": 99}),
+            json!(secret),
+            "is shorter than 99 characters",
+        ),
+        (
+            json!({"type": "array", "maxItems": 1}),
+            json!([secret, secret]),
+            "has more than 1 items",
+        ),
+        (
+            json!({"type": "array", "minItems": 3}),
+            json!([secret]),
+            "has fewer than 3 items",
+        ),
+        (
+            json!({"type": "integer", "maximum": 5}),
+            json!(6),
+            "is above 5",
+        ),
+        (
+            json!({"type": "integer", "minimum": 5}),
+            json!(4),
+            "is below 5",
+        ),
+        (json!({"enum": ["a", "b"]}), json!(secret), "is not one of"),
+        (
+            json!({"not": {"type": "string"}}),
+            json!(secret),
+            "breaks the schema's not",
+        ),
+    ];
+    for (schema, instance, named) in cases {
+        let validator = jsonschema::draft7::new(&schema).expect("the schema compiles");
+        let error = validator.iter_errors(&instance).next().expect(named);
+        let rule = broken_rule(&error);
+        assert!(rule.starts_with(named), "{schema}: {rule}");
+        assert!(!rule.contains(secret), "{rule}");
+    }
+}
+
+/// T-7767: the argument and tool builders the tables use at compile time build what they
+/// name when called at run time too.
+#[test]
+fn the_tool_table_builders_keep_what_they_are_given() {
+    const ARGS: [super::Arg; 2] = [req("id", Kind::Text(8)), opt("limit", Kind::Text(4))];
+    assert!(ARGS[0].required && !ARGS[1].required);
+    let built = [req("id", Kind::Text(8)), opt("limit", Kind::Text(4))];
+    assert_eq!((built[0].name, built[1].name), ("id", "limit"));
+    let tool = broker(
+        "get_entity",
+        &[Operation::RetrieveEntity],
+        "Reads one entity",
+        &ARGS,
+        "entity",
+    );
+    assert_eq!((tool.name, tool.result_key), ("get_entity", "entity"));
+    assert!(matches!(tool.shape, Shape::Broker(args) if args.len() == 2));
+}
 
 /// A day of AirQualityObserved history, the one shape an anonymous caller is let through.
 fn day() -> Map<String, Value> {

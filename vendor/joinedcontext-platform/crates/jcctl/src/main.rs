@@ -2887,4 +2887,321 @@ mod tests {
             assert!(!said.contains(APPLY_TOKEN), "{said}");
         }
     }
+
+    /// A scratch directory and a path inside it that does not exist.
+    fn scratch(test: &str) -> (PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("jcctl-run-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let missing = dir
+            .join("missing")
+            .to_str()
+            .expect("utf-8 temp dir")
+            .to_owned();
+        (dir, missing)
+    }
+
+    #[test]
+    fn every_flag_parser_refuses_an_unknown_flag_a_missing_value_or_a_missing_required_flag() {
+        for line in [
+            &["validate", "--repo-dir", "d", "--project-dir", "no-equals"][..],
+            &["validate", "--project", "d", "--bogus", "x"],
+            &["validate", "--project", "d", "--slug"],
+            &["validate", "--project", "d", "--param", "no-equals"],
+            &[
+                "checkouts",
+                "--org-dir",
+                "o",
+                "--projects-dir",
+                "p",
+                "--forge",
+                "f",
+                "--interval",
+                "0",
+            ],
+            &[
+                "checkouts",
+                "--org-dir",
+                "o",
+                "--projects-dir",
+                "p",
+                "--forge",
+                "f",
+                "--interval",
+                "x",
+            ],
+            &[
+                "checkouts",
+                "--org-dir",
+                "o",
+                "--projects-dir",
+                "p",
+                "--forge",
+                "f",
+                "--bogus",
+            ],
+            &["apply", "--repo-dir", "d", "--bogus"],
+            &["apply", "--repo-dir", "d", "--gateway-url"],
+            &["drift", "--repo-dir", "d", "--adopt-dir"],
+            &["drift", "--repo-dir", "d", "--bogus", "x"],
+            &["plan", "--repo-dir", "d", "--token-file"],
+            &["export", "--format", "git", "--app-dir", "no-equals"],
+            &["export", "--format", "git", "--repo-dir"],
+            &["export", "--format", "git", "--bogus", "x"],
+            &[
+                "export",
+                "--format",
+                "git",
+                "--repo-dir",
+                "r",
+                "--project",
+                "p",
+            ],
+            &["import", "src", "--bogus", "x"],
+            &["import", "src", "--conflict", "maybe", "--repo-dir", "r"],
+            &["import", "src"],
+            &["pipeline", "test", "--bogus", "x"],
+            &[
+                "pipeline",
+                "test",
+                "--pipeline",
+                "p",
+                "--sample",
+                "s",
+                "--format",
+                "pdf",
+            ],
+            &["artifacts", "rebuild", "--bogus", "x"],
+            &["artifacts", "rebuild", "--repo-dir", "r"],
+            &[
+                "artifacts",
+                "rebuild",
+                "--repo-dir",
+                "r",
+                "--out-dir",
+                "o",
+                "--project-key",
+                "bad",
+            ],
+            &["sync", "--bogus"],
+            &["sync", "--repo-dir"],
+            &["sync", "--once"],
+            &["publish", "ckan", "--bogus"],
+            &["publish", "ckan", "--repo-dir", "r"],
+            &["model", "import", "id", "--bogus", "x"],
+            &["model", "import", "id"],
+            &["model", "merge", "--bogus", "x"],
+            &["model", "merge", "--repo-dir", "d"],
+            &[
+                "model",
+                "merge",
+                "--repo-dir",
+                "d",
+                "--project",
+                "p",
+                "--space",
+                "s",
+                "extra",
+            ],
+            &["model", "infer", "--bogus", "x"],
+            &["model", "generate", "--bogus", "x"],
+            &["model", "generate"],
+            &["roles", "input", "--groups"],
+            &["roles", "input", "--repo-dir", "r", "--base-dir", "b"],
+            &["roles", "render"],
+            &[
+                "workspace",
+                "diff",
+                "--base-dir",
+                "a",
+                "--repo-dir",
+                "b",
+                "--x",
+            ],
+            &["workspace"],
+            &["schema", "export", "--bogus"],
+            &["token"],
+            &[
+                "token",
+                "--resource",
+                "https://a.example/api/endpoint/x",
+                "--server",
+                "s",
+                "--idm",
+                "i",
+            ],
+            &["login", "--idm", "https://idm.example", "--resource", "r"],
+            &["policy"],
+            &["policy", "import", "--bogus"],
+            &["changelog", "--bogus"],
+            &["ops"],
+            &["ops", "--bogus"],
+            &["ops", "--project", "p", "-f", "in.json"],
+            &["op", "--project", "p"],
+            &["ops", "--project", "p", "-o", "json"],
+            &["ops", "--project", "p", "--idm", "x"],
+            &["ops", "--project", "p", "extra"],
+            &["get"],
+            &["get", "--bogus"],
+            &["get", "endpoints"],
+            &["get", "endpoints", "--project", "p", "-o", "nonsense"],
+            &["describe", "endpoints", "--project", "p", "-o", "json"],
+            &["describe", "endpoints", "--project", "p"],
+            &["apply", "-f", "m.yaml", "-l", "a=b"],
+            &["apply", "-f", "m.yaml", "-o", "json"],
+            &["get", "endpoints", "--project", "p", "--idm", "x"],
+            &["get", "endpoints", "--project", "p", "-f", "m.yaml"],
+        ] {
+            assert_eq!(run(line), ExitCode::FAILURE, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn every_command_reports_a_repository_that_is_not_there() {
+        let (dir, m) = scratch("missing");
+        let out = dir.join("out").to_str().expect("utf-8").to_owned();
+        let file = format!("{m}/x.yaml");
+        let token = format!("{m}/token");
+        for line in [
+            vec!["validate", "--repo-dir", &m],
+            vec![
+                "validate",
+                "--repo-dir",
+                &m,
+                "--project-dir",
+                "air=/nowhere",
+            ],
+            vec!["validate", "--project", &m],
+            vec!["migrate", "--repo-dir", &m, "--out-dir", &out],
+            vec!["migrate", "mqtt-roles", "--repo-dir", &m],
+            vec!["plan", "--repo-dir", &m],
+            vec!["plan", "--repo-dir", &m, "--json"],
+            vec!["apply", "--repo-dir", &m],
+            vec!["drift", "--repo-dir", &m],
+            vec!["drift", "--repo-dir", &m, "--json", "--adopt-dir", &out],
+            vec![
+                "plan",
+                "--repo-dir",
+                &m,
+                "--gateway-url",
+                "http://127.0.0.1:9",
+            ],
+            vec![
+                "plan",
+                "--repo-dir",
+                &m,
+                "--gateway-url",
+                "http://127.0.0.1:9",
+                "--token-file",
+                &token,
+            ],
+            vec!["import", "--format", "git", &m, "--out-dir", &out],
+            vec![
+                "export",
+                "--format",
+                "git",
+                "--repo-dir",
+                &m,
+                "--project",
+                "p",
+                "--out-dir",
+                &out,
+            ],
+            vec!["import", &m, "--repo-dir", &out],
+            vec!["import", &m, "--repo-dir", &out, "--json"],
+            vec![
+                "export",
+                "--repo-dir",
+                &m,
+                "--project",
+                "p",
+                "--out-dir",
+                &out,
+            ],
+            vec!["pipeline", "test", "--pipeline", &file, "--sample", &file],
+            vec!["artifacts", "rebuild", "--repo-dir", &m, "--out-dir", &out],
+            vec![
+                "model",
+                "merge",
+                "--repo-dir",
+                &m,
+                "--project",
+                "p",
+                "--space",
+                "s",
+            ],
+            vec!["model", "infer", "--file", &file],
+            vec![
+                "model",
+                "import",
+                "sdm/Air",
+                "--out",
+                &out,
+                "--url",
+                "http://127.0.0.1:9",
+            ],
+            vec!["roles", "render", "--repo-dir", &m],
+            vec![
+                "roles",
+                "input",
+                "--repo-dir",
+                &m,
+                "--base-dir",
+                &m,
+                "--changes",
+                &file,
+                "--author",
+                "a",
+            ],
+            vec!["workspace", "render", "--repo-dir", &m, "--prefix", "ws-"],
+            vec!["workspace", "diff", "--base-dir", &m, "--repo-dir", &m],
+            vec!["policy", "export", &file],
+            vec!["policy", "import", "--file", &file],
+            vec![
+                "ops",
+                "--project",
+                "p",
+                "--server",
+                "http://127.0.0.1:9",
+                "--token-file",
+                &token,
+            ],
+            vec!["op", "list", "--project", "p", "-f", &file],
+            vec![
+                "get",
+                "endpoints",
+                "--project",
+                "p",
+                "--server",
+                "http://127.0.0.1:9",
+                "--token-file",
+                &token,
+            ],
+            vec!["apply", "-f", &file],
+            vec!["fmt", &m],
+            vec![
+                "token",
+                "--resource",
+                "https://a.example/not-an-endpoint",
+                "--idm",
+                "https://idm.example",
+            ],
+        ] {
+            assert_ne!(run(&line), ExitCode::SUCCESS, "{line:?}");
+        }
+        // An organization without a registry holds no project yet: the gateway starts empty.
+        let once = [
+            "checkouts",
+            "--org-dir",
+            &m,
+            "--projects-dir",
+            &out,
+            "--forge",
+            "http://127.0.0.1:9",
+            "--once",
+        ];
+        assert_eq!(run(&once), ExitCode::SUCCESS);
+        assert!(dir.join("out").is_dir());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

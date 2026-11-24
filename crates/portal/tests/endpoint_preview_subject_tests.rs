@@ -663,6 +663,32 @@ async fn a_project_readers_member_is_admitted() {
     );
 }
 
+/// A session whose token names another client's service account is nobody the gateway reads
+/// for: the door does not admit it and the preview refuses it, though the Portal's session (here
+/// jana's) reads the space.
+#[tokio::test]
+async fn a_token_named_like_another_clients_service_account_is_nobody() {
+    let r = rig().await;
+    let mut session = session_of(
+        &json!({ "sub": "sub-jana", "iss": "https://kc.example/realms/jc",
+        "exp": 4_102_444_800_i64, "azp": "portal-ui",
+        "preferred_username": "service-account-ingest", "groups": ["/hel"], "jc_org": ["hel"] }),
+    );
+    session.identity = Identity {
+        subject: "sub-jana".into(),
+        groups: vec!["hel".into()],
+        ..person("jana")
+    };
+    let (status, body) = admission_of(&r, &session, "air-staff").await;
+    assert_eq!(
+        (status, body),
+        (StatusCode::OK, json!({ "admitted": false }))
+    );
+    let (status, asked) = preview(&r, &session, true, "air-staff", &[]).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(asked, None, "the broker is asked nothing");
+}
+
 /// T-6802: a person whose project is of another Organization meets the gateway's 404 here too,
 /// and the answer names no group or Policy of the Endpoint.
 #[tokio::test]

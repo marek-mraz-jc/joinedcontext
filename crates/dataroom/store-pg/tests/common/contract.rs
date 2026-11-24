@@ -827,6 +827,74 @@ pub async fn edges(store: &dyn Store) {
 
 /// Two catalogues of one Organization holding the same dataset slug, distribution id, view
 /// and report: every read and the purge stay inside the catalogue asked.
+/// What a store mints and follows on its own: a view and a harvest source written without an
+/// id get one, an activity row naming its object keeps that name, a merge into a publisher whose
+/// redirect leads nowhere stops at that publisher, and an entity set no service declares is not
+/// found.
+pub async fn minted_and_redirected(store: &dyn Store) {
+    let (org, cat) = tenant();
+    store
+        .upsert_catalogue(catalogue(org, cat, "minted", &unique_host("minted")))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+    store
+        .upsert_publisher(&ctx, publisher("city"))
+        .await
+        .unwrap();
+    let stored = store
+        .upsert_dataset(&ctx, dataset("air", "city", "public"))
+        .await
+        .unwrap();
+    let res = stored.distributions[0].id.clone();
+
+    let saved = store
+        .save_resource_view(&ctx, view("", &res, 1), audit("resource_view.propose"))
+        .await
+        .unwrap();
+    assert!(saved.id.starts_with("view-"), "{}", saved.id);
+    assert!(store
+        .get_resource_view(&ctx, &saved.id)
+        .await
+        .unwrap()
+        .is_some());
+    let source = store
+        .upsert_harvest_source(&ctx, harvest_source("feed"))
+        .await
+        .unwrap();
+    assert_eq!(source.id, "hs-feed");
+
+    let mut named = activity("act-named", "air", "2026-11-09T10:00:00Z");
+    named.id = format!("act-{}", uuid::Uuid::now_v7());
+    store
+        .save_dataset(&ctx, dataset("air", "city", "internal"), None, named)
+        .await
+        .unwrap();
+    let rows = store.list_activity(&ctx, None, 20).await.unwrap();
+    assert!(rows.iter().any(|r| r.object_id == "air"), "{rows:?}");
+
+    let mut dangling = publisher("dangling");
+    dangling.merged_into = Some("pub-gone".into());
+    store.upsert_publisher(&ctx, dangling).await.unwrap();
+    store
+        .upsert_publisher(&ctx, publisher("dept"))
+        .await
+        .unwrap();
+    let target = store
+        .merge_publishers(&ctx, "dept", "dangling", audit("publisher.merge"))
+        .await
+        .unwrap();
+    assert_eq!(target.name, "dangling");
+    // the merged publisher's name now answers with the publisher it went to
+    let dept = store.get_publisher(&ctx, "dept").await.unwrap().unwrap();
+    assert_eq!(dept.name, "dangling");
+
+    assert!(matches!(
+        store.odata_table(&ctx, "Nonsense").await.err(),
+        Some(DataroomError::NotFound(_))
+    ));
+}
+
 pub async fn twin_catalogues(store: &dyn Store) {
     let (org, cat_a) = tenant();
     let (_, cat_b) = tenant();

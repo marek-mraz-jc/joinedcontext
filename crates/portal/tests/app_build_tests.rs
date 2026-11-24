@@ -288,6 +288,38 @@ async fn a_builds_log_is_read_by_the_apps_readers_only() {
     assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
 }
 
+/// A build store that does not answer is a dependency down on every build door, a 503 with a
+/// next step, never a 500 or an empty list (T-6520); the driver's wording stays out.
+#[tokio::test]
+async fn a_build_store_that_does_not_answer_is_503_on_every_build_door() {
+    let work = Work::new();
+    let shako = forge_with_a_run().await;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    let state = lane_state(&shako, true, &pool, &work);
+    for uri in [
+        "/api/v1/projects/helsinki/apps/bikes/build",
+        "/api/v1/projects/helsinki/apps/bikes/builds",
+        "/api/v1/projects/helsinki/apps/bikes/builds/1/log",
+    ] {
+        let answer = send(&state, person("vera"), "GET", uri, None).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{uri}: {}",
+            answer.text
+        );
+        assert!(
+            answer.text.contains("try again in a minute"),
+            "{uri}: {}",
+            answer.text
+        );
+        assert!(!answer.text.contains("127.0.0.1"), "{uri}: {}", answer.text);
+    }
+}
+
 /// The repository's head and the template's build workflow at it.
 async fn head_with_workflow(shako: &MockServer, workflow: Option<&str>) {
     Mock::given(method("GET"))

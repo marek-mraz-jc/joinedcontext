@@ -1,0 +1,3 @@
+-
+georel=within&geometry=Polygon&coordinates=[[[0,0],[0,10],[10,10],[10,0],[0,0]]]
+georel=near;maxDistance==5&geometry=Point&coordinates=[1,1]
