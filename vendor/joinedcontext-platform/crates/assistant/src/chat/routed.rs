@@ -1395,7 +1395,7 @@ pub struct AnswerCache {
     /// The deployments whose languages are being read now.
     reading_languages: std::sync::Arc<Mutex<HashSet<String>>>,
     /// Each page lookup's answer, or its last deadline, by [`page_key`] (T-7765).
-    pages: Mutex<HashMap<String, PageKept>>,
+    pages: std::sync::Arc<Mutex<HashMap<String, PageKept>>>,
     /// Each Endpoint's public `tools/list`, by slug, for [`TOOLS_LIFE`] (T-4683).
     tools: Mutex<HashMap<String, (Instant, Vec<Value>)>>,
     /// The Endpoints, by slug, whose last listing failed: how many times in a row, and until
@@ -1583,16 +1583,7 @@ impl AnswerCache {
     }
 
     fn keep_page(&self, key: &str, kept: PageKept) {
-        if let Ok(mut pages) = self.pages.lock() {
-            // Bounded by the deployments, their Endpoints and types; an answer past its life
-            // goes when the map grows past the answers' own bound.
-            if pages.len() >= CACHE_ENTRIES {
-                pages.retain(
-                    |_, k| matches!(k, PageKept::Answered(at, _) if at.elapsed() < PAGE_LIFE),
-                );
-            }
-            pages.insert(key.to_owned(), kept);
-        }
+        keep_page_in(&self.pages, key, kept);
     }
 
     /// The languages last read for `key`, and whether that read is younger than
@@ -2517,7 +2508,7 @@ async fn kept_lookup<F>(
     lookup: F,
 ) -> Result<Looked, crate::Error>
 where
-    F: std::future::Future<Output = Result<Option<String>, crate::Error>>,
+    F: std::future::Future<Output = Result<Option<String>, crate::Error>> + Send + 'static,
 {
     let misses = match cache.page_of(key) {
         Ok(page) => return Ok(Looked::Page(page)),
@@ -2525,18 +2516,44 @@ where
         Err(Some(misses)) => misses,
     };
     let mut miss = Miss::new(cache, key, misses);
-    let found = bounded(deadline, lookup).await;
-    match found {
-        Some(Ok(page)) => {
+    let mut running = tokio::spawn(lookup);
+    match bounded(deadline, &mut running).await {
+        Some(Ok(Ok(page))) => {
             miss.armed = false;
             cache.keep_page(key, PageKept::Answered(Instant::now(), page.clone()));
             Ok(Looked::Page(page))
         }
-        Some(Err(why)) => {
+        Some(Ok(Err(why))) => {
             miss.armed = false;
             Err(why)
         }
-        None => Ok(Looked::Deadline),
+        // A lookup that panicked counts as missed.
+        Some(Err(_)) => Ok(Looked::Deadline),
+        None => {
+            // Past the deadline the lookup goes on in the background and keeps its page for the
+            // next question; until it answers, the miss's backoff leaves it alone (T-7772: turn
+            // 36 on jc-prod waited 1.5 s for a page no later question got either).
+            drop(miss);
+            let (pages, key) = (cache.pages.clone(), key.to_owned());
+            tokio::spawn(async move {
+                if let Ok(Ok(page)) = running.await {
+                    keep_page_in(&pages, &key, PageKept::Answered(Instant::now(), page));
+                }
+            });
+            Ok(Looked::Deadline)
+        }
+    }
+}
+
+/// Keeps a page lookup's answer or miss in `pages`.
+fn keep_page_in(pages: &Mutex<HashMap<String, PageKept>>, key: &str, kept: PageKept) {
+    if let Ok(mut pages) = pages.lock() {
+        // Bounded by the deployments, their Endpoints and types; an answer past its life goes
+        // when the map grows past the answers' own bound.
+        if pages.len() >= CACHE_ENTRIES {
+            pages.retain(|_, k| matches!(k, PageKept::Answered(at, _) if at.elapsed() < PAGE_LIFE));
+        }
+        pages.insert(key.to_owned(), kept);
     }
 }
 
@@ -2614,13 +2631,18 @@ async fn kept_rows_dataset(
     kind: &str,
 ) -> Result<Looked, crate::Error> {
     let key = page_key(ask, &format!("rows {} {kind}", connector.surface.slug));
-    kept_lookup(
-        ask.cache,
-        &key,
-        PAGE_DEADLINE,
-        rows_dataset(ask, connector, kind),
-    )
-    .await
+    let (pool, slug, siblings, kind, sources, public_only) = (
+        ask.pool.clone(),
+        connector.surface.slug.clone(),
+        connector.siblings.clone(),
+        kind.to_owned(),
+        ask.sources.to_vec(),
+        ask.public_only,
+    );
+    let lookup = async move {
+        crate::rows_dataset_projects(&pool, &slug, &siblings, &kind, &sources, public_only).await
+    };
+    kept_lookup(ask.cache, &key, PAGE_DEADLINE, lookup).await
 }
 
 /// The page the sources hold about the Endpoint `slug` ([`crate::endpoint_page_projects`]), kept
@@ -2630,31 +2652,20 @@ pub(super) async fn endpoint_page(
     slug: &str,
 ) -> Result<Option<String>, crate::Error> {
     let key = page_key(ask, &format!("endpoint {slug}"));
-    let lookup = crate::endpoint_page_projects(ask.pool, slug, ask.sources, ask.public_only);
+    let (pool, slug, sources, public_only) = (
+        ask.pool.clone(),
+        slug.to_owned(),
+        ask.sources.to_vec(),
+        ask.public_only,
+    );
+    let lookup =
+        async move { crate::endpoint_page_projects(&pool, &slug, &sources, public_only).await };
     Ok(
         match kept_lookup(ask.cache, &key, PAGE_DEADLINE, lookup).await? {
             Looked::Page(page) => page,
             Looked::Deadline | Looked::Skipped => None,
         },
     )
-}
-
-/// The dataset page of `kind` read from `connector` that names no `isPartOf` of its rows:
-/// [`crate::rows_dataset_projects`].
-async fn rows_dataset(
-    ask: &Ask<'_>,
-    connector: &Connected,
-    kind: &str,
-) -> Result<Option<String>, crate::Error> {
-    crate::rows_dataset_projects(
-        ask.pool,
-        &connector.surface.slug,
-        &connector.siblings,
-        kind,
-        ask.sources,
-        ask.public_only,
-    )
-    .await
 }
 
 /// The rows of `kind` as the Endpoint `slug` serves them to anyone: a table's download, and the
@@ -3274,11 +3285,7 @@ async fn searched(ask: &Ask<'_>, events: &Sender<Event>, query: &str) -> Option<
 /// (T-4293); a direct message drops the round (T-4655): its search is stopped, its passages never
 /// reach the answer, and the widget is shown no step of it, which is why the round searches
 /// quietly and its step is shown once the route needs it.
-async fn route_call(
-    ask: &Ask<'_>,
-    router: &Call<'_>,
-    messages: &[Value],
-) -> (Result<Completion, CallError>, Duration) {
+async fn route_call(ask: &Ask<'_>, router: &Call<'_>, messages: &[Value]) -> Routed {
     let at = Instant::now();
     let model = router.model.unwrap_or(ask.model.name());
     let pending = ask.trace.pending("router", model, at, messages);
@@ -3286,20 +3293,32 @@ async fn route_call(
         ask.model
             .ask(ask.deployment, ask.tokens_per_day, router, messages)
     };
-    let reply = hedged(ask_once, ROUTER_HEDGE, |started, second_won| {
+    let (reply, left) = hedged(ask_once, ROUTER_HEDGE, |started, second_won, left| {
         let which = if second_won { "second" } else { "first" };
+        let left = if left {
+            "; the other, left running, is charged as its twin"
+        } else {
+            ""
+        };
         ask.trace.note(
             "model",
             "router_hedge",
             started,
             None,
-            Some(&format!("{which} call answered")),
+            Some(&format!("{which} call answered{left}")),
         );
     })
     .await;
     pending.done(reply.as_ref());
-    (reply, at.elapsed())
+    // The call left running still costs: the proxy counts no unstreamed call its caller left, so
+    // it is charged here as the winner's twin, the same prompt to the same model (T-7772).
+    let twin = left.then(|| reply.as_ref().ok().cloned()).flatten();
+    (reply, at.elapsed(), twin)
 }
+
+/// The router's reply, how long it took, and the hedged call left running, charged as the
+/// reply's twin.
+type Routed = (Result<Completion, CallError>, Duration, Option<Completion>);
 
 /// How long the router call runs before a second, identical one starts beside it (T-4803: one
 /// provider answer took 16 s of "Výber zdroja" where the router's median is under 2 s).
@@ -3307,14 +3326,15 @@ const ROUTER_HEDGE: Duration = Duration::from_secs(3);
 
 /// `call` once, and once more beside it when the first has not answered after `after`: the first
 /// success wins and the other call is dropped, so one slow provider answer no longer holds the
-/// turn. An error waits for the other call. `hedge` hears when the second call started and
-/// whether it answered first. ponytail: one hedge, never a third call; a provider that is slow
+/// turn; `true` beside the answer when a call was dropped before it answered. An error waits for
+/// the other call. `hedge` hears when the second call started, whether it answered first and
+/// whether the other was dropped. ponytail: one hedge, never a third call; a provider that is slow
 /// for every call stays slow, and the trace shows it.
 async fn hedged<F, Fut, T, E>(
     call: F,
     after: Duration,
-    hedge: impl FnOnce(Instant, bool),
-) -> Result<T, E>
+    hedge: impl FnOnce(Instant, bool, bool),
+) -> (Result<T, E>, bool)
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
@@ -3322,24 +3342,24 @@ where
     let first = call();
     tokio::pin!(first);
     tokio::select! {
-        out = &mut first => return out,
+        out = &mut first => return (out, false),
         () = tokio::time::sleep(after) => {}
     }
     let started = Instant::now();
     let second = call();
     tokio::pin!(second);
-    let (out, second_won) = tokio::select! {
+    let (out, second_won, left) = tokio::select! {
         out = &mut first => match out {
-            Ok(done) => (Ok(done), false),
-            Err(_) => ((&mut second).await, true),
+            Ok(done) => (Ok(done), false, true),
+            Err(_) => ((&mut second).await, true, false),
         },
         out = &mut second => match out {
-            Ok(done) => (Ok(done), true),
-            Err(_) => ((&mut first).await, false),
+            Ok(done) => (Ok(done), true, true),
+            Err(_) => ((&mut first).await, false, false),
         },
     };
-    hedge(started, second_won);
-    out
+    hedge(started, second_won, left);
+    (out, left)
 }
 
 /// The steps of a search that already ran, as `searched` shows them while it runs.
@@ -3532,6 +3552,7 @@ async fn answer_routed(
         reasoning: ask.reasoning.judge.unwrap_or_default(),
         ..router
     };
+    let judging = std::sync::atomic::AtomicBool::new(true);
     let q = Question {
         ask,
         history,
@@ -3539,6 +3560,7 @@ async fn answer_routed(
         events,
         languages: &languages,
         now: &now,
+        judging: &judging,
     };
     let messages = router_messages(history, question, &live, &languages, &now);
     if !within(ask, &spent, &messages, ROUTER_TOKENS) {
@@ -3553,6 +3575,8 @@ async fn answer_routed(
     let mut opened = opening(q, &router, &judge, &messages, &live, reserve).await;
     spent.stages.route = Some(millis(opened.took));
     let beside = opened.beside();
+    // A judgement already running finishes beside the data loop and is counted there.
+    judging.store(!beside, std::sync::atomic::Ordering::Release);
     let (first_round_left, (first_hits, first_covers, judged_answers, more)) = if beside {
         (opened.first.take(), (None, false, false, Vec::new()))
     } else {
@@ -3560,12 +3584,16 @@ async fn answer_routed(
     };
     let Opening {
         routed,
+        left,
         early,
         wanted,
         read,
         mut search,
         ..
     } = opened;
+    if let Some(left) = &left {
+        count(&mut spent, left);
+    }
     let routing = match (routed, early) {
         (Ok(reply), early) => {
             count(&mut spent, &reply);
@@ -3696,6 +3724,8 @@ type FirstRound = (Option<Vec<Hit>>, bool, bool, Vec<String>);
 struct Opening<'a> {
     routed: Result<Completion, CallError>,
     took: Duration,
+    /// The hedged router call left running, charged as the reply's twin (T-7772).
+    left: Option<Completion>,
     /// The route of a reply that is not `out`.
     early: Option<Routing>,
     direct: bool,
@@ -3723,7 +3753,7 @@ async fn opening<'a>(
         Box::pin(search_first(q, judge, reserve));
     tokio::pin!(route);
     let mut first = None;
-    let (routed, took) = tokio::select! {
+    let (routed, took, left) = tokio::select! {
         out = &mut route => out,
         out = &mut search => {
             first = Some(out);
@@ -3746,11 +3776,14 @@ async fn opening<'a>(
     let direct = routed.is_ok() && early.as_ref().is_none_or(|r| r.direct);
     // The narrowing searches the embedder too, whose one turn the first round may hold until it
     // is polled again: both go on beside it, or the narrowing waits out its deadline (T-6178).
+    // The first round's passages, when its search finished beside the router.
+    let first_hits = first.as_ref().and_then(|(hits, _, _)| hits.clone());
     let (wanted, read) = {
         let reading = async {
             let wanted = match &early {
                 Some(r) if !r.direct => {
-                    narrowed(q.ask, wanted(q.ask, r), &r.queries, q.question).await
+                    let found = first_hits.as_deref();
+                    narrowed(q.ask, wanted(q.ask, r), &r.queries, q.question, found).await
                 }
                 _ => Vec::new(),
             };
@@ -3778,6 +3811,7 @@ async fn opening<'a>(
     Opening {
         routed,
         took,
+        left,
         early,
         direct,
         wanted,
@@ -3840,6 +3874,9 @@ struct Question<'a, 'b> {
     events: &'a Sender<Event>,
     languages: &'a [String],
     now: &'a str,
+    /// Whether the first round may still start its judgement: a data question whose rows came
+    /// back leaves the round out of its answer, so a judge not yet started never starts (T-7772).
+    judging: &'a std::sync::atomic::AtomicBool,
 }
 
 /// Whether a call that writes `out` tokens after `messages` stays inside the conversation's
@@ -3862,7 +3899,11 @@ async fn search_first(q: Question<'_, '_>, judge: &Call<'_>, reserve: u64) -> Fi
     let judged = match &hits {
         // Passages both rankings put at the top answer as they are: no judgement to wait for.
         Some(hits) if covers(hits) => None,
-        Some(hits) if !hits.is_empty() && !q.events.is_closed() => {
+        Some(hits)
+            if !hits.is_empty()
+                && !q.events.is_closed()
+                && q.judging.load(std::sync::atomic::Ordering::Acquire) =>
+        {
             let asked = [q.question.to_owned()];
             let messages = follow_messages(
                 q.history,
@@ -3971,6 +4012,7 @@ async fn narrowed<'a>(
     mut wanted: Vec<(Read, &'a Connected)>,
     queries: &[String],
     question: &str,
+    first: Option<&[Hit]>,
 ) -> Vec<(Read, &'a Connected)> {
     if wanted.iter().all(|(w, _)| w.q.is_some()) {
         return wanted;
@@ -3984,49 +4026,36 @@ async fn narrowed<'a>(
     let began = Instant::now();
     // A narrowing that waited out its deadline lately is skipped until its backoff passes, as a
     // page lookup is (T-7765): the reads then take their whole type, as past the deadline.
-    let key = page_key(ask, "narrowing");
-    let Err(Some(misses)) = ask.cache.page_of(&key) else {
-        ask.trace
-            .note("tool", "dataset_narrowing", began, None, Some("skipped"));
-        return wanted;
+    // The question's own first round, searched beside the router, names the page with no search
+    // of its own (T-7772: two more searches waited out the 2 s deadline on jc-prod's turn 36), so
+    // it is tried also while the searches' backoff runs.
+    let from_first = match first {
+        Some(hits) => bounded(
+            NARROW_DEADLINE,
+            narrowing_pages(ask, &wanted, &dataset_pages(hits)),
+        )
+        .await
+        .filter(|chosen| chosen.iter().any(Option::is_some)),
+        None => None,
     };
-    let mut miss = Miss::new(ask.cache, &key, misses);
-    let found = bounded(NARROW_DEADLINE, async {
-        let pages: Vec<String> = datasets(ask, &asked)
+    let key = page_key(ask, "narrowing");
+    let mut miss = None;
+    let found = match from_first {
+        Some(chosen) => Some(chosen),
+        None => {
+            let Err(Some(misses)) = ask.cache.page_of(&key) else {
+                ask.trace
+                    .note("tool", "dataset_narrowing", began, None, Some("skipped"));
+                return wanted;
+            };
+            miss = Some(Miss::new(ask.cache, &key, misses));
+            let left = NARROW_DEADLINE.saturating_sub(began.elapsed());
+            bounded(left, async {
+                narrowing_pages(ask, &wanted, &datasets(ask, &asked).await).await
+            })
             .await
-            .into_iter()
-            .map(|hit| hit.url)
-            .filter(|url| is_dataset_page(url) && dataset_q(url).is_some())
-            .take(NARROW_PAGES)
-            .collect();
-        let mut chosen = Vec::new();
-        for (w, connector) in &wanted {
-            if w.q.is_some() {
-                chosen.push(None);
-                continue;
-            }
-            let checks = pages.iter().map(|page| {
-                crate::dataset_reads_projects(
-                    ask.pool,
-                    page,
-                    &connector.surface.slug,
-                    &w.kind,
-                    ask.sources,
-                    ask.public_only,
-                )
-            });
-            let held = futures_util::future::join_all(checks).await;
-            chosen.push(
-                pages
-                    .iter()
-                    .zip(held)
-                    .find(|(_, held)| matches!(held, Ok(true)))
-                    .map(|(page, _)| page.clone()),
-            );
         }
-        chosen
-    })
-    .await;
+    };
     let output = match &found {
         Some(chosen) => chosen
             .iter()
@@ -4036,7 +4065,7 @@ async fn narrowed<'a>(
             .join("\n"),
         None => "deadline".to_owned(),
     };
-    if found.is_some() {
+    if let (Some(miss), true) = (miss.as_mut(), found.is_some()) {
         // In time: the next question narrows again, and a past miss is forgotten.
         miss.armed = false;
         ask.cache.forget_page(&key);
@@ -4050,6 +4079,47 @@ async fn narrowed<'a>(
         }
     }
     wanted
+}
+
+/// For each read without a `q`, the first of `hits`' dataset pages that serves its type from its
+/// Endpoint by `isPartOf` ([`crate::dataset_reads_projects`]); `None` for the others.
+async fn narrowing_pages(
+    ask: &Ask<'_>,
+    wanted: &[(Read, &Connected)],
+    hits: &[Hit],
+) -> Vec<Option<String>> {
+    let pages: Vec<&str> = hits
+        .iter()
+        .map(|hit| hit.url.as_str())
+        .filter(|url| is_dataset_page(url) && dataset_q(url).is_some())
+        .take(NARROW_PAGES)
+        .collect();
+    let mut chosen = Vec::new();
+    for (w, connector) in wanted {
+        if w.q.is_some() {
+            chosen.push(None);
+            continue;
+        }
+        let checks = pages.iter().map(|page| {
+            crate::dataset_reads_projects(
+                ask.pool,
+                page,
+                &connector.surface.slug,
+                &w.kind,
+                ask.sources,
+                ask.public_only,
+            )
+        });
+        let held = futures_util::future::join_all(checks).await;
+        chosen.push(
+            pages
+                .iter()
+                .zip(held)
+                .find(|(_, held)| matches!(held, Ok(true)))
+                .map(|(page, _)| (*page).to_owned()),
+        );
+    }
+    chosen
 }
 
 /// The reads, run at once: two of a slow Endpoint used to take their sum of the answer's time
@@ -4618,10 +4688,10 @@ mod tests {
         let cache = AnswerCache::default();
         let short = Duration::from_millis(20);
         let dead = || std::future::pending::<Result<Option<String>, crate::Error>>();
-        let asked = std::sync::atomic::AtomicU32::new(0);
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         // Counts only a lookup that runs: an async block does nothing until it is polled.
         let counted = |page: Option<&'static str>| {
-            let asked = &asked;
+            let asked = asked.clone();
             async move {
                 asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 Ok(page.map(str::to_owned))
@@ -4683,6 +4753,38 @@ mod tests {
         };
         assert!(until <= Instant::now() + BACKOFF_MAX);
         assert!(until > Instant::now() + BACKOFF_MAX - Duration::from_secs(5));
+    }
+
+    /// T-7772: a page lookup past its deadline goes on in the background and keeps its page, so
+    /// the next question reads it at once instead of waiting out the deadline again.
+    #[tokio::test]
+    async fn a_page_lookup_past_its_deadline_keeps_its_page_for_the_next_question() {
+        let cache = AnswerCache::default();
+        let short = Duration::from_millis(20);
+        let slow = async {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            Ok(Some("https://p/bridges".to_owned()))
+        };
+        let began = Instant::now();
+        assert_eq!(
+            kept_lookup(&cache, "d#true|rows bbsk Bridge", short, slow)
+                .await
+                .unwrap(),
+            Looked::Deadline
+        );
+        assert!(began.elapsed() < Duration::from_millis(70));
+        // Until it answers, the backoff leaves it alone.
+        assert_eq!(cache.page_of("d#true|rows bbsk Bridge"), Err(None));
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let never = std::future::pending::<Result<Option<String>, crate::Error>>();
+        let began = Instant::now();
+        assert_eq!(
+            kept_lookup(&cache, "d#true|rows bbsk Bridge", short, never)
+                .await
+                .unwrap(),
+            Looked::Page(Some("https://p/bridges".into()))
+        );
+        assert!(began.elapsed() < short);
     }
 
     /// T-7765: a database that does not answer never holds the question. The pool's server
@@ -7608,8 +7710,12 @@ classes:
         };
         let mut heard = None;
         let started = tokio::time::Instant::now();
-        let won = hedged(slow_first, ROUTER_HEDGE, |_, second| heard = Some(second)).await;
-        assert_eq!((won, heard), (Ok(1), Some(true)));
+        let won = hedged(slow_first, ROUTER_HEDGE, |_, second, _| {
+            heard = Some(second)
+        })
+        .await;
+        // T-7772: the first call was dropped before it answered, so it is charged.
+        assert_eq!((won, heard), ((Ok(1), true), Some(true)));
         assert_eq!(started.elapsed(), ROUTER_HEDGE + Duration::from_secs(1));
 
         let once = AtomicUsize::new(0);
@@ -7619,8 +7725,8 @@ classes:
         };
         let mut hedge_heard = false;
         assert_eq!(
-            hedged(fast, ROUTER_HEDGE, |_, _| hedge_heard = true).await,
-            Ok(7)
+            hedged(fast, ROUTER_HEDGE, |_, _, _| hedge_heard = true).await,
+            (Ok(7), false)
         );
         assert_eq!((once.load(Ordering::SeqCst), hedge_heard), (1, false));
 
@@ -7636,7 +7742,11 @@ classes:
                 }
             }
         };
-        assert_eq!(hedged(second_fails, ROUTER_HEDGE, |_, _| {}).await, Ok(0));
+        // The failed call answered: nothing was left running.
+        assert_eq!(
+            hedged(second_fails, ROUTER_HEDGE, |_, _, _| {}).await,
+            (Ok(0), false)
+        );
     }
 
     /// T-4803: the bbsk-registre model as the broker serves a view's LinkML (an annotation's
