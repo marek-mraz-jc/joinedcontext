@@ -721,6 +721,57 @@ async fn an_ftps_transfer_cut_mid_file_fails_the_read() {
     assert!(err.starts_with("ftp RETR /exports/a.csv: "), "{err}");
 }
 
+/// The size caps as documented: the 256 MiB most is accepted and one byte more refused, and a
+/// 2 MiB file reads under the default 32 MiB cap. A `*` path never reads `.`, `..` or a file
+/// already renamed with the processed suffix.
+#[tokio::test]
+async fn the_size_caps_hold_and_a_star_path_skips_dot_entries_and_processed_files() {
+    let ctx = context(OrgQuotas {
+        allow_plain_ftp: true,
+        ..loopback()
+    });
+    let base = json!({ "address": "127.0.0.1:21", "tls": "none", "path": "/exports/*.csv" });
+    let with = |extra: Value| {
+        let mut c = base.clone();
+        c.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        conf("ftp", c)
+    };
+    assert!(ekiben_io_remote::FtpInput::from_config(
+        &with(json!({ "max_file_bytes": 268_435_456u64 })),
+        &ctx
+    )
+    .is_ok());
+    assert!(ekiben_io_remote::FtpInput::from_config(
+        &with(json!({ "max_file_bytes": 268_435_457u64 })),
+        &ctx
+    )
+    .is_err());
+
+    let (mut input, ctx, files) = faulty_ftp(
+        &[],
+        json!({ "path": "/exports/*", "processed_suffix": ".done" }),
+    )
+    .await;
+    let big = vec![b'x'; 2 * 1024 * 1024];
+    *files.lock().unwrap() = BTreeMap::from([
+        ("/exports/big.bin".to_string(), big.clone()),
+        ("/exports/.".to_string(), b"dot".to_vec()),
+        ("/exports/..".to_string(), b"dotdot".to_vec()),
+        ("/exports/old.csv.done".to_string(), b"read before".to_vec()),
+    ]);
+    let seen = run(&mut input, &ctx, |_| false).await;
+    assert_eq!(
+        seen.len(),
+        1,
+        "{:?}",
+        seen.iter().map(|s| &s.0).collect::<Vec<_>>()
+    );
+    assert_eq!(seen[0].0, "/exports/big.bin");
+    assert_eq!(seen[0].1, big);
+}
+
 /// A file the server will not delete after the ack stays where it was (read again next run, a
 /// duplicate rather than a loss) and the run still ends; a path at the root lists `/`.
 #[tokio::test]

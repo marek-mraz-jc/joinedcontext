@@ -491,6 +491,11 @@ mod tests {
             host_port("[2001:db8::1]:21").unwrap(),
             ("[2001:db8::1]".into(), 21)
         );
+        // A bare IPv6 address has no port to split off.
+        assert_eq!(
+            host_port("2001:db8::1").unwrap(),
+            ("2001:db8::1".into(), 21)
+        );
         for bad in ["", "ftp://x", "user@x", "x:0", "x:port", "a b"] {
             assert!(host_port(bad).is_err(), "{bad}");
         }

@@ -38,6 +38,9 @@ exclude_re = [
   # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
   # skipping them by name or not is alike; the @context half is held by a test (T-7622).
   'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
+  # T-7579 ekiben-io-http and ekiben-io-remote: the fuzzing helpers compile only with the `fuzzing` feature, which the
+  # crates' tests never enable; fuzz/ drives them (cargo fuzz), so no test run can tell a mutant of them.
+  'ekiben-io-(remote|http)/src/[a-z_]+\.rs:\d+:\d+: .*\bfuzz(ing::|_)',
   # T-7632 ekiben-io-ngsild status_text: a body of exactly ERROR_BODY_BYTES is cut at its own length either way.
   'ekiben-io-ngsild/src/client\.rs:\d+:\d+: replace > with >= in status_text',
   # T-7632 ekiben-io-ngsild: the next pass due exactly now sleeps zero either way; an equal timestamp

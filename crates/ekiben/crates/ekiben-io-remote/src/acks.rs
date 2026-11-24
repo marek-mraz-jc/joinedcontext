@@ -87,5 +87,17 @@ mod tests {
             late_nack.nack(BatchError::new(Vec::new(), "output refused"));
         });
         assert_eq!(acks.all(Duration::from_millis(200)).await, vec!["c"]);
+
+        // Every answer in: the end of the run does not wait out the limit.
+        let mut acks = Acks::new();
+        let a = acks.responder("a");
+        let b = acks.responder("b");
+        tokio::spawn(async move {
+            a.ack();
+            b.ack();
+        });
+        let started = tokio::time::Instant::now();
+        assert_eq!(acks.all(Duration::from_secs(30)).await, vec!["a", "b"]);
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
