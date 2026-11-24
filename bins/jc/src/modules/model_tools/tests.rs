@@ -1098,6 +1098,27 @@ fn types_resolve_through_typeof_and_their_uri_coerces_the_term() {
 }
 
 #[test]
+fn a_whole_number_stays_a_number_in_the_broker_schema_and_a_fraction_is_text() {
+    let compiled = |rank: &str| {
+        let model = MODEL.replace("  capacity:\n", &format!("  capacity:\n    rank: {rank}\n"));
+        generate(&source(&model)).1
+    };
+    for (rank, expected) in [("-1", json!(-1)), ("7", json!(7))] {
+        let out = compiled(rank);
+        assert_eq!(
+            out["brokerSchema"]["slots"]["capacity"]["rank"], expected,
+            "{rank}: {out}"
+        );
+    }
+    // A fraction goes as its text, which the broker then refuses as no whole number.
+    let e = errors_of(&compiled("1.5"));
+    assert!(
+        e[0].ends_with("invalid type: string \"1.5\", expected i64"),
+        "{e:?}"
+    );
+}
+
+#[test]
 fn a_default_prefix_written_as_the_model_iri_is_refused_before_a_save() {
     let e = errors_with(
         "default_prefix: city\n",
@@ -1311,8 +1332,10 @@ fn a_type_with_neither_uri_nor_parent_or_a_type_cycle_is_named() {
     );
     let e = errors_of(&generate(&source(&(base + "types:\n  Loose:\n    typeof: Ghost\n"))).1);
     assert!(
-        e.iter().any(|m| m.contains("Ghost") || m.contains("Loose")),
-        "{e:?}"
+        e.iter().any(|m| m.starts_with(
+            "brokerSchema: slot 'capacity': range 'Loose' is not a class, an enum or a type based on one of"
+        )),
+        "a chain that ends on no built-in: {e:?}"
     );
 }
 
