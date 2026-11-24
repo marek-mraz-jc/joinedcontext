@@ -37,6 +37,20 @@ doc = false
 bench = false
 
 [[bin]]
+name = "view_geoq"
+path = "fuzz_targets/view_geoq.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "view_desired"
+path = "fuzz_targets/view_desired.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "filter"
 path = "fuzz_targets/filter.rs"
 test = false

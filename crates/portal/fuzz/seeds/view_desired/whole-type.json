@@ -1,0 +1,3 @@
+{"endpoint": {"contextSpaceRef": "air", "slug": "k4y7pq2mzt6vhx3nbwrs5cjdaf", "audience": "public", "enabledRepresentations": ["ngsi-ld"]},
+ "policies": [{"contextSpaceRef": "air", "assigner": "did:web:city.example", "assignee": {"kind": "role", "id": "public"}, "operations": ["retrieveOps", "upsertBatch"], "information": [{"entities": [{"type": "Car"}]}]}],
+ "model": "classes:\n  Car: {is_a: Car, mixins: [Car], slots: [speed]}\n"}
