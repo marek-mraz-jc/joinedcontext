@@ -17,7 +17,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let _ = Registry::new().lint_stream_config(&conf, Vec::new());
-    assert_eq!(page_cuts(&conf.pipeline.processors).len(), conf.pipeline.processors.len());
+    assert_eq!(
+        page_cuts(&conf.pipeline.processors).len(),
+        conf.pipeline.processors.len()
+    );
     if let Some(section) = conf.raw_source.get("metrics") {
         if let Ok(m) = MetricsConfig::from_json(section) {
             let _ = MetricMapping::new(&m.mapping);

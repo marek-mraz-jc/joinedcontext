@@ -28,7 +28,10 @@ use tokio::sync::watch;
 
 // ---------- helpers ----------
 
-fn stream_ctx_with(reg: Arc<Registry>, metrics: Arc<StreamMetrics>) -> (watch::Sender<bool>, StreamContext) {
+fn stream_ctx_with(
+    reg: Arc<Registry>,
+    metrics: Arc<StreamMetrics>,
+) -> (watch::Sender<bool>, StreamContext) {
     let resources = ResourceManager::new();
     let org = resources.get_or_create_org(&OrgId::new("o1"));
     let (tx, rx) = watch::channel(false);
@@ -134,7 +137,12 @@ impl Processor for Expand {
             .collect();
         Ok(vec![out])
     }
-    fn pages(&self, _: &ProcContext, b: Batch, rows: usize) -> Result<Box<ekiben_core::traits::Pages>, Batch> {
+    fn pages(
+        &self,
+        _: &ProcContext,
+        b: Batch,
+        rows: usize,
+    ) -> Result<Box<ekiben_core::traits::Pages>, Batch> {
         let all: Vec<Part> = b
             .iter()
             .flat_map(|p| (0..self.n).map(move |_| p.shallow_copy()))
@@ -242,7 +250,11 @@ impl Output for Collect {
 #[tokio::test]
 async fn a_buffered_input_passes_every_batch_then_ends_after_the_input() {
     let (_stop, ctx) = stream_ctx();
-    let (input, acks, closed) = script(vec![Ok(parts(&["a"])), Err(CoreError::Timeout), Ok(parts(&["b", "c"]))]);
+    let (input, acks, closed) = script(vec![
+        Ok(parts(&["a"])),
+        Err(CoreError::Timeout),
+        Ok(parts(&["b", "c"])),
+    ]);
     let buffer = Arc::new(MemoryBuffer::new(1024, Gauge::noop()));
     let mut buffered = BufferedInput::new(input, buffer);
     assert_eq!(buffered.input_type(), "script");
@@ -251,10 +263,16 @@ async fn a_buffered_input_passes_every_batch_then_ends_after_the_input() {
     buffered.connect(&ctx).await.unwrap();
     let (b1, ack1) = buffered.read_batch(&ctx).await.unwrap();
     let (b2, ack2) = buffered.read_batch(&ctx).await.unwrap();
-    assert_eq!((texts(&b1), texts(&b2)), (vec!["a".to_string()], vec!["b".into(), "c".into()]));
+    assert_eq!(
+        (texts(&b1), texts(&b2)),
+        (vec!["a".to_string()], vec!["b".into(), "c".into()])
+    );
     ack1.ack();
     ack2.ack();
-    assert!(matches!(buffered.read_batch(&ctx).await, Err(CoreError::EndOfInput)));
+    assert!(matches!(
+        buffered.read_batch(&ctx).await,
+        Err(CoreError::EndOfInput)
+    ));
     // The memory buffer acknowledges each batch at the input once stored.
     assert_eq!(*acks.lock().unwrap(), [None, None]);
     assert!(closed.load(Ordering::SeqCst));
@@ -264,14 +282,20 @@ async fn a_buffered_input_passes_every_batch_then_ends_after_the_input() {
 #[tokio::test]
 async fn a_failed_read_ends_the_buffered_input_with_that_error() {
     let (_stop, ctx) = stream_ctx();
-    let (input, _, _) = script(vec![Ok(parts(&["a"])), Err(CoreError::other("socket reset"))]);
+    let (input, _, _) = script(vec![
+        Ok(parts(&["a"])),
+        Err(CoreError::other("socket reset")),
+    ]);
     let mut buffered = BufferedInput::new(input, Arc::new(MemoryBuffer::new(1024, Gauge::noop())));
     buffered.connect(&ctx).await.unwrap();
     assert_eq!(texts(&buffered.read_batch(&ctx).await.unwrap().0), ["a"]);
     let err = buffered.read_batch(&ctx).await.err().unwrap();
     assert!(err.to_string().contains("socket reset"), "{err}");
     // The error is reported once; the next read is a plain end.
-    assert!(matches!(buffered.read_batch(&ctx).await, Err(CoreError::EndOfInput)));
+    assert!(matches!(
+        buffered.read_batch(&ctx).await,
+        Err(CoreError::EndOfInput)
+    ));
 }
 
 #[tokio::test]
@@ -300,7 +324,10 @@ async fn the_buffer_hears_of_the_end_only_after_every_input_transaction_is_acked
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     assert!(closed.load(Ordering::SeqCst));
-    assert_eq!(*acks.lock().unwrap(), [Some("rejected downstream".to_string())]);
+    assert_eq!(
+        *acks.lock().unwrap(),
+        [Some("rejected downstream".to_string())]
+    );
 }
 
 #[tokio::test]
@@ -334,7 +361,10 @@ async fn a_memory_buffer_reads_its_limit_and_caps_it_by_the_org_quota() {
     // The default limit is Bento's 500 MB, capped by the organization's run memory quota.
     let quota = ctx.org.get_quotas().max_memory_bytes_per_run;
     let big = Transaction::new(
-        vec![Part::new(vec![0u8; DEFAULT_MEMORY_BUFFER_LIMIT.min(quota) + 1])],
+        vec![Part::new(vec![
+            0u8;
+            DEFAULT_MEMORY_BUFFER_LIMIT.min(quota) + 1
+        ])],
         AckResponder::noop(),
     );
     assert!(default.write(big).await.is_err());
@@ -345,11 +375,20 @@ async fn a_memory_buffer_reads_its_limit_and_caps_it_by_the_org_quota() {
         .unwrap();
     assert!(exporter.render(&|_| true).contains("buffer_backlog"));
     let (_s, rx) = watch::channel(true);
-    assert_eq!(texts(&small.read(rx.clone()).await.unwrap().payload), ["ab"]);
+    assert_eq!(
+        texts(&small.read(rx.clone()).await.unwrap().payload),
+        ["ab"]
+    );
     // Nothing left and the stream stopping: the read ends.
     assert!(matches!(small.read(rx).await, Err(CoreError::EndOfInput)));
-    for bad in [json!({"limit": "lots"}), json!({"limit": -1}), json!({"limit": 0})] {
-        let err = MemoryBuffer::from_config(&conf(json!({ "memory": bad })), &ctx).err().unwrap();
+    for bad in [
+        json!({"limit": "lots"}),
+        json!({"limit": -1}),
+        json!({"limit": 0}),
+    ] {
+        let err = MemoryBuffer::from_config(&conf(json!({ "memory": bad })), &ctx)
+            .err()
+            .unwrap();
         assert!(err.to_string().contains("buffer memory: limit"), "{err}");
     }
     let null = MemoryBuffer::from_config(&conf(json!({"memory": {"limit": null}})), &ctx);
@@ -375,10 +414,23 @@ async fn the_registry_builds_no_buffer_for_none_and_refuses_an_unknown_one() {
         Ok(Arc::new(MemoryBuffer::from_config(c, ctx)?) as Arc<dyn Buffer>)
     });
     let (_stop, ctx) = stream_ctx();
-    assert!(reg.build_buffer(&conf(json!({"none": {}})), &ctx).unwrap().is_none());
-    assert!(reg.build_buffer(&conf(json!({"memory": {}})), &ctx).unwrap().is_some());
-    let err = reg.build_buffer(&conf(json!({"disk": {}})), &ctx).err().unwrap();
-    assert!(err.to_string().ends_with("type 'disk' was not recognised as a buffer"), "{err}");
+    assert!(reg
+        .build_buffer(&conf(json!({"none": {}})), &ctx)
+        .unwrap()
+        .is_none());
+    assert!(reg
+        .build_buffer(&conf(json!({"memory": {}})), &ctx)
+        .unwrap()
+        .is_some());
+    let err = reg
+        .build_buffer(&conf(json!({"disk": {}})), &ctx)
+        .err()
+        .unwrap();
+    assert!(
+        err.to_string()
+            .ends_with("type 'disk' was not recognised as a buffer"),
+        "{err}"
+    );
     // A registered constructor's own refusal comes back unchanged.
     let err = reg
         .build_buffer(&conf(json!({"memory": {"limit": 0}})), &ctx)
@@ -390,7 +442,11 @@ async fn the_registry_builds_no_buffer_for_none_and_refuses_an_unknown_one() {
 // ---------- paging ----------
 
 fn procs_conf(v: serde_json::Value) -> Vec<ComponentConfig> {
-    v.as_array().unwrap().iter().map(|c| conf(c.clone())).collect()
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|c| conf(c.clone()))
+        .collect()
 }
 
 #[test]
@@ -497,13 +553,19 @@ async fn paged_execution_cuts_a_processor_without_pages_after_it_ran() {
     };
     let emitted = Arc::new(Mutex::new(Vec::new()));
     let sink = emitted.clone();
-    execute_paged(&ctx, &procs, parts(&["1", "2", "3", "4", "5"]), &paging, |b| {
-        let sink = sink.clone();
-        async move {
-            sink.lock().unwrap().push(b.len());
-            Ok(())
-        }
-    })
+    execute_paged(
+        &ctx,
+        &procs,
+        parts(&["1", "2", "3", "4", "5"]),
+        &paging,
+        |b| {
+            let sink = sink.clone();
+            async move {
+                sink.lock().unwrap().push(b.len());
+                Ok(())
+            }
+        },
+    )
     .await
     .unwrap();
     assert_eq!(*emitted.lock().unwrap(), [2, 2, 1]);
@@ -566,10 +628,18 @@ async fn try_all_skips_failed_batches_and_stops_once_nothing_is_left() {
     let out = execute_try_all(&ctx, &procs, vec![parts(&["ok"]), vec![errored("bad")]])
         .await
         .unwrap();
-    assert_eq!(out.iter().map(|b| texts(b)).collect::<Vec<_>>(), [vec!["ok!!".to_string()], vec!["bad".into()]]);
-    assert!(execute_try_all(&ctx, &procs, vec![]).await.unwrap().is_empty());
+    assert_eq!(
+        out.iter().map(|b| texts(b)).collect::<Vec<_>>(),
+        [vec!["ok!!".to_string()], vec!["bad".into()]]
+    );
+    assert!(execute_try_all(&ctx, &procs, vec![])
+        .await
+        .unwrap()
+        .is_empty());
     let failing: Vec<Arc<dyn Processor>> = vec![Arc::new(Boom)];
-    assert!(execute_try_all(&ctx, &failing, vec![parts(&["x"])]).await.is_err());
+    assert!(execute_try_all(&ctx, &failing, vec![parts(&["x"])])
+        .await
+        .is_err());
     let (stop, ctx) = proc_ctx();
     stop.send(true).unwrap();
     let closed = execute_try_all(&ctx, &procs, vec![parts(&["x"])]).await;
@@ -580,12 +650,23 @@ async fn try_all_skips_failed_batches_and_stops_once_nothing_is_left() {
 async fn catch_all_runs_only_on_batches_that_entered_failed() {
     let (_stop, ctx) = proc_ctx();
     let procs: Vec<Arc<dyn Processor>> = vec![Arc::new(Bang)];
-    let out = execute_catch_all(&ctx, &procs, vec![parts(&["ok"]), vec![errored("bad")], vec![]])
-        .await
-        .unwrap();
-    assert_eq!(out.iter().map(|b| texts(b)).collect::<Vec<_>>(), [vec!["ok".to_string()], vec!["bad!".into()], vec![]]);
+    let out = execute_catch_all(
+        &ctx,
+        &procs,
+        vec![parts(&["ok"]), vec![errored("bad")], vec![]],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out.iter().map(|b| texts(b)).collect::<Vec<_>>(),
+        [vec!["ok".to_string()], vec!["bad!".into()], vec![]]
+    );
     let failing: Vec<Arc<dyn Processor>> = vec![Arc::new(Boom)];
-    assert!(execute_catch_all(&ctx, &failing, vec![vec![errored("bad")]]).await.is_err());
+    assert!(
+        execute_catch_all(&ctx, &failing, vec![vec![errored("bad")]])
+            .await
+            .is_err()
+    );
     let (stop, ctx) = proc_ctx();
     stop.send(true).unwrap();
     let closed = execute_catch_all(&ctx, &procs, vec![vec![errored("bad")]]).await;
@@ -597,7 +678,10 @@ fn metric_paths_are_rooted_once() {
     assert_eq!(metric_path("root"), "root");
     assert_eq!(metric_path("root.pipeline"), "root.pipeline");
     assert_eq!(metric_path(""), "root");
-    assert_eq!(metric_path("pipeline.processors.0"), "root.pipeline.processors.0");
+    assert_eq!(
+        metric_path("pipeline.processors.0"),
+        "root.pipeline.processors.0"
+    );
 }
 
 #[tokio::test]
@@ -612,7 +696,11 @@ async fn an_observed_processor_counts_pages_and_refuses_paging_over_the_memory_q
         }),
         ctx.clone(),
     );
-    let pages: Vec<Batch> = observed.pages(&ctx, parts(&["a", "b"]), 3).ok().unwrap().collect();
+    let pages: Vec<Batch> = observed
+        .pages(&ctx, parts(&["a", "b"]), 3)
+        .ok()
+        .unwrap()
+        .collect();
     assert_eq!(pages.iter().map(Vec::len).collect::<Vec<_>>(), [3, 1]);
     let page = exporter.render(&|_| true);
     let line = |name: &str| {
@@ -626,7 +714,10 @@ async fn an_observed_processor_counts_pages_and_refuses_paging_over_the_memory_q
     assert_eq!(line("processor_batch_sent").as_deref(), Some("2"));
     // A processor without pages hands the batch back.
     let plain = ObservedProcessor::new(Arc::new(Bang), ctx.clone());
-    assert_eq!(plain.pages(&ctx, parts(&["a"]), 3).err().map(|b| b.len()), Some(1));
+    assert_eq!(
+        plain.pages(&ctx, parts(&["a"]), 3).err().map(|b| b.len()),
+        Some(1)
+    );
     // Over the organization's memory quota, the batch goes back to be refused by process_batch.
     ctx.org.set_quotas(OrgQuotas {
         max_memory_bytes_per_run: 1,
@@ -657,7 +748,10 @@ async fn a_split_batch_nack_maps_only_tracked_messages_back_to_the_source() {
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel(8);
     let run = tokio::spawn(async move { pool.run(in_rx, out_tx).await });
     let (ack, result) = AckResponder::channel();
-    in_tx.send(Transaction::new(parts(&["a", "b"]), ack)).await.unwrap();
+    in_tx
+        .send(Transaction::new(parts(&["a", "b"]), ack))
+        .await
+        .unwrap();
     drop(in_tx);
     let mut got = Vec::new();
     while let Some(tx) = out_rx.recv().await {
@@ -686,7 +780,11 @@ async fn a_batched_output_passes_identity_and_connection_through() {
     let (_stop, sctx) = stream_ctx();
     let inner = Arc::new(Collect::default());
     let policy = BatchPolicyConfig::from_json_value(&json!({"count": 2})).unwrap();
-    let batcher = Batcher::new(&policy, sctx.to_proc_context("collect", "", "output.batching")).unwrap();
+    let batcher = Batcher::new(
+        &policy,
+        sctx.to_proc_context("collect", "", "output.batching"),
+    )
+    .unwrap();
     let out = BatchedOutput::new(inner.clone(), batcher);
     assert_eq!((out.output_type(), out.label()), ("collect", "sink"));
     out.connect(&sctx).await.unwrap();
@@ -697,14 +795,20 @@ async fn a_batched_output_passes_identity_and_connection_through() {
     // A batching policy that batches nothing builds the plain output; a path outside `root.`
     // names its processors' context as given.
     let reg = Registry::new();
-    reg.register_output("collect", |_, _| Ok(Arc::new(Collect::default()) as Arc<dyn Output>));
+    reg.register_output("collect", |_, _| {
+        Ok(Arc::new(Collect::default()) as Arc<dyn Output>)
+    });
     reg.register_processor("bang", |_, _| Ok(Arc::new(Bang) as Arc<dyn Processor>));
     let plain = reg
         .build_output(&conf(json!({"collect": {"batching": {"count": 1}}})), &sctx)
         .unwrap();
     plain.write_batch(&sctx, parts(&["x"])).await.unwrap();
     let custom = reg
-        .build_output_at(&conf(json!({"collect": {}, "processors": [{"bang": {}}]})), &sctx, "output_resources.sink")
+        .build_output_at(
+            &conf(json!({"collect": {}, "processors": [{"bang": {}}]})),
+            &sctx,
+            "output_resources.sink",
+        )
         .unwrap();
     custom.write_batch(&sctx, parts(&["y"])).await.unwrap();
     assert!(inner.got.lock().unwrap().is_empty());
@@ -776,7 +880,10 @@ fn a_late_listener_admits_nothing_until_its_address_is_known() {
     let resources = ResourceManager::new().with_host_target(t.clone());
     let org = resources.get_or_create_org(&OrgId::new("o"));
     assert_eq!(org.host_target(), Some(&t));
-    assert_eq!(OrgContext::new(OrgId::new("p"), OrgQuotas::default()).host_target(), None);
+    assert_eq!(
+        OrgContext::new(OrgId::new("p"), OrgQuotas::default()).host_target(),
+        None
+    );
 }
 
 #[test]
@@ -787,9 +894,15 @@ fn scoped_secrets_reach_only_streams_of_their_scope_and_the_org_wins_a_shared_na
     org.replace_scoped_secrets(HashMap::from([
         (
             "team".to_string(),
-            HashMap::from([("SHARED".to_string(), "team".to_string()), ("TEAM_ONLY".to_string(), "t".to_string())]),
+            HashMap::from([
+                ("SHARED".to_string(), "team".to_string()),
+                ("TEAM_ONLY".to_string(), "t".to_string()),
+            ]),
         ),
-        ("other".to_string(), HashMap::from([("OTHER".to_string(), "x".to_string())])),
+        (
+            "other".to_string(),
+            HashMap::from([("OTHER".to_string(), "x".to_string())]),
+        ),
     ]));
     let team = org.secrets_snapshot_for("team.ingest");
     assert_eq!(team.get("SHARED").map(String::as_str), Some("org"));
@@ -798,7 +911,10 @@ fn scoped_secrets_reach_only_streams_of_their_scope_and_the_org_wins_a_shared_na
     // A stream id without a scope, or of an unknown scope, sees the organization's alone.
     assert_eq!(org.secrets_snapshot_for("plain"), org.secrets_snapshot());
     assert_eq!(org.secrets_snapshot_for("nobody.s"), org.secrets_snapshot());
-    assert_eq!(org.resolve_scoped_secret("team", "SHARED").as_deref(), Some("team"));
+    assert_eq!(
+        org.resolve_scoped_secret("team", "SHARED").as_deref(),
+        Some("team")
+    );
     assert_eq!(org.resolve_scoped_secret("team", "ORG_ONLY"), None);
     assert_eq!(org.resolve_scoped_secret("ghost", "SHARED"), None);
     // Replacing the scopes drops a scope left out.
@@ -820,7 +936,11 @@ fn an_exact_http_host_allow_list_entry_matches_only_that_host() {
     assert!(org.check_http_host("API.example.org").is_ok());
     assert!(org.check_http_host("x.data.example").is_ok());
     assert!(org.check_http_host("data.example").is_ok());
-    for refused in ["evil.api.example.org", "example.org", "api.example.org.evil"] {
+    for refused in [
+        "evil.api.example.org",
+        "example.org",
+        "api.example.org.evil",
+    ] {
         assert!(org.check_http_host(refused).is_err(), "{refused}");
     }
 }
@@ -852,7 +972,9 @@ fn ambiguous_component_keys_stay_ambiguous_unless_one_is_known() {
     let v = json!({"kafka": {}, "amqp": {}});
     // Two known candidates: the type is not guessed.
     assert!(ComponentConfig::from_json_value(&v, "noop", Some(&known)).is_err());
-    let one = ComponentConfig::from_json_value(&json!({"kafka": {}, "typo": {}}), "noop", Some(&known)).unwrap();
+    let one =
+        ComponentConfig::from_json_value(&json!({"kafka": {}, "typo": {}}), "noop", Some(&known))
+            .unwrap();
     assert_eq!(one.component_type, "kafka");
 }
 
@@ -865,20 +987,36 @@ fn backoff_reads_every_interval_and_refuses_a_bad_duration() {
     .unwrap();
     assert_eq!(
         (b.initial_interval, b.max_interval, b.max_elapsed_time),
-        (Duration::from_secs(1), Duration::from_secs(4), Duration::from_secs(60))
+        (
+            Duration::from_secs(1),
+            Duration::from_secs(4),
+            Duration::from_secs(60)
+        )
     );
     for key in ["initial_interval", "max_interval", "max_elapsed_time"] {
-        assert!(BackoffConfig::from_json_value(&json!({ key: "soon" }), Duration::ZERO).is_err(), "{key}");
+        assert!(
+            BackoffConfig::from_json_value(&json!({ key: "soon" }), Duration::ZERO).is_err(),
+            "{key}"
+        );
     }
-    let only_initial = BackoffConfig::from_json_value(&json!({"initial_interval": "2s"}), Duration::from_secs(3)).unwrap();
-    assert_eq!((only_initial.initial_interval, only_initial.max_elapsed_time), (Duration::from_secs(2), Duration::from_secs(3)));
-    let d = BackoffConfig::from_json_value(&json!("not an object"), Duration::from_secs(9)).unwrap();
+    let only_initial =
+        BackoffConfig::from_json_value(&json!({"initial_interval": "2s"}), Duration::from_secs(3))
+            .unwrap();
+    assert_eq!(
+        (only_initial.initial_interval, only_initial.max_elapsed_time),
+        (Duration::from_secs(2), Duration::from_secs(3))
+    );
+    let d =
+        BackoffConfig::from_json_value(&json!("not an object"), Duration::from_secs(9)).unwrap();
     assert_eq!(d.max_elapsed_time, Duration::from_secs(9));
 }
 
 #[test]
 fn a_stream_without_pipeline_processors_and_a_filter_without_prefixes_parse() {
-    let s = StreamConfig::from_yaml_or_json("input: {generate: {}}\npipeline: {threads: 2}\noutput: {drop: {}}\n").unwrap();
+    let s = StreamConfig::from_yaml_or_json(
+        "input: {generate: {}}\npipeline: {threads: 2}\noutput: {drop: {}}\n",
+    )
+    .unwrap();
     assert_eq!(s.pipeline.threads, 2);
     assert!(s.pipeline.processors.is_empty());
     let f = extract_metadata_filter(&json!({"include_patterns": ["^k", "("]}));
@@ -893,7 +1031,10 @@ fn a_stream_without_pipeline_processors_and_a_filter_without_prefixes_parse() {
 #[test]
 fn interpolation_keeps_bloblang_and_escapes_and_lists_each_missing_name_once() {
     let none = |_: &str| None::<String>;
-    assert_eq!(interpolate_env_str("${{!meta(\"k\")}}", none).unwrap(), "${{!meta(\"k\")}}");
+    assert_eq!(
+        interpolate_env_str("${{!meta(\"k\")}}", none).unwrap(),
+        "${{!meta(\"k\")}}"
+    );
     // Unterminated forms pass through unchanged.
     assert_eq!(interpolate_env_str("${{!open", none).unwrap(), "${{!open");
     assert_eq!(interpolate_env_str("${{open", none).unwrap(), "${{open");
@@ -901,14 +1042,23 @@ fn interpolation_keeps_bloblang_and_escapes_and_lists_each_missing_name_once() {
     // Quotes, escaped quotes and nested braces inside a Bloblang query.
     let q = r#"${! "a\"}b" + {"k": 1}.k }"#;
     assert_eq!(interpolate_env_str(q, none).unwrap(), q);
-    assert_eq!(interpolate_env_str(r#"${! "a\\" }"#, none).unwrap(), r#"${! "a\\" }"#);
+    assert_eq!(
+        interpolate_env_str(r#"${! "a\\" }"#, none).unwrap(),
+        r#"${! "a\\" }"#
+    );
     // Names that are not environment variable names are left as text.
-    assert_eq!(interpolate_env_str("${} ${1A} ${a-b}", none).unwrap(), "${} ${1A} ${a-b}");
+    assert_eq!(
+        interpolate_env_str("${} ${1A} ${a-b}", none).unwrap(),
+        "${} ${1A} ${a-b}"
+    );
     let err = interpolate_env_str("${MISSING} and ${MISSING} and ${OTHER}", none).unwrap_err();
     assert_eq!(err.missing, ["MISSING", "OTHER"]);
     assert_eq!(err.best_attempt, " and  and ");
     assert_eq!(interpolate_env_str("${X:def}", none).unwrap(), "def");
-    assert_eq!(interpolate_env_str("é${X}ü", |_| Some("1".into())).unwrap(), "é1ü");
+    assert_eq!(
+        interpolate_env_str("é${X}ü", |_| Some("1".into())).unwrap(),
+        "é1ü"
+    );
 }
 
 // ---------- redaction ----------
@@ -916,9 +1066,15 @@ fn interpolation_keeps_bloblang_and_escapes_and_lists_each_missing_name_once() {
 #[test]
 fn urls_that_do_not_parse_still_lose_their_password() {
     assert_eq!(redact_url_str("https://host/path"), "https://host/path");
-    assert_eq!(redact_url_str("${SCHEME}://user:secret@host/db"), "${SCHEME}://user:REDACTED@host/db");
+    assert_eq!(
+        redact_url_str("${SCHEME}://user:secret@host/db"),
+        "${SCHEME}://user:REDACTED@host/db"
+    );
     // A password holding `@` loses all of it, as Go splits userinfo at the last `@`.
-    assert_eq!(redact_url_str("${S}://u:p@ss@host"), "${S}://u:REDACTED@host");
+    assert_eq!(
+        redact_url_str("${S}://u:p@ss@host"),
+        "${S}://u:REDACTED@host"
+    );
     assert_eq!(redact_url_str("${S}://token@host"), "${S}://token@host");
     assert_eq!(redact_url_str("${S}://host/a@b"), "${S}://host/a@b");
     assert_eq!(redact_url_str("no scheme at all"), "no scheme at all");
@@ -942,17 +1098,29 @@ fn secret_fields_redact_strings_keep_empties_and_walk_nested_values() {
 
 #[test]
 fn lint_fields_lists_unknown_and_missing_fields() {
-    let errs = lint_fields(&json!({"url": "x", "typo": 1}), &["url", "topic"], &["topic"]);
-    assert_eq!(errs, ["field typo not recognised", "field topic is required"]);
+    let errs = lint_fields(
+        &json!({"url": "x", "typo": 1}),
+        &["url", "topic"],
+        &["topic"],
+    );
+    assert_eq!(
+        errs,
+        ["field typo not recognised", "field topic is required"]
+    );
     assert!(lint_fields(&json!({"url": "x"}), &["url"], &[]).is_empty());
-    assert_eq!(lint_fields(&json!("x"), &[], &[]), ["expected object value"]);
+    assert_eq!(
+        lint_fields(&json!("x"), &[], &[]),
+        ["expected object value"]
+    );
 }
 
 #[test]
 fn stream_lint_reports_unknown_kinds_registered_rules_and_nested_processors() {
     let reg = Registry::new();
     reg.register_input("generate", |_, _| unreachable_input());
-    reg.register_output("drop", |_, _| Ok(Arc::new(Collect::default()) as Arc<dyn Output>));
+    reg.register_output("drop", |_, _| {
+        Ok(Arc::new(Collect::default()) as Arc<dyn Output>)
+    });
     for name in ["mapping", "branch", "catch", "try", "noop"] {
         reg.register_processor(name, |_, _| Ok(Arc::new(Bang) as Arc<dyn Processor>));
     }
@@ -1006,9 +1174,13 @@ output:
     ] {
         assert!(text.contains(want), "{want} missing from {text}");
     }
-    let unknown = StreamConfig::from_yaml_or_json("input: {nope: {}}\noutput: {drop: \"x\"}\n").unwrap();
+    let unknown =
+        StreamConfig::from_yaml_or_json("input: {nope: {}}\noutput: {drop: \"x\"}\n").unwrap();
     let text = format!("{:?}", reg.lint_stream_config(&unknown, Vec::new()));
-    assert!(text.contains("input: type 'nope' was not recognised"), "{text}");
+    assert!(
+        text.contains("input: type 'nope' was not recognised"),
+        "{text}"
+    );
 }
 
 fn unreachable_input() -> Result<Box<dyn Input>, CoreError> {
@@ -1018,7 +1190,9 @@ fn unreachable_input() -> Result<Box<dyn Input>, CoreError> {
 #[tokio::test]
 async fn children_built_by_composite_outputs_get_bento_paths() {
     let reg = Arc::new(Registry::new());
-    reg.register_output("collect", |_, _| Ok(Arc::new(Collect::default()) as Arc<dyn Output>));
+    reg.register_output("collect", |_, _| {
+        Ok(Arc::new(Collect::default()) as Arc<dyn Output>)
+    });
     for kind in ["fallback", "switch", "retry", "broker"] {
         reg.register_output(kind, |c, ctx| {
             let child = conf(json!({"collect": {}}));
@@ -1093,7 +1267,10 @@ fn a_part_moves_between_bytes_and_structured_values() {
     assert!(e.as_bytes_ref().is_empty());
     assert_eq!(e.size_estimate(), 2);
     assert!(PartsView(std::slice::from_ref(&e)).part_bytes(0).is_empty());
-    assert_eq!(Part::from_str("[1]").as_structured().unwrap(), Part::from_str("[1]").as_structured_ref().unwrap());
+    assert_eq!(
+        Part::from_str("[1]").as_structured().unwrap(),
+        Part::from_str("[1]").as_structured_ref().unwrap()
+    );
     let mut twice = Part::from_str("5");
     twice.as_structured().unwrap();
     assert_eq!(twice.as_structured().unwrap(), Value::Int(5));
@@ -1113,12 +1290,24 @@ fn a_part_moves_between_bytes_and_structured_values() {
 
 #[test]
 fn structured_reads_refuse_empty_missing_and_multi_document_parts() {
-    assert_eq!(Part::new(Vec::<u8>::new()).as_structured_ref().unwrap_err(), "target message part does not exist");
-    assert_eq!(Part::from_str("   ").as_structured_ref().unwrap_err(), "EOF");
-    assert_eq!(Part::from_str("1 2").as_structured_ref().unwrap_err(), "message contains multiple valid documents");
+    assert_eq!(
+        Part::new(Vec::<u8>::new()).as_structured_ref().unwrap_err(),
+        "target message part does not exist"
+    );
+    assert_eq!(
+        Part::from_str("   ").as_structured_ref().unwrap_err(),
+        "EOF"
+    );
+    assert_eq!(
+        Part::from_str("1 2").as_structured_ref().unwrap_err(),
+        "message contains multiple valid documents"
+    );
     assert!(Part::from_str("1 }").as_structured_ref().is_err());
     assert!(Part::from_str("{").as_structured_ref().is_err());
-    assert_eq!(Part::from_str("[1]").as_structured_ref().unwrap(), Value::Array(vec![Value::Int(1)].into()));
+    assert_eq!(
+        Part::from_str("[1]").as_structured_ref().unwrap(),
+        Value::Array(vec![Value::Int(1)].into())
+    );
 }
 
 #[test]
@@ -1129,7 +1318,10 @@ fn size_estimates_cover_every_value_kind() {
     assert_eq!(size(Value::Number("1.50".into())), 4);
     // Bytes set as a structured value become raw bytes; inside an array they are estimated.
     assert_eq!(size(Value::Bytes(b"abc".to_vec())), 3);
-    assert_eq!(size(Value::Array(vec![Value::Bytes(b"abc".to_vec())].into())), 5 + 1 + 2);
+    assert_eq!(
+        size(Value::Array(vec![Value::Bytes(b"abc".to_vec())].into())),
+        5 + 1 + 2
+    );
     assert_eq!(size(Value::String("abc".into())), 5);
     assert_eq!(size(Value::Float(1.0)), 24);
 }
@@ -1146,7 +1338,10 @@ fn a_parts_view_reads_structured_parts_as_bytes_and_out_of_range_as_empty() {
 #[test]
 fn malformed_wire_batches_are_refused() {
     let good = ekiben_core::serialize_bytes(&[b"ab", b""]);
-    assert_eq!(deserialize_bytes(&good).unwrap(), [b"ab".to_vec(), Vec::new()]);
+    assert_eq!(
+        deserialize_bytes(&good).unwrap(),
+        [b"ab".to_vec(), Vec::new()]
+    );
     for bad in [
         &[0u8, 0, 1][..],
         &[0, 0, 0, 9, 0][..],
@@ -1164,14 +1359,27 @@ fn malformed_wire_batches_are_refused() {
 #[test]
 fn walking_a_batch_error_skips_foreign_parts_and_stops_when_asked() {
     let (group, source) = SortGroup::new(parts(&["a", "b", "c"]));
-    let mut err = BatchError::new(vec![source[0].clone(), Part::from_str("foreign"), source[2].clone()], "all failed");
+    let mut err = BatchError::new(
+        vec![
+            source[0].clone(),
+            Part::from_str("foreign"),
+            source[2].clone(),
+        ],
+        "all failed",
+    );
     let mut seen = Vec::new();
     err.walk_parts_by_source(&group, &source, |i, _, e| {
         seen.push((i, e.map(String::from)));
         true
     });
     // No per-part errors: each part carries the batch message.
-    assert_eq!(seen, [(0, Some("all failed".to_string())), (2, Some("all failed".into()))]);
+    assert_eq!(
+        seen,
+        [
+            (0, Some("all failed".to_string())),
+            (2, Some("all failed".into()))
+        ]
+    );
     err.failed(0, "first").failed(99, "out of range");
     assert_eq!(err.indexed_errors(), 1);
     let mut first_only = Vec::new();
@@ -1193,12 +1401,16 @@ fn walking_a_batch_error_skips_foreign_parts_and_stops_when_asked() {
 fn a_tracked_transaction_resolves_by_its_error_kind() {
     let log = AckLog::default();
     TrackedTransaction::new(parts(&["a"]), logged(&log)).resolve(None);
-    TrackedTransaction::new(parts(&["a"]), logged(&log)).resolve(Some(BatchError::new(parts(&["a"]), "whole")));
+    TrackedTransaction::new(parts(&["a"]), logged(&log))
+        .resolve(Some(BatchError::new(parts(&["a"]), "whole")));
     // Per-part errors naming no message of this transaction nack it with the batch error.
     let mut foreign = BatchError::new(parts(&["z", "y"]), "foreign");
     foreign.failed(1, "y failed");
     TrackedTransaction::new(parts(&["a"]), logged(&log)).resolve(Some(foreign));
-    assert_eq!(*log.lock().unwrap(), [None, Some("whole".to_string()), Some("foreign".into())]);
+    assert_eq!(
+        *log.lock().unwrap(),
+        [None, Some("whole".to_string()), Some("foreign".into())]
+    );
 }
 
 #[test]
@@ -1245,7 +1457,10 @@ fn stream_metrics_charge_time_and_count_errors_per_processor_path() {
     assert!(snap.to_string().contains("t0"));
     // The per-path error counters are capped too: a path past the cap is not counted.
     for i in 0..4100 {
-        m.register_processor_error(&format!("p{i}"), Namespaced::bare(exporter.clone()).counter("e"));
+        m.register_processor_error(
+            &format!("p{i}"),
+            Namespaced::bare(exporter.clone()).counter("e"),
+        );
     }
     let late = Namespaced::bare(exporter.clone()).counter("late_error");
     m.register_processor_error("p-late", late.clone());
@@ -1301,22 +1516,57 @@ fn metrics_config_refuses_wrong_types_and_reads_string_forms() {
     assert_eq!(ok.max_series, 10);
     assert_eq!(ok.histogram_buckets, [0.1, 0.5]);
     assert_eq!(ok.summary_quantiles, [0.5, 0.9]);
-    assert_eq!(MetricsConfig::from_json(&json!(null)).unwrap(), MetricsConfig::default());
-    assert_eq!(MetricsConfig::from_json(&json!({"prometheus": null})).unwrap(), MetricsConfig::default());
-    let empty_q = MetricsConfig::from_json(&json!({"prometheus": {"summary_quantiles_objectives": []}})).unwrap();
-    assert_eq!(empty_q.summary_quantiles, MetricsConfig::default().summary_quantiles);
+    assert_eq!(
+        MetricsConfig::from_json(&json!(null)).unwrap(),
+        MetricsConfig::default()
+    );
+    assert_eq!(
+        MetricsConfig::from_json(&json!({"prometheus": null})).unwrap(),
+        MetricsConfig::default()
+    );
+    let empty_q =
+        MetricsConfig::from_json(&json!({"prometheus": {"summary_quantiles_objectives": []}}))
+            .unwrap();
+    assert_eq!(
+        empty_q.summary_quantiles,
+        MetricsConfig::default().summary_quantiles
+    );
     for (bad, want) in [
         (json!("prometheus"), "expected an object"),
         (json!({"type": "statsd"}), "only the prometheus exporter"),
         (json!({"mapping": 3}), "metrics.mapping: expected a string"),
-        (json!({"max_series": "many"}), "max_series: expected a number"),
-        (json!({"prometheus": []}), "metrics.prometheus: expected an object"),
-        (json!({"prometheus": {"use_histogram_timing": "yes"}}), "expected a boolean"),
-        (json!({"prometheus": {"push_interval": 5}}), "not supported by ekiben"),
-        (json!({"prometheus": {"push_basic_auth": {"username": "u"}}}), "not supported by ekiben"),
-        (json!({"prometheus": {"histogram_buckets": "0.1"}}), "expected a list of numbers"),
-        (json!({"prometheus": {"histogram_buckets": ["x"]}}), "is not a finite number"),
-        (json!({"prometheus": {"summary_quantiles_objectives": [{"quantile": 1.5}]}}), "outside 0..1"),
+        (
+            json!({"max_series": "many"}),
+            "max_series: expected a number",
+        ),
+        (
+            json!({"prometheus": []}),
+            "metrics.prometheus: expected an object",
+        ),
+        (
+            json!({"prometheus": {"use_histogram_timing": "yes"}}),
+            "expected a boolean",
+        ),
+        (
+            json!({"prometheus": {"push_interval": 5}}),
+            "not supported by ekiben",
+        ),
+        (
+            json!({"prometheus": {"push_basic_auth": {"username": "u"}}}),
+            "not supported by ekiben",
+        ),
+        (
+            json!({"prometheus": {"histogram_buckets": "0.1"}}),
+            "expected a list of numbers",
+        ),
+        (
+            json!({"prometheus": {"histogram_buckets": ["x"]}}),
+            "is not a finite number",
+        ),
+        (
+            json!({"prometheus": {"summary_quantiles_objectives": [{"quantile": 1.5}]}}),
+            "outside 0..1",
+        ),
     ] {
         let err = MetricsConfig::from_json(&bad).unwrap_err().to_string();
         assert!(err.contains(want), "{bad}: {err}");
@@ -1325,7 +1575,10 @@ fn metrics_config_refuses_wrong_types_and_reads_string_forms() {
 
 #[test]
 fn custom_buckets_and_overflowing_observations_render_in_a_histogram() {
-    let conf = MetricsConfig::from_json(&json!({"prometheus": {"use_histogram_timing": true, "histogram_buckets": [0.001]}})).unwrap();
+    let conf = MetricsConfig::from_json(
+        &json!({"prometheus": {"use_histogram_timing": true, "histogram_buckets": [0.001]}}),
+    )
+    .unwrap();
     let exporter = Arc::new(PromExporter::new(conf).unwrap());
     let t = Namespaced::bare(exporter.clone()).timer("lat");
     t.timing(500);
@@ -1344,7 +1597,13 @@ fn a_summary_keeps_its_count_past_the_reservoir() {
         t.timing(i);
     }
     let page = exporter.render(&|_| true);
-    assert!(page.contains(&format!("lat_count {}", ekiben_core::prometheus::SUMMARY_RESERVOIR_SIZE + 10)), "{page}");
+    assert!(
+        page.contains(&format!(
+            "lat_count {}",
+            ekiben_core::prometheus::SUMMARY_RESERVOIR_SIZE + 10
+        )),
+        "{page}"
+    );
 }
 
 #[test]
@@ -1402,10 +1661,16 @@ fn gauges_counters_and_vectors_ignore_wrong_kinds_and_invalid_input() {
 
 #[test]
 fn process_metrics_render_from_proc_when_asked() {
-    let conf = MetricsConfig::from_json(&json!({"prometheus": {"add_process_metrics": true}})).unwrap();
+    let conf =
+        MetricsConfig::from_json(&json!({"prometheus": {"add_process_metrics": true}})).unwrap();
     let exporter = PromExporter::new(conf).unwrap();
     let page = exporter.render(&|_| true);
-    for want in ["process_resident_memory_bytes", "process_virtual_memory_bytes", "process_cpu_seconds_total", "process_open_fds"] {
+    for want in [
+        "process_resident_memory_bytes",
+        "process_virtual_memory_bytes",
+        "process_cpu_seconds_total",
+        "process_open_fds",
+    ] {
         assert!(page.contains(want), "{want} missing:\n{page}");
     }
     // An organization's view holds no process-wide series.

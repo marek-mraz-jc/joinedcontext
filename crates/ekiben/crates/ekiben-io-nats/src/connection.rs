@@ -531,13 +531,22 @@ mod tests {
             None,
         );
         let text = format!("{c:?}");
-        assert!(text.contains("NatsConnectionDetails") && text.contains("\"t\""), "{text}");
-        assert!(!text.contains(&seed) && !text.contains("jwt-text"), "{text}");
+        assert!(
+            text.contains("NatsConnectionDetails") && text.contains("\"t\""),
+            "{text}"
+        );
+        assert!(
+            !text.contains(&seed) && !text.contains("jwt-text"),
+            "{text}"
+        );
     }
 
     #[test]
     fn urls_split_on_commas_and_an_empty_list_is_refused() {
-        let c = conn(serde_json::json!({"urls": " nats://a:1, ,nats://b:2 "}), None);
+        let c = conn(
+            serde_json::json!({"urls": " nats://a:1, ,nats://b:2 "}),
+            None,
+        );
         assert_eq!(c.urls, ["nats://a:1", "nats://b:2"]);
         let c = conn(serde_json::json!({"urls": ["nats://a:1", "  "]}), None);
         assert_eq!(c.urls, ["nats://a:1"]);
@@ -549,25 +558,45 @@ mod tests {
             let err = NatsConnectionDetails::from_json(&bad, org(), None).unwrap_err();
             assert!(err.to_string().contains("at least one URL"), "{bad}");
         }
-        let err = NatsConnectionDetails::from_json(&serde_json::json!("nats://a"), org(), None).unwrap_err();
+        let err = NatsConnectionDetails::from_json(&serde_json::json!("nats://a"), org(), None)
+            .unwrap_err();
         assert!(err.to_string().contains("must be an object"));
     }
 
     #[test]
     fn jwt_auth_needs_both_halves_and_a_valid_seed() {
         let err = |auth: serde_json::Value| {
-            NatsConnectionDetails::from_json(&serde_json::json!({"urls": ["nats://h"], "auth": auth}), org(), None)
-                .unwrap_err()
-                .to_string()
+            NatsConnectionDetails::from_json(
+                &serde_json::json!({"urls": ["nats://h"], "auth": auth}),
+                org(),
+                None,
+            )
+            .unwrap_err()
+            .to_string()
         };
         assert!(err(serde_json::json!({"user_jwt": "j"})).contains("missing auth.user_nkey_seed"));
-        assert!(err(serde_json::json!({"user_jwt": "j", "user_nkey_seed": ""})).contains("missing auth.user_nkey_seed"));
+        assert!(
+            err(serde_json::json!({"user_jwt": "j", "user_nkey_seed": ""}))
+                .contains("missing auth.user_nkey_seed")
+        );
         assert!(err(serde_json::json!({"user_nkey_seed": "S"})).contains("missing auth.user_jwt"));
-        assert!(err(serde_json::json!({"user_jwt": "", "user_nkey_seed": "S"})).contains("missing auth.user_jwt"));
-        assert!(err(serde_json::json!({"user_jwt": "j", "user_nkey_seed": "not-a-seed"})).contains("invalid NATS auth.user_nkey_seed"));
+        assert!(
+            err(serde_json::json!({"user_jwt": "", "user_nkey_seed": "S"}))
+                .contains("missing auth.user_jwt")
+        );
+        assert!(
+            err(serde_json::json!({"user_jwt": "j", "user_nkey_seed": "not-a-seed"}))
+                .contains("invalid NATS auth.user_nkey_seed")
+        );
         let seed = nkeys::KeyPair::new_user().seed().unwrap();
-        let ok = conn(serde_json::json!({"urls": ["nats://h"], "auth": {"user_jwt": "j", "user_nkey_seed": seed}}), None);
-        assert_eq!(ok.auth.user_jwt.as_ref().map(SecretString::expose), Some("j"));
+        let ok = conn(
+            serde_json::json!({"urls": ["nats://h"], "auth": {"user_jwt": "j", "user_nkey_seed": seed}}),
+            None,
+        );
+        assert_eq!(
+            ok.auth.user_jwt.as_ref().map(SecretString::expose),
+            Some("j")
+        );
     }
 
     #[test]
@@ -601,15 +630,34 @@ mod tests {
 
     #[test]
     fn tls_reports_unreadable_and_invalid_certificates() {
-        let msg = |v: serde_json::Value| tls(v).and_then(|c| c.tls.client_config().map(|_| ())).unwrap_err().to_string();
-        assert!(msg(serde_json::json!({"enabled": true, "root_cas_file": "/nonexistent/ca.pem"})).contains("failed to read tls.root_cas_file"));
-        assert!(msg(serde_json::json!({"client_certs": ["not an object"]})).contains("tls.client_certs[0] must be an object"));
+        let msg = |v: serde_json::Value| {
+            tls(v)
+                .and_then(|c| c.tls.client_config().map(|_| ()))
+                .unwrap_err()
+                .to_string()
+        };
+        assert!(
+            msg(serde_json::json!({"enabled": true, "root_cas_file": "/nonexistent/ca.pem"}))
+                .contains("failed to read tls.root_cas_file")
+        );
+        assert!(msg(serde_json::json!({"client_certs": ["not an object"]}))
+            .contains("tls.client_certs[0] must be an object"));
         let garbage = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
-        assert!(msg(serde_json::json!({"enabled": true, "root_cas": garbage})).contains("tls root CA refused"));
+        assert!(
+            msg(serde_json::json!({"enabled": true, "root_cas": garbage}))
+                .contains("tls root CA refused")
+        );
         let broken = "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
-        assert!(msg(serde_json::json!({"enabled": true, "root_cas": broken})).contains("tls root CA is not valid PEM"));
+        assert!(
+            msg(serde_json::json!({"enabled": true, "root_cas": broken}))
+                .contains("tls root CA is not valid PEM")
+        );
         // Without a custom CA the platform's roots are used (or an error says none were found).
-        match tls(serde_json::json!({"enabled": true})).unwrap().tls.client_config() {
+        match tls(serde_json::json!({"enabled": true}))
+            .unwrap()
+            .tls
+            .client_config()
+        {
             Ok(_) => {}
             Err(e) => assert!(e.to_string().contains("root"), "{e}"),
         }
@@ -628,9 +676,15 @@ mod tests {
                 .client_config()
         };
         assert!(client(&cert, &key).is_ok());
-        let err = |r: Result<async_nats::rustls::ClientConfig, CoreError>| r.unwrap_err().to_string();
-        assert!(err(client("-----BEGIN CERTIFICATE-----\n!!\n-----END CERTIFICATE-----\n", &key)).contains("tls client cert is not valid PEM"));
-        assert!(err(client(&cert, "not a key")).contains("tls client key is not a valid PEM private key"));
+        let err =
+            |r: Result<async_nats::rustls::ClientConfig, CoreError>| r.unwrap_err().to_string();
+        assert!(err(client(
+            "-----BEGIN CERTIFICATE-----\n!!\n-----END CERTIFICATE-----\n",
+            &key
+        ))
+        .contains("tls client cert is not valid PEM"));
+        assert!(err(client(&cert, "not a key"))
+            .contains("tls client key is not a valid PEM private key"));
         // A key that does not belong to the certificate is refused by rustls.
         let (_, other_key) = self_signed().unwrap();
         assert!(err(client(&cert, &other_key)).contains("tls client certificate refused"));
@@ -644,11 +698,28 @@ mod tests {
 
     /// A self-signed certificate and its PKCS#8 key, made by the openssl CLI.
     fn self_signed() -> Option<(String, String)> {
-        let dir = std::env::temp_dir().join(format!("ekiben-nats-tls-{}-{}", std::process::id(), uuid_like()));
+        let dir = std::env::temp_dir().join(format!(
+            "ekiben-nats-tls-{}-{}",
+            std::process::id(),
+            uuid_like()
+        ));
         std::fs::create_dir_all(&dir).ok()?;
         let (c, k) = (dir.join("c.pem"), dir.join("k.pem"));
         let ok = std::process::Command::new("openssl")
-            .args(["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-days", "1", "-subj", "/CN=localhost", "-keyout"])
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "ec",
+                "-pkeyopt",
+                "ec_paramgen_curve:prime256v1",
+                "-nodes",
+                "-days",
+                "1",
+                "-subj",
+                "/CN=localhost",
+                "-keyout",
+            ])
             .arg(&k)
             .arg("-out")
             .arg(&c)
@@ -656,7 +727,14 @@ mod tests {
             .ok()?
             .status
             .success();
-        let pair = ok.then(|| Some((std::fs::read_to_string(&c).ok()?, std::fs::read_to_string(&k).ok()?))).flatten();
+        let pair = ok
+            .then(|| {
+                Some((
+                    std::fs::read_to_string(&c).ok()?,
+                    std::fs::read_to_string(&k).ok()?,
+                ))
+            })
+            .flatten();
         let _ = std::fs::remove_dir_all(&dir);
         pair
     }
@@ -669,11 +747,32 @@ mod tests {
 
     #[tokio::test]
     async fn unreadable_auth_files_and_bad_urls_fail_before_dialing() {
-        let creds = conn(serde_json::json!({"urls": ["nats://8.8.8.8"], "auth": {"user_credentials_file": "/nonexistent/x.creds"}}), None);
-        assert!(creds.connect_live("t").await.unwrap_err().to_string().contains("credentials_file error"));
-        let nkey = conn(serde_json::json!({"urls": ["nats://8.8.8.8"], "auth": {"nkey_file": "/nonexistent/x.nk"}}), None);
-        assert!(nkey.connect_live("t").await.unwrap_err().to_string().contains("failed to read nkey_file"));
+        let creds = conn(
+            serde_json::json!({"urls": ["nats://8.8.8.8"], "auth": {"user_credentials_file": "/nonexistent/x.creds"}}),
+            None,
+        );
+        assert!(creds
+            .connect_live("t")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("credentials_file error"));
+        let nkey = conn(
+            serde_json::json!({"urls": ["nats://8.8.8.8"], "auth": {"nkey_file": "/nonexistent/x.nk"}}),
+            None,
+        );
+        assert!(nkey
+            .connect_live("t")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("failed to read nkey_file"));
         let bad = conn(serde_json::json!({"urls": ["nats://[::1"]}), None);
-        assert!(bad.checked_server_addrs().await.unwrap_err().to_string().contains("invalid NATS URL"));
+        assert!(bad
+            .checked_server_addrs()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("invalid NATS URL"));
     }
 }

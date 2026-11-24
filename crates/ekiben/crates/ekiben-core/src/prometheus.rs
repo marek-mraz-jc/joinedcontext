@@ -339,9 +339,11 @@ impl AtomicF64 {
     }
 
     fn add(&self, delta: f64) {
-        let _ = self.0.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
-            Some((f64::from_bits(cur) + delta).to_bits())
-        });
+        let _ = self
+            .0
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+                Some((f64::from_bits(cur) + delta).to_bits())
+            });
     }
 }
 

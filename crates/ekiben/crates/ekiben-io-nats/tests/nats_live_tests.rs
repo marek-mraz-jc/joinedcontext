@@ -478,14 +478,30 @@ async fn jetstream_connect_names_what_is_missing_and_reads_existing_consumer_fil
         let (reg, sctx) = (reg.clone(), sctx.clone());
         async move {
             let mut i = reg.build_input(&conf(v), &sctx).unwrap();
-            i.connect(&sctx).await.err().map(|e| e.to_string()).unwrap_or_default()
+            i.connect(&sctx)
+                .await
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
         }
     };
-    let err = connect_err(serde_json::json!({"nats_jetstream": {"urls": [srv.url], "subject": "org_a.none"}})).await;
-    assert!(err.contains("no JetStream stream holds subject 'org_a.none'"), "{err}");
+    let err = connect_err(
+        serde_json::json!({"nats_jetstream": {"urls": [srv.url], "subject": "org_a.none"}}),
+    )
+    .await;
+    assert!(
+        err.contains("no JetStream stream holds subject 'org_a.none'"),
+        "{err}"
+    );
     let err = connect_err(serde_json::json!({"nats_jetstream": {"urls": [srv.url], "subject": "org_a.x", "stream": "NOPE"}})).await;
-    assert!(err.contains("failed to open JetStream stream 'NOPE'"), "{err}");
-    let err = connect_err(serde_json::json!({"nats_jetstream": {"urls": [srv.url], "bind": true, "durable": "d"}})).await;
+    assert!(
+        err.contains("failed to open JetStream stream 'NOPE'"),
+        "{err}"
+    );
+    let err = connect_err(
+        serde_json::json!({"nats_jetstream": {"urls": [srv.url], "bind": true, "durable": "d"}}),
+    )
+    .await;
     assert!(err.contains("bind with only durable"), "{err}");
     add_stream(&srv.url, "MULTI", &["org_a.m.>"]).await;
     let stream = js(&srv.url).await.get_stream("MULTI").await.unwrap();
@@ -587,7 +603,9 @@ async fn core_nats_input_and_output_on_a_live_server() {
                 &sctx,
             )
             .unwrap();
-        o.write_batch(&sctx, vec![Part::from_str("a")]).await.unwrap();
+        o.write_batch(&sctx, vec![Part::from_str("a")])
+            .await
+            .unwrap();
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -608,7 +626,8 @@ async fn nats_kv_revisions_updates_purges_and_keys_on_a_real_bucket() {
         .unwrap();
     let (reg, _sctx, pctx) = make_ctx("org-a", Some("org_a"));
     let proc = |bucket: &str, op: &str, key: &str, rev: Option<&str>| {
-        let mut v = serde_json::json!({"urls": [srv.url], "bucket": bucket, "operation": op, "key": key});
+        let mut v =
+            serde_json::json!({"urls": [srv.url], "bucket": bucket, "operation": op, "key": key});
         if let Some(r) = rev {
             v["revision"] = serde_json::json!(r);
         }
@@ -646,7 +665,10 @@ async fn nats_kv_revisions_updates_purges_and_keys_on_a_real_bucket() {
     assert!(gone.is_errored());
     // A bucket the server does not hold is reported by name.
     let missing = run(proc("org_a_absent", "get", "k", None), "").await;
-    let err = missing.error_get().map(|e| e.to_string()).unwrap_or_default();
+    let err = missing
+        .error_get()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
     assert!(err.contains("org_a_absent"), "{err}");
 }
 

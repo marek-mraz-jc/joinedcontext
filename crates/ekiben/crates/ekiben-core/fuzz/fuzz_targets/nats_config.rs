@@ -27,7 +27,10 @@ fuzz_target!(|data: &[u8]| {
     let (a, b) = text.split_once('\n').unwrap_or((text, ""));
     let _ = subject_matches(a, b);
     if let Ok(subject) = org.validate_nats_subject(a) {
-        assert!(subject == "org_f" || subject.starts_with("org_f."), "{subject}");
+        assert!(
+            subject == "org_f" || subject.starts_with("org_f."),
+            "{subject}"
+        );
     }
     if org.validate_nats_bucket(b).is_ok() {
         assert!(b.starts_with("org_f"), "{b}");
