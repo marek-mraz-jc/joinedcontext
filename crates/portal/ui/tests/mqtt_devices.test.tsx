@@ -185,6 +185,33 @@ describe("Add device", () => {
     expect(screen.getByRole("link", { name: d.openChange })).toHaveAttribute("href", `/projects/${PROJECT}/approvals/pr-9`);
   });
 
+  it("sends the role and topic picked, says a bad name on leaving the field, and starts over for another device", async () => {
+    const sent = mount();
+    fireEvent.click(await screen.findByRole("button", { name: d.open }));
+    const name = screen.getByLabelText(new RegExp(d.name));
+    fireEvent.change(name, { target: { value: "Bad Name" } });
+    expect(screen.queryByText(d.nameInvalid)).toBeNull();
+    fireEvent.blur(name);
+    expect(await screen.findByText(d.nameInvalid)).toBeInTheDocument();
+    fireEvent.change(name, { target: { value: "dev2" } });
+    fireEvent.click(screen.getByRole("radio", { name: new RegExp(d.paste) }));
+    fireEvent.change(screen.getByLabelText(new RegExp(d.publicKey)), { target: { value: JSON.stringify({ keys: [EC] }) } });
+    // A role without a publish filter offers no topic; back on cams, its first filter is picked.
+    fireEvent.change(screen.getByLabelText(new RegExp(d.role)), { target: { value: "ops" } });
+    expect(screen.queryByLabelText(new RegExp(`^${d.topic}`))).toBeNull();
+    fireEvent.change(screen.getByLabelText(new RegExp(d.role)), { target: { value: "cams" } });
+    const topic = screen.getByLabelText(new RegExp(`^${d.topic}`)) as HTMLSelectElement;
+    expect(topic.value).toBe("cameras/${clientid}/#");
+    fireEvent.change(topic, { target: { value: "cameras/${clientid}/status" } });
+    fireEvent.click(screen.getByRole("button", { name: d.propose }));
+    await screen.findByText(d.signInTitle);
+    expect(JSON.parse(sent[0])).toMatchObject({ name: "dev2", role: "cams", topic: "cameras/${clientid}/status" });
+
+    fireEvent.click(screen.getByRole("button", { name: d.another }));
+    expect(screen.queryByText(d.signInTitle)).toBeNull();
+    expect(screen.getByRole("button", { name: d.propose })).toBeInTheDocument();
+  });
+
   it("refuses a pasted private key in place and sends nothing", async () => {
     const sent = mount();
     await openForm();
