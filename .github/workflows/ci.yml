@@ -59,6 +59,8 @@ jobs:
       dockerfiles: ${{ steps.paths.outputs.dockerfiles }}
       deploy: ${{ steps.paths.outputs.deploy }}
       ship: ${{ steps.paths.outputs.ship }}
+      # the pre-production assistant gate a prod pin of this change needs (T-7788): no ci job
+      assistant: ${{ steps.paths.outputs.assistant }}
       release: ${{ steps.release.outputs.release }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -102,7 +104,7 @@ jobs:
       # A deny.toml ignore whose reason says `remove by YYYY-MM-DD` is red after that day (T-7232).
       - run: python3 .github/scripts/deny-ignore-dates.py --selftest && python3 .github/scripts/deny-ignore-dates.py && python3 .github/scripts/coverage-ratchet.py --selftest && python3 .github/scripts/coverage-ratchet.py floors
       - if: steps.paths.outputs.workflows == 'true'
-        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/ff-main.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/watched.sh --selftest && sh .github/scripts/build-in-base.sh --selftest && sh .github/scripts/check-runners.sh --selftest && sh .github/scripts/check-runners.sh && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
+        run: sh .github/scripts/changes.sh --selftest && python3 .github/scripts/assistant-gate.py --selftest && sh .github/scripts/ff-main.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/watched.sh --selftest && sh .github/scripts/build-in-base.sh --selftest && sh .github/scripts/check-runners.sh --selftest && sh .github/scripts/check-runners.sh && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'
         run: >-
           docker run --rm -v "$PWD:/repo" -w /repo
