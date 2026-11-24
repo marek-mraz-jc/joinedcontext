@@ -17,6 +17,7 @@
 "antares-odata" = { lines = 99.47, functions = 99.12 }
 "antares-ogc" = { lines = 99.70, functions = 99.17 }
 "antares-ops" = { lines = 99.00, functions = 99.00 }
+"antares-store" = { lines = 98.90, functions = 96.00 }
 "antares-sta" = { lines = 100.00, functions = 99.78 }
 "antares-views" = { lines = 99.88, functions = 99.30 }
 "antares-wasm" = { lines = 97.53, functions = 100.00 }

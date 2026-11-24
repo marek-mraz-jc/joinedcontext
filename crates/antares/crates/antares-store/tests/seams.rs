@@ -675,8 +675,9 @@ fn a_stored_document_must_be_an_object() {
     assert_eq!(stored_object(&mut doc).expect("an object")["id"], "x");
 }
 
-/// A Cached @context row that is no object passes through the view and the
-/// stored form untouched, rather than losing a row it cannot read.
+/// A row that is no object names no `kind`, so it reads as the default
+/// Tenant's and passes through the view untouched; the stored form of one
+/// keeps it as it is rather than losing a row it cannot read.
 #[test]
 fn a_context_row_that_is_no_object_passes_through() {
     let t = tenant();
