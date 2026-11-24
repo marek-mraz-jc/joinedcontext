@@ -1448,7 +1448,7 @@ mod tests {
             ("/a/{x{y}", "bad path variable"),
             ("/a/b}c", "bad path segment 'b}c'"),
         ] {
-            let err = PathPattern::parse(path).err().expect(path).to_string();
+            let err = PathPattern::parse(path).expect_err(path).to_string();
             assert!(err.contains(want), "{path}: {err}");
         }
         let exact = PathPattern::parse("/s/{id}/r").unwrap();

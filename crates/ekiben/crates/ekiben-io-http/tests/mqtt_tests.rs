@@ -454,8 +454,7 @@ async fn the_output_refuses_a_bad_topic_a_huge_message_and_a_missing_puback() {
         let err = output
             .write_batch(&ctx, batch_of(&[(topic, b"x")]))
             .await
-            .err()
-            .expect("refused")
+            .expect_err("refused")
             .to_string();
         assert!(err.contains(want), "{topic:?}: {err}");
     }
@@ -463,8 +462,7 @@ async fn the_output_refuses_a_bad_topic_a_huge_message_and_a_missing_puback() {
     let err = output
         .write_batch(&ctx, batch_of(&[("t", &huge)]))
         .await
-        .err()
-        .expect("too big")
+        .expect_err("too big")
         .to_string();
     assert!(err.contains("is over the"), "{err}");
     let numeric = build_output(
@@ -475,8 +473,7 @@ async fn the_output_refuses_a_bad_topic_a_huge_message_and_a_missing_puback() {
     let err = numeric
         .write_batch(&ctx, batch_of(&[("t", b"not a number")]))
         .await
-        .err()
-        .expect("no topic")
+        .expect_err("no topic")
         .to_string();
     assert!(err.contains("topic interpolation error"), "{err}");
 
@@ -492,8 +489,7 @@ async fn the_output_refuses_a_bad_topic_a_huge_message_and_a_missing_puback() {
     let err = output
         .write_batch(&ctx, batch_of(&[("t", b"x")]))
         .await
-        .err()
-        .expect("no PUBACK")
+        .expect_err("no PUBACK")
         .to_string();
     assert!(err.contains("no PUBACK for a message to t"), "{err}");
     broker.abort();
@@ -584,8 +580,7 @@ async fn a_refused_connect_is_named_and_the_outbound_rule_holds_at_connect() {
         let err = output
             .write_batch(&ctx, batch_of(&[("t", b"x")]))
             .await
-            .err()
-            .expect("refused")
+            .expect_err("refused")
             .to_string();
         assert!(err.contains(want), "{connack:?}: {err}");
     }
@@ -845,8 +840,7 @@ async fn the_output_over_mqtts_trusts_only_its_root_ca() {
     let err = untrusted
         .write_batch(&ctx, batch_of(&[("t", b"x")]))
         .await
-        .err()
-        .expect("untrusted")
+        .expect_err("untrusted")
         .to_string();
     assert!(err.contains("tls handshake failed"), "{err}");
 
@@ -859,8 +853,7 @@ async fn the_output_over_mqtts_trusts_only_its_root_ca() {
     let err = bad_root
         .connect(&ctx)
         .await
-        .err()
-        .expect("not a certificate")
+        .expect_err("not a certificate")
         .to_string();
     assert!(err.contains("tls.root_cas: "), "{err}");
 

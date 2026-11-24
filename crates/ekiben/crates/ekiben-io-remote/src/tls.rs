@@ -56,22 +56,22 @@ mod tests {
     #[test]
     fn a_root_ca_that_is_not_a_certificate_and_a_bad_server_name_are_refused() {
         assert!(client_config(None).is_ok());
-        let not_pem = client_config(Some("just text")).err().expect("no PEM");
+        let not_pem = client_config(Some("just text")).expect_err("no PEM");
         assert!(
             not_pem.to_string().contains("holds no PEM certificate"),
             "{not_pem}"
         );
         let bad_base64 = "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n";
-        let err = client_config(Some(bad_base64)).err().expect("bad base64");
+        let err = client_config(Some(bad_base64)).expect_err("bad base64");
         assert!(err.to_string().contains("root_cas: "), "{err}");
         // Valid base64, but not a DER certificate: the store refuses it.
         let not_der = "-----BEGIN CERTIFICATE-----\naGVsbG8gd29ybGQ=\n-----END CERTIFICATE-----\n";
-        let err = client_config(Some(not_der)).err().expect("not DER");
+        let err = client_config(Some(not_der)).expect_err("not DER");
         assert!(err.to_string().contains("root_cas: "), "{err}");
 
         assert!(server_name("imap.example.org").is_ok());
         assert!(server_name("[2001:db8::1]").is_ok());
-        let err = server_name("a..b").err().expect("empty label");
+        let err = server_name("a..b").expect_err("empty label");
         assert!(
             err.to_string().contains("'a..b' is not a server name"),
             "{err}"

@@ -734,7 +734,7 @@ mod tests {
             ),
             ("no pem here", "no PEM certificate found"),
         ] {
-            let err = pem_certificates(pem).err().expect(pem).to_string();
+            let err = pem_certificates(pem).expect_err(pem).to_string();
             assert!(err.contains(want), "{pem}: {err}");
         }
     }

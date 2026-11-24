@@ -313,7 +313,7 @@ async fn ftp_session<S: AsyncRead + AsyncWrite + Unpin>(
                         tokio::net::TcpStream::connect(addr),
                     )
                     .await
-                    .map(|c| c.map(|c| std::mem::forget(c)));
+                    .map(|c| c.map(std::mem::forget));
                 }
                 std::mem::forget(l);
                 format!(
