@@ -1757,6 +1757,7 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "hyper",
+ "rcgen",
  "reqwest",
  "rustls",
  "rustls-native-certs",

@@ -737,3 +737,141 @@ async fn a_malformed_publish_redials_and_a_refused_subscription_backs_off_until_
         Err(CoreError::EndOfInput)
     ));
 }
+
+/// A certificate for `localhost`, its PEM and an acceptor serving it.
+fn tls_acceptor() -> (String, tokio_rustls::TlsAcceptor) {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let pem = cert.cert.pem();
+    let key = rustls_pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(vec![cert.cert.der().clone()], key)
+    .unwrap();
+    (pem, tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+}
+
+/// MQTT over websocket over TLS (`wss://`), the broker's certificate trusted through
+/// `tls.root_cas`: CONNECT, SUBSCRIBE and a PUBLISH travel as websocket messages, a ping frame
+/// between them is skipped, and a close frame ends the connection.
+#[tokio::test]
+async fn the_input_speaks_mqtt_over_wss_with_a_private_root_ca() {
+    use futures::{SinkExt, StreamExt};
+    use tokio_websockets::Message;
+    let (pem, acceptor) = tls_acceptor();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (reg, ctx, _stop) = context(true);
+    let mut input = build(
+        json!({ "qos": 0, "topics": ["t"], "urls": [format!("wss://localhost:{port}/mqtt")],
+                "tls": { "root_cas": pem } }),
+        &ctx,
+        &reg,
+    );
+    let broker = async {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let tls = acceptor.accept(tcp).await.unwrap();
+        let (req, mut ws) = tokio_websockets::ServerBuilder::new()
+            .accept(tls)
+            .await
+            .unwrap();
+        assert_eq!(req.uri().path(), "/mqtt");
+        let connect = ws.next().await.unwrap().unwrap();
+        assert_eq!(connect.as_payload()[0], 0x10);
+        ws.send(Message::binary(vec![0x20u8, 0x02, 0x00, 0x00]))
+            .await
+            .unwrap();
+        let sub = ws.next().await.unwrap().unwrap();
+        let id = [sub.as_payload()[2], sub.as_payload()[3]];
+        ws.send(Message::ping(Vec::<u8>::new())).await.unwrap();
+        ws.send(Message::binary(vec![0x90u8, 0x03, id[0], id[1], 0x00]))
+            .await
+            .unwrap();
+        ws.send(Message::text(
+            String::from_utf8(publish("t", 0, 0, b"over wss")).unwrap(),
+        ))
+        .await
+        .unwrap();
+        ws
+    };
+    let (connected, mut ws) = tokio::join!(input.connect(&ctx), broker);
+    connected.expect("connects over wss");
+    assert!(input.is_connected());
+    let (batch, _) = tokio::time::timeout(Duration::from_secs(10), input.read_batch(&ctx))
+        .await
+        .expect("a message")
+        .expect("read");
+    assert_eq!(batch[0].as_bytes_ref().as_ref(), b"over wss");
+    ws.close().await.unwrap();
+    input.close().await.unwrap();
+}
+
+/// The output over `mqtts://`: an untrusted certificate fails the handshake, a root_cas that is
+/// not a certificate is a config error at connect, and the trusted one publishes.
+#[tokio::test]
+async fn the_output_over_mqtts_trusts_only_its_root_ca() {
+    let (pem, acceptor) = tls_acceptor();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (reg, ctx, _stop) = context(true);
+    let url = format!("mqtts://localhost:{port}");
+    let broker = tokio::spawn(async move {
+        loop {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let Ok(mut tls) = acceptor.accept(tcp).await else {
+                continue;
+            };
+            let mut first = [0u8; 2];
+            tls.read_exact(&mut first).await.unwrap();
+            let mut rest = vec![0u8; first[1] as usize];
+            tls.read_exact(&mut rest).await.unwrap();
+            tls.write_all(&[0x20, 0x02, 0x00, 0x00]).await.unwrap();
+            let mut publish = [0u8; 2];
+            tls.read_exact(&mut publish).await.unwrap();
+            let mut body = vec![0u8; publish[1] as usize];
+            tls.read_exact(&mut body).await.unwrap();
+            return body;
+        }
+    });
+
+    let untrusted = build_output(
+        json!({ "urls": [url.clone()], "topic": "t", "qos": 0 }),
+        &ctx,
+        &reg,
+    );
+    let err = untrusted
+        .write_batch(&ctx, batch_of(&[("t", b"x")]))
+        .await
+        .err()
+        .expect("untrusted")
+        .to_string();
+    assert!(err.contains("tls handshake failed"), "{err}");
+
+    let not_der = "-----BEGIN CERTIFICATE-----\naGVsbG8gd29ybGQ=\n-----END CERTIFICATE-----\n";
+    let bad_root = build_output(
+        json!({ "urls": [url.clone()], "topic": "t", "tls": { "root_cas": not_der } }),
+        &ctx,
+        &reg,
+    );
+    let err = bad_root
+        .connect(&ctx)
+        .await
+        .err()
+        .expect("not a certificate")
+        .to_string();
+    assert!(err.contains("tls.root_cas: "), "{err}");
+
+    let trusted = build_output(
+        json!({ "urls": [url], "topic": "t", "qos": 0, "tls": { "root_cas": pem } }),
+        &ctx,
+        &reg,
+    );
+    trusted
+        .write_batch(&ctx, batch_of(&[("t", b"secure")]))
+        .await
+        .expect("publishes over TLS");
+    assert_eq!(broker.await.unwrap(), b"\x00\x01tsecure");
+}

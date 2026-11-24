@@ -661,3 +661,81 @@ impl Input for WebsocketInput {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_websocket_config_is_refused_naming_the_field() {
+        let env = ekiben_bloblang::Environment::new();
+        for (val, want) in [
+            (json!({}), "websocket.url is required"),
+            (json!({ "url": "::nope" }), "websocket.url '"),
+            (
+                json!({ "url": "http://x" }),
+                "scheme 'http' is not ws or wss",
+            ),
+            (
+                json!({ "url": "ws://x", "proxy_url": "http://p" }),
+                "proxy_url is not supported",
+            ),
+            (
+                json!({ "url": "ws://x", "jwt": { "enabled": true } }),
+                "websocket.jwt is not supported",
+            ),
+            (
+                json!({ "url": "ws://x", "headers": { "bad header": "v" } }),
+                "'bad header' is not a valid header name",
+            ),
+            (
+                json!({ "url": "ws://x", "headers": { "X-A": "${! nope( }" } }),
+                "websocket.headers.X-A",
+            ),
+            (
+                json!({ "url": "ws://x", "max_message_bytes": "big" }),
+                "max_message_bytes: expected a number",
+            ),
+            (
+                json!({ "url": "ws://x", "max_message_bytes": 0 }),
+                "max_message_bytes",
+            ),
+        ] {
+            let err = WebsocketConf::from_json(&val, &env)
+                .err()
+                .unwrap_or_else(|| panic!("{val} must be refused"))
+                .to_string();
+            assert!(err.contains(want), "{val}: {err}");
+        }
+        let c = WebsocketConf::from_json(
+            &json!({ "url": "wss://x", "headers": { "X-N": 5 },
+                     "oauth": { "enabled": true, "consumer_key": "ck", "consumer_secret": "cs",
+                                "access_token": "at", "access_token_secret": "as" } }),
+            &env,
+        )
+        .expect("oauth and a number header");
+        assert!(c.oauth.is_some());
+    }
+
+    #[test]
+    fn root_cas_pem_is_read_strictly() {
+        let one = "-----BEGIN CERTIFICATE-----\naGVs\nbG8=\n-----END CERTIFICATE-----";
+        assert_eq!(pem_certificates(one).unwrap(), vec![b"hello".to_vec()]);
+        assert_eq!(pem_certificates(&format!("{one}\n{one}")).unwrap().len(), 2);
+        for (pem, want) in [
+            (
+                "-----BEGIN CERTIFICATE-----\naGVsbG8=",
+                "unterminated certificate",
+            ),
+            (
+                "-----BEGIN CERTIFICATE-----\n!!\n-----END CERTIFICATE-----",
+                "not valid base64",
+            ),
+            ("no pem here", "no PEM certificate found"),
+        ] {
+            let err = pem_certificates(pem).err().expect(pem).to_string();
+            assert!(err.contains(want), "{pem}: {err}");
+        }
+    }
+}
