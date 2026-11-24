@@ -53,6 +53,56 @@ describe("a pasted public key", () => {
       expect(d.keyError[problem as keyof typeof d.keyError]).toBeTruthy();
     }
   });
+
+  it("reads an RSA-2048 key as RS256 and a PEM RSA key after the P-256 attempt fails", async () => {
+    const pair = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"],
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+    const read = await parsePublicKey(JSON.stringify({ kty: "RSA", n: jwk.n, e: jwk.e, kid: "r1" }));
+    expect(read).toEqual({ ok: true, jwks: { keys: [{ kty: "RSA", n: jwk.n, e: jwk.e, kid: "r1", alg: "RS256", use: "sig" }] } });
+
+    const spki = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
+    const pem = `-----BEGIN PUBLIC KEY-----\n${btoa(String.fromCharCode(...spki))}\n-----END PUBLIC KEY-----`;
+    const fromPem = await parsePublicKey(pem);
+    expect(fromPem.ok && fromPem.jwks.keys[0]).toMatchObject({ kty: "RSA", n: jwk.n, alg: "RS256" });
+  });
+
+  it("refuses a short RSA key, another algorithm, an encryption key, an unknown type and a broken PEM", async () => {
+    const pair = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"],
+    );
+    const short = await crypto.subtle.exportKey("jwk", pair.publicKey);
+    const cases: [string, string][] = [
+      [JSON.stringify({ kty: "RSA", n: short.n, e: short.e }), "unsupported"],
+      [JSON.stringify({ kty: "RSA", n: "A".repeat(342) }), "unsupported"],
+      [JSON.stringify({ kty: "RSA", n: "A".repeat(342), e: "AQAB", alg: "PS256" }), "unsupported"],
+      [JSON.stringify({ ...EC, alg: "ES384" }), "unsupported"],
+      [JSON.stringify({ ...EC, x: X.slice(1) }), "unsupported"],
+      [JSON.stringify({ ...EC, use: "enc" }), "unsupported"],
+      [JSON.stringify({ kty: "OKP", crv: "Ed25519", x: X }), "unsupported"],
+      [JSON.stringify({ keys: [{ kid: "nothing" }] }), "notKey"],
+      [JSON.stringify({ keys: ["k1"] }), "notKey"],
+      [JSON.stringify({ keys: [[EC]] }), "notKey"],
+      [JSON.stringify({ keys: [] }), "notKey"],
+      ["-----BEGIN PUBLIC KEY-----\n%%%not base64%%%\n-----END PUBLIC KEY-----", "unsupported"],
+      ["-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----", "unsupported"],
+    ];
+    for (const [text, problem] of cases) {
+      expect(await parsePublicKey(text), text).toEqual({ ok: false, problem });
+    }
+  });
+
+  it("keeps a pasted kid to 128 characters and fills a blank one with the thumbprint", async () => {
+    const long = await parsePublicKey(JSON.stringify({ ...EC, kid: "k".repeat(300) }));
+    expect(long.ok && long.jwks.keys[0].kid).toBe("k".repeat(128));
+    const blank = await parsePublicKey(JSON.stringify({ ...EC, kid: "   " }));
+    expect(blank.ok && blank.jwks.keys[0].kid).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
 });
 
 describe("a key pair made in the browser", () => {
