@@ -703,8 +703,10 @@ async fn dispatch(state: AppState, caller: crate::ops::Caller, body: Bytes) -> R
                     // The broker Tenant a space's data is filed under, as its page shows it
                     // (T-7216): a model that reads the broker directly names the right one.
                     if info.kind == "ContextSpace" {
-                        resource["description"] =
-                            json!(space_description(&state, &project, &item.metadata.name));
+                        resource["description"] = json!(space_description(
+                            &item.metadata.name,
+                            crate::spaces::tenant(&state.mirror, &project, &item.metadata.name)
+                        ));
                     }
                     resources.push(resource);
                 }
@@ -966,8 +968,8 @@ fn negotiated_version(asked: Option<&str>) -> &'static str {
 
 /// The `resources/list` description of a Context Space: its broker Tenant, or why it is not
 /// known yet (T-7216).
-fn space_description(state: &AppState, project: &str, space: &str) -> String {
-    match crate::spaces::tenant(&state.mirror, project, space) {
+fn space_description(space: &str, tenant: Result<String, String>) -> String {
+    match tenant {
         Ok(tenant) => format!("Context Space {space}; broker tenant: {tenant}"),
         Err(reason) => format!("Context Space {space}; broker tenant not known yet: {reason}"),
     }
@@ -3228,12 +3230,13 @@ mod tests {
 
     #[test]
     fn a_space_without_a_tenant_says_why() {
-        let state = AppState::new(crate::config::Config::for_tests(), None);
-        let said = space_description(&state, "ovzdusie", "missing");
-        assert!(
-            said.starts_with("Context Space missing; broker tenant not known yet: "),
-            "{said}"
+        let said = space_description("air", Err("no project id yet".to_owned()));
+        assert_eq!(
+            said,
+            "Context Space air; broker tenant not known yet: no project id yet"
         );
+        let said = space_description("air", Ok("ovzdusie-air".to_owned()));
+        assert_eq!(said, "Context Space air; broker tenant: ovzdusie-air");
     }
 
     /// AG-70: a caller narrowed by an access reads only the kinds the access reads.
@@ -3508,10 +3511,10 @@ mod tests {
         })
         .await;
         assert_eq!(lost.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let said = body_of(lost).await.to_string();
-        assert!(
-            said.contains("read the current state before sending it again"),
-            "{said}"
+        // The words are the generic 500's: an internal error never carries its own detail.
+        assert_eq!(
+            body_of(lost).await["type"],
+            crate::error::type_uri("internal-error")
         );
 
         let ran = std::sync::atomic::AtomicBool::new(false);

@@ -1574,10 +1574,7 @@ mod tests {
 
         let (_, verdict, shown) = judged(&state, &connector, ana(), call).await;
         assert_eq!(verdict, "allowed");
-        assert_eq!(
-            shown["result"]["structuredContent"]["shown"]["action"],
-            "filter"
-        );
+        assert_eq!(shown["result"]["structuredContent"]["shown"], "filter");
         let action = heard.try_recv().expect("the tab hears the filter");
         assert_eq!(action["frame"], "ui");
 
@@ -1607,14 +1604,18 @@ mod tests {
     #[tokio::test]
     async fn a_scope_item_with_personal_data_passes_the_answer_unchanged() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
-        let mut connector = doprava();
+        // The organization default ceiling carries data-read alone.
+        let mut connector = connectors::of_conversation("r1", "f:1:ana", "doprava", "data-read");
         connector.scope[0].personal_data = true;
+        // An administrator reads every project: the default ceiling reaches doprava.
+        let mut admin = ana();
+        admin.groups = vec![state.config.bootstrap_admins.clone()];
         let call = rpc(
             "tools/call",
             json!({ "name": "jc_resource_list",
-            "arguments": { "project": "doprava", "kind": "Pipeline" } }),
+            "arguments": { "project": "doprava", "kind": "Endpoint" } }),
         );
-        let (status, verdict, body) = judged(&state, &connector, ana(), call).await;
+        let (status, verdict, body) = judged(&state, &connector, admin, call).await;
         assert_eq!(status, StatusCode::OK);
         assert!(
             !verdict.starts_with("refused: target") && !verdict.starts_with("refused: personal"),
