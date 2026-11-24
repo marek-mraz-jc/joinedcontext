@@ -628,7 +628,9 @@ fn quote(s: &str) -> String {
 /// YAML 1.1 reader, and holds nothing a line or a flow collection would cut.
 fn plain_ok(s: &str) -> bool {
     let first = s.chars().next().unwrap_or('0');
-    let risky = first.is_ascii_digit() || "+-.".contains(first) || s.ends_with(':');
+    // An indicator first (`?` a complex key, `&*!` an anchor, alias or tag) is a value the parser
+    // above refuses on the next run even where YAML reads it back as the string.
+    let risky = first.is_ascii_digit() || "+-.?&*!|>%@`#".contains(first) || s.ends_with(':');
     let cut = s.contains(": ") || s.contains(" #") || s.contains(['\n', '\r', '\t']);
     let edge = s.trim() != s;
     let reserved = RESERVED.iter().any(|w| s.eq_ignore_ascii_case(w));
@@ -1005,6 +1007,17 @@ mod edge_tests {
             refused("a:\n  x # c\n"),
             "a comment after a value on its own line"
         );
+    }
+
+    /// Fuzz (T-7766): `'?+'` was written plain, and the parser reads a leading `?` as a complex
+    /// key, so the formatted file no longer formatted. A value starting with an indicator stays
+    /// quoted.
+    #[test]
+    fn a_value_starting_with_an_indicator_stays_quoted_and_formats_again() {
+        for src in ["'?+'\n", "a: '?x'\n", "- '?'\n", "a: ['?b']\n"] {
+            let out = format(src).unwrap_or_else(|e| panic!("{src:?}: {e}"));
+            assert_eq!(format(&out).as_deref().ok(), Some(out.as_str()), "{src:?} -> {out:?}");
+        }
     }
 
     #[test]
