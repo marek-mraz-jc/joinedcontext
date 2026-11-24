@@ -620,6 +620,63 @@ root.val = this.n.apply("double")
 }
 
 #[test]
+fn a_failing_secret_argument_never_reaches_the_error() {
+    const SECRET: &str = "s3cr3t-Do-Not-Print-7f2a";
+    let cases = [
+        format!(r#"root = {{"a":1}}.sign_jwt_rs256("{SECRET}")"#),
+        format!(r#"root = {{"a":1}}.sign_jwt_es256("{SECRET}")"#),
+        format!(r#"root = "a.b.c".parse_jwt_hs256("{SECRET}")"#),
+        format!(r#"root = "e30.e30.c2ln".parse_jwt_rs256("{SECRET}")"#),
+        format!(
+            r#"root = "x".encrypt_aes("ctr", "{SECRET}!".bytes(), "0123456789abcdef".bytes())"#
+        ),
+        format!(r#"root = "x".decrypt_aes("gcm", "0123456789abcdef".bytes(), "{SECRET}".bytes())"#),
+        format!(r#"root = "x".hash("hmac_sha256", "{SECRET}").number()"#),
+        format!(r#"root = "x".compare_argon2("$argon2id$v=19$m=16,t=1,p=1${SECRET}$!!")"#),
+        format!(r#"root = "x".compare_bcrypt("{SECRET}")"#),
+    ];
+    for mapping in &cases {
+        let err = match Environment::new().compile_mapping(mapping) {
+            Ok(exec) => exec.execute_bytes(b"{}").expect_err(mapping).to_string(),
+            Err(e) => e.to_string(),
+        };
+        assert!(!err.contains(SECRET), "{mapping} leaked the secret: {err}");
+    }
+    // An env() value that fails a later method keeps the value out of the message.
+    let env = Environment::new().with_env_vars(
+        [("API_TOKEN".to_string(), SECRET.to_string())]
+            .into_iter()
+            .collect(),
+    );
+    let err = env
+        .compile_mapping(r#"root = env("API_TOKEN").number()"#)
+        .unwrap()
+        .execute_bytes(b"{}")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.contains(SECRET), "env leaked: {err}");
+}
+
+#[test]
+fn a_mounted_secret_file_that_fails_a_method_is_redacted() {
+    const SECRET: &str = "s3cr3t-Do-Not-Print-7f2a";
+    let files: HashMap<String, Vec<u8>> = [("token".to_string(), SECRET.as_bytes().to_vec())]
+        .into_iter()
+        .collect();
+    let env = Environment::new()
+        .with_host_file(true)
+        .with_importer(Arc::new(MemoryImporter { files }));
+    let err = env
+        .compile_mapping(r#"root = file("token").number()"#)
+        .unwrap()
+        .execute_bytes(b"{}")
+        .unwrap_err()
+        .to_string();
+    assert!(!err.contains(SECRET), "file leaked: {err}");
+    assert!(err.contains("parsing \"[redacted]\""), "{err}");
+}
+
+#[test]
 fn whole_floats_marshal_like_go_and_type_errors_name_their_source_last() {
     // Bento 1.22 config/test/bloblang/csv.yaml sums number() values into `[6,41,114]`.
     assert_eq!(
