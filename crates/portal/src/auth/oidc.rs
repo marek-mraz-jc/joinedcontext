@@ -2364,7 +2364,7 @@ QBscU7MjEGan3Dhawtnn2+fD51T2sLSc
             .and(wm_path(format!("{REALM}/protocol/openid-connect/token")))
             .and(body_string_contains(format!("code={code}&")))
             .respond_with(ResponseTemplate::new(status).set_body_json(body))
-            .mount(&server)
+            .mount(server)
             .await;
     }
 
