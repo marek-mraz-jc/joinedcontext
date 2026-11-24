@@ -1425,6 +1425,17 @@ mod tests {
     }
 
     #[test]
+    fn a_fraction_in_the_layout_reads_its_own_digits_and_an_offset_reads_mid_layout() -> R {
+        let dt = parse_go_layout("10:00:00.123|", "15:04:05.000|")?;
+        assert_eq!((dt.second(), dt.subsec_nanosecond()), (0, 123_000_000));
+        let dt = parse_go_layout("2026-11-24T10:00:00+01:00|x", "2006-01-02T15:04:05Z07:00|x")?;
+        assert_eq!(rfc(&dt), "2026-11-24T10:00:00+01:00");
+        let dt = parse_go_layout("2026-11-24T10:00:00-0130|x", "2006-01-02T15:04:05-0700|x")?;
+        assert_eq!(rfc(&dt), "2026-11-24T10:00:00-01:30");
+        Ok(())
+    }
+
+    #[test]
     fn a_padded_day_reads_after_other_tokens() -> R {
         for (input, layout) in [
             ("Nov 24 2026", "Jan _2 2006"),

@@ -48,7 +48,7 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
             i += 1;
             match args.get(arg).and_then(star) {
                 Some(w) => {
-                    if w < 0 {
+                    if w.is_negative() {
                         f.minus = true;
                         f.zero = false;
                     }
@@ -568,9 +568,7 @@ fn format_float(x: f64, verb: char, prec: Option<usize>) -> String {
             let exp = dp - 1;
             let e = if verb == 'G' { 'E' } else { 'e' };
             if exp < -4 || exp >= eprec {
-                if p > nd {
-                    p = nd;
-                }
+                p = p.min(nd);
                 fmt_e(&mut s, &digs, dp, p.saturating_sub(1), e);
             } else {
                 if p as i64 > dp {

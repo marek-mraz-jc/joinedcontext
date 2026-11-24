@@ -552,10 +552,8 @@ mod tests {
 
     #[test]
     fn coordinates_and_amounts_are_uniform_fractions_scaled_into_range() {
-        let num = |name: &str| match fake(name) {
-            Ok(Value::Float(f)) => f,
-            other => panic!("{name}: {other:?}"),
-        };
+        // A refusal or a non-number reads as NaN, which the range checks below refuse.
+        let num = |name: &str| fake(name).ok().and_then(|v| v.as_f64()).unwrap_or(f64::NAN);
         let lat: Vec<f64> = (0..40).map(|_| num("latitude")).collect();
         let lon: Vec<f64> = (0..40).map(|_| num("longitude")).collect();
         assert!(lat.iter().all(|v| (-90.0..90.0).contains(v)), "{lat:?}");

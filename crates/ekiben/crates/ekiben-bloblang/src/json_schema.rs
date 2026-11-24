@@ -481,6 +481,7 @@ mod tests {
                 "properties" => serde_json::json!({ "properties": { "a": r } }),
                 "patternProperties" => serde_json::json!({ "patternProperties": { "^a$": r } }),
                 "additionalProperties" => serde_json::json!({ "additionalProperties": r }),
+                "items-schema" => serde_json::json!({ "items": r }),
                 other => serde_json::json!({ other: [r] }),
             };
             defs.insert(format!("d{i}"), d);
@@ -489,7 +490,7 @@ mod tests {
         let schema = serde_json::json!({ "definitions": defs, "$ref": "#/definitions/d0" });
         let doc = (0..levels).fold(serde_json::json!(1), |d, _| match key {
             // `items` as a list validates a tuple: the document nests arrays.
-            "items" => serde_json::json!([d]),
+            "items" | "items-schema" => serde_json::json!([d]),
             _ => serde_json::json!({ "a": d }),
         });
         (schema.to_string(), doc)
@@ -511,6 +512,7 @@ mod tests {
             "patternProperties",
             "additionalProperties",
             "items",
+            "items-schema",
         ] {
             let (ok, doc) = chain(key, (MAX_DEPTH - 1) / 2);
             assert_eq!(run(&ok, doc), Ok(()), "{key}");
