@@ -465,6 +465,15 @@ mod tests {
         assert_eq!(run(s, serde_json::json!({"Name": "a", "age": 3})), Ok(()));
     }
 
+    #[test]
+    fn a_property_dependency_lists_what_it_needs() {
+        let s = r#"{"dependencies":{"card":["billing"]}}"#;
+        assert_eq!(run(s, serde_json::json!({"card": 1, "billing": 2})), Ok(()));
+        assert_eq!(run(s, serde_json::json!({"other": 1})), Ok(()));
+        let refused = run(s, serde_json::json!({"card": 1})).expect_err("billing is missing");
+        assert!(refused.contains("has a dependency on billing"), "{refused}");
+    }
+
     fn err(schema: &str, doc: serde_json::Value) -> String {
         run(schema, doc).expect_err("the document must be refused")
     }

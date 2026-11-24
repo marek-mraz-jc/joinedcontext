@@ -1616,6 +1616,26 @@ mod tests {
     }
 
     #[test]
+    fn go_durations_drop_fraction_digits_past_the_limit_and_refuse_a_sum_past_it() {
+        // Digits past what a u64 fraction can hold are dropped, as Go's leadingFraction does.
+        assert_eq!(
+            parse_go_duration_nanos("1.000000000000000000000001s"),
+            Ok(1_000_000_000)
+        );
+        assert!(parse_go_duration_nanos("9223372036.854775807s").is_ok());
+        assert!(parse_go_duration_nanos("9223372036.854775809s").is_err());
+    }
+
+    #[test]
+    fn strptime_weekday_names_need_letters() {
+        assert!(parse_strptime("Tue 2026-11-24", "%a %Y-%m-%d").is_ok());
+        assert_eq!(
+            parse_strptime("2026-11-24", "%a%Y-%m-%d").map(|_| ()),
+            Err("expected weekday name in '2026-11-24'".to_string())
+        );
+    }
+
+    #[test]
     fn go_durations_read_every_unit_sign_and_refuse_bad_text() {
         let d = parse_go_duration_nanos;
         assert_eq!(d("0"), Ok(0));

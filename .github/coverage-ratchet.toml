@@ -40,7 +40,7 @@
 "dataroom-store-memory" = { lines = 99.66, functions = 100.00 }
 "dataroom-store-pg" = { lines = 99.51, functions = 99.29 }
 "dataroom-web" = { lines = 99.62, functions = 97.16 }
-"ekiben-bloblang" = { lines = 90.91, functions = 88.45 }
+"ekiben-bloblang" = { lines = 91.30, functions = 89.36 }
 "ekiben-io-amqp" = { lines = 99.09, functions = 100.00 }
 "ekiben-io-http" = { lines = 90.41, functions = 80.23 }
 "ekiben-io-kafka" = { lines = 99.32, functions = 99.69 }
