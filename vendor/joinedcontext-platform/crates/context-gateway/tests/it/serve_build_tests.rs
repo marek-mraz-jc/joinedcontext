@@ -146,7 +146,10 @@ async fn a_part_that_cannot_start_refuses_the_start_naming_it() {
     let no_keys = config(vec![
         ("JC_OIDC_ISSUER", common::ISSUER.to_owned()),
         ("JC_OIDC_JWKS_URL", "http://127.0.0.1:9/jwks".to_owned()),
-        ("JC_GATEWAY_REVOCATIONS_URL", "http://127.0.0.1:9/revocations".to_owned()),
+        (
+            "JC_GATEWAY_REVOCATIONS_URL",
+            "http://127.0.0.1:9/revocations".to_owned(),
+        ),
     ]);
     let refused = build(&no_keys, Broker::new("http://127.0.0.1:9"))
         .await
