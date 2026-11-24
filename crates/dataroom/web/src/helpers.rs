@@ -1055,15 +1055,44 @@ pub fn dataset_list_fields(display: &jc_core::kinds::DatasetListDisplay) -> Vec<
 
 /// The about rows a display lists, in its order (T-7743): each DCAT name keeps all its rows
 /// (several sources), an `extras.<key>` shows that extra as plain text, and a row left out is
-/// hidden. An empty `order` keeps the built-in rows.
-pub fn displayed_about(rows: Vec<AboutRow>, ds: &Dataset, order: &[String]) -> Vec<AboutRow> {
+/// hidden. An empty `order` keeps the built-in rows and adds the Organization's own dataset
+/// fields after them (T-7746). A field's row carries its label in `lang` and, for a `url` field,
+/// a link, which its definition holds to `https://`.
+pub fn displayed_about(
+    rows: Vec<AboutRow>,
+    ds: &Dataset,
+    order: &[String],
+    fields: &dataroom_core::branding::BrandingDatasetFields,
+    lang: &str,
+    fallback: &str,
+) -> Vec<AboutRow> {
+    let field_row = |field: &jc_core::kinds::DatasetField, value: &str| AboutRow {
+        key: "",
+        label: field.label_in(lang, fallback).to_owned(),
+        text: value.to_owned(),
+        link: (field.kind == jc_core::kinds::DatasetFieldType::Url).then(|| value.to_owned()),
+    };
     if order.is_empty() {
-        return rows;
+        let mut out = rows;
+        out.extend(fields.filled(&ds.extras).map(|(f, v)| field_row(f, v)));
+        return out;
     }
     let mut out = Vec::new();
     for name in order {
         if let Some(key) = name.strip_prefix("extras.") {
-            if let Some(text) = ds.extras.get(key).filter(|t| !t.trim().is_empty()) {
+            if let Some((field, value)) = fields
+                .filled(&ds.extras)
+                .find(|(f, _)| f.extra_key() == key)
+            {
+                out.push(field_row(field, value));
+                continue;
+            }
+            let defined = fields.fields.iter().any(|f| f.extra_key() == key);
+            if let Some(text) = ds
+                .extras
+                .get(key)
+                .filter(|t| !defined && !t.trim().is_empty())
+            {
                 out.push(AboutRow {
                     key: "",
                     label: key.to_owned(),
@@ -1308,7 +1337,12 @@ pub fn jc_more_rows(ds: &Dataset, lang: &str) -> Vec<AboutRow> {
     let code = normalize_lang_code(lang);
     let mut rows = Vec::new();
     for (k, v) in &ds.extras {
-        if HIDDEN_EXTRAS.contains(&k.as_str()) || v.is_empty() {
+        // T-7746: an Organization's own field (`x_<name>`) shows only where the portal's display
+        // puts it in the about table, so a portal that hides it shows it nowhere.
+        if HIDDEN_EXTRAS.contains(&k.as_str())
+            || v.is_empty()
+            || k.starts_with(jc_core::kinds::dataset_fields::EXTRA_PREFIX)
+        {
             continue;
         }
         let label = match (k.as_str(), code.as_str()) {

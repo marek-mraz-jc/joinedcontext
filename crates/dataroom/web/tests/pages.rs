@@ -921,6 +921,115 @@ fn style_tokens_reach_the_page_root() {
     assert!(!plain.contains("--jc-header-bg"), "no tokens, none set");
 }
 
+/// T-7746: the Organization's own dataset fields show after the built-in about rows under their
+/// label in the page's language, a url field as a link, a value its type refuses nowhere; a
+/// portal whose display lists its rows without them (doprava) hides them, one listing a field
+/// shows it in that place.
+#[test]
+fn organization_dataset_fields_show_in_the_about_table_per_portal_display() {
+    let ds = with_dists(
+        dataset(
+            "air",
+            json!({ "endpointUrl": ep(""), "licenceId": "cc-by",
+                    "extras": { "x_funding": "eu", "x_reviewed": "2026-11-23",
+                                "x_page": "https://bbsk.sk/report?a=1&b=2",
+                                "x_bad_url": "javascript:alert(2)",
+                                "x_budget": "<script>alert(1)</script>" } }),
+        ),
+        vec![dist("csv", &ep("file.csv"), json!({}))],
+    );
+    let block = BrandingBlock {
+        dataset_fields: dataroom_core::branding::BrandingDatasetFields {
+            organization: "bbsk".into(),
+            namespace: "https://bbsk.sk/ns/dataset-fields/bbsk/".into(),
+            fields: serde_json::from_value(json!([
+                { "name": "funding", "label": { "en": "Funding", "sk": "Financovanie" },
+                  "type": "enum", "values": ["eu", "city"] },
+                { "name": "reviewed", "label": { "sk": "Revízia" }, "type": "date" },
+                { "name": "page", "label": { "en": "Report" }, "type": "url" },
+                { "name": "budget", "label": { "en": "Budget" }, "type": "number" }
+            ]))
+            .expect("definitions"),
+        },
+        ..BrandingBlock::default()
+    };
+    let page = |block: &BrandingBlock| {
+        render_dataset_page_full(
+            &cat(),
+            Some(block),
+            &ds,
+            None,
+            &[],
+            &[],
+            false,
+            "en",
+            true,
+            "/m",
+            NONCE,
+        )
+    };
+    let about = |html: &str| -> String {
+        let start = html
+            .find("<dl class=\"jc-about-list\">")
+            .expect("the about table");
+        let end = start + html[start..].find("</dl>").expect("its end");
+        html[start..end]
+            .split("<dt>")
+            .skip(1)
+            .map(|row| row.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let shown = page(&block);
+    assert_safe_page("dataset fields", &shown, "en");
+    let rows = about(&shown);
+    let fields: Vec<&str> = rows
+        .lines()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            "Funding</dt> <dd>eu</dd>",
+            "Revízia</dt> <dd>2026-11-23</dd>",
+            "Report</dt> <dd><a href=\"https://bbsk.sk/report?a=1&amp;b=2\" rel=\"noopener\">https://bbsk.sk/report?a=1&amp;b=2</a></dd>",
+        ],
+        "after the built-in rows, in the definitions' order: {rows}"
+    );
+    assert!(
+        !shown.contains("alert(1)"),
+        "a value its type refuses shows nowhere"
+    );
+    assert!(
+        !shown.contains("javascript:alert(2)"),
+        "an undefined extra shows nowhere"
+    );
+
+    // doprava: its display lists the licence only, so no field shows.
+    let mut doprava = block.clone();
+    doprava.display =
+        serde_json::from_value(json!({ "dataset": { "about": ["license"] } })).expect("display");
+    let hidden = about(&page(&doprava));
+    assert!(
+        !hidden.contains("Funding") && !hidden.contains("2026-11-23"),
+        "{hidden}"
+    );
+    assert!(
+        !page(&doprava).contains(">x_funding<"),
+        "nor under More details"
+    );
+    // A display listing a field shows it, labelled, where it is listed.
+    let mut listed = block.clone();
+    listed.display =
+        serde_json::from_value(json!({ "dataset": { "about": ["extras.x_funding", "license"] } }))
+            .expect("display");
+    assert!(about(&page(&listed)).starts_with("Funding</dt> <dd>eu</dd>"));
+}
+
 /// T-7743: the dataset list shows the fields a display lists, in its order.
 #[test]
 fn a_display_picks_the_dataset_list_fields() {

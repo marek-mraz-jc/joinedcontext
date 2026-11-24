@@ -16,6 +16,7 @@ pub mod csr;
 pub mod dashboard;
 pub mod data_model;
 pub mod data_source;
+pub mod dataset_fields;
 pub mod dataspace;
 pub mod delegation_policy;
 pub mod ekiben_components;
@@ -97,6 +98,7 @@ pub use data_source::{
     HttpPagingOrder, HttpPreset, HttpPresetKind, MqttConnection, TlsSettings, WebSocketConnection,
     WebhookBearer, WebhookConnection, WebhookHmac,
 };
+pub use dataset_fields::{DatasetField, DatasetFieldType};
 pub use dataspace::{
     AgreementConstraints, AgreementRole, AgreementState, ConnectorEngine, DataAgreementSpec,
     DataOfferSpec, DataSpaceParticipantSpec, Did,

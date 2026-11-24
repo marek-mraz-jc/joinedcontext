@@ -806,7 +806,72 @@ fn catalogue_looks(
         block.layout.pages.clone_from(&portal.pages);
         out.insert(id, block);
     }
+    // T-7746: each catalogue carries its own Organization's dataset fields, never another's;
+    // a portal's catalogue shows them under whatever look it has.
+    let domain = joinedcontext_portal::permissions::installation_organization_manifest(mirror)
+        .and_then(|org| org.spec.get("domain")?.as_str().map(str::to_owned));
+    let mut owners: Vec<(CatalogueId, String)> = catalogue
+        .iter()
+        .map(|(name, id)| (*id, name.clone()))
+        .collect();
+    for portal in super::portals::in_mirror(mirror).values() {
+        if let Some((_, id)) = super::portals::catalogue_key(portal, &orgs) {
+            owners.push((id, portal.organization_ref.clone()));
+        }
+    }
+    for (id, org) in owners {
+        let fields = dataset_fields_in(mirror, &org, domain.as_deref());
+        if fields.fields.is_empty() {
+            continue;
+        }
+        let Some((own, under)) = looks.get(&org) else {
+            continue;
+        };
+        let block = match (out.remove(&id), configured.get(own)) {
+            (Some(shown), _) => shown,
+            (None, Some(base)) => with_appearance(base.clone(), under.as_ref()),
+            (None, None) => continue,
+        };
+        out.insert(
+            id,
+            BrandingBlock {
+                dataset_fields: fields,
+                ..block
+            },
+        );
+    }
     out
+}
+
+/// The Organization `name`'s own dataset fields (`spec.datasetFields`, T-7746) with their DCAT
+/// namespace `https://<installation domain>/ns/dataset-fields/<name>/`: none when it defines none
+/// or its list fails jc-core's check, and no namespace (the page still shows them, the feed not)
+/// when the installation names no domain.
+#[cfg(feature = "portal")]
+fn dataset_fields_in(
+    mirror: &joinedcontext_portal::store::Mirror,
+    name: &str,
+    domain: Option<&str>,
+) -> dataroom_core::branding::BrandingDatasetFields {
+    let fields: Vec<jc_core::kinds::DatasetField> = mirror
+        .get(
+            joinedcontext_portal::permissions::ORG_NAMESPACE,
+            "Organization",
+            name,
+        )
+        .and_then(|org| org.spec.get("datasetFields").cloned())
+        .and_then(|defs| serde_json::from_value(defs).ok())
+        .filter(|defs: &Vec<_>| jc_core::kinds::dataset_fields::validate(defs).is_ok())
+        .unwrap_or_default();
+    let namespace = domain
+        .filter(|d| jc_core::names::validate_org_domain(d).is_ok())
+        .map(|d| format!("https://{d}/ns/dataset-fields/{name}/"))
+        .unwrap_or_default();
+    dataroom_core::branding::BrandingDatasetFields {
+        organization: name.to_owned(),
+        namespace,
+        fields,
+    }
 }
 
 /// Each Organization's catalogue home shows the public Dashboards its
@@ -2958,6 +3023,86 @@ mod tests {
         let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
         assert!(looks[&city].layout.pages.is_empty(), "removed pages leave");
         const { assert!(super::super::appearance::FOLLOW_LOOK_EVERY.as_secs() < 10) };
+    }
+
+    /// T-7746: each catalogue carries its own Organization's dataset fields under the
+    /// installation's namespace, a portal's catalogue too; another Organization's never.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn dataset_fields_reach_only_their_own_organizations_catalogues() {
+        use joinedcontext_portal::resource::ResourceEnvelope;
+        let ns = joinedcontext_portal::permissions::ORG_NAMESPACE;
+        let envelope = |kind: &str, name: &str, spec: serde_json::Value| ResourceEnvelope {
+            api_version: jc_core::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: jc_core::ObjectMeta::new(name, ns),
+            spec,
+            status: None,
+        };
+        let installation = OrgId::parse_verified("00000000-0000-7000-8000-000000000001").unwrap();
+        let org = |name: &str, cat: &str| super::super::portals::OrganizationPortals {
+            name: name.into(),
+            org_id: OrgId::of_organization(installation, name),
+            catalogue_id: CatalogueId::parse_verified(cat).unwrap(),
+            scheme: "https".into(),
+            opendata: format!("data.{name}.test"),
+            listed: Vec::new(),
+            harvest_hosts: Vec::new(),
+            config_dir: None,
+            own_gateway: None,
+        };
+        let portals = vec![
+            org("bbsk", "00000000-0000-7000-8000-0000000000c1"),
+            org("town", "00000000-0000-7000-8000-0000000000c2"),
+        ];
+        let catalogue: BTreeMap<String, CatalogueId> = portals
+            .iter()
+            .map(|o| (o.name.clone(), o.catalogue_id))
+            .collect();
+        let configured: BTreeMap<CatalogueId, BrandingBlock> = portals
+            .iter()
+            .map(|o| (o.catalogue_id, BrandingBlock::default()))
+            .collect();
+        let mirror = joinedcontext_portal::store::Mirror::new();
+        mirror.upsert(envelope(
+            "Organization",
+            "bbsk",
+            serde_json::json!({ "domain": "bbsk.sk", "installation": true, "datasetFields": [
+                { "name": "funding", "label": { "sk": "Financovanie" }, "type": "enum",
+                  "values": ["eu", "city"] },
+                { "name": "reviewed", "label": { "sk": "Revízia" }, "type": "date" }] }),
+        ));
+        mirror.upsert(envelope(
+            "Organization",
+            "town",
+            serde_json::json!({ "domain": "town.test" }),
+        ));
+        mirror.upsert(envelope(
+            "Portal",
+            "bbsk-doprava",
+            serde_json::json!({ "organizationRef": "bbsk", "path": "doprava" }),
+        ));
+        let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
+        let (bbsk, town) = (portals[0].catalogue_id, portals[1].catalogue_id);
+        let doprava = CatalogueId::of_portal(portals[0].org_id, "doprava");
+        for id in [bbsk, doprava] {
+            let fields = &looks[&id].dataset_fields;
+            assert_eq!(fields.namespace, "https://bbsk.sk/ns/dataset-fields/bbsk/");
+            assert_eq!(
+                fields
+                    .fields
+                    .iter()
+                    .map(|f| f.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["funding", "reviewed"]
+            );
+        }
+        assert!(
+            looks
+                .get(&town)
+                .is_none_or(|b| b.dataset_fields.fields.is_empty()),
+            "never another Organization's"
+        );
     }
 
     fn prod_hidden() -> BTreeMap<String, String> {

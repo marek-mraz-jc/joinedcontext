@@ -18,6 +18,7 @@ Desired specification of an `Organization` resource (PF-01, PF-02, PF-25, PF-41)
 | `appearance` | [OrganizationAppearance](#organizationappearance) | no | What the Organization's Portal, open data portal and login page show of it, each member over the installation's branding (UIX-16). |
 | `catalog` | [ProjectCatalog](#projectcatalog) | no | The catalogue publisher a project of this Organization takes when it names none of its own (ADR-N-058 section 2.3, EP-127). |
 | `contacts` | list of [Contact](#contact) | no | Administrative, technical, data protection, or security contacts. |
+| `datasetFields` | list of [DatasetField](#datasetfield) | no | Up to 20 extra metadata fields its datasets fill in the dataset form, each stored as the dataset extra `x_<name>` and served in DCAT (T-7746). |
 | `dcatProfiles` | list of [DcatProfile](#dcatprofile) | no | The national DCAT-AP profiles the records of its Endpoints are also served in, besides DCAT-AP 3.0, which is always served (EP-27, docs API/08 section 5). |
 | `defaultLocale` | string | yes | Organization fallback default locale, MUST be one of [`Self::locales`] (PF-25, PF-26). |
 | `domain` | string | yes | Verified internet FQDN, the `{orgDomain}` of every entity URN (PF-41). |
@@ -79,6 +80,18 @@ Contact information for an organization role.
 | `name` | string | yes | Full name of the contact person or organizational unit. |
 | `phone` | string | no | Optional contact telephone number. |
 | `role` | [ContactRole](#contactrole) | yes | Role of this contact. |
+
+## DatasetField
+
+One extra metadata field of an Organization's datasets (T-7746).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `label` | map of string | yes | The label the dataset form and page show, per language, such as `{sk: Zdroj financovania}`. |
+| `name` | string | yes | A DNS label, unique in the Organization, such as `funding`; the dataset extra is `x_<name>` and the DCAT property `https://<installation domain>/ns/dataset-fields/<org>/<name>`. |
+| `required` | boolean | no | Whether every dataset of the Organization must fill it. |
+| `type` | [DatasetFieldType](#datasetfieldtype) | yes | What the field holds: `text`, `number`, `date`, `url` or `enum`. |
+| `values` | list of string | no | The values an `enum` field offers, at most 50; only `enum` takes them. |
 
 ## DcatProfile
 
@@ -230,6 +243,12 @@ The publisher of a dataset, a `foaf:Agent`.
 Functional responsibility of an organization contact.
 
 Type: one of `"administrative"`, `"technical"`, `"data-protection"`, `"security"`, `"open-data"`
+
+## DatasetFieldType
+
+What a field holds.
+
+Type: one of `"text"`, `"number"`, `"date"`, `"url"`, `"enum"`
 
 ## AgentLimits
 
