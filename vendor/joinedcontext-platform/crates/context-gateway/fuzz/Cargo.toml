@@ -1,0 +1,46 @@
+# Fuzzing the gateway's parsers of caller input (T-7767) under libFuzzer:
+# `cargo +nightly fuzz run <target>`. Not a workspace member.
+[package]
+name = "context-gateway-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+context-gateway = { path = ".." }
+jc-time = { path = "../../../../../crates/shared/jc-time" }
+serde_json = "1"
+
+[[bin]]
+name = "query_string"
+path = "fuzz_targets/query_string.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "geo_q"
+path = "fuzz_targets/geo_q.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "temporal_q"
+path = "fuzz_targets/temporal_q.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "owned_payload"
+path = "fuzz_targets/owned_payload.rs"
+test = false
+doc = false
+bench = false
