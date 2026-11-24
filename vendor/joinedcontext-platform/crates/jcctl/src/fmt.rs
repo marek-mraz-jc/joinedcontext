@@ -23,7 +23,11 @@ pub struct Report {
 /// Formats every YAML and Markdown file under `paths`; writes them back unless `check`.
 pub fn run(paths: &[PathBuf], check: bool) -> std::io::Result<Report> {
     let mut report = Report::default();
-    for file in paths.iter().flat_map(|p| files(p)) {
+    let mut found = Vec::new();
+    for path in paths {
+        found.extend(files(path)?);
+    }
+    for file in found {
         let src = std::fs::read_to_string(&file)?;
         match format_file(&file, &src) {
             Ok(out) if out == src => {}
@@ -39,22 +43,22 @@ pub fn run(paths: &[PathBuf], check: bool) -> std::io::Result<Report> {
     Ok(report)
 }
 
-/// The YAML and Markdown files under `path`, in a stable order.
-fn files(path: &Path) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = walkdir::WalkDir::new(path)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file())
-        .map(walkdir::DirEntry::into_path)
-        .filter(|p| {
-            matches!(
-                p.extension().and_then(|e| e.to_str()),
-                Some("yaml" | "yml" | "md")
-            )
-        })
-        .collect();
+/// The YAML and Markdown files under `path`, in a stable order. A path that is not there or a
+/// directory that does not read is an error: a mistyped path must not pass `--check` unread.
+fn files(path: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    for entry in walkdir::WalkDir::new(path) {
+        let entry = entry?;
+        let wanted = matches!(
+            entry.path().extension().and_then(|e| e.to_str()),
+            Some("yaml" | "yml" | "md")
+        );
+        if wanted && entry.file_type().is_file() {
+            out.push(entry.into_path());
+        }
+    }
     out.sort();
-    out
+    Ok(out)
 }
 
 /// One file's text, formatted.
@@ -141,6 +145,42 @@ mod tests {
             .expect("again")
             .changed
             .is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_path_that_is_not_there_is_an_error_naming_it_and_formats_nothing() {
+        let dir = std::env::temp_dir().join(format!("jcctl-fmt-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let messy = dir.join("a.yaml");
+        std::fs::write(&messy, "kind: K\napiVersion: v1\n").expect("write");
+        let missing = dir.join("typo");
+        let err = run(&[missing.clone(), dir.clone()], false).expect_err("typo is not there");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(err.to_string().contains("typo"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&messy).ok().as_deref(),
+            Some("kind: K\napiVersion: v1\n"),
+            "nothing is written when one path does not read"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unclosed_markdown_block_stays_as_written_and_other_extensions_are_left() {
+        let dir = std::env::temp_dir().join(format!("jcctl-fmt-file-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let page = dir.join("page.md");
+        let other = dir.join("notes.txt");
+        std::fs::write(&page, "```yaml\nkind: K\napiVersion: v1\n").expect("write");
+        std::fs::write(&other, "kind: K\napiVersion: v1\n").expect("write");
+        let report = run(&[page.clone(), other.clone()], true).expect("check");
+        assert!(
+            report.changed.is_empty() && report.failed.is_empty(),
+            "an unclosed block stays as written and a .txt is no manifest: {report:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
