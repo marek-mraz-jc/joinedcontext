@@ -610,12 +610,21 @@ dependencies = [
 name = "dataroom-fuzz"
 version = "0.0.0"
 dependencies = [
+ "axum",
+ "dataroom-api",
  "dataroom-core",
+ "dataroom-harvest",
+ "dataroom-rdf",
+ "dataroom-search",
  "dataroom-server",
+ "dataroom-shacl",
  "dataroom-store-memory",
+ "dataroom-web",
  "libfuzzer-sys",
  "serde_json",
  "tokio",
+ "tower",
+ "url",
  "uuid",
 ]
 

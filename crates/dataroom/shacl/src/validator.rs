@@ -62,7 +62,23 @@ impl PathExpr {
                     .into_iter()
                     .map(|s| s.to_term())
                     .collect(),
-                _ => Vec::new(),
+                // `^^p` is `p`, `^(a/b)` is `^b/^a` and `^(x|y)` is `^x|^y` (SHACL 2.3.1).
+                Self::Inverse(path) => path.evaluate(graph, focus),
+                Self::Sequence(steps) => Self::Sequence(
+                    steps
+                        .iter()
+                        .rev()
+                        .map(|step| Self::Inverse(Box::new(step.clone())))
+                        .collect(),
+                )
+                .evaluate(graph, focus),
+                Self::Alternative(branches) => Self::Alternative(
+                    branches
+                        .iter()
+                        .map(|branch| Self::Inverse(Box::new(branch.clone())))
+                        .collect(),
+                )
+                .evaluate(graph, focus),
             },
             Self::Sequence(steps) => {
                 let mut current = vec![focus.clone()];
@@ -239,6 +255,16 @@ impl ShapesGraph {
     }
 }
 
+/// The node kinds `sh:nodeKind` may name (SHACL 4.1.3).
+const NODE_KINDS: [&str; 6] = [
+    "http://www.w3.org/ns/shacl#IRI",
+    "http://www.w3.org/ns/shacl#BlankNode",
+    "http://www.w3.org/ns/shacl#Literal",
+    "http://www.w3.org/ns/shacl#BlankNodeOrIRI",
+    "http://www.w3.org/ns/shacl#BlankNodeOrLiteral",
+    "http://www.w3.org/ns/shacl#IRIOrLiteral",
+];
+
 /// Parses a Turtle document of SHACL shapes into a [`ShapesGraph`].
 pub fn parse_shapes_graph(turtle: &str, limits: &RdfLimits) -> Result<ShapesGraph> {
     let g = parse_turtle_checked(turtle, limits)?;
@@ -295,6 +321,15 @@ pub fn compile_shapes_from_rdf(g: &RdfGraph) -> Result<ShapesGraph> {
             .map(|f| f.string_value().to_owned());
         if let Err(e) = compile_pattern(t.object.string_value(), flags.as_deref()) {
             return refuse(format!("sh:pattern on {}: {e}", t.subject));
+        }
+    }
+
+    for t in g.triples.iter().filter(|t| t.predicate == sh("nodeKind")) {
+        if !NODE_KINDS.contains(&t.object.string_value()) {
+            return refuse(format!(
+                "sh:nodeKind on {}: {} is no SHACL node kind",
+                t.subject, t.object
+            ));
         }
     }
 
@@ -390,19 +425,20 @@ fn parse_path_expr(g: &RdfGraph, term: &Term) -> Option<PathExpr> {
             if let Some(inv) = g.first_object(&subj, &sh("inversePath")) {
                 return Some(PathExpr::Inverse(Box::new(parse_path_expr(g, &inv)?)));
             }
+            // Every item must be a path: one dropped would check another path than stated.
             if let Some(alt) = g.first_object(&subj, &sh("alternativePath")) {
                 let list = g
                     .rdf_list(&alt)
                     .iter()
-                    .filter_map(|item| parse_path_expr(g, item))
-                    .collect();
-                return Some(PathExpr::Alternative(list));
+                    .map(|item| parse_path_expr(g, item))
+                    .collect::<Option<Vec<_>>>()?;
+                return (!list.is_empty()).then_some(PathExpr::Alternative(list));
             }
             let seq: Vec<PathExpr> = g
                 .rdf_list(term)
                 .iter()
-                .filter_map(|item| parse_path_expr(g, item))
-                .collect();
+                .map(|item| parse_path_expr(g, item))
+                .collect::<Option<_>>()?;
             if !seq.is_empty() {
                 Some(PathExpr::Sequence(seq))
             } else {
@@ -1469,6 +1505,168 @@ mod tests {
         let dangling =
             shapes("ex:S a sh:NodeShape ; sh:targetClass ex:Item ; sh:property ex:Undefined .");
         assert!(dangling.is_ok(), "{dangling:?}");
+    }
+
+    /// A literal path, an unknown node kind, a sequence or alternative with an item that is no
+    /// path, and an empty alternative check nothing they were meant to: each is refused.
+    #[test]
+    fn unreadable_paths_and_node_kinds_are_refused() {
+        for path in [
+            "\"ex:p\"",
+            "( ex:a \"b\" )",
+            "[ sh:alternativePath ( ex:a 5 ) ]",
+            "[ sh:alternativePath () ]",
+            "[ sh:inversePath \"p\" ]",
+        ] {
+            let why = refusal(&format!(
+                "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+                   sh:property [ sh:path {path} ; sh:maxCount 0 ] ."
+            ));
+            assert!(why.contains("unsupported sh:path"), "{path}: {why}");
+        }
+        let kind = refusal(
+            "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path ex:p ; sh:nodeKind sh:IRl ] .",
+        );
+        assert!(kind.contains("sh:nodeKind"), "{kind}");
+        let on_node =
+            refusal("ex:S a sh:NodeShape ; sh:targetClass ex:Item ; sh:nodeKind \"IRI\" .");
+        assert!(on_node.contains("sh:nodeKind"), "{on_node}");
+    }
+
+    /// An inverse of a sequence, an alternative or an inverse reads the values SHACL defines:
+    /// `^(a/b)` is `^b/^a`, `^(x|y)` is `^x|^y`, `^^p` is `p`; a `sh:maxCount 0` on one is
+    /// broken by such a value, never passed for want of evaluation.
+    #[test]
+    fn inverse_of_complex_paths_evaluates_per_shacl() {
+        let shapes_body = "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path [ sh:inversePath ( ex:a ex:b ) ] ; sh:maxCount 0 ] ;
+               sh:property [ sh:path [ sh:inversePath [ sh:alternativePath ( ex:x ex:y ) ] ] ; sh:maxCount 1 ] ;
+               sh:property [ sh:path [ sh:inversePath [ sh:inversePath ex:own ] ] ; sh:maxCount 0 ] .";
+        assert!(report(shapes_body, "ex:i a ex:Item .").conforms);
+        let bad = report(
+            shapes_body,
+            "ex:i a ex:Item ; ex:own ex:thing .
+             ex:s ex:a ex:m . ex:m ex:b ex:i .
+             ex:p ex:x ex:i . ex:q ex:y ex:i .",
+        );
+        assert_eq!(
+            components(&bad),
+            ["MaxCountConstraintComponent"; 3],
+            "{:?}",
+            bad.findings
+        );
+        let data = parse_rdf_graph(
+            &format!("{PREFIXES}ex:s ex:a ex:m . ex:m ex:b ex:i ."),
+            RdfFormat::Turtle,
+            &RdfLimits::default(),
+        )
+        .unwrap();
+        let ex = |l: &str| format!("https://example.org/{l}");
+        let inverse = PathExpr::Inverse(Box::new(PathExpr::Sequence(vec![
+            PathExpr::Predicate(ex("a")),
+            PathExpr::Predicate(ex("b")),
+        ])));
+        assert_eq!(
+            inverse.evaluate(&data, &Term::Iri(ex("i"))),
+            [Term::Iri(ex("s"))]
+        );
+        assert!(inverse.evaluate(&data, &Term::Iri(ex("s"))).is_empty());
+    }
+
+    /// Shapes edges read as stated: a literal `sh:property` and an IRI `sh:name` carry nothing,
+    /// a property shape with a target node and no target class is no node shape of its own,
+    /// one with a target class is.
+    #[test]
+    fn literal_property_iri_name_and_targeted_property_shapes() {
+        let sg = shapes(
+            "ex:S a sh:NodeShape ; sh:targetClass ex:Item ; sh:property \"oops\" ;
+               sh:property [ sh:path ex:p ; sh:name ex:NotAText, \"Name\"@sk ] .
+             ex:P sh:path ex:q ; sh:targetNode ex:i ; sh:minCount 1 .
+             ex:Q sh:path ex:r ; sh:targetClass ex:Item ; sh:minCount 1 .",
+        )
+        .unwrap();
+        let s = SubjectNode::Named("https://example.org/S".into());
+        assert_eq!(
+            sg.node_shapes[&s].properties.len(),
+            1,
+            "the literal is no shape"
+        );
+        let names = &sg.node_shapes[&s].properties[0].name;
+        assert_eq!(names.len(), 1, "an IRI is no name: {names:?}");
+        assert!(!sg
+            .node_shapes
+            .contains_key(&SubjectNode::Named("https://example.org/P".into())));
+        assert!(sg
+            .node_shapes
+            .contains_key(&SubjectNode::Named("https://example.org/Q".into())));
+    }
+
+    /// A node typed with two target classes of one shape is checked once; a closed shape whose
+    /// target is a literal has no predicates to refuse; `sh:uniqueLang` ignores values without
+    /// a language and compares tags whatever their case.
+    #[test]
+    fn focus_reached_by_two_classes_literal_closed_target_and_unique_lang() {
+        let twice = report(
+            "ex:S a sh:NodeShape ; sh:targetClass ex:A, ex:B ;
+               sh:property [ sh:path ex:p ; sh:minCount 1 ] .",
+            "ex:i a ex:A, ex:B .",
+        );
+        assert_eq!(components(&twice), ["MinCountConstraintComponent"]);
+
+        let closed = report(
+            "ex:S a sh:NodeShape ; sh:targetNode \"text\" ; sh:closed true .",
+            "ex:i ex:p 1 .",
+        );
+        assert!(closed.conforms, "{:?}", closed.findings);
+
+        let shapes_body = "ex:S a sh:NodeShape ; sh:targetClass ex:Item ;
+               sh:property [ sh:path ex:label ; sh:uniqueLang true ] .";
+        let ok = report(
+            shapes_body,
+            "ex:i a ex:Item ; ex:label ex:x, \"plain\", \"other\", \"a\"@sk .",
+        );
+        assert!(ok.conforms, "{:?}", ok.findings);
+        let bad = report(
+            shapes_body,
+            "ex:i a ex:Item ; ex:label \"a\"@en, \"b\"@EN .",
+        );
+        assert_eq!(components(&bad), ["UniqueLangConstraintComponent"]);
+    }
+
+    /// A shapes graph built in code with a node kind SHACL does not define has nothing to
+    /// compare it with and reports nothing (a parsed one is refused, see above).
+    #[test]
+    fn a_hand_built_unknown_node_kind_reports_nothing() {
+        let id = SubjectNode::Named("https://example.org/S".into());
+        let mut sg = ShapesGraph::default();
+        sg.node_shapes.insert(
+            id.clone(),
+            NodeShape {
+                id,
+                target_classes: Vec::new(),
+                target_nodes: vec![Term::Iri("https://example.org/i".into())],
+                properties: Vec::new(),
+                constraints: ShapeConstraints {
+                    node_kind: Some("https://example.org/Kind".into()),
+                    ..ShapeConstraints::default()
+                },
+            },
+        );
+        let rep = validate_graph_against_shapes(
+            &RdfGraph::new(),
+            &sg,
+            OrgId::from_uuid(Uuid::from_u128(1)),
+            CatalogueId::from_uuid(Uuid::from_u128(10)),
+            "ds",
+            "test",
+            "1",
+        );
+        assert!(
+            rep.conforms && rep.findings.is_empty(),
+            "{:?}",
+            rep.findings
+        );
     }
 
     #[test]
