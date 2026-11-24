@@ -599,8 +599,8 @@ fn model(
         .collect();
     let edm = edm::outputs(edm, &listed);
     let edm = if key.6 { edm::histories(edm) } else { edm };
-    let schema_revision = revision;
-    tracing::debug!(view = id, schema_revision, "the view's OData model built");
+    let (view, schema_revision) = (id, revision);
+    tracing::debug!(view, schema_revision, "the view's OData model was built");
     let documents = Arc::new(odata_axum::MetadataDocuments::default());
     // The XML document `$metadata` serves, written here once: its tag and its weight.
     let xml = documents.xml(&edm.csdl, &odata_csdl::Limits::strict());
