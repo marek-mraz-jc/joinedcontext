@@ -174,7 +174,7 @@ mod tests {
             .expect("scanner");
         assert!(s.splits_on_newline());
         assert_eq!(
-            lines(serde_json::json!({"custom_delimiter": ""}), b"a\r\nb").expect("lines"),
+            lines(serde_json::json!({"custom_delimiter": ""}), b"a\r\nb\r").expect("lines"),
             ["a", "b"]
         );
     }

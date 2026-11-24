@@ -191,6 +191,13 @@ impl tracing::Subscriber for Recorder {
     fn exit(&self, _: &tracing::span::Id) {}
 }
 
+/// One server test at a time: atmoz's sshd drops handshakes past its MaxStartups when the tests'
+/// sessions arrive together.
+async fn serial() -> tokio::sync::MutexGuard<'static, ()> {
+    static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    SERIAL.lock().await
+}
+
 fn lines(b: &ekiben_core::Batch) -> Vec<String> {
     b.iter()
         .map(|p| String::from_utf8_lossy(&p.as_bytes_ref()).into_owned())
@@ -203,6 +210,7 @@ async fn reads_matching_files_deletes_them_after_ack_and_refuses_bad_logins() {
         eprintln!("SFTP_TEST_ADDRESS unset: skipped");
         return;
     };
+    let _serial = serial().await;
     let c = ctx(Arc::default());
     let pin = pin(&s, &c).await;
     let dir = format!("/upload/once-{}", std::process::id());
@@ -260,6 +268,7 @@ async fn a_watcher_takes_each_new_file_once() {
         eprintln!("SFTP_TEST_ADDRESS unset: skipped");
         return;
     };
+    let _serial = serial().await;
     let cache = Arc::new(MemCache::default());
     let c = ctx(cache.clone());
     let pin = pin(&s, &c).await;
@@ -309,6 +318,7 @@ async fn connect_names_missing_undecodable_and_refused_credentials() {
         eprintln!("SFTP_TEST_ADDRESS unset: skipped");
         return;
     };
+    let _serial = serial().await;
     let c = ctx(Arc::default());
     let pin = pin(&s, &c).await;
     fn err<T>(r: Result<T, CoreError>) -> String {
@@ -341,6 +351,7 @@ async fn files_past_the_cap_are_skipped_or_refused_and_an_empty_file_is_passed_o
         eprintln!("SFTP_TEST_ADDRESS unset: skipped");
         return;
     };
+    let _serial = serial().await;
     logs();
     let c = ctx(Arc::default());
     let pin = pin(&s, &c).await;
@@ -457,6 +468,7 @@ async fn a_watcher_rides_out_a_vanished_file_and_a_missing_directory() {
         eprintln!("SFTP_TEST_ADDRESS unset: skipped");
         return;
     };
+    let _serial = serial().await;
     logs();
     let cache = Arc::new(MemCache::default());
     let c = ctx(cache.clone());

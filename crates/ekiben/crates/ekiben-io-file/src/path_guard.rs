@@ -76,5 +76,11 @@ mod tests {
             sanitize_file_path("link", Some(r)).expect("inside"),
             r.join("link")
         );
+        // a root that does not exist yet is taken as written
+        let later = r.join("later");
+        assert_eq!(
+            sanitize_file_path("x", Some(&later)).expect("kept"),
+            later.join("x")
+        );
     }
 }

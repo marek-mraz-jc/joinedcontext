@@ -278,6 +278,21 @@ fn keygen(dir: &std::path::Path, name: &str) -> String {
     std::fs::read_to_string(path.with_extension("pub")).expect("public key")
 }
 
+#[test]
+fn a_private_key_config_parses_with_or_without_a_pass() {
+    let dir = tempfile::TempDir::new().expect("tmp");
+    keygen(dir.path(), "user");
+    let key = std::fs::read_to_string(dir.path().join("user")).expect("private key");
+    for pass in ["", "unused"] {
+        let s = Settings::parse(&with(json!({"credentials": {
+            "username": "city", "private_key": key, "private_key_pass": pass,
+        }})))
+        .expect("parses");
+        assert!(s.target.password.is_none() && s.target.private_key.is_some());
+        assert_eq!(s.target.private_key_pass.is_some(), !pass.is_empty());
+    }
+}
+
 #[tokio::test]
 async fn the_pin_checks_a_host_key_and_a_host_certificate_by_their_key() {
     use russh::client::Handler;

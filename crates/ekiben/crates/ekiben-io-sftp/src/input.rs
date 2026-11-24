@@ -400,11 +400,8 @@ impl SftpInput {
                 }
                 let path = format!("{}/{name}", dir.trim_end_matches('/'));
                 if meta.len() > self.s.max_file_bytes as u64 {
-                    tracing::warn!(
-                        "sftp input: {path} ({} bytes) is larger than max_file_bytes ({}) and is skipped",
-                        meta.len(),
-                        self.s.max_file_bytes
-                    );
+                    let (len, max) = (meta.len(), self.s.max_file_bytes);
+                    tracing::warn!("sftp input: {path} ({len} bytes) is larger than max_file_bytes ({max}) and is skipped");
                     continue;
                 }
                 // from_config gives a watcher its cache
@@ -487,10 +484,8 @@ impl SftpInput {
                 Err(e @ (CoreError::AccessDenied { .. } | CoreError::Config(_))) => return Err(e),
                 Err(e) if self.s.watcher.is_none() => return Err(e),
                 Err(e) => {
-                    tracing::warn!(
-                        "sftp input: connect failed, retrying in {:?}: {e}",
-                        self.backoff
-                    );
+                    let wait = self.backoff;
+                    tracing::warn!("sftp input: connect failed, retrying in {wait:?}: {e}");
                     tokio::time::sleep(self.backoff).await;
                     self.backoff = (self.backoff * 2).min(Duration::from_secs(30));
                 }

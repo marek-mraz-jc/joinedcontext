@@ -91,6 +91,8 @@ enum Fail {
     Indexed(&'static str, Vec<usize>),
     /// A batch error over the batch sent twice, naming each copy of its first part.
     Doubled(&'static str),
+    /// A batch error over a part the batch never held.
+    Foreign(&'static str),
 }
 
 #[derive(Default)]
@@ -157,6 +159,11 @@ impl Output for RecOutput {
                 for i in idx {
                     e.failed(i, format!("part {i} failed"));
                 }
+                Err(CoreError::Batch(e))
+            }
+            Some(Fail::Foreign(m)) => {
+                let mut e = BatchError::new(vec![Part::from_str("stranger")], m.to_string());
+                e.failed(0, "stranger failed");
                 Err(CoreError::Batch(e))
             }
             Some(Fail::Doubled(m)) => {
@@ -680,10 +687,13 @@ async fn generate_refuses_a_cron_schedule_that_never_fires_and_stops_on_shutdown
     )
     .expect("builds");
     let _ = i.read_batch(&c).await.expect("the first tick is free");
-    // a change that is not a stop leaves the wait running
-    tx.send(false).expect("no stop");
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    tx.send(true).expect("signal");
+    // a change that is not a stop leaves the wait running; the stop then ends it
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tx.send(false).expect("no stop");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tx.send(true).expect("signal");
+    });
     let r = tokio::time::timeout(Duration::from_secs(5), i.read_batch(&c))
         .await
         .expect("ends at once");
@@ -1359,6 +1369,18 @@ async fn fallback_marks_the_whole_batch_and_answers_the_last_tier_error() {
         .await
         .expect("second tier");
     assert_eq!(next.marks(), [vec!["out of range", "out of range"]]);
+    // an error over parts the batch never held narrows nothing either
+    rec("fbf-1", vec![Fail::Foreign("strangers")], false);
+    let next = rec("fbf-2", vec![], false);
+    let o = output(
+        &c,
+        json!({"fallback": [{"rec": "fbf-1"}, {"rec": "fbf-2"}]}),
+    )
+    .expect("builds");
+    o.write_batch(&c, parts(&["a", "b"]))
+        .await
+        .expect("second tier");
+    assert_eq!(next.marks(), [vec!["strangers", "strangers"]]);
     // a part the child sent twice goes on once
     rec("fbd-1", vec![Fail::Doubled("twice")], false);
     let next = rec("fbd-2", vec![], false);
