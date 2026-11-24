@@ -93,6 +93,27 @@ describe("who can do what on a broker", () => {
     expect(asked).toEqual(["fleet", "spare"]);
   });
 
+  it("sorts the held roles by each column the person picks", async () => {
+    const roles = [
+      // Every column holds a value in both rows: a blank sorts last both ways.
+      { role: "sensor", publish: ["air/${clientid}/pm10"], subscribe: ["air/${clientid}/a"], legacy: false, bound: true, until: "2026-12-01T00:00:00Z" },
+      { role: "relay", publish: ["air/${clientid}/z"], subscribe: ["air/${clientid}/cmd"], legacy: true, bound: false, until: "2027-01-01T00:00:00Z" },
+    ];
+    show({ access: () => json({ ...HELD, roles }) });
+    const table = await within(await panel()).findByRole("table");
+    const order = () => within(table).getAllByRole("row").slice(1).map((row) => within(row).queryByText(/^(sensor|relay)$/)?.textContent);
+    for (const name of ["Role", "Publish", "Subscribe", "Granted by", "Until"]) {
+      const header = within(table).getByRole("columnheader", { name: new RegExp(name) });
+      const sort = header.querySelector("button.jc-grid-sort-btn") as HTMLButtonElement;
+      fireEvent.click(sort);
+      expect(header).toHaveAttribute("aria-sort", "ascending");
+      const once = order();
+      fireEvent.click(sort);
+      expect(header).toHaveAttribute("aria-sort", "descending");
+      expect(order(), name).toEqual([...once].reverse());
+    }
+  });
+
   it("lists a grant past its end", async () => {
     show({ access: () => json({ ...HELD, roles: [], outOfWindow: [{ grant: "mqtt/*/sensor", notAfter: "2026-10-01T00:00:00Z" }] }) });
     const region = await panel();

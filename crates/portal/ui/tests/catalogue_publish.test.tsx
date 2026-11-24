@@ -1,7 +1,7 @@
 // covers (T-2137, the module gate in gate_modules.test.ts): the cases in this file drive
 // src/pages/catalogue/PublishDataset.tsx, PublicationPreview.tsx and publish.ts: the one-step publish
 // flow (EP-83, T-2726) and its CKAN page preview (T-4847).
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
@@ -112,6 +112,8 @@ describe("publish a dataset in one step (EP-83)", () => {
   });
 
   let readBesideDraft = false;
+  /** The answer the proposal (the PUT without dryRun) gets the first time; later ones are accepted. */
+  let firstProposal: { status: number; body: unknown } | null = null;
   function stub() {
     readBesideDraft = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -141,7 +143,10 @@ describe("publish a dataset in one step (EP-83)", () => {
       }
       if (path === "/api/v1/projects/bbsk/endpoints/bbsk-kpi" && request.method === "GET") return json(ENDPOINT);
       if (path === "/api/v1/projects/bbsk/endpoints/bbsk-kpi" && request.method === "PUT") {
-        return url.searchParams.get("dryRun") === "All" ? json({ valid: true }) : json(CHANGE, 202);
+        if (url.searchParams.get("dryRun") === "All") return json({ valid: true });
+        const refusal = firstProposal;
+        firstProposal = null;
+        return refusal ? json(refusal.body, refusal.status) : json(CHANGE, 202);
       }
       return json({ apiVersion: LIST, kind: "List", items: [] });
     });
@@ -260,6 +265,61 @@ describe("publish a dataset in one step (EP-83)", () => {
       spatial: ["SK032"],
       temporal: { start: "2020-01-01" },
     });
+  });
+
+  it("edits the contact, themes, frequency and period, goes back from the preview, shows a refused proposal and closes when done", async () => {
+    const user = userEvent.setup();
+    stub();
+    firstProposal = { status: 422, body: { status: 422, title: "Unprocessable Content", detail: "the catalogue refused the entry" } };
+    window.history.pushState({}, "", "/catalogue");
+    render(
+      <QueryClientProvider client={client()}>
+        <I18nextProvider i18n={i18n}>
+          <App />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Publish a dataset" }));
+    const dialog = await screen.findByRole("dialog", { name: "Publish a dataset" });
+    await user.click(within(dialog).getByRole("combobox", { name: "Endpoint" }));
+    await user.click(await within(dialog).findByRole("option", { name: /Ukazovatele kraja/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Draft the description" }));
+    const contact = await within(dialog).findByRole("textbox", { name: /Contact name/ });
+    await user.clear(contact);
+    await user.type(contact, "Data desk");
+    const email = within(dialog).getByRole("textbox", { name: /Contact e-mail/ });
+    await user.clear(email);
+    await user.type(email, "data@example.org");
+    // A theme the draft chose can be taken off.
+    await user.click(within(dialog).getByRole("checkbox", { name: "Economy and finance" }));
+    await user.click(within(dialog).getByRole("checkbox", { name: "Environment" }));
+    const frequency = within(dialog).getByRole("combobox", { name: "Updated" });
+    const choice = [...(frequency as HTMLSelectElement).options].map((option) => option.value).find((value) => value !== "") ?? "";
+    await user.selectOptions(frequency, choice);
+    fireEvent.change(within(dialog).getByLabelText("Covers data from"), { target: { value: "2020-01-01" } });
+    fireEvent.change(within(dialog).getByLabelText("Covers data until"), { target: { value: "2025-12-31" } });
+    // An attribute left out and taken back is published again.
+    await user.click(within(dialog).getByRole("checkbox", { name: /kpiValue/ }));
+    await user.click(within(dialog).getByRole("checkbox", { name: /kpiValue/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Preview the entry" }));
+    await within(dialog).findByRole("region", { name: "3. Preview" });
+    await user.click(within(dialog).getByRole("button", { name: "Back" }));
+    expect(within(dialog).getByRole("textbox", { name: /Contact name/ })).toHaveValue("Data desk");
+    await user.click(within(dialog).getByRole("button", { name: "Preview the entry" }));
+    await user.type(await within(dialog).findByRole("textbox", { name: /Type the endpoint's name/ }), "bbsk-kpi");
+    await user.click(within(dialog).getByRole("button", { name: "Make public and propose publication" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("the catalogue refused the entry");
+    await user.click(within(dialog).getByRole("button", { name: "Make public and propose publication" }));
+    await within(dialog).findByText(/next reconcile/);
+    const body = sent.filter((s) => s.method === "PUT").at(-1)?.body as { spec: { catalog: Record<string, unknown>; projection?: unknown } };
+    expect(body.spec.catalog).toMatchObject({
+      themes: ["ENVI"],
+      contactPoint: { name: "Data desk", email: "data@example.org" },
+      temporal: { start: "2020-01-01", end: "2025-12-31" },
+    });
+    expect(body.spec.projection).toEqual({ hiddenAttributes: ["internalNote", "reporter"] });
+    await user.click(within(dialog).getByRole("button", { name: "Close the flow" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Publish a dataset" })).toBeNull());
   });
 
   it("says what the API said when the project has no catalogue to publish to", async () => {

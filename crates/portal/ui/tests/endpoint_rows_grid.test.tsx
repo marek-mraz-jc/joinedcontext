@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { I18nextProvider } from "react-i18next";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import type { Manifest } from "../src/api/manifest";
-import { endpointRows } from "../src/pages/endpoints/endpointRows";
+import { SharedRowActions, endpointRows } from "../src/pages/endpoints/endpointRows";
+import { json, renderPage } from "./page_contract";
 import { MASK, manifestYaml } from "../src/components/grid/ManifestYamlDialog";
 import { CallsCell, CallsDetail } from "../src/routes/EndpointsPage";
 
@@ -138,5 +140,67 @@ describe("the one Endpoints grid (T-6169)", () => {
     );
     expect(screen.getByText("No answered calls in the last 7 days")).toBeVisible();
     expect(screen.queryByRole("list")).toBeNull();
+  });
+});
+
+describe("a shared row's menu (T-7540)", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
+  const permissions = (verbs: string[]) => ({
+    project: "espoo",
+    bootstrap: false,
+    grants: [{ role: "r", binding: "b", scope: "project", rule: { kinds: ["SharedSpaceReference"], verbs } }],
+  });
+  const bikes = [{ source: "helsinki", endpoint: endpoint("helsinki", "bikes") }];
+
+  function menu(row: ReturnType<typeof endpointRows>[number], verbs: string[], onUse = vi.fn()) {
+    renderPage(<SharedRowActions project="espoo" row={row} label="Helsinki bikes" onUse={onUse} useBusy={false} />, {
+      path: "/projects/espoo/endpoints",
+      answer: (url) => (url.pathname.endsWith("/permissions/me") ? json(permissions(verbs)) : undefined),
+    });
+    return onUse;
+  }
+
+  async function pick(name: string) {
+    await userEvent.click(await screen.findByRole("button", { name: /Helsinki bikes/ }));
+    const item = within(await screen.findByRole("menu")).getByRole("menuitem", { name: new RegExp(`^${name}`) });
+    await waitFor(() => expect(item).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(item);
+  }
+
+  it("opens the source endpoint, shows its YAML, edits the alias and stops using it", async () => {
+    const [row] = endpointRows("espoo", [], bikes, [reference("helsinki-bikes", "helsinki", "bikes")]);
+    menu(row, ["read", "propose", "delete"]);
+    await pick("View YAML");
+    const yaml = await screen.findByRole("dialog");
+    expect(within(yaml).getByText(/kind: Endpoint/)).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    for (const action of ["Edit alias", "Stop using"]) {
+      await pick(action);
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
+    await pick("Open");
+    await waitFor(() => expect(window.location.pathname).toBe("/projects/helsinki/endpoints/bikes"));
+  });
+
+  it("uses a shared endpoint not referenced yet", async () => {
+    const [row] = endpointRows("espoo", [], bikes, []);
+    const onUse = menu(row, ["read", "propose"]);
+    await pick("Use in this project");
+    expect(onUse).toHaveBeenCalledOnce();
+  });
+
+  it("refuses stopping to a person who may not delete references, with the reason", async () => {
+    const [row] = endpointRows("espoo", [], [], [reference("gone", "vantaa", "air")]);
+    menu(row, ["read", "propose"]);
+    await userEvent.click(await screen.findByRole("button", { name: /Helsinki bikes/ }));
+    const stop = within(await screen.findByRole("menu")).getByRole("menuitem", { name: /^Stop using/ });
+    await waitFor(() => expect(stop).toHaveAttribute("aria-disabled", "true"));
+    expect(within(screen.getByRole("menu")).queryByRole("menuitem", { name: /^Open/ })).toBeNull();
   });
 });
