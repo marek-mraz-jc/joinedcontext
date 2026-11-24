@@ -1,0 +1,2 @@
+{"urls":["nats://memory/x"],"auth":{"user_jwt":"j","user_nkey_seed":"SU"},"tls":{"enabled":true,"root_cas":"x"}}
+org_f.a.>

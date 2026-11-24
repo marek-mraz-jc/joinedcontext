@@ -339,17 +339,11 @@ impl AtomicF64 {
     }
 
     fn add(&self, delta: f64) {
-        let mut cur = self.0.load(Ordering::Relaxed);
-        loop {
-            let next = (f64::from_bits(cur) + delta).to_bits();
-            match self
-                .0
-                .compare_exchange_weak(cur, next, Ordering::Relaxed, Ordering::Relaxed)
-            {
-                Ok(_) => return,
-                Err(actual) => cur = actual,
-            }
-        }
+        let _ = self
+            .0
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+                Some((f64::from_bits(cur) + delta).to_bits())
+            });
     }
 }
 
@@ -362,8 +356,9 @@ impl Reservoir {
     fn record(&mut self, v: f64) {
         if self.samples.len() < SUMMARY_RESERVOIR_SIZE {
             self.samples.push(v);
-        } else if let Some(slot) = self.samples.get_mut(self.cursor % SUMMARY_RESERVOIR_SIZE) {
-            *slot = v;
+        } else {
+            // Full: `samples` holds exactly SUMMARY_RESERVOIR_SIZE values, so the index is in range.
+            self.samples[self.cursor % SUMMARY_RESERVOIR_SIZE] = v;
         }
         self.cursor = self.cursor.wrapping_add(1);
     }
@@ -474,10 +469,9 @@ impl SeriesData {
                 let secs = ns as f64 / 1_000_000_000.0;
                 sum.add(secs);
                 count.fetch_add(1, Ordering::Relaxed);
+                // `counts` has one slot per bound; above the last bound only `+Inf` (the count) moves.
                 if let Some(i) = bounds.iter().position(|b| secs <= *b) {
-                    if let Some(c) = counts.get(i) {
-                        c.fetch_add(1, Ordering::Relaxed);
-                    }
+                    counts[i].fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
@@ -1060,34 +1054,26 @@ impl Namespaced {
         (path, names, values)
     }
 
-    fn handle(
-        &self,
-        path: &str,
-        kind: FamilyKind,
-        extra: &[(&str, &str)],
-    ) -> Option<Arc<SeriesData>> {
+    fn handle(&self, path: &str, kind: FamilyKind) -> Option<Arc<SeriesData>> {
         let (path, names, values) = self.path_and_labels(path);
         if path.is_empty() {
             return None;
         }
-        let mut labels: Vec<(String, String)> = names.into_iter().zip(values).collect();
-        for (k, v) in extra {
-            labels.push(((*k).to_string(), (*v).to_string()));
-        }
+        let labels: Vec<(String, String)> = names.into_iter().zip(values).collect();
         self.exporter
             .get_or_create(&path, kind, labels, self.owner.as_ref())
     }
 
     pub fn counter(&self, path: &str) -> Counter {
-        Counter(self.handle(path, FamilyKind::Counter, &[]))
+        Counter(self.handle(path, FamilyKind::Counter))
     }
 
     pub fn gauge(&self, path: &str) -> Gauge {
-        Gauge(self.handle(path, FamilyKind::Gauge, &[]))
+        Gauge(self.handle(path, FamilyKind::Gauge))
     }
 
     pub fn timer(&self, path: &str) -> Timer {
-        Timer(self.handle(path, FamilyKind::Timer, &[]))
+        Timer(self.handle(path, FamilyKind::Timer))
     }
 
     /// A counter with dynamic labels named `label_names` after the static ones.
@@ -1161,5 +1147,34 @@ impl MetricVec {
         } else {
             None
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_series_ignores_operations_of_another_kind() {
+        let timer = SeriesData::summary();
+        timer.add(2.0);
+        timer.set(3.0);
+        assert_eq!(timer.value(), 0.0);
+        let hist = SeriesData::histogram(Arc::new(vec![1.0]));
+        hist.add(1.0);
+        assert_eq!(hist.value(), 0.0);
+        let scalar = SeriesData::scalar();
+        scalar.observe_ns(5);
+        scalar.add(1.5);
+        assert_eq!(scalar.value(), 1.5);
+    }
+
+    #[test]
+    fn an_empty_reservoir_has_no_quantile() {
+        let r = Reservoir {
+            samples: Vec::new(),
+            cursor: 0,
+        };
+        assert!(r.quantile(0.5).is_nan());
     }
 }
