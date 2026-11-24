@@ -34,9 +34,10 @@ fuzz_target!(|data: &[u8]| {
 /// The last `__Host-jc_csrf` value of the `Cookie` line, read without the Portal's parser.
 fn axum_extra_free_cookie(headers: &HeaderMap) -> Option<String> {
     let line = headers.get(header::COOKIE)?.to_str().ok()?;
+    // RFC 6265 5.2: the name and the value are read with the whitespace around them removed.
     line.split(';')
-        .filter_map(|pair| pair.trim().split_once('='))
-        .filter(|(name, _)| *name == CSRF_COOKIE)
-        .map(|(_, value)| value.trim_matches('"').to_owned())
+        .filter_map(|pair| pair.split_once('='))
+        .filter(|(name, _)| name.trim() == CSRF_COOKIE)
+        .map(|(_, value)| value.trim().to_owned())
         .last()
 }
