@@ -4,7 +4,7 @@
 use crate::common;
 
 use common::*;
-use jcctl::roles::{self, RolesError};
+use jc_manifest::roles::{self, RolesError};
 use std::path::Path;
 use std::process::Command;
 
@@ -613,6 +613,122 @@ fn a_path_git_quotes_is_read_as_the_file_it_names() {
             "{broken}: {refused:?}"
         );
     }
+}
+
+/// PF-52: every C escape git writes in a quoted path is read as its byte; an octal escape with
+/// a digit past 7, a quote inside the quotes and an escape at the very end are refused.
+#[test]
+fn every_git_escape_is_read_and_a_broken_one_is_refused() {
+    let (head, base) = merge_request("roles-escapes");
+    let name = "e\u{7}\u{8}\u{b}\u{c}\r\n\"\\.yaml";
+    write(&head, &format!("projects/ovzdusie/{name}"), PUBLIC_ENDPOINT);
+    let listing = "A\t\"projects/ovzdusie/e\\a\\b\\v\\f\\r\\n\\\"\\\\.yaml\"\n";
+    let input = roles::input(&head, &base, listing, "jana", None, &[]).expect("input");
+    assert_eq!(input.changes.len(), 1, "{:?}", seen(&input));
+    assert_eq!(input.changes[0].path, format!("projects/ovzdusie/{name}"));
+    for broken in [
+        "A\t\"a\\38x\"",
+        "A\t\"a\"b\"",
+        "A\t\"a\\\"",
+        "A\t\"\"",
+        "A\t.",
+    ] {
+        let refused = roles::input(&head, &base, broken, "jana", None, &[]);
+        let Err(RolesError::ChangePath { path }) = &refused else {
+            panic!("{broken}: {refused:?}");
+        };
+        assert_eq!(&format!("A\t{path}"), broken);
+    }
+}
+
+/// A path the gate cannot read for a reason other than its absence (a directory) is an error
+/// naming the cause, never a skipped change.
+#[test]
+fn an_unreadable_change_is_an_io_error() {
+    let (head, base) = merge_request("roles-unreadable");
+    std::fs::create_dir_all(head.join("projects/ovzdusie/dir.yaml")).expect("a directory");
+    let refused = roles::input(
+        &head,
+        &base,
+        "A\tprojects/ovzdusie/dir.yaml\n",
+        "jana",
+        None,
+        &[],
+    );
+    let Err(err @ RolesError::Io(_)) = refused else {
+        panic!("{refused:?}");
+    };
+    assert!(!err.to_string().is_empty());
+}
+
+/// Each refusal says what is wrong and where, in words a reviewer can act on.
+#[test]
+fn every_roles_error_names_what_to_fix() {
+    let cases = [
+        (
+            RolesError::MissingRole { binding: "b".into(), role: "r".into() },
+            "RoleBinding `b` names Role `r`, which neither users/roles/ nor its own project holds",
+        ),
+        (
+            RolesError::RoleNameClash { name: "r".into(), project: "p".into() },
+            "Role `r` is in users/roles/ and in project `p`; a project role takes a name of its own (PF-68)",
+        ),
+        (
+            RolesError::RoleOutOfReach {
+                binding: "b".into(),
+                role: "r".into(),
+                role_project: "p".into(),
+                scope: "project scope `q`".into(),
+            },
+            "RoleBinding `b` names Role `r` of project `p` at project scope `q`; a project role is bound inside its own project alone (PF-69)",
+        ),
+        (
+            RolesError::AmbiguousSpace {
+                binding: "b".into(),
+                space: "s".into(),
+                projects: vec!["p".into(), "q".into()],
+            },
+            "RoleBinding `b` is scoped to context space `s`, which projects p, q each declare; scope it to one project, or give the spaces names of their own",
+        ),
+        (
+            RolesError::ChangePath { path: "/etc/x".into() },
+            "the change list names \"/etc/x\", which is not a path inside the repository; the gate reads only what `git diff --name-status` lists",
+        ),
+        (
+            RolesError::from(std::io::Error::other("disk gone")),
+            "disk gone",
+        ),
+    ];
+    for (err, message) in cases {
+        assert_eq!(err.to_string(), message);
+    }
+}
+
+/// A Role or RoleBinding whose spec does not parse is refused by kind and name.
+#[test]
+fn a_binding_that_does_not_parse_is_refused_by_kind_and_name() {
+    let dir = users_repo("roles-unparsed");
+    write(
+        &dir,
+        "users/assignments/broken.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata: { name: broken, namespace: org }\nspec: { role: 7 }\n",
+    );
+    let err = roles::compile(&load(&dir)).expect_err("refused");
+    assert!(matches!(err, RolesError::Manifest { .. }), "{err:?}");
+    assert!(
+        err.to_string()
+            .starts_with("RoleBinding `broken` does not parse: "),
+        "{err}"
+    );
+}
+
+/// render refuses a repository that does not load, writing nothing.
+#[test]
+fn render_of_a_repository_that_does_not_load_is_an_error() {
+    let dir = temp_dir("roles-render-broken");
+    write(&dir, "org.yaml", "kind: [not a manifest\n");
+    assert!(roles::render(&dir).is_err());
+    assert!(!dir.join("CODEOWNERS").exists() && !dir.join(".gitea/CODEOWNERS").exists());
 }
 
 /// PF-52: a YAML file that is not a manifest is skipped by name: the loader refuses it in
