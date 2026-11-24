@@ -654,17 +654,16 @@ fn mysql_value(
             Ok(text(bytes))
         }
         false => Ok(match base {
-            "BOOLEAN" | "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "YEAR"
-                if unsigned =>
-            {
-                let v = <u64 as Decode<MySql>>::decode(raw).map_err(err_text)?;
-                // go-sql-driver hands an unsigned value past int64 on as text.
-                i64::try_from(v)
-                    .map(Value::Int)
-                    .unwrap_or_else(|_| Value::String(v.to_string()))
-            }
             "BOOLEAN" | "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "BIGINT" | "YEAR" => {
-                Value::Int(<i64 as Decode<MySql>>::decode(raw).map_err(err_text)?)
+                if unsigned {
+                    let v = <u64 as Decode<MySql>>::decode(raw).map_err(err_text)?;
+                    // go-sql-driver hands an unsigned value past int64 on as text.
+                    i64::try_from(v)
+                        .map(Value::Int)
+                        .unwrap_or_else(|_| Value::String(v.to_string()))
+                } else {
+                    Value::Int(<i64 as Decode<MySql>>::decode(raw).map_err(err_text)?)
+                }
             }
             "FLOAT" => {
                 let f = <f32 as Decode<MySql>>::decode(raw).map_err(err_text)?;
