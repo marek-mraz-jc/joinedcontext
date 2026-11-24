@@ -157,3 +157,4 @@ jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", feature
 http-body-util = "0.1"
 tempfile = "3"
 jc-time = { path = "../../crates/shared/jc-time" }
+odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }

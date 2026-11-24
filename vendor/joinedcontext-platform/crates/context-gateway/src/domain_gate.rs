@@ -219,6 +219,118 @@ mod tests {
         }
     }
 
+    /// A Portal answering the scripted `(status, etag, body)` per call in turn (the last one
+    /// repeats), logging each call's `If-None-Match`. `before` runs on the gate as a call
+    /// arrives, before the answer goes back.
+    async fn portal(
+        script: Vec<(u16, Option<&'static str>, &'static str)>,
+        gate: Arc<DomainGate>,
+    ) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+        let asked: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let log = asked.clone();
+        let app = axum::Router::new().route(
+            "/internal/domain-verifications",
+            axum::routing::get(move |headers: axum::http::HeaderMap| {
+                let (log, gate, script) = (log.clone(), gate.clone(), script.clone());
+                async move {
+                    let sent = headers
+                        .get(axum::http::header::IF_NONE_MATCH)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or_default()
+                        .to_owned();
+                    let mut log = log.lock().unwrap_or_else(|e| e.into_inner());
+                    let (status, etag, body) = script[log.len().min(script.len() - 1)];
+                    if status == 304 {
+                        // A list confirmed long ago: only the 304 makes it current again.
+                        let stale = Instant::now()
+                            .checked_sub(MAX_AGE * 2)
+                            .unwrap_or_else(Instant::now);
+                        gate.replace_at(vec![item("verified")], stale);
+                    }
+                    log.push(sent);
+                    let mut response = axum::response::Response::builder().status(status);
+                    if let Some(etag) = etag {
+                        response = response.header(axum::http::header::ETAG, etag);
+                    }
+                    response
+                        .body(axum::body::Body::from(body))
+                        .unwrap_or_default()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let address = listener.local_addr().expect("the bound address");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            format!("http://{address}/internal/domain-verifications"),
+            asked,
+        )
+    }
+
+    /// T-7767: the follower takes a full list with its tag, sends the tag back, takes a `304`
+    /// as the list confirmed now, forgets the tag after a refusal or an unreadable answer, and
+    /// takes the next full list as it comes.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn the_follower_confirms_on_304_and_forgets_the_tag_after_a_failed_answer() {
+        let gate = Arc::new(DomainGate::new(Mode::Enforce));
+        let verified = r#"{"items":[{"organization":"hel","domain":"hel.fi","state":"verified"}]}"#;
+        let failed = r#"{"items":[{"organization":"hel","domain":"hel.fi","state":"failed"}]}"#;
+        let (url, asked) = portal(
+            vec![
+                (200, Some("\"v1\""), verified),
+                (304, Some("\"v1\""), ""),
+                (500, None, "down"),
+                (200, Some("\"v2\""), "not json"),
+                (200, None, failed),
+            ],
+            gate.clone(),
+        )
+        .await;
+        let calls = || asked.lock().map(|log| log.clone()).unwrap_or_default();
+        assert!(gate.refusal("hel.fi").is_some(), "no list yet refuses");
+        tokio::spawn(gate.clone().follow(url, None));
+
+        for _ in 0..600 {
+            if calls().len() >= 5 && gate.refusal("hel.fi").is_some() {
+                break;
+            }
+            if calls().len() == 2 {
+                // The 304 made the stale list current again.
+                for _ in 0..50 {
+                    if gate.refusal("hel.fi").is_none() {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                assert!(gate.refusal("hel.fi").is_none(), "a 304 confirms the list");
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        let calls = calls();
+        assert!(calls.len() >= 5, "{calls:?}");
+        assert_eq!(calls[0], "", "the first call has no tag to send");
+        assert_eq!(calls[1], "\"v1\"", "the full list's tag is sent back");
+        assert_eq!(calls[2], "\"v1\"", "a 304 keeps the tag");
+        assert_eq!(calls[3], "", "a refusal forgets the tag");
+        assert_eq!(calls[4], "", "an unreadable list forgets the tag");
+        assert!(
+            gate.refusal("hel.fi").is_some(),
+            "the last full list says failed and is taken"
+        );
+    }
+
+    /// T-7767: a `304` before any list leaves the gate without one, so it still refuses.
+    #[test]
+    fn a_confirmation_without_a_list_confirms_nothing() {
+        let gate = DomainGate::new(Mode::Enforce);
+        gate.confirm();
+        assert!(gate.refusal("hel.fi").is_some());
+    }
+
     /// PF-41: `report` refuses nothing whatever the state, and the setting admits only its two
     /// words, so a typo never runs as the weaker one.
     #[test]

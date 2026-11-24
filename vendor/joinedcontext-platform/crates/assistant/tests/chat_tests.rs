@@ -3643,6 +3643,47 @@ async fn a_router_that_fails_searches_the_question_and_a_refusal_is_not_cached()
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// T-7772: the turn's transcript is stored after `done`, its question and spend before it. A second
+/// question sent the moment the first one's `done` arrives, the stream still open, meets
+/// `messagesPerConversation` as before.
+#[tokio::test]
+async fn a_question_sent_at_done_still_meets_the_conversation_limit() {
+    use futures_util::StreamExt;
+    let mut limited = deployment(Channel::Public, 1_000_000, 10);
+    if let Some(budget) = limited.spec.budget.as_mut() {
+        budget.messages_per_conversation = 1;
+    }
+    let w = world("chatatdone", limited).await;
+    script(
+        &w.proxy,
+        vec![completion(json!({"role": "assistant", "content": "Áno."}), 50); 2],
+    )
+    .await;
+    let response = w
+        .app
+        .clone()
+        .oneshot(ask(json!({"message": "a"}), Some(ORIGIN)))
+        .await
+        .expect("an answer");
+    let mut stream = response.into_body().into_data_stream();
+    let mut text = String::new();
+    while !text.contains("event: done") {
+        let chunk = stream.next().await.expect("done arrives").expect("a chunk");
+        text.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    let first = events_in(&text);
+    let id = first[0].1["id"].as_str().expect("an id").to_owned();
+    let (status, body, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "b", "conversation": id}), Some(ORIGIN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body:?}");
+    assert_eq!(body[0].1["title"], "Conversation Budget Spent");
+    drop(stream);
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// T-4149: the owner's limits hold before any model call: a question past `questionChars`, the
 /// 11th question of a minute from one visitor (`429`, `Retry-After`, in Slovak), a conversation
 /// past `messagesPerConversation`, and a deployment switched off.
@@ -4042,6 +4083,68 @@ fn verdict(body: Value, origin: Option<&str>, client: &str) -> Request<Body> {
     request
         .body(Body::from(body.to_string()))
         .expect("a request")
+}
+
+/// A store that is down is a 503 in words for a question that continues a conversation and for
+/// a verdict; a history turn past the cap and an unknown assistant are refused before either.
+#[tokio::test]
+async fn a_store_that_is_down_is_said_and_a_long_history_turn_or_unknown_id_refused() {
+    let w = world("chatdown", deployment(Channel::Public, 1_000_000, 50)).await;
+    let long = "x".repeat(assistant::chat::MAX_TEXT_CHARS + 1);
+    let (status, _, _) = answer_of(
+        &w.app,
+        ask(
+            json!({"message": "a", "history": [{"role": "user", "text": long}]}),
+            Some(ORIGIN),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let unknown = Request::builder()
+        .method("POST")
+        .uri("/api/v1/d/nobody-here/chat")
+        .header("content-type", "application/json")
+        .header("origin", ORIGIN)
+        .body(Body::from(json!({"message": "a"}).to_string()))
+        .expect("a request");
+    assert_eq!(
+        w.app
+            .clone()
+            .oneshot(unknown)
+            .await
+            .expect("an answer")
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    w.pool.close().await;
+    let conversation = "00000000-0000-4000-8000-000000000000";
+    let response = w
+        .app
+        .clone()
+        .oneshot(ask(
+            json!({"conversation": conversation, "message": "Kedy je zber?"}),
+            Some(ORIGIN),
+        ))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let response = w
+        .app
+        .clone()
+        .oneshot(verdict(
+            json!({"conversation": conversation, "turn": 1, "verdict": "up"}),
+            Some(ORIGIN),
+            "203.0.113.9",
+        ))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+        .await
+        .expect("a body");
+    assert!(String::from_utf8_lossy(&bytes).contains("Try again in a minute"));
+    db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
 /// T-4174, API/05 §1.8: a verdict on an answer of a current conversation is stored with its turn

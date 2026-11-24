@@ -197,8 +197,10 @@ fn db_err(e: sqlx::Error) -> DataroomError {
                 Some("uq_cat_catalogue_id") => {
                     DataroomError::Conflict("catalogue id belongs to another organisation".into())
                 }
-                Some(other) => DataroomError::Conflict(format!("duplicate record ({other})")),
-                None => DataroomError::Conflict("duplicate record".into()),
+                other => DataroomError::Conflict(format!(
+                    "duplicate record ({})",
+                    other.unwrap_or("unnamed constraint")
+                )),
             };
         }
     }

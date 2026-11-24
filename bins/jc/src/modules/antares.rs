@@ -411,6 +411,140 @@ mod tests {
         assert!(request_state_key(&without).unwrap().is_none());
     }
 
+    /// A key-encryption key that is not 32 bytes seals nothing: the start stops naming it.
+    #[test]
+    fn a_short_kek_stops_the_request_state_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let given = std::collections::BTreeMap::from([(
+            crate::setup::Secret::KaisatsuKek,
+            crate::setup::Given {
+                secret: jc_secret::Secret::new("too-short".into()),
+                source: jc_secret::Source::Env,
+                path: None,
+            },
+        )]);
+        let setup = crate::setup::Setup::prepare(dir.path(), &[Module::Kaisatsu], &given).unwrap();
+        let e = request_state_key(&setup).err().unwrap().to_string();
+        assert!(e.contains("not a 32-byte key"), "{e}");
+    }
+
+    /// T-7488 before any connection: the owner and maintenance logins must be named, every URL
+    /// must read, and the three logins must differ; no error repeats a password.
+    #[tokio::test]
+    async fn the_three_antares_logins_are_named_read_and_distinct() {
+        let refused = |request: &'static str,
+                       owner: Option<&'static str>,
+                       maint: Option<&'static str>| async move {
+            refuse_shared_login(request, owner, maint)
+                .await
+                .unwrap_err()
+                .to_string()
+        };
+        let app = "postgres://antares_app:pw-app-0@127.0.0.1:9/antares";
+        let owner = "postgres://antares:pw-owner-0@127.0.0.1:9/antares";
+        let maint = "postgres://antares_maint:pw-maint-0@127.0.0.1:9/antares";
+        for (o, m) in [(None, Some(maint)), (Some(owner), None)] {
+            let e = refused(app, o, m).await;
+            assert!(e.contains("ANTARES_MIGRATION_DATABASE_URL and"), "{e}");
+        }
+        for (request, o, m, key) in [
+            ("not a url", owner, maint, "ANTARES_DATABASE_URL"),
+            (
+                app,
+                "postgres://[oops",
+                maint,
+                "ANTARES_MIGRATION_DATABASE_URL",
+            ),
+            (app, owner, "::", "ANTARES_MAINTENANCE_DATABASE_URL"),
+        ] {
+            let e = refused(request, Some(o), Some(m)).await;
+            assert!(e.contains(&format!("{key} is not a Postgres URL")), "{e}");
+        }
+        for (request, o, m) in [
+            (owner, owner, maint),
+            (app, owner, owner),
+            (app, owner, app),
+        ] {
+            let e = refused(request, Some(o), Some(m)).await;
+            assert!(e.contains("three different logins"), "{e}");
+            assert!(!e.contains("pw-"), "{e}");
+        }
+        let e = refused(app, Some(owner), Some(maint)).await;
+        assert!(e.contains("ANTARES_DATABASE_URL: cannot connect"), "{e}");
+        assert!(!e.contains("pw-"), "{e}");
+    }
+
+    /// T-7488 on real Postgres (`ANTARES_TEST_DATABASE_URL`, a superuser that only prepares): a
+    /// superuser request login is refused, a plain login that owns nothing serves.
+    #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // The test database URL.
+    async fn a_superuser_request_login_is_refused_and_a_plain_one_serves() {
+        let Ok(admin) = std::env::var("ANTARES_TEST_DATABASE_URL") else {
+            println!("SKIP: ANTARES_TEST_DATABASE_URL is unset");
+            return;
+        };
+        let pool = crate::pg::connect(admin.parse().unwrap(), 1).await.unwrap();
+        sqlx::raw_sql(
+            "DO $$ BEGIN CREATE ROLE jc_t7637_antares_app LOGIN PASSWORD 'app-pw'; \
+             EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        let at = |login: &str| {
+            let mut url = url::Url::parse(&admin).unwrap();
+            url.set_username(login).unwrap();
+            if login != "postgres" {
+                url.set_password(Some("app-pw")).unwrap();
+            }
+            url.to_string()
+        };
+        let (owner, maint) = (at("jc_t7637_antares"), at("jc_t7637_antares_maint"));
+        let e = refuse_shared_login(&admin, Some(&owner), Some(&maint))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("superuser"), "{e}");
+        refuse_shared_login(&at("jc_t7637_antares_app"), Some(&owner), Some(&maint))
+            .await
+            .unwrap();
+    }
+
+    /// `[antares.database]` with the broker's local bus double-fires notifications across two
+    /// processes: refused unless the deployment says one process serves the database.
+    #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // Reads whether the environment already names a bus.
+    async fn a_shared_database_on_the_local_bus_is_refused() {
+        if std::env::vars().any(|(k, _)| {
+            k == "ANTARES_BUS" || k == "ANTARES_STORE" || k == "ANTARES_ALLOW_SHARED_LOCAL"
+        }) {
+            println!("SKIP: the environment names Antares' bus or store");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let none = std::collections::BTreeMap::new();
+        let setup = crate::setup::Setup::prepare(dir.path(), &[Module::Antares], &none).unwrap();
+        let cfg = AntaresSection {
+            database: Some(crate::pg::DatabaseSection {
+                url: "postgres://antares_app@127.0.0.1:9/antares".into(),
+                password_file: dir.path().join("pw"),
+                max_connections: None,
+                migrate_url: None,
+                migrate_password_file: None,
+                maintenance_url: None,
+                maintenance_password_file: None,
+            }),
+            ..AntaresSection::default()
+        };
+        let e = build(&cfg, &setup, None, None, &CancellationToken::new())
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(e.contains("ANTARES_BUS=local double-fires"), "{e}");
+    }
+
     /// dev's four write settings come as defaults beside the identity keys; the broker reads each
     /// through its host defaults, so the environment or `[antares.database]` still wins
     /// (antares-broker `host_defaults_fill_only_what_the_environment_leaves_unset`).

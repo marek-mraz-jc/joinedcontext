@@ -409,6 +409,25 @@ mod tests {
             .route(
                 "/down",
                 route_post(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+            )
+            .route(
+                "/authed",
+                route_post(|headers: axum::http::HeaderMap| async move {
+                    match headers.get("authorization").and_then(|v| v.to_str().ok()) {
+                        Some("Bearer usage-t") => StatusCode::NO_CONTENT,
+                        _ => StatusCode::UNAUTHORIZED,
+                    }
+                }),
+            )
+            .route(
+                "/token",
+                route_post(|| async {
+                    Json(serde_json::json!({"access_token": "usage-t", "expires_in": 300}))
+                }),
+            )
+            .route(
+                "/no-token",
+                route_post(|| async { StatusCode::UNAUTHORIZED }),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -425,5 +444,19 @@ mod tests {
         assert!(post(&client, &format!("http://{addr}/ok"), None, &counts).await);
         assert!(!post(&client, &format!("http://{addr}/down"), None, &counts).await);
         assert!(!post(&client, "http://127.0.0.1:1/none", None, &counts).await);
+
+        // T-7767: the gateway's own token goes with the post; a realm that refuses it keeps
+        // the counts for the next post, and the Portal is not asked.
+        let token = |path: &str| {
+            WorkloadToken::new(
+                format!("http://{addr}{path}"),
+                "context-gateway".to_owned(),
+                "test-client-secret".to_owned(),
+            )
+        };
+        let authed = format!("http://{addr}/authed");
+        assert!(post(&client, &authed, Some(&token("/token")), &counts).await);
+        assert!(!post(&client, &authed, Some(&token("/no-token")), &counts).await);
+        assert!(!post(&client, &authed, None, &counts).await);
     }
 }

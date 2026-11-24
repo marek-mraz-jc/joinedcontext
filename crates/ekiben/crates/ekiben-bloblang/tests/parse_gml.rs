@@ -144,9 +144,80 @@ fn an_arc_through_three_points_stays_on_its_circle() {
         let (x, y) = xy(p);
         assert!((x.hypot(y) - 10.0).abs() < 1e-9 && y >= -1e-9, "{x} {y}");
     }
+    // An end off the start's axis: both coordinates of each offset count toward the centre.
+    let h = 50f64.sqrt();
+    let tilted = format!("<gml:Curve><gml:segments><gml:ArcString><gml:posList>10 0 0 10 {} {h}</gml:posList></gml:ArcString></gml:segments></gml:Curve>", -h);
+    let g = parse_gml(&text(&tilted), None, None).unwrap();
+    // 135 degrees counter-clockwise in 27 chords of 5 degrees, each position on its own angle.
+    let ps = items(coords(&g));
+    assert_eq!(ps.len(), 28);
+    for (i, p) in ps.iter().enumerate() {
+        let (x, y) = xy(p);
+        let want = (5.0 * i as f64).to_radians();
+        assert!(
+            (x - 10.0 * want.cos()).abs() < 1e-9 && (y - 10.0 * want.sin()).abs() < 1e-9,
+            "{i}: {x} {y}"
+        );
+    }
+    // A z goes from the start's to the end's in step with the angle.
+    let g = parse_gml(&text(r#"<gml:Curve srsDimension="3"><gml:segments><gml:ArcString><gml:posList>10 0 0 0 10 5 -10 0 10</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#), None, None).unwrap();
+    let ps = items(coords(&g));
+    assert_eq!(ps.len(), 37);
+    for (i, p) in ps.iter().enumerate() {
+        let Value::Array(c) = p else { panic!("{p:?}") };
+        let z = c[2].as_f64().unwrap_or(f64::NAN);
+        assert!((z - 10.0 * i as f64 / 36.0).abs() < 1e-9, "{i}: {z}");
+    }
     // A clockwise arc sweeps the other way, below the x axis.
     let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:Arc><gml:posList>10 0 0 -10 -10 0</gml:posList></gml:Arc></gml:segments></gml:Curve>"#), None, None).unwrap();
     assert!(items(coords(&g)).iter().all(|p| xy(p).1 <= 1e-9));
+    // Nearly collinear at projected scale (an offset of 1e-6 over 2e6 metres) is a line too.
+    let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:ArcString><gml:posList>0 0 1000000 1000000 2000000 2000000.000001</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#), None, None).unwrap();
+    let ps = items(coords(&g));
+    assert_eq!(ps.len(), 3);
+    assert_eq!(
+        xy(&ps[1]),
+        (1_000_000.0, 1_000_000.0),
+        "the middle position is kept"
+    );
+    // A centre off both of the start's axes, and a z that starts above 0.
+    let t0 = 8f64.atan2(6.0);
+    let te = t0 + 177.5f64.to_radians();
+    let (ex, ey) = (10.0 * te.cos(), 10.0 * te.sin());
+    let off = format!("<gml:Curve srsDimension=\"3\"><gml:segments><gml:ArcString><gml:posList>6 8 2 -8 6 4 {ex} {ey} 8</gml:posList></gml:ArcString></gml:segments></gml:Curve>");
+    let g = parse_gml(&text(&off), None, None).unwrap();
+    let ps = items(coords(&g));
+    assert_eq!(ps.len(), 37, "177.5 degrees in 36 chords");
+    for (i, p) in ps.iter().enumerate() {
+        let Value::Array(c) = p else { panic!("{p:?}") };
+        let (x, y) = xy(p);
+        let f = i as f64 / 36.0;
+        let t = t0 + 177.5f64.to_radians() * f;
+        let z = c[2].as_f64().unwrap_or(f64::NAN);
+        assert!(
+            (x - 10.0 * t.cos()).abs() < 1e-9
+                && (y - 10.0 * t.sin()).abs() < 1e-9
+                && (z - (2.0 + 6.0 * f)).abs() < 1e-9,
+            "{i}: {x} {y} {z}"
+        );
+    }
+    // Clockwise through a middle position 30 degrees after the start (same circle, start at 6 8).
+    let (b, e) = (t0 - 30f64.to_radians(), t0 - 57.5f64.to_radians());
+    let cw = format!(
+        "<gml:Curve><gml:segments><gml:ArcString><gml:posList>6 8 {} {} {} {}</gml:posList></gml:ArcString></gml:segments></gml:Curve>",
+        10.0 * b.cos(), 10.0 * b.sin(), 10.0 * e.cos(), 10.0 * e.sin()
+    );
+    let g = parse_gml(&text(&cw), None, None).unwrap();
+    let ps = items(coords(&g));
+    assert_eq!(ps.len(), 13, "57.5 degrees in 12 chords");
+    for (i, p) in ps.iter().enumerate() {
+        let (x, y) = xy(p);
+        let t = t0 - 57.5f64.to_radians() * i as f64 / 12.0;
+        assert!(
+            (x - 10.0 * t.cos()).abs() < 1e-9 && (y - 10.0 * t.sin()).abs() < 1e-9,
+            "{i}: {x} {y}"
+        );
+    }
     // Three collinear positions are a straight line.
     let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:ArcString><gml:posList>0 0 1 1 2 2</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#), None, None).unwrap();
     assert_eq!(items(coords(&g)).len(), 3);
@@ -374,6 +445,14 @@ fn coordinates_separators_must_be_given_and_distinct() {
             "{attrs}"
         );
     }
+}
+
+#[test]
+fn a_polygon_takes_one_exterior() {
+    let ring = "<gml:exterior><gml:LinearRing><gml:posList>0 0 1 0 1 1 0 0</gml:posList></gml:LinearRing></gml:exterior>";
+    let two = format!("<gml:Polygon>{ring}{ring}</gml:Polygon>");
+    let err = parse_gml(&text(&two), None, None).unwrap_err();
+    assert!(err.contains("exterior"), "{err}");
 }
 
 #[test]

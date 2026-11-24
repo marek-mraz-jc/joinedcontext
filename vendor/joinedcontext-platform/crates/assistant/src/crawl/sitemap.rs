@@ -301,4 +301,110 @@ mod tests {
             Some("2026-10-01T06:00:00Z")
         );
     }
+
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const HOST: &str = "www.city.test";
+
+    fn urlset(locs: &[&str]) -> String {
+        let urls: String = locs
+            .iter()
+            .map(|loc| format!("<url><loc>{loc}</loc><lastmod>2026-09-01</lastmod></url>"))
+            .collect();
+        format!(
+            r#"<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>"#
+        )
+    }
+
+    /// An index lists its sitemaps one level deep: the site's own are read, one on another host,
+    /// one that is no URL and one that does not answer are passed over.
+    #[tokio::test]
+    async fn an_index_is_followed_one_level_on_the_site_alone() {
+        let server = MockServer::start().await;
+        let port = server.address().port();
+        let at = |p: &str| format!("http://{HOST}:{port}{p}");
+        let index = format!(
+            r#"<?xml version="1.0"?><sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <sitemap><loc>{}</loc></sitemap><sitemap><loc>https://other.test/s.xml</loc></sitemap>
+            <sitemap><loc>not a url</loc></sitemap><sitemap><loc>{}</loc></sitemap>
+            <sitemap><loc>{}</loc></sitemap><sitemap><loc>ftp://{HOST}/s.xml</loc></sitemap></sitemapindex>"#,
+            at("/a.xml"),
+            at("/missing.xml"),
+            at("/b.xml"),
+        );
+        Mock::given(path("/index.xml"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(index))
+            .mount(&server)
+            .await;
+        Mock::given(path("/a.xml"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(urlset(&[
+                &at("/one"),
+                "https://other.test/two",
+                "no url",
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(path("/b.xml"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(urlset(&[&at("/three")])))
+            .mount(&server)
+            .await;
+        let client = Client::builder()
+            .resolve(HOST, *server.address())
+            .build()
+            .expect("a client");
+        let policy = CrawlPolicy {
+            allow_plain_http: true,
+            ..CrawlPolicy::default()
+        };
+        let listed = fetch_sitemap_urls(
+            &client,
+            &policy,
+            HOST,
+            &[
+                "not a url".to_owned(),
+                "https://other.test/index.xml".to_owned(),
+                at("/index.xml"),
+            ],
+            10,
+        )
+        .await;
+        let paths: Vec<&str> = listed.urls.iter().map(Url::path).collect();
+        assert_eq!(paths, ["/one", "/three"]);
+        assert_eq!(listed.lastmod.len(), 2);
+
+        // The page cap stops the index before its next sitemap is read.
+        let capped =
+            fetch_sitemap_urls(&client, &policy, HOST, &[at("/index.xml"), at("/b.xml")], 1).await;
+        assert_eq!(capped.urls.len(), 1);
+        // Plain http is refused without the fixture's leave, before any request.
+        let https_only = fetch_sitemap_urls(
+            &client,
+            &CrawlPolicy::default(),
+            HOST,
+            &[at("/index.xml")],
+            10,
+        )
+        .await;
+        assert!(https_only.urls.is_empty());
+    }
+
+    #[test]
+    fn the_default_port_is_dropped_from_a_key() {
+        let key = |u: &str| canonical(Url::parse(u).expect("a URL")).to_string();
+        assert_eq!(key("http://a.test:80/x#top"), "http://a.test/x");
+        assert_eq!(key("https://a.test:443/x"), "https://a.test/x");
+        assert_eq!(key("https://a.test:8443/x"), "https://a.test:8443/x");
+    }
+
+    #[test]
+    fn a_broken_sitemap_keeps_what_it_read_before_the_break() {
+        let parsed = parse_sitemap_xml(
+            "<urlset><url><loc>https://a.test/1</loc></url><url><loc>https://a.test/2</lo",
+        );
+        assert_eq!(parsed.urls, ["https://a.test/1"]);
+        let index = parse_sitemap_xml("<sitemapindex><sitemap><loc> </loc></sitemap><sitemap><loc>https://a.test/s.xml</loc></sitemap></sitemapindex>");
+        assert_eq!(index.sub_sitemaps, ["https://a.test/s.xml"]);
+        assert!(index.urls.is_empty());
+    }
 }

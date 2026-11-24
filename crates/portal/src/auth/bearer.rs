@@ -394,6 +394,38 @@ fn session_of(c: Claims) -> (Session, Option<String>) {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TokenClient(pub String);
 
+/// A verifier for `issuer`/`audience` holding one fresh ES256 key `kid`, and a signer for it: tests
+/// of the routes that verify a token mint their own instead of reaching a realm. The JWKS URL is
+/// port 9 (discard), so a refresh for an unknown kid fails at once.
+#[cfg(test)]
+pub(crate) fn test_verifier(
+    issuer: &str,
+    audience: &str,
+    kid: &str,
+) -> (BearerVerifier, impl Fn(&serde_json::Value) -> String) {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use p256::pkcs8::EncodePrivateKey;
+    let secret = p256::SecretKey::random(&mut rand_core::OsRng);
+    let signer = EncodingKey::from_ec_der(secret.to_pkcs8_der().expect("der").as_bytes());
+    let mut jwk: serde_json::Value =
+        serde_json::from_str(&secret.public_key().to_jwk_string()).expect("jwk");
+    jwk["kid"] = serde_json::json!(kid);
+    jwk["alg"] = serde_json::json!("ES256");
+    let set: JwkSet = serde_json::from_value(serde_json::json!({ "keys": [jwk] })).expect("set");
+    let verifier = BearerVerifier::with_jwks_url(
+        &Url::parse(issuer).expect("issuer"),
+        audience,
+        Url::parse("http://127.0.0.1:9/certs").expect("jwks"),
+    );
+    verifier.install(&set);
+    let kid = kid.to_owned();
+    (verifier, move |claims: &serde_json::Value| {
+        let mut header = Header::new(Algorithm::ES256);
+        header.kid = Some(kid.clone());
+        encode(&header, claims, &signer).expect("sign")
+    })
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     /// ADR-N-067 2.2 (T-6408): the `groups` claim holds full paths; the session names a root
@@ -540,6 +572,82 @@ pub(crate) mod tests {
         for _ in 0..5 {
             assert!(matches!(v.refresh().await, Ok(1)));
         }
+    }
+
+    /// T-2091: a key set larger than the cap is refused before it is parsed, and the keys held
+    /// stay; so is an answer that is no key set.
+    #[tokio::test]
+    async fn an_oversized_or_garbled_key_set_is_refused_and_the_held_keys_stay() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        for (body, says) in [
+            (vec![b' '; MAX_JWKS_BYTES + 1], "JWKS is larger than"),
+            (b"<html>".to_vec(), "JWKS is not a key set"),
+        ] {
+            let realm = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+                .mount(&realm)
+                .await;
+            let v = BearerVerifier::with_jwks_url(
+                &Url::parse(ISSUER).unwrap(),
+                "portal-api",
+                Url::parse(&format!("{}/certs", realm.uri())).unwrap(),
+            );
+            let (_signer, set) = keypair("k1");
+            v.install(&set);
+            let Err(ApiError::Unavailable(message)) = v.refresh().await else {
+                panic!("{says}: expected Unavailable");
+            };
+            assert!(message.starts_with(says), "{message}");
+            assert!(v.key("k1").is_some(), "{says}: the held keys were dropped");
+        }
+    }
+
+    /// T-5954, AG-151: a connector token is taken at its connector's door alone: refused as a
+    /// plain bearer, admitted for its one connector and refused for another or with two.
+    #[tokio::test]
+    async fn a_connector_token_opens_its_own_connectors_door_alone() {
+        let v = verifier();
+        let (signer, set) = keypair("k1");
+        v.install(&set);
+        let a = "connector:abcdefghijklmnopqrstuvwxyz";
+        let b = "connector:bcdefghijklmnopqrstuvwxyz2";
+        let token = |scope: &str| {
+            let mut c = claims(now() + 60);
+            c["scope"] = json!(scope);
+            sign(&signer, "k1", &c)
+        };
+        assert!(matches!(
+            v.verify_for_audience(&token(&format!("openid {a}")), "portal-api")
+                .await,
+            Err(ApiError::Unauthorized)
+        ));
+        let (session, azp) = v
+            .verify_for_scope(&token(&format!("openid {a}")), "portal-api", a)
+            .await
+            .expect("its own connector");
+        assert_eq!(
+            (session.identity.subject.as_str(), azp.as_deref()),
+            ("svc:smoke", Some("apisix-gateway"))
+        );
+        for refused in [
+            format!("openid {b}"),
+            format!("{a} {b}"),
+            "openid".to_owned(),
+        ] {
+            assert!(
+                matches!(
+                    v.verify_for_scope(&token(&refused), "portal-api", a).await,
+                    Err(ApiError::Unauthorized)
+                ),
+                "{refused}"
+            );
+        }
+        assert!(matches!(
+            v.verify_for_scope(&token(a), "other-audience", a).await,
+            Err(ApiError::Unauthorized)
+        ));
     }
 
     #[tokio::test]

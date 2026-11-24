@@ -40,7 +40,7 @@ fn stored(err: sqlx::Error) -> ApiError {
 }
 
 /// An NGSI-LD URN of its own type and an NGSI-LD type name (PF-43, ADR-N-041).
-fn urn_and_type(entity: &Value) -> Result<(String, String), ApiError> {
+pub fn urn_and_type(entity: &Value) -> Result<(String, String), ApiError> {
     let id = entity.get("id").and_then(Value::as_str).unwrap_or_default();
     let kind = entity
         .get("type")

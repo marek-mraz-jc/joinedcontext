@@ -1,0 +1,58 @@
+# Fuzzing the gateway's parsers of caller input (T-7767) under libFuzzer:
+# `cargo +nightly fuzz run <target>`. Not a workspace member.
+[package]
+name = "context-gateway-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+context-gateway = { path = ".." }
+jc-time = { path = "../../../../../crates/shared/jc-time" }
+serde_json = "1"
+
+[[bin]]
+name = "query_string"
+path = "fuzz_targets/query_string.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "geo_q"
+path = "fuzz_targets/geo_q.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "temporal_q"
+path = "fuzz_targets/temporal_q.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "owned_payload"
+path = "fuzz_targets/owned_payload.rs"
+test = false
+doc = false
+bench = false
+
+# The platform workspace's patches (its Cargo.toml), from here.
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../../../../crates/antares/crates/antares-ql" }
+ngsild-jsonld = { path = "../../../../../crates/antares/crates/antares-jsonld" }
+ngsild-matcher = { path = "../../../../../crates/antares/crates/antares-matcher" }
+ngsild-model = { path = "../../../../../crates/antares/crates/antares-model" }
+
+[patch.crates-io]
+ml-kem = { path = "../../../../ml-kem" }
+rstar = { path = "../../../../../crates/antares/vendor/rstar" }
+geo-types = { path = "../../../../../crates/antares/vendor/geo-types" }

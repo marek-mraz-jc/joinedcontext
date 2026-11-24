@@ -459,6 +459,40 @@ async fn an_unknown_endpoint_is_404_and_a_bad_kind_400() {
     assert_eq!(answer.status, 400, "{}", answer.text);
 }
 
+/// An Endpoint not wired yet (no Context Space, no slug) is a 404 that says which piece is
+/// missing, and the gateway is never asked.
+#[tokio::test]
+async fn an_endpoint_without_a_space_or_a_slug_says_which_is_missing() {
+    let r = rig().await;
+    gateway_answers(&r.gateway).await;
+    r.state.mirror.upsert(common::envelope(
+        "Endpoint",
+        "spaceless",
+        "helsinki",
+        json!({ "slug": "helsinki-spaceless" }),
+    ));
+    r.state.mirror.upsert(common::envelope(
+        "Endpoint",
+        "unslugged",
+        "helsinki",
+        json!({ "contextSpaceRef": "bikes" }),
+    ));
+    for (endpoint, says) in [
+        ("spaceless", "names no Context Space"),
+        ("unslugged", "has no slug yet"),
+    ] {
+        let answer = matrix(
+            &r.state,
+            admin(),
+            &format!("/api/v1/projects/helsinki/endpoints/{endpoint}/access/matrix"),
+        )
+        .await;
+        assert_eq!(answer.status, 404, "{endpoint}: {}", answer.text);
+        assert!(answer.text.contains(says), "{endpoint}: {}", answer.text);
+    }
+    assert!(asked(&r.gateway).await.is_empty());
+}
+
 /// Over 50 principals is a 422 that asks for a kind; `?kind=` narrows below the cap.
 #[tokio::test]
 async fn over_fifty_principals_asks_for_a_kind() {
@@ -510,6 +544,27 @@ async fn every_read_is_recorded_once() {
         "sub-anna read the access matrix of bikes-ops: 2 principals"
     );
     assert_eq!(event.details["matrix"], true);
+}
+
+/// A principal the gateway admits to nothing has no row, and a read the activity log cannot
+/// record still answers the matrix (EP-103: the record is logged, not a failure).
+#[tokio::test]
+async fn a_principal_with_no_grant_has_no_row_and_a_lost_record_keeps_the_answer() {
+    let r = rig().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "admitted": false })))
+        .mount(&r.gateway)
+        .await;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    let state = r.state.clone().with_db(pool);
+    let answer = matrix(&state, admin(), ROUTE).await;
+    assert_eq!(answer.status, 200, "{}", answer.text);
+    assert_eq!(body(&answer)["principals"], json!([]), "{}", answer.text);
+    assert_eq!(body(&answer)["cells"], json!([]), "{}", answer.text);
+    assert!(!asked(&r.gateway).await.is_empty());
 }
 
 /// A gateway that does not answer is the Portal's 503, never an empty matrix.

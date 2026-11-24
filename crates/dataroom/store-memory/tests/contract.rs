@@ -34,5 +34,6 @@ memory_store!(
     guarded_writes,
     audited_writes,
     edges,
+    minted_and_redirected,
     twin_catalogues
 );

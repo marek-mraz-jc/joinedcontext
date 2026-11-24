@@ -205,6 +205,49 @@ mod tests {
         })
     }
 
+    /// PL-32: a pipeline here reading another project's Endpoint shows that Endpoint by name
+    /// alone to a reader of this project who reads nothing of the other; the pipeline's runs are
+    /// asked for, and none recorded is no run on its node.
+    #[tokio::test]
+    async fn another_projects_source_is_a_name_alone_for_who_cannot_read_it() {
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        let pipeline = ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "Pipeline".to_owned(),
+            metadata: ObjectMeta::new("roads-in", "helsinki"),
+            spec: serde_json::json!({ "class": "scheduled",
+                "sources": [{ "endpointRef": { "kind": "Endpoint", "name": "ep-roads", "namespace": "espoo" },
+                              "query": { "type": "Road" } }] }),
+            status: None,
+        };
+        let state = reader_world(
+            "reader@hel.fi",
+            serde_json::json!(["Pipeline", "Endpoint"]),
+            vec![pipeline],
+        );
+        let map = get_flow_map(
+            signed_in("reader@hel.fi"),
+            State(state),
+            Path("helsinki".to_owned()),
+            Query(FlowMapQuery { space: None }),
+        )
+        .await
+        .expect("the map")
+        .0;
+        let foreign = map
+            .nodes
+            .iter()
+            .find(|node| node.name == "ep-roads")
+            .expect("the foreign source is drawn");
+        assert_eq!(foreign.project, "espoo");
+        assert!(foreign.opaque, "{foreign:?}");
+        assert_eq!(foreign.space, None);
+        assert!(
+            map.nodes.iter().any(|node| node.name == "roads-in"),
+            "{map:?}"
+        );
+    }
+
     #[tokio::test]
     async fn the_map_is_for_a_reader_of_the_project_and_a_space_name_only() {
         let state = reader_world("reader@hel.fi", serde_json::json!(["Pipeline"]), Vec::new());

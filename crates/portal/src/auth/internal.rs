@@ -167,207 +167,219 @@ pub async fn authenticate_pipeline_runner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::bearer::tests::{keypair, now, sign, ISSUER};
-    use crate::auth::bearer::BearerVerifier;
     use crate::config::Config;
+    use axum::http::HeaderValue;
+    use serde_json::json;
     use std::sync::Arc;
 
-    /// A Portal whose realm signs with one key, the internal clients named as a deployment
-    /// names them, and the signer for that realm's tokens.
-    fn portal() -> (AppState, jsonwebtoken::EncodingKey) {
+    const ISSUER: &str = "https://idm.example.test/realms/dev";
+
+    fn now() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs() as i64
+    }
+
+    /// A Portal with a realm whose one key signs `sign`'s tokens, and the clients of the gateway,
+    /// the credential proxy and the runner named as in a deployment.
+    fn world() -> (AppState, impl Fn(&str, &str) -> HeaderMap) {
         let mut config = Config::for_tests();
         config.gateway_client_id = Some("context-gateway".into());
-        config.agent_proxy_client_id = Some("agent-proxy".into());
+        config.agent_proxy_client_id = Some(" credential-proxy ".into());
         config.pipeline_runner_client_id = Some("pipeline-runner".into());
         let mut state = AppState::new(config, None);
-        let (signer, set) = keypair("k1");
-        // Port 9 refuses at once: an unknown kid fails fast instead of reaching a realm.
-        let verifier = BearerVerifier::with_jwks_url(
-            &url::Url::parse(ISSUER).expect("issuer"),
-            "portal-api",
-            url::Url::parse("http://127.0.0.1:9/certs").expect("jwks"),
-        );
-        assert_eq!(verifier.install(&set), 1);
+        let (verifier, sign) = crate::auth::bearer::test_verifier(ISSUER, "portal-api", "k1");
         state.bearer = Some(Arc::new(verifier));
-        (state, signer)
+        let headers = move |audience: &str, azp: &str| {
+            let token = sign(&json!({
+                "iss": ISSUER, "typ": "Bearer", "aud": audience, "sub": "svc", "azp": azp,
+                "exp": now() + 60, "iat": now(),
+            }));
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {token}")).expect("header"),
+            );
+            headers
+        };
+        (state, headers)
     }
 
-    /// `Authorization: Bearer` with a token for `audience` obtained by `azp` (none when `None`).
-    fn bearer(signer: &jsonwebtoken::EncodingKey, audience: &str, azp: Option<&str>) -> HeaderMap {
-        let mut claims = serde_json::json!({
-            "iss": ISSUER, "typ": "Bearer", "aud": audience, "sub": "service-account",
-            "exp": now() + 60, "iat": now(),
-        });
-        if let Some(azp) = azp {
-            claims["azp"] = serde_json::json!(azp);
-        }
-        authorization(&format!("Bearer {}", sign(signer, "k1", &claims)))
-    }
-
-    /// `Err(UNAUTHORIZED)` is a 401 refusal; any other error reads `Err(false)`.
-    const UNAUTHORIZED: bool = true;
-
-    /// The refusal as whether it is the 401, so verdicts compare (`ApiError` is not `PartialEq`).
-    fn code(error: ApiError) -> bool {
-        matches!(error, ApiError::Unauthorized)
-    }
-
-    fn authorization(value: &str) -> HeaderMap {
+    fn bearer(value: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        headers.insert(header::AUTHORIZATION, value.parse().expect("header"));
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(value).expect("header"),
+        );
         headers
     }
 
-    /// Only `Bearer <token>` with a non-blank token is a presented token; any other shape is 401.
+    /// No header, another scheme, an empty or blank token and a header that is not text are each
+    /// a 401 before any key is looked at.
     #[test]
     fn only_a_non_blank_bearer_is_presented() {
-        assert_eq!(
-            presented(&authorization("Bearer abc")).map_err(code),
-            Ok("abc")
-        );
-        for refused in [
-            "Bearer ",
-            "Bearer    ",
-            "Basic abc",
-            "bearer abc",
-            "abc",
-            "Bearer",
-        ] {
-            assert_eq!(
-                presented(&authorization(refused)).map_err(code),
-                Err(UNAUTHORIZED),
+        assert!(matches!(
+            presented(&HeaderMap::new()),
+            Err(ApiError::Unauthorized)
+        ));
+        for refused in ["Basic eDp5", "Bearer ", "Bearer    ", "bearer abc", "abc"] {
+            assert!(
+                matches!(presented(&bearer(refused)), Err(ApiError::Unauthorized)),
                 "{refused:?}"
             );
         }
-        assert_eq!(
-            presented(&HeaderMap::new()).map_err(code),
-            Err(UNAUTHORIZED)
-        );
         let mut opaque = HeaderMap::new();
         opaque.insert(
             header::AUTHORIZATION,
-            axum::http::HeaderValue::from_bytes(b"Bearer \xff").expect("bytes"),
+            HeaderValue::from_bytes(b"Bearer \xff\xfe").expect("bytes"),
         );
-        assert_eq!(presented(&opaque).map_err(code), Err(UNAUTHORIZED));
+        assert!(matches!(presented(&opaque), Err(ApiError::Unauthorized)));
+        assert_eq!(presented(&bearer("Bearer abc.def")).ok(), Some("abc.def"));
     }
 
-    /// PF-46: a route's own client with a token for this listener passes; the same realm's
-    /// other workload, a token for the API audience, one with no client and none at all do not.
+    /// PF-46, AG-52: each door opens to its own client's internal token and to nothing else: not
+    /// another workload of the realm, not a token for the Portal's API, not a forged one.
     #[tokio::test]
-    async fn a_route_opens_for_its_own_client_and_this_listener_alone() {
-        let (state, signer) = portal();
-        let own = bearer(&signer, INTERNAL_AUDIENCE, Some("context-gateway"));
-        assert_eq!(
-            authenticate_workload(&state, &own, Some("context-gateway"))
+    async fn each_internal_door_admits_its_own_client_alone() {
+        let (state, token) = world();
+        let internal = INTERNAL_AUDIENCE;
+        assert!(
+            authenticate_gateway(&state, &token(internal, "context-gateway"))
                 .await
-                .map_err(code),
-            Ok(())
+                .is_ok()
         );
-        assert_eq!(
-            authenticate_workload(&state, &own, Some(" context-gateway "))
+        // The configured name is trimmed: " credential-proxy " names the client `credential-proxy`.
+        assert!(
+            authenticate_agent_proxy(&state, &token(internal, "credential-proxy"))
                 .await
-                .map_err(code),
-            Ok(())
+                .is_ok()
         );
-        for (headers, why) in [
-            (
-                bearer(&signer, INTERNAL_AUDIENCE, Some("agent-proxy")),
-                "another client",
-            ),
-            (
-                bearer(&signer, "portal-api", Some("context-gateway")),
-                "the API audience",
-            ),
-            (bearer(&signer, INTERNAL_AUDIENCE, None), "no client"),
-            (HeaderMap::new(), "no token"),
-            (authorization("Bearer not-a-jwt"), "garbled token"),
+        for (audience, azp) in [
+            (internal, "credential-proxy"),
+            (internal, "pipeline-runner"),
+            (internal, ""),
+            ("portal-api", "context-gateway"),
         ] {
-            assert_eq!(
-                authenticate_workload(&state, &headers, Some("context-gateway"))
-                    .await
-                    .map_err(code),
-                Err(UNAUTHORIZED),
-                "{why}"
+            assert!(
+                matches!(
+                    authenticate_gateway(&state, &token(audience, azp)).await,
+                    Err(ApiError::Unauthorized)
+                ),
+                "{audience} {azp}"
             );
         }
+        assert!(matches!(
+            authenticate_agent_proxy(&state, &token(internal, "context-gateway")).await,
+            Err(ApiError::Unauthorized)
+        ));
+        assert!(matches!(
+            authenticate_gateway(&state, &bearer("Bearer not-a-jwt")).await,
+            Err(ApiError::Unauthorized)
+        ));
+        assert!(matches!(
+            authenticate_gateway(&state, &HeaderMap::new()).await,
+            Err(ApiError::Unauthorized)
+        ));
     }
 
-    /// Fail closed: a route nobody configured, a blank client and a Portal with no realm refuse
-    /// even a valid token.
+    /// A token without `azp` names no client and opens no door.
     #[tokio::test]
-    async fn an_unconfigured_route_or_realm_refuses_a_valid_token() {
-        let (mut state, signer) = portal();
-        let token = bearer(&signer, INTERNAL_AUDIENCE, Some("context-gateway"));
+    async fn a_token_naming_no_client_is_refused() {
+        let mut config = Config::for_tests();
+        config.gateway_client_id = Some("context-gateway".into());
+        let mut state = AppState::new(config, None);
+        let (verifier, sign) = crate::auth::bearer::test_verifier(ISSUER, "portal-api", "k1");
+        state.bearer = Some(Arc::new(verifier));
+        let token = sign(&json!({
+            "iss": ISSUER, "typ": "Bearer", "aud": INTERNAL_AUDIENCE, "sub": "svc", "exp": now() + 60, "iat": now(),
+        }));
+        let headers = bearer(&format!("Bearer {token}"));
+        assert!(matches!(
+            authenticate_gateway(&state, &headers).await,
+            Err(ApiError::Unauthorized)
+        ));
+        // The runner's door reads the missing client as "", which no configuration names.
+        assert!(matches!(
+            authenticate_pipeline_runner(&state, &headers, Some("praha")).await,
+            Err(ApiError::Unauthorized)
+        ));
+    }
+
+    /// Fail closed: a route whose client is not configured (absent or blank) and a Portal with no
+    /// realm refuse a token that would otherwise be valid.
+    #[tokio::test]
+    async fn an_unconfigured_door_or_a_portal_without_realm_refuses_everyone() {
+        let (state, token) = world();
+        let headers = token(INTERNAL_AUDIENCE, "context-gateway");
         for expected in [None, Some(""), Some("   ")] {
-            assert_eq!(
-                authenticate_workload(&state, &token, expected)
-                    .await
-                    .map_err(code),
-                Err(UNAUTHORIZED),
+            assert!(
+                matches!(
+                    authenticate_workload(&state, &headers, expected).await,
+                    Err(ApiError::Unauthorized)
+                ),
                 "{expected:?}"
             );
         }
-        state.bearer = None;
-        assert_eq!(
-            authenticate_workload(&state, &token, Some("context-gateway"))
-                .await
-                .map_err(code),
-            Err(UNAUTHORIZED)
-        );
-        assert_eq!(
-            authenticate_pipeline_runner(
-                &state,
-                &bearer(&signer, INTERNAL_AUDIENCE, Some("pipeline-runner")),
-                None
-            )
-            .await
-            .map_err(code),
-            Err(UNAUTHORIZED)
-        );
+        let mut no_realm = state.clone();
+        no_realm.bearer = None;
+        assert!(matches!(
+            authenticate_gateway(&no_realm, &headers).await,
+            Err(ApiError::Unauthorized)
+        ));
+        assert!(matches!(
+            authenticate_pipeline_of(&no_realm, &headers, "praha", "odpad").await,
+            Err(ApiError::Unauthorized)
+        ));
+        assert!(matches!(
+            authenticate_pipeline_runner(&no_realm, &headers, None).await,
+            Err(ApiError::Unauthorized)
+        ));
     }
 
-    /// T-2271: the gateway's door and the credential proxy's door each take their own client
-    /// and refuse the other's token.
+    /// T-3193: a pipeline's sink admits its project's `pipelines` account and the pipeline's own
+    /// client, and refuses another project's or another pipeline's client and a non-internal token.
     #[tokio::test]
-    async fn the_gateway_and_the_agent_proxy_do_not_open_each_others_door() {
-        let (mut state, signer) = portal();
-        let gateway = bearer(&signer, INTERNAL_AUDIENCE, Some("context-gateway"));
-        let proxy = bearer(&signer, INTERNAL_AUDIENCE, Some("agent-proxy"));
-        assert_eq!(
-            authenticate_gateway(&state, &gateway).await.map_err(code),
-            Ok(())
-        );
-        assert_eq!(
-            authenticate_agent_proxy(&state, &proxy).await.map_err(code),
-            Ok(())
-        );
-        assert_eq!(
-            authenticate_gateway(&state, &proxy).await.map_err(code),
-            Err(UNAUTHORIZED)
-        );
-        assert_eq!(
-            authenticate_agent_proxy(&state, &gateway)
+    async fn a_pipeline_sink_admits_its_projects_clients_alone() {
+        let (state, token) = world();
+        for client in ["praha-pipelines", "praha-pl-odpad"] {
+            assert!(
+                authenticate_pipeline_of(
+                    &state,
+                    &token(INTERNAL_AUDIENCE, client),
+                    "praha",
+                    "odpad"
+                )
                 .await
-                .map_err(code),
-            Err(UNAUTHORIZED)
-        );
-        Arc::make_mut(&mut state.config).gateway_client_id = None;
-        assert_eq!(
-            authenticate_gateway(&state, &gateway).await.map_err(code),
-            Err(UNAUTHORIZED)
-        );
+                .is_ok(),
+                "{client}"
+            );
+        }
+        for (audience, client) in [
+            (INTERNAL_AUDIENCE, "helsinki-pipelines"),
+            (INTERNAL_AUDIENCE, "praha-pl-other"),
+            (INTERNAL_AUDIENCE, "pipeline-runner"),
+            ("portal-api", "praha-pipelines"),
+        ] {
+            assert!(
+                matches!(
+                    authenticate_pipeline_of(&state, &token(audience, client), "praha", "odpad")
+                        .await,
+                    Err(ApiError::Unauthorized)
+                ),
+                "{audience} {client}"
+            );
+        }
     }
 
-    /// T-3193: a pipeline's sink takes its project's `pipelines` account and the pipeline's own
-    /// client; another project's or pipeline's client, a token with no client and the API
-    /// audience are refused.
+    /// A refused pipeline sink logs the client it saw, the project and the pipeline, and never the
+    /// token.
     #[tokio::test]
-    async fn a_pipeline_sink_takes_only_its_own_projects_pipeline_clients() {
-        // The refusal's log line names the client it saw, never the token.
-        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    async fn a_refused_pipeline_sink_logs_the_client_and_never_the_token() {
+        let log = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
         let writer = {
-            let log = std::sync::Arc::clone(&log);
-            move || Captured(std::sync::Arc::clone(&log))
+            let log = Arc::clone(&log);
+            move || Captured(Arc::clone(&log))
         };
         let _logging = tracing::subscriber::set_default(
             tracing_subscriber::fmt()
@@ -375,67 +387,34 @@ mod tests {
                 .with_ansi(false)
                 .finish(),
         );
-        let (state, signer) = portal();
-        for client in ["praha-pipelines", "praha-pl-odpad"] {
-            let headers = bearer(&signer, INTERNAL_AUDIENCE, Some(client));
-            assert_eq!(
-                authenticate_pipeline_of(&state, &headers, "praha", "odpad")
-                    .await
-                    .map_err(code),
-                Ok(()),
-                "{client}"
-            );
+        let (state, token) = world();
+        let mut tokens = Vec::new();
+        for client in ["zilina-pipelines", "praha-pl-other"] {
+            let headers = token(INTERNAL_AUDIENCE, client);
+            tokens.push(presented(&headers).expect("token").to_owned());
+            assert!(matches!(
+                authenticate_pipeline_of(&state, &headers, "praha", "odpad").await,
+                Err(ApiError::Unauthorized)
+            ));
         }
-        for (headers, why) in [
-            (
-                bearer(&signer, INTERNAL_AUDIENCE, Some("zilina-pipelines")),
-                "another project",
-            ),
-            (
-                bearer(&signer, INTERNAL_AUDIENCE, Some("praha-pl-other")),
-                "another pipeline",
-            ),
-            (
-                bearer(&signer, INTERNAL_AUDIENCE, Some("pipeline-runner")),
-                "the runner",
-            ),
-            (bearer(&signer, INTERNAL_AUDIENCE, None), "no client"),
-            (
-                bearer(&signer, "portal-api", Some("praha-pipelines")),
-                "the API audience",
-            ),
-            (HeaderMap::new(), "no token"),
-        ] {
-            let token = headers
-                .get(header::AUTHORIZATION)
-                .and_then(|v| v.to_str().ok())
-                .map(|v| v.trim_start_matches("Bearer ").to_owned());
-            assert_eq!(
-                authenticate_pipeline_of(&state, &headers, "praha", "odpad")
-                    .await
-                    .map_err(code),
-                Err(UNAUTHORIZED),
-                "{why}"
-            );
-            let logged = String::from_utf8(log.lock().expect("log").clone()).expect("utf-8");
-            assert!(
-                token.is_none_or(|token| !logged.contains(&token)),
-                "{why}: the token is logged"
-            );
-        }
-        std::io::Write::flush(&mut Captured(std::sync::Arc::clone(&log))).expect("flush");
+        std::io::Write::flush(&mut Captured(Arc::clone(&log))).expect("flush");
         let logged = String::from_utf8(log.lock().expect("log").clone()).expect("utf-8");
         assert!(logged.contains("a pipeline sink was refused"), "{logged}");
-        for client in ["zilina-pipelines", "praha-pl-other", "pipeline-runner"] {
-            assert!(
-                logged.contains(&format!("client={client}")),
-                "{client}: {logged}"
-            );
+        for needle in [
+            "client=zilina-pipelines",
+            "client=praha-pl-other",
+            "project=praha",
+            "pipeline=odpad",
+        ] {
+            assert!(logged.contains(needle), "{needle}: {logged}");
+        }
+        for token in tokens {
+            assert!(!logged.contains(&token), "the token is logged");
         }
     }
 
     /// A log sink the test reads back.
-    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
 
     impl std::io::Write for Captured {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -448,69 +427,49 @@ mod tests {
         }
     }
 
-    /// T-3163, T-4050: the runner's capture route takes the configured runner client and the
-    /// running test's project harness clients; another project's, a blank configuration and a
-    /// test of no project do not widen it.
+    /// T-3163, T-4050: the runner's capture route admits the configured runner for any test, and a
+    /// project's harness clients only for that project's test.
     #[tokio::test]
-    async fn the_runner_route_takes_the_configured_client_and_its_projects_harness() {
-        let (mut state, signer) = portal();
-        let runner = bearer(&signer, INTERNAL_AUDIENCE, Some("pipeline-runner"));
-        let harness = bearer(&signer, INTERNAL_AUDIENCE, Some("praha-pl-pipeline-test"));
-        let account = bearer(&signer, INTERNAL_AUDIENCE, Some("praha-pipelines"));
-        assert_eq!(
-            authenticate_pipeline_runner(&state, &runner, None)
-                .await
-                .map_err(code),
-            Ok(())
-        );
-        assert_eq!(
-            authenticate_pipeline_runner(&state, &runner, Some("praha"))
-                .await
-                .map_err(code),
-            Ok(())
-        );
-        assert_eq!(
-            authenticate_pipeline_runner(&state, &harness, Some("praha"))
-                .await
-                .map_err(code),
-            Ok(())
-        );
-        assert_eq!(
-            authenticate_pipeline_runner(&state, &account, Some("praha"))
-                .await
-                .map_err(code),
-            Ok(())
-        );
-        for (headers, project, why) in [
-            (&harness, None, "a harness with no running test's project"),
-            (&harness, Some("zilina"), "another project's test"),
-            (&account, Some("zilina"), "another project's account"),
-        ] {
-            assert_eq!(
-                authenticate_pipeline_runner(&state, headers, project)
+    async fn the_capture_route_admits_the_runner_and_the_tests_own_harness() {
+        let (state, token) = world();
+        let runner = token(INTERNAL_AUDIENCE, "pipeline-runner");
+        assert!(authenticate_pipeline_runner(&state, &runner, None)
+            .await
+            .is_ok());
+        assert!(authenticate_pipeline_runner(&state, &runner, Some("praha"))
+            .await
+            .is_ok());
+        for client in ["praha-pipelines", "praha-pl-pipeline-test"] {
+            let headers = token(INTERNAL_AUDIENCE, client);
+            assert!(
+                authenticate_pipeline_runner(&state, &headers, Some("praha"))
                     .await
-                    .map_err(code),
-                Err(UNAUTHORIZED),
-                "{why}"
+                    .is_ok(),
+                "{client}"
             );
+            assert!(matches!(
+                authenticate_pipeline_runner(&state, &headers, Some("helsinki")).await,
+                Err(ApiError::Unauthorized)
+            ));
+            assert!(matches!(
+                authenticate_pipeline_runner(&state, &headers, None).await,
+                Err(ApiError::Unauthorized)
+            ));
         }
-        for blank in [None, Some("  ".to_owned())] {
-            Arc::make_mut(&mut state.config).pipeline_runner_client_id = blank;
-            assert_eq!(
-                authenticate_pipeline_runner(&state, &runner, Some("praha"))
-                    .await
-                    .map_err(code),
-                Err(UNAUTHORIZED)
-            );
-        }
-        // A token with no client never equals a blank configuration.
-        Arc::make_mut(&mut state.config).pipeline_runner_client_id = Some(String::new());
-        assert_eq!(
-            authenticate_pipeline_runner(&state, &bearer(&signer, INTERNAL_AUDIENCE, None), None)
-                .await
-                .map_err(code),
-            Err(UNAUTHORIZED)
-        );
+        // A blank runner configuration names no client, so a token with the blank name is no runner.
+        let mut blank = state.clone();
+        let mut config = (*blank.config).clone();
+        config.pipeline_runner_client_id = Some("  ".into());
+        blank.config = Arc::new(config);
+        assert!(matches!(
+            authenticate_pipeline_runner(&blank, &runner, None).await,
+            Err(ApiError::Unauthorized)
+        ));
+        assert!(matches!(
+            authenticate_pipeline_runner(&state, &token("portal-api", "pipeline-runner"), None)
+                .await,
+            Err(ApiError::Unauthorized)
+        ));
     }
 
     /// T-4050: a pipeline test's capture route admits its project's `pipelines` account and its

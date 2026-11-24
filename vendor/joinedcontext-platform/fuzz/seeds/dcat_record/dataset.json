@@ -1,0 +1,1 @@
+{"@id":"https://example.org/dataset/air","@type":"dcat:Dataset","dct:title":{"@value":"Air","@language":"en"},"dct:modified":"2026-01-01","dcat:distribution":[{"@type":"dcat:Distribution","dcat:accessURL":{"@id":"https://example.org/x"},"dct:format":"CSV"}],"version":"2.1.0"}

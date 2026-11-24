@@ -267,3 +267,142 @@ pub fn drop_types_that_may_not_be_filtered(
 pub fn now() -> TimestampTz {
     TimestampTz::now()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    fn projection(yaml: &str) -> jc_core::kinds::ModelProjectionSpec {
+        serde_norway::from_str(&format!(
+            "contextSpaceRef: sensors\ndataModelRef: {{ name: sensors, version: 1.0.0 }}\n{yaml}"
+        ))
+        .expect("the projection parses")
+    }
+
+    fn by_type() -> evaluator::Constraints {
+        evaluator::Constraints {
+            types: set(&["Sensor", "Vehicle"]),
+            attrs_by_type: [
+                ("Sensor".to_owned(), set(&["id", "level", "name"])),
+                ("Vehicle".to_owned(), set(&["id", "name", "weight"])),
+            ]
+            .into_iter()
+            .collect(),
+            ..evaluator::Constraints::default()
+        }
+    }
+
+    fn filtering(names: &[&str]) -> Request {
+        Request {
+            referenced: set(names),
+            ..Request::default()
+        }
+    }
+
+    /// T-7767 (T-1862, MP-02): a filter keeps exactly the types that serve every name it
+    /// reads; none left is an empty answer, and a name every type serves narrows nothing.
+    #[test]
+    fn a_filter_keeps_only_the_types_that_serve_every_name_it_reads() {
+        let kept = drop_types_that_may_not_be_filtered(by_type(), &filtering(&["level"]));
+        let kept = kept.constraints().expect("a rewrite");
+        assert_eq!(kept.types, set(&["Sensor"]));
+        assert_eq!(kept.attrs_by_type.keys().collect::<Vec<_>>(), ["Sensor"]);
+        assert!(kept.restricted && !kept.empty);
+
+        let none = drop_types_that_may_not_be_filtered(by_type(), &filtering(&["colour"]));
+        let none = none.constraints().expect("a rewrite");
+        assert!(none.empty && none.restricted);
+
+        let both = drop_types_that_may_not_be_filtered(by_type(), &filtering(&["name"]));
+        let both = both.constraints().expect("a rewrite");
+        assert_eq!(both.types, set(&["Sensor", "Vehicle"]));
+        assert!(!both.restricted && !both.empty);
+
+        // System members and observedAt are no attribute a grant names.
+        let system = drop_types_that_may_not_be_filtered(by_type(), &filtering(&["observedAt"]));
+        assert!(!system.constraints().expect("a rewrite").restricted);
+    }
+
+    /// T-7767 (EP-61): filtering on a hidden name answers nothing for every type, and without
+    /// a projection the grants' whitelist is what a filter is judged against.
+    #[test]
+    fn a_hidden_or_unserved_name_filters_to_nothing() {
+        let hidden = evaluator::Constraints {
+            hidden: set(&["owner"]),
+            ..by_type()
+        };
+        let hidden = drop_types_that_may_not_be_filtered(hidden, &filtering(&["owner"]));
+        assert!(hidden.constraints().expect("a rewrite").empty);
+
+        let whitelisted = || evaluator::Constraints {
+            served: set(&["level"]),
+            ..evaluator::Constraints::default()
+        };
+        let outside = drop_types_that_may_not_be_filtered(whitelisted(), &filtering(&["colour"]));
+        assert!(outside.constraints().expect("a rewrite").empty);
+        let inside = drop_types_that_may_not_be_filtered(whitelisted(), &filtering(&["level"]));
+        assert!(!inside.constraints().expect("a rewrite").empty);
+        let whole = drop_types_that_may_not_be_filtered(
+            evaluator::Constraints::default(),
+            &filtering(&["colour"]),
+        );
+        assert!(
+            !whole.constraints().expect("a rewrite").empty,
+            "no whitelist is the whole entity"
+        );
+    }
+
+    /// T-7767 (MP-02, GW10): a type the projection does not expose is a refusal, never every
+    /// type; the projection's filter is conjoined with the grants' and its geo and temporal
+    /// windows apply only where the grants set none.
+    #[test]
+    fn a_projection_refuses_an_unexposed_type_and_conjoins_its_filter() {
+        let sensors = projection("classes: [{ name: Sensor, slots: [level] }]\n");
+        let vehicles = evaluator::Constraints {
+            types: set(&["Vehicle"]),
+            ..evaluator::Constraints::default()
+        };
+        assert_eq!(project_constraints(vehicles, &sensors), Verdict::Deny);
+
+        let filtered = projection(
+            "classes: [{ name: Sensor, slots: [level] }]\nfilter:\n  q: level>2\n  \
+             geoQ: georel=near;maxDistance==10&geometry=Point&coordinates=[1,1]\n  \
+             temporalQ: timerel=after;timeAt=P1D\n",
+        );
+        let asked = evaluator::Constraints {
+            types: set(&["Sensor"]),
+            q: Some("name==\"a\"".to_owned()),
+            ..evaluator::Constraints::default()
+        };
+        let verdict = project_constraints(asked.clone(), &filtered);
+        let projected = verdict.constraints().expect("a rewrite");
+        let q = projected.q.as_deref().unwrap_or_default();
+        assert!(q.contains("level>2") && q.contains("name==\"a\""), "{q}");
+        assert!(projected
+            .geo_q
+            .as_deref()
+            .is_some_and(|g| g.contains("near")));
+        assert_eq!(
+            projected.temporal_q.as_deref(),
+            Some("timerel=after;timeAt=P1D")
+        );
+        assert_eq!(
+            projected.attrs_by_type["Sensor"],
+            set(&["id", "level", "type"])
+        );
+
+        let clamped = evaluator::Constraints {
+            geo_q: Some("granted".to_owned()),
+            temporal_q: Some("granted".to_owned()),
+            ..asked
+        };
+        let verdict = project_constraints(clamped, &filtered);
+        let projected = verdict.constraints().expect("a rewrite");
+        assert_eq!(projected.geo_q.as_deref(), Some("granted"));
+        assert_eq!(projected.temporal_q.as_deref(), Some("granted"));
+    }
+}
