@@ -527,10 +527,6 @@ root.local_hour = "2020-08-14T11:50:26Z".ts_strftime("%H", "Europe/Bratislava")
             r#"root = "2300-01-01T00:00:00Z".ts_unix_nano()"#,
             "timestamp out of nanosecond range",
         ),
-        (
-            r#"root = "2300-01-01T00:00:00Z".ts_sub("1700-01-01T00:00:00Z")"#,
-            "timestamp difference overflows nanoseconds",
-        ),
     ] {
         let err = run_map(mapping, "{}").expect_err(mapping);
         assert!(err.contains(says), "{mapping}: {err}");
@@ -616,6 +612,198 @@ root.val = this.n.apply("double")
     assert_eq!(
         static_field.resolve_string(0, &EmptyBatch).unwrap(),
         "static-only"
+    );
+}
+
+/// Bento 1.22 answers recorded by ekiben T-6651 (tests/parity/edge.json upstream) for the
+/// parity bugs it fixed: `Ok` is the JSON Bento printed, `Err` a fragment of its refusal. The
+/// second slug case follows the Latin Extended-A fold table T-6651 recorded per character.
+#[test]
+fn bento_edge_cases_from_the_t6651_parity_table() {
+    let cases: &[(&str, &str, Result<&str, &str>)] = &[
+        (
+            r#"root = this.s.slug()"#,
+            r#"{"s":"Café Ünïcödé Ñandú Øre"}"#,
+            Ok(r#""cafe-unicode-nandu-ore""#),
+        ),
+        (
+            r#"root = this.s.slug()"#,
+            r#"{"s":"Æsir Þor Đuro Œuvre Łódź ğış"}"#,
+            Ok(r#""aesir-thor-duro-oeuvre-lodz-gis""#),
+        ),
+        (
+            r#"root = this.a.ts_sub(this.b)"#,
+            r#"{"a":"9999-01-01T00:00:00Z","b":"0001-01-01T00:00:00Z"}"#,
+            Ok("9223372036854775807"),
+        ),
+        (
+            r#"root = this.b.ts_sub(this.a)"#,
+            r#"{"a":"9999-01-01T00:00:00Z","b":"0001-01-01T00:00:00Z"}"#,
+            Ok("-9223372036854775808"),
+        ),
+        ("root = 1e999", "{}", Err("value out of range")),
+        (
+            r#"root = this.s.ts_format("3:4:5 03:04:05 PM")"#,
+            r#"{"s":"2024-01-02T00:05:09Z"}"#,
+            Ok(r#""12:5:9 12:05:09 AM""#),
+        ),
+        (
+            r#"root = this.s.ts_parse("2006-01-02 3:4:5 PM")"#,
+            r#"{"s":"2024-01-02 3:7:9 PM"}"#,
+            Ok(r#""2024-01-02T15:07:09Z""#),
+        ),
+        (
+            r#"root = this.s.ts_strftime("c=%c|j=%j|D=%D|R=%R|r=%r|x=%x|X=%X|u=%u|w=%w|k=%k|l=%l|n=%n|t=%t|C=%C|G=%G|g=%g|V=%V|U=%U|W=%W|v=%v|s=%s|+=%+")"#,
+            r#"{"s":"2024-01-07T05:08:09.5Z"}"#,
+            Ok(
+                r#""c=Sun Jan  7 05:08:09 2024|j=007|D=01/07/24|R=05:08|r=05:08:09 AM|x=01/07/24|X=05:08:09|u=7|w=0|k= 5|l= 5|n=\n|t=\t|C=20|G=2024|g=24|V=01|U=01|W=01|v= 7-Jan-2024|s=1704604089|+=Sun Jan  7 05:08:09 UTC 2024""#,
+            ),
+        ),
+        (
+            r#"root = this.s.ts_add_iso8601("P1M")"#,
+            r#"{"s":"2024-01-31T00:00:00Z"}"#,
+            Ok(r#""2024-03-02T00:00:00Z""#),
+        ),
+        (
+            r#"root = this.s.ts_sub_iso8601("P1Y")"#,
+            r#"{"s":"2024-02-29T00:00:00Z"}"#,
+            Ok(r#""2023-03-01T00:00:00Z""#),
+        ),
+        (
+            r#"root = this.s.ts_sub_iso8601("P1Y2M3DT4H5M6S")"#,
+            r#"{"s":"2020-01-01T00:00:00Z"}"#,
+            Ok(r#""2018-10-28T19:54:54Z""#),
+        ),
+        (
+            r#"root = this.s.ts_round(-1)"#,
+            r#"{"s":"2024-01-02T10:00:00.5Z"}"#,
+            Ok(r#""2024-01-02T10:00:00.5Z""#),
+        ),
+        (
+            r#"root = this.s.parse_duration()"#,
+            r#"{"s":"9999999999h"}"#,
+            Err(r#"time: invalid duration "9999999999h""#),
+        ),
+        (
+            r#"root = this.s.parse_duration()"#,
+            r#"{"s":"9223372036854775808ns"}"#,
+            Err("time: invalid duration"),
+        ),
+        (
+            r#"root = this.s.parse_duration()"#,
+            r#"{"s":"9223372036854775807ns"}"#,
+            Ok("9223372036854775807"),
+        ),
+        (
+            r#"root = this.s.parse_duration()"#,
+            r#"{"s":"-9223372036854775808ns"}"#,
+            Ok("-9223372036854775808"),
+        ),
+        (
+            r#"root = this.s.parse_duration()"#,
+            r#"{"s":"1.5h3m"}"#,
+            Ok("5580000000000"),
+        ),
+        (
+            r#"root = this.s.parse_bytes()"#,
+            r#"{"s":"10000000000 GB"}"#,
+            Ok("10000000000000000000"),
+        ),
+        (
+            r#"root = this.s.parse_bytes()"#,
+            r#"{"s":"99999999999999999999999 B"}"#,
+            Err("too large: 99999999999999999999999 B"),
+        ),
+        (
+            r#"root = this.s.parse_bytes()"#,
+            r#"{"s":"12QQ"}"#,
+            Err("unhandled size name: qq"),
+        ),
+        (
+            r#"root = "%[2]d %[1]d %[3]d %[x]d %d".format(1, 2)"#,
+            "{}",
+            Ok(r#""2 1 %!d(BADINDEX) %!d(BADINDEX) 2""#),
+        ),
+        (
+            r#"root = "%[2]*[1]d|%[1]d %d %d|%[3]d|%-[1]d|%[1]".format(5, 7)"#,
+            "{}",
+            Ok(r#""      5|5 7 %!d(MISSING)|%!d(BADINDEX)|5|%!(NOVERB)""#),
+        ),
+        (r#"root = "%d %[1]d".format(1,2,3)"#, "{}", Ok(r#""1 1""#)),
+        (
+            r#"root = "%[0]d %[1d %.[2]f %[1]%".format(1, 2.5)"#,
+            "{}",
+            Ok(r#""%!d(BADINDEX) %!f(BADINDEX) %""#),
+        ),
+        (
+            r#"root = "%U %#U %.6U %#U %#U %c %q %#q %+q %U".format(65, 9731, 65, 7, 1114111, 9731, 9731, 39, 233, -1)"#,
+            "{}",
+            Ok(
+                r#""U+0041 U+2603 '☃' U+000041 U+0007 U+10FFFF ☃ '☃' '\\'' '\\u00e9' U+FFFFFFFFFFFFFFFF""#,
+            ),
+        ),
+        (
+            r#"root = "s".hash("fnv32").string()"#,
+            "{}",
+            Ok(r#""84696428""#),
+        ),
+        (
+            r#"root = this.json_schema("{\"dependencies\":{\"a\":[\"b\"]}}")"#,
+            r#"{"a":4}"#,
+            Err("(root) has a dependency on b"),
+        ),
+        (
+            r#"root = this.json_schema("{\"dependencies\":{\"a\":{\"required\":[\"c\"]}}}")"#,
+            r#"{"a":4}"#,
+            Err("(root) c is required"),
+        ),
+        (
+            r#"root = this.json_schema("{\"dependencies\":{\"z\":[\"b\"]}}")"#,
+            r#"{"a":4}"#,
+            Ok(r#"{"a":4}"#),
+        ),
+        (
+            r#"root = this.s.ts_strptime("%Y-%m-%d %z")"#,
+            r#"{"s":"2024-01-02 +2500"}"#,
+            Err(r#"failed to parse "2024-01-02 +2500" with "%Y-%m-%d %z""#),
+        ),
+        (
+            r#"root = this.s.ts_strptime("%Y-%m-%d %A")"#,
+            r#"{"s":"2024-01-02 Tuesday"}"#,
+            Ok(r#""2024-01-02T00:00:00Z""#),
+        ),
+        (
+            r#"root = this.s.ts_strptime("%Y-%m-%d %z")"#,
+            r#"{"s":"2024-01-01 +0530"}"#,
+            Ok(r#""2024-01-01T00:00:00+05:30""#),
+        ),
+    ];
+    let mut diffs = Vec::new();
+    for (mapping, input, want) in cases {
+        let got = run_map(mapping, input).map(|v| v.unwrap_or_default());
+        let ok = match (&got, want) {
+            // run_map prints a string answer without its JSON quotes, a timestamp with them.
+            (Ok(g), Ok(w)) => g == w || serde_json::from_str::<String>(w).is_ok_and(|w| *g == w),
+            (Err(g), Err(w)) => g.contains(w),
+            _ => false,
+        };
+        if !ok {
+            diffs.push(format!("{mapping} on {input}: got {got:?}, want {want:?}"));
+        }
+    }
+    assert!(diffs.is_empty(), "{}", diffs.join("\n"));
+}
+
+/// `%v` of a timestamp prints Go's Time.String, its fraction trimmed to the last non-zero digit.
+#[test]
+fn a_timestamp_prints_under_v_with_its_fraction_trimmed() {
+    let got = run_map(
+        r#"root = "%v".format(this.s.ts_parse("2006-01-02T15:04:05Z07:00"))"#,
+        r#"{"s":"2020-01-01T00:00:00.120Z"}"#,
+    );
+    assert_eq!(
+        got,
+        Ok(Some("2020-01-01 00:00:00.12 +0000 UTC".to_string()))
     );
 }
 
