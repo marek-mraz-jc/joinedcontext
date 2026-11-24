@@ -51,7 +51,7 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "ekiben-text-fuzz-${{ matrix.target }}", path: crates/ekiben/crates/ekiben-text/fuzz/artifacts }
-  # The parsers of ekiben-io-file, ekiben-io-http and ekiben-io-remote that read bytes from outside (T-7579, T-7581):
+  # The parsers of ekiben-io-file, ekiben-io-http, ekiben-io-remote and ekiben-core (with ekiben-io-nats) that read bytes from outside (T-7579, T-7581, T-7685):
   # io-file scanners, cron, sftp/s3 configs and S3 listings (T-7581), MQTT wire, multipart bodies, route patterns and paths, ftp/imap config fields, raw mails.
   io:
     runs-on: ubuntu-24.04
@@ -70,6 +70,12 @@ jobs:
           - { crate: ekiben-io-http, target: path }
           - { crate: ekiben-io-remote, target: mail }
           - { crate: ekiben-io-remote, target: names }
+          - { crate: ekiben-core, target: interpolate }
+          - { crate: ekiben-core, target: wire }
+          - { crate: ekiben-core, target: redact }
+          - { crate: ekiben-core, target: stream_config }
+          - { crate: ekiben-core, target: part_json }
+          - { crate: ekiben-core, target: nats_config }
     defaults: { run: { working-directory: "crates/ekiben/crates/${{ matrix.crate }}" } }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

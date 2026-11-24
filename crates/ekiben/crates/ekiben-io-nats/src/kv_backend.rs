@@ -251,4 +251,25 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn operations_print_as_nats_go_names_them() {
+        assert_eq!(op_name(kv::Operation::Put), "KeyValuePutOp");
+        assert_eq!(op_name(kv::Operation::Delete), "KeyValueDeleteOp");
+        assert_eq!(op_name(kv::Operation::Purge), "KeyValuePurgeOp");
+    }
+
+    #[test]
+    fn a_jetstream_api_error_prints_as_go_and_any_other_error_plainly() {
+        let api: async_nats::jetstream::Error = serde_json::from_value(serde_json::json!(
+            {"code": 404, "err_code": 10059, "description": "stream not found"}
+        ))
+        .unwrap();
+        assert_eq!(
+            live_err(api).to_string(),
+            "nats: nats: API error: code=404 err_code=10059 description=stream not found"
+        );
+        let plain = std::io::Error::other("connection reset");
+        assert_eq!(live_err(plain).to_string(), "nats: connection reset");
+    }
 }

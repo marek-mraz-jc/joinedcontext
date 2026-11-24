@@ -469,6 +469,139 @@ async fn nats_request_reply_on_a_live_server() {
 }
 
 #[tokio::test]
+async fn core_nats_input_and_output_on_a_live_server() {
+    let Some(srv) = start_server("core_nats", &[], &[]) else {
+        return;
+    };
+    let (reg, sctx, _) = make_ctx("org-a", Some("org_a"));
+    let mut plain = input(
+        &reg,
+        &sctx,
+        serde_json::json!({"nats": {"urls": [srv.url], "subject": "org_a.core.>"}}),
+    )
+    .await;
+    let mut grouped = input(
+        &reg,
+        &sctx,
+        serde_json::json!({"nats": {"urls": [srv.url], "subject": "org_a.core.>", "queue": "g"}}),
+    )
+    .await;
+    // Connecting again keeps the subscription.
+    plain.connect(&sctx).await.unwrap();
+    let out = reg
+        .build_output(
+            &conf(serde_json::json!({"nats": {"urls": [srv.url], "subject": "org_a.core.${! meta(\"z\") }",
+                "headers": {"X-H": "v"}, "metadata": {"include_prefixes": ["trace"]}}})),
+            &sctx,
+        )
+        .unwrap();
+    out.connect(&sctx).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let mut p = Part::from_str("live");
+    p.meta_set_str("z", "n");
+    p.meta_set_str("trace_id", "t-1");
+    out.write_batch(&sctx, vec![p]).await.unwrap();
+    let (got, ack) = read(&mut plain, &sctx).await;
+    ack.ack();
+    assert_eq!(&got.as_bytes_ref()[..], b"live");
+    assert_eq!(got.meta_get_str("nats_subject"), "org_a.core.n");
+    assert_eq!(got.meta_get_str("X-H"), "v");
+    assert_eq!(got.meta_get_str("trace_id"), "t-1");
+    assert_eq!(got.meta_get_str("nats_reply_subject"), "");
+    let (g, _) = read(&mut grouped, &sctx).await;
+    assert_eq!(&g.as_bytes_ref()[..], b"live");
+    // A message published with a reply subject reports it.
+    let client = async_nats::connect(&srv.url).await.unwrap();
+    client
+        .publish_with_reply("org_a.core.r", "_INBOX.edge", Bytes::from_static(b"q"))
+        .await
+        .unwrap();
+    client.flush().await.unwrap();
+    let (r, _) = read(&mut plain, &sctx).await;
+    assert_eq!(r.meta_get_str("nats_reply_subject"), "_INBOX.edge");
+    plain.close().await.unwrap();
+    assert!(!plain.is_connected());
+
+    // An nkey file and a JWT pair are read and sent; this server asks for neither.
+    let dir = std::env::temp_dir().join(format!("ekiben-nkey-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let nk = dir.join("user.nk");
+    let user = nkeys::KeyPair::new_user();
+    std::fs::write(&nk, format!("{}\n", user.seed().unwrap())).unwrap();
+    for auth in [
+        serde_json::json!({"nkey_file": nk.to_str().unwrap()}),
+        serde_json::json!({"user_jwt": "eyJ0eXAiOiJKV1QifQ.e30.sig", "user_nkey_seed": user.seed().unwrap()}),
+    ] {
+        let o = reg
+            .build_output(
+                &conf(serde_json::json!({"nats": {"urls": [srv.url], "subject": "org_a.auth", "auth": auth}})),
+                &sctx,
+            )
+            .unwrap();
+        o.write_batch(&sctx, vec![Part::from_str("a")]).await.unwrap();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn nats_kv_revisions_updates_purges_and_keys_on_a_real_bucket() {
+    let Some(srv) = start_server("nats_kv_ops", &[], &[]) else {
+        return;
+    };
+    js(&srv.url)
+        .await
+        .create_key_value(jetstream::kv::Config {
+            bucket: "org_a_ops".into(),
+            history: 5,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let (reg, _sctx, pctx) = make_ctx("org-a", Some("org_a"));
+    let proc = |bucket: &str, op: &str, key: &str, rev: Option<&str>| {
+        let mut v = serde_json::json!({"urls": [srv.url], "bucket": bucket, "operation": op, "key": key});
+        if let Some(r) = rev {
+            v["revision"] = serde_json::json!(r);
+        }
+        reg.build_processor(&conf(serde_json::json!({ "nats_kv": v })), &pctx, "0")
+            .unwrap()
+    };
+    let run = |p: Arc<dyn ekiben_core::Processor>, body: &'static str| {
+        let pctx = pctx.clone();
+        async move {
+            p.process_batch(&pctx, vec![Part::from_str(body)])
+                .await
+                .unwrap()
+                .remove(0)
+                .remove(0)
+        }
+    };
+    let created = run(proc("org_a_ops", "create", "k", None), "v1").await;
+    assert!(!created.is_errored(), "{:?}", created.error_get());
+    let r1 = created.meta_get_str("nats_kv_revision");
+    let updated = run(proc("org_a_ops", "update", "k", Some(&r1)), "v2").await;
+    assert!(!updated.is_errored(), "{:?}", updated.error_get());
+    let stale = run(proc("org_a_ops", "update", "k", Some(&r1)), "v3").await;
+    assert!(stale.is_errored());
+    let old = run(proc("org_a_ops", "get_revision", "k", Some(&r1)), "").await;
+    assert_eq!(&old.as_bytes_ref()[..], b"v1");
+    let none = run(proc("org_a_ops", "get_revision", "k", Some("999")), "").await;
+    assert!(none.is_errored());
+    run(proc("org_a_ops", "put", "other", None), "x").await;
+    let keys = run(proc("org_a_ops", "keys", ">", None), "").await;
+    let text = String::from_utf8_lossy(&keys.as_bytes_ref()).to_string();
+    assert!(text.contains("other") && text.contains("\"k\""), "{text}");
+    let purged = run(proc("org_a_ops", "purge", "k", None), "").await;
+    assert!(!purged.is_errored(), "{:?}", purged.error_get());
+    let gone = run(proc("org_a_ops", "get", "k", None), "").await;
+    assert!(gone.is_errored());
+    // A bucket the server does not hold is reported by name.
+    let missing = run(proc("org_a_absent", "get", "k", None), "").await;
+    let err = missing.error_get().map(|e| e.to_string()).unwrap_or_default();
+    assert!(err.contains("org_a_absent"), "{err}");
+}
+
+#[tokio::test]
 async fn nats_kv_cache_processor_and_output_on_a_real_bucket() {
     let Some(srv) = start_server("nats_kv", &[], &[]) else {
         return;

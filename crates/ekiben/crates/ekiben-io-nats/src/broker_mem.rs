@@ -311,10 +311,8 @@ impl InMemoryNatsCluster {
         let Some(b_map) = buckets.get(bucket) else {
             return Err(CoreError::KeyNotFound(key.to_string()));
         };
-        let Some(history) = b_map.get(key) else {
-            return Err(CoreError::KeyNotFound(key.to_string()));
-        };
-        let Some(latest) = history.last() else {
+        // A key's history is never empty: a delete or purge leaves its marker.
+        let Some(latest) = b_map.get(key).and_then(|h| h.last()) else {
             return Err(CoreError::KeyNotFound(key.to_string()));
         };
         if latest.operation != "KeyValuePutOp" {
