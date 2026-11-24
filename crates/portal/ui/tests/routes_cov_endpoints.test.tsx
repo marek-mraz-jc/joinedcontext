@@ -53,7 +53,7 @@ const SPACE = {
 
 const PROJECTS = () => jsonResponse(list([{ name: "helsinki" }, { name: "espoo" }]));
 
-function answering(rows: { own?: unknown[]; shared?: unknown[]; references?: unknown[] } = {}, extra?: (path: string, request: Request) => Response | Promise<Response> | undefined) {
+function answering(rows: { own?: unknown[]; shared?: unknown[]; references?: unknown[] } = {}, extra?: (path: string, request: Request) => Response | Promise<Response | undefined> | undefined) {
   return async (path: string, request: Request): Promise<Response> => {
     const own = await extra?.(path, request);
     if (own) return own;
@@ -345,7 +345,7 @@ describe("the editor of a published endpoint", () => {
     expect(proof.closest("details")).toHaveAttribute("open");
   });
 
-  it("opens on a model whose source cannot be read without offering any class", async () => {
+  it("opens on a model whose source is not YAML without offering any class", async () => {
     await renderRoute({
       path: PATH,
       projects: PROJECTS,

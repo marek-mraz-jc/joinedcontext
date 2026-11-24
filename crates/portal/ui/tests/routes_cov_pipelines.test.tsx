@@ -16,6 +16,7 @@ import { handPrefill } from "../src/assistant/state";
 import type { Manifest } from "../src/api/manifest";
 import { pipelineMatches, prefilledForm } from "../src/routes/PipelinesPage";
 import { json, list, problem, renderPage } from "./page_contract";
+import { jsonResponse, list as listBody, renderRoute } from "./pageHarness";
 
 const ENVELOPE = {
   apiVersion: "joinedcontext.com/v1alpha1",
@@ -511,5 +512,87 @@ describe("pause and resume", () => {
     await userEvent.click(within(row).getByRole("button", { name: new RegExp(en.pipelines.pause) }));
     expect(await screen.findByRole("alert")).toHaveTextContent("You may not pause this pipeline.");
     expect(screen.getByText("nightly")).toBeInTheDocument();
+  });
+});
+
+describe("the grid's own columns and details", () => {
+  it("shows the hidden period and schedule columns on request and sorts by them", async () => {
+    const rows = [
+      pipeline("hourly", { class: "scheduled", schedule: "0 * * * *", period: "1h" }),
+      pipeline("daily", { class: "scheduled", schedule: "0 3 * * *", period: "24h" }),
+      pipeline("never", { class: "scheduled" }),
+    ];
+    show({ items: rows });
+    const table = await screen.findByRole("table");
+    await within(table).findByText("hourly");
+    expect(within(table).queryByRole("button", { name: en.grid.field.period })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.entityGrid.arrangeColumns }));
+    const panel = await screen.findByRole("dialog", { name: en.entityGrid.arrangeColumns });
+    await user.click(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: ${en.grid.field.period}` }));
+    await user.click(within(panel).getByRole("checkbox", { name: `${en.entityGrid.showColumn}: ${en.grid.field.schedule}` }));
+    await user.keyboard("{Escape}");
+    const names = () =>
+      within(table)
+        .getAllByRole("row")
+        .slice(1)
+        .map((row) => within(row).getAllByRole("link")[0].textContent);
+    await user.click(await within(table).findByRole("button", { name: en.grid.field.period }));
+    expect(names()).toEqual(["hourly", "daily", "never"]);
+    await user.click(within(table).getByRole("button", { name: en.grid.field.period }));
+    expect(names()).toEqual(["daily", "hourly", "never"]);
+    await user.click(within(table).getByRole("button", { name: en.grid.field.period }));
+    await user.click(within(table).getByRole("button", { name: en.grid.field.schedule }));
+    expect(names()).toEqual(["hourly", "daily", "never"]);
+  });
+
+  it("sorts by the last run column, which holds no text to order by, without losing a row", async () => {
+    show();
+    const table = await screen.findByRole("table");
+    await within(table).findByText("quiet");
+    await userEvent.click(within(table).getByRole("button", { name: en.pipelines.field.lastRun }));
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+  });
+
+  it("opens a row's details with the pipeline's own fields", async () => {
+    show();
+    const row = await rowOf("quiet");
+    const user = userEvent.setup();
+    await user.click(within(row).getByRole("button", { name: /More actions/ }));
+    await user.click(await screen.findByRole("menuitem", { name: en.grid.details }));
+    const panel = await screen.findByRole("dialog");
+    expect(panel).toHaveTextContent("quiet");
+  });
+});
+
+describe("on a routed list, where the editor is a page at an address", () => {
+  const answer = (path: string): Response | undefined => {
+    if (path.endsWith("/pipelines")) return jsonResponse(listBody(ITEMS));
+    return undefined;
+  };
+
+  it("opens the editor for /pipelines/new", async () => {
+    await renderRoute({ path: "/projects/helsinki/pipelines/new", answer });
+    expect(await screen.findByText("creating")).toBeInTheDocument();
+  });
+
+  it("opens the editor on the pipeline /pipelines/{name}/edit names", async () => {
+    await renderRoute({ path: "/projects/helsinki/pipelines/nightly/edit", answer });
+    expect(await screen.findByText("editing nightly")).toBeInTheDocument();
+  });
+
+  it("sends a new pipeline from the map to the new address, prefilled", async () => {
+    await renderRoute({ path: "/projects/helsinki/pipelines?view=map", answer });
+    await userEvent.click(await screen.findByRole("button", { name: "new from the map" }));
+    await waitFor(() => expect(window.location.pathname).toBe("/projects/helsinki/pipelines/new"));
+    expect(await screen.findByText("prefilled from-map")).toBeInTheDocument();
+  });
+
+  it("goes to the new address from the header's New", async () => {
+    await renderRoute({ path: "/projects/helsinki/pipelines", answer });
+    const add = await screen.findByRole("button", { name: en.pipelines.add });
+    await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled", "true"));
+    await userEvent.click(add);
+    await waitFor(() => expect(window.location.pathname).toBe("/projects/helsinki/pipelines/new"));
   });
 });

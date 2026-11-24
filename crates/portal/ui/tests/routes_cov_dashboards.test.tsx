@@ -55,6 +55,14 @@ vi.mock("maplibre-gl", () => {
   };
 });
 
+vi.mock("../src/components/dashboards/DeckGlOverlay", () => ({
+  DeckGlOverlay: ({ dense, layers, label }: { dense: { name: string; features: unknown[] }[]; layers: unknown[]; label: string }) => (
+    <div role="img" aria-label={`deck ${label}`}>
+      {dense.map((layer) => `${layer.name}:${layer.features.length}`).join(",")} native:{layers.length}
+    </div>
+  ),
+}));
+
 const PATH = "/projects/helsinki/dashboards";
 
 const endpoint = (name: string, slug: string, audience: string) => ({
@@ -324,5 +332,34 @@ describe("dashboards page, remaining branches", () => {
     handPrefill(PATH, drafted as unknown as Record<string, unknown>);
     await renderRoute({ path: `${PATH}?edit=fresh`, answer: answering() });
     expect(await findFormPage(en.dashboards.add)).toBeInTheDocument();
+  });
+
+  it("hands an aggregating layer to the GPU overlay with its features, and draws no native layer for it", async () => {
+    await renderRoute({
+      path: PATH,
+      answer: answering({
+        layers: [layer("stations", "pub-air", { style: "heatmap" })],
+        features: () => jsonResponse({ type: "FeatureCollection", features: [{ type: "Feature", geometry: null, properties: {} }] }),
+      }),
+    });
+    const overlay = await screen.findByRole("img", { name: "deck Air" });
+    expect(overlay).toHaveTextContent("stations:1 native:0");
+  });
+
+  it("asks the endpoint for the layer's own filter and scope", async () => {
+    const urls: string[] = [];
+    await renderRoute({
+      path: PATH,
+      answer: (path, request) => {
+        if (path.startsWith("/api/endpoint/")) urls.push(request.url);
+        return answering({ layers: [layer("stations", "pub-air", { filter: { q: "pm10>40", scopeQ: "/city/#" } })] })(path);
+      },
+    });
+    await waitFor(() => expect(urls.length).toBeGreaterThan(0));
+    const asked = new URL(urls[0]);
+    expect(asked.pathname).toBe("/api/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa/ngsi-ld/v1/entities");
+    expect(asked.searchParams.get("q")).toBe("pm10>40");
+    expect(asked.searchParams.get("scopeQ")).toBe("/city/#");
+    expect(asked.searchParams.get("type")).toBe("AirQualityObserved");
   });
 });
