@@ -167,4 +167,76 @@ mod tests {
             json!([{ "space": "air", "id": "a" }])
         );
     }
+
+    use super::super::testkit::{admin, caller, envelope, person, state};
+    use super::super::{call, find, Via};
+    use axum::response::IntoResponse;
+
+    fn outcome(result: Result<Value, OpError>) -> String {
+        match result {
+            Ok(Value::Object(map)) => format!("200 {}", map.keys().cloned().collect::<Vec<_>>().join(",")),
+            Ok(other) => format!("200 {other}"),
+            Err(err) => err.into_response().status().as_u16().to_string(),
+        }
+    }
+
+    async fn each_aspect(caller: &super::super::Caller, state: &crate::state::AppState) -> Vec<String> {
+        let op = find(GOVERNANCE).expect("listed");
+        let mut got = Vec::new();
+        for aspect in ["quality", "qualityChecks", "usage", "temporalAudit", "surfaceFit", "drift"] {
+            let mut input = json!({ "space": "air", "aspect": aspect });
+            if aspect == "temporalAudit" {
+                input["pipeline"] = json!("sensors");
+            }
+            got.push(format!("{aspect}: {}", outcome(call(op, caller, state, "helsinki", input).await)));
+        }
+        got
+    }
+
+    /// Each aspect is the route's own reading of the space, on a Portal with no database or
+    /// broker: what such a Portal can say, or the route's reason it cannot.
+    #[tokio::test]
+    async fn each_aspect_answers_the_routes_reading() {
+        let state = state();
+        state.mirror.upsert(envelope("ContextSpace", "air", "helsinki", json!({})));
+        let got = each_aspect(&admin(&state), &state).await;
+        // usage counts on the broker this Portal has none of; the audit names a pipeline the
+        // project does not hold.
+        let want = [
+            "quality: 200 ",
+            "qualityChecks: 200 at,rules,windows",
+            "usage: 503",
+            "temporalAudit: 404",
+            "surfaceFit: 200 dataModel,surfaces",
+            "drift: 200 apiVersion,items,kind,metadata",
+        ];
+        assert_eq!(got, want);
+    }
+
+    /// A person who may not read the project learns nothing about its space, aspect by aspect.
+    #[tokio::test]
+    async fn a_stranger_reads_no_aspect() {
+        let state = state();
+        state.mirror.upsert(envelope("ContextSpace", "air", "helsinki", json!({})));
+        let got = each_aspect(&caller(person("mallory", &[]), Via::Mcp), &state).await;
+        let want = ["quality: 404", "qualityChecks: 404", "usage: 404", "temporalAudit: 404", "surfaceFit: 404", "drift: 404"];
+        assert_eq!(got, want);
+    }
+
+    /// The body judges its input even when the door's check is skipped.
+    #[tokio::test]
+    async fn the_body_refuses_a_pipeline_on_another_aspect() {
+        let state = state();
+        let op = find(GOVERNANCE).expect("listed");
+        match (op.run)(&admin(&state), &state, "helsinki", json!({ "space": "air", "aspect": "usage", "pipeline": "p" })).await {
+            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/pipeline"),
+            other => panic!("a 422, got {other:?}"),
+        }
+    }
+
+    /// Drift findings without a list stay as they are.
+    #[test]
+    fn drift_without_items_is_answered_as_it_came() {
+        assert_eq!(of_space(json!({ "scanned": false }), "air"), json!({ "scanned": false }));
+    }
 }

@@ -607,4 +607,91 @@ mod tests {
             .expect("compiles")
             .is_valid(&json!({ "aspect": "costs", "month": "2026-09" })));
     }
+
+    use super::super::testkit::{admin, caller, person, state};
+    use super::super::{call, find, Via};
+    use axum::response::IntoResponse;
+
+    const ASPECTS: [&str; 13] = [
+        "projects", "setup", "health", "healthChecks", "limits", "brokers", "agents",
+        "agentActivity", "costs", "addresses", "dataAccess", "widgetOptions", "personReadable",
+    ];
+
+    /// An answer as its HTTP status, and for a 200 the members it answers.
+    fn outcome(result: Result<Value, OpError>) -> String {
+        match result {
+            Ok(Value::Object(map)) => format!("200 {}", map.keys().cloned().collect::<Vec<_>>().join(",")),
+            Ok(other) => format!("200 {other}"),
+            Err(err) => err.into_response().status().as_u16().to_string(),
+        }
+    }
+
+    async fn each_aspect(caller: &super::super::Caller, state: &crate::state::AppState) -> Vec<String> {
+        let op = find(ORGANIZATION).expect("listed");
+        let mut got = Vec::new();
+        for aspect in ASPECTS {
+            let mut input = json!({ "aspect": aspect });
+            match aspect {
+                "personReadable" => input["person"] = json!("sub-eva"),
+                "widgetOptions" => input["organization"] = json!("city"),
+                _ => {}
+            }
+            got.push(format!("{aspect}: {}", outcome(call(op, caller, state, "helsinki", input).await)));
+        }
+        got
+    }
+
+    /// Each aspect answers the route's own reading to the installation's administrator, on a
+    /// Portal with no database, broker or assistant.
+    #[tokio::test]
+    async fn every_aspect_answers_the_administrator() {
+        let state = state();
+        let got = each_aspect(&admin(&state), &state).await;
+        // agentActivity is refused to a caller who reads no project, and this Portal holds none;
+        // costs and personReadable read the database this Portal does not have.
+        let want = [
+            "projects: 200 apiVersion,items,kind,organizations",
+            "setup: 200 complete,operates,operator,steps",
+            "health: 200 checks",
+            "healthChecks: 200 items",
+            "limits: 200 entries,projects,secondFactorFloor",
+            "brokers: 200 items",
+            "agents: 200 items",
+            "agentActivity: 403",
+            "costs: 503",
+            "addresses: 200 items",
+            "dataAccess: 200 columns,rows,unanswered",
+            "widgetOptions: 200 options",
+            "personReadable: 503",
+        ];
+        assert_eq!(got, want);
+    }
+
+    /// A person with no binding in the project the call is addressed to finds no project: every
+    /// aspect is the same 404, so the answer says nothing about the Organization (PF-59).
+    #[tokio::test]
+    async fn a_person_without_a_role_reads_no_administration() {
+        let state = state();
+        let got = each_aspect(&caller(person("eva", &[]), Via::Mcp), &state).await;
+        let want: Vec<String> = ASPECTS.iter().map(|a| format!("{a}: 404")).collect();
+        assert_eq!(got, want);
+    }
+
+    /// A decision on a request nobody filed is the route's 404, a blank revoke reason the body's
+    /// 422, an account the project does not hold a 404; the request list reads the database.
+    #[tokio::test]
+    async fn a_decision_on_an_unknown_request_and_an_unknown_account_are_not_found() {
+        let state = state();
+        let admin = admin(&state);
+        let decide = find(DECIDE).expect("listed");
+        let approve = call(decide, &admin, &state, "helsinki", json!({ "id": "r-404", "decision": "approve" })).await;
+        let revoke = call(decide, &admin, &state, "helsinki", json!({ "id": "r-404", "decision": "revoke", "reason": "left" })).await;
+        let blank = (decide.run)(&admin, &state, "helsinki", json!({ "id": "r-404", "decision": "revoke", "reason": " " })).await;
+        let account = call(find(ACCOUNT).expect("listed"), &admin, &state, "helsinki", json!({ "name": "cam-west" })).await;
+        let requests = call(find(REQUESTS).expect("listed"), &admin, &state, "helsinki", json!({})).await;
+        assert_eq!(
+            [outcome(approve), outcome(revoke), outcome(blank), outcome(account), outcome(requests)],
+            ["404", "404", "422", "404", "503"]
+        );
+    }
 }

@@ -502,4 +502,57 @@ mod tests {
             "{refused:?}"
         );
     }
+
+    use super::super::testkit::{admin, state};
+    use super::super::{call, find};
+
+    async fn body(op: &str, input: Value) -> Result<Value, OpError> {
+        let state = state();
+        let op = find(op).expect("listed");
+        (op.run)(&admin(&state), &state, "doprava", input).await
+    }
+
+    fn refused_at(result: Result<Value, OpError>) -> String {
+        match result {
+            Err(OpError::InvalidInput { path, .. }) => path,
+            other => panic!("an input refusal, got {other:?}"),
+        }
+    }
+
+    /// An export through an operation is a document, yaml or json; a zip is the Portal's
+    /// download, refused by name even when the door's schema is skipped.
+    #[tokio::test]
+    async fn an_export_is_yaml_or_json_and_a_zip_is_refused() {
+        assert_eq!(refused_at(body("jc_project_export", json!({ "format": "zip" })).await), "/format");
+        let state = state();
+        let exported = call(find("jc_project_export").expect("listed"), &admin(&state), &state, "doprava", json!({}))
+            .await;
+        match exported {
+            Ok(answer) => {
+                assert_eq!(answer["format"], "yaml");
+                assert!(answer["document"].is_string(), "{answer}");
+            }
+            Err(OpError::Api(ApiError::Unavailable(why))) => assert!(why.contains("forge"), "{why}"),
+            other => panic!("a document or the forge's absence, got {other:?}"),
+        }
+    }
+
+    /// An import takes the bundle or the manifests, never both nor neither, and a conflict
+    /// policy outside the four is refused naming it.
+    #[tokio::test]
+    async fn an_import_takes_one_source_and_one_of_four_conflict_policies() {
+        for input in [json!({}), json!({ "bundle": "a: b", "manifests": [] })] {
+            assert_eq!(refused_at(body("jc_project_import", input).await), "/bundle");
+        }
+        match body("jc_project_import", json!({ "bundle": "a: b", "conflictPolicy": "merge" })).await {
+            Err(OpError::InvalidInput { path, message }) => {
+                assert_eq!(path, "/conflictPolicy");
+                assert!(message.contains("'merge' is not fail, skip, replace or rename"), "{message}");
+            }
+            other => panic!("a 422, got {other:?}"),
+        }
+        let op = find("jc_project_import").expect("listed");
+        assert!((op.validate)(&json!({ "manifests": [] })).is_ok());
+        assert_eq!(refused_at((op.validate)(&json!({})).map(|()| Value::Null)), "/bundle");
+    }
 }

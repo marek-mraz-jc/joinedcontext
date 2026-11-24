@@ -362,4 +362,98 @@ mod tests {
             Some("pm10=12")
         );
     }
+
+    use super::super::testkit::{admin, caller, envelope, person};
+    use super::super::call as run_op;
+    use super::super::{find, OpError};
+    use crate::mqtt_capture::Message;
+
+    /// Broker `cameras` of helsinki keeps two messages: a JSON one naming a plate, and bytes.
+    async fn capturing() -> AppState {
+        let state = super::super::testkit::state();
+        state.mirror.upsert(envelope("MqttBroker", "cameras", "helsinki", json!({
+            "mode": "capture", "capture": { "messagesPerTopic": 5, "window": "PT1H" },
+            "roles": [{ "name": "camera", "serviceAccounts": ["cam-west"], "publish": ["cams/${clientid}/frame"] }]
+        })));
+        let now = jc_time::TimestampTz::now();
+        let kept = |payload: &[u8]| Message {
+            topic: "cams/cam-west/frame".into(),
+            client_id: Some("cam-west".into()),
+            received_at: now,
+            expires_at: now + jiff::SignedDuration::from_hours(1),
+            payload: payload.to_vec(),
+        };
+        state
+            .mqtt_capture
+            .keep("helsinki", "cameras", 5, vec![kept(br#"{"plate": "ABC-123", "speed": 41}"#)], now)
+            .await
+            .expect("kept");
+        state
+    }
+
+    fn source(state: &AppState, name: &str, broker: &str, personal: Option<Value>) {
+        let mut spec = json!({ "type": "mqtt", "mqtt": { "brokerRef": { "kind": "MqttBroker", "name": broker } } });
+        if let Some(fields) = personal {
+            spec["personalFields"] = fields;
+        }
+        state.mirror.upsert(envelope("DataSource", name, "helsinki", spec));
+    }
+
+    async fn read(state: &AppState, via: Via) -> Value {
+        let mut who = admin(state);
+        who.via = via;
+        run_op(find(CAPTURED).expect("listed"), &who, state, "helsinki", json!({ "name": "cameras" }))
+            .await
+            .expect("the capture")
+    }
+
+    /// AG-158: a model outside the Portal reads no payload of a broker no DataSource declares the
+    /// personal fields of, and never a client id; the person's own session reads it whole.
+    #[tokio::test]
+    async fn a_model_reads_no_payload_until_a_source_declares_the_personal_fields() {
+        let state = capturing().await;
+        let whole = read(&state, Via::Session).await;
+        assert_eq!(whole["messages"][0]["clientId"], "cam-west", "{whole}");
+        assert!(whole["messages"][0]["payload"].as_str().is_some_and(|p| p.contains("ABC-123")));
+        assert!(whole.get("withheld").is_none(), "{whole}");
+
+        // A source on another broker and one declaring nothing do not count for this broker.
+        source(&state, "elsewhere", "other-hub", Some(json!(["plate"])));
+        source(&state, "silent", "cameras", None);
+        for via in [Via::Mcp, Via::Agent] {
+            let shown = read(&state, via).await;
+            let text = shown.to_string();
+            assert!(!text.contains("ABC-123"), "{text}");
+            assert!(shown["messages"][0].get("clientId").is_none_or(Value::is_null), "{shown}");
+            assert_eq!(shown["messages"][0]["payload"], "", "{shown}");
+            assert_eq!(
+                shown["withheld"],
+                json!(["clientId", "payload: no DataSource reading broker cameras lists its personal fields"])
+            );
+        }
+    }
+
+    /// Once a source reading the broker lists `plate`, the model reads the payload without it.
+    #[tokio::test]
+    async fn a_declared_personal_field_leaves_the_payload_a_model_reads() {
+        let state = capturing().await;
+        source(&state, "plates", "cameras", Some(json!(["plate"])));
+        let shown = read(&state, Via::Mcp).await;
+        let payload: Value = serde_json::from_str(shown["messages"][0]["payload"].as_str().unwrap_or_default())
+            .expect("a JSON payload");
+        assert_eq!(payload, json!({ "speed": 41 }));
+        assert_eq!(shown["withheld"], json!(["DataSource/plates.plate", "clientId"]));
+    }
+
+    /// Whoever may not approve MqttBrokers finds no capture: the route's 404.
+    #[tokio::test]
+    async fn a_person_who_may_not_approve_brokers_finds_no_capture() {
+        let state = capturing().await;
+        let stranger = caller(person("jana", &[]), Via::Mcp);
+        let got = run_op(find(CAPTURED).expect("listed"), &stranger, &state, "helsinki", json!({ "name": "cameras" })).await;
+        assert!(
+            matches!(got, Err(OpError::Api(crate::error::ApiError::NotFound(_)))),
+            "{got:?}"
+        );
+    }
 }
