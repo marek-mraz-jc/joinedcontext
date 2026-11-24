@@ -681,6 +681,247 @@ async fn a_build_whose_job_failed_or_whose_token_expired_fails_with_the_reason()
     assert!(reason(stuck).await.contains("Portal stopped"));
 }
 
+/// A running build whose Job is gone two minutes after its start, or ended without a reason,
+/// fails with what happened; one whose Job still runs within its token is left alone.
+#[tokio::test]
+async fn a_build_whose_job_is_gone_or_ended_quietly_fails_and_a_running_one_is_left() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let server = MockServer::start().await;
+    let state = state(
+        &server,
+        &db,
+        work.path(),
+        &[app_manifest("bikes", None), app_manifest("events", None), app_manifest("maps", None)],
+    );
+    let mut ids = Vec::new();
+    for app in ["bikes", "events", "maps"] {
+        let id = build_records::enqueue(&db, PROJECT, app, COMMIT, Class::Node, Trigger::Push, None)
+            .await
+            .expect("q");
+        build_records::start(&db, PROJECT, id, app, jiff::SignedDuration::from_mins(25))
+            .await
+            .expect("s");
+        ids.push(id);
+    }
+    let (gone, quiet, live) = (ids[0], ids[1], ids[2]);
+    sqlx::query("UPDATE app_builds SET started_at = now() - interval '5 minutes' WHERE id = $1")
+        .bind(gone)
+        .execute(&db)
+        .await
+        .expect("an older start");
+    cluster(
+        &server,
+        json!([
+            { "metadata": { "name": format!("build-events-{quiet}") },
+              "status": { "conditions": [
+                  { "type": "Suspended", "status": "True" },
+                  { "type": "Complete", "status": "True" }
+              ] } },
+            { "metadata": { "name": format!("build-maps-{live}") }, "status": { "active": 1 } },
+        ]),
+    )
+    .await;
+    let pass = dispatch_once(
+        &kube(&server),
+        &db,
+        &state.mirror,
+        state.config.build_pods.as_ref().expect("lane"),
+    )
+    .await
+    .expect("the pass");
+    let ended: Vec<i64> = pass.ended.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ended.len(), 2, "{:?}", pass.ended);
+    assert!(ended.contains(&gone) && ended.contains(&quiet));
+    let reason = |id| {
+        let db = db.clone();
+        async move {
+            build_records::get(&db, id).await.expect("read").expect("there").reason.unwrap_or_default()
+        }
+    };
+    assert!(reason(gone).await.contains("is gone"));
+    assert_eq!(
+        reason(quiet).await,
+        format!("the build Job build-events-{quiet} ended (Complete) before the build reported")
+    );
+    let live = build_records::get(&db, live).await.expect("read").expect("there");
+    assert_eq!(live.state, "running");
+    assert!(pass.started.is_empty(), "one build runs: nothing else starts");
+}
+
+/// A cluster that refuses the Job, or answers no uid for it, puts the build back in the queue
+/// with its token forgotten, and the pass says why.
+#[tokio::test]
+async fn a_job_the_cluster_refuses_or_does_not_hold_puts_the_build_back_in_the_queue() {
+    for refusal in ["apply", "no-uid"] {
+        let db = db_or_skip!();
+        let work = Work::new();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/apis/batch/v1/namespaces/{NS}/jobs")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/v1/namespaces/{NS}/persistentvolumeclaims")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+            .mount(&server)
+            .await;
+        let state = state(&server, &db, work.path(), &[app_manifest("bikes", None)]);
+        let id = build_records::enqueue(&db, PROJECT, "bikes", COMMIT, Class::Node, Trigger::Push, None)
+            .await
+            .expect("q");
+        let job = format!("/apis/batch/v1/namespaces/{NS}/jobs/build-bikes-{id}");
+        match refusal {
+            "apply" => {
+                Mock::given(method("GET"))
+                    .and(path(job.clone()))
+                    .respond_with(ResponseTemplate::new(404))
+                    .mount(&server)
+                    .await;
+                Mock::given(method("PATCH"))
+                    .respond_with(
+                        ResponseTemplate::new(403)
+                            .set_body_json(json!({ "message": "jobs is forbidden" })),
+                    )
+                    .mount(&server)
+                    .await;
+            }
+            _ => {
+                Mock::given(method("GET"))
+                    .and(path(job.clone()))
+                    .respond_with(ResponseTemplate::new(404))
+                    .mount(&server)
+                    .await;
+                Mock::given(method("PATCH"))
+                    .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                    .mount(&server)
+                    .await;
+            }
+        }
+        let err = dispatch_once(
+            &kube(&server),
+            &db,
+            &state.mirror,
+            state.config.build_pods.as_ref().expect("lane"),
+        )
+        .await
+        .expect_err("the pass stops");
+        let said = err.to_string();
+        match refusal {
+            "apply" => assert!(said.contains("jobs is forbidden"), "{said}"),
+            _ => assert!(said.contains("applied and is not there"), "{said}"),
+        }
+        let build = build_records::get(&db, id).await.expect("read").expect("there");
+        assert_eq!(build.state, "pending", "{refusal}: back in the queue");
+        assert_eq!(build_records::token_of(&db, PROJECT, id).await.expect("read"), None);
+    }
+}
+
+/// A Job of the build that holds its token already (a pass that ended after the annotation) is
+/// left running: no second Job, no second token.
+#[tokio::test]
+async fn a_job_that_holds_its_token_already_is_left_running() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let server = MockServer::start().await;
+    cluster(&server, json!([])).await;
+    let state = state(&server, &db, work.path(), &[app_manifest("bikes", None)]);
+    let id = build_records::enqueue(&db, PROJECT, "bikes", COMMIT, Class::Node, Trigger::Push, None)
+        .await
+        .expect("q");
+    Mock::given(method("GET"))
+        .and(path(format!("/apis/batch/v1/namespaces/{NS}/jobs/build-bikes-{id}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "metadata": {
+            "name": format!("build-bikes-{id}"),
+            "annotations": { "joinedcontext.com/build-token-written": "true" },
+        } })))
+        .mount(&server)
+        .await;
+    dispatch_once(
+        &kube(&server),
+        &db,
+        &state.mirror,
+        state.config.build_pods.as_ref().expect("lane"),
+    )
+    .await
+    .expect("the pass");
+    assert!(applied(&server).await.is_empty(), "nothing applied again");
+    let build = build_records::get(&db, id).await.expect("read").expect("there");
+    assert_eq!(build.state, "pending", "the store is not touched");
+}
+
+/// The cache claim of an App that is gone is deleted; one of an App that builds, and a claim
+/// without the App label, stay. A mirror holding no App sweeps nothing.
+#[tokio::test]
+async fn the_cache_of_a_gone_app_is_swept_and_nothing_while_the_mirror_is_empty() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/apis/batch/v1/namespaces/{NS}/jobs")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v1/namespaces/{NS}/persistentvolumeclaims")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [
+            { "metadata": { "name": "build-cache-bikes", "labels": { "joinedcontext.com/build-app": "bikes" } } },
+            { "metadata": { "name": "build-cache-old", "labels": { "joinedcontext.com/build-app": "old" } } },
+            { "metadata": { "name": "unlabelled" } },
+        ] })))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("/api/v1/namespaces/{NS}/persistentvolumeclaims/build-cache-old")))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let state = state(&server, &db, work.path(), &[app_manifest("bikes", None)]);
+    let lane = state.config.build_pods.clone().expect("lane");
+    let pass = dispatch_once(&kube(&server), &db, &state.mirror, &lane)
+        .await
+        .expect("the pass");
+    assert_eq!(pass.removed, ["build-cache-old"]);
+    let empty = joinedcontext_portal::store::Mirror::new();
+    let pass = dispatch_once(&kube(&server), &db, &empty, &lane)
+        .await
+        .expect("the pass");
+    assert!(pass.removed.is_empty());
+}
+
+/// A forge that refuses the head read stops the trigger pass; an App whose repository is not
+/// there yet has nothing to build.
+#[tokio::test]
+async fn a_trigger_pass_skips_a_missing_repository_and_stops_at_a_refusing_forge() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(repo("bikes")))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    let state = state(&server, &db, work.path(), &[app_manifest("bikes", None)]);
+    let forge = state.shako.clone().expect("a forge");
+    assert!(trigger_once(&forge, &db, &state.mirror).await.expect("the pass").is_empty());
+    let refusing = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(repo("bikes")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
+        .mount(&refusing)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{}/Branches('main')", repo("bikes"))))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&refusing)
+        .await;
+    let state = self::state(&refusing, &db, work.path(), &[app_manifest("bikes", None)]);
+    let forge = state.shako.clone().expect("a forge");
+    assert!(trigger_once(&forge, &db, &state.mirror).await.is_err());
+}
+
 #[tokio::test]
 async fn the_listener_answers_a_builds_own_token_and_refuses_every_other() {
     let db = db_or_skip!();

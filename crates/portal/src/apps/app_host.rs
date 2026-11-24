@@ -528,6 +528,17 @@ mod login {
         crate::apps::static_host::app_origin(state.config.apps_url.as_ref()?, name)
     }
 
+    /// `{issuer}/protocol/openid-connect/{page}`, with or without a slash after the realm.
+    fn realm_page(oidc: &OidcConfig, page: &str) -> url::Url {
+        let mut url = oidc.issuer.clone();
+        let path = format!(
+            "{}/protocol/openid-connect/{page}",
+            oidc.issuer.path().trim_end_matches('/')
+        );
+        url.set_path(&path);
+        url
+    }
+
     fn redirect(location: &str) -> Response {
         match HeaderValue::from_str(location) {
             Ok(location) => (StatusCode::SEE_OTHER, [(header::LOCATION, location)]).into_response(),
@@ -561,16 +572,7 @@ mod login {
         if !held {
             return problem(StatusCode::SERVICE_UNAVAILABLE, "too many sign-ins at once");
         }
-        let mut url = match oidc.issuer.join("protocol/openid-connect/auth") {
-            Ok(url) if oidc.issuer.path().ends_with('/') => url,
-            _ => match url::Url::parse(&format!(
-                "{}/protocol/openid-connect/auth",
-                oidc.issuer.as_str().trim_end_matches('/')
-            )) {
-                Ok(url) => url,
-                Err(_) => return problem(StatusCode::SERVICE_UNAVAILABLE, "no realm address"),
-            },
-        };
+        let mut url = realm_page(&oidc, "auth");
         url.query_pairs_mut()
             .append_pair("response_type", "code")
             .append_pair("client_id", &client_id(name))
@@ -820,17 +822,13 @@ mod login {
             }
         }
         let target = match (app_oidc(state, name), origin(state, name)) {
-            (Some(oidc), Some(origin)) => url::Url::parse(&format!(
-                "{}/protocol/openid-connect/logout",
-                oidc.issuer.as_str().trim_end_matches('/')
-            ))
-            .map(|mut url| {
+            (Some(oidc), Some(origin)) => {
+                let mut url = realm_page(&oidc, "logout");
                 url.query_pairs_mut()
                     .append_pair("client_id", &client_id(name))
                     .append_pair("post_logout_redirect_uri", origin.as_str());
                 url.to_string()
-            })
-            .unwrap_or_else(|_| "/".to_owned()),
+            }
             _ => "/".to_owned(),
         };
         let mut response = redirect(&target);
@@ -840,17 +838,120 @@ mod login {
 
     #[cfg(test)]
     pub(super) fn insert_for_test(id: &str, app: &str, access: &str) {
+        insert_expiring_for_test(id, app, access, None, 60);
+    }
+
+    /// A session whose access token is valid `access_secs` more (expired when not positive).
+    #[cfg(test)]
+    pub(super) fn insert_expiring_for_test(
+        id: &str,
+        app: &str,
+        access: &str,
+        refresh: Option<&str>,
+        access_secs: i64,
+    ) {
         let now = now_unix();
         SESSIONS.lock().unwrap().insert(
             id.to_owned(),
             Session {
                 app: app.to_owned(),
                 access: access.to_owned(),
-                refresh: None,
-                access_until: now + 60,
-                until: now + 60,
+                refresh: refresh.map(str::to_owned),
+                access_until: now + access_secs,
+                until: now + 600,
             },
         );
+    }
+
+    #[cfg(test)]
+    pub(super) fn held_for_test(id: &str) -> bool {
+        SESSIONS.lock().unwrap().contains_key(id)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn oidc(issuer: &str) -> OidcConfig {
+            OidcConfig {
+                issuer: issuer.parse().unwrap(),
+                client_id: "portal".into(),
+                auth: crate::auth::client_auth::ClientAuth::Secret("unused".into()),
+                extra_ca_pem: None,
+                admin_url: None,
+            }
+        }
+
+        #[test]
+        fn a_realm_page_is_under_the_realm_with_or_without_its_trailing_slash() {
+            for issuer in [
+                "https://idm.example.org/realms/city",
+                "https://idm.example.org/realms/city/",
+            ] {
+                assert_eq!(
+                    realm_page(&oidc(issuer), "logout").as_str(),
+                    "https://idm.example.org/realms/city/protocol/openid-connect/logout"
+                );
+            }
+        }
+
+        /// MAX_HELD bounds the logins and sessions held: the expired go first, and a map full of
+        /// live ones refuses the next instead of growing.
+        #[test]
+        fn a_full_map_drops_the_expired_first_and_refuses_when_all_are_live() {
+            let now = now_unix();
+            let mut map: HashMap<String, i64> =
+                (0..MAX_HELD).map(|i| (format!("k{i}"), now - 1)).collect();
+            assert!(keep(&mut map, |until| *until, "new".into(), now + 60));
+            assert_eq!(map.len(), 1, "the expired were dropped");
+            let mut live: HashMap<String, i64> =
+                (0..MAX_HELD).map(|i| (format!("k{i}"), now + 60)).collect();
+            assert!(!keep(&mut live, |until| *until, "new".into(), now + 60));
+            assert_eq!(live.len(), MAX_HELD);
+            assert!(!live.contains_key("new"));
+            let mut room: HashMap<String, i64> = HashMap::new();
+            assert!(keep(&mut room, |until| *until, "a".into(), now));
+        }
+
+        #[test]
+        fn a_location_no_header_can_carry_is_a_bad_gateway_and_a_bad_cookie_is_not_set() {
+            assert_eq!(redirect("/a\nb").status(), StatusCode::BAD_GATEWAY);
+            let mut response = redirect("/");
+            set_cookie(&mut response, "c", "bad\nvalue", 60);
+            assert!(response.headers().get(header::SET_COOKIE).is_none());
+            set_cookie(&mut response, "c", "v", -5);
+            assert_eq!(
+                response.headers()[header::SET_COOKIE],
+                "c=v; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0"
+            );
+        }
+
+        /// The access token's lifetime is the realm's, one second to an hour, five seconds early.
+        #[test]
+        fn a_sessions_access_lifetime_is_bounded_and_defaults_to_a_minute() {
+            let tokens = |expires_in| Tokens {
+                access_token: "a".into(),
+                refresh_token: None,
+                expires_in,
+            };
+            assert_eq!(session_of("x", tokens(None), 1000, 2000).access_until, 1055);
+            assert_eq!(session_of("x", tokens(Some(999_999)), 1000, 2000).access_until, 4595);
+            assert_eq!(session_of("x", tokens(Some(-3)), 1000, 2000).access_until, 996);
+            let session = session_of("x", tokens(Some(30)), 1000, 2000);
+            assert_eq!((session.app.as_str(), session.until), ("x", 2000));
+        }
+
+        #[test]
+        fn a_cookie_is_found_among_several_and_a_missing_one_is_none() {
+            let mut headers = HeaderMap::new();
+            headers.append(header::COOKIE, HeaderValue::from_static("a=1; __Host-jc_app_x=sid"));
+            headers.append(header::COOKIE, HeaderValue::from_static("b=2"));
+            assert_eq!(cookie_of(&headers, "__Host-jc_app_x").as_deref(), Some("sid"));
+            assert_eq!(cookie_of(&headers, "b").as_deref(), Some("2"));
+            assert_eq!(cookie_of(&headers, "__Host-jc_app"), None);
+            assert_eq!(cookie_name("my-app"), "__Host-jc_app_my_app");
+            assert_eq!(login_cookie("my-app"), "__Host-jc_app_login_my_app");
+        }
     }
 }
 
@@ -1124,5 +1225,503 @@ mod tests {
             assert_eq!(headers[header::AUTHORIZATION], "Bearer counts-token");
             assert!(headers.get(header::COOKIE).is_none());
         }
+    }
+
+    /// A realm on wiremock that knows App `bikes`' client and its secret, and a verifier of its
+    /// tokens; the state's sign-in goes there.
+    struct Realm {
+        server: wiremock::MockServer,
+        state: AppState,
+        sign: Box<dyn Fn(&serde_json::Value) -> String + Send + Sync>,
+        issuer: String,
+        /// Of this realm alone: the client secret is kept per issuer, and a port of a dropped
+        /// server is handed out again.
+        realm: String,
+    }
+
+    impl Realm {
+        async fn start() -> Self {
+            static REALMS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let server = wiremock::MockServer::start().await;
+            let realm = format!(
+                "city{}",
+                REALMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            let issuer = format!("{}/realms/{realm}", server.uri());
+            let (verifier, sign) =
+                crate::auth::bearer::test_verifier(&issuer, "app-bikes", "k1");
+            let base = state();
+            let mut config = (*base.config).clone();
+            config.oidc = Some(OidcConfig {
+                issuer: issuer.parse().unwrap(),
+                client_id: "portal".into(),
+                auth: crate::auth::client_auth::ClientAuth::Secret("portal-secret".into()),
+                extra_ca_pem: None,
+                admin_url: None,
+            });
+            let mut state = AppState::new(config, None).with_mirror(base.mirror.clone());
+            state.bearer = Some(Arc::new(verifier));
+            Self {
+                server,
+                state,
+                sign: Box::new(sign),
+                issuer,
+                realm,
+            }
+        }
+
+        fn token(&self, azp: &str) -> String {
+            let now = crate::auth::session::now_unix();
+            (self.sign)(&serde_json::json!({
+                "iss": self.issuer, "sub": "ana", "aud": "app-bikes", "azp": azp,
+                "typ": "Bearer", "iat": now, "exp": now + 300,
+            }))
+        }
+
+        /// The admin token, App `bikes`' client `u1` and its `secret`, each asked for `times`.
+        async fn knows_the_client(&self, secret: serde_json::Value, times: u64) {
+            use wiremock::matchers::{body_string_contains, method, path, query_param};
+            use wiremock::{Mock, ResponseTemplate};
+            Mock::given(method("POST"))
+                .and(path(format!("/realms/{}/protocol/openid-connect/token", self.realm)))
+                .and(body_string_contains("grant_type=client_credentials"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({ "access_token": "admin" })),
+                )
+                .expect(times)
+                .mount(&self.server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path(format!("/admin/realms/{}/clients", self.realm)))
+                .and(query_param("clientId", "app-bikes"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!([{ "id": "u1" }])),
+                )
+                .expect(times)
+                .mount(&self.server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path(format!("/admin/realms/{}/clients/u1/client-secret", self.realm)))
+                .respond_with(ResponseTemplate::new(200).set_body_json(secret))
+                .expect(times)
+                .mount(&self.server)
+                .await;
+        }
+
+        /// The token endpoint's answer to a `grant` of App `bikes`' client with secret `s3`.
+        async fn answers(&self, grant: &str, status: u16, body: serde_json::Value) {
+            use wiremock::matchers::{body_string_contains, method, path};
+            use wiremock::{Mock, ResponseTemplate};
+            Mock::given(method("POST"))
+                .and(path(format!("/realms/{}/protocol/openid-connect/token", self.realm)))
+                .and(body_string_contains(format!("grant_type={grant}")))
+                .and(body_string_contains("client_id=app-bikes"))
+                .and(body_string_contains("client_secret=s3"))
+                .respond_with(ResponseTemplate::new(status).set_body_json(body))
+                .mount(&self.server)
+                .await;
+        }
+
+        /// A sign-in started on `bikes` for `back`: its state and its login cookie.
+        async fn started(&self, back: &str) -> (String, String) {
+            let response = get(
+                &self.state,
+                "bikes.apps.example.org",
+                back,
+                &[("accept", "text/html")],
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::SEE_OTHER);
+            let location =
+                url::Url::parse(response.headers()[header::LOCATION].to_str().unwrap()).unwrap();
+            let csrf = location
+                .query_pairs()
+                .find(|(k, _)| k == "state")
+                .unwrap()
+                .1
+                .into_owned();
+            (csrf.clone(), format!("__Host-jc_app_login_bikes={csrf}"))
+        }
+    }
+
+    fn set_cookies(response: &axum::response::Response) -> Vec<String> {
+        response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// AP-29, AP-92: the code is redeemed with the App's own secret read from the realm and the
+    /// PKCE verifier; the browser goes back where it started with a session cookie, the login
+    /// cookie cleared, and that session is the App's bearer. A second sign-in reuses the secret.
+    #[tokio::test]
+    async fn a_completed_sign_in_opens_a_session_on_the_apps_host_and_the_secret_is_kept() {
+        let realm = Realm::start().await;
+        realm
+            .knows_the_client(serde_json::json!({ "value": "s3" }), 1)
+            .await;
+        let token = realm.token("app-bikes");
+        realm
+            .answers(
+                "authorization_code",
+                200,
+                serde_json::json!({ "access_token": token, "refresh_token": "r1", "expires_in": 60 }),
+            )
+            .await;
+        for _ in 0..2 {
+            let (csrf, cookie) = realm.started("/stations?x=1").await;
+            let callback = format!("/callback?code=the-code&state={csrf}&session_state=s");
+            let response = get(
+                &realm.state,
+                "bikes.apps.example.org",
+                &callback,
+                &[("cookie", &cookie)],
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::SEE_OTHER);
+            assert_eq!(response.headers()[header::LOCATION], "/stations?x=1");
+            let cookies = set_cookies(&response);
+            let session = cookies
+                .iter()
+                .find(|c| c.starts_with("__Host-jc_app_bikes="))
+                .expect("a session cookie");
+            assert!(session.contains("Max-Age=43200"), "{session}");
+            assert!(
+                cookies
+                    .iter()
+                    .any(|c| c.starts_with("__Host-jc_app_login_bikes=;") && c.contains("Max-Age=0")),
+                "{cookies:?}"
+            );
+            let sid = session
+                .trim_start_matches("__Host-jc_app_bikes=")
+                .split(';')
+                .next()
+                .unwrap()
+                .to_owned();
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::COOKIE,
+                HeaderValue::from_str(&format!("__Host-jc_app_bikes={sid}")).unwrap(),
+            );
+            assert_eq!(
+                super::login::session(&realm.state, &headers, "bikes")
+                    .await
+                    .as_deref(),
+                Some(token.as_str())
+            );
+            // The state is spent: the same answer again is not a sign-in started here.
+            let again = get(
+                &realm.state,
+                "bikes.apps.example.org",
+                &callback,
+                &[("cookie", &cookie)],
+            )
+            .await;
+            assert_eq!(again.status(), StatusCode::BAD_REQUEST);
+        }
+        let requests = realm.server.received_requests().await.unwrap();
+        let redeemed = requests
+            .iter()
+            .find(|r| String::from_utf8_lossy(&r.body).contains("authorization_code"))
+            .expect("the code was redeemed");
+        let form: std::collections::HashMap<String, String> =
+            url::form_urlencoded::parse(&redeemed.body).into_owned().collect();
+        assert_eq!(form["code"], "the-code");
+        assert_eq!(form["redirect_uri"], "https://bikes.apps.example.org/callback");
+        assert!(form["code_verifier"].len() >= 43, "a PKCE verifier");
+    }
+
+    /// The realm refusing the code, a token another client obtained, and an App client the realm
+    /// does not know or keeps no secret for each end the sign-in with a 502, no session.
+    #[tokio::test]
+    async fn a_sign_in_the_realm_does_not_complete_is_a_bad_gateway_without_a_session() {
+        for case in ["refused", "foreign", "no-client", "no-id", "no-secret", "admin-refused"] {
+            let realm = Realm::start().await;
+            match case {
+                "no-client" | "no-id" | "admin-refused" => {
+                    use wiremock::matchers::{body_string_contains, method, path};
+                    use wiremock::{Mock, ResponseTemplate};
+                    let status = if case == "admin-refused" { 401 } else { 200 };
+                    Mock::given(method("POST"))
+                        .and(path(format!("/realms/{}/protocol/openid-connect/token", realm.realm)))
+                        .and(body_string_contains("grant_type=client_credentials"))
+                        .respond_with(
+                            ResponseTemplate::new(status)
+                                .set_body_json(serde_json::json!({ "access_token": "admin" })),
+                        )
+                        .mount(&realm.server)
+                        .await;
+                    let found = if case == "no-id" {
+                        serde_json::json!([{ "clientId": "app-bikes" }])
+                    } else {
+                        serde_json::json!([])
+                    };
+                    Mock::given(method("GET"))
+                        .and(path(format!("/admin/realms/{}/clients", realm.realm)))
+                        .respond_with(ResponseTemplate::new(200).set_body_json(found))
+                        .mount(&realm.server)
+                        .await;
+                }
+                "no-secret" => {
+                    realm
+                        .knows_the_client(serde_json::json!({ "value": "" }), 1)
+                        .await
+                }
+                _ => {
+                    realm
+                        .knows_the_client(serde_json::json!({ "value": "s3" }), 1)
+                        .await
+                }
+            }
+            match case {
+                "refused" => {
+                    realm
+                        .answers(
+                            "authorization_code",
+                            400,
+                            serde_json::json!({ "error": "invalid_grant" }),
+                        )
+                        .await
+                }
+                "foreign" => {
+                    let token = realm.token("another-client");
+                    realm
+                        .answers(
+                            "authorization_code",
+                            200,
+                            serde_json::json!({ "access_token": token }),
+                        )
+                        .await
+                }
+                _ => {}
+            }
+            let (csrf, cookie) = realm.started("/").await;
+            let response = get(
+                &realm.state,
+                "bikes.apps.example.org",
+                &format!("/callback?code=c&state={csrf}"),
+                &[("cookie", &cookie)],
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_GATEWAY, "{case}");
+            assert!(
+                !set_cookies(&response)
+                    .iter()
+                    .any(|c| c.starts_with("__Host-jc_app_bikes=")),
+                "{case}"
+            );
+        }
+    }
+
+    /// A token answer that is no token JSON is a failed sign-in too.
+    #[tokio::test]
+    async fn a_token_answer_without_an_access_token_is_a_bad_gateway() {
+        let realm = Realm::start().await;
+        realm
+            .knows_the_client(serde_json::json!({ "value": "s3" }), 1)
+            .await;
+        realm
+            .answers("authorization_code", 200, serde_json::json!({ "id_token": "x" }))
+            .await;
+        let (csrf, cookie) = realm.started("/").await;
+        let response = get(
+            &realm.state,
+            "bikes.apps.example.org",
+            &format!("/callback?code=c&state={csrf}"),
+            &[("cookie", &cookie)],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn a_callback_without_its_code_or_state_is_a_bad_request() {
+        let state = state();
+        for uri in ["/callback", "/callback?code=c", "/callback?state=s", "/apps/bikes/callback?error=x"] {
+            let response = get(&state, "bikes.apps.example.org", uri, &[]).await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+        }
+    }
+
+    /// The minute-long access token is renewed by the refresh token; a refusal of the renewal,
+    /// an answer without a token, or a session without a refresh token ends the session.
+    #[tokio::test]
+    async fn an_expired_access_token_is_renewed_or_the_session_ends() {
+        let realm = Realm::start().await;
+        realm
+            .knows_the_client(serde_json::json!({ "value": "s3" }), 1)
+            .await;
+        {
+            use wiremock::matchers::{body_string_contains, method, path};
+            use wiremock::{Mock, ResponseTemplate};
+            for (refresh, status, body) in [
+                ("good", 200, serde_json::json!({ "access_token": "renewed", "refresh_token": "good", "expires_in": 60 })),
+                ("empty", 200, serde_json::json!({ "access_token": "" })),
+                ("revoked", 400, serde_json::json!({ "error": "invalid_grant" })),
+            ] {
+                Mock::given(method("POST"))
+                    .and(path(format!("/realms/{}/protocol/openid-connect/token", realm.realm)))
+                    .and(body_string_contains("grant_type=refresh_token"))
+                    .and(body_string_contains(format!("refresh_token={refresh}&")))
+                    .respond_with(ResponseTemplate::new(status).set_body_json(body))
+                    .mount(&realm.server)
+                    .await;
+            }
+        }
+        let cookie = |sid: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::COOKIE,
+                HeaderValue::from_str(&format!("__Host-jc_app_bikes={sid}")).unwrap(),
+            );
+            headers
+        };
+        super::login::insert_expiring_for_test("sid-renew", "bikes", "old", Some("good"), -1);
+        assert_eq!(
+            super::login::session(&realm.state, &cookie("sid-renew"), "bikes")
+                .await
+                .as_deref(),
+            Some("renewed")
+        );
+        // Renewed: the next call needs no realm.
+        assert_eq!(
+            super::login::session(&realm.state, &cookie("sid-renew"), "bikes")
+                .await
+                .as_deref(),
+            Some("renewed")
+        );
+        for (sid, refresh) in [
+            ("sid-empty", Some("empty")),
+            ("sid-revoked", Some("revoked")),
+            ("sid-none", None),
+        ] {
+            super::login::insert_expiring_for_test(sid, "bikes", "old", refresh, 0);
+            assert_eq!(
+                super::login::session(&realm.state, &cookie(sid), "bikes").await,
+                None,
+                "{sid}"
+            );
+            assert!(!super::login::held_for_test(sid), "{sid} ended");
+        }
+        // No session cookie, an unknown id: no session, nothing asked.
+        assert_eq!(super::login::session(&realm.state, &HeaderMap::new(), "bikes").await, None);
+        assert_eq!(super::login::session(&realm.state, &cookie("sid-unknown"), "bikes").await, None);
+    }
+
+    /// Without a realm a renewal cannot be asked for: the session ends.
+    #[tokio::test]
+    async fn a_renewal_without_a_realm_ends_the_session() {
+        let base = state();
+        let mut config = (*base.config).clone();
+        config.oidc = None;
+        let state = AppState::new(config, None).with_mirror(base.mirror.clone());
+        super::login::insert_expiring_for_test("sid-no-realm", "bikes", "old", Some("r"), -1);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("__Host-jc_app_bikes=sid-no-realm"),
+        );
+        assert_eq!(super::login::session(&state, &headers, "bikes").await, None);
+        assert!(!super::login::held_for_test("sid-no-realm"));
+        // And a sign-in cannot start: 503, not a redirect to nowhere.
+        let response = get(&state, "bikes.apps.example.org", "/login", &[]).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// `/logout` ends this App's session alone, here and at the realm, and lands on the App.
+    #[tokio::test]
+    async fn a_logout_ends_this_apps_session_here_and_at_the_realm() {
+        let state = state();
+        super::login::insert_for_test("sid-out-bikes", "bikes", "t");
+        super::login::insert_for_test("sid-out-alerts", "alerts", "t");
+        let response = get(
+            &state,
+            "bikes.apps.example.org",
+            "/logout",
+            &[("cookie", "__Host-jc_app_bikes=sid-out-bikes")],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        let location =
+            url::Url::parse(response.headers()[header::LOCATION].to_str().unwrap()).unwrap();
+        assert_eq!(
+            location.as_str().split('?').next(),
+            Some("https://idm.example.org/realms/city/protocol/openid-connect/logout")
+        );
+        let query: std::collections::HashMap<_, _> = location.query_pairs().into_owned().collect();
+        assert_eq!(query["client_id"], "app-bikes");
+        assert_eq!(query["post_logout_redirect_uri"], "https://bikes.apps.example.org/");
+        assert!(set_cookies(&response)
+            .iter()
+            .any(|c| c.starts_with("__Host-jc_app_bikes=;") && c.contains("Max-Age=0")));
+        assert!(!super::login::held_for_test("sid-out-bikes"));
+        // Another App's session id under this App's cookie name is not this App's to end.
+        let _ = get(
+            &state,
+            "bikes.apps.example.org",
+            "/logout",
+            &[("cookie", "__Host-jc_app_bikes=sid-out-alerts")],
+        )
+        .await;
+        assert!(super::login::held_for_test("sid-out-alerts"));
+        // No realm configured: the browser lands on the App's start.
+        let mut config = (*state.config).clone();
+        config.oidc = None;
+        let bare = AppState::new(config, None).with_mirror(state.mirror.clone());
+        let response = get(&bare, "bikes.apps.example.org", "/logout", &[]).await;
+        assert_eq!(response.headers()[header::LOCATION], "/");
+    }
+
+    /// `back` is a path on the App's host: another origin, a protocol-relative or a backslash
+    /// path starts the App at `/` instead (an open redirect otherwise).
+    #[tokio::test]
+    async fn a_sign_in_never_returns_to_another_origin() {
+        let realm = Realm::start().await;
+        realm
+            .knows_the_client(serde_json::json!({ "value": "s3" }), 1)
+            .await;
+        let token = realm.token("app-bikes");
+        realm
+            .answers("authorization_code", 200, serde_json::json!({ "access_token": token }))
+            .await;
+        for (back, want) in [
+            ("https://evil.example", "/"),
+            ("//evil.example/x", "/"),
+            ("/\\evil.example", "/"),
+            ("/ok/path", "/ok/path"),
+        ] {
+            let response = super::login::start(&realm.state, "bikes", back);
+            let location =
+                url::Url::parse(response.headers()[header::LOCATION].to_str().unwrap()).unwrap();
+            let csrf = location
+                .query_pairs()
+                .find(|(k, _)| k == "state")
+                .unwrap()
+                .1
+                .into_owned();
+            let cookie = format!("__Host-jc_app_login_bikes={csrf}");
+            let response = get(
+                &realm.state,
+                "bikes.apps.example.org",
+                &format!("/callback?code=c&state={csrf}"),
+                &[("cookie", &cookie)],
+            )
+            .await;
+            assert_eq!(response.headers()[header::LOCATION], want, "{back}");
+        }
+    }
+
+    /// An App host without an apps origin has no sign-in to start.
+    #[tokio::test]
+    async fn a_sign_in_without_the_apps_origin_is_unavailable() {
+        let base = state();
+        let mut config = (*base.config).clone();
+        config.apps_url = None;
+        let state = AppState::new(config, None).with_mirror(base.mirror.clone());
+        let response = super::login::start(&state, "bikes", "/");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

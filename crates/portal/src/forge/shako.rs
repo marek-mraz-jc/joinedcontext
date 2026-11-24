@@ -233,8 +233,9 @@ pub struct RepoFile {
 }
 
 /// What `git-receive-pack` reported with `report-status`: `unpack ok`, then `ok {ref}` or
-/// `ng {ref} {reason}` per ref, in pkt-lines. Answers the refused refs.
-fn receive_pack_status(answer: &[u8]) -> Result<Vec<String>, GitError> {
+/// `ng {ref} {reason}` per ref, in pkt-lines. Answers the refused refs. Public for the fuzz
+/// target `receive_pack`: the forge's answer is outside input.
+pub fn receive_pack_status(answer: &[u8]) -> Result<Vec<String>, GitError> {
     let mut rest = answer;
     let mut unpacked = false;
     let mut refused = Vec::new();
@@ -2074,6 +2075,992 @@ fn file_path(path: String) -> Result<String, GitError> {
         return Err(GitError::NotFound);
     }
     Ok(path)
+}
+
+#[cfg(test)]
+mod client_tests {
+    use super::*;
+    use wiremock::matchers::{
+        body_json, body_partial_json, body_string, header, method, path, query_param,
+    };
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const R: &str = "/odata/Repositories(Owner='org',Name='cfg')";
+
+    fn forge(server: &MockServer) -> ShakoClient {
+        ShakoClient::new(server.uri().parse().unwrap(), "org", "cfg", "tok").unwrap()
+    }
+
+    fn ok(body: Value) -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(body)
+    }
+
+    fn odata_error(status: u16, message: &str) -> ResponseTemplate {
+        ResponseTemplate::new(status)
+            .set_body_json(json!({ "error": { "code": "x", "message": message } }))
+    }
+
+    async fn on(server: &MockServer, verb: &str, at: &str, answer: ResponseTemplate) {
+        Mock::given(method(verb))
+            .and(path(at))
+            .respond_with(answer)
+            .mount(server)
+            .await;
+    }
+
+    /// A port nobody listens on: every call is a transport error, never a panic.
+    fn unreachable() -> ShakoClient {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = held.local_addr().unwrap();
+        drop(held);
+        ShakoClient::new(format!("http://{addr}").parse().unwrap(), "org", "cfg", "tok").unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_forge_answer_keeps_its_odata_message_or_its_first_line_capped() {
+        let server = MockServer::start().await;
+        on(&server, "GET", &format!("{R}/PushMirrors"), odata_error(403, " not an admin ")).await;
+        on(&server, "GET", "/odata/Me()", ResponseTemplate::new(500).set_body_json(json!({ "message": "flat" }))).await;
+        let page = format!("{}\nsecond line", "x".repeat(300));
+        on(&server, "GET", &format!("{R}/Tags"), ResponseTemplate::new(502).set_body_string(page)).await;
+        let forge = forge(&server);
+        assert_eq!(
+            forge.push_mirrors().await.unwrap_err(),
+            GitError::Api { status: 403, message: "not an admin".into() }
+        );
+        assert_eq!(
+            forge.reserve_change_branches().await.unwrap_err(),
+            GitError::Api { status: 500, message: "flat".into() }
+        );
+        match forge.list_tags().await.unwrap_err() {
+            GitError::Api { status: 502, message } => assert_eq!(message, "x".repeat(200)),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// `odata_get` escapes each value so OData reads a space as `%20` and a `+` as itself, and
+    /// refuses a body past its cap.
+    #[tokio::test]
+    async fn an_odata_read_escapes_its_query_and_refuses_a_body_past_its_cap() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/odata/Repositories"))
+            .and(query_param("$filter", "Name eq 'a b+c'"))
+            .and(header("authorization", "Bearer tok"))
+            .respond_with(ok(json!({ "value": [1, 2] })))
+            .mount(&server)
+            .await;
+        on(&server, "GET", "/odata/Big", ok(json!({ "value": "y".repeat(100) }))).await;
+        on(&server, "GET", "/odata/Plain", ResponseTemplate::new(200).set_body_string("not json")).await;
+        let forge = forge(&server);
+        let read = forge
+            .odata_get("Repositories", &[("$filter", "Name eq 'a b+c'")], 1000)
+            .await
+            .unwrap();
+        assert_eq!(read["value"], json!([1, 2]));
+        let raw = server.received_requests().await.unwrap()[0].url.query().unwrap().to_owned();
+        assert!(raw.contains("%20") && raw.contains("%2B") && !raw.contains('+'), "{raw}");
+        assert!(matches!(
+            forge.odata_get("Big", &[], 10).await,
+            Err(GitError::Transport(m)) if m.contains("larger than 10 bytes")
+        ));
+        assert!(matches!(forge.odata_get("Plain", &[], 100).await, Err(GitError::Transport(_))));
+        assert_eq!(forge.odata_get("Missing", &[], 100).await, Err(GitError::NotFound));
+    }
+
+    /// T-6896: git's smart HTTP read goes to the repository's `.git` path as the machine user,
+    /// a pack request with its content type and the client's protocol header.
+    #[tokio::test]
+    async fn an_upload_pack_reads_the_repository_as_the_machine_user() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/org/cfg.git/info/refs"))
+            .and(query_param("service", "git-upload-pack"))
+            .and(header("authorization", "Bearer tok"))
+            .and(header("git-protocol", "version=2"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("refs"))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/org/cfg.git/git-upload-pack"))
+            .and(header("content-type", "application/x-git-upload-pack-request"))
+            .and(body_string("0000"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("pack"))
+            .mount(&server)
+            .await;
+        let forge = forge(&server);
+        let refs = forge
+            .upload_pack("info/refs?service=git-upload-pack", Some("version=2"), None)
+            .await
+            .unwrap();
+        assert_eq!(refs.text().await.unwrap(), "refs");
+        let pack = forge
+            .upload_pack("git-upload-pack", None, Some(b"0000".to_vec()))
+            .await
+            .unwrap();
+        assert_eq!(pack.text().await.unwrap(), "pack");
+        assert!(matches!(
+            unreachable().upload_pack("git-upload-pack", None, None).await,
+            Err(GitError::Transport(_))
+        ));
+    }
+
+    /// PF-89: a migration copies the origin unless a repository of the name is there; a lost
+    /// race (409) is the same answer, any other refusal an error.
+    #[tokio::test]
+    async fn a_migration_copies_the_origin_once() {
+        let server = MockServer::start().await;
+        on(&server, "GET", R, ResponseTemplate::new(404)).await;
+        Mock::given(method("POST"))
+            .and(path("/odata/ImportRepository"))
+            .and(body_json(json!({
+                "SourceOwner": "org", "SourceName": "tpl",
+                "RepoOwner": "org", "RepoName": "cfg", "Private": true,
+            })))
+            .respond_with(ResponseTemplate::new(201))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/odata/ImportRepository"))
+            .respond_with(odata_error(409, "exists"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        on(&server, "POST", "/odata/ImportRepository", odata_error(422, "bad source")).await;
+        let forge = forge(&server);
+        let origin = forge.for_repository("tpl");
+        assert!(forge.migrate_repository(&origin).await.unwrap());
+        assert!(!forge.migrate_repository(&origin).await.unwrap());
+        assert!(matches!(
+            forge.migrate_repository(&origin).await,
+            Err(GitError::Api { status: 422, .. })
+        ));
+        let there = MockServer::start().await;
+        on(&there, "GET", R, ok(json!({ "DefaultBranch": "main" }))).await;
+        assert!(!self::forge(&there).migrate_repository(&origin).await.unwrap());
+        let broken = MockServer::start().await;
+        on(&broken, "GET", R, odata_error(500, "down")).await;
+        assert!(self::forge(&broken).migrate_repository(&origin).await.is_err());
+        assert!(self::forge(&broken).create_empty_repository("d").await.is_err());
+    }
+
+    /// MF-45: an empty repository is created without an initial commit, for a push to fill.
+    #[tokio::test]
+    async fn an_empty_repository_is_created_without_an_initial_commit() {
+        let server = MockServer::start().await;
+        on(&server, "GET", R, ResponseTemplate::new(404)).await;
+        Mock::given(method("POST"))
+            .and(path("/odata/CreateRepository"))
+            .and(body_partial_json(json!({ "AutoInit": false, "Private": true, "DefaultBranch": "main" })))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(forge(&server).create_empty_repository("import").await.unwrap());
+    }
+
+    fn bundle(pack: &[u8]) -> Vec<u8> {
+        let mut bytes = b"# v2 git bundle\nabc refs/heads/main\n\n".to_vec();
+        bytes.extend_from_slice(pack);
+        bytes
+    }
+
+    fn pkt(text: &str) -> String {
+        format!("{:04x}{text}", text.len() + 4)
+    }
+
+    /// MF-45: one receive-pack request with every ref created from zero and the bundle's pack;
+    /// a ref the forge refuses is answered, the others set.
+    #[tokio::test]
+    async fn a_bundle_is_pushed_as_one_receive_pack_and_refused_refs_are_named() {
+        let server = MockServer::start().await;
+        let answer = format!(
+            "{}{}{}0000",
+            pkt("unpack ok\n"),
+            pkt("ok refs/heads/main\n"),
+            pkt("ng refs/tags/v1 missing necessary objects\n")
+        );
+        Mock::given(method("POST"))
+            .and(path("/org/cfg.git/git-receive-pack"))
+            .and(header("content-type", "application/x-git-receive-pack-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(answer))
+            .mount(&server)
+            .await;
+        let refs = vec![
+            ("c1".to_owned(), "refs/heads/main".to_owned()),
+            ("c2".to_owned(), "refs/tags/v1".to_owned()),
+        ];
+        let refused = forge(&server).push_bundle(&bundle(b"PACKdata"), &refs).await.unwrap();
+        assert_eq!(refused, ["refs/tags/v1 missing necessary objects"]);
+        let body = server.received_requests().await.unwrap()[0].body.clone();
+        let zero = "0".repeat(40);
+        let first = format!("{zero} c1 refs/heads/main\0 report-status\n");
+        let want = format!("{}{}0000PACKdata", pkt(&first), pkt(&format!("{zero} c2 refs/tags/v1\n")));
+        assert_eq!(String::from_utf8_lossy(&body), want);
+    }
+
+    #[tokio::test]
+    async fn a_bundle_without_a_pack_or_a_ref_is_refused_before_any_request() {
+        let server = MockServer::start().await;
+        let forge = forge(&server);
+        let one = vec![("c1".to_owned(), "refs/heads/main".to_owned())];
+        for bad in [b"no header end".to_vec(), bundle(b"NOTPACK")] {
+            assert!(matches!(forge.push_bundle(&bad, &one).await, Err(GitError::Conflict(_))));
+        }
+        assert!(matches!(
+            forge.push_bundle(&bundle(b"PACK"), &[]).await,
+            Err(GitError::Conflict(m)) if m.contains("at least one ref")
+        ));
+        assert!(server.received_requests().await.unwrap().is_empty());
+        on(&server, "POST", "/org/cfg.git/git-receive-pack", odata_error(403, "no push")).await;
+        assert!(matches!(
+            forge.push_bundle(&bundle(b"PACK"), &one).await,
+            Err(GitError::Api { status: 403, .. })
+        ));
+    }
+
+    #[test]
+    fn a_receive_pack_answer_is_read_strictly() {
+        let ok = format!("{}0000{}", pkt("unpack ok"), pkt("ok refs/heads/main"));
+        assert_eq!(receive_pack_status(ok.as_bytes()), Ok(vec![]));
+        let failed = pkt("unpack index-pack abnormal exit\n");
+        assert!(matches!(
+            receive_pack_status(failed.as_bytes()),
+            Err(GitError::Conflict(m)) if m.contains("index-pack abnormal exit")
+        ));
+        for bad in ["zzzz", "0003", "00ffunpack ok", ""] {
+            assert!(matches!(receive_pack_status(bad.as_bytes()), Err(GitError::Transport(_))), "{bad}");
+        }
+        assert!(matches!(
+            receive_pack_status(pkt("ok refs/heads/main").as_bytes()),
+            Err(GitError::Transport(m)) if m.contains("no unpack")
+        ));
+    }
+
+    /// AP-79: mirrors are listed with their last error, added with the credential in its own
+    /// member, removed by name and synced.
+    #[tokio::test]
+    async fn push_mirrors_are_listed_added_removed_and_synced() {
+        let server = MockServer::start().await;
+        on(&server, "GET", &format!("{R}/PushMirrors"), ok(json!({ "value": [
+            { "Name": "m1", "RemoteAddress": "https://github.com/o/r.git", "Branch": null, "LastError": "auth" },
+            { "Name": "m2", "RemoteAddress": "https://x/y.git" },
+        ] }))).await;
+        Mock::given(method("POST"))
+            .and(path(format!("{R}/Shako.AddPushMirror")))
+            .and(body_json(json!({
+                "RemoteAddress": "https://github.com/o/r.git", "RemoteUsername": "u",
+                "Credential": "pw", "Interval": "8h0m0s", "SyncOnCommit": true, "Branch": "main",
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{R}/Shako.AddPushMirror")))
+            .and(body_json(json!({
+                "RemoteAddress": "https://all", "RemoteUsername": "u",
+                "Credential": "pw", "Interval": "8h0m0s", "SyncOnCommit": true,
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{R}/Shako.RemovePushMirror")))
+            .and(body_json(json!({ "Name": "m1" })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        on(&server, "POST", &format!("{R}/Shako.SyncPushMirrors"), ResponseTemplate::new(204)).await;
+        let forge = forge(&server);
+        let mirrors = forge.push_mirrors().await.unwrap();
+        assert_eq!(mirrors.len(), 2);
+        assert_eq!((mirrors[0].branch.as_str(), mirrors[0].last_error.as_str()), ("", "auth"));
+        forge.add_push_mirror("https://github.com/o/r.git", "u", "pw", Some("main")).await.unwrap();
+        forge.add_push_mirror("https://all", "u", "pw", None).await.unwrap();
+        forge.delete_push_mirror("m1").await.unwrap();
+        forge.sync_push_mirrors().await.unwrap();
+        let gone = unreachable();
+        assert!(gone.add_push_mirror("a", "u", "p", None).await.is_err());
+        assert!(gone.delete_push_mirror("m").await.is_err());
+        assert!(gone.sync_push_mirrors().await.is_err());
+    }
+
+    /// AP-104: artifacts of exactly the name asked for, and their bytes up to a cap.
+    #[tokio::test]
+    async fn artifacts_are_found_by_exact_name_and_downloaded_within_a_cap() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/Artifacts")))
+            .and(query_param("$filter", "Name eq 'app''s sbom'"))
+            .respond_with(ok(json!({ "value": [
+                { "Id": 7, "Name": "app's sbom", "Size": 3, "RunId": 9, "HeadSha": "c1" },
+                { "Id": 8, "Name": "other" },
+            ] })))
+            .mount(&server)
+            .await;
+        on(&server, "GET", &format!("{R}/Artifacts(7)/$value"), ResponseTemplate::new(200).set_body_bytes(b"abc".to_vec())).await;
+        on(&server, "GET", &format!("{R}/Artifacts(8)/$value"), ResponseTemplate::new(404)).await;
+        let forge = forge(&server);
+        assert_eq!(
+            forge.artifacts_named("app's sbom").await.unwrap(),
+            [Artifact { id: 7, size: 3, run: 9, commit: "c1".into() }]
+        );
+        assert_eq!(forge.download_artifact(7, 3).await.unwrap(), b"abc");
+        assert!(matches!(forge.download_artifact(7, 2).await, Err(GitError::Transport(_))));
+        assert_eq!(forge.download_artifact(8, 10).await, Err(GitError::NotFound));
+        assert!(unreachable().download_artifact(7, 3).await.is_err());
+    }
+
+    /// AP-101: a package file is published base64 and read back within a cap; a file the
+    /// version holds already is a conflict, never replaced.
+    #[tokio::test]
+    async fn a_generic_package_file_is_published_once_and_read_back() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/odata/PublishPackage"))
+            .and(body_json(json!({
+                "Owner": "org", "Package": "app", "Version": "1", "File": "a.tgz",
+                "ContentBase64": STANDARD.encode(b"bytes"),
+            })))
+            .respond_with(ResponseTemplate::new(201))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        on(&server, "POST", "/odata/PublishPackage", odata_error(409, "the file exists")).await;
+        on(
+            &server,
+            "GET",
+            "/odata/PackageFiles(Owner='org',Name='app',Version='1',File='a.tgz')/$value",
+            ResponseTemplate::new(200).set_body_bytes(b"bytes".to_vec()),
+        )
+        .await;
+        let forge = forge(&server);
+        forge.put_generic_file("app", "1", "a.tgz", b"bytes".to_vec()).await.unwrap();
+        assert_eq!(
+            forge.put_generic_file("app", "1", "a.tgz", b"bytes".to_vec()).await,
+            Err(GitError::Conflict("the file exists".into()))
+        );
+        assert_eq!(forge.get_generic_file("app", "1", "a.tgz", 5).await.unwrap(), b"bytes");
+        assert!(matches!(forge.get_generic_file("app", "1", "a.tgz", 4).await, Err(GitError::Transport(_))));
+        assert_eq!(forge.get_generic_file("app", "1", "b.tgz", 4).await, Err(GitError::NotFound));
+        let gone = unreachable();
+        assert!(gone.put_generic_file("a", "1", "f", vec![]).await.is_err());
+        assert!(gone.get_generic_file("a", "1", "f", 1).await.is_err());
+    }
+
+    /// AP-107: a registry token for push and pull of the one image, each blob the registry lacks
+    /// uploaded with its digest, the manifest put as given, the stored digest answered.
+    #[tokio::test]
+    async fn an_image_is_pushed_blob_by_blob_and_its_digest_answered() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v2/token"))
+            .and(query_param("service", "container_registry"))
+            .and(query_param("scope", "repository:org/web:push,pull"))
+            .respond_with(ok(json!({ "token": "reg" })))
+            .mount(&server)
+            .await;
+        Mock::given(method("HEAD"))
+            .and(path("/v2/org/web/blobs/sha256:held"))
+            .and(header("authorization", "Bearer reg"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        on(&server, "HEAD", "/v2/org/web/blobs/sha256:new", ResponseTemplate::new(404)).await;
+        Mock::given(method("POST"))
+            .and(path("/v2/org/web/blobs/uploads/"))
+            .and(query_param("digest", "sha256:new"))
+            .and(body_string("layer"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/v2/org/web/manifests/v1"))
+            .and(header("content-type", "application/vnd.oci.image.manifest.v1+json"))
+            .respond_with(ResponseTemplate::new(201).insert_header("docker-content-digest", "sha256:m"))
+            .mount(&server)
+            .await;
+        on(&server, "PUT", "/v2/org/web/manifests/nodigest", ResponseTemplate::new(201)).await;
+        let forge = forge(&server);
+        let blobs: [(&str, &[u8]); 2] = [("sha256:held", b"held"), ("sha256:new", b"layer")];
+        let manifest_type = "application/vnd.oci.image.manifest.v1+json";
+        assert_eq!(
+            forge.push_image("web", "v1", &blobs, manifest_type, b"{}").await.unwrap(),
+            "sha256:m"
+        );
+        assert!(matches!(
+            forge.push_image("web", "nodigest", &[], manifest_type, b"{}").await,
+            Err(GitError::Transport(m)) if m.contains("no digest")
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_image_push_stops_at_the_first_refusal() {
+        let refused_token = MockServer::start().await;
+        on(&refused_token, "GET", "/v2/token", ResponseTemplate::new(401)).await;
+        let blobs: [(&str, &[u8]); 1] = [("sha256:new", b"layer")];
+        assert!(matches!(
+            forge(&refused_token).push_image("web", "v1", &blobs, "t", b"{}").await,
+            Err(GitError::Api { status: 401, .. })
+        ));
+        let bad_token = MockServer::start().await;
+        on(&bad_token, "GET", "/v2/token", ok(json!({ "nope": 1 }))).await;
+        assert!(matches!(
+            forge(&bad_token).push_image("web", "v1", &blobs, "t", b"{}").await,
+            Err(GitError::Transport(m)) if m.contains("registry token")
+        ));
+        let full = MockServer::start().await;
+        on(&full, "GET", "/v2/token", ok(json!({ "token": "reg" }))).await;
+        on(&full, "HEAD", "/v2/org/web/blobs/sha256:new", ResponseTemplate::new(404)).await;
+        on(&full, "POST", "/v2/org/web/blobs/uploads/", odata_error(413, "too big")).await;
+        assert!(matches!(
+            forge(&full).push_image("web", "v1", &blobs, "t", b"{}").await,
+            Err(GitError::Api { status: 413, .. })
+        ));
+        let manifest = MockServer::start().await;
+        on(&manifest, "GET", "/v2/token", ok(json!({ "token": "reg" }))).await;
+        on(&manifest, "PUT", "/v2/org/web/manifests/v1", odata_error(400, "manifest invalid")).await;
+        assert!(forge(&manifest).push_image("web", "v1", &[], "t", b"{}").await.is_err());
+        assert!(unreachable().push_image("web", "v1", &[], "t", b"{}").await.is_err());
+    }
+
+    /// CC-85, PF-77: a repository deleted twice is deleted; one archived is kept read-only.
+    #[tokio::test]
+    async fn a_repository_is_deleted_idempotently_and_archived() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path(R))
+            .respond_with(ResponseTemplate::new(204))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(R))
+            .respond_with(ResponseTemplate::new(404))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        on(&server, "DELETE", R, odata_error(403, "no")).await;
+        on(&server, "POST", &format!("{R}/Shako.Archive"), ResponseTemplate::new(204)).await;
+        let forge = forge(&server);
+        forge.delete_repository().await.unwrap();
+        forge.delete_repository().await.unwrap();
+        assert!(matches!(forge.delete_repository().await, Err(GitError::Api { status: 403, .. })));
+        forge.archive_repository().await.unwrap();
+        assert!(unreachable().archive_repository().await.is_err());
+    }
+
+    /// PF-87, T-6706: `main` takes no push and only the Portal's account merges into it; the
+    /// Change branches are pushed by that account alone.
+    #[tokio::test]
+    async fn a_protected_branch_and_the_change_branches_name_the_portals_account_alone() {
+        let server = MockServer::start().await;
+        on(&server, "GET", "/odata/Me()", ok(json!({ "Login": "portal-bot" }))).await;
+        Mock::given(method("POST"))
+            .and(path(format!("{R}/Shako.Protect")))
+            .and(body_json(json!({ "Rule": {
+                "rule_name": "main", "enable_push": false, "enable_merge_whitelist": true,
+                "merge_whitelist_usernames": ["portal-bot"], "block_admin_merge_override": true,
+            } })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        for pattern in ["portal/*", "workspace/*", "sync/*", "mirror/*"] {
+            Mock::given(method("POST"))
+                .and(path(format!("{R}/Shako.Protect")))
+                .and(body_partial_json(json!({ "Rule": {
+                    "rule_name": pattern, "push_whitelist_usernames": ["portal-bot"],
+                    "force_push_allowlist_usernames": ["portal-bot"],
+                } })))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(2)
+                .mount(&server)
+                .await;
+        }
+        let forge = forge(&server);
+        forge.protect_branch("main").await.unwrap();
+        forge.reserve_change_branches().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_token_that_names_no_account_or_a_refused_rule_protects_nothing() {
+        let server = MockServer::start().await;
+        on(&server, "GET", "/odata/Me()", ok(json!({ "Login": "  " }))).await;
+        assert!(matches!(
+            forge(&server).protect_branch("main").await,
+            Err(GitError::Api { status: 200, .. })
+        ));
+        let refused = MockServer::start().await;
+        on(&refused, "GET", "/odata/Me()", ok(json!({ "Login": "bot" }))).await;
+        on(&refused, "POST", &format!("{R}/Shako.Protect"), odata_error(403, "not an admin")).await;
+        assert!(forge(&refused).protect_branch("main").await.is_err());
+        assert!(forge(&refused).reserve_change_branches().await.is_err());
+        let broken = MockServer::start().await;
+        on(&broken, "GET", "/odata/Me()", ResponseTemplate::new(200).set_body_string("{")).await;
+        assert!(matches!(
+            forge(&broken).reserve_change_branches().await,
+            Err(GitError::Transport(m)) if m.contains("the forge account")
+        ));
+    }
+
+    /// CC-90: a commit's combined CI state, `None` while no check reported.
+    #[tokio::test]
+    async fn a_commits_state_is_none_until_a_check_reports() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/Shako.CommitStatus(Sha=@s)")))
+            .and(query_param("@s", "'c1'"))
+            .respond_with(ok(json!({ "State": "success", "TotalCount": 2 })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/Shako.CommitStatus(Sha=@s)")))
+            .and(query_param("@s", "'c2'"))
+            .respond_with(ok(json!({ "State": "pending", "TotalCount": 0 })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/Shako.CommitStatus(Sha=@s)")))
+            .and(query_param("@s", "'c3'"))
+            .respond_with(ok(json!({ "TotalCount": 1 })))
+            .mount(&server)
+            .await;
+        let forge = forge(&server);
+        assert_eq!(forge.commit_state("c1").await.unwrap().as_deref(), Some("success"));
+        assert_eq!(forge.commit_state("c2").await.unwrap(), None);
+        assert_eq!(forge.commit_state("c3").await.unwrap(), None);
+    }
+
+    /// F-POR1-023: a new file is created, a known blob updated, all in one commit; a path
+    /// outside a project repository is refused before any request (CC-87).
+    #[tokio::test]
+    async fn files_are_written_and_updated_in_one_commit_and_a_foreign_path_is_refused() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("{R}/Shako.CommitFiles")))
+            .and(body_partial_json(json!({
+                "Branch": "portal/x",
+                "Files": [
+                    { "operation": "create", "path": "a.md", "content": STANDARD.encode("A") },
+                    { "operation": "update", "path": "b.md", "content": STANDARD.encode("B"), "sha": "s-b" },
+                ],
+            })))
+            .respond_with(ok(json!({ "Sha": "c-write" })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{R}/Shako.CommitFiles")))
+            .and(body_partial_json(json!({
+                "Files": [{ "operation": "update", "path": "c.md", "sha": "s-c" }],
+            })))
+            .respond_with(ok(json!({ "Sha": "c-update" })))
+            .mount(&server)
+            .await;
+        let forge = forge(&server);
+        let author = Author { name: "Ana", email: "ana@example.org" };
+        let writes = vec![
+            ("a.md".to_owned(), "A".to_owned(), None),
+            ("b.md".to_owned(), "B".to_owned(), Some("s-b".to_owned())),
+        ];
+        assert_eq!(forge.write_files("portal/x", "m", author, &writes).await.unwrap(), "c-write");
+        let updates = vec![("c.md".to_owned(), "C".to_owned(), "s-c".to_owned())];
+        assert_eq!(forge.update_files("portal/x", "m", author, &updates).await.unwrap(), "c-update");
+        let project = forge.for_project("helsinki", "helsinki");
+        assert!(project.is_project_repository());
+        let foreign = vec![("organization/x.yaml".to_owned(), "x".to_owned(), None)];
+        assert!(matches!(
+            project.write_files("b", "m", author, &foreign).await,
+            Err(GitError::Conflict(m)) if m.contains("not a file of the project repository")
+        ));
+        let dotted = vec![("projects/helsinki/../x".to_owned(), "x".to_owned(), "s".to_owned())];
+        assert_eq!(project.update_files("b", "m", author, &dotted).await, Err(GitError::NotFound));
+    }
+
+    /// A commit answer that is not the commit is an error, never an empty sha.
+    #[tokio::test]
+    async fn a_commit_answer_without_its_sha_is_an_error() {
+        let server = MockServer::start().await;
+        on(&server, "POST", &format!("{R}/Shako.CommitFiles"), ok(json!({ "Message": "?" }))).await;
+        let author = Author { name: "Ana", email: "ana@example.org" };
+        assert!(matches!(
+            forge(&server).update_files("b", "m", author, &[]).await,
+            Err(GitError::Transport(m)) if m.contains("the commit")
+        ));
+    }
+
+    /// PF-58, CC-87: a path's history, the whole repository for no path or the project's root;
+    /// a path outside the project repository has none. Only a message's first line is kept.
+    #[tokio::test]
+    async fn a_history_is_of_the_path_or_the_whole_repository() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/Shako.History(Ref=@r,Path=@p,Top=@n)")))
+            .and(query_param("@p", "''"))
+            .and(query_param("@n", "5"))
+            .respond_with(ok(json!({ "value": [
+                { "Sha": "c1", "Message": "first line\n\nbody", "Author": "Ana", "Email": "", "Date": "d" },
+            ] })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/Shako.History(Ref=@r,Path=@p,Top=@n)")))
+            .and(query_param("@p", "'policies/a.yaml'"))
+            .respond_with(ok(json!({ "value": [{ "Sha": "c2", "Email": "e@x" }] })))
+            .mount(&server)
+            .await;
+        let project = forge(&server).for_project("cfg", "helsinki");
+        for root in ["", "/", "projects/helsinki/", "/projects/helsinki"] {
+            let commits = project.list_commits("main", root, 5).await.unwrap();
+            assert_eq!(commits[0].message, "first line", "{root}");
+            assert_eq!(commits[0].email, None);
+        }
+        let commits = project.list_commits("main", "projects/helsinki/policies/a.yaml", 5).await.unwrap();
+        assert_eq!((commits[0].sha.as_str(), commits[0].email.as_deref()), ("c2", Some("e@x")));
+        assert!(project.list_commits("main", "organization/x.yaml", 5).await.unwrap().is_empty());
+        assert_eq!(
+            project.list_commits("main", "projects/helsinki/../x", 5).await,
+            Err(GitError::NotFound)
+        );
+    }
+
+    fn pull_row(number: u64) -> Value {
+        json!({ "Number": number, "State": "open", "Head": format!("portal/{number}"), "HtmlUrl": "http://forge/pr" })
+    }
+
+    /// CC-34: pages of 50 until a short page, `all` filters no state, a repeated page ends.
+    #[tokio::test]
+    async fn pull_requests_are_read_page_by_page_until_a_short_or_repeated_page() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/PullRequests")))
+            .and(query_param("$filter", "State eq 'open'"))
+            .and(query_param("$skip", "0"))
+            .and(query_param("$top", "50"))
+            .and(query_param("$orderby", "UpdatedAt desc"))
+            .respond_with(ok(json!({ "value": (1..=50).map(pull_row).collect::<Vec<_>>() })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/PullRequests")))
+            .and(query_param("$filter", "State eq 'open'"))
+            .and(query_param("$skip", "50"))
+            .respond_with(ok(json!({ "value": [pull_row(51)] })))
+            .mount(&server)
+            .await;
+        // `all` answers the same full page twice: the second adds nothing and ends the read.
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/PullRequests")))
+            .and(wiremock::matchers::query_param_is_missing("$filter"))
+            .respond_with(ok(json!({ "value": (1..=50).map(pull_row).collect::<Vec<_>>() })))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let forge = forge(&server);
+        let open = forge.list_pull_requests("open").await.unwrap();
+        assert_eq!(open.len(), 51);
+        assert_eq!(open[0].repository, "cfg");
+        assert_eq!(open[0].url, "http://forge/pr", "no public forge: the forge's own link");
+        assert_eq!(forge.list_pull_requests("all").await.unwrap().len(), 50);
+        // Page 0 reads as page 1.
+        assert_eq!(forge.list_pull_requests_page("open", 0, 50).await.unwrap().len(), 50);
+    }
+
+    /// PF-81: with a public forge, a pull request's link is the public one behind the sign-in.
+    #[tokio::test]
+    async fn a_pull_requests_link_is_the_public_one_behind_the_sign_in() {
+        let server = MockServer::start().await;
+        on(&server, "GET", &format!("{R}/PullRequests(4)"), ok(pull_row(4))).await;
+        let mut forge = forge(&server);
+        forge.public_base = "https://forge.example.org/git".parse().unwrap();
+        let pull = forge.pull_request(4).await.unwrap();
+        assert_eq!(
+            pull.url,
+            "https://forge.example.org/git/user/oauth2/keycloak?redirect_to=%2Fgit%2Forg%2Fcfg%2Fpulls%2F4"
+        );
+        assert_eq!(pull.head_ref(), "portal/4");
+        assert_eq!(
+            forge.repository_page_url(),
+            "https://forge.example.org/git/user/oauth2/keycloak?redirect_to=%2Fgit%2Forg%2Fcfg"
+        );
+        assert_eq!(
+            forge.package_page_url("app", "1.0"),
+            "https://forge.example.org/git/user/oauth2/keycloak?redirect_to=%2Fgit%2Forg%2F-%2Fpackages%2Fgeneric%2Fapp%2F1.0"
+        );
+    }
+
+    /// MF-45: the bundle link's path is fetched from the base the Portal dials; a link that is
+    /// no URL or names no repository is an error.
+    #[tokio::test]
+    async fn a_bundle_and_an_archive_are_fetched_from_the_base_the_portal_dials() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/Shako.BundleLink(Ref=@r)")))
+            .and(query_param("@r", "'main'"))
+            .respond_with(ok(json!({ "value": "https://public.example/api/v1/repos/org/cfg/bundle/main" })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/Shako.ArchiveLink(Ref=@r,Format=@f)")))
+            .and(query_param("@f", "'tar.gz'"))
+            .respond_with(ok(json!({ "value": "https://public.example/x/api/v1/repos/org/cfg/archive/main.tar.gz" })))
+            .mount(&server)
+            .await;
+        on(&server, "GET", "/api/v1/repos/org/cfg/bundle/main", ResponseTemplate::new(200).set_body_bytes(b"BUNDLE".to_vec())).await;
+        on(&server, "GET", "/api/v1/repos/org/cfg/archive/main.tar.gz", ResponseTemplate::new(200).set_body_bytes(b"TGZ".to_vec())).await;
+        let forge = forge(&server);
+        assert_eq!(forge.bundle("main").await.unwrap(), b"BUNDLE");
+        assert_eq!(forge.source_archive("main", 3).await.unwrap(), b"TGZ");
+        assert!(matches!(forge.source_archive("main", 2).await, Err(GitError::Transport(_))));
+    }
+
+    #[tokio::test]
+    async fn a_link_that_is_no_url_or_names_no_repository_is_an_error() {
+        for (value, want) in [("not a url", "no URL"), ("https://public.example/elsewhere", "names no repository")] {
+            let server = MockServer::start().await;
+            on(&server, "GET", &format!("{R}/Shako.BundleLink(Ref=@r)"), ok(json!({ "value": value }))).await;
+            on(&server, "GET", &format!("{R}/Shako.ArchiveLink(Ref=@r,Format=@f)"), ok(json!({ "value": value }))).await;
+            let forge = forge(&server);
+            assert!(matches!(forge.bundle("main").await, Err(GitError::Transport(m)) if m.contains(want)), "{value}");
+            assert!(matches!(forge.source_archive("main", 9).await, Err(GitError::Transport(m)) if m.contains(want)), "{value}");
+        }
+        let gone = MockServer::start().await;
+        on(&gone, "GET", &format!("{R}/Shako.BundleLink(Ref=@r)"), ok(json!({ "value": "https://p/api/v1/repos/org/cfg/b" }))).await;
+        assert_eq!(forge(&gone).bundle("main").await, Err(GitError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn a_repositorys_info_is_none_when_it_is_not_there() {
+        let server = MockServer::start().await;
+        on(&server, "GET", R, ok(json!({ "DefaultBranch": "main", "Archived": true, "SizeBytes": 10 }))).await;
+        let info = forge(&server).repository_info().await.unwrap().unwrap();
+        assert_eq!((info.default_branch.as_str(), info.archived, info.size_bytes), ("main", true, 10));
+        let missing = MockServer::start().await;
+        on(&missing, "GET", R, ResponseTemplate::new(404)).await;
+        assert!(forge(&missing).repository_info().await.unwrap().is_none());
+        let broken = MockServer::start().await;
+        on(&broken, "GET", R, odata_error(500, "down")).await;
+        assert!(forge(&broken).repository_info().await.is_err());
+    }
+
+    /// Tags are read page by page until a short page.
+    #[tokio::test]
+    async fn every_page_of_tags_is_read() {
+        let server = MockServer::start().await;
+        let page: Vec<Value> = (0..50).map(|i| json!({ "Name": format!("v{i}"), "TargetSha": "c" })).collect();
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/Tags")))
+            .and(query_param("$skip", "0"))
+            .respond_with(ok(json!({ "value": page })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{R}/Tags")))
+            .and(query_param("$skip", "50"))
+            .respond_with(ok(json!({ "value": [{ "Name": "last" }] })))
+            .mount(&server)
+            .await;
+        let tags = forge(&server).list_tags().await.unwrap();
+        assert_eq!(tags.len(), 51);
+        assert_eq!(tags[50], ("last".to_owned(), String::new()));
+    }
+
+    #[tokio::test]
+    async fn a_commits_message_and_a_pull_requests_reviews_are_read_whole() {
+        let server = MockServer::start().await;
+        on(&server, "GET", &format!("{R}/Commits('c1')"), ok(json!({ "Message": "title\n\nbody" }))).await;
+        on(&server, "GET", &format!("{R}/PullRequests(3)/Reviews"), ok(json!({ "value": [{ "Body": "lgtm" }, {}] }))).await;
+        let forge = forge(&server);
+        assert_eq!(forge.commit_message("c1").await.unwrap(), "title\n\nbody");
+        assert_eq!(forge.review_bodies(3).await.unwrap(), ["lgtm", ""]);
+        assert_eq!(forge.commit_message("c9").await, Err(GitError::NotFound));
+    }
+
+    /// PF-105: closing and updating a pull request; a base that does not merge is the 409.
+    #[tokio::test]
+    async fn a_pull_request_is_closed_or_brought_up_to_its_base() {
+        let server = MockServer::start().await;
+        on(&server, "POST", &format!("{R}/PullRequests(5)/Shako.Close"), ResponseTemplate::new(204)).await;
+        Mock::given(method("POST"))
+            .and(path(format!("{R}/PullRequests(5)/Shako.UpdateBranch")))
+            .and(body_json(json!({ "Style": "merge" })))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        on(&server, "POST", &format!("{R}/PullRequests(6)/Shako.UpdateBranch"), odata_error(409, "merge conflict")).await;
+        let forge = forge(&server);
+        forge.close_pull_request(5).await.unwrap();
+        forge.update_pull_request(5).await.unwrap();
+        assert_eq!(forge.update_pull_request(6).await, Err(GitError::Conflict("merge conflict".into())));
+        assert!(unreachable().close_pull_request(5).await.is_err());
+    }
+
+    /// A merge names the person as author, and an empty approved commit is no commit.
+    #[tokio::test]
+    async fn a_merge_names_its_author_and_drops_an_empty_head_commit() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("{R}/PullRequests(7)/Shako.Merge")))
+            .and(body_json(json!({
+                "Style": "squash", "Message": "m",
+                "Author": { "Name": "Ana", "Email": "ana@example.org" },
+            })))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        forge(&server)
+            .merge(7, MergeStyle::Squash, "m", Some(""), Some(("Ana", "ana@example.org")))
+            .await
+            .unwrap();
+    }
+
+    /// A tree read twice that moved between pages, or more pages than the cap, is an error.
+    #[tokio::test]
+    async fn a_tree_that_moves_between_pages_is_an_error() {
+        let server = MockServer::start().await;
+        let tree = format!("{R}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)");
+        Mock::given(method("GET"))
+            .and(path(tree.as_str()))
+            .and(query_param("@s", "0"))
+            .respond_with(ok(json!({ "Sha": "t1", "Tree": [{ "Path": "a", "Type": "blob", "Sha": "b" }], "Truncated": true })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(tree.as_str()))
+            .and(query_param("@s", "1000"))
+            .respond_with(ok(json!({ "Sha": "t2", "Tree": [], "Truncated": false })))
+            .mount(&server)
+            .await;
+        assert!(matches!(
+            forge(&server).list_tree("main").await,
+            Err(GitError::Api { message, .. }) if message.contains("changed while it was read")
+        ));
+        let stuck = MockServer::start().await;
+        on(&stuck, "GET", &tree, ok(json!({ "Sha": "t", "Tree": [], "Truncated": true }))).await;
+        assert!(matches!(
+            forge(&stuck).list_tree("main").await,
+            Err(GitError::Api { message, .. }) if message.contains("truncated")
+        ));
+    }
+
+    /// A file that is no base64 or no UTF-8 is a transport error; a path outside the project is
+    /// not this repository's file.
+    #[tokio::test]
+    async fn a_file_that_is_no_base64_or_no_text_is_an_error() {
+        let server = MockServer::start().await;
+        let file = format!("{R}/Shako.File(Path=@p,Ref=@r)");
+        Mock::given(method("GET"))
+            .and(path(file.as_str()))
+            .and(query_param("@p", "'bad64'"))
+            .respond_with(ok(json!({ "Sha": "s", "Content": "!!!" })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(file.as_str()))
+            .and(query_param("@p", "'binary'"))
+            .respond_with(ok(json!({ "Sha": "s", "Content": STANDARD.encode([0xff, 0xfe]) })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(file.as_str()))
+            .and(query_param("@p", "'shape'"))
+            .respond_with(ok(json!({ "Content": "" })))
+            .mount(&server)
+            .await;
+        let forge = forge(&server);
+        for (name, want) in [("bad64", "base64"), ("binary", "utf-8"), ("shape", "parse the file")] {
+            assert!(
+                matches!(forge.get_file(name, "main").await, Err(GitError::Transport(m)) if m.contains(want)),
+                "{name}"
+            );
+        }
+        let project = forge.for_project("helsinki", "helsinki");
+        assert_eq!(project.get_file("organization/x.yaml", "main").await, Ok(None));
+        assert_eq!(project.get_file("projects/helsinki/", "main").await, Ok(None));
+    }
+
+    #[test]
+    fn a_base_that_cannot_be_a_base_is_a_config_error() {
+        let forge = ShakoClient::new("mailto:forge@example.org".parse().unwrap(), "org", "cfg", "t").unwrap();
+        assert!(matches!(forge.odata_url(&["x"]), Err(GitError::Config(_))));
+        // A link that is no URL is handed back as it came.
+        assert_eq!(forge.signed_in("not a url"), "not a url");
+    }
+
+    #[test]
+    fn the_applications_organization_writes_with_its_own_token() {
+        let lookup = |vars: &'static [(&'static str, &'static str)]| {
+            move |key: &str| vars.iter().find(|(k, _)| *k == key).map(|(_, v)| (*v).to_owned())
+        };
+        let base = [
+            ("JC_SHAKO_URL", "http://shako:3000"),
+            ("JC_SHAKO_OWNER", "org"),
+            ("JC_SHAKO_REPO", "cfg"),
+            ("JC_SHAKO_TOKEN", "t"),
+        ];
+        let with_apps: &'static [_] = Box::leak(Box::new(
+            [base.as_slice(), &[("JC_SHAKO_APPS_OWNER", " apps "), ("JC_SHAKO_APPS_TOKEN", " at ")]].concat(),
+        ));
+        let forge = ShakoClient::from_env(lookup(with_apps)).unwrap().unwrap();
+        let app = forge.for_application("bikes");
+        assert_eq!((app.owner.as_str(), app.token.as_str(), app.repo.as_str()), ("apps", "at", "bikes"));
+        assert_eq!(forge.applications().repo, "cfg");
+        let half: &'static [_] = Box::leak(Box::new([base.as_slice(), &[("JC_SHAKO_APPS_OWNER", "apps")]].concat()));
+        assert!(matches!(ShakoClient::from_env(lookup(half)), Err(GitError::Config(_))));
+        let blank: &'static [_] = Box::leak(Box::new(
+            [base.as_slice(), &[("JC_SHAKO_APPS_OWNER", " "), ("JC_SHAKO_APPS_TOKEN", "x")]].concat(),
+        ));
+        assert!(matches!(ShakoClient::from_env(lookup(blank)), Err(GitError::Config(_))));
+        let bad_public: &'static [_] =
+            Box::leak(Box::new([base.as_slice(), &[("JC_SHAKO_PUBLIC_URL", "not a url")]].concat()));
+        assert!(matches!(ShakoClient::from_env(lookup(bad_public)), Err(GitError::Config(m)) if m.contains("PUBLIC")));
+        let bad_url: &'static [_] = &[
+            ("JC_SHAKO_URL", "::"),
+            ("JC_SHAKO_OWNER", "org"),
+            ("JC_SHAKO_REPO", "cfg"),
+            ("JC_SHAKO_TOKEN", "t"),
+        ];
+        assert!(matches!(ShakoClient::from_env(lookup(bad_url)), Err(GitError::Config(_))));
+        let without_apps = ShakoClient::from_env(lookup(Box::leak(Box::new(base)))).unwrap().unwrap();
+        assert_eq!(without_apps.for_application("bikes").owner, "org");
+    }
+
+    /// A closed pull request's base is the merge base it was judged against.
+    #[test]
+    fn a_closed_pull_requests_base_is_its_merge_base() {
+        let row: PullRequestRow = serde_json::from_value(json!({
+            "Number": 1, "State": "closed", "Base": "main", "MergeBase": "mb", "HeadSha": "h",
+            "AuthorName": " ", "Author": "ana", "AuthorEmail": "",
+        }))
+        .unwrap();
+        let pull = PullRequest::from(row);
+        assert_eq!((pull.base_ref(), pull.head_ref()), ("mb", "h"));
+        assert_eq!((pull.author_name.as_str(), pull.author_email.as_deref()), ("ana", None));
+        let open: PullRequestRow =
+            serde_json::from_value(json!({ "Number": 2, "State": "open", "Base": "main", "MergeBase": "mb" })).unwrap();
+        assert_eq!(PullRequest::from(open).base_ref(), "main");
+    }
+
+    #[test]
+    fn a_git_error_of_a_client_fault_is_an_internal_error_and_an_outage_unavailable() {
+        assert!(matches!(ApiError::from(GitError::Config("x".into())), ApiError::Internal(_)));
+        assert!(matches!(
+            ApiError::from(GitError::Api { status: 422, message: "x".into() }),
+            ApiError::Internal(_)
+        ));
+        for status in [401, 403, 408, 429, 500, 599] {
+            assert!(matches!(
+                ApiError::from(GitError::Api { status, message: "x".into() }),
+                ApiError::Unavailable(_)
+            ));
+        }
+    }
 }
 
 #[cfg(test)]

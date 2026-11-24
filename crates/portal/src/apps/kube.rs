@@ -626,7 +626,7 @@ impl KubeClient {
             .map_err(|err| KubeError::Client(err.to_string()))
     }
 
-    fn headers(&self, content_type: &str) -> Result<HeaderMap, KubeError> {
+    fn headers(&self, content_type: &'static str) -> Result<HeaderMap, KubeError> {
         let token = match &self.token {
             TokenSource::Fixed(token) => token.clone(),
             TokenSource::File(path) => std::fs::read_to_string(path)
@@ -657,11 +657,7 @@ impl KubeClient {
         bearer.set_sensitive(true);
         headers.insert(AUTHORIZATION, bearer);
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-        headers.insert(
-            CONTENT_TYPE,
-            HeaderValue::from_str(content_type)
-                .map_err(|err| KubeError::Client(err.to_string()))?,
-        );
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
         Ok(headers)
     }
 
@@ -888,5 +884,652 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    use wiremock::matchers::{body_json, header, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn api() -> (MockServer, KubeClient) {
+        let server = MockServer::start().await;
+        let client = KubeClient::with_token(&server.uri(), "tok").expect("built");
+        (server, client)
+    }
+
+    fn object(api_version: &str, kind: &str, namespace: &str, name: &str) -> Value {
+        serde_json::json!({
+            "apiVersion": api_version, "kind": kind,
+            "metadata": { "namespace": namespace, "name": name },
+        })
+    }
+
+    fn refused(status: u16, message: &str) -> ResponseTemplate {
+        ResponseTemplate::new(status).set_body_json(serde_json::json!({ "message": message }))
+    }
+
+    /// CC-18: an apply is a server-side apply patch of the Portal's field manager, forced, with
+    /// the bearer and the apply content type; a namespace is addressed by its name alone.
+    #[tokio::test]
+    async fn an_apply_is_a_forced_server_side_patch_at_the_objects_own_path() {
+        let (server, client) = api().await;
+        Mock::given(method("PATCH"))
+            .and(path("/apis/apps/v1/namespaces/city/deployments/web"))
+            .and(query_param("fieldManager", FIELD_MANAGER))
+            .and(query_param("force", "true"))
+            .and(header("authorization", "Bearer tok"))
+            .and(header("content-type", APPLY_PATCH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/v1/namespaces/city-apps"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let deployment = object("apps/v1", "Deployment", "city", "web");
+        client.apply(&deployment).await.expect("applied");
+        let namespace = serde_json::json!({
+            "apiVersion": "v1", "kind": "Namespace", "metadata": { "name": "city-apps" },
+        });
+        client.apply(&namespace).await.expect("a namespace needs no namespace");
+    }
+
+    #[tokio::test]
+    async fn an_apply_the_api_server_refuses_names_the_status_message_and_the_path() {
+        let (server, client) = api().await;
+        Mock::given(method("PATCH"))
+            .respond_with(refused(403, "deployments is forbidden"))
+            .mount(&server)
+            .await;
+        let err = client
+            .apply(&object("apps/v1", "Deployment", "city", "web"))
+            .await
+            .expect_err("refused");
+        match err {
+            KubeError::Api { status, path, message } => {
+                assert_eq!(status, 403);
+                assert_eq!(path, "/apis/apps/v1/namespaces/city/deployments/web");
+                assert_eq!(message, "deployments is forbidden");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A body that is no Status object is handed on as it came.
+    #[tokio::test]
+    async fn a_refusal_without_a_status_object_carries_the_body_as_it_came() {
+        let (server, client) = api().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(409).set_body_string("conflict, try again"))
+            .mount(&server)
+            .await;
+        let err = client
+            .replace(&object("v1", "Secret", "city", "creds"))
+            .await
+            .expect_err("conflict");
+        assert!(
+            matches!(&err, KubeError::Api { status: 409, message, .. } if message == "conflict, try again"),
+            "{err:?}"
+        );
+    }
+
+    /// A manifest that names a kind the Portal does not write, or no name, or a namespace that is
+    /// no DNS label, never becomes a request.
+    #[tokio::test]
+    async fn an_apply_of_a_wrong_kind_or_name_is_refused_before_any_request() {
+        let (server, client) = api().await;
+        Mock::given(method("PATCH"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let cases = [
+            object("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "city", "x"),
+            serde_json::json!({ "apiVersion": "v1", "kind": "Secret", "metadata": { "name": "s" } }),
+            serde_json::json!({ "apiVersion": "v1", "kind": "Secret", "metadata": { "namespace": "city" } }),
+            object("v1", "Secret", "../kube-system", "s"),
+            object("v1", "Secret", "city", "S_UPPER"),
+            serde_json::json!({ "apiVersion": "v1", "kind": "Namespace", "metadata": { "name": "a/b" } }),
+            serde_json::json!({ "kind": "Secret" }),
+        ];
+        for case in &cases {
+            assert!(client.apply(case).await.is_err(), "{case}");
+        }
+    }
+
+    /// AP-157: the placement ConfigMap of a shard is the one ConfigMap `apply_placement` writes.
+    #[tokio::test]
+    async fn a_placement_is_applied_and_nothing_else_through_its_door() {
+        let (server, client) = api().await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/v1/namespaces/wasm/configmaps/jc-wasm-host-3-placements"))
+            .and(query_param("force", "true"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let placement = object("v1", "ConfigMap", "wasm", "jc-wasm-host-3-placements");
+        client.apply_placement(&placement).await.expect("applied");
+        for (case, wrong_kind) in [
+            (object("v1", "Secret", "wasm", "jc-wasm-host-3-placements"), true),
+            (object("apps/v1", "ConfigMap", "wasm", "jc-wasm-host-3-placements"), true),
+            (serde_json::json!({ "metadata": { "name": "x" } }), true),
+            (object("v1", "ConfigMap", "wasm", "jc-wasm-host-x-placements"), false),
+            (object("v1", "ConfigMap", "wasm", "jc-wasm-host--placements"), false),
+            (object("v1", "ConfigMap", "wasm", "edge-base"), false),
+        ] {
+            let err = client.apply_placement(&case).await.expect_err("refused");
+            match (wrong_kind, &err) {
+                (true, KubeError::UnsupportedKind { .. }) => {}
+                (false, KubeError::NotAName { field: "metadata.name", .. }) => {}
+                _ => panic!("{case}: {err:?}"),
+            }
+        }
+        let err = client
+            .apply_placement(&serde_json::json!({
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": { "name": "jc-wasm-host-1-placements" },
+            }))
+            .await
+            .expect_err("no namespace");
+        assert!(matches!(err, KubeError::NotAName { field: "metadata.namespace", .. }));
+    }
+
+    #[tokio::test]
+    async fn a_refused_placement_names_the_api_servers_reason() {
+        let (server, client) = api().await;
+        Mock::given(method("PATCH"))
+            .respond_with(refused(422, "invalid data"))
+            .mount(&server)
+            .await;
+        let err = client
+            .apply_placement(&object("v1", "ConfigMap", "wasm", "jc-wasm-host-0-placements"))
+            .await
+            .expect_err("refused");
+        assert!(matches!(err, KubeError::Api { status: 422, .. }), "{err:?}");
+    }
+
+    /// SDK-38: a create posts to the collection, a ConfigMap included; a taken name is the 409.
+    #[tokio::test]
+    async fn a_create_posts_to_the_collection_and_a_taken_name_is_a_conflict() {
+        let (server, client) = api().await;
+        let config_map = object("v1", "ConfigMap", "sandbox", "run-1");
+        Mock::given(method("POST"))
+            .and(path("/api/v1/namespaces/sandbox/configmaps"))
+            .and(header("content-type", "application/json"))
+            .and(body_json(&config_map))
+            .respond_with(ResponseTemplate::new(201).set_body_json(&config_map))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/namespaces/sandbox/configmaps"))
+            .respond_with(refused(409, "configmaps \"run-1\" already exists"))
+            .mount(&server)
+            .await;
+        client.create(&config_map).await.expect("created");
+        let err = client.create(&config_map).await.expect_err("taken");
+        assert!(
+            matches!(&err, KubeError::Api { status: 409, path, .. } if path == "/api/v1/namespaces/sandbox/configmaps"),
+            "{err:?}"
+        );
+        let err = client
+            .create(&object("v1", "Pod", "sandbox", "p"))
+            .await
+            .expect_err("not a kind the Portal writes");
+        assert!(matches!(err, KubeError::UnsupportedKind { .. }));
+    }
+
+    #[tokio::test]
+    async fn pod_names_are_listed_by_the_label_selector_and_a_bad_namespace_is_refused() {
+        let (server, client) = api().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/sandbox/pods"))
+            .and(query_param("labelSelector", "job-name=run-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "items": [
+                    { "metadata": { "name": "run-1-abc" } },
+                    { "metadata": {} },
+                    { "metadata": { "name": "run-1-def" } },
+                ]
+            })))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            client.pod_names("sandbox", "job-name=run-1").await.expect("listed"),
+            ["run-1-abc", "run-1-def"]
+        );
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/empty/pods"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+        assert!(client.pod_names("empty", "a=b").await.expect("listed").is_empty());
+        let err = client.pod_names("Not_A_Label", "a=b").await.expect_err("refused");
+        assert!(matches!(err, KubeError::NotAName { field: "metadata.namespace", .. }));
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/locked/pods"))
+            .respond_with(refused(403, "pods is forbidden"))
+            .mount(&server)
+            .await;
+        assert!(matches!(
+            client.pod_names("locked", "a=b").await,
+            Err(KubeError::Api { status: 403, .. })
+        ));
+    }
+
+    /// SDK-38: a pod's log is its tail, bounded in bytes and lines; a refusal names the Status
+    /// message, else the body.
+    #[tokio::test]
+    async fn a_pod_log_is_its_bounded_tail_and_a_refusal_names_why() {
+        let (server, client) = api().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/sandbox/pods/run-1-abc/log"))
+            .and(query_param("limitBytes", "4096"))
+            .and(query_param("tailLines", "200"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("line 1\nline 2\n"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/sandbox/pods/gone/log"))
+            .respond_with(refused(404, "pods \"gone\" not found"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/sandbox/pods/starting/log"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("container is waiting"))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            client.pod_log("sandbox", "run-1-abc", 4096).await.expect("log"),
+            "line 1\nline 2\n"
+        );
+        let err = client.pod_log("sandbox", "gone", 10).await.expect_err("gone");
+        assert!(
+            matches!(&err, KubeError::Api { status: 404, path, message }
+                if path == "/api/v1/namespaces/sandbox/pods/gone/log" && message == "pods \"gone\" not found"),
+            "{err:?}"
+        );
+        let err = client.pod_log("sandbox", "starting", 10).await.expect_err("waiting");
+        assert!(
+            matches!(&err, KubeError::Api { status: 400, message, .. } if message == "container is waiting"),
+            "{err:?}"
+        );
+        assert!(matches!(
+            client.pod_log("sandbox", "a/b", 10).await,
+            Err(KubeError::NotAName { field: "metadata.name", .. })
+        ));
+    }
+
+    /// PF-47: a TokenRequest for one audience and lifetime; an answer without a token is an
+    /// error, never an empty bearer.
+    #[tokio::test]
+    async fn a_service_account_token_is_minted_for_one_audience_and_an_empty_answer_is_an_error() {
+        let (server, client) = api().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/namespaces/portal/serviceaccounts/portal-rec/token"))
+            .and(body_json(serde_json::json!({
+                "apiVersion": "authentication.k8s.io/v1",
+                "kind": "TokenRequest",
+                "spec": { "audiences": ["https://idm/realms/city"], "expirationSeconds": 600 },
+            })))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "status": { "token": "minted" }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/namespaces/portal/serviceaccounts/empty/token"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "status": { "token": "" }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/namespaces/portal/serviceaccounts/denied/token"))
+            .respond_with(refused(403, "cannot create serviceaccounts/token"))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            client
+                .service_account_token("portal", "portal-rec", "https://idm/realms/city", 600)
+                .await
+                .expect("minted"),
+            "minted"
+        );
+        let err = client
+            .service_account_token("portal", "empty", "a", 600)
+            .await
+            .expect_err("no token");
+        assert!(
+            matches!(&err, KubeError::Api { status: 200, message, .. } if message.contains("no token")),
+            "{err:?}"
+        );
+        assert!(matches!(
+            client.service_account_token("portal", "denied", "a", 600).await,
+            Err(KubeError::Api { status: 403, .. })
+        ));
+        assert!(matches!(
+            client.service_account_token("portal", "", "a", 600).await,
+            Err(KubeError::NotAName { .. })
+        ));
+    }
+
+    /// A delete asks for background collection; one that is gone already is deleted.
+    #[tokio::test]
+    async fn a_delete_collects_dependents_and_a_missing_object_is_deleted_already() {
+        let (server, client) = api().await;
+        Mock::given(method("DELETE"))
+            .and(path("/apis/batch/v1/namespaces/sandbox/jobs/run-1"))
+            .and(query_param("propagationPolicy", "Background"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/namespaces/sandbox/configmaps/gone"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/namespaces/sandbox/secrets/held"))
+            .respond_with(refused(403, "forbidden"))
+            .mount(&server)
+            .await;
+        client.delete("batch/v1", "Job", "sandbox", "run-1").await.expect("deleted");
+        client.delete("v1", "ConfigMap", "sandbox", "gone").await.expect("gone");
+        assert!(matches!(
+            client.delete("v1", "Secret", "sandbox", "held").await,
+            Err(KubeError::Api { status: 403, .. })
+        ));
+        assert!(matches!(
+            client.delete("v1", "Pod", "sandbox", "p").await,
+            Err(KubeError::UnsupportedKind { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_get_reads_one_object_and_a_missing_one_is_none() {
+        let (server, client) = api().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/city/secrets/creds"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "data": {} })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/city/secrets/gone"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/city/secrets/locked"))
+            .respond_with(refused(403, "forbidden"))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            client.get("v1", "Secret", "city", "creds").await.expect("read"),
+            Some(serde_json::json!({ "data": {} }))
+        );
+        assert_eq!(client.get("v1", "Secret", "city", "gone").await.expect("read"), None);
+        assert!(client.get("v1", "Secret", "city", "locked").await.is_err());
+        assert!(matches!(
+            client.get("v1", "ConfigMap", "city", "x").await,
+            Err(KubeError::UnsupportedKind { .. })
+        ));
+    }
+
+    /// A success body that is no JSON reads as null, never an error.
+    #[tokio::test]
+    async fn a_list_is_one_page_of_items_by_label_and_a_non_json_answer_is_empty() {
+        let (server, client) = api().await;
+        Mock::given(method("GET"))
+            .and(path("/apis/apps/v1/namespaces/city/deployments"))
+            .and(query_param("labelSelector", "app=web"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "items": [{ "metadata": { "name": "web" } }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/city/services"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/city/secrets"))
+            .respond_with(refused(403, "forbidden"))
+            .mount(&server)
+            .await;
+        let listed = client.list("apps/v1", "Deployment", "city", "app=web").await.expect("listed");
+        assert_eq!(listed.len(), 1);
+        assert!(client.list("v1", "Service", "city", "a=b").await.expect("listed").is_empty());
+        assert!(client.list("v1", "Secret", "city", "a=b").await.is_err());
+        assert!(client.list("v1", "Pod", "city", "a=b").await.is_err());
+        assert!(client.list("v1", "Secret", "Bad Ns", "a=b").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_config_map_is_read_or_none_and_a_refusal_is_an_error() {
+        let (server, client) = api().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/edge/configmaps/edge-base"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "data": { "a": "b" } })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/edge/configmaps/gone"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/edge/configmaps/locked"))
+            .respond_with(refused(403, "forbidden"))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            client.get_config_map("edge", "edge-base").await.expect("read").expect("there")["data"]["a"],
+            "b"
+        );
+        assert_eq!(client.get_config_map("edge", "gone").await.expect("read"), None);
+        assert!(matches!(
+            client.get_config_map("edge", "locked").await,
+            Err(KubeError::Api { status: 403, .. })
+        ));
+        assert!(client.get_config_map("edge", "").await.is_err());
+    }
+
+    /// T-3994: a broker's object is applied only in the namespace asked for, named `mqtt-…`.
+    #[tokio::test]
+    async fn a_brokers_object_is_applied_in_its_namespace_alone() {
+        let (server, client) = api().await;
+        Mock::given(method("PATCH"))
+            .and(path("/apis/cert-manager.io/v1/namespaces/mqtt/certificates/mqtt-city"))
+            .and(query_param("fieldManager", FIELD_MANAGER))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/v1/namespaces/mqtt/services/mqtt-denied"))
+            .respond_with(refused(403, "forbidden"))
+            .mount(&server)
+            .await;
+        client
+            .apply_mqtt("mqtt", &object("cert-manager.io/v1", "Certificate", "mqtt", "mqtt-city"))
+            .await
+            .expect("applied");
+        assert!(matches!(
+            client.apply_mqtt("mqtt", &object("v1", "Service", "mqtt", "mqtt-denied")).await,
+            Err(KubeError::Api { status: 403, .. })
+        ));
+        let err = client
+            .apply_mqtt("mqtt", &object("v1", "Service", "kube-system", "mqtt-city"))
+            .await
+            .expect_err("another namespace");
+        assert!(
+            matches!(&err, KubeError::NotAName { field: "metadata.namespace", value } if value == "kube-system"),
+            "{err:?}"
+        );
+        for case in [
+            object("v1", "Secret", "mqtt", "mqtt-city"),
+            object("v1", "Service", "mqtt", "city"),
+            serde_json::json!({ "apiVersion": "v1", "kind": "Service", "metadata": { "name": "mqtt-a" } }),
+        ] {
+            assert!(client.apply_mqtt("mqtt", &case).await.is_err(), "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_brokers_objects_are_listed_and_deleted_by_kind_and_name() {
+        let (server, client) = api().await;
+        Mock::given(method("GET"))
+            .and(path("/apis/traefik.io/v1alpha1/namespaces/mqtt/ingressroutetcps"))
+            .and(query_param("labelSelector", "jc/broker=city"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "items": [{ "metadata": { "name": "mqtt-city" } }, { "metadata": { "name": "mqtt-b" } }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/mqtt/configmaps"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/namespaces/mqtt/services"))
+            .respond_with(refused(403, "forbidden"))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/apis/policy.linkerd.io/v1beta3/namespaces/mqtt/servers/mqtt-city"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/namespaces/mqtt/services/mqtt-gone"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/namespaces/mqtt/services/mqtt-held"))
+            .respond_with(refused(500, "etcd timeout"))
+            .mount(&server)
+            .await;
+        let listed = client
+            .list_mqtt("traefik.io/v1alpha1", "IngressRouteTCP", "mqtt", "jc/broker=city")
+            .await
+            .expect("listed");
+        assert_eq!(listed.len(), 2);
+        assert!(client.list_mqtt("v1", "ConfigMap", "mqtt", "a=b").await.expect("listed").is_empty());
+        assert!(client.list_mqtt("v1", "Service", "mqtt", "a=b").await.is_err());
+        assert!(matches!(
+            client.list_mqtt("v1", "Secret", "mqtt", "a=b").await,
+            Err(KubeError::UnsupportedKind { .. })
+        ));
+        client
+            .delete_mqtt("policy.linkerd.io/v1beta3", "Server", "mqtt", "mqtt-city")
+            .await
+            .expect("deleted");
+        client.delete_mqtt("v1", "Service", "mqtt", "mqtt-gone").await.expect("gone already");
+        assert!(matches!(
+            client.delete_mqtt("v1", "Service", "mqtt", "mqtt-held").await,
+            Err(KubeError::Api { status: 500, .. })
+        ));
+        assert!(matches!(
+            client.delete_mqtt("v1", "Service", "mqtt", "city").await,
+            Err(KubeError::NotAName { .. })
+        ));
+        assert!(matches!(
+            client.delete_mqtt("v1", "Secret", "mqtt", "mqtt-city").await,
+            Err(KubeError::UnsupportedKind { .. })
+        ));
+    }
+
+    /// A replace is a PUT of the object as read, so a raced write is the API server's 409.
+    #[tokio::test]
+    async fn a_replace_puts_the_object_at_its_path() {
+        let (server, client) = api().await;
+        let secret = object("v1", "Secret", "city", "creds");
+        Mock::given(method("PUT"))
+            .and(path("/api/v1/namespaces/city/secrets/creds"))
+            .and(header("content-type", "application/json"))
+            .and(body_json(&secret))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        client.replace(&secret).await.expect("replaced");
+        assert!(client.replace(&object("v1", "Pod", "city", "p")).await.is_err());
+        assert!(client
+            .replace(&serde_json::json!({ "apiVersion": "v1", "kind": "Secret", "metadata": { "name": "creds" } }))
+            .await
+            .is_err());
+    }
+
+    /// An API server nobody answers on is a transport error of every call, never a panic.
+    #[tokio::test]
+    async fn an_unreachable_api_server_is_a_transport_error_of_every_call() {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+        let addr = held.local_addr().expect("addr");
+        drop(held);
+        let client = KubeClient::with_token(&format!("http://{addr}"), "tok").expect("built");
+        let secret = object("v1", "Secret", "city", "creds");
+        let placement = object("v1", "ConfigMap", "wasm", "jc-wasm-host-0-placements");
+        let broker = object("v1", "Service", "mqtt", "mqtt-city");
+        let results = [
+            client.apply(&secret).await.map(|_| ()),
+            client.apply_placement(&placement).await,
+            client.create(&secret).await,
+            client.pod_names("city", "a=b").await.map(|_| ()),
+            client.pod_log("city", "p", 1).await.map(|_| ()),
+            client.service_account_token("city", "sa", "a", 60).await.map(|_| ()),
+            client.delete("v1", "Secret", "city", "creds").await,
+            client.get("v1", "Secret", "city", "creds").await.map(|_| ()),
+            client.list("v1", "Secret", "city", "a=b").await.map(|_| ()),
+            client.get_config_map("city", "c").await.map(|_| ()),
+            client.apply_mqtt("mqtt", &broker).await,
+            client.list_mqtt("v1", "Service", "mqtt", "a=b").await.map(|_| ()),
+            client.delete_mqtt("v1", "Service", "mqtt", "mqtt-city").await,
+            client.replace(&secret).await,
+        ];
+        for (index, result) in results.into_iter().enumerate() {
+            assert!(matches!(result, Err(KubeError::Transport(_))), "call {index}: {result:?}");
+        }
+    }
+
+    /// A fixed token that is empty would send a bare `Bearer` (CC-06): refused before a request.
+    #[test]
+    fn an_empty_fixed_token_is_refused_before_a_request() {
+        let client = KubeClient::with_token("https://10.0.0.1:443", "  ").expect("built");
+        assert!(matches!(client.headers("application/json"), Err(KubeError::Client(_))));
+        assert!(matches!(
+            KubeClient::with_token("not a url", "tok"),
+            Err(KubeError::Client(_))
+        ));
+    }
+
+    /// A CA that is no PEM certificate fails the build, naming the problem.
+    #[test]
+    fn a_mount_whose_ca_is_no_certificate_fails_the_build() {
+        let dir = std::env::temp_dir().join(format!("kube-bad-ca-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a mount");
+        std::fs::write(dir.join("token"), "tok").expect("a token");
+        std::fs::write(dir.join("ca.crt"), "-----BEGIN CERTIFICATE-----\nnot base64\n-----END CERTIFICATE-----\n").expect("a ca");
+        std::fs::write(dir.join("namespace"), "  portal \n").expect("a namespace");
+        let built = KubeClient::from_mount(&dir, "https://10.0.0.1:443");
+        assert!(matches!(built, Err(KubeError::Client(_))), "{built:?}");
+        assert_eq!(KubeClient::namespace_of(&dir).as_deref(), Some("portal"));
+        std::fs::write(dir.join("namespace"), " \n").expect("a blank namespace");
+        assert_eq!(KubeClient::namespace_of(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Outside a cluster there is no mount: no client and no namespace, and neither is an error.
+    #[test]
+    fn outside_a_cluster_there_is_no_client_and_no_namespace() {
+        if Path::new(SERVICE_ACCOUNT_DIR).exists() {
+            return;
+        }
+        assert!(KubeClient::in_cluster().expect("not an error").is_none());
+        assert_eq!(KubeClient::own_namespace(), None);
     }
 }

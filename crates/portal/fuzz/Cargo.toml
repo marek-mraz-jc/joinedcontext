@@ -3,7 +3,8 @@
 # Prometheus page, a pipeline's cron schedule, the masking of a record the runner posts, the list
 # query string and its cursor, a device's JSON Web Key Set, an MQTT test-publish body, and (T-7658) a
 # feedback body, a comment's mentions, a git bundle's header, an entity bound for the trash and an
-# Endpoint preview's body. Its own
+# Endpoint preview's body; (T-7652) a forge's receive-pack answer, an App's host name under the
+# apps apex and an App repository's build workflow. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 [package]
@@ -20,6 +21,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
+url = "2"
 joinedcontext-portal = { path = ".." }
 jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
 
@@ -127,6 +129,27 @@ bench = false
 [[bin]]
 name = "preview_query"
 path = "fuzz_targets/preview_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "receive_pack"
+path = "fuzz_targets/receive_pack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "app_origin"
+path = "fuzz_targets/app_origin.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "build_workflow"
+path = "fuzz_targets/build_workflow.rs"
 test = false
 doc = false
 bench = false
