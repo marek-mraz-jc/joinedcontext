@@ -813,6 +813,142 @@ async fn the_latest_runs_are_one_read_of_the_pipelines_the_caller_reads() {
     assert!(!refused.text.contains("stations"), "{}", refused.text);
 }
 
+/// PL-61 in Postgres: a record is kept masked with its rule, the list pages newest first by id,
+/// groups count every kept record, a replay takes only the named ids of its own pipeline, and a
+/// sync drops the lists of pipelines its project no longer holds. A project no Organization
+/// places keeps nothing and reads empty, it is never an error.
+#[tokio::test]
+async fn postgres_keeps_pages_groups_takes_and_forgets_rejected_records() {
+    use joinedcontext_portal::pipeline_outcomes::{RejectedStore, MASK};
+    use std::collections::{BTreeMap, HashSet};
+    let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+    else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("the test database answers and migrates");
+    let project = format!("t7727-{}", common::unique::unique());
+    let store = RejectedStore::new(
+        Some(pool.clone()),
+        common::keyed_mirror(&pool, &[&project]).await,
+    );
+    let reason = |rule: &str, path: &str, step: Option<i32>| Reason {
+        rule: rule.into(),
+        path: path.into(),
+        message: format!("{rule} at {path}"),
+        step,
+        run: step.map(|_| "2026-11-24T09:00:00Z".to_owned()),
+    };
+    for (n, rule, path) in [
+        (1, "sh:datatype", "temperature"),
+        (2, "sh:minCount", "name"),
+        (3, "sh:datatype", "temperature"),
+        (4, "sh:datatype", "temperature"),
+        (5, "sh:datatype", "temperature"),
+    ] {
+        let record = json!({"id": format!("urn:ngsi-ld:Station:{n}"), "password": "hunter2"});
+        store
+            .reject(&project, "stations", &record, &reason(rule, path, Some(n)))
+            .await
+            .expect("kept");
+    }
+    store
+        .reject(&project, "other", &json!({}), &reason("type", "", None))
+        .await
+        .expect("kept");
+
+    assert_eq!(store.count(&project, "stations").await.unwrap(), 5);
+    assert_eq!(store.count(&project, "never").await.unwrap(), 0);
+    let all = store.list(&project, "stations", 0, None).await.unwrap();
+    assert_eq!(all.len(), 1, "a limit of 0 reads as 1");
+    let all = store.list(&project, "stations", 100, None).await.unwrap();
+    let names: Vec<&str> = all
+        .iter()
+        .map(|r| r.record["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(names[0], "urn:ngsi-ld:Station:5", "newest first");
+    assert_eq!(
+        all[0].record["password"], MASK,
+        "masked before it is stored"
+    );
+    assert_eq!(all[0].rule, "sh:datatype");
+    assert_eq!(all[0].message, "sh:datatype at temperature");
+    assert_eq!(all[0].step, Some(5));
+    assert_eq!(all[0].run.as_deref(), Some("2026-11-24T09:00:00Z"));
+    assert!(all[0].at.ends_with('Z'), "RFC 3339 in UTC: {}", all[0].at);
+    let older = store
+        .list(&project, "stations", 2, Some(all[1].id))
+        .await
+        .unwrap();
+    assert_eq!(
+        older.iter().map(|r| r.id).collect::<Vec<_>>(),
+        [all[2].id, all[3].id],
+        "a page older than the id given"
+    );
+
+    let groups = store.groups(&project, "stations").await.unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(
+        (groups[0].rule.as_str(), groups[0].count),
+        ("sh:datatype", 4)
+    );
+    assert_eq!(groups[0].examples.len(), 3, "the newest three only");
+    assert_eq!(groups[0].examples[0].id, all[0].id);
+    assert_eq!((groups[1].path.as_str(), groups[1].count), ("name", 1));
+    assert!(store.groups(&project, "never").await.unwrap().is_empty());
+
+    let taken = store
+        .take(&project, "other", &[all[0].id, all[1].id])
+        .await
+        .unwrap();
+    assert!(taken.is_empty(), "ids of another pipeline are not taken");
+    let taken = store
+        .take(&project, "stations", &[all[0].id, all[1].id, i64::MAX])
+        .await
+        .unwrap();
+    let mut ids: Vec<i64> = taken.iter().map(|r| r.id).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, [all[1].id, all[0].id]);
+    assert_eq!(store.count(&project, "stations").await.unwrap(), 3);
+
+    let loaded = BTreeMap::from([(project.clone(), HashSet::from(["stations".to_owned()]))]);
+    store.forget_gone(&loaded).await.unwrap();
+    assert_eq!(
+        store.count(&project, "other").await.unwrap(),
+        0,
+        "a gone pipeline"
+    );
+    assert_eq!(store.count(&project, "stations").await.unwrap(), 3, "kept");
+
+    let unplaced = format!("t7727-unplaced-{}", common::unique::unique());
+    store
+        .reject(&unplaced, "stations", &json!({}), &reason("type", "", None))
+        .await
+        .expect("an unplaced project keeps nothing and is no error");
+    assert_eq!(store.count(&unplaced, "stations").await.unwrap(), 0);
+    assert!(store
+        .list(&unplaced, "stations", 10, None)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .groups(&unplaced, "stations")
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .take(&unplaced, "stations", &[1])
+        .await
+        .unwrap()
+        .is_empty());
+    let loaded = BTreeMap::from([(unplaced, HashSet::new())]);
+    store.forget_gone(&loaded).await.expect("nothing to forget");
+}
+
 /// T-5818: in Postgres the latest runs are one row per pipeline asked, its newest by `last_at`,
 /// and nothing of a pipeline not asked or of another project.
 #[tokio::test]

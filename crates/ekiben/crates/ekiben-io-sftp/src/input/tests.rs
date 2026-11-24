@@ -88,6 +88,32 @@ fn config_refusals_name_the_field_and_never_the_password() {
         (json!({"max_file_bytes": 0}), "max_file_bytes"),
         (json!({"address": "sftp.example.org:http"}), "address"),
         (json!({"frobnicate": 1}), "frobnicate"),
+        (
+            json!({"credentials": "city:hunter2"}),
+            "credentials must be an object",
+        ),
+        (json!({"address": ""}), "address must be host:port"),
+        (
+            json!({"paths": ["/upload/[x"]}),
+            "paths[0] is not a valid glob",
+        ),
+        (json!({"paths": ["/upload/"]}), "file name only"),
+        (
+            json!({"watcher": {"enabled": true, "cache": "c", "poll_interval": "often"}}),
+            "watcher.poll_interval must be a duration, e.g. 1s",
+        ),
+        (
+            json!({"watcher": {"enabled": true, "cache": "c", "minimum_age": "old"}}),
+            "watcher.minimum_age must be a duration, e.g. 1s",
+        ),
+        (
+            json!({"max_file_bytes": MAX_FILE_BYTES + 1}),
+            "max_file_bytes must be 1 to",
+        ),
+        (
+            json!({"scanner": {"bogus": {}}}),
+            "scanner type 'bogus' was not recognised",
+        ),
     ] {
         let errs = lint(&with(extra.clone()));
         let e = errs.join("; ");
@@ -95,6 +121,48 @@ fn config_refusals_name_the_field_and_never_the_password() {
         assert!(!e.contains("hunter2"), "{e}");
     }
     assert!(lint(&base()).is_empty(), "{:?}", lint(&base()));
+}
+
+#[test]
+fn an_address_without_a_port_dials_22_and_a_root_glob_lists_the_root() {
+    let s = Settings::parse(&with(
+        json!({"address": "sftp.example.org", "paths": ["/*.csv"]}),
+    ))
+    .expect("parses");
+    assert_eq!(
+        (s.target.host.as_str(), s.target.port),
+        ("sftp.example.org", 22)
+    );
+    assert_eq!(s.paths[0].0, "/");
+    let s = Settings::parse(&with(json!({"address": "[::1]:2222"}))).expect("parses");
+    assert_eq!((s.target.host.as_str(), s.target.port), ("::1", 2222));
+    let s = Settings::parse(&with(json!({"address": "[::1]"}))).expect("parses");
+    assert_eq!((s.target.host.as_str(), s.target.port), ("::1", 22));
+    for address in [":22", "[]:22", "[]"] {
+        let e = Settings::parse(&with(json!({"address": address})))
+            .err()
+            .expect("refused");
+        assert!(e.contains("address must be host:port"), "{address}: {e}");
+    }
+    // the pin is SHA256: and at least 20 characters
+    let pin = "SHA256:abcdefghijklm";
+    assert_eq!(pin.len(), 20);
+    Settings::parse(&with(json!({"host_key_fingerprint": pin}))).expect("a 20-character pin");
+    for pin in ["SHA256:abcdefghijkl", "SHA256:x"] {
+        let e = Settings::parse(&with(json!({"host_key_fingerprint": pin})))
+            .err()
+            .expect("short");
+        assert!(e.contains("host_key_fingerprint must pin"), "{pin}: {e}");
+    }
+    // a watcher that is not enabled is no watcher, and max_file_bytes takes its ceiling
+    let s = Settings::parse(&with(json!({
+        "watcher": {"enabled": false, "cache": "c"},
+        "max_file_bytes": MAX_FILE_BYTES,
+    })))
+    .expect("parses");
+    assert!(s.watcher.is_none());
+    assert_eq!(s.max_file_bytes, MAX_FILE_BYTES);
+    assert!(!lint(&json!("sftp://x")).is_empty());
 }
 
 #[test]
@@ -129,4 +197,193 @@ async fn a_private_server_is_refused_before_any_connection() {
     assert!(matches!(e, CoreError::AccessDenied { .. }), "{e}");
     assert!(started.elapsed() < Duration::from_secs(2));
     assert!(!i.is_connected());
+}
+
+/// An input dialling a loopback port where `serve` answers each connection.
+fn local_input(port: u16, extra: JsonValue) -> (SftpInput, StreamContext) {
+    let c = ctx(OrgQuotas {
+        allow_private_ips: true,
+        ..Default::default()
+    });
+    let mut config = with(json!({"address": format!("127.0.0.1:{port}")}));
+    config
+        .as_object_mut()
+        .expect("object")
+        .extend(extra.as_object().expect("object").clone());
+    let conf = ComponentConfig {
+        label: "upload".into(),
+        component_type: "sftp".into(),
+        config,
+        processors: Vec::new(),
+    };
+    (SftpInput::from_config(&conf, &c).expect("builds"), c)
+}
+
+#[tokio::test]
+async fn a_server_that_is_not_ssh_fails_the_handshake_by_name() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        while let Ok((mut sock, _)) = listener.accept().await {
+            let _ = sock.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
+        }
+    });
+    let (mut i, c) = local_input(port, json!({}));
+    assert_eq!((i.input_type(), i.label()), ("sftp", "upload"));
+    let e = match i.read_batch(&c).await {
+        Ok(_) => panic!("read from a web server"),
+        Err(e) => e.to_string(),
+    };
+    assert!(e.contains("sftp input: ssh handshake"), "{e}");
+    assert!(!i.is_connected());
+    i.close().await.expect("nothing to close");
+}
+
+#[tokio::test]
+async fn a_server_that_never_answers_times_out_the_handshake() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((sock, _)) = listener.accept().await {
+            held.push(sock);
+        }
+    });
+    let (mut i, c) = local_input(port, json!({}));
+    let started = std::time::Instant::now();
+    let e = match i.read_batch(&c).await {
+        Ok(_) => panic!("read from a silent server"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        e.contains("did not complete the SSH handshake in 15 s"),
+        "{e}"
+    );
+    assert!(started.elapsed() >= CONNECT_TIMEOUT);
+}
+
+#[tokio::test]
+async fn a_refused_connection_fails_a_listing_at_once() {
+    // a bound socket that never listens refuses every connection
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = closed.local_addr().expect("addr").port();
+    drop(closed);
+    let (mut i, c) = local_input(port, json!({}));
+    let e = match i.read_batch(&c).await {
+        Ok(_) => panic!("read from a closed port"),
+        Err(e) => e,
+    };
+    assert!(
+        !matches!(e, CoreError::Config(_) | CoreError::AccessDenied { .. }),
+        "{e}"
+    );
+}
+
+/// An OpenSSH key pair made by ssh-keygen in `dir`: the public key line.
+fn keygen(dir: &std::path::Path, name: &str) -> String {
+    let path = dir.join(name);
+    let made = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&path)
+        .status()
+        .expect("ssh-keygen runs");
+    assert!(made.success());
+    std::fs::read_to_string(path.with_extension("pub")).expect("public key")
+}
+
+#[test]
+fn a_private_key_config_parses_with_or_without_a_pass() {
+    let dir = tempfile::TempDir::new().expect("tmp");
+    keygen(dir.path(), "user");
+    let key = std::fs::read_to_string(dir.path().join("user")).expect("private key");
+    for pass in ["", "unused"] {
+        let s = Settings::parse(&with(json!({"credentials": {
+            "username": "city", "private_key": key, "private_key_pass": pass,
+        }})))
+        .expect("parses");
+        assert!(s.target.password.is_none() && s.target.private_key.is_some());
+        assert_eq!(s.target.private_key_pass.is_some(), !pass.is_empty());
+    }
+    // an encrypted key opens with its pass and is refused without it
+    let made = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "open sesame", "-f"])
+        .arg(dir.path().join("locked"))
+        .status()
+        .expect("ssh-keygen runs");
+    assert!(made.success());
+    let locked = std::fs::read_to_string(dir.path().join("locked")).expect("private key");
+    let creds = |pass: &str| {
+        with(json!({"credentials": {
+            "username": "city", "private_key": locked, "private_key_pass": pass,
+        }}))
+    };
+    Settings::parse(&creds("open sesame")).expect("opens with its pass");
+    for pass in ["", "wrong"] {
+        let e = Settings::parse(&creds(pass)).err().expect("refused");
+        assert!(e.contains("private_key_pass does not open it"), "{e}");
+        assert!(!e.contains("open sesame"), "{e}");
+    }
+}
+
+#[tokio::test]
+async fn the_pin_checks_a_host_key_and_a_host_certificate_by_their_key() {
+    use russh::client::Handler;
+    use russh::keys::{Certificate, PublicKey};
+    let dir = tempfile::TempDir::new().expect("tmp");
+    let host = PublicKey::from_openssh(&keygen(dir.path(), "host")).expect("host key");
+    keygen(dir.path(), "ca");
+    let signed = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-s"])
+        .arg(dir.path().join("ca"))
+        .args(["-I", "sftp.example.org", "-h"])
+        .arg(dir.path().join("host.pub"))
+        .status()
+        .expect("ssh-keygen signs");
+    assert!(signed.success());
+    let cert = Certificate::from_openssh(
+        &std::fs::read_to_string(dir.path().join("host-cert.pub")).expect("certificate"),
+    )
+    .expect("parses");
+    let fingerprint = host.fingerprint(HashAlg::Sha256).to_string();
+    let presented = [
+        PublicKeyOrCertificate::PublicKey {
+            key: host.clone(),
+            hash_alg: None,
+        },
+        PublicKeyOrCertificate::Certificate(cert),
+    ];
+    for (pin, want) in [
+        (fingerprint.clone(), true),
+        ("SHA256:other".to_string(), false),
+    ] {
+        for key in &presented {
+            let seen = Arc::new(std::sync::Mutex::new(None));
+            let mut pinned = Pinned {
+                fingerprint: pin.clone(),
+                seen: seen.clone(),
+            };
+            assert_eq!(pinned.check_server_key(key).await.expect("checked"), want);
+            assert_eq!(
+                seen.lock().expect("lock").as_deref(),
+                Some(fingerprint.as_str())
+            );
+        }
+    }
+}
+
+#[test]
+fn the_client_closes_an_idle_session_and_sends_keepalives() {
+    let c = client_config();
+    assert_eq!(c.inactivity_timeout, Some(Duration::from_secs(300)));
+    assert_eq!(c.keepalive_interval, Some(Duration::from_secs(30)));
+    let d = client::Config::default();
+    assert_ne!(
+        (d.inactivity_timeout, d.keepalive_interval),
+        (c.inactivity_timeout, c.keepalive_interval)
+    );
 }

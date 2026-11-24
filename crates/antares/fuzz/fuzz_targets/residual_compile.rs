@@ -11,19 +11,57 @@ use serde_json::json;
 
 const NAMES: [&str; 6] = ["name", "pm10", "tags", "when", "doc", "speed"];
 const FUNCS: [Func; 37] = [
-    Func::Contains, Func::StartsWith, Func::EndsWith, Func::Length, Func::IndexOf, Func::Substring,
-    Func::ToLower, Func::ToUpper, Func::Trim, Func::Concat, Func::CaseI, Func::AccentI,
-    Func::MatchesPattern, Func::Like, Func::Year, Func::Month, Func::Day, Func::Hour, Func::Minute,
-    Func::Second, Func::FractionalSeconds, Func::TotalOffsetMinutes, Func::Date, Func::Time,
-    Func::Now, Func::MinDateTime, Func::MaxDateTime, Func::Round, Func::Floor, Func::Ceiling,
-    Func::Add, Func::Sub, Func::Mul, Func::Div, Func::DivBy, Func::Mod, Func::Neg,
+    Func::Contains,
+    Func::StartsWith,
+    Func::EndsWith,
+    Func::Length,
+    Func::IndexOf,
+    Func::Substring,
+    Func::ToLower,
+    Func::ToUpper,
+    Func::Trim,
+    Func::Concat,
+    Func::CaseI,
+    Func::AccentI,
+    Func::MatchesPattern,
+    Func::Like,
+    Func::Year,
+    Func::Month,
+    Func::Day,
+    Func::Hour,
+    Func::Minute,
+    Func::Second,
+    Func::FractionalSeconds,
+    Func::TotalOffsetMinutes,
+    Func::Date,
+    Func::Time,
+    Func::Now,
+    Func::MinDateTime,
+    Func::MaxDateTime,
+    Func::Round,
+    Func::Floor,
+    Func::Ceiling,
+    Func::Add,
+    Func::Sub,
+    Func::Mul,
+    Func::Div,
+    Func::DivBy,
+    Func::Mod,
+    Func::Neg,
 ];
 const CMPS: [Cmp; 6] = [Cmp::Eq, Cmp::Ne, Cmp::Lt, Cmp::Le, Cmp::Gt, Cmp::Ge];
-const MEMBERS: [Member; 5] =
-    [Member::Value, Member::ObservedAt, Member::CreatedAt, Member::ModifiedAt, Member::UnitCode];
+const MEMBERS: [Member; 5] = [
+    Member::Value,
+    Member::ObservedAt,
+    Member::CreatedAt,
+    Member::ModifiedAt,
+    Member::UnitCode,
+];
 
 fn names(u: &mut Unstructured, most: u32) -> Result<Vec<String>> {
-    (0..u.int_in_range(0..=most)?).map(|_| Ok((*u.choose(&NAMES)?).to_owned())).collect()
+    (0..u.int_in_range(0..=most)?)
+        .map(|_| Ok((*u.choose(&NAMES)?).to_owned()))
+        .collect()
 }
 
 fn lit(u: &mut Unstructured) -> Result<Lit> {
@@ -44,12 +82,18 @@ fn path(u: &mut Unstructured) -> Result<Path> {
         1 => Path::Type,
         2 => Path::CreatedAt,
         3 => Path::ModifiedAt,
-        _ => Path::Attribute { attrs: names(u, 2)?, member: *u.choose(&MEMBERS)?, keys: names(u, 2)? },
+        _ => Path::Attribute {
+            attrs: names(u, 2)?,
+            member: *u.choose(&MEMBERS)?,
+            keys: names(u, 2)?,
+        },
     })
 }
 
 fn many(u: &mut Unstructured, depth: usize, most: u32) -> Result<Vec<Expr>> {
-    (0..u.int_in_range(0..=most)?).map(|_| expr(u, depth + 1)).collect()
+    (0..u.int_in_range(0..=most)?)
+        .map(|_| expr(u, depth + 1))
+        .collect()
 }
 
 fn expr(u: &mut Unstructured, depth: usize) -> Result<Expr> {
@@ -60,14 +104,33 @@ fn expr(u: &mut Unstructured, depth: usize) -> Result<Expr> {
     Ok(match u.int_in_range(0..=11)? {
         0 => Expr::Lit(lit(u)?),
         1 => Expr::Path(path(u)?),
-        2 => Expr::Var { up: u.int_in_range(0..=2)?, keys: names(u, 1)? },
-        3 => Expr::Cmp(*u.choose(&CMPS)?, Box::new(expr(u, next)?), Box::new(expr(u, next)?)),
+        2 => Expr::Var {
+            up: u.int_in_range(0..=2)?,
+            keys: names(u, 1)?,
+        },
+        3 => Expr::Cmp(
+            *u.choose(&CMPS)?,
+            Box::new(expr(u, next)?),
+            Box::new(expr(u, next)?),
+        ),
         4 => Expr::And(many(u, depth, 4)?),
         5 => Expr::Or(many(u, depth, 4)?),
         6 => Expr::Not(Box::new(expr(u, next)?)),
         7 => Expr::IsNull(Box::new(expr(u, next)?)),
-        8 => Expr::In(Box::new(expr(u, next)?), (0..u.int_in_range(0..=8)?).map(|_| lit(u)).collect::<Result<_>>()?),
-        9 => Expr::Any(Box::new(expr(u, next)?), if u.arbitrary()? { Some(Box::new(expr(u, next)?)) } else { None }),
+        8 => Expr::In(
+            Box::new(expr(u, next)?),
+            (0..u.int_in_range(0..=8)?)
+                .map(|_| lit(u))
+                .collect::<Result<_>>()?,
+        ),
+        9 => Expr::Any(
+            Box::new(expr(u, next)?),
+            if u.arbitrary()? {
+                Some(Box::new(expr(u, next)?))
+            } else {
+                None
+            },
+        ),
         10 => Expr::All(Box::new(expr(u, next)?), Box::new(expr(u, next)?)),
         _ => Expr::Call(*u.choose(&FUNCS)?, many(u, depth, 3)?),
     })

@@ -107,35 +107,33 @@ impl Scheduler {
         self.entries.lock().unwrap().values().cloned().collect()
     }
 
+    /// Marks the streams due at `now` running and answers them; a due stream still running counts a
+    /// skipped overlap (`Skip`) or queues one more run (`Queue`). `next_run_at` moves strictly past
+    /// `now`, so missed runs after a pause fire once, never N times.
+    fn take_due(&self, now: Timestamp) -> Vec<(String, StreamConfig)> {
+        let mut due = Vec::new();
+        let mut guard = self.entries.lock().unwrap();
+        for (sid, entry) in guard.iter_mut() {
+            if now < entry.next_run_at {
+                continue;
+            }
+            entry.next_run_at = entry.schedule.next_after(now).unwrap_or(entry.next_run_at);
+            if !entry.is_running {
+                entry.is_running = true;
+                due.push((sid.clone(), entry.config.clone()));
+            } else if entry.overlap == OverlapPolicy::Queue {
+                entry.queued_run = true;
+            } else {
+                entry.skipped_overlaps += 1;
+            }
+        }
+        due
+    }
+
     /// Evaluates due streams at `now`, spawning any due runs asynchronously (so slow runs can overlap
     /// with subsequent ticks to test `Skip` vs `Queue` overlap rules).
     pub fn trigger_due(&self, now: Timestamp) -> Vec<String> {
-        let mut to_spawn = Vec::new();
-        {
-            let mut guard = self.entries.lock().unwrap();
-            for (sid, entry) in guard.iter_mut() {
-                if now >= entry.next_run_at {
-                    // Advance `next_run_at` strictly past `now` so missed runs after a pause fire only ONCE, never N times!
-                    if let Some(next_after_now) = entry.schedule.next_after(now) {
-                        entry.next_run_at = next_after_now;
-                    }
-                    if entry.is_running {
-                        match entry.overlap {
-                            OverlapPolicy::Skip => {
-                                entry.skipped_overlaps += 1;
-                            }
-                            OverlapPolicy::Queue => {
-                                entry.queued_run = true;
-                            }
-                        }
-                    } else {
-                        entry.is_running = true;
-                        to_spawn.push((sid.clone(), entry.config.clone()));
-                    }
-                }
-            }
-        }
-
+        let to_spawn = self.take_due(now);
         let triggered_ids: Vec<String> = to_spawn.iter().map(|(id, _)| id.clone()).collect();
         for (sid, conf) in to_spawn {
             let sched = self.clone();
@@ -148,35 +146,9 @@ impl Scheduler {
 
     /// Synchronous tick helper that triggers all due streams at `now` and waits for their runs to finish.
     pub async fn tick_and_wait(&self, now: Timestamp) -> Vec<RunSummary> {
-        let mut to_run = Vec::new();
-        {
-            let mut guard = self.entries.lock().unwrap();
-            for (sid, entry) in guard.iter_mut() {
-                if now >= entry.next_run_at {
-                    if let Some(next_after_now) = entry.schedule.next_after(now) {
-                        entry.next_run_at = next_after_now;
-                    }
-                    if entry.is_running {
-                        match entry.overlap {
-                            OverlapPolicy::Skip => {
-                                entry.skipped_overlaps += 1;
-                            }
-                            OverlapPolicy::Queue => {
-                                entry.queued_run = true;
-                            }
-                        }
-                    } else {
-                        entry.is_running = true;
-                        to_run.push((sid.clone(), entry.config.clone()));
-                    }
-                }
-            }
-        }
-
-        let mut summaries = Vec::with_capacity(to_run.len());
-        for (sid, conf) in to_run {
-            let sum = self.execute_scheduled_run(sid, conf).await;
-            summaries.push(sum);
+        let mut summaries = Vec::new();
+        for (sid, conf) in self.take_due(now) {
+            summaries.push(self.execute_scheduled_run(sid, conf).await);
         }
         summaries
     }
@@ -203,26 +175,130 @@ impl Scheduler {
                 },
             };
 
-            let run_again = {
-                let mut guard = self.entries.lock().unwrap();
-                if let Some(entry) = guard.get_mut(&sid) {
+            // Entries are never removed, so the stream's entry is still there.
+            let run_again = self
+                .entries
+                .lock()
+                .unwrap()
+                .get_mut(&sid)
+                .is_some_and(|entry| {
                     entry.total_runs += 1;
                     entry.last_run = Some(summary.clone());
-                    if entry.queued_run {
-                        entry.queued_run = false;
-                        true
-                    } else {
-                        entry.is_running = false;
-                        false
-                    }
-                } else {
-                    false
-                }
-            };
+                    entry.is_running = entry.queued_run;
+                    std::mem::take(&mut entry.queued_run)
+                });
 
             if !run_again {
                 return summary;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn scheduler() -> Scheduler {
+        Scheduler::new(
+            crate::build_full_registry(),
+            ResourceManager::new(),
+            None,
+            false,
+        )
+    }
+
+    fn conf(text: &str) -> StreamConfig {
+        StreamConfig::from_yaml_or_json(text).expect("config")
+    }
+
+    const OUT: &str = "output:\n  drop: {}\n";
+
+    fn at(s: &str) -> Timestamp {
+        s.parse().expect("timestamp")
+    }
+
+    #[test]
+    fn add_stream_refuses_what_cannot_be_scheduled() {
+        let s = scheduler();
+        let now = at("2026-03-28T10:00:00Z");
+        let gen = "input:\n  generate:\n    count: 1\n    mapping: 'root = 1'\n";
+        for (sched, want) in [
+            ("", "has no schedule configuration"),
+            (
+                "schedule:\n  overlap: queue\n",
+                "requires 'cron' or 'period'",
+            ),
+            (
+                "schedule:\n  cron: '0 0 * * *'\n  timezone: Mars/Olympus\n",
+                "unknown timezone",
+            ),
+            (
+                "schedule:\n  cron: '0 0 30 2 *'\n",
+                "has no future run time",
+            ),
+        ] {
+            let err = s
+                .add_stream("x", conf(&format!("{sched}{gen}{OUT}")), now)
+                .expect_err(sched)
+                .to_string();
+            assert!(err.contains(want), "{sched}: {err}");
+        }
+        assert!(s.list_entries().is_empty());
+        assert!(s.get_entry("x").is_none());
+        let ok = format!("schedule:\n  period: 1m\n{gen}{OUT}");
+        s.add_stream("p", conf(&ok), now).expect("period");
+        let e = s.get_entry("p").expect("entry");
+        assert_eq!(e.next_run_at, at("2026-03-28T10:01:00Z"));
+        assert_eq!(s.list_entries().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_run_that_does_not_build_is_recorded_as_failed() {
+        let s = scheduler();
+        let now = at("2026-03-28T10:00:00Z");
+        let text = format!("schedule:\n  period: 1m\ninput:\n  no_such_input: {{}}\n{OUT}");
+        s.add_stream("bad", conf(&text), now).expect("added");
+        let runs = s.tick_and_wait(at("2026-03-28T10:01:00Z")).await;
+        assert_eq!(runs.len(), 1);
+        assert!(!runs[0].success);
+        assert!(runs[0].error.is_some());
+        let e = s.get_entry("bad").expect("entry");
+        assert_eq!(e.total_runs, 1);
+        assert!(!e.is_running);
+    }
+
+    #[tokio::test]
+    async fn an_overlapping_tick_skips_or_queues_by_the_stream_rule() {
+        let s = scheduler();
+        let now = at("2026-03-28T10:00:00Z");
+        let slow =
+            "input:\n  generate:\n    count: 2\n    interval: 300ms\n    mapping: 'root = 1'\n";
+        for (id, overlap) in [("skip", "skip"), ("queue", "queue")] {
+            let text = format!("schedule:\n  period: 1s\n  overlap: {overlap}\n{slow}{OUT}");
+            s.add_stream(id, conf(&text), now).expect("added");
+        }
+        assert!(s.trigger_due(now).is_empty(), "nothing is due yet");
+        let first = s.trigger_due(at("2026-03-28T10:00:01Z"));
+        assert_eq!(first.len(), 2);
+        assert!(s.trigger_due(at("2026-03-28T10:00:02Z")).is_empty());
+        assert_eq!(s.get_entry("skip").expect("skip").skipped_overlaps, 1);
+        assert!(s.get_entry("queue").expect("queue").queued_run);
+        for _ in 0..100 {
+            let q = s.get_entry("queue").expect("queue");
+            if q.total_runs == 2 && !q.is_running {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let q = s.get_entry("queue").expect("queue");
+        assert_eq!(
+            (q.total_runs, q.queued_run, q.is_running),
+            (2, false, false)
+        );
+        let k = s.get_entry("skip").expect("skip");
+        assert_eq!(k.total_runs, 1);
+        assert!(k.last_run.expect("run").success);
     }
 }

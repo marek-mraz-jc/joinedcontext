@@ -1,0 +1,1 @@
+{"expressions": ["%{INT:n:int}", "%{WORD:w}"]}

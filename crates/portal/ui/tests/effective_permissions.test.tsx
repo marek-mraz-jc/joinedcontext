@@ -93,7 +93,7 @@ const POLICIES = {
   ],
 };
 
-function renderMatrix(document: unknown = GRANTS, accessStatus = 200) {
+function renderMatrix(document: unknown = GRANTS, accessStatus = 200, model?: string) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     // The generated client hands over a `Request`; the gateway call is a plain `fetch(url)`.
     const request = typeof input === "string" || input instanceof URL ? null : input;
@@ -115,6 +115,12 @@ function renderMatrix(document: unknown = GRANTS, accessStatus = 200) {
     }
     if (path.endsWith("/access")) {
       return json(document, accessStatus);
+    }
+    if (model !== undefined && path.endsWith("/schema/index.json")) {
+      return json({ models: [{ version: 1 }] });
+    }
+    if (model !== undefined && path.endsWith("/schema/v1/model.linkml.yaml")) {
+      return Promise.resolve(new Response(model, { headers: { "Content-Type": "text/yaml" } }));
     }
     if (path.endsWith("/endpoints")) {
       return json(ENDPOINTS);
@@ -257,6 +263,36 @@ describe("effective permissions", () => {
       en.access.matrix.residual,
       en.access.matrix.source,
     ]);
+  });
+
+  it("names the attributes as the published model does, and sorts by writes and attributes (T-7588)", async () => {
+    const user = userEvent.setup();
+    const model = [
+      "id: https://banskabystrica.sk/models/air",
+      "name: air",
+      "classes:",
+      "  AirQualityObserved:",
+      "    attributes:",
+      "      pm10:",
+      "        title: PM10 particles",
+      "      pm25:",
+      "        range: float",
+    ].join("\n");
+    renderMatrix(GRANTS, 200, model);
+    const air = await rowOf("AirQualityObserved");
+    expect(await within(air).findByText("PM10 particles")).toBeInTheDocument();
+    const table = air.closest("table") as HTMLElement;
+    const rows = () => [...table.querySelectorAll("tbody tr")].map((tr) => tr.textContent ?? "");
+    const writer = (text: string) => text.includes(en.access.words.area.change);
+    await user.click(within(table).getByRole("button", { name: `${en.entityGrid.columnMenu}: ${en.access.matrix.write}` }));
+    await user.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDesc }));
+    // Z to A: every "None" before the one grant that changes data.
+    expect(writer(rows().at(-1) ?? "")).toBe(true);
+    expect(writer(rows()[0])).toBe(false);
+    await user.click(within(table).getByRole("button", { name: `${en.entityGrid.columnMenu}: ${en.access.matrix.attributes}` }));
+    await user.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDesc }));
+    // Z to A: the model's "PM10 particles, …" before "All attributes".
+    expect(rows()[0]).toContain("PM10 particles");
   });
 
   it("reads the endpoint's own access surface, never a second implementation (EP-60)", async () => {

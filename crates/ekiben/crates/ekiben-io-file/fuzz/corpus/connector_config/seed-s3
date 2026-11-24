@@ -1,0 +1,1 @@
+{"bucket":"raw","endpoint":"http://minio:9000","force_path_style_urls":true,"credentials":{"id":"a","secret":"s","token":"t"}}

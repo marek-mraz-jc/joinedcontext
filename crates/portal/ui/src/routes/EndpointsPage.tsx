@@ -853,15 +853,14 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
       )
     : undefined;
   const spaceModelSource = useModelSource(project, spaceModel);
-  const modelClasses = useMemo(() => {
-    try {
-      return spaceModelSource
+  // parseModel answers an empty model for a source that does not parse, an alias bomb included.
+  const modelClasses = useMemo(
+    () =>
+      spaceModelSource
         ? parseModel(spaceModelSource).classes.filter((klass) => !isAnyClass(klass)).map((klass) => klass.name)
-        : [];
-    } catch {
-      return [];
-    }
-  }, [spaceModelSource]);
+        : [],
+    [spaceModelSource],
+  );
   const datasetTypes = [
     ...new Set([
       ...(tickedClassNames.length > 0 ? tickedClassNames : modelClasses),

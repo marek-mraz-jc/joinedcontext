@@ -1,0 +1,33 @@
+# Fuzzes what ekiben-io-remote reads from outside (T-7579): the ftp and imap config readers
+# (address, path, sender, mailbox) and the raw mails an IMAP server sends. Each must answer or
+# refuse, never panic or hang; an attachment keeps a bare file name. Run by hand:
+# cargo +nightly fuzz run <target> -- -max_total_time=300. Not a member of the ekiben workspace.
+[package]
+name = "ekiben-io-remote-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ekiben-io-remote = { path = "..", features = ["fuzzing"] }
+
+[[bin]]
+name = "mail"
+path = "fuzz_targets/mail.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "names"
+path = "fuzz_targets/names.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

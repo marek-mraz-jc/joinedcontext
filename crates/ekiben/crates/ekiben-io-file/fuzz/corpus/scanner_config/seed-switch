@@ -1,0 +1,1 @@
+{"scanner":{"switch":[{"re_match_name":"\\.csv$","scanner":{"chunker":{"size":3}}}]}}

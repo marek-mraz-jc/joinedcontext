@@ -56,6 +56,8 @@ const PLAN = {
 const RESTORES = [
   { id: 7, versionId: "d1", requestedBy: "ada", requestedAt: "2026-11-16T09:30:00Z", state: "pending", plan: PLAN, decidedBy: null, decidedAt: null, message: "" },
   { id: 8, versionId: "d1", requestedBy: "jana.kovacova", requestedAt: "2026-11-16T09:40:00Z", state: "pending", plan: PLAN, decidedBy: null, decidedAt: null, message: "" },
+  // Decided before the Portal recorded when: the line names who and why, and no time.
+  { id: 6, versionId: "d1", requestedBy: "ada", requestedAt: "2026-11-15T09:40:00Z", state: "declined", plan: PLAN, decidedBy: "jana.kovacova", decidedAt: null, message: "the wrong version" },
 ];
 
 const SOURCE = "bm6wyhdpioruxguvhqpu4lt2ca";
@@ -296,6 +298,43 @@ describe("Administration → Backups", () => {
     expect(plan).not.toHaveTextContent(en.backups.restore.organizationNote);
     expect(screen.queryByRole("button", { name: en.backups.restore.propose })).toBeNull();
     await expectNoAxeViolations(container);
+  });
+
+  it("names who declined a restore and why when no time was recorded (T-7588)", async () => {
+    render(ADMIN, null, false, false, DATA_TARGET);
+    const list = within(await (await data()).findByRole("list", { name: en.backups.data.requestsTitle }));
+    const declined = list.getAllByRole("listitem")[2];
+    expect(within(declined).getByText(en.backups.data.state.declined)).toBeInTheDocument();
+    expect(declined).toHaveTextContent(/jana\.kovacova.* the wrong version/);
+  });
+
+  it("sorts a data restore's plan and a project copy's rows by table, and asks for a project again when it is unpicked (T-7588)", async () => {
+    render(ADMIN, null, false, false, DATA_TARGET);
+    fireEvent.click(await (await data()).findByRole("button", { name: en.backups.versions.restore }));
+    const restore = within(await screen.findByTestId("backup-data-restore"));
+    fireEvent.change(restore.getByLabelText(en.backups.data.identity), { target: { value: "AGE-SECRET-KEY-1TEST" } });
+    fireEvent.click(restore.getByRole("button", { name: en.backups.data.check }));
+    await restore.findByRole("rowheader", { name: "portal/entity_comments" });
+    fireEvent.click(restore.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${en.backups.data.table}` }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: en.entityGrid.sortDesc }));
+    expect(restore.getAllByRole("rowheader")[0]).toHaveTextContent("portal/entity_comments");
+    fireEvent.keyDown(screen.getByTestId("backup-data-restore"), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("backup-data-restore")).toBeNull());
+
+    fireEvent.click((await data()).getByRole("button", { name: en.backups.copy.action }));
+    const copy = within(await screen.findByTestId("backup-project-copy"));
+    fireEvent.change(copy.getByLabelText(en.backups.data.identity), { target: { value: "AGE-SECRET-KEY-1TEST" } });
+    fireEvent.click(copy.getByRole("button", { name: en.backups.copy.list }));
+    const picker = await copy.findByLabelText(en.backups.copy.project);
+    fireEvent.change(picker, { target: { value: "" } });
+    expect(copy.getByRole("button", { name: en.backups.copy.check })).toHaveAttribute("aria-disabled", "true");
+    fireEvent.change(picker, { target: { value: SOURCE } });
+    fireEvent.change(copy.getByLabelText(en.backups.copy.name), { target: { value: "air-quality-restored" } });
+    fireEvent.click(copy.getByRole("button", { name: en.backups.copy.check }));
+    await copy.findByRole("rowheader", { name: "entity_comments" });
+    fireEvent.click(copy.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${en.backups.data.table}` }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: en.entityGrid.sortAsc }));
+    expect(copy.getAllByRole("rowheader")[0]).toHaveTextContent("entity_comments");
   });
 
   it("fetches nothing of the backup for a person who does not administer the Organization", async () => {

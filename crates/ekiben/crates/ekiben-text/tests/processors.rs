@@ -302,6 +302,52 @@ async fn jq_recursion_loops_and_deep_results_fail_the_message_not_the_process() 
     assert_eq!(bytes(&out[0][0]), "[1,1,1]");
 }
 
+/// The OS refusing the evaluation thread fails the message with the reason. Fault injected: the test
+/// reruns itself alone, caps its own address space 256 MiB above what it holds (prlimit), and the
+/// thread's 1 GiB stack no longer fits.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn jq_reports_a_thread_the_os_refuses() {
+    const CHILD: &str = "EKIBEN_TEXT_JQ_THREAD_REFUSED";
+    let name = "jq_reports_a_thread_the_os_refuses";
+    if std::env::var_os(CHILD).is_none() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--test-threads=1", "--nocapture"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        let why = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success() && text.contains("1 passed"),
+            "{text}{why}"
+        );
+        return;
+    }
+    let (p, c) = build_yaml("jq:\n  query: .\n").unwrap();
+    let status = std::fs::read_to_string("/proc/self/status").unwrap();
+    let held_kib: u64 = status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmSize:"))
+        .and_then(|v| v.trim().trim_end_matches("kB").trim().parse().ok())
+        .unwrap();
+    let cap = held_kib * 1024 + (256 << 20);
+    assert!(cap < ekiben_text::processor_jq::THREAD_STACK as u64 + held_kib * 1024);
+    let capped = std::process::Command::new("prlimit")
+        .arg(format!("--pid={}", std::process::id()))
+        .arg(format!("--as={cap}"))
+        .status()
+        .unwrap();
+    assert!(capped.success());
+    // the processor list fails the message with the batch's error
+    let out = p
+        .process_batch(&c, vec![Part::new(Bytes::from_static(b"{}"))])
+        .await
+        .unwrap();
+    let err = out[0][0].error_get().expect("errored").to_string();
+    assert!(err.contains("jq: cannot start its thread: "), "{err}");
+}
+
 #[tokio::test]
 async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
     use ekiben_bloblang::Value;
@@ -315,6 +361,7 @@ async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
     let big = "123456789012345678901234567890";
     let input = Value::Array(
         vec![
+            Value::Null,
             Value::Uint(u64::MAX),
             Value::Number("12".into()),
             Value::Number(big.into()),
@@ -326,7 +373,7 @@ async fn jq_reads_every_value_kind_and_refuses_what_it_cannot_write() {
     let out = p.process_batch(&c, vec![part(input)]).await.unwrap();
     assert_eq!(
         bytes(&out[0][0]),
-        format!("[18446744073709551615,12,{big},-{big},1.5]")
+        format!("[null,18446744073709551615,12,{big},-{big},1.5]")
     );
     let ts = ekiben_bloblang::time_format::utc("2026-01-02T03:04:05Z".parse().unwrap());
     for (v, want) in [
@@ -622,6 +669,17 @@ async fn test_grok_file_imports() {
         bytes(&out[0][0]),
         r#"{"nested":{"first":10,"second":"foo","third":"bar"}}"#
     );
+    // a directory in the patterns directory is no pattern file: skipped, the files still load
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    let (p, c) = build_yaml(&yaml).unwrap();
+    let out = p
+        .process_batch(&c, vec![Part::new(Bytes::from_static(b"hello foo bar"))])
+        .await
+        .unwrap();
+    assert_eq!(
+        bytes(&out[0][0]),
+        r#"{"first":"hello","second":"foo","third":"bar"}"#
+    );
 }
 
 #[test]
@@ -877,4 +935,32 @@ async fn msgpack_names_its_type_and_fails_a_message_it_cannot_decode() {
     );
     let err = build_yaml("msgpack: {}\n").err().unwrap().to_string();
     assert!(err.contains("field 'operator' is required"), "{err}");
+}
+
+/// fuzz target `documents` (T-7577): maps keyed by maps 100 levels deep made the key text double its
+/// escapes at each level, a 17 s timeout on 212 bytes; such a key is refused now.
+#[tokio::test]
+async fn msgpack_refuses_a_map_keyed_by_a_map_in_bounded_time() {
+    let input = hex::decode(concat!(
+        "82a16100822e3001a1a182a16100828282828282828282828282828282828282",
+        "82828282828282828282808282828282828282828282828282825f0000008282",
+        "8282828282828282828282828282828282828282828282828282828282828282",
+        "8282828282828282828282828282828282823337333631335c223a2d33313832",
+        "39363700000000000000000000000000003630343837353337333331362c5c2e",
+        "00225b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b355b5b5b000000000000006d8282",
+        "82828282828282828282a16101206a73a17887",
+    ))
+    .unwrap();
+    let (p, c) = build_yaml("msgpack:\n  operator: to_json\n").unwrap();
+    let started = std::time::Instant::now();
+    let out = p
+        .process_batch(&c, vec![Part::new(Bytes::from(input))])
+        .await
+        .unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    let err = out[0][0].error_get().expect("errored").to_string();
+    assert_eq!(
+        err,
+        "failed to convert MsgPack document to JSON: msgpack: a map key must be a scalar, not an array or map"
+    );
 }

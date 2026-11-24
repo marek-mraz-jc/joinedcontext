@@ -339,6 +339,40 @@ async fn the_input_pages_through_the_listing_and_deletes_only_what_was_acked() {
 }
 
 #[tokio::test]
+async fn an_anonymous_read_is_unsigned_and_an_ack_without_a_runtime_deletes_nothing() {
+    let (endpoint, seen) = store(Arc::new(|method, path| match (method, path) {
+        ("GET", p) if p.contains("list-type=2") => ok(
+            "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>a.txt</Key></Contents></ListBucketResult>",
+        ),
+        ("GET", _) => ok("a1"),
+        _ => "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".to_string(),
+    }))
+    .await;
+    let ctx = ctx();
+    let mut config = base(&endpoint, json!({"delete_objects": true}));
+    config
+        .as_object_mut()
+        .expect("object")
+        .remove("credentials");
+    let mut input = ctx
+        .registry
+        .build_input(&conf("", config), &ctx)
+        .expect("input");
+    let (parts, ack) = input.read_batch(&ctx).await.expect("read");
+    assert_eq!(String::from_utf8_lossy(&parts[0].as_bytes_ref()), "a1");
+    // an ack answered on a thread with no runtime cannot send the delete
+    std::thread::spawn(move || ack.ack()).join().expect("ack");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let seen = seen.lock().expect("lock").clone();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert!(seen.iter().all(|r| r.starts_with("get ")), "{seen:?}");
+    assert!(
+        seen.iter().all(|r| !r.contains("authorization:")),
+        "{seen:?}"
+    );
+}
+
+#[tokio::test]
 async fn caps_error_answers_and_cut_bodies_are_refused_with_the_object_named() {
     let (endpoint, _) = store(Arc::new(|_, path| match path {
         p if p.contains("list-type=2") => ok(

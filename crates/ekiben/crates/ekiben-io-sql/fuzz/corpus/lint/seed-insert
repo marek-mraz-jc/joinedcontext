@@ -1,0 +1,1 @@
+{"driver":"postgres","dsn":"postgres://h/db","table":"t","columns":["a"],"args_mapping":"root = []","conn_max_idle_time":"5s","conn_max_open":2,"init_files":["*.sql"],"max_in_flight":4}

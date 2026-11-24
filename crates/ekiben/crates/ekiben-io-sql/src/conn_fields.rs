@@ -754,9 +754,14 @@ mod tests {
 
     #[test]
     fn driver_lint_names_the_driver() {
-        assert!(Driver::parse("clickhouse")
-            .unwrap_err()
-            .contains("clickhouse"));
+        assert_eq!(
+            Driver::parse("clickhouse").unwrap_err(),
+            "driver clickhouse is not supported by ekiben (it runs postgres, mysql and sqlite)"
+        );
+        for d in [Driver::Postgres, Driver::MySql, Driver::Sqlite] {
+            assert_eq!(Driver::parse(d.name()), Ok(d));
+        }
+        assert_eq!(Driver::MySql.name(), "mysql");
         assert_eq!(
             Driver::parse("pgx").unwrap_err(),
             "sql: unknown driver \"pgx\" (forgotten import?)"
@@ -955,6 +960,242 @@ mod tests {
         assert_eq!((o.get_host(), o.get_port()), ("127.0.0.1", 3306));
         assert!(parse_mysql_dsn("u@unix(/tmp/s)/db").is_err());
         assert!(parse_mysql_dsn("nodb").is_err());
+    }
+
+    #[test]
+    fn postgres_dsn_keys_quotes_and_refusals() {
+        let o = parse_postgres_dsn(
+            r"host = h password='it\'s' application_name=a\ b binary_parameters=yes krbsrvname=k search_path=x statement_timeout=5",
+        )
+        .unwrap()
+        .opts;
+        assert_eq!(o.get_host(), "h");
+        assert_eq!(o.get_application_name(), Some("a b"));
+        assert_eq!(o.get_username(), "postgres", "lib/pq's default user");
+        assert_eq!(
+            o.get_options(),
+            Some("-c search_path=x -c statement_timeout=5")
+        );
+        // lib/pq's own keys never reach the server as run-time parameters.
+        let o = parse_postgres_dsn(
+            "host=h binary_parameters=yes disable_prepared_binary_result=yes krbspn=x",
+        )
+        .unwrap()
+        .opts;
+        assert_eq!(o.get_options(), None);
+        let o = parse_postgres_dsn("fallback_application_name=f sslmode=verify-full")
+            .unwrap()
+            .opts;
+        assert_eq!(o.get_application_name(), Some("f"));
+        assert!(matches!(o.get_ssl_mode(), PgSslMode::VerifyFull));
+        assert_eq!(o.get_host(), "localhost");
+        assert!(parse_postgres_dsn("")
+            .unwrap()
+            .opts
+            .get_database()
+            .is_none());
+        for (dsn, why) in [
+            ("host", "expected key=value pairs"),
+            ("=x", "expected key=value pairs"),
+            ("host='h", "expected key=value pairs"),
+            (r"host='h\", "expected key=value pairs"),
+            (r"host=h\", "expected key=value pairs"),
+            ("port=dbport", "port is not a number"),
+            ("sslmode=sometimes", "unknown sslmode"),
+            (
+                "sslrootcert=/etc/ca.pem",
+                "parameter sslrootcert is not supported",
+            ),
+            ("sslkey=k", "parameter sslkey is not supported"),
+            (
+                "postgres://h/db?sslinline=x",
+                "parameter sslinline is not supported",
+            ),
+        ] {
+            let e = parse_postgres_dsn(dsn).err().expect(dsn).to_string();
+            assert!(e.contains(why), "{dsn}: {e}");
+        }
+    }
+
+    #[test]
+    fn mysql_dsn_params_tls_and_addresses() {
+        let tls = |p: &str| {
+            parse_mysql_dsn(&format!("u@tcp(h:1)/db?tls={p}"))
+                .unwrap()
+                .0
+                .get_ssl_mode()
+        };
+        assert!(matches!(tls("true"), MySqlSslMode::VerifyIdentity));
+        assert!(matches!(tls("false"), MySqlSslMode::Disabled));
+        assert!(matches!(tls("skip-verify"), MySqlSslMode::Required));
+        assert!(matches!(tls("preferred"), MySqlSslMode::Preferred));
+        let (o, pt) = parse_mysql_dsn(
+            "u:p@tcp([::1]:3307)/my%20db?parseTime=0&loc=UTC&charset=utf8mb4,utf8&collation=utf8mb4_bin&allowNativePasswords=true&timeout=5s&readTimeout=1m&writeTimeout=30s",
+        )
+        .unwrap();
+        assert!(!pt);
+        assert_eq!((o.get_host(), o.get_port()), ("::1", 3307));
+        assert_eq!(o.get_database(), Some("my db"));
+        assert_eq!(o.get_charset(), "utf8mb4");
+        assert_eq!(o.get_collation(), Some("utf8mb4_bin"));
+        let (o, _) = parse_mysql_dsn("u@tcp([::1])/db").unwrap();
+        assert_eq!((o.get_host(), o.get_port()), ("::1", 3306));
+        let (o, _) = parse_mysql_dsn("u@tcp(db.example)/db").unwrap();
+        assert_eq!((o.get_host(), o.get_port()), ("db.example", 3306));
+        let (o, _) = parse_mysql_dsn("u@tcp/db").unwrap();
+        assert_eq!(o.get_host(), "127.0.0.1");
+        for (dsn, why) in [
+            ("u@tcp(h:1/db", "missing closing brace"),
+            ("u@tcp(h:port)/db", "invalid address"),
+            ("u@tcp([::1)/db", "invalid address"),
+            ("u@tcp([::1]:x)/db", "invalid address"),
+            (
+                "u@tcp(h:1)/db?tls=custom",
+                "tls config custom is not supported",
+            ),
+            ("u@tcp(h:1)/db?loc=Local", "parameter loc is not supported"),
+            (
+                "u@tcp(h:1)/db?allowNativePasswords=false",
+                "parameter allowNativePasswords is not supported",
+            ),
+            ("u@tcp(h:1)/db?timeout=soon", "timeout: invalid duration"),
+        ] {
+            let e = parse_mysql_dsn(dsn).expect_err(dsn).to_string();
+            assert!(e.contains(why), "{dsn}: {e}");
+        }
+    }
+
+    fn private_org() -> Arc<OrgContext> {
+        let quotas = ekiben_core::OrgQuotas {
+            allow_private_ips: true,
+            ..Default::default()
+        };
+        OrgContext::new(ekiben_core::OrgId::new("o"), quotas)
+    }
+
+    /// A port that accepts each connection and closes it at once: no database answers there.
+    fn closing_port() -> u16 {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for c in l.incoming() {
+                drop(c);
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn open_pings_with_init_verify_conn_and_names_the_failure() {
+        let org = private_org();
+        let port = closing_port();
+        let verify = serde_json::json!({"init_verify_conn": true, "conn_max_idle_time": "0s",
+            "conn_max_life_time": "1m"});
+        let settings = ConnSettings::from_config(verify.as_object().unwrap(), None).unwrap();
+        for (driver, dsn) in [
+            (
+                Driver::Postgres,
+                format!("host=127.0.0.1 port={port} sslmode=disable connect_timeout=2"),
+            ),
+            (Driver::MySql, format!("u@tcp(127.0.0.1:{port})/db")),
+        ] {
+            let (target, _) = parse_dsn(driver, &dsn, None).unwrap();
+            let e = open(&target, &settings, &org)
+                .await
+                .err()
+                .expect(&dsn)
+                .to_string();
+            assert!(
+                e.contains("could not establish connection to database"),
+                "{dsn}: {e}"
+            );
+        }
+        // Without the ping a pool opens lazily and fails only when used.
+        let lazy = ConnSettings::from_config(&serde_json::Map::new(), None).unwrap();
+        let (target, _) = parse_dsn(
+            Driver::Postgres,
+            &format!("host=127.0.0.1 port={port}"),
+            None,
+        )
+        .unwrap();
+        let db = open(&target, &lazy, &org).await.unwrap();
+        assert_eq!(db.driver(), Driver::Postgres);
+        assert!(db.exec_raw("SELECT 1").await.is_err());
+        db.close().await;
+        // A host the outbound rule refuses is never dialled.
+        let strict = OrgContext::new(ekiben_core::OrgId::new("o"), Default::default());
+        assert!(open(&target, &lazy, &strict).await.is_err());
+        // sqlite: a pinged file database, and one that cannot open.
+        let dir = tempfile::tempdir().unwrap();
+        let (ok, _) = parse_dsn(Driver::Sqlite, "file:ok.db", Some(dir.path())).unwrap();
+        let db = open(&ok, &settings, &org).await.unwrap();
+        assert_eq!(db.driver(), Driver::Sqlite);
+        db.close().await;
+        let e = db.exec_raw("SELECT 1").await.unwrap_err();
+        assert_eq!(crate::util::db_error_text(&e), "sql: database is closed");
+        let (missing, _) =
+            parse_dsn(Driver::Sqlite, "file:none.db?mode=rw", Some(dir.path())).unwrap();
+        let e = open(&missing, &settings, &org)
+            .await
+            .err()
+            .expect("no file")
+            .to_string();
+        assert!(
+            e.contains("could not establish connection to database"),
+            "{e}"
+        );
+    }
+
+    #[tokio::test]
+    async fn init_files_and_statement_run_once_and_a_failure_only_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.sql"), "CREATE TABLE a (x int)").unwrap();
+        std::fs::write(dir.path().join("b.sql"), "NOT SQL").unwrap();
+        let conf = serde_json::json!({"init_files": ["*.sql"],
+            "init_statement": "INSERT INTO a VALUES (1)"});
+        let s = ConnSettings::from_config(conf.as_object().unwrap(), Some(dir.path())).unwrap();
+        let file = dir.path().join("i.db").display().to_string();
+        let (t, _) = parse_dsn(Driver::Sqlite, &file, None).unwrap();
+        let db = open(&t, &s, &private_org()).await.unwrap();
+        s.apply(&db).await;
+        s.apply(&db).await;
+        let n: i64 = rusqlite::Connection::open(&file)
+            .unwrap()
+            .query_row("SELECT count(*) FROM a", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "the init statement ran once");
+        let bad = serde_json::json!({"init_statement": "ALSO NOT SQL"});
+        let s = ConnSettings::from_config(bad.as_object().unwrap(), None).unwrap();
+        s.apply(&db).await;
+    }
+
+    #[tokio::test]
+    async fn auth_errors_by_driver() {
+        let io = crate::sqlx::Error::Io(std::io::Error::other("reset"));
+        assert!(!is_auth_error(Driver::Postgres, &io));
+        assert!(!is_auth_error(Driver::Sqlite, &io));
+        assert!(!is_auth_error(Driver::MySql, &io));
+        assert!(is_auth_error(
+            Driver::MySql,
+            &crate::sqlx::Error::Protocol("Access denied for user 'u'".into())
+        ));
+        assert!(is_bad_conn(&io) && is_bad_conn(&crate::sqlx::Error::PoolClosed));
+        assert!(!is_bad_conn(&crate::sqlx::Error::RowNotFound));
+        if let Some(dsn) = crate::testing::env_dsn("PG_DSN") {
+            postgres_auth_error(&dsn).await;
+        }
+    }
+
+    /// A role the CI postgres does not know is SQLSTATE class 28 (28000), under trust and scram
+    /// alike.
+    async fn postgres_auth_error(dsn: &str) {
+        let mut u = url::Url::parse(dsn).unwrap();
+        u.set_username("no_such_role").unwrap();
+        let (t, _) = parse_dsn(Driver::Postgres, u.as_str(), None).unwrap();
+        let s = ConnSettings::from_config(&serde_json::Map::new(), None).unwrap();
+        let db = open(&t, &s, &private_org()).await.unwrap();
+        let e = db.exec_raw("SELECT 1").await.expect_err("an unknown role");
+        assert!(is_auth_error(Driver::Postgres, &e), "{e}");
     }
 
     #[test]
