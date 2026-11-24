@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+# `ekiben_io_remote::fuzzing`: the mail parser for fuzz/ (cargo fuzz).
+fuzzing = []
+
 [dependencies]
 ekiben-core = { workspace = true }
 ekiben-io-http = { workspace = true }
