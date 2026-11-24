@@ -376,6 +376,12 @@ fn a_catalogue_address_and_its_branding_layer_over_the_installation() {
         "an empty title is not a title"
     );
 
+    // a catalogue without languages keeps the installation's
+    let bare = catalogue(json!({"defaultLanguage": "", "languages": []}));
+    let installation = dataroom_core::BrandingBlock::default();
+    let kept = bare.effective_branding(Some(&installation));
+    assert_eq!(kept.languages, installation.languages);
+
     // tokens that are not colours, or the defaults, leave the installation's values
     let base = dataroom_core::BrandingBlock::default();
     let odd = catalogue(json!({"theme": {
@@ -398,6 +404,9 @@ fn a_publisher_iri_on_a_left_host_is_not_its_own() {
         "created": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z"
     }))
     .unwrap();
+    let mut undeclared = publisher.clone();
+    undeclared.uri = "not an iri".into();
+    assert!(!undeclared.has_own_iri(&catalogue(json!({}))));
     let moved = catalogue(json!({"leftHosts": ["old.city.example"]}));
     assert!(
         !publisher.has_own_iri(&moved),

@@ -350,3 +350,41 @@ fn svg_checks_skip_comments_and_declarations_but_never_an_attribute() {
     let err = logo_error(b"<svg = width=\"10\"></svg>", "image/svg+xml");
     assert!(err.contains("an attribute without a name"), "{err}");
 }
+
+#[test]
+fn yaml_colours_fonts_and_a_logo_svg_reach_the_block() {
+    use dataroom_core::branding::{sanitize_font_stack, BrandingDatasetFields};
+    let field: jc_core::kinds::DatasetField =
+        serde_json::from_value(json!({"name": "budget", "label": {}, "type": "number"})).unwrap();
+    assert_eq!(BrandingDatasetFields::xsd_type(&field), Some("decimal"));
+    assert_eq!(sanitize_font_stack("   "), None);
+    let b = BrandingBlock::from_yaml_lossy(
+        "branding:\n  domain: 'https://{{ default \"docs.example\" '\n  tagline: 'Dáta mesta'\n  colours:\n    primary: '#112233'\n  fonts:\n    heading: 'Inter, sans-serif'\n",
+    );
+    assert_eq!(b.colours.primary, "#112233");
+    assert_eq!(b.fonts.heading, "Inter, sans-serif");
+    assert_eq!(b.tagline, "Dáta mesta");
+    assert_eq!(
+        b.domain,
+        BrandingBlock::default().domain,
+        "a Helm expression without its closing braces is no host"
+    );
+    let mut svg = BrandingBlock::default();
+    svg.apply_override_json(
+        &json!({"logoSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"}),
+    );
+    assert!(svg.logo_svg.is_some());
+    let before = svg.clone();
+    svg.apply_override_json(&json!(["not", "an", "object"]));
+    assert_eq!(
+        svg, before,
+        "an override that is not an object changes nothing"
+    );
+    // unquoted attribute values are read up to the next space
+    assert!(dataroom_core::branding::is_safe_logo_svg(
+        "<svg width=10 height=10></svg>"
+    ));
+    assert!(!dataroom_core::branding::is_safe_logo_svg(
+        "<svg width=10 onload=x></svg>"
+    ));
+}

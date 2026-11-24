@@ -2165,6 +2165,20 @@ async fn writes_into_a_catalogue_that_does_not_exist_are_not_found() {
             "branding.propose",
             json!({"branding": {"primary": "#112233"}}),
         ),
+        (
+            "profile.propose",
+            json!({"profile": {"id": "city-ext", "version": "1",
+                "uri": "https://example.org/p", "title": {"en": "City"}, "shapesTurtle": "",
+                "builtIn": false}}),
+        ),
+        (
+            "catalogue.propose",
+            json!({"catalogue": {
+                "orgId": w.org, "id": w.cat, "name": "city", "host": "data.city.example",
+                "title": {"sk": "Mesto"}, "description": {}, "defaultLanguage": "sk",
+                "languages": ["sk"], "mainProfile": "dcat-ap-3.0.1", "activeProfiles": [],
+                "modified": "2026-11-01T10:00:00Z"}}),
+        ),
     ] {
         match empty.run(&admin, op, input).await {
             Err(DataroomError::NotFound(m)) => assert_eq!(m, "catalogue not found", "{op}"),
@@ -2172,6 +2186,103 @@ async fn writes_into_a_catalogue_that_does_not_exist_are_not_found() {
         }
     }
     assert!(empty.activity_ops().await.is_empty());
+    // a dataset read where the catalogue is gone answers in English
+    empty
+        .store
+        .upsert_dataset(&admin, dataset("open", "city", "public", json!({})))
+        .await
+        .unwrap();
+    let got = empty
+        .run(&admin, "dataset.get", json!({"id": "open"}))
+        .await;
+    assert_eq!(got.unwrap()["name"], "open");
+}
+
+#[test]
+fn a_preview_card_falls_back_to_the_name_and_any_language_keywords() {
+    use dataroom_core::ops::PreviewRecord;
+    let ds = dataset(
+        "bez-nazvu",
+        "city",
+        "public",
+        json!({"title": {"sk": ""}, "keywords": {"de": ["luft", "a", "b", "c", "d", "e"]}}),
+    );
+    let card = PreviewRecord::of(&ds, "en");
+    assert_eq!(card.title, "bez-nazvu");
+    assert_eq!(card.keywords, ["luft", "a", "b", "c", "d"], "at most five");
+}
+
+/// A runner that tests and previews: the call answers its word and its records.
+struct Previewer;
+
+impl HarvestRunner for Previewer {
+    fn run_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        store: &'a dyn Store,
+        source: &'a HarvestSource,
+    ) -> BoxFuture<'a, Result<HarvestRun>> {
+        Harvester.run_source(ctx, store, source)
+    }
+
+    fn test_source<'a>(
+        &'a self,
+        _ctx: &'a RequestCtx,
+        _store: &'a dyn Store,
+        _source: &'a HarvestSource,
+    ) -> BoxFuture<'a, Result<dataroom_core::ops::SourceTest>> {
+        Box::pin(std::future::ready(Ok(
+            dataroom_core::ops::SourceTest::RefusedHost,
+        )))
+    }
+
+    fn preview_source<'a>(
+        &'a self,
+        _ctx: &'a RequestCtx,
+        _store: &'a dyn Store,
+        _source: &'a HarvestSource,
+    ) -> BoxFuture<'a, Result<dataroom_core::ops::SourcePreview>> {
+        Box::pin(std::future::ready(Ok(dataroom_core::ops::SourcePreview {
+            outcome: dataroom_core::ops::SourceTest::Ok,
+            records: Vec::new(),
+            partial: true,
+        })))
+    }
+}
+
+#[tokio::test]
+async fn a_source_test_answers_the_runners_word_and_preview() {
+    let w = world().await;
+    let src = json!({"source": {"name": "nkod", "kind": "dcat-ap",
+        "url": "https://nkod.example/feed.ttl", "publisherId": "city",
+        "allowedHosts": ["nkod.example"]}});
+    w.run(&w.admin(), "harvest_source.propose", src)
+        .await
+        .unwrap();
+    let mut ops = w.ops();
+    ops.harvester = Some(Arc::new(Previewer));
+    let admin = w.admin();
+    let tested = execute_operation(
+        &ops,
+        &admin,
+        "harvest_source.test",
+        json!({"source": "nkod"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(tested, json!({"outcome": "refused host"}));
+    let preview = execute_operation(
+        &ops,
+        &admin,
+        "harvest_source.test",
+        json!({"source": "nkod", "preview": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (preview["outcome"].clone(), preview["partial"].clone()),
+        (json!("ok"), json!(true))
+    );
 }
 
 /// An activity row with a fresh id for a store write the test sets up; the store files it under
