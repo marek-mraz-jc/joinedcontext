@@ -337,9 +337,8 @@ pub fn here(state: &AppState) -> Option<Arc<OrganizationRealm>> {
 pub fn of_app(state: &AppState, app: &str) -> Option<Arc<OrganizationRealm>> {
     let project = state
         .mirror
-        .find(|env| env.kind == "App" && env.metadata.name == app)?
-        .metadata
-        .namespace?;
+        .find(|env| env.kind == "App" && env.metadata.name == app)
+        .and_then(|env| env.metadata.namespace)?;
     let organization = crate::permissions::organization_of(&state.mirror, &project)?;
     state.organization_realms.get(&organization)
 }
@@ -706,7 +705,7 @@ mod tests {
             Ok(1)
         );
         let hel = state.organization_realms.get("hel").expect("served");
-        assert_eq!(hel.bearer.refresh().await.map_err(|e| e.to_string()), Ok(1));
+        assert_eq!(hel.bearer.refresh().await.ok(), Some(1));
         assert!(
             state.replace_organization_realms("[{", None).is_err(),
             "a garbled list"

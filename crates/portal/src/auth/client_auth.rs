@@ -264,7 +264,7 @@ mod tests {
         let answer = paced(|| {
             built += 1;
             let request = http.get(realm.uri());
-            async { request.send().await.map_err(|err| err.to_string()) }
+            async { Ok(request.send().await.expect("the mock answers")) }
         })
         .await
         .expect("an answer");
@@ -277,7 +277,7 @@ mod tests {
             .await;
         let answer = paced(|| {
             let request = http.get(busy.uri());
-            async { request.send().await.map_err(|err| err.to_string()) }
+            async { Ok(request.send().await.expect("the mock answers")) }
         })
         .await
         .expect("an answer");
