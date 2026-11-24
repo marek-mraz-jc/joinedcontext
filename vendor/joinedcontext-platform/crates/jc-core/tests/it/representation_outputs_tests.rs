@@ -36,7 +36,7 @@ const FIVE: &str = r#"  feed:
     - name: vsetky
       sources: [{ type: Event, preset: sdm-event }]
     - name: mesto
-      filter: { scopeQ: /bbsk/banska-bystrica }
+      filter: { scopeQ: /bbsk/banska_bystrica }
       sources: [{ type: Event, preset: sdm-event }]
 "#;
 

@@ -1,0 +1,9 @@
+id: https://example.org/air
+name: air
+default_range: string
+slots:
+  pm10: { range: float, unit: { ucum_code: ug/m3 } }
+  name: { annotations: { personal: true } }
+classes:
+  AirQualityObserved:
+    slots: [name, pm10]

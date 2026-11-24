@@ -1,5 +1,8 @@
-# Fuzzing a Portal's own stylesheet check (T-7745) under libFuzzer:
-# `cargo +nightly fuzz run portal_css`. Not a workspace member.
+# Fuzzing jc-core's outside inputs under libFuzzer (T-7745, T-7766): manifests of every kind, names,
+# URNs and hosts, cron expressions, the manifest formatter, KPI formulas, LinkML models and the
+# Portal stylesheet. `cargo +nightly fuzz run <target> --target x86_64-unknown-linux-gnu
+# fuzz/corpus/<target> fuzz/seeds/<target> -- -max_total_time=300 -rss_limit_mb=2048`; seeds/ is the
+# committed seed corpus. Not a workspace member.
 [package]
 name = "jc-core-fuzz"
 version = "0.0.0"
@@ -18,6 +21,48 @@ jc-core = { path = ".." }
 [[bin]]
 name = "portal_css"
 path = "fuzz_targets/portal_css.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest"
+path = "fuzz_targets/manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "names"
+path = "fuzz_targets/names.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cron"
+path = "fuzz_targets/cron.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "yaml_fmt"
+path = "fuzz_targets/yaml_fmt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kpi_formula"
+path = "fuzz_targets/kpi_formula.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "linkml"
+path = "fuzz_targets/linkml.rs"
 test = false
 doc = false
 bench = false

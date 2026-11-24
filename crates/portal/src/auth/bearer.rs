@@ -427,7 +427,7 @@ pub(crate) fn test_verifier(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     /// ADR-N-067 2.2 (T-6408): the `groups` claim holds full paths; the session names a root
     /// group by its name and keeps an Organization's subgroup as `helsinki/members`, which no
     /// RoleBinding subject, project or Group name can equal.
@@ -490,7 +490,7 @@ mod tests {
     use p256::pkcs8::EncodePrivateKey;
     use serde_json::json;
 
-    const ISSUER: &str = "https://idm.example.test/realms/dev";
+    pub(crate) const ISSUER: &str = "https://idm.example.test/realms/dev";
 
     fn verifier() -> BearerVerifier {
         // Port 9 (discard) refuses connections immediately: a refresh fails fast, never hangs.
@@ -502,7 +502,7 @@ mod tests {
     }
 
     /// A fresh P-256 key pair: the signing key for `encode` and its public half as a JWK set.
-    fn keypair(kid: &str) -> (EncodingKey, JwkSet) {
+    pub(crate) fn keypair(kid: &str) -> (EncodingKey, JwkSet) {
         let secret = p256::SecretKey::random(&mut rand_core::OsRng);
         let der = secret.to_pkcs8_der().unwrap();
         let signer = EncodingKey::from_ec_der(der.as_bytes());
@@ -515,7 +515,7 @@ mod tests {
         (signer, set)
     }
 
-    fn now() -> i64 {
+    pub(crate) fn now() -> i64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -545,7 +545,7 @@ mod tests {
         assert_eq!(identity(json!(true)).as_deref(), Some("admin@city.example"));
     }
 
-    fn sign(signer: &EncodingKey, kid: &str, claims: &serde_json::Value) -> String {
+    pub(crate) fn sign(signer: &EncodingKey, kid: &str, claims: &serde_json::Value) -> String {
         let mut header = Header::new(Algorithm::ES256);
         header.kid = Some(kid.into());
         encode(&header, claims, signer).unwrap()
