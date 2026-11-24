@@ -4962,6 +4962,8 @@ output_error{stream="kpi"} 6
             .with_ansi(false)
             .with_writer(move || writer.clone())
             .finish();
+        // The global test subscriber keeps a callsite another test registers from caching `never`.
+        crate::test_log::install();
         let staged =
             tracing::subscriber::with_default(subscriber, || stageable(content).expect("YAML"));
         let said = String::from_utf8_lossy(&log.0.lock().expect("log")).into_owned();
