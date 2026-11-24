@@ -1019,6 +1019,232 @@ async fn every_odata_operation_runs_and_refuses_bad_parameters() {
     assert_eq!(st, StatusCode::NOT_FOUND, "gone");
 }
 
+/// OData reads by key, by bare name and through expansions, the package sets, the set-read tools
+/// MCP calls, and the refusals of a key or path that names nothing.
+#[tokio::test]
+async fn odata_reads_by_key_name_and_expansion_and_refuse_what_names_nothing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let app = world(tmp.path());
+    const K: &str = "joinedcontext/ops";
+    const NONE: &str = "00000000-0000-4000-8000-000000000000";
+    let get = |uri: String| {
+        let app = app.clone();
+        async move { send(&app, "GET", &uri, READER, None).await }
+    };
+    let (st, repo) = op(
+        &app,
+        "CreateRepository",
+        ADMIN,
+        json!({ "Owner": "joinedcontext", "Name": "ops" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{repo}");
+    let rid = repo["Id"].as_str().unwrap_or_default().to_owned();
+    let (_, _) = op(
+        &app,
+        "CreateBranch",
+        ADMIN,
+        json!({ "repo": K, "NewBranchName": "feature" }),
+    )
+    .await;
+    let (st, c) = op(
+        &app,
+        "CommitFiles",
+        ADMIN,
+        json!({ "repo": K, "Branch": "feature", "Message": "a",
+        "Files": [{ "operation": "create", "path": "a.txt", "content": STANDARD.encode("a") }] }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{c}");
+    let sha = c["Sha"].as_str().unwrap_or_default().to_owned();
+    let (st, pr) = op(
+        &app,
+        "OpenPullRequest",
+        ADMIN,
+        json!({ "repo": K, "Head": "feature", "Title": "t" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{pr}");
+    let (st, status) = send(
+        &app,
+        "POST",
+        &format!("/api/v1/repos/{K}/statuses/{sha}"),
+        ADMIN,
+        Some(json!({ "state": "success", "context": "ci", "description": "green" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{status}");
+    let (st, pkg) = op(
+        &app,
+        "PublishPackage",
+        ADMIN,
+        json!({ "Package": "tool", "Version": "1.0.0",
+        "File": "tool.txt", "ContentBase64": STANDARD.encode("bytes") }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{pkg}");
+    assert_eq!(
+        pkg["Owner"],
+        json!("admin"),
+        "the caller owns a package that names no owner"
+    );
+
+    // Keys: named, by id, by bare name, unknown and ambiguous.
+    let (st, one) = get(format!("/odata/Repositories(Id='{rid}')")).await;
+    assert_eq!(
+        (st, one["Name"].clone()),
+        (StatusCode::OK, json!("ops")),
+        "{one}"
+    );
+    let (st, _) = get(format!("/odata/Repositories('{NONE}')")).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, one) = get("/odata/Repositories('ops')".into()).await;
+    assert_eq!(
+        (st, one["Id"].clone()),
+        (StatusCode::OK, json!(rid)),
+        "{one}"
+    );
+    let (st, _) = get("/odata/Repositories('nothing')".into()).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, mine) = op(&app, "CreateRepository", ADMIN, json!({ "Name": "ops" })).await;
+    assert_eq!(
+        (st, mine["Owner"].clone()),
+        (StatusCode::OK, json!("admin")),
+        "{mine}"
+    );
+    let (st, e) = send(&app, "GET", "/odata/Repositories('ops')", ADMIN, None).await;
+    assert_eq!(
+        st,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a bare name two owners hold: {e}"
+    );
+
+    // A repository the caller cannot see, or none, answers an empty set; a bad ref is refused.
+    for set in ["Branches", "Commits", "Tags"] {
+        let (st, page) = get(format!("/odata/{set}?$filter=RepoId%20eq%20'{NONE}'")).await;
+        assert_eq!(st, StatusCode::OK, "{set}: {page}");
+        assert_eq!(page["value"], json!([]), "{set}");
+    }
+    let (st, _) = get(format!("/odata/Commits('{rid}:..bad')")).await;
+    assert_eq!(
+        st,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a ref that is no branch, tag or id"
+    );
+    let (st, _) = get("/odata/Nope".into()).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = send(&app, "DELETE", "/odata/Branches('main')", ADMIN, None).await;
+    assert_eq!(st, StatusCode::METHOD_NOT_ALLOWED);
+
+    // Pull request expansions.
+    let (st, _) = get("/odata/PullRequests?$expand=Nope".into()).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, _) = get("/odata/Repositories?$expand=Files".into()).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "only pull requests expand");
+    let (st, page) = get("/odata/PullRequests?$expand=Files,,".into()).await;
+    assert_eq!(st, StatusCode::OK, "{page}");
+    assert!(
+        page["value"][0]["Files"]
+            .as_array()
+            .is_some_and(|f| !f.is_empty()),
+        "{page}"
+    );
+    assert!(page["value"][0].get("Reviews").is_none(), "{page}");
+    let (st, page) = get("/odata/PullRequests?$expand=Reviews".into()).await;
+    assert_eq!(st, StatusCode::OK, "{page}");
+    assert_eq!(page["value"][0]["Reviews"], json!([]), "{page}");
+    assert!(page["value"][0].get("Files").is_none(), "{page}");
+    for select in ["Title", "RepoId"] {
+        let (st, page) = get(format!(
+            "/odata/PullRequests?$expand=Reviews&$select={select}"
+        ))
+        .await;
+        assert_eq!(st, StatusCode::OK, "{page}");
+        assert!(
+            page["value"][0].get("Reviews").is_none(),
+            "a row without its keys expands nothing: {page}"
+        );
+    }
+    let (st, _) = get(format!("/odata/PullRequests('{rid}:abc')/Reviews")).await;
+    assert_eq!(st.as_u16() / 100, 4, "a pull request key is its number");
+    let (st, _) = get(format!(
+        "/odata/Repositories('{rid}')/PullRequests('abc')/Files"
+    ))
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::BAD_REQUEST,
+        "a pull request key is its number"
+    );
+    let (st, _) = get(format!("/odata/PullRequests('{rid}:999')/Mergeable")).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // Functions over the repository's files and statuses.
+    let (st, _) = op(
+        &app,
+        "File",
+        READER,
+        json!({ "repo": K, "Ref": "feature", "Path": "none.txt" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, cs) = op(
+        &app,
+        "CommitStatus",
+        READER,
+        json!({ "repo": K, "Sha": sha }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{cs}");
+    assert!(cs.to_string().contains("green"), "{cs}");
+
+    // Packages.
+    for set in ["Packages", "PackageVersions", "PackageFiles"] {
+        let (st, page) = get(format!("/odata/{set}")).await;
+        assert_eq!(st, StatusCode::OK, "{set}: {page}");
+        assert_eq!(
+            page["value"].as_array().map(Vec::len),
+            Some(1),
+            "{set}: {page}"
+        );
+    }
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/odata/PackageFiles(Owner='admin',Name='tool',Version='1.0.0',File='tool.txt')/$value")
+                .header("authorization", format!("token {READER}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("answer");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 16)
+        .await
+        .expect("body");
+    assert_eq!(&bytes[..], b"bytes");
+    let (st, _) = get("/odata/PackageFiles(Owner='admin',Name='tool')/$value".into()).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "the whole key");
+
+    // The set-read tools narrow by repository and the caller's filter together.
+    let (st, rows) = op(
+        &app,
+        "jc_forge_branches_list",
+        READER,
+        json!({ "repo": K, "Filter": "Name eq 'feature'" }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{rows}");
+    assert_eq!(rows["value"].as_array().map(Vec::len), Some(1), "{rows}");
+    let (st, rows) = op(&app, "jc_forge_branches_list", READER, json!({ "repo": K })).await;
+    assert_eq!(
+        rows["value"].as_array().map(Vec::len),
+        Some(2),
+        "{st} {rows}"
+    );
+}
+
 #[tokio::test]
 async fn every_odata_set_answers_a_reader_and_refuses_the_anonymous() {
     let tmp = tempfile::tempdir().expect("tempdir");
