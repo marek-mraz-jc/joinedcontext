@@ -226,6 +226,86 @@ async fn a_second_person_turns_the_mode_off_and_says_so() {
     assert!(!stored.0 && stored.1.is_some());
 }
 
+/// An approval asks by project: whoever reads the project reads its Organization's mode; a
+/// project or an Organization they may not read and a question naming neither or both of
+/// `organization` and `project` say so, and nothing tells an outsider the Organization exists.
+#[tokio::test]
+async fn the_mode_is_read_by_project_and_a_wrong_question_says_which_name_to_give() {
+    let state = AppState::new(Config::for_tests(), None).with_db(pool().await);
+    let org = run("byproject");
+    organization(&state, &org, &[OWNER]).await;
+    let project = run("air");
+    state.mirror.upsert(envelope(
+        "Project",
+        &project,
+        ORG_NAMESPACE,
+        json!({ "organizationRef": org }),
+    ));
+    state.mirror.upsert(envelope(
+        "Role",
+        "space-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["ContextSpace"], "verbs": ["read"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "owner-reads-air",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": OWNER }], "role": "space-reader", "scope": { "project": project } }),
+    ));
+    let ask = |query: String| {
+        let state = state.clone();
+        async move {
+            send(
+                &state,
+                owner(),
+                "GET",
+                &format!("/api/v1/organization/approval-mode?{query}"),
+                None,
+            )
+            .await
+        }
+    };
+    let read = ask(format!("project={project}")).await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    let read: Value = serde_json::from_str(&read.text).expect("json");
+    assert_eq!(read["singlePerson"], false, "{read}");
+
+    // The Organization above is the installation's, whose projects every signed-in person
+    // reads; one of another Organization is not read by someone it binds nowhere.
+    let closed = run("closed");
+    state
+        .mirror
+        .upsert(envelope("Organization", &closed, ORG_NAMESPACE, json!({})));
+    state.mirror.upsert(envelope(
+        "Project",
+        &format!("{closed}-air"),
+        ORG_NAMESPACE,
+        json!({ "organizationRef": closed }),
+    ));
+    let stranger = ask(format!("project={closed}-air")).await;
+    assert_eq!(stranger.status, StatusCode::NOT_FOUND, "{}", stranger.text);
+    let outsider = ask(format!("organization={closed}")).await;
+    assert_eq!(outsider.status, StatusCode::NOT_FOUND, "{}", outsider.text);
+    for query in [
+        String::new(),
+        format!("organization={org}&project={project}"),
+    ] {
+        let refused = ask(query.clone()).await;
+        assert_eq!(
+            refused.status,
+            StatusCode::BAD_REQUEST,
+            "{query}: {}",
+            refused.text
+        );
+        assert!(
+            refused.text.contains("exactly one of organization"),
+            "{}",
+            refused.text
+        );
+    }
+}
+
 /// The automation login of a test: a username its RoleBinding names, unique per run, since a
 /// mark refuses its approvals in every Organization.
 fn bot(test: &str) -> Identity {

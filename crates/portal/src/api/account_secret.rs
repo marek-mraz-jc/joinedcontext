@@ -270,8 +270,37 @@ pub fn router() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
-    use super::{owned_by, IssuedSecret};
+    use super::{authorize, owned_by, IssuedSecret};
+    use crate::config::Config;
+    use crate::error::ApiError;
+    use crate::state::AppState;
     use serde_json::json;
+
+    /// A session cookie never carries a client, so only a bearer token reaches this: the door
+    /// refuses it before it reads the account (PF-58).
+    #[test]
+    fn a_service_accounts_or_an_agents_token_never_issues_a_secret() {
+        let state = AppState::new(Config::for_tests(), None);
+        let mut robot = crate::auth::Identity {
+            client: Some("ovzdusie-vendor".into()),
+            subject: "service-account-ovzdusie-vendor".into(),
+            username: "service-account-ovzdusie-vendor".into(),
+            email: None,
+            name: None,
+            roles: Vec::new(),
+            groups: vec![state.config.bootstrap_admins.clone()],
+            second_factor: true,
+        };
+        assert!(matches!(
+            authorize(&state, &robot, "ovzdusie", "vendor"),
+            Err(ApiError::Denied(why)) if why.contains("PF-58")
+        ));
+        robot.client = None;
+        assert!(matches!(
+            authorize(&state, &robot, "ovzdusie", "vendor"),
+            Err(ApiError::NotFound(_))
+        ));
+    }
 
     #[test]
     fn only_the_accounts_own_managed_client_is_issued_a_secret() {
