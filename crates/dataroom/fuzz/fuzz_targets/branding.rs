@@ -33,8 +33,14 @@ fuzz_target!(|data: &[u8]| {
         }
         2 => {
             if let Some(stack) = sanitize_font_stack(text) {
-                assert!(!stack.contains([';', '{', '}', '<', '>']), "font: {stack:?}");
-                assert!(!stack.to_ascii_lowercase().contains("url("), "font: {stack:?}");
+                assert!(
+                    !stack.contains([';', '{', '}', '<', '>']),
+                    "font: {stack:?}"
+                );
+                assert!(
+                    !stack.to_ascii_lowercase().contains("url("),
+                    "font: {stack:?}"
+                );
             }
         }
         3 => {

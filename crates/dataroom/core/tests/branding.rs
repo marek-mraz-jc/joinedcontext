@@ -222,10 +222,20 @@ fn a_branding_string_is_json_first_then_the_yaml_block() {
     assert_eq!(yaml.instance_name, "Mesto");
     assert!(yaml.noindex);
     assert_eq!(yaml.domain, "city.example", "a Helm default resolves");
-    assert_eq!(yaml.documentation_base_url, "https://docs.city.example/guide");
-    assert_eq!(yaml.languages.offered, ["sk", "en"], "an empty code is skipped");
+    assert_eq!(
+        yaml.documentation_base_url,
+        "https://docs.city.example/guide"
+    );
+    assert_eq!(
+        yaml.languages.offered,
+        ["sk", "en"],
+        "an empty code is skipped"
+    );
     assert_eq!(yaml.languages.default, "sk");
-    assert_eq!(yaml.city, "{{ default \"unterminated }}", "a default without its closing quote stays as written");
+    assert_eq!(
+        yaml.city, "{{ default \"unterminated }}",
+        "a default without its closing quote stays as written"
+    );
 }
 
 #[test]
@@ -243,14 +253,25 @@ fn an_override_keeps_the_level_above_wherever_a_value_is_unsafe_or_empty() {
     assert_eq!(b.colours, base.colours);
     assert_eq!(b.fonts, base.fonts);
     assert_eq!(b.languages, base.languages);
-    assert_eq!((b.tagline.as_str(), b.ribbon.as_str()), (base.tagline.as_str(), base.ribbon.as_str()));
-    assert_eq!((&b.site_title, &b.site_tagline, &b.site_logo), (&base.site_title, &base.site_tagline, &base.site_logo));
+    assert_eq!(
+        (b.tagline.as_str(), b.ribbon.as_str()),
+        (base.tagline.as_str(), base.ribbon.as_str())
+    );
+    assert_eq!(
+        (&b.site_title, &b.site_tagline, &b.site_logo),
+        (&base.site_title, &base.site_tagline, &base.site_logo)
+    );
     assert!(b.samples.is_empty(), "{:?}", b.samples);
 
-    b.apply_override_json(&json!({"siteIssued": "2026-01-15", "siteTitle": {"sk": "", "en": "City"}}));
+    b.apply_override_json(
+        &json!({"siteIssued": "2026-01-15", "siteTitle": {"sk": "", "en": "City"}}),
+    );
     assert_eq!(b.site_issued.as_deref(), Some("2026-01-15"));
     assert_eq!(b.site_title.get("en").map(String::as_str), Some("City"));
-    assert!(!b.site_title.contains_key("sk"), "an empty title is not taken");
+    assert!(
+        !b.site_title.contains_key("sk"),
+        "an empty title is not taken"
+    );
 }
 
 #[test]
@@ -267,7 +288,11 @@ fn the_header_tagline_and_logo_fall_back_in_order() {
     b.site_logo = Some("logo-city.png".into());
     assert_eq!(b.site_logo_path("/portal"), "/portal/logo-city.png");
     b.site_logo = Some("bad name.exe".into());
-    assert_eq!(b.site_logo_path(""), "/jc-logo.svg", "an unsafe name is never linked");
+    assert_eq!(
+        b.site_logo_path(""),
+        "/jc-logo.svg",
+        "an unsafe name is never linked"
+    );
 }
 
 #[test]
@@ -280,15 +305,31 @@ fn a_publisher_image_prefers_its_logo_then_the_fallback_logo_then_a_badge() {
         logo_url: Some("https://city.example/logo.png".into()),
         ..PublisherBranding::default()
     };
-    let (img, _) = resolve_publisher_branding(Some("https://own.example/l.svg"), &none, Some(&fb), "sk", "sk");
+    let (img, _) = resolve_publisher_branding(
+        Some("https://own.example/l.svg"),
+        &none,
+        Some(&fb),
+        "sk",
+        "sk",
+    );
     assert_eq!(img.as_deref(), Some("https://own.example/l.svg"));
     let (img, _) = resolve_publisher_branding(Some(""), &none, Some(&fb), "sk", "sk");
     assert_eq!(img.as_deref(), Some("https://city.example/logo.png"));
-    let badge = PublisherBranding { logo_url: Some(String::new()), ..fb.clone() };
+    let badge = PublisherBranding {
+        logo_url: Some(String::new()),
+        ..fb.clone()
+    };
     let (img, _) = resolve_publisher_branding(None, &none, Some(&badge), "sk", "sk");
     assert!(img.unwrap().starts_with("data:image/svg+xml;base64,"));
-    let bare = PublisherBranding { logo_url: None, colour: None, ..fb };
-    assert_eq!(resolve_publisher_branding(None, &none, Some(&bare), "sk", "sk").0, None);
+    let bare = PublisherBranding {
+        logo_url: None,
+        colour: None,
+        ..fb
+    };
+    assert_eq!(
+        resolve_publisher_branding(None, &none, Some(&bare), "sk", "sk").0,
+        None
+    );
 }
 
 #[test]

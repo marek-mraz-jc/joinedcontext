@@ -211,7 +211,11 @@ fn every_error_names_its_problem_slug_and_status() {
         (DataroomError::Gone("x".into()), "gone", 410),
         (DataroomError::Forbidden("x".into()), "forbidden", 403),
         (DataroomError::Unauthorized("x".into()), "unauthorized", 401),
-        (DataroomError::field_error("name", "bad"), "validation-error", 422),
+        (
+            DataroomError::field_error("name", "bad"),
+            "validation-error",
+            422,
+        ),
         (
             DataroomError::ShaclViolation {
                 profile: "dcat-ap".into(),
@@ -222,8 +226,16 @@ fn every_error_names_its_problem_slug_and_status() {
             422,
         ),
         (DataroomError::Conflict("x".into()), "conflict", 409),
-        (DataroomError::NotSupported("x".into()), "not-supported", 501),
-        (DataroomError::OutboundRefused("x".into()), "outbound-refused", 400),
+        (
+            DataroomError::NotSupported("x".into()),
+            "not-supported",
+            501,
+        ),
+        (
+            DataroomError::OutboundRefused("x".into()),
+            "outbound-refused",
+            400,
+        ),
         (DataroomError::Rdf("x".into()), "rdf-error", 422),
         (
             DataroomError::RdfLimitExceeded {
@@ -233,12 +245,19 @@ fn every_error_names_its_problem_slug_and_status() {
             "rdf-limit-exceeded",
             422,
         ),
-        (DataroomError::FeedUnavailable("x".into()), "feed-unavailable", 503),
+        (
+            DataroomError::FeedUnavailable("x".into()),
+            "feed-unavailable",
+            503,
+        ),
         (DataroomError::Storage("x".into()), "storage-error", 500),
     ];
     for (err, slug, status) in cases {
         assert_eq!((err.slug(), err.status_code()), (slug, status), "{err:?}");
-        assert_eq!(err.problem_type_uri(), format!("urn:joinedcontext:problem:{slug}"));
+        assert_eq!(
+            err.problem_type_uri(),
+            format!("urn:joinedcontext:problem:{slug}")
+        );
     }
 }
 
@@ -261,7 +280,10 @@ fn vocabulary_spellings_fold_to_their_authority_iris() {
     ] {
         assert_eq!(format_to_eu_iri(label), format!("{ft}{code}"), "{label}");
     }
-    assert_eq!(format_to_eu_iri(" https://example.org/csv "), "https://example.org/csv");
+    assert_eq!(
+        format_to_eu_iri(" https://example.org/csv "),
+        "https://example.org/csv"
+    );
     assert_eq!(
         language_to_eu_iri("pl"),
         "http://publications.europa.eu/resource/authority/language/PL"
@@ -325,15 +347,34 @@ fn a_catalogue_address_and_its_branding_layer_over_the_installation() {
     assert_eq!(block.instance_name, "Mestské dáta");
     assert_eq!(block.organisation, "Mesto Žilina");
     assert_eq!(
-        [&block.colours.primary, &block.colours.secondary, &block.colours.accent],
+        [
+            &block.colours.primary,
+            &block.colours.secondary,
+            &block.colours.accent
+        ],
         ["#112233", "#223344", "#334455"]
     );
-    assert_eq!((block.colours.background.as_str(), block.colours.text.as_str()), ("#ffffff", "#000000"));
-    assert_eq!((block.logo.as_str(), block.tagline.as_str()), ("/assets/logo.svg", "Otvorené dáta mesta"));
+    assert_eq!(
+        (
+            block.colours.background.as_str(),
+            block.colours.text.as_str()
+        ),
+        ("#ffffff", "#000000")
+    );
+    assert_eq!(
+        (block.logo.as_str(), block.tagline.as_str()),
+        ("/assets/logo.svg", "Otvorené dáta mesta")
+    );
     assert_eq!(block.languages.default, "sk");
     assert_eq!(block.languages.offered, ["sk", "en"]);
-    assert_eq!(block.site_title.get("sk").map(String::as_str), Some("Mesto"));
-    assert!(!block.site_title.contains_key("en"), "an empty title is not a title");
+    assert_eq!(
+        block.site_title.get("sk").map(String::as_str),
+        Some("Mesto")
+    );
+    assert!(
+        !block.site_title.contains_key("en"),
+        "an empty title is not a title"
+    );
 
     // tokens that are not colours, or the defaults, leave the installation's values
     let base = dataroom_core::BrandingBlock::default();
@@ -358,7 +399,10 @@ fn a_publisher_iri_on_a_left_host_is_not_its_own() {
     }))
     .unwrap();
     let moved = catalogue(json!({"leftHosts": ["old.city.example"]}));
-    assert!(!publisher.has_own_iri(&moved), "minted on a host the catalogue left");
+    assert!(
+        !publisher.has_own_iri(&moved),
+        "minted on a host the catalogue left"
+    );
     let elsewhere = catalogue(json!({"leftHosts": ["other.example"]}));
     assert!(publisher.has_own_iri(&elsewhere), "minted by someone else");
 }
@@ -366,21 +410,51 @@ fn a_publisher_iri_on_a_left_host_is_not_its_own() {
 #[test]
 fn a_dataset_iri_falls_back_to_its_extras_then_the_catalogue() {
     let mut d = dataset(json!({"uri": "  ", "extras": {"uri": " https://data.gov.sk/set/1 "}}));
-    assert_eq!(d.canonical_uri("https://x.example/"), "https://data.gov.sk/set/1");
+    assert_eq!(
+        d.canonical_uri("https://x.example/"),
+        "https://data.gov.sk/set/1"
+    );
     d.extras.insert("uri".into(), " ".into());
-    assert_eq!(d.canonical_uri("https://x.example/"), "https://x.example/dataset/ovzdusie");
+    assert_eq!(
+        d.canonical_uri("https://x.example/"),
+        "https://x.example/dataset/ovzdusie"
+    );
 }
 
 #[test]
 fn basic_validation_names_the_field_it_refuses() {
     assert!(dataset(json!({})).validate_basic().is_ok());
     for (extra, field, why) in [
-        (json!({"title": {"sk": "  "}}), "title", "at least one non-empty language title"),
-        (json!({"publisherId": " "}), "owner_org", "Organization does not exist"),
-        (json!({"tags": ["a"]}), "tags", "between 2 and 100 characters"),
-        (json!({"tags": ["x".repeat(101)]}), "tags", "between 2 and 100 characters"),
-        (json!({"tags": ["air;drop"]}), "tags", "contains invalid characters"),
-        (json!({"keywords": {"not a tag": ["x"]}}), "keywords", "is not a language tag"),
+        (
+            json!({"title": {"sk": "  "}}),
+            "title",
+            "at least one non-empty language title",
+        ),
+        (
+            json!({"publisherId": " "}),
+            "owner_org",
+            "Organization does not exist",
+        ),
+        (
+            json!({"tags": ["a"]}),
+            "tags",
+            "between 2 and 100 characters",
+        ),
+        (
+            json!({"tags": ["x".repeat(101)]}),
+            "tags",
+            "between 2 and 100 characters",
+        ),
+        (
+            json!({"tags": ["air;drop"]}),
+            "tags",
+            "contains invalid characters",
+        ),
+        (
+            json!({"keywords": {"not a tag": ["x"]}}),
+            "keywords",
+            "is not a language tag",
+        ),
     ] {
         match dataset(extra.clone()).validate_basic().unwrap_err() {
             DataroomError::Validation { fields, .. } => {

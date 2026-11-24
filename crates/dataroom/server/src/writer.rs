@@ -641,7 +641,9 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'sta
     match tokio::task::spawn_blocking(f).await {
         Ok(answer) => answer,
         // Only a call that panicked ends here.
-        Err(e) => Err(DataroomError::Storage(format!("blocking call stopped: {e}"))),
+        Err(e) => Err(DataroomError::Storage(format!(
+            "blocking call stopped: {e}"
+        ))),
     }
 }
 
@@ -1362,7 +1364,10 @@ mod tests {
         let spec = mobility(Some("old.city.test"));
         let mut held = writer.upsert(spec.clone()).await.expect("served");
         held.left_hosts = vec!["old.city.test".into()];
-        store.upsert_catalogue(held).await.expect("a row that lists its own host");
+        store
+            .upsert_catalogue(held)
+            .await
+            .expect("a row that lists its own host");
         let moved = writer
             .upsert(mobility(Some("new.city.test")))
             .await
@@ -1386,13 +1391,27 @@ mod tests {
             .expect("stored");
         let before = store.list_publishers(&target).await.expect("publishers");
         let listed = writer
-            .list_from(org, (from.id, "https://data.city.test/-/mobility"), to.id, "endpoints:bus", |_| true)
+            .list_from(
+                org,
+                (from.id, "https://data.city.test/-/mobility"),
+                to.id,
+                "endpoints:bus",
+                |_| true,
+            )
             .await
             .expect("listed");
         assert_eq!(listed, ["bus"]);
-        let copy = store.get_dataset(&target, "bus").await.expect("read").expect("copied");
+        let copy = store
+            .get_dataset(&target, "bus")
+            .await
+            .expect("read")
+            .expect("copied");
         assert_eq!(copy.generated_by.as_deref(), Some("endpoints:bus"));
-        assert_eq!(store.list_publishers(&target).await.expect("publishers"), before, "no second city");
+        assert_eq!(
+            store.list_publishers(&target).await.expect("publishers"),
+            before,
+            "no second city"
+        );
     }
 
     #[tokio::test]

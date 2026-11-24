@@ -1359,7 +1359,9 @@ fn svg_tags(text: &str) -> Vec<SvgTag<'_>> {
 fn check_svg_attribute(name: &str, value: &str) -> Result<()> {
     let refuse = |why: String| Err(DataroomError::field_error("logo", why));
     if name.is_empty() {
-        return refuse(format!("SVG contains an attribute without a name before '{value}'"));
+        return refuse(format!(
+            "SVG contains an attribute without a name before '{value}'"
+        ));
     }
     if name.starts_with("on") && name.len() > 2 {
         return refuse(format!(

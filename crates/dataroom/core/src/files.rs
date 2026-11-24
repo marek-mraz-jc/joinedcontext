@@ -568,7 +568,11 @@ mod tests {
         // the Organization's folder is a file: usage and a new upload refuse, nothing is written
         let (org2, cat2) = key(5);
         fs::write(files.org_dir(org2), b"x").unwrap();
-        assert!(files.usage(org2).unwrap_err().to_string().contains("file store:"));
+        assert!(files
+            .usage(org2)
+            .unwrap_err()
+            .to_string()
+            .contains("file store:"));
         let err = files.put((org2, cat2), "a.png", PNG, "ana").unwrap_err();
         assert!(matches!(err, DataroomError::Storage(_)), "{err}");
         let _ = fs::remove_dir_all(root);
@@ -583,7 +587,10 @@ mod tests {
             .collect();
         FileStore::write_index(&files.dir(org, cat), &full).unwrap();
         let err = files.put((org, cat), "b.png", PNG, "ana").unwrap_err();
-        assert!(err.to_string().contains("holds 500 files, its limit"), "{err}");
+        assert!(
+            err.to_string().contains("holds 500 files, its limit"),
+            "{err}"
+        );
         assert_eq!(err.status_code(), 422);
 
         // bytes: one more small file past 200 MB is refused, replacing the big one is not
@@ -593,7 +600,10 @@ mod tests {
         let err = files.put((org, cat), "b.png", PNG, "ana").unwrap_err();
         assert!(err.to_string().contains("its limit is 200.0 MB"), "{err}");
         let (_, after) = files.replace((org, cat), "f-big", PNG, "ben").unwrap();
-        assert_eq!((after.size, after.uploaded_by.as_str()), (PNG.len() as u64, "ben"));
+        assert_eq!(
+            (after.size, after.uploaded_by.as_str()),
+            (PNG.len() as u64, "ben")
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -602,8 +612,12 @@ mod tests {
         let (files, root) = store();
         let k = key(8);
         for (name, msg) in [("nope", "no file nope")] {
-            assert!(matches!(files.rename(k, name, "x.png"), Err(DataroomError::NotFound(m)) if m == msg));
-            assert!(matches!(files.replace(k, name, PNG, "ana"), Err(DataroomError::NotFound(m)) if m == msg));
+            assert!(
+                matches!(files.rename(k, name, "x.png"), Err(DataroomError::NotFound(m)) if m == msg)
+            );
+            assert!(
+                matches!(files.replace(k, name, PNG, "ana"), Err(DataroomError::NotFound(m)) if m == msg)
+            );
             assert!(matches!(files.delete(k, name), Err(DataroomError::NotFound(m)) if m == msg));
         }
         let entries = [
@@ -628,15 +642,21 @@ mod tests {
         let k = key(9);
         let (a, b) = ("a".repeat(64), "b".repeat(64));
         let dir = files.dir(k.0, k.1);
-        FileStore::write_index(&dir, &[entry("f-a", "a.png", 1, &a), entry("f-b", "b.png", 1, &b)])
-            .unwrap();
+        FileStore::write_index(
+            &dir,
+            &[entry("f-a", "a.png", 1, &a), entry("f-b", "b.png", 1, &b)],
+        )
+        .unwrap();
         // in the index, bytes gone: none, as for a hash nobody holds
         assert!(files.read(k, &a).unwrap().is_none());
         assert!(files.read(k, &"c".repeat(64)).unwrap().is_none());
         // the bytes' path is a folder: reading and dropping them refuse instead of losing track
         fs::create_dir(dir.join(&b)).unwrap();
         assert!(matches!(files.read(k, &b), Err(DataroomError::Storage(_))));
-        assert!(matches!(files.delete(k, "f-b"), Err(DataroomError::Storage(_))));
+        assert!(matches!(
+            files.delete(k, "f-b"),
+            Err(DataroomError::Storage(_))
+        ));
         let _ = fs::remove_dir_all(root);
     }
 

@@ -838,7 +838,10 @@ pub async fn minted_and_redirected(store: &dyn Store) {
         .await
         .unwrap();
     let ctx = member_ctx(org, cat);
-    store.upsert_publisher(&ctx, publisher("city")).await.unwrap();
+    store
+        .upsert_publisher(&ctx, publisher("city"))
+        .await
+        .unwrap();
     let stored = store
         .upsert_dataset(&ctx, dataset("air", "city", "public"))
         .await
@@ -850,7 +853,11 @@ pub async fn minted_and_redirected(store: &dyn Store) {
         .await
         .unwrap();
     assert!(saved.id.starts_with("view-"), "{}", saved.id);
-    assert!(store.get_resource_view(&ctx, &saved.id).await.unwrap().is_some());
+    assert!(store
+        .get_resource_view(&ctx, &saved.id)
+        .await
+        .unwrap()
+        .is_some());
     let source = store
         .upsert_harvest_source(&ctx, harvest_source("feed"))
         .await
@@ -869,7 +876,10 @@ pub async fn minted_and_redirected(store: &dyn Store) {
     let mut dangling = publisher("dangling");
     dangling.merged_into = Some("pub-gone".into());
     store.upsert_publisher(&ctx, dangling).await.unwrap();
-    store.upsert_publisher(&ctx, publisher("dept")).await.unwrap();
+    store
+        .upsert_publisher(&ctx, publisher("dept"))
+        .await
+        .unwrap();
     let target = store
         .merge_publishers(&ctx, "dept", "dangling", audit("publisher.merge"))
         .await

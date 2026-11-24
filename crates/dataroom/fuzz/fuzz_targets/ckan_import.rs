@@ -24,6 +24,10 @@ fuzz_target!(|data: &[u8]| {
     );
     let store = MemoryStore::new();
     if let Ok((_, datasets)) = rt.block_on(import_ckan_json(&store, &ctx, raw, "sk")) {
-        assert!(datasets <= raw.len(), "{datasets} datasets from {} bytes", raw.len());
+        assert!(
+            datasets <= raw.len(),
+            "{datasets} datasets from {} bytes",
+            raw.len()
+        );
     }
 });

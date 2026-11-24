@@ -564,7 +564,11 @@ mod tests {
     }
 
     fn member(org: OrgId, cat: CatalogueId) -> RequestCtx {
-        RequestCtx::new(org, cat, Subject::authenticated("ana", vec![org], vec!["editors".into()]))
+        RequestCtx::new(
+            org,
+            cat,
+            Subject::authenticated("ana", vec![org], vec!["editors".into()]),
+        )
     }
 
     fn rule(org: OrgId, cat: CatalogueId, actions: Vec<Action>) -> GrantRule {
@@ -584,15 +588,27 @@ mod tests {
         let policy = PolicyAuthorizer::new(vec![rule(org, cat, vec![Action::Admin])]);
         let ctx = member(org, cat);
         for target in [
-            ObjectTarget::Catalogue { org_id: other_org, catalogue_id: cat },
-            ObjectTarget::Catalogue { org_id: org, catalogue_id: other_cat },
+            ObjectTarget::Catalogue {
+                org_id: other_org,
+                catalogue_id: cat,
+            },
+            ObjectTarget::Catalogue {
+                org_id: org,
+                catalogue_id: other_cat,
+            },
         ] {
             let d = policy.check(&ctx, Action::Read, &target);
             assert!(!d.allowed && !d.visible, "{d:?}");
-            assert_eq!(d.reason, "object is outside the request's organization or catalogue");
+            assert_eq!(
+                d.reason,
+                "object is outside the request's organization or catalogue"
+            );
         }
         // the same catalogue of the caller's own organization is granted
-        let own = ObjectTarget::Catalogue { org_id: org, catalogue_id: cat };
+        let own = ObjectTarget::Catalogue {
+            org_id: org,
+            catalogue_id: cat,
+        };
         assert!(policy.check(&ctx, Action::Propose, &own).allowed);
     }
 
@@ -609,8 +625,16 @@ mod tests {
             editor_grants: vec!["editors".into()],
         };
         let d = policy.check(&ctx, Action::Read, &publisher);
-        assert_eq!((d.allowed, d.reason.as_str()), (true, "publishers are readable"));
-        for action in [Action::Propose, Action::Approve, Action::Delete, Action::Admin] {
+        assert_eq!(
+            (d.allowed, d.reason.as_str()),
+            (true, "publishers are readable")
+        );
+        for action in [
+            Action::Propose,
+            Action::Approve,
+            Action::Delete,
+            Action::Admin,
+        ] {
             let d = policy.check(&ctx, action, &publisher);
             assert!(!d.allowed && d.visible, "{action:?}: {d:?}");
             assert_eq!(d.reason, "connector is read-only");
@@ -624,9 +648,11 @@ mod tests {
     fn the_live_authorizer_swaps_one_catalogue_and_survives_a_poisoned_lock() {
         let (org, cat) = ids(4);
         let (_, other_cat) = ids(5);
-        let live = std::sync::Arc::new(LiveAuthorizer::new(vec![rule(org, other_cat, vec![
-            Action::Propose,
-        ])]));
+        let live = std::sync::Arc::new(LiveAuthorizer::new(vec![rule(
+            org,
+            other_cat,
+            vec![Action::Propose],
+        )]));
         let held = std::sync::Arc::clone(&live);
         let _ = std::thread::spawn(move || {
             let _g = held.policy.write().unwrap();
@@ -635,18 +661,34 @@ mod tests {
         .join();
         assert!(live.policy.is_poisoned());
         let ctx = member(org, cat);
-        let target = ObjectTarget::Catalogue { org_id: org, catalogue_id: cat };
+        let target = ObjectTarget::Catalogue {
+            org_id: org,
+            catalogue_id: cat,
+        };
         assert!(!live.check(&ctx, Action::Propose, &target).allowed);
         // a rule naming another catalogue is dropped, never widened to this one
-        live.replace_catalogue(org, cat, vec![
-            rule(org, cat, vec![Action::Propose]),
-            rule(org, other_cat, vec![Action::Admin]),
-        ]);
+        live.replace_catalogue(
+            org,
+            cat,
+            vec![
+                rule(org, cat, vec![Action::Propose]),
+                rule(org, other_cat, vec![Action::Admin]),
+            ],
+        );
         assert!(live.check(&ctx, Action::Propose, &target).allowed);
         assert!(!live.check(&ctx, Action::Admin, &target).allowed);
         let other_ctx = member(org, other_cat);
-        let other = ObjectTarget::Catalogue { org_id: org, catalogue_id: other_cat };
-        assert!(live.check(&other_ctx, Action::Propose, &other).allowed, "kept");
-        assert!(!live.check(&other_ctx, Action::Admin, &other).allowed, "not widened");
+        let other = ObjectTarget::Catalogue {
+            org_id: org,
+            catalogue_id: other_cat,
+        };
+        assert!(
+            live.check(&other_ctx, Action::Propose, &other).allowed,
+            "kept"
+        );
+        assert!(
+            !live.check(&other_ctx, Action::Admin, &other).allowed,
+            "not widened"
+        );
     }
 }

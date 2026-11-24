@@ -1579,7 +1579,13 @@ async fn a_runner_or_validator_without_the_hook_answers_not_supported() {
         "this harvest runner tests no source"
     );
     assert_eq!(
-        not_supported(run("harvest_source.test", json!({"source": "nkod", "preview": true})).await),
+        not_supported(
+            run(
+                "harvest_source.test",
+                json!({"source": "nkod", "preview": true})
+            )
+            .await
+        ),
         "this harvest runner previews no source"
     );
     let profile = json!({"profile": {"id": "city-ext", "version": "1",
@@ -1590,22 +1596,41 @@ async fn a_runner_or_validator_without_the_hook_answers_not_supported() {
         "this validator takes no uploaded profile"
     );
     assert_eq!(
-        not_supported(run("profile.activate", json!({"id": "city-ext", "version": "1"})).await),
+        not_supported(
+            run(
+                "profile.activate",
+                json!({"id": "city-ext", "version": "1"})
+            )
+            .await
+        ),
         "this validator dry-runs no profile"
     );
     // without any validator the activation names that, and an unknown member is refused first
     assert_eq!(
-        not_supported(w.run(&admin, "profile.activate", json!({"id": "x", "version": "1"})).await),
+        not_supported(
+            w.run(
+                &admin,
+                "profile.activate",
+                json!({"id": "x", "version": "1"})
+            )
+            .await
+        ),
         "no validator holds the profiles here"
     );
     let r = w
-        .run(&admin, "profile.activate", json!({"id": "x", "version": "1", "colour": 1}))
+        .run(
+            &admin,
+            "profile.activate",
+            json!({"id": "x", "version": "1", "colour": 1}),
+        )
         .await;
     assert!(field(&r, "input"), "{r:?}");
     // a validator without a profile rule takes any profile the catalogue adds
     let mut cat = run("catalogue.get", json!({})).await.unwrap();
     cat["activeProfiles"] = json!([{"profileId": "city-ext", "version": "1"}]);
-    let saved = run("catalogue.propose", json!({"catalogue": cat})).await.unwrap();
+    let saved = run("catalogue.propose", json!({"catalogue": cat}))
+        .await
+        .unwrap();
     assert_eq!(saved["activeProfiles"][0]["profileId"], "city-ext");
     assert!(w.activity_ops().await.contains(&"catalogue.propose".into()));
 }
@@ -1626,7 +1651,10 @@ async fn an_unknown_operation_name_is_not_found_and_a_read_only_connector_cannot
             json!({"name": "novy", "title": "Nový", "notes": "Popis", "owner_org": "city"}),
         )
         .await;
-    assert!(matches!(&r, Err(DataroomError::Forbidden(m)) if m == "connector is read-only"), "{r:?}");
+    assert!(
+        matches!(&r, Err(DataroomError::Forbidden(m)) if m == "connector is read-only"),
+        "{r:?}"
+    );
     // the same call by the admin itself is a create
     let made = w
         .run(
@@ -1692,14 +1720,20 @@ async fn allowed_reads_runs_and_publishers_like_their_calls() {
         }
     };
     let gone = ask("harvest_run.get", Some("run-404")).await;
-    assert_eq!((gone["allowed"].clone(), gone["reason"].clone()), (json!(false), json!("not found")));
+    assert_eq!(
+        (gone["allowed"].clone(), gone["reason"].clone()),
+        (json!(false), json!("not found"))
+    );
     assert_eq!(ask("harvest_run.logs", None).await["allowed"], true);
     let p = ask("publisher.propose", Some("city")).await;
     assert_eq!(p["allowed"], true, "{p}");
     let p = ask("publisher.propose", Some("nobody")).await;
     assert_eq!(p["reason"], "publisher not found", "{p}");
     // every run of the catalogue lists without naming a source
-    let runs = w.run(&w.admin(), "harvest_run.list", json!({})).await.unwrap();
+    let runs = w
+        .run(&w.admin(), "harvest_run.list", json!({}))
+        .await
+        .unwrap();
     assert_eq!(runs["runs"], json!([]), "{runs}");
 }
 
@@ -1708,9 +1742,18 @@ async fn declaring_a_missing_catalogue_answers_none() {
     let w = world().await;
     let declared = dataroom_core::CatalogueDeclaration::default();
     let gone = CatalogueId::from_uuid(Uuid::now_v7());
-    assert!(w.store.declare_catalogue(w.org, gone, &declared).await.unwrap().is_none());
+    assert!(w
+        .store
+        .declare_catalogue(w.org, gone, &declared)
+        .await
+        .unwrap()
+        .is_none());
     // the stored one answers as it is when nothing is declared
-    let held = w.store.declare_catalogue(w.org, w.cat, &declared).await.unwrap();
+    let held = w
+        .store
+        .declare_catalogue(w.org, w.cat, &declared)
+        .await
+        .unwrap();
     assert_eq!(held.map(|c| c.name), Some("city".to_string()));
 }
 
@@ -1728,22 +1771,54 @@ async fn odata_scopes_follow_dataset_visibility() {
             .collect()
     };
     let outsider = w.outsider();
-    let ds = paths(&scope_for_context(&outsider, w.authz.as_ref(), "Datasets", None));
-    assert!(ds.contains(&("visibility".into(), vec![json!("public")])), "{ds:?}");
-    assert!(ds.contains(&("state".into(), vec![json!("active")])), "{ds:?}");
-    let dist = paths(&scope_for_context(&outsider, w.authz.as_ref(), "Distributions", None));
-    assert!(dist.contains(&("dataset_id".into(), Vec::new())), "{dist:?}");
+    let ds = paths(&scope_for_context(
+        &outsider,
+        w.authz.as_ref(),
+        "Datasets",
+        None,
+    ));
+    assert!(
+        ds.contains(&("visibility".into(), vec![json!("public")])),
+        "{ds:?}"
+    );
+    assert!(
+        ds.contains(&("state".into(), vec![json!("active")])),
+        "{ds:?}"
+    );
+    let dist = paths(&scope_for_context(
+        &outsider,
+        w.authz.as_ref(),
+        "Distributions",
+        None,
+    ));
+    assert!(
+        dist.contains(&("dataset_id".into(), Vec::new())),
+        "{dist:?}"
+    );
     let listed = paths(&scope_for_context(
         &w.member(),
         w.authz.as_ref(),
         "ShaclResults",
         Some(vec!["d-1".into()]),
     ));
-    assert!(listed.contains(&("dataset_id".into(), vec![json!("d-1")])), "{listed:?}");
-    let ids = paths(&scope_for_context(&w.member(), w.authz.as_ref(), "Datasets", Some(vec!["d-1".into()])));
+    assert!(
+        listed.contains(&("dataset_id".into(), vec![json!("d-1")])),
+        "{listed:?}"
+    );
+    let ids = paths(&scope_for_context(
+        &w.member(),
+        w.authz.as_ref(),
+        "Datasets",
+        Some(vec!["d-1".into()]),
+    ));
     assert!(ids.contains(&("id".into(), vec![json!("d-1")])), "{ids:?}");
     // a member without a list reads every dataset of the catalogue
-    let member = paths(&scope_for_context(&w.member(), w.authz.as_ref(), "Datasets", None));
+    let member = paths(&scope_for_context(
+        &w.member(),
+        w.authz.as_ref(),
+        "Datasets",
+        None,
+    ));
     assert!(!member.iter().any(|(p, _)| p == "visibility"), "{member:?}");
 }
 
