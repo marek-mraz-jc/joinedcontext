@@ -11,7 +11,7 @@ use odata_axum::{table_router, ODataState};
 use odata_csdl::{
     CsdlVersion, EntityContainer, EntitySet, EntityType, Model, Property, Schema, TypeRef,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use odata_table::{
     Applying, Batch, Fetched, Fetching, MemoryTable, Operation, Plan, Rule, Scope, Table,
@@ -108,6 +108,23 @@ impl Table for Vanishing {
 
     fn apply<'a>(&'a self, batch: &'a Batch) -> Applying<'a> {
         self.inner.apply(batch)
+    }
+}
+
+/// A set that remembers how many rows the last read asked its source for.
+struct Peeking {
+    inner: MemoryTable,
+    limit: AtomicU64,
+}
+
+impl Table for Peeking {
+    fn info(&self) -> &TableInfo {
+        self.inner.info()
+    }
+
+    fn fetch<'a>(&'a self, plan: &'a Plan, scope: &'a Scope) -> Fetching<'a> {
+        self.limit.store(plan.limit, Ordering::SeqCst);
+        self.inner.fetch(plan, scope)
     }
 }
 
@@ -241,6 +258,24 @@ async fn count_key_and_select_resolve() -> Result<(), String> {
     assert_eq!((status, body), (StatusCode::OK, json!(2)));
     let (status, _, body) = get("/odata/Things/$count?$search=a").await?;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+    // `$count` asks the source for the total only, no page of rows
+    let model = model();
+    let info = TableInfo::new(model.clone(), "Things").ok_or("no set")?;
+    let rows = vec![json!({"id": "t1"}), json!({"id": "t2"})];
+    let peeking = Arc::new(Peeking {
+        inner: MemoryTable::new(info, rows).map_err(|e| e.to_string())?,
+        limit: AtomicU64::new(u64::MAX),
+    });
+    let tables: Vec<Arc<dyn Table>> = vec![peeking.clone()];
+    let router = Router::new()
+        .nest_service(
+            "/odata",
+            table_router(Arc::new(state(model, None)), tables, 2),
+        )
+        .layer(Extension(Scope::all()));
+    let (status, _, body) = call(router, "GET", "/odata/Things/$count").await?;
+    assert_eq!((status, body), (StatusCode::OK, json!(2)));
+    assert_eq!(peeking.limit.load(Ordering::SeqCst), 0);
     let (status, _, body) =
         get("/odata/Things('it''s')?$format=application/json;odata.metadata=full").await?;
     assert_eq!(status, StatusCode::OK, "{body}");

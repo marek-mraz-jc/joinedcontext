@@ -140,6 +140,7 @@ mod tests {
             assert!(SelfUrls::parse(bad).is_err(), "{bad}");
         }
         assert!(SelfUrls::parse(" , ").is_ok_and(|u| u.is_empty()));
+        assert!(SelfUrls::parse("https://a.example").is_ok_and(|u| !u.is_empty()));
         assert_eq!(
             SelfUrls::parse("https://a.example,https://A.example/").map(|u| u.0.len()),
             Ok(1)

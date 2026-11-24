@@ -1044,8 +1044,9 @@ impl Store for PgStore {
                 .begin_tenant(ctx.org_id, Some(ctx.catalogue_id))
                 .await?;
             if let Some(expected) = expected {
-                let stored: Option<(TimestampTz,)> = sqlx::query_as(
-                    "SELECT modified FROM dataroom.cat_publisher
+                // The doc's version: the column keeps microseconds, a read returns the doc.
+                let stored: Option<(Json<Publisher>,)> = sqlx::query_as(
+                    "SELECT doc FROM dataroom.cat_publisher
                      WHERE org_id = $1 AND catalogue_id = $2 AND id COLLATE \"C\" = $3
                      FOR UPDATE",
                 )
@@ -1055,7 +1056,7 @@ impl Store for PgStore {
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(db_err)?;
-                if stored.is_none_or(|(m,)| m != expected) {
+                if stored.is_none_or(|(Json(p),)| p.modified != expected) {
                     return Err(changed_since_read("publisher", &publisher.name));
                 }
             }

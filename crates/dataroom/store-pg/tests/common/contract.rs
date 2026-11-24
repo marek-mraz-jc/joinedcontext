@@ -1669,6 +1669,23 @@ pub async fn audited_writes(store: &dyn Store) {
         .save_publisher(&ctx, edit, Some(city.modified), audit("publisher.propose"))
         .await
         .unwrap();
+    // A version with nanoseconds (TimestampTz::now()) guards the next write as read back.
+    let mut town = publisher("town");
+    town.modified = ts("2026-11-01T10:00:00.123456789Z");
+    store
+        .save_publisher(&ctx, town, None, audit("publisher.propose"))
+        .await
+        .unwrap();
+    let read = store.get_publisher(&ctx, "town").await.unwrap().unwrap();
+    store
+        .save_publisher(
+            &ctx,
+            read.clone(),
+            Some(read.modified),
+            audit("publisher.propose"),
+        )
+        .await
+        .expect("a guarded write on the version just read");
     store
         .save_publisher(&ctx, publisher("region"), None, audit("publisher.propose"))
         .await

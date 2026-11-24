@@ -200,6 +200,9 @@ async fn an_attr_not_listed_unknown_or_hidden_is_one_400() -> Result<(), String>
     // the other facet still answers for that caller
     let a = get(&hidden, &format!("{FACETS}?attr=address.addressLocality")).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+    // a q the query refuses is the query's 400, never an empty count
+    let a = get(&app, &format!("{FACETS}?attr=category&q=%28%28")).await;
+    assert_eq!(a.status, StatusCode::BAD_REQUEST, "{}", a.text);
     Ok(())
 }
 
@@ -270,6 +273,41 @@ async fn an_empty_tenant_has_no_values_and_a_wide_selection_is_413() -> Result<(
     let a = get(&app, "/x/views/quiet/facets?attr=category").await;
     assert_eq!(a.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", a.text);
     assert!(a.text.contains("narrow it with q or type"), "{}", a.text);
+    Ok(())
+}
+
+/// The read asks for the counted attribute alone: Entities whose other
+/// attributes together pass the broker's answer ceiling still count.
+#[tokio::test]
+async fn the_read_fetches_only_the_counted_attribute() -> Result<(), String> {
+    let broker = TestBroker::with_max_answer_bytes(64 * 1024).await?;
+    let app = broker.serve(antares_views::Views)?;
+    let blob = "x".repeat(30 * 1024);
+    for n in 0..4 {
+        let e = json!({"id": format!("urn:ngsi-ld:Event:big{n}"), "type": "Event",
+                       "category": prop(&json!("music")), "name": prop(&json!(blob))});
+        let a = send(
+            &app,
+            Method::POST,
+            "/ngsi-ld/v1/entities",
+            &[("NGSILD-Tenant", "city")],
+            Some(&e),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::CREATED, "{}", a.text);
+    }
+    put_view(
+        &app,
+        &json!({"id": "events", "tenant": "city", "selector": ["Event"],
+            "operations": ["query_entities"],
+            "rules": [{"types": ["Event"], "attributes": ["name", "category"]}],
+            "representations": {"facets": ["category"]}}),
+    )
+    .await?;
+    let a = get(&app, &format!("{FACETS}?attr=category")).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+    let body: Value = serde_json::from_str(&a.text).map_err(|e| e.to_string())?;
+    assert_eq!(counts(&body), pairs(&[("music", 4)]));
     Ok(())
 }
 

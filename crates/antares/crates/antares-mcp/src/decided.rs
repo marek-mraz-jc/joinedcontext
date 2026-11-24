@@ -437,7 +437,8 @@ mod tests {
 
     /// T-7507: an id naming another Tenant reaches no question of this one.
     #[tokio::test]
-    async fn a_question_answers_in_its_own_tenant_alone() -> Result<(), String> {
+    async fn a_question_answers_in_its_own_tenant_alone() -> Result<(), Box<dyn std::error::Error>>
+    {
         let r = Replica::new().await?;
         let id = r.open("alice").await;
         let nonce = id.split('-').next().unwrap_or_default();
@@ -445,7 +446,7 @@ mod tests {
         assert_eq!(read(&r.all, &forged).await.status(), StatusCode::NOT_FOUND);
         let decided = r.decide(&forged, &body("accept", "alice")).await;
         assert_eq!(decided, StatusCode::NOT_FOUND);
-        let u = r.all.of(TenantId::new("u").map_err(|e| e.to_string())?);
+        let u = r.all.of(TenantId::new("u")?);
         assert_eq!(
             u.take(&id, &person("alice")).await.ok(),
             Some(Taken::Unknown)

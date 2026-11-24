@@ -73,6 +73,41 @@ async fn ws_a_removed_view_stops_delivery() -> Result<(), String> {
 /// T-4084: an x-subscribe whose `q` is no NGSI-LD q is answered 400, as
 /// POST /subscriptions is. A write through another view reaching the socket
 /// is antares-broker's `views_matrix` test, which mounts the views surface.
+/// An `x-unsubscribe` the view refuses leaves the Subscription the socket's:
+/// asked again, it is refused the same way, never "unknown".
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_a_refused_unsubscribe_keeps_the_subscription() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    let view = json!({
+        "id": "keep", "tenant": "city", "selector": ["Car"],
+        "rules": [{"types": ["Car"], "attributes": ["speed"]}],
+        "operations": ["query_entities", "create_subscription", "retrieve_subscription"]
+    });
+    let (code, answer) = b
+        .http
+        .call("PUT", "/q/views/keep", &[], Some(&view))
+        .await?;
+    assert!(code == 201 || code == 204, "view: {code} {answer}");
+    let mut c = connect(b.addr, "/x/views/keep/ws", &[]).await?;
+    let made = c.subscribe(cars()).await?;
+    assert_eq!(status(&made), 201, "{made}");
+    let id = made.pointer("/body/id").cloned().unwrap_or_default();
+    let mut refusals = Vec::new();
+    for _ in 0..2 {
+        c.send(
+            json!({"x-op": "x-unsubscribe", "x-id": "u", "x-subscription": id}),
+            None,
+        )
+        .await?;
+        refusals.push(status(&c.result().await?));
+    }
+    assert!(
+        matches!(refusals.as_slice(), [a, b] if *a != 204 && a == b),
+        "{refusals:?}"
+    );
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn ws_a_bad_q_is_refused() -> Result<(), String> {
     let b = broker(Limits::default()).await?;

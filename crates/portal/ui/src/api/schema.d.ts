@@ -13282,15 +13282,15 @@ export interface components {
                 accent?: string | null;
                 /** @description Page background, e.g. `#ffffff`. */
                 background?: string | null;
-                /** @description The page footer, e.g. `#0f172a`. */
+                /** @description The page footer, six hex digits after a hash, such as 0f172a. */
                 footerBackground?: string | null;
-                /** @description Text and links in the footer, at least 4.5:1 on its background, e.g. `#ffffff`. */
+                /** @description Text and links in the footer, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff. */
                 footerText?: string | null;
-                /** @description The open data portal's header bar, e.g. `#0b5394`. */
+                /** @description The open data portal's header bar, six hex digits after a hash, such as 0b5394. */
                 headerBackground?: string | null;
-                /** @description Text and links in the header bar, at least 4.5:1 on its background, e.g. `#ffffff`. */
+                /** @description Text and links in the header bar, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff. */
                 headerText?: string | null;
-                /** @description Links in the page, at least 4.5:1 on the background, e.g. `#1d4ed8` (T-7744). */
+                /** @description Links in the page, at least 4.5:1 on the background, six hex digits after a hash, such as 1d4ed8 (T-7744). */
                 link?: string | null;
                 /** @description Primary action colour, e.g. `#0b5394`. */
                 primary?: string | null;
@@ -27516,7 +27516,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description The source is no webhook, `pipeline` reads no such source, or `body` is empty or over the cap */
+            /** @description The source is no webhook or names no single credential, `pipeline` reads no such source, or `body` is empty or over the cap */
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -485,19 +485,19 @@ pub struct AppearanceColours {
     /// Body text, e.g. `#0f172a`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-    /// Links in the page, at least 4.5:1 on the background, e.g. `#1d4ed8` (T-7744).
+    /// Links in the page, at least 4.5:1 on the background, six hex digits after a hash, such as 1d4ed8 (T-7744).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
-    /// The open data portal's header bar, e.g. `#0b5394`.
+    /// The open data portal's header bar, six hex digits after a hash, such as 0b5394.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header_background: Option<String>,
-    /// Text and links in the header bar, at least 4.5:1 on its background, e.g. `#ffffff`.
+    /// Text and links in the header bar, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header_text: Option<String>,
-    /// The page footer, e.g. `#0f172a`.
+    /// The page footer, six hex digits after a hash, such as 0f172a.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub footer_background: Option<String>,
-    /// Text and links in the footer, at least 4.5:1 on its background, e.g. `#ffffff`.
+    /// Text and links in the footer, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub footer_text: Option<String>,
 }

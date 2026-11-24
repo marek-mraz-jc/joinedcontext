@@ -53,8 +53,8 @@ async fn create_then_retrieve_round_trips() {
     assert_eq!(doc["speed"]["value"], 42);
 }
 
-/// The seam trims a trailing '/' as the native NormalizePathLayer does, keeping
-/// the query; a bare "/" stays the root.
+/// A trailing '/' reaches the same route with its query kept (antares_api::router
+/// trims it for every host); a bare "/" stays the root.
 #[tokio::test(flavor = "current_thread")]
 async fn a_trailing_slash_reaches_the_same_route_with_its_query() {
     let broker = Broker::default();

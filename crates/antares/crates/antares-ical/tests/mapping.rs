@@ -66,6 +66,13 @@ fn a_line_of_multibyte_letters_folds_at_75_octets_between_characters() {
         out.replace("\r\n ", ""),
         format!("SUMMARY:{}\r\n", "ž".repeat(60))
     );
+    // exactly 75 octets stay one line; the 76th continues it
+    let mut at = String::new();
+    fold(&"a".repeat(75), &mut at);
+    assert_eq!(at, format!("{}\r\n", "a".repeat(75)));
+    let mut over = String::new();
+    fold(&"a".repeat(76), &mut over);
+    assert_eq!(over, format!("{}\r\n a\r\n", "a".repeat(75)));
 }
 
 #[test]

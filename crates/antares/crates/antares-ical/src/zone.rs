@@ -272,6 +272,11 @@ mod tests {
         let z: Zone = "Europe/Bratislava".parse()?;
         assert_eq!(z.name(), "Europe/Bratislava");
         assert_eq!(z, "Europe/Bratislava".parse()?);
+        assert_ne!(z, "Europe/Prague".parse()?, "zones are told apart by name");
+        assert_eq!(
+            year(Timestamp::from_second(1_790_000_000).unwrap_or_default()),
+            2026
+        );
         assert!("europe/bratislava".parse::<Zone>().is_err());
         assert!("Mars/Olympus".parse::<Zone>().is_err());
         assert_eq!("US/Eastern".parse::<Zone>()?.name(), "US/Eastern");
