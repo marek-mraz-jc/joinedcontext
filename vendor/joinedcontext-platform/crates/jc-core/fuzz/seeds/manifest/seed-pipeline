@@ -1,0 +1,8 @@
+apiVersion: joinedcontext.com/v1alpha1
+kind: Pipeline
+metadata:
+  name: p
+  namespace: bb
+spec:
+  class: resident
+  targetEndpoint: urn:ngsi-ld:Endpoint:bb.sk:e:ep

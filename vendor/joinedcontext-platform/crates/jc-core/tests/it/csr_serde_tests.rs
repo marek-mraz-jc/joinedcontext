@@ -174,13 +174,20 @@ fn an_identity_has_to_be_one_the_forward_can_actually_use() {
 }
 
 /// PF-48: a hub reads its members' tenants directly, so registering one is what exposes it to
-/// the hub's audience. That act stays inside the steward's own project.
+/// the hub's audience. That act stays inside the steward's own project. Another project's
+/// Endpoint read as the caller stays refused; read anonymously or as the hub's ServiceAccount it
+/// is a shared Endpoint (SHR-15 `live`, T-7422, T-7426: the lib tests of csr.rs).
 #[test]
 fn a_member_of_another_project_is_refused() {
+    let as_caller = LOCAL.replace(
+        "    identity: serviceAccount\n    serviceAccountRef: { kind: ServiceAccount, name: hub-reader }\n",
+        "    identity: caller\n",
+    );
+    assert_ne!(as_caller, LOCAL);
     for (field, yaml) in [
         (
             "spec.endpointRef.namespace",
-            LOCAL.replace(
+            as_caller.replace(
                 "endpointRef: { kind: Endpoint, name: transport-internal }",
                 "endpointRef: { kind: Endpoint, name: transport-internal, namespace: espoo }",
             ),

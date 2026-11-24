@@ -1,0 +1,36 @@
+# Fuzzes what jc-door reads from outside (T-7766): the Authorization header of a request and the
+# bearer token a door checks against an issuer's keys. Any input ends in a value or a refusal,
+# never a panic. Run by hand: cargo +nightly fuzz run <target> --target x86_64-unknown-linux-gnu
+# fuzz/corpus/<target> fuzz/seeds/<target> -- -max_total_time=300 -rss_limit_mb=2048; seeds/ is
+# the committed seed corpus. Not a member of the jc workspace.
+[package]
+name = "jc-door-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+http = "1"
+tokio = { version = "1.54", features = ["rt"] }
+jc-door = { path = "..", features = ["issuer"] }
+
+[[bin]]
+name = "bearer"
+path = "fuzz_targets/bearer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "token"
+path = "fuzz_targets/token.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

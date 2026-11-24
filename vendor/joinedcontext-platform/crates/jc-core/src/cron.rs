@@ -46,19 +46,19 @@ pub fn matches(
     weekday: u32,
 ) -> Option<bool> {
     let [m, h, d, mo, wd] = fields(cron)?;
+    // Every field is read before any is combined, so a field that is not cron is `None` whatever
+    // minute is asked (a `&&` chain left the fields after a missed minute unread).
     let weekday_ok =
         field_matches(wd, weekday, 0, 7)? || (weekday == 0 && field_matches(wd, 7, 0, 7)?);
     let day_ok = field_matches(d, day, 1, 31)?;
+    let minute_ok = field_matches(m, minute, 0, 59)?;
+    let hour_ok = field_matches(h, hour, 0, 23)?;
+    let month_ok = field_matches(mo, month, 1, 12)?;
     let day_and_weekday = match (d == "*", wd == "*") {
         (false, false) => day_ok || weekday_ok,
         _ => day_ok && weekday_ok,
     };
-    Some(
-        field_matches(m, minute, 0, 59)?
-            && field_matches(h, hour, 0, 23)?
-            && field_matches(mo, month, 1, 12)?
-            && day_and_weekday,
-    )
+    Some(minute_ok && hour_ok && month_ok && day_and_weekday)
 }
 
 /// Whether `cron` is five valid fields.
@@ -102,6 +102,9 @@ mod tests {
         assert_eq!(at("30 9-17 * * 6,0"), Some(false));
         assert_eq!(at("0,30 14 6 10 *"), Some(true));
         assert_eq!(at("10/20 * * * *"), Some(true)); // 10, 30, 50
+                                                     // a step counts from the range's start: 5/3 is 5, 8, 11 ... (mutants, T-7766)
+        assert_eq!(matches("5/3 * * * *", 8, 0, 1, 1, 0), Some(true));
+        assert_eq!(matches("5/3 * * * *", 9, 0, 1, 1, 0), Some(false));
     }
 
     #[test]
@@ -110,6 +113,8 @@ mod tests {
         assert_eq!(matches("0 0 7 * 5", 0, 0, 9, 10, 5), Some(true));
         assert_eq!(matches("0 0 7 * 5", 0, 0, 8, 10, 4), Some(false));
         assert_eq!(matches("0 0 * * 7", 0, 0, 11, 10, 0), Some(true));
+        // seven is Sunday only, never another day (mutants, T-7766)
+        assert_eq!(matches("0 0 * * 7", 0, 0, 12, 10, 1), Some(false));
     }
 
     #[test]
@@ -123,6 +128,10 @@ mod tests {
             "*/0 * * * *",
             "5-1 * * * *",
             "a * * * *",
+            // fuzz (T-7766): a minute that misses the probe left the later fields unread
+            "5 99 * * *",
+            "5 * * 13 *",
+            "5 0 * 0 *",
         ] {
             assert!(!is_valid(bad), "{bad}");
             assert_eq!(shortest_gap_minutes(bad), None, "{bad}");

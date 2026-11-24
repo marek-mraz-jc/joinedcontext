@@ -1,0 +1,1552 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AppAccess": {
+      "additionalProperties": false,
+      "description": "Who holds one role of an App (AP-91).",
+      "properties": {
+        "role": {
+          "description": "A role of `spec.roles`.",
+          "type": "string"
+        },
+        "subjects": {
+          "description": "`user` by e-mail, `group` by the name of a `Group` manifest (PF-62, PF-64).",
+          "items": {
+            "$ref": "#/definitions/Subject"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "role",
+        "subjects"
+      ],
+      "type": "object"
+    },
+    "AppClass": {
+      "description": "The App's shape (AP-124, AP-148): `ui`, React on the SDK served statically, `ui-rust`, the same UI with an axum server in a pod, or `wasm`, the same UI with a server component on the shared WASM host. `ui-node` is declared and not built yet.",
+      "enum": [
+        "ui",
+        "ui-rust",
+        "wasm"
+      ],
+      "type": "string"
+    },
+    "AppEgress": {
+      "additionalProperties": false,
+      "description": "One destination a server pod reaches besides its endpoint (AP-134). A NetworkPolicy matches addresses, never names, so a host name has no place here (ADR-N-037).",
+      "properties": {
+        "cidr": {
+          "description": "An IPv4 or IPv6 network, `203.0.113.0/24`, with no host bits set; never `/0`.",
+          "type": "string"
+        },
+        "ports": {
+          "description": "The TCP ports the pod may reach there, at least one.",
+          "items": {
+            "format": "uint16",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "cidr",
+        "ports"
+      ],
+      "type": "object"
+    },
+    "AppJob": {
+      "additionalProperties": false,
+      "description": "One scheduled call of the App's component (AP-154).",
+      "properties": {
+        "export": {
+          "description": "The function the component exports, called with no arguments.",
+          "type": "string"
+        },
+        "name": {
+          "description": "`[a-z][a-z0-9-]{0,39}`, unique in the App, as a function's name (SDK-21).",
+          "type": "string"
+        },
+        "schedule": {
+          "description": "Five-field cron, `minute hour day month weekday`, read in UTC.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "export",
+        "name",
+        "schedule"
+      ],
+      "type": "object"
+    },
+    "AppLifecycle": {
+      "description": "Lifecycle state of an app (AP-18, AP-19, AP-20).",
+      "oneOf": [
+        {
+          "description": "Being written; not deployed.",
+          "enum": [
+            "draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Bound to a sandbox space, reachable by the author and reviewers only (AP-19).",
+          "enum": [
+            "preview"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Bound to the real space and reachable by its `visibility` audience (AP-18).",
+          "enum": [
+            "published"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Withdrawn; kept for the record.",
+          "enum": [
+            "retired"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "AppLimits": {
+      "additionalProperties": false,
+      "description": "Per-app runtime limits enforced on its own endpoint (AP-17).",
+      "properties": {
+        "aiTokensPerDay": {
+          "description": "Model tokens, in and out, the App may use a day through `ai` (AP-165).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "emailsPerDay": {
+          "description": "Messages the App may send a day through `email` (AP-165).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "filesMiB": {
+          "description": "MiB the App may store through `files` (AP-165).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxFileRows": {
+          "description": "Rows a single file representation download may return.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "requestsPerMinute": {
+          "description": "Requests per minute allowed on the app endpoint.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AppRole": {
+      "additionalProperties": false,
+      "description": "One role a person can hold in an App (AP-90).",
+      "properties": {
+        "description": {
+          "description": "What a person holding it may do, for whoever adds a member.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "`[a-z][a-z0-9-]{0,31}`, unique in the App.",
+          "type": "string"
+        },
+        "title": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The role's name per locale, as the App page and the `403` page show it.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "AppServer": {
+      "additionalProperties": false,
+      "description": "The server part of a `wasm` App beyond its request handler (AP-154).",
+      "properties": {
+        "jobs": {
+          "description": "What the host calls on a schedule, each in a fresh instance (AP-154).",
+          "items": {
+            "$ref": "#/definitions/AppJob"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "AppService": {
+      "description": "A platform service an App uses (AP-160, ADR-N-045): the closed set, so a name outside it is refused like any unknown field, with the six it may be.",
+      "oneOf": [
+        {
+          "description": "Who is signed in and what they may do; every App's (AP-161).",
+          "enum": [
+            "identity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The App's Endpoint; every App's (AP-161).",
+          "enum": [
+            "data"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Objects under the App's own storage prefix (AP-170).",
+          "enum": [
+            "files"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A message to people of the organization (AP-168).",
+          "enum": [
+            "email"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The schedules of a `wasm` App, `spec.server.jobs[]` (AP-162).",
+          "enum": [
+            "jobs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A completion from a model of the organization's (AP-169).",
+          "enum": [
+            "ai"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "AppSource": {
+      "additionalProperties": false,
+      "description": "Where the app's source lives; exactly one member is set (AP-02).",
+      "properties": {
+        "git": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GitSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A repository of the same forge (AP-02)."
+        },
+        "path": {
+          "description": "Path beside the manifest in the org repository.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AppSpec": {
+      "additionalProperties": false,
+      "description": "Desired specification of an [`App`][crate::kinds::App] resource (AP-01..AP-20).",
+      "properties": {
+        "access": {
+          "description": "Who holds each role (AP-91).",
+          "items": {
+            "$ref": "#/definitions/AppAccess"
+          },
+          "type": "array"
+        },
+        "build": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Toolchain versions the build lane builds with; `{}` on a static app is no build step (AP-11, AP-83).",
+          "type": "object"
+        },
+        "csp": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContentSecurityPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Content Security Policy of the served app (AP-12)."
+        },
+        "dataNeeds": {
+          "description": "What the app needs to read or write; the reconciler renders its Endpoint and Policies from this (AP-04, AP-05).",
+          "items": {
+            "$ref": "#/definitions/DataNeed"
+          },
+          "type": "array"
+        },
+        "egress": {
+          "description": "Where a server pod may connect besides its endpoint, by address only; declaring one takes the red lane (AP-134).",
+          "items": {
+            "$ref": "#/definitions/AppEgress"
+          },
+          "type": "array"
+        },
+        "embeddable": {
+          "default": false,
+          "description": "Whether the Portal may embed the app in a frame (AP-12).",
+          "type": "boolean"
+        },
+        "hostnames": {
+          "description": "Names of the Organization's own domain the App also answers on, besides its host under the installation (AP-172); the Portal checks each against the Organization's verified domain and the other Apps.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppClass"
+            }
+          ],
+          "description": "How the app is built and served; `spec.kind` in the manifest (AP-01)."
+        },
+        "lifecycle": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppLifecycle"
+            }
+          ],
+          "default": "draft",
+          "description": "Lifecycle state; a manifest without one is a draft (AP-18)."
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AppLimits"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Per-app rate limits (AP-17)."
+        },
+        "roles": {
+          "description": "The roles a person can hold in the app (AP-90).",
+          "items": {
+            "$ref": "#/definitions/AppRole"
+          },
+          "type": "array"
+        },
+        "server": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AppServer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What a `wasm` App's server part runs on a schedule (AP-154)."
+        },
+        "services": {
+          "description": "The platform services the App uses beyond identity and data, each once (AP-160).",
+          "items": {
+            "$ref": "#/definitions/AppService"
+          },
+          "type": "array"
+        },
+        "source": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppSource"
+            }
+          ],
+          "description": "Where the source lives (AP-02)."
+        },
+        "storage": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AppStorage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The database schema and the storage prefix of a `wasm` App (AP-148)."
+        },
+        "visibility": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppVisibility"
+            }
+          ],
+          "default": "project",
+          "description": "Who may reach the published app (AP-18); `project` when the manifest does not say, so an app nobody opened up asks for a login (AP-120)."
+        }
+      },
+      "required": [
+        "build",
+        "dataNeeds",
+        "kind",
+        "source"
+      ],
+      "type": "object"
+    },
+    "AppStorage": {
+      "additionalProperties": false,
+      "description": "What a `wasm` App stores: its own schema in `apps-db` and its own prefix in the object store (AP-148, ADR-N-044).",
+      "properties": {
+        "blob": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BlobStorage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its objects, under its own prefix (AP-145)."
+        },
+        "sql": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SqlStorage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its schema, migrated by the reconciler at publish (AP-149)."
+        }
+      },
+      "type": "object"
+    },
+    "AppVisibility": {
+      "description": "Who may reach a published app (AP-18). A login by default: `project` (AP-120).",
+      "oneOf": [
+        {
+          "description": "Only the author.",
+          "enum": [
+            "private"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Members of the owning project.",
+          "enum": [
+            "project"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Anyone in the organization.",
+          "enum": [
+            "organization"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Everyone, unauthenticated.",
+          "enum": [
+            "public"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Only a signed-in person holding one of the app's roles (AP-93, AP-94).",
+          "enum": [
+            "roles"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "BlobStorage": {
+      "additionalProperties": false,
+      "description": "An App's object prefix (AP-148).",
+      "properties": {
+        "quotaMiB": {
+          "default": 1024,
+          "description": "How much the prefix may hold, MiB.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Build": {
+      "additionalProperties": false,
+      "description": "The artifact one build of an `App` published, as the build lane writes it back (AP-13a).",
+      "properties": {
+        "builtAt": {
+          "description": "When the build lane published it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit of the source the artifact was built from, 7 to 40 lowercase hexadecimal characters.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The digest of a `wasm` App's server component, taken from the checked bundle and stored by it in the object store; what the WASM host loads and checks (AP-151).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "description": "The artifact's digest, `sha256:` and 64 lowercase hexadecimal characters. The reconciler deploys this and nothing else (AP-72).",
+          "type": "string"
+        },
+        "sdkVersion": {
+          "description": "The version of the app SDK the artifact was built against.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "builtAt",
+        "commit",
+        "digest",
+        "sdkVersion"
+      ],
+      "type": "object"
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "Status condition entry.",
+      "properties": {
+        "lastTransitionTime": {
+          "description": "Last transition timestamp.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Machine-readable reason code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status value (\"True\", \"False\", \"Unknown\").",
+          "type": "string"
+        },
+        "type": {
+          "description": "Type of condition (e.g. Reconciled, Ready).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ContentSecurityPolicy": {
+      "additionalProperties": false,
+      "description": "Content Security Policy of a served app (AP-12).",
+      "properties": {
+        "connectSrc": {
+          "description": "`connect-src`; only `self` and https origins, never `*` (AP-12).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "frameAncestors": {
+          "description": "`frame-ancestors`; defaults to `none` (AP-12).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "frameSrc": {
+          "description": "`frame-src` beyond `self`; only https origins, never `*` (AP-12).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "DataNeed": {
+      "additionalProperties": false,
+      "description": "One declared data need, the input the reconciler renders a Policy from (AP-04, AP-05).",
+      "properties": {
+        "attrs": {
+          "description": "Attributes the app needs; empty means every readable attribute of those types.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "contextSpaceRef": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Ref"
+            }
+          ],
+          "description": "The context space the app reads."
+        },
+        "geoQ": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/GeoConstraint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Geographic narrowing."
+        },
+        "operations": {
+          "description": "CIM 009 clause 4.20 operation names the app performs (R8).",
+          "items": {
+            "$ref": "#/definitions/OperationRef"
+          },
+          "type": "array"
+        },
+        "q": {
+          "description": "NGSI-LD query narrowing the readable set.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "representations": {
+          "description": "Representations of the rendered endpoint this need contributes (AP-05, EP-08).",
+          "items": {
+            "$ref": "#/definitions/Representation"
+          },
+          "type": "array"
+        },
+        "roles": {
+          "description": "The app roles this need is granted to; empty means every caller the endpoint admits (AP-96).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scopeQ": {
+          "description": "Scope query narrowing the readable set.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "temporalQ": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TemporalConstraint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Temporal narrowing."
+        },
+        "types": {
+          "description": "NGSI-LD entity types the app needs.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "contextSpaceRef",
+        "operations",
+        "types"
+      ],
+      "type": "object"
+    },
+    "GeoConstraint": {
+      "additionalProperties": false,
+      "description": "Geographic narrowing of a data need, e.g. `{ within: { scopeRef: /geo/SK/BB } }` (AP-05).",
+      "properties": {
+        "within": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/GeoWithin"
+            }
+          ],
+          "description": "Scope tree the app may read inside."
+        }
+      },
+      "required": [
+        "within"
+      ],
+      "type": "object"
+    },
+    "GeoWithin": {
+      "additionalProperties": false,
+      "description": "The scope a [`GeoConstraint`] confines the app to (ADR 005).",
+      "properties": {
+        "scopeRef": {
+          "description": "Absolute scope string, e.g. `/geo/SK/BB`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scopeRef"
+      ],
+      "type": "object"
+    },
+    "GitSource": {
+      "additionalProperties": false,
+      "description": "A source repository on the organization's own forge (AP-02).",
+      "properties": {
+        "path": {
+          "description": "Subdirectory holding the app.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ref": {
+          "description": "Branch, tag or commit.",
+          "type": "string"
+        },
+        "url": {
+          "description": "Clone URL on the organization's forge; `https://` only.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "url"
+      ],
+      "type": "object"
+    },
+    "MultiLanguageMap": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Multi-language map keyed by ISO 639-1 two-letter lowercase language codes",
+      "propertyNames": {
+        "pattern": "^[a-z]{2}$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "ObjectMeta": {
+      "additionalProperties": false,
+      "description": "Metadata envelope attached to every platform resource (MF-02).",
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value annotations for provenance and ownership (MF-08).",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable description: one string, or the legacy map per locale (UI-50, PF-24)."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value labels for filtering (MF-10).",
+          "type": "object"
+        },
+        "name": {
+          "description": "Resource name (DNS-1123 label).",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Resource namespace (\"org\" or project slug).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable title: one string, or the legacy map per locale (UI-50, PF-24)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Operation": {
+      "description": "Table 4.20-1: every named distributed API operation in ETSI GS CIM 009 (R8).\n\nClosed enum ensures no proprietary verbs (`upsertEntity`, `read`, `write`) are accepted, satisfying the strict R8 CIM 009 vocabulary guarantee.",
+      "oneOf": [
+        {
+          "description": "Create entity (`POST /entities`).",
+          "enum": [
+            "createEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update entity (`PATCH /entities/{id}`).",
+          "enum": [
+            "updateEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Append entity attributes (`POST /entities/{id}/attrs`).",
+          "enum": [
+            "appendAttrs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update entity attributes (`PATCH /entities/{id}/attrs`).",
+          "enum": [
+            "updateAttrs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete entity attributes (`DELETE /entities/{id}/attrs/{attr}`).",
+          "enum": [
+            "deleteAttrs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete entity (`DELETE /entities/{id}`).",
+          "enum": [
+            "deleteEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch create entities (`POST /entityOperations/create`).",
+          "enum": [
+            "createBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch upsert entities (`POST /entityOperations/upsert`).",
+          "enum": [
+            "upsertBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch update entities (`POST /entityOperations/update`).",
+          "enum": [
+            "updateBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch delete entities (`POST /entityOperations/delete`).",
+          "enum": [
+            "deleteBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Upsert temporal entity attributes (`POST /temporal/entities/{id}/attrs`).",
+          "enum": [
+            "upsertTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Append temporal entity attributes (`POST /temporal/entities/{id}/attrs`).",
+          "enum": [
+            "appendAttrsTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete temporal entity attributes (`DELETE /temporal/entities/{id}/attrs/{attr}`).",
+          "enum": [
+            "deleteAttrsTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update temporal attribute instance (`PATCH /temporal/entities/{id}/attrs/{attr}/{instance}`).",
+          "enum": [
+            "updateAttrInstanceTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete temporal attribute instance (`DELETE /temporal/entities/{id}/attrs/{attr}/{instance}`).",
+          "enum": [
+            "deleteAttrInstanceTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete temporal entity (`DELETE /temporal/entities/{id}`).",
+          "enum": [
+            "deleteTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Merge entity (`PATCH /entities/{id}`).",
+          "enum": [
+            "mergeEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Replace entity (`PUT /entities/{id}`).",
+          "enum": [
+            "replaceEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Replace entity attributes (`PATCH /entities/{id}/attrs`).",
+          "enum": [
+            "replaceAttrs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch merge entities (`POST /entityOperations/merge`).",
+          "enum": [
+            "mergeBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Purge entity permanently (`DELETE /entities/{id}?purge=true`).",
+          "enum": [
+            "purgeEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve single entity (`GET /entities/{id}`).",
+          "enum": [
+            "retrieveEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Query entities (`GET /entities` or `POST /entityOperations/query`).",
+          "enum": [
+            "queryEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Batch query entities (`POST /entityOperations/query`).",
+          "enum": [
+            "queryBatch"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve temporal entity (`GET /temporal/entities/{id}`).",
+          "enum": [
+            "retrieveTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Query temporal entities (`GET /temporal/entities`).",
+          "enum": [
+            "queryTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve entity types list (`GET /types`).",
+          "enum": [
+            "retrieveEntityTypes"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve details of the available entity types (`GET /types?details=true`).",
+          "enum": [
+            "retrieveEntityTypeDetails"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve one entity type's information (`GET /types/{type}`).",
+          "enum": [
+            "retrieveEntityTypeInfo"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve attribute types list (`GET /attributes`).",
+          "enum": [
+            "retrieveAttrTypes"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve details of the available attributes (`GET /attributes?details=true`).",
+          "enum": [
+            "retrieveAttrTypeDetails"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve one attribute's information (`GET /attributes/{attr}`).",
+          "enum": [
+            "retrieveAttrTypeInfo"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Create context subscription (`POST /subscriptions`).",
+          "enum": [
+            "createSubscription"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update context subscription (`PATCH /subscriptions/{id}`).",
+          "enum": [
+            "updateSubscription"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve context subscription (`GET /subscriptions/{id}`).",
+          "enum": [
+            "retrieveSubscription"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Query context subscriptions (`GET /subscriptions`).",
+          "enum": [
+            "querySubscription"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete context subscription (`DELETE /subscriptions/{id}`).",
+          "enum": [
+            "deleteSubscription"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve context entity map (`GET /entityMaps/{id}`).",
+          "enum": [
+            "retrieveEntityMap"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Update context entity map (`PATCH /entityMaps/{id}`).",
+          "enum": [
+            "updateEntityMap"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Delete context entity map (`DELETE /entityMaps/{id}`).",
+          "enum": [
+            "deleteEntityMap"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Create entity map query on entities.",
+          "enum": [
+            "createEntityMapQueryEntity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Create entity map query on temporal entities.",
+          "enum": [
+            "createEntityMapQueryTemporal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve context source identity (`GET /csourceIdentity`).",
+          "enum": [
+            "retrieveContextSourceIdentity"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "OperationGroup": {
+      "description": "Table 4.20-2: the five distributed operation group names (R8).",
+      "oneOf": [
+        {
+          "description": "Consumption, subscription, and entity map operations.",
+          "enum": [
+            "federationOps"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Association operations without entity map support.",
+          "enum": [
+            "associationOps"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Entity and attribute update operations.",
+          "enum": [
+            "updateOps"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Retrieve and query entity operations.",
+          "enum": [
+            "retrieveOps"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Full redirection operations.",
+          "enum": [
+            "redirectionOps"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "OperationRef": {
+      "anyOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Operation"
+            }
+          ],
+          "description": "Individual named operation from CIM 009 Table 4.20-1."
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/OperationGroup"
+            }
+          ],
+          "description": "Operation group from CIM 009 Table 4.20-2."
+        }
+      ],
+      "description": "Reference to a CIM 009 operation or operation group (R8).\n\nClosed enum ensures no proprietary verbs (`read`, `write`, `upsertEntity`) are permitted, satisfying the strict R8 CIM 009 vocabulary guarantee."
+    },
+    "Phase": {
+      "description": "Lifecycle phase enumeration.",
+      "oneOf": [
+        {
+          "description": "Resource manifest is in draft state.",
+          "enum": [
+            "Draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is pending review or approval.",
+          "enum": [
+            "Pending"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource deployment is in progress.",
+          "enum": [
+            "Deploying"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is live and active in cluster.",
+          "enum": [
+            "Live"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reconciliation error.",
+          "enum": [
+            "Error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The platform holds something the repository does not declare, or no longer holds what it does (CC-21, UI-25). Configuration cannot reach this phase — every component reads it from the repository (CC-72) — so it is a space whose seed entities the broker answers differently, and the two resolutions of UI-26 are what a person does about it.",
+          "enum": [
+            "Drifted"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Ref": {
+      "anyOf": [
+        {
+          "description": "Bare string resource name.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TypedRef"
+            }
+          ],
+          "description": "Typed reference with kind, name, and optional namespace."
+        }
+      ],
+      "description": "Reference to another resource, either bare name or typed reference (MF-07)."
+    },
+    "Representation": {
+      "description": "Supported representation formats served under an endpoint (EP-05, Architecture/04).\n\nNote: `schema` (EP-46) and `access` (EP-55) are not variants: they are unconditional surfaces on every endpoint and cannot be toggled off. `file.csv` is the one file an Endpoint publishes; the names of the removed files are refused by name ([`REMOVED_REPRESENTATIONS`]).",
+      "oneOf": [
+        {
+          "description": "Canonical NGSI-LD representation (`/ngsi-ld/v1/`).",
+          "enum": [
+            "ngsi-ld"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Direct Model Context Protocol streamable HTTP interface (`/mcp`).",
+          "enum": [
+            "mcp"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Flat tabular CSV (`/file.csv`), the one file an Endpoint publishes.",
+          "enum": [
+            "csv"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "OGC API - Features Part 1 collections and items (`/ogc/features/`).",
+          "enum": [
+            "ogc-features"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "SensorThings API v1.1 read projection (`/sta/v1.1/`); served only where listed (EP-104), and only on a space whose model has a numeric attribute with a unit (EP-125).",
+          "enum": [
+            "sta"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "OData v4 service of the Endpoint's view (`/odata/v4/`, EP-104).",
+          "enum": [
+            "odata"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Notifications over one WebSocket (`/ws`, EP-106).",
+          "enum": [
+            "websocket"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "iCalendar (RFC 5545) feed of the view's entities (`/ical/v1/`); served only where listed, through the mapping `spec.representations.ical` checked against the space's model (EP-125).",
+          "enum": [
+            "ical"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Atom, RSS 2.0 and JSON Feed of the view's entities (`/feed/v1/{name}/`); served exactly where `spec.representations.feed` lists an output, never through `enabledRepresentations` (EP-150, EP-151).",
+          "enum": [
+            "feed"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "SqlStorage": {
+      "additionalProperties": false,
+      "description": "An App's schema (AP-148, AP-149).",
+      "properties": {
+        "migrations": {
+          "default": "migrations",
+          "description": "The folder of the repository whose `.sql` files are run in the order of their names.",
+          "type": "string"
+        },
+        "quotaMiB": {
+          "default": 100,
+          "description": "How much the schema may hold, MiB.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Status": {
+      "additionalProperties": false,
+      "description": "Server-computed lifecycle and reconciliation status (MF-04). Never stored in Git.",
+      "properties": {
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Build"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the build lane published for an `App`, and the only place its artifact is named (AP-13a). Written back by the build lane in the commit that publishes the artifact; an App without it renders no pod, and no other principal may set it (AP-73)."
+        },
+        "conditions": {
+          "description": "Reconciler condition transitions.",
+          "items": {
+            "$ref": "#/definitions/Condition"
+          },
+          "type": "array"
+        },
+        "observedRevision": {
+          "description": "Git commit revision observed during reconciliation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Phase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current lifecycle phase."
+        },
+        "shard": {
+          "description": "The shard of the WASM host a `wasm` App runs on, recorded at its first publish and kept; the edge's route to the App's server is rendered from it (AP-149).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Subject": {
+      "additionalProperties": false,
+      "description": "One human or group a binding names; exactly one of `user`, `group` (PF-49).",
+      "properties": {
+        "group": {
+          "description": "A group: a `Group` manifest of the organization unless `source` says otherwise (PF-64).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SubjectSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Who owns `group`'s members: absent for a `Group` manifest, `provider` for a group the identity provider owns, which the reconciler never manages. Only a `RoleBinding` subject carries it, and only with `group` (PF-63, PF-64)."
+        },
+        "user": {
+          "description": "The person's Keycloak user id, the `sub` of their token: a lower-case UUID, never an e-mail or a username (PF-126); or a client's own `service-account-<client>` user.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SubjectSource": {
+      "description": "Who owns the members of a subject's group (PF-64).",
+      "oneOf": [
+        {
+          "description": "A group of the identity provider, such as the realm's default group; no `Group` manifest declares it and the reconciler never creates, edits or prunes it (PF-63).",
+          "enum": [
+            "provider"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "TemporalConstraint": {
+      "additionalProperties": false,
+      "description": "Temporal narrowing of a data need, e.g. `{ window: P1D }` (AP-05).",
+      "properties": {
+        "window": {
+          "description": "ISO 8601 duration reaching back from now.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "window"
+      ],
+      "type": "object"
+    },
+    "Text": {
+      "anyOf": [
+        {
+          "description": "The form every new manifest writes.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MultiLanguageMap"
+            }
+          ],
+          "description": "The legacy `{locale: text}` map."
+        }
+      ],
+      "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+    },
+    "TypedRef": {
+      "additionalProperties": false,
+      "description": "Structured typed resource reference (MF-07).",
+      "properties": {
+        "kind": {
+          "description": "Target resource kind.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Target resource name.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Target resource namespace (defaults to caller namespace if omitted).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Kubernetes-style resource envelope (MF-01..MF-04).",
+  "properties": {
+    "apiVersion": {
+      "description": "API version: [`API_VERSION`], or a version [`serves`] accepts for this kind.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Resource kind name (must match [`Kind::KIND`]).",
+      "type": "string"
+    },
+    "metadata": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ObjectMeta"
+        }
+      ],
+      "description": "Metadata identifying and labeling the resource."
+    },
+    "spec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/AppSpec"
+        }
+      ],
+      "description": "Desired spec state."
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Status"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Server-computed status. Stripped during export and serialization."
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "ResourceEnvelope_for_AppSpec",
+  "type": "object"
+}
