@@ -1240,6 +1240,16 @@ mod tests {
                 .await
                 .unwrap();
         }
+        // The cluster-wide role dataroom's first migration creates when it is missing, made
+        // by the superuser as a deployment does: the NOCREATEROLE owner cannot, and on a fresh
+        // server no earlier test has made it.
+        sqlx::raw_sql(
+            "DO $$ BEGIN CREATE ROLE dataroom_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+             NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$;",
+        )
+        .execute(&admin)
+        .await
+        .unwrap();
         let mut urls = Vec::new();
         for role in ["split_app", "split_owner"] {
             let pw = format!("pw-{role}-{}", std::process::id());
@@ -1379,6 +1389,28 @@ mod tests {
             tokio_util::sync::CancellationToken::new(),
             tokio_util::task::TaskTracker::new(),
         );
+        // Without the migration owner nothing moves: the start stops and names the fix.
+        let mut no_owner = cfg.clone();
+        if let Some(db) = no_owner.database.as_mut() {
+            db.migrate_url = None;
+            db.migrate_password_file = None;
+        }
+        let moves: Vec<_> = organizations
+            .iter()
+            .map(|o| {
+                (
+                    installation,
+                    OrgId::of_organization(installation, &o.name),
+                    CatalogueId::parse_verified(&o.catalogue_id).unwrap(),
+                )
+            })
+            .collect();
+        let e = open_store(&no_owner, &moves)
+            .await
+            .err()
+            .expect("a catalogue still under the installation's OrgId")
+            .to_string();
+        assert!(e.contains("still sits under [dataroom] org_id"), "{e}");
         let router = build(
             &cfg,
             &organizations,

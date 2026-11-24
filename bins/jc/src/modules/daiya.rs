@@ -354,8 +354,13 @@ mod tests {
             ..DaiyaSection::default()
         };
         std::fs::create_dir_all(tmp.path().join("empty")).unwrap();
-        build(&good, &setup(tmp.path(), &roles), &siblings(None), mount())
+        let router = build(&good, &setup(tmp.path(), &roles), &siblings(None), mount())
             .await
             .expect("a valid reach and an empty provisioning root start");
+        use tower::ServiceExt as _;
+        let health = axum::http::Request::get("/api/health")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert!(router.oneshot(health).await.unwrap().status().is_success());
     }
 }
