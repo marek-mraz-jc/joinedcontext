@@ -1,0 +1,1 @@
+{"folders":["F"],"services":[{"name":"A","type":"MapServer"}],"numberMatched":1,"features":[{"id":"r1","properties":{"id":"h1","title":"T","license":"CC-BY-4.0"},"links":[{"rel":"item","type":"text/csv","href":"a.csv"}]}]}

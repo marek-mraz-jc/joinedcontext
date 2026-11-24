@@ -1,0 +1,1660 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AppearanceColours": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.colours`: each one a hex colour, `#rgb` or `#rrggbb`.",
+      "properties": {
+        "accent": {
+          "description": "Highlight colour, e.g. `#f59e0b`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "background": {
+          "description": "Page background, e.g. `#ffffff`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "footerBackground": {
+          "description": "The page footer, six hex digits after a hash, such as 0f172a.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "footerText": {
+          "description": "Text and links in the footer, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headerBackground": {
+          "description": "The open data portal's header bar, six hex digits after a hash, such as 0b5394.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headerText": {
+          "description": "Text and links in the header bar, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "link": {
+          "description": "Links in the page, at least 4.5:1 on the background, six hex digits after a hash, such as 1d4ed8 (T-7744).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "primary": {
+          "description": "Primary action colour, e.g. `#0b5394`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secondary": {
+          "description": "Secondary colour for links and focus, e.g. `#0f766e`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "Body text, e.g. `#0f172a`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AppearanceDisplay": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.display` (T-7743): data only, every name one of a fixed list.",
+      "properties": {
+        "dataset": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DatasetDisplay"
+            }
+          ],
+          "description": "The dataset page."
+        },
+        "datasetList": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DatasetListDisplay"
+            }
+          ],
+          "description": "The dataset list."
+        }
+      },
+      "type": "object"
+    },
+    "AppearanceFont": {
+      "description": "`spec.appearance.font`: a system font stack, never a web font (T-7410).",
+      "oneOf": [
+        {
+          "description": "The platform's interface font.",
+          "enum": [
+            "system"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A humanist sans serif.",
+          "enum": [
+            "humanist"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A book serif.",
+          "enum": [
+            "serif"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A monospace font.",
+          "enum": [
+            "mono"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "AppearanceHero": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.hero`.",
+      "properties": {
+        "intro": {
+          "description": "The introduction under it in Markdown of at most 2 KiB, e.g. `Dáta mesta na **jednom mieste**.`; raw HTML shows as text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "The home page's heading, one line, e.g. `Otvorené dáta Banskej Bystrice`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AppearanceLink": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.navLinks[]` and `footerLinks[]`.",
+      "properties": {
+        "label": {
+          "description": "The text of the link, e.g. `Mesto`.",
+          "type": "string"
+        },
+        "url": {
+          "description": "An `https://` or `http://` address or a path on the portal starting `/`, e.g. `https://www.banskabystrica.sk`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "url"
+      ],
+      "type": "object"
+    },
+    "AppearancePage": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.pages[]`: one page of the open data portal in one language (T-7031).",
+      "properties": {
+        "lang": {
+          "description": "The language as a two-letter code, e.g. `sk`.",
+          "type": "string"
+        },
+        "markdown": {
+          "description": "The page in Markdown, its first `# heading` the title, at most 16 KiB, e.g. `# Podpora\\n\\nNapíšte nám na opendata@mesto.sk.`; raw HTML shows as text.",
+          "type": "string"
+        },
+        "page": {
+          "description": "The page: `connector`, `privacy`, `terms`, `support` or `accessibility`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "lang",
+        "markdown",
+        "page"
+      ],
+      "type": "object"
+    },
+    "Build": {
+      "additionalProperties": false,
+      "description": "The artifact one build of an `App` published, as the build lane writes it back (AP-13a).",
+      "properties": {
+        "builtAt": {
+          "description": "When the build lane published it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit of the source the artifact was built from, 7 to 40 lowercase hexadecimal characters.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The digest of a `wasm` App's server component, taken from the checked bundle and stored by it in the object store; what the WASM host loads and checks (AP-151).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "description": "The artifact's digest, `sha256:` and 64 lowercase hexadecimal characters. The reconciler deploys this and nothing else (AP-72).",
+          "type": "string"
+        },
+        "sdkVersion": {
+          "description": "The version of the app SDK the artifact was built against.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "builtAt",
+        "commit",
+        "digest",
+        "sdkVersion"
+      ],
+      "type": "object"
+    },
+    "ButtonStyle": {
+      "description": "`spec.appearance.buttonStyle` (T-7744).",
+      "oneOf": [
+        {
+          "description": "The primary colour filled in.",
+          "enum": [
+            "filled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The primary colour as border and text.",
+          "enum": [
+            "outline"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "CardShadow": {
+      "description": "`spec.appearance.cardShadow` (T-7744).",
+      "oneOf": [
+        {
+          "description": "Flat cards with a border only.",
+          "enum": [
+            "none"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A soft shadow under each card.",
+          "enum": [
+            "soft"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "Status condition entry.",
+      "properties": {
+        "lastTransitionTime": {
+          "description": "Last transition timestamp.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Machine-readable reason code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status value (\"True\", \"False\", \"Unknown\").",
+          "type": "string"
+        },
+        "type": {
+          "description": "Type of condition (e.g. Reconciled, Ready).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "type"
+      ],
+      "type": "object"
+    },
+    "ContentWidth": {
+      "description": "`spec.appearance.width`: how wide the open data portal's content runs (T-7744).",
+      "oneOf": [
+        {
+          "description": "About 60 rem, for reading.",
+          "enum": [
+            "narrow"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "About 76 rem, the built-in width.",
+          "enum": [
+            "normal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "About 90 rem, for wide tables.",
+          "enum": [
+            "wide"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "DatasetDisplay": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.display.dataset`: each list left empty shows the level above's.",
+      "properties": {
+        "about": {
+          "description": "The about table's rows in order, each at most once; a row left out is hidden. A DCAT field name (`publisher`, `license`, `rights`, `source`, `keyword`, `accrualPeriodicity`, `issued`, `modified`, `nextUpdate`, `spatial`, `temporal`, `contactPoint`, `identifier`, `conformsTo`) or a dataset extra as `extras.<key>`, e.g. `[license, publisher, modified]`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sections": {
+          "description": "The sections that show, in order, each at most once; a section left out is hidden. One of `publisher`, `subscribe`, `explorer`, `map`, `visualizations`, `dashboards`, `about`, `live`, `mcp`, `resources`, `additional-info`, `shacl`, e.g. `[{name: about}, {name: resources}]`.",
+          "items": {
+            "$ref": "#/definitions/DisplaySection"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "DatasetListDisplay": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.display.datasetList`.",
+      "properties": {
+        "fields": {
+          "description": "What each dataset shows after its title, in order, as a table column or a card line: `notes`, `format`, `publisher`, `modified`, e.g. `[format, modified]`; empty shows the level above's.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "DatasetListLayout": {
+      "description": "`spec.appearance.datasetList`.",
+      "oneOf": [
+        {
+          "description": "One card per dataset with its description.",
+          "enum": [
+            "cards"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "One table row per dataset.",
+          "enum": [
+            "table"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "DisplaySection": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.display.dataset.sections[]`.",
+      "properties": {
+        "heading": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Its heading per language in place of the built-in one, plain text, e.g. `{sk: O dátach, en: About the data}`; a Portal's languages are those of `spec.languages`.",
+          "type": "object"
+        },
+        "name": {
+          "description": "The section, e.g. `about`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "HarvestBudget": {
+      "additionalProperties": false,
+      "description": "The most a harvest run of a source reads before it fails and changes nothing (ODP-13).",
+      "properties": {
+        "bytes": {
+          "description": "Bytes read per run, e.g. `50000000`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "records": {
+          "description": "Records per run, e.g. `5000`.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bytes",
+        "records"
+      ],
+      "type": "object"
+    },
+    "LinkCard": {
+      "additionalProperties": false,
+      "description": "One card of a [`LinkCardsBlock`].",
+      "properties": {
+        "text": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "One line under it per language.",
+          "type": "object"
+        },
+        "title": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The card's heading per language, e.g. `{sk: Rozpočet}`.",
+          "type": "object"
+        },
+        "url": {
+          "description": "An `https://` address or a path on the portal, e.g. `/page/rozpocet`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "url"
+      ],
+      "type": "object"
+    },
+    "MultiLanguageMap": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Multi-language map keyed by ISO 639-1 two-letter lowercase language codes",
+      "propertyNames": {
+        "pattern": "^[a-z]{2}$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "ObjectMeta": {
+      "additionalProperties": false,
+      "description": "Metadata envelope attached to every platform resource (MF-02).",
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value annotations for provenance and ownership (MF-08).",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable description: one string, or the legacy map per locale (UI-50, PF-24)."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value labels for filtering (MF-10).",
+          "type": "object"
+        },
+        "name": {
+          "description": "Resource name (DNS-1123 label).",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Resource namespace (\"org\" or project slug).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable title: one string, or the legacy map per locale (UI-50, PF-24)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "OrganizationAppearance": {
+      "additionalProperties": false,
+      "description": "`spec.appearance` (UIX-16).",
+      "properties": {
+        "bodyFont": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AppearanceFont"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The body text's typeface over `font`, from the same fixed set, e.g. `system`."
+        },
+        "buttonStyle": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ButtonStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How buttons look: `filled` (the default) or `outline`."
+        },
+        "cardShadow": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CardShadow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whether cards carry a shadow: `soft` (the default) or `none`."
+        },
+        "city": {
+          "description": "The city or region the Organization serves, e.g. `Banská Bystrica`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "colours": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppearanceColours"
+            }
+          ],
+          "description": "The colour tokens, each a hex colour such as `#0b5394`."
+        },
+        "contactEmail": {
+          "description": "The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "css": {
+          "description": "A `kind: Portal`'s own stylesheet for its open data portal, at most 32 KiB (T-7745): style rules and `@media` alone, every selector scoped to that portal's pages, properties from a fixed list without `content`, positioning, `z-index` or hiding, `url()` only of `/files/{sha256}/{name}` of the portal's files; e.g. `.site-header { background: navy }`. An Organization's appearance refuses it: each portal carries its own.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "datasetList": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DatasetListLayout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the open data portal lists datasets: `cards` (the default) or a compact `table`."
+        },
+        "display": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppearanceDisplay"
+            }
+          ],
+          "description": "Which parts of the open data portal's dataset and dataset list pages show, in which order and under which heading (T-7743); a page left out shows the level above's."
+        },
+        "faviconSvg": {
+          "description": "The favicon as an SVG document of at most 64 KiB, under the same rules as the logo.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "font": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AppearanceFont"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The open data portal's typeface, one of a fixed set of system font stacks, so no font is fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410)."
+        },
+        "fontSize": {
+          "description": "The base text size in pixels, 14 to 18, e.g. `16`.",
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "footerLinks": {
+          "description": "Links the open data portal's footer adds after its own, under the same rules.",
+          "items": {
+            "$ref": "#/definitions/AppearanceLink"
+          },
+          "type": "array"
+        },
+        "headingFont": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AppearanceFont"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The headings' typeface over `font`, from the same fixed set, e.g. `serif` (T-7744)."
+        },
+        "hero": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppearanceHero"
+            }
+          ],
+          "description": "The open data portal's home hero: its title and an introduction in Markdown."
+        },
+        "homeWidgets": {
+          "description": "Dashboards the Organization's Portal home page shows, each `project/name` of one of its projects, e.g. `doprava/prehlad`; a viewer sees only those they may read (T-6779).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "instanceName": {
+          "description": "Full name on page titles and the login page, e.g. `Mesto Banská Bystrica`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "licenseDefault": {
+          "description": "The licence a new dataset starts with, e.g. `CC-BY-4.0`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "logoSvg": {
+          "description": "The logo as an SVG document of at most 64 KiB, without script, event handler or external reference.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "navLinks": {
+          "description": "Links the open data portal's header adds after its own, at most 8, each a label and an `https://` address or a path on the portal, e.g. `{label: Mesto, url: https://mesto.sk}`.",
+          "items": {
+            "$ref": "#/definitions/AppearanceLink"
+          },
+          "type": "array"
+        },
+        "opendataWidgets": {
+          "description": "Dashboards the Organization's open data portal shows on its catalogue home, each `project/name` of one of its projects with `visibility: public`, e.g. `doprava/prehlad`; anonymous readers see them (T-6780).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pages": {
+          "description": "The texts of the open data portal's own pages, each one page in one language in Markdown (T-7031); a page or language left out shows the built-in text.",
+          "items": {
+            "$ref": "#/definitions/AppearancePage"
+          },
+          "type": "array"
+        },
+        "publisher": {
+          "description": "The legal publisher named in the footer and the open data portal, e.g. `Mesto Banská Bystrica`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "radius": {
+          "description": "The corner radius of cards, buttons and fields in pixels, 0 to 24, e.g. `8`.",
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "shortName": {
+          "description": "Short name on sidebars and tabs, e.g. `BB`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "width": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContentWidth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How wide the content runs: `narrow`, `normal` (the default) or `wide`."
+        }
+      },
+      "type": "object"
+    },
+    "Phase": {
+      "description": "Lifecycle phase enumeration.",
+      "oneOf": [
+        {
+          "description": "Resource manifest is in draft state.",
+          "enum": [
+            "Draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is pending review or approval.",
+          "enum": [
+            "Pending"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource deployment is in progress.",
+          "enum": [
+            "Deploying"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is live and active in cluster.",
+          "enum": [
+            "Live"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reconciliation error.",
+          "enum": [
+            "Error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The platform holds something the repository does not declare, or no longer holds what it does (CC-21, UI-25). Configuration cannot reach this phase — every component reads it from the repository (CC-72) — so it is a space whose seed entities the broker answers differently, and the two resolutions of UI-26 are what a person does about it.",
+          "enum": [
+            "Drifted"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "PortalBlock": {
+      "description": "One block of a row, told apart by `type`.",
+      "oneOf": [
+        {
+          "description": "A heading, an introduction, an image and the dataset search box.",
+          "properties": {
+            "image": {
+              "description": "A raster image of the portal's files, e.g. `/files/{sha256}/hero.png`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "intro": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "The introduction per language in Markdown of at most 2 KiB, e.g. `Dáta mesta na **jednom mieste**.`",
+              "type": "object"
+            },
+            "search": {
+              "description": "Whether the dataset search box shows.",
+              "type": "boolean"
+            },
+            "title": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "The heading per language; absent: the portal's title.",
+              "type": "object"
+            },
+            "type": {
+              "enum": [
+                "hero"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Markdown.",
+          "properties": {
+            "markdown": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Markdown per language, at most 8 KiB each, e.g. `## O portáli\\n\\nDáta mesta...`; raw HTML shows as text.",
+              "type": "object"
+            },
+            "type": {
+              "enum": [
+                "text"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "markdown",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The datasets a query of this portal's public datasets finds, newest first.",
+          "properties": {
+            "format": {
+              "description": "Only datasets with a distribution of this format, e.g. `CSV`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "layout": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/DatasetListLayout"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Cards (the default) or a table."
+            },
+            "limit": {
+              "default": 6,
+              "description": "How many datasets show, 1 to 24.",
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "publisher": {
+              "description": "Only datasets of this publisher by name, e.g. `mesto-bb`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tag": {
+              "description": "Only datasets with this keyword, e.g. `doprava`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "theme": {
+              "description": "Only datasets of this theme by its EU code, e.g. `TRAN`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "The heading per language, e.g. `{sk: Doprava}`.",
+              "type": "object"
+            },
+            "type": {
+              "enum": [
+                "dataset-gallery"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Datasets picked by name, in that order.",
+          "properties": {
+            "datasets": {
+              "description": "One to 12 dataset names, e.g. `[ovzdusie-bb, mhd-zastavky]`.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "The heading per language.",
+              "type": "object"
+            },
+            "type": {
+              "enum": [
+                "featured-datasets"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "datasets",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The map of one dataset with a location, on the deployment's basemap.",
+          "properties": {
+            "dataset": {
+              "description": "The dataset by name, one with a GeoJSON or OGC API Features distribution.",
+              "type": "string"
+            },
+            "title": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "The heading per language.",
+              "type": "object"
+            },
+            "type": {
+              "enum": [
+                "map"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "dataset",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Counts of the portal's public datasets.",
+          "properties": {
+            "items": {
+              "description": "One to three counts, each once, e.g. `[datasets, publishers]`.",
+              "items": {
+                "$ref": "#/definitions/PortalNumber"
+              },
+              "type": "array"
+            },
+            "title": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "The heading per language.",
+              "type": "object"
+            },
+            "type": {
+              "enum": [
+                "numbers"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "items",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A chart of one dataset's Endpoint, the chart its own page shows.",
+          "properties": {
+            "dataset": {
+              "description": "The dataset by name whose Endpoint the chart reads, e.g. `ovzdusie-bb`.",
+              "type": "string"
+            },
+            "title": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "The heading per language.",
+              "type": "object"
+            },
+            "type": {
+              "enum": [
+                "chart"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "dataset",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Cards that each link somewhere.",
+          "properties": {
+            "cards": {
+              "description": "One to 12 cards.",
+              "items": {
+                "$ref": "#/definitions/LinkCard"
+              },
+              "type": "array"
+            },
+            "title": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "The heading per language.",
+              "type": "object"
+            },
+            "type": {
+              "enum": [
+                "link-cards"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "cards",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Files of the portal's store to download.",
+          "properties": {
+            "files": {
+              "description": "One to 12 files of the portal, each `/files/{sha256}/{name}`.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "The heading per language.",
+              "type": "object"
+            },
+            "type": {
+              "enum": [
+                "file-list"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "files",
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PortalNumber": {
+      "description": "One count of a [`NumbersBlock`].",
+      "oneOf": [
+        {
+          "description": "Public datasets.",
+          "enum": [
+            "datasets"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Publishers with a public dataset.",
+          "enum": [
+            "publishers"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Public datasets modified in the last 30 days.",
+          "enum": [
+            "updated-this-month"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "PortalPage": {
+      "additionalProperties": false,
+      "description": "One page of the portal (T-7418).",
+      "properties": {
+        "menu": {
+          "description": "Whether the header menu lists the page; the home page is the logo's link.",
+          "type": "boolean"
+        },
+        "rows": {
+          "description": "The rows from top to bottom.",
+          "items": {
+            "$ref": "#/definitions/PortalRow"
+          },
+          "type": "array"
+        },
+        "slug": {
+          "description": "`home` for the home page, else a DNS label such as `doprava`: the page answers at `/page/doprava`.",
+          "type": "string"
+        },
+        "title": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The page's title and menu entry per language, e.g. `{sk: Doprava, en: Mobility}`.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "slug"
+      ],
+      "type": "object"
+    },
+    "PortalRow": {
+      "additionalProperties": false,
+      "description": "One row of a page: one to three blocks side by side, stacked on a phone.",
+      "properties": {
+        "blocks": {
+          "description": "The blocks from left to right.",
+          "items": {
+            "$ref": "#/definitions/PortalBlock"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "blocks"
+      ],
+      "type": "object"
+    },
+    "PortalSource": {
+      "additionalProperties": false,
+      "description": "One source of a portal (ODP-10). No source carries a credential in this version.",
+      "properties": {
+        "allowedHosts": {
+          "description": "Every host a run may fetch from, the `url`'s own included.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/HarvestBudget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Records and bytes one run may read."
+        },
+        "convertedFile": {
+          "description": "The deployment's file of converted datasets beside jc.toml, e.g. `od-datasets.json`: only those datasets are listed, with their Endpoint's distributions.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "datasetsBase": {
+          "description": "The catalogue base the converted file's dataset URLs name, replaced by this portal's own, e.g. `https://opendata.dev.joinedcontext.com/`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "description": "Whether the source runs on its schedule; `false` keeps it and its records without runs.",
+          "type": "boolean"
+        },
+        "gateway": {
+          "description": "The public base the Endpoints of converted datasets answer under.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Unique in the portal, a DNS label, e.g. `kosice`.",
+          "type": "string"
+        },
+        "namePrefix": {
+          "description": "A prefix for each record's name, e.g. `ke-`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "names": {
+          "description": "`endpoints`: only these Endpoints by name.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "projects": {
+          "description": "`endpoints`: only these projects' Endpoints.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "publisher": {
+          "description": "The CKAN organisation the records land in, e.g. `kosice`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "publisherDescription": {
+          "description": "The publisher's description.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "publisherTitle": {
+          "description": "The publisher's title, e.g. `Mesto Košice`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "publisherUri": {
+          "description": "The publisher's IRI, the one the records name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requireColumn": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "A column each named dataset must have, dataset to column.",
+          "type": "object"
+        },
+        "rewriteHosts": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Hosts in harvested URLs replaced by others, e.g. `{old.sk: new.sk}`.",
+          "type": "object"
+        },
+        "schedule": {
+          "description": "Five-field cron, UTC, e.g. `23 3 * * *`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "skip": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Items left out (title, IRI or item id) with the reason the run log gives.",
+          "type": "object"
+        },
+        "spaces": {
+          "description": "`endpoints`: only these spaces' Endpoints.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "spatialUri": {
+          "description": "The IRI of the area the records cover.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spelling": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Spelling fixed in titles and descriptions, wrong to right.",
+          "type": "object"
+        },
+        "tags": {
+          "description": "`endpoints`: only Endpoints carrying one of these tags.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "titles": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Titles replaced, old title to new.",
+          "type": "object"
+        },
+        "type": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PortalSourceType"
+            }
+          ],
+          "description": "The source's type, e.g. `dcat-ap`."
+        },
+        "url": {
+          "description": "A harvested catalogue's address, `https://` only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "PortalSourceType": {
+      "description": "Where a [`PortalSource`] takes its datasets from (ODP-10).",
+      "oneOf": [
+        {
+          "description": "This Organization's already published Endpoints, narrowed by project, space, tag or name.",
+          "enum": [
+            "endpoints"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A DCAT-AP catalogue (Turtle, RDF/XML or JSON-LD), e.g. another deployment's `catalog.ttl`.",
+          "enum": [
+            "dcat-ap"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A CKAN Action API (`.../api/3/action`).",
+          "enum": [
+            "ckan-action"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The Slovak national catalogue's SPARQL endpoint.",
+          "enum": [
+            "nkod-sparql"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An ArcGIS Hub site.",
+          "enum": [
+            "arcgis-hub"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An ArcGIS REST services directory, folder, FeatureServer or MapServer, e.g. `https://gis.example.sk/arcgis/rest/services`: one record per service.",
+          "enum": [
+            "arcgis-rest"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An OGC API Records collection, e.g. `https://data.example.sk/collections/metadata`.",
+          "enum": [
+            "ogc-records"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "PortalSpec": {
+      "additionalProperties": false,
+      "description": "Desired specification of a [`Portal`][crate::kinds::Portal] (ODP-08).",
+      "properties": {
+        "appearance": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/OrganizationAppearance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Overrides of the Organization's appearance for this portal only."
+        },
+        "hidden": {
+          "description": "Dataset names the portal does not list.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "host": {
+          "description": "A host the operator listed for the Organization, e.g. `mobility.bratislava.sk`; absent: the slug address.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "languages": {
+          "description": "The languages the portal is shown in, the first one the default, e.g. `[sk, en]`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "organizationRef": {
+          "description": "The Organization the portal belongs to, e.g. `bratislava`.",
+          "type": "string"
+        },
+        "pages": {
+          "description": "The portal's pages built from blocks (T-7418): `home` replaces the built-in home, each other page answers at `/page/{slug}`; absent: the built-in home alone.",
+          "items": {
+            "$ref": "#/definitions/PortalPage"
+          },
+          "type": "array"
+        },
+        "path": {
+          "description": "The portal's name inside the Organization, a DNS label such as `mobility`: `/{org}/opendata/-/mobility/`; `default` is the Organization's own portal.",
+          "type": "string"
+        },
+        "profiles": {
+          "description": "The profiles its feeds serve beside EU DCAT-AP, e.g. `[dcat-ap-fi-2.0]`; `[]` for EU DCAT-AP alone. Absent, or naming only `dcat-ap-3.0.1`: the catalogue keeps what it serves.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "slug": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SlugAddress"
+            }
+          ],
+          "default": "redirect",
+          "description": "With a `host`: what the slug address does."
+        },
+        "sources": {
+          "description": "Where its datasets come from (ODP-10).",
+          "items": {
+            "$ref": "#/definitions/PortalSource"
+          },
+          "type": "array"
+        },
+        "title": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The title on every page, per language, e.g. `{sk: Doprava, en: Mobility}`.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "organizationRef",
+        "path"
+      ],
+      "type": "object"
+    },
+    "SlugAddress": {
+      "description": "How a portal on its own host answers its slug address `/{org}/opendata/-/{path}/` (ODP-08).",
+      "oneOf": [
+        {
+          "description": "The slug address answers `308` to the same path and query on the host.",
+          "enum": [
+            "redirect"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Both addresses answer; every page and feed names the host as canonical.",
+          "enum": [
+            "keep"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Status": {
+      "additionalProperties": false,
+      "description": "Server-computed lifecycle and reconciliation status (MF-04). Never stored in Git.",
+      "properties": {
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Build"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the build lane published for an `App`, and the only place its artifact is named (AP-13a). Written back by the build lane in the commit that publishes the artifact; an App without it renders no pod, and no other principal may set it (AP-73)."
+        },
+        "conditions": {
+          "description": "Reconciler condition transitions.",
+          "items": {
+            "$ref": "#/definitions/Condition"
+          },
+          "type": "array"
+        },
+        "observedRevision": {
+          "description": "Git commit revision observed during reconciliation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Phase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current lifecycle phase."
+        },
+        "shard": {
+          "description": "The shard of the WASM host a `wasm` App runs on, recorded at its first publish and kept; the edge's route to the App's server is rendered from it (AP-149).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Text": {
+      "anyOf": [
+        {
+          "description": "The form every new manifest writes.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MultiLanguageMap"
+            }
+          ],
+          "description": "The legacy `{locale: text}` map."
+        }
+      ],
+      "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+    }
+  },
+  "description": "Kubernetes-style resource envelope (MF-01..MF-04).",
+  "properties": {
+    "apiVersion": {
+      "description": "API version: [`API_VERSION`], or a version [`serves`] accepts for this kind.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Resource kind name (must match [`Kind::KIND`]).",
+      "type": "string"
+    },
+    "metadata": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ObjectMeta"
+        }
+      ],
+      "description": "Metadata identifying and labeling the resource."
+    },
+    "spec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/PortalSpec"
+        }
+      ],
+      "description": "Desired spec state."
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Status"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Server-computed status. Stripped during export and serialization."
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "ResourceEnvelope_for_PortalSpec",
+  "type": "object"
+}

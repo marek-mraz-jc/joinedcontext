@@ -634,3 +634,179 @@ mod loopback_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn semver_parsing_and_accessors() {
+        let err = SemVer::new("99999999999999999999.0.0").expect_err("major overflow");
+        assert!(
+            err.to_string()
+                .contains("major version exceeds maximum u32"),
+            "{err}"
+        );
+
+        let err = SemVer::new("0.99999999999999999999.0").expect_err("minor overflow");
+        assert!(
+            err.to_string()
+                .contains("minor version exceeds maximum u32"),
+            "{err}"
+        );
+
+        let err = SemVer::new("0.0.99999999999999999999").expect_err("patch overflow");
+        assert!(
+            err.to_string()
+                .contains("patch version exceeds maximum u32"),
+            "{err}"
+        );
+
+        let ver = SemVer::from_str("1.2.3").expect("valid semver");
+        assert_eq!(ver.as_ref(), "1.2.3");
+        assert_eq!(ver.major(), 1);
+        assert_eq!(ver.minor(), 2);
+        assert_eq!(ver.patch(), 3);
+    }
+
+    #[test]
+    fn data_model_lifecycle_display_and_surfaces() {
+        assert_eq!(DataModelLifecycle::Draft.as_str(), "draft");
+        assert_eq!(DataModelLifecycle::Published.as_str(), "published");
+        assert_eq!(DataModelLifecycle::Deprecated.as_str(), "deprecated");
+        assert_eq!(DataModelLifecycle::Retired.as_str(), "retired");
+        assert_eq!(DataModelLifecycle::Mirrored.as_str(), "mirrored");
+
+        assert_eq!(format!("{}", DataModelLifecycle::Retired), "retired");
+        assert_eq!(format!("{}", DataModelLifecycle::Mirrored), "mirrored");
+
+        assert!(!DataModelLifecycle::Draft.backs_surfaces());
+        assert!(DataModelLifecycle::Published.backs_surfaces());
+        assert!(DataModelLifecycle::Deprecated.backs_surfaces());
+        assert!(!DataModelLifecycle::Retired.backs_surfaces());
+        assert!(!DataModelLifecycle::Mirrored.backs_surfaces());
+    }
+
+    #[test]
+    fn data_model_source_and_origin_validation() {
+        let both = DataModelSource {
+            repository: Some("https://example.com/repo.git".into()),
+            path: Some("model.linkml.yaml".into()),
+            commit: Some("01234567".into()),
+            remote: Some(RemoteSource {
+                url: "https://peer.example.com/schema".into(),
+                version: SemVer::new("1.0.0").unwrap(),
+                sha256: "0".repeat(64),
+                fetched_at: "2026-01-01T00:00:00Z".parse::<TimestampTz>().unwrap(),
+            }),
+        };
+        let err = both
+            .validate()
+            .expect_err("both imported and remote rejected");
+        assert!(
+            err.to_string()
+                .contains("a model is either imported or mirrored, never both (DM-08, DM-48)"),
+            "{err}"
+        );
+
+        let empty = DataModelSource::default();
+        let err = empty.validate().expect_err("empty source rejected");
+        assert!(err.to_string().contains("source must carry either repository/path/commit or remote; omit it for a hand-authored model"), "{err}");
+
+        let origin_bad_space = DataModelOrigin {
+            project: "my-project".into(),
+            space: Some("BAD SPACE".into()),
+            name: "model".into(),
+            version: SemVer::new("1.0.0").unwrap(),
+            commit: "01234567".into(),
+        };
+        let err = origin_bad_space
+            .validate()
+            .expect_err("invalid origin space rejected");
+        assert!(err.to_string().contains("origin.space"), "{err}");
+    }
+
+    #[test]
+    fn data_model_spec_validation_and_transition() {
+        let mut spec = DataModelSpec {
+            context_space_ref: Some("INVALID_SPACE".into()),
+            linkml: "model.linkml.yaml".into(),
+            version: SemVer::new("1.0.0").unwrap(),
+            lifecycle: DataModelLifecycle::Draft,
+            classes: Vec::new(),
+            source: None,
+            origin: None,
+            artifacts: GeneratedArtifacts::default(),
+            open_world: false,
+            consumers: Vec::new(),
+        };
+        let err = spec.validate().expect_err("invalid space ref rejected");
+        assert!(err.to_string().contains("contextSpaceRef"), "{err}");
+
+        spec.context_space_ref = Some("space".into());
+        spec.consumers.push(TypedRef {
+            kind: "Endpoint".into(),
+            name: "BAD CONSUMER".into(),
+            namespace: None,
+        });
+        let err = spec.validate().expect_err("invalid consumer name rejected");
+        assert!(err.to_string().contains("metadata.name"), "{err}");
+
+        spec.consumers[0].name = "valid-consumer".into();
+        spec.consumers[0].namespace = Some("BAD NAMESPACE".into());
+        let err = spec
+            .validate()
+            .expect_err("invalid consumer namespace rejected");
+        assert!(err.to_string().contains("metadata.namespace"), "{err}");
+
+        spec.consumers.clear();
+        assert!(spec.allows_transition_to(DataModelLifecycle::Published));
+        assert!(!spec.allows_transition_to(DataModelLifecycle::Retired));
+    }
+    #[test]
+    fn rejects_an_origin_project_that_is_no_namespace() {
+        let origin = DataModelOrigin {
+            project: "BAD PROJECT".into(),
+            space: None,
+            name: "model".into(),
+            version: SemVer::new("1.0.0").unwrap(),
+            commit: "01234567".into(),
+        };
+        let err = origin.validate().expect_err("invalid origin project");
+        assert!(err.to_string().contains("origin.project"), "{err}");
+    }
+
+    #[test]
+    fn an_origin_without_a_space_validates() {
+        let origin = DataModelOrigin {
+            project: "my-project".into(),
+            space: None,
+            name: "model".into(),
+            version: SemVer::new("1.0.0").unwrap(),
+            commit: "01234567".into(),
+        };
+        origin.validate().expect("valid origin");
+    }
+
+    #[test]
+    fn a_consumer_without_a_namespace_validates() {
+        let spec = DataModelSpec {
+            context_space_ref: Some("space".into()),
+            linkml: "model.linkml.yaml".into(),
+            version: SemVer::new("1.0.0").unwrap(),
+            lifecycle: DataModelLifecycle::Draft,
+            classes: Vec::new(),
+            source: None,
+            origin: None,
+            artifacts: GeneratedArtifacts::default(),
+            open_world: false,
+            consumers: vec![TypedRef {
+                kind: "Endpoint".into(),
+                name: "air".into(),
+                namespace: None,
+            }],
+        };
+        spec.validate().expect("valid spec");
+    }
+}

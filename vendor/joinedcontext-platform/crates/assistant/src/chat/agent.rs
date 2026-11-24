@@ -415,7 +415,7 @@ fn tool_specs(searchable: bool, scripts: bool, connectors: &[Connected]) -> Vec<
             "type": "function",
             "function": {
                 "name": "run_script",
-                "description": "Run JavaScript over a tool result that was cut because it is long. The code is the body of an async function: `data` is the whole result (parsed JSON, or text), and what it returns is what you read. No network, no clock, at most 5 seconds.",
+                "description": "Run JavaScript over a tool result that was cut because it is long. The code is the body of an async function: `data` is the whole result (parsed JSON, or text), and what it returns is what you read. No network, no clock, at most 10 seconds.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -1160,6 +1160,9 @@ async fn run_across(
     json!({ "tool": super::across::TOOL, "counts": counts }).to_string()
 }
 
+/// The most of a script's output the person's `script` event carries, in characters.
+const SHOWN_OUTPUT_CHARS: usize = 1024 * 1024;
+
 /// `run_script` over a kept result (AG-112): the code and its output reach the person too.
 async fn run_script(
     ask: &Ask<'_>,
@@ -1199,11 +1202,16 @@ async fn run_script(
         }
         Err(err) => Err(err.to_string()),
     };
+    // The person sees at most what the sandbox answered before T-7774 (1 MiB): the stream, the
+    // resume registry and the stored transcript hold this copy.
     send(
         events,
         Event::Script {
             code: code.to_owned(),
-            output: output.clone(),
+            output: output
+                .as_ref()
+                .map(|text| cut(text, SHOWN_OUTPUT_CHARS))
+                .map_err(Clone::clone),
         },
     )
     .await;

@@ -657,3 +657,62 @@ mod controls_tests {
         assert!(error.contains("unknown field `controls`"), "{error}");
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn an_ogc_source_reads_ogc_features_and_checks_its_collection() {
+        let good = VisualizationData::Ogc {
+            collection: "WeatherObserved".into(),
+            filter: None,
+            properties: None,
+        };
+        assert_eq!(good.representation(), Representation::OgcFeatures);
+        assert!(check_source("/data", &good).is_ok());
+        let bad = VisualizationData::Ogc {
+            collection: "not a type".into(),
+            filter: None,
+            properties: None,
+        };
+        let refused = check_source("/data", &bad);
+        assert!(
+            matches!(
+                &refused,
+                Err(Error::Invalid { field, reason })
+                    if field == "/data/collection"
+                        && reason.contains("`not a type` is not an entity type")
+            ),
+            "not refused: {refused:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_spec_that_is_not_an_object() {
+        let refusal = check_spec(&json!([1, 2])).expect_err("refused");
+        assert_eq!(refusal.pointer, "");
+        assert_eq!(refusal.rule, "schema");
+        assert_eq!(refusal.reason, "a spec is a JSON object");
+    }
+
+    #[test]
+    fn an_image_url_is_a_literal_data_uri_string_or_value() {
+        assert!(image(&json!("data:image/png;base64,AAAA"), "/mark/url").is_ok());
+        assert!(image(&json!({"value": "data:image/png;base64,AAAA"}), "/mark/url").is_ok());
+        let refused = image(&json!(42), "/mark/url").expect_err("a number is no URI");
+        assert_eq!(refused.pointer, "/mark/url");
+        assert_eq!(refused.rule, "url");
+        let refused = image(&json!("https://evil.example/x.png"), "/mark/url").expect_err("remote");
+        assert_eq!(refused.rule, "url");
+    }
+
+    #[test]
+    fn durations_take_weeks_and_minutes_and_refuse_an_empty_time_part() {
+        assert_eq!(seconds("P1W"), Some(604_800));
+        assert_eq!(seconds("PT90M"), Some(5_400));
+        assert_eq!(seconds("P1DT"), None);
+        assert_eq!(seconds("PT1HT1M"), None);
+    }
+}

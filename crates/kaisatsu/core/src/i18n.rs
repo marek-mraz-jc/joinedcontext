@@ -1420,7 +1420,9 @@ mod tests {
     /// nothing.
     #[test]
     fn a_properties_line_without_an_equals_sign_adds_nothing() {
-        let map = parse_properties("# comment\n\n a = one \nno equals here\nb=two=2\n");
+        let map = parse_properties(
+            "# comment\n# key = commented out\n\n a = one \nno equals here\nb=two=2\n",
+        );
         assert_eq!(map.len(), 2, "{map:?}");
         assert_eq!(map.get("a"), Some(&"one"));
         assert_eq!(map.get("b"), Some(&"two=2"));
@@ -1532,5 +1534,57 @@ mod tests {
             "cs"
         );
         assert_eq!(negotiate_locale(None, None, Some("fr-FR"), "de"), "de");
+    }
+
+    #[test]
+    fn an_unknown_key_reads_as_itself_and_client_names_translate_only_in_braces() {
+        let sk = Bundle::for_locale("sk");
+        assert_eq!(sk.get("noSuchKeyAnywhere"), "noSuchKeyAnywhere");
+        assert_eq!(
+            Bundle::for_locale("pl").locale,
+            "en",
+            "unshipped language reads English"
+        );
+        let portal = sk.get("jcClientPortal");
+        assert_ne!(portal, "jcClientPortal", "the key is shipped");
+        assert_eq!(sk.translate_client_name("${jcClientPortal}"), portal);
+        assert!(sk.keys().any(|k| k == "jcClientPortal"));
+        assert!(!sk.keys().any(|k| k == "noSuchKeyAnywhere"));
+        assert_eq!(sk.translate_client_name("${unknownName}"), "unknownName");
+        for raw in ["My app", "${jcClientPortal", "jcClientPortal}", ""] {
+            assert_eq!(sk.translate_client_name(raw), raw, "{raw}");
+        }
+    }
+
+    #[test]
+    fn negotiation_runs_ui_locales_then_cookie_then_header_then_default() {
+        assert_eq!(
+            negotiate_locale(Some("xx de"), Some("sk"), Some("cs"), "hu"),
+            "de"
+        );
+        assert_eq!(
+            negotiate_locale(Some("xx"), Some("sk-SK"), Some("cs"), "hu"),
+            "sk"
+        );
+        assert_eq!(
+            negotiate_locale(None, Some("xx"), Some("pl, CS_cz;q=0.8"), "hu"),
+            "cs"
+        );
+        assert_eq!(negotiate_locale(None, None, Some("pl,xx"), "hu"), "hu");
+        assert_eq!(negotiate_locale(None, None, None, "HU"), "hu");
+        assert_eq!(negotiate_locale(Some(""), None, None, "pl"), "en");
+        assert_eq!(negotiate_locale(None, None, Some(" de ;q=1"), "en"), "de");
+    }
+
+    #[test]
+    fn the_realm_default_wins_when_it_is_offered() {
+        let realm = crate::model::RealmConfig {
+            internationalization_enabled: true,
+            supported_locales: vec!["cs".into(), "de".into()],
+            default_locale: "de".into(),
+            ..Default::default()
+        };
+        assert_eq!(negotiate_for_realm(&realm, None, None, None), "de");
+        assert_eq!(negotiate_for_realm(&realm, None, None, Some("cs")), "cs");
     }
 }

@@ -482,3 +482,50 @@ fn annotation(node: &Value, name: &str) -> Option<Value> {
         None => Some(inner.clone()),
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn enum_words_reads_the_range_from_class_attributes_in_the_default_language() {
+        let model = "default_language: de\nclasses:\n  C:\n    attributes:\n      s:\n        range: E\nenums:\n  E:\n    permissible_values:\n      a:\n        description: Alpha\n";
+        let words = enum_words(model, "C", "s").expect("the value has words");
+        assert_eq!(words["a"]["de"], "Alpha");
+        assert_eq!(words.len(), 1);
+    }
+
+    #[test]
+    fn enum_words_is_none_when_permissible_values_is_no_map() {
+        let model = "classes:\n  C:\n    attributes:\n      s:\n        range: E\nenums:\n  E:\n    permissible_values: [a, b]\n";
+        assert_eq!(enum_words(model, "C", "s"), None);
+    }
+
+    #[test]
+    fn a_label_text_that_is_no_yaml_says_nothing() {
+        let model = "classes:\n  C:\n    attributes:\n      s:\n        range: E\nenums:\n  E:\n    permissible_values:\n      a:\n        annotations:\n          label: \"{de: Ahoj}\"\n      b:\n        annotations:\n          label: \"[broken\"\n";
+        let words = enum_words(model, "C", "s").expect("a has words");
+        assert_eq!(words["a"]["de"], "Ahoj");
+        assert!(!words.contains_key("b"), "{words:?}");
+    }
+
+    #[test]
+    fn query_attributes_follows_an_is_a_cycle_once_and_lists_each_slot_once() {
+        let model = "classes:\n  A:\n    is_a: B\n    slots: [x]\n    attributes:\n      y:\n        range: integer\n  B:\n    is_a: A\n    slots: [x, z]\n";
+        let classes = query_attributes(model).expect("parses");
+        let a: Vec<(&str, &str, Option<&str>)> = classes["A"]
+            .iter()
+            .map(|q| (q.slot.as_str(), q.written.as_str(), q.example.as_deref()))
+            .collect();
+        assert_eq!(
+            a,
+            vec![
+                ("x", "x", None),
+                ("y", "y:integer", Some("y>0")),
+                ("z", "z", None)
+            ]
+        );
+        let b: Vec<&str> = classes["B"].iter().map(|q| q.slot.as_str()).collect();
+        assert_eq!(b, vec!["x", "z", "y"]);
+    }
+}

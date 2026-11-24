@@ -132,6 +132,31 @@ async fn one_pass_visits_every_realm() {
     );
 }
 
+#[tokio::test]
+async fn a_realm_without_a_display_name_is_named_by_its_name() {
+    let kek = Kek::generate_for_tests();
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
+    realm(&store, &kek, "plaincity", None).await;
+    store
+        .enqueue_outbox(EmailOutboxRecord {
+            template_kind: "RESET_CREDENTIALS".into(),
+            ..row("plaincity", "ob-plain")
+        })
+        .await
+        .unwrap();
+    let sink = RecordingSender::new();
+    let d = OutboxDispatcher::new(store.clone(), kek, Arc::new(sink.clone()));
+    assert_eq!(d.dispatch_all_realms(&mount()).await.unwrap(), 1);
+    let sent = sink.drain();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].realm_id, "plaincity");
+    assert!(
+        sent[0].subject.contains("plaincity") || sent[0].body.contains("plaincity"),
+        "{:?}",
+        sent[0]
+    );
+}
+
 /// A mail server that never answers holds no dispatcher past the send deadline: the row goes
 /// back to pending with the cause and a retry time.
 #[tokio::test(start_paused = true)]

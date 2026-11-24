@@ -250,4 +250,28 @@ slots:
         ));
         assert!(!carries_entities(&json!({"id": "urn:x", "type": 3})));
     }
+    #[test]
+    fn a_class_key_that_is_no_string_is_skipped() {
+        let model = "classes:\n  1:\n    slots: [secret]\n  Citizen:\n    annotations: { personalData: true }\n    attributes:\n      phone: {}\n";
+        let marks = marks(model).expect("YAML");
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks["Citizen"], BTreeSet::from(["phone".to_owned()]));
+    }
+
+    #[test]
+    fn a_type_listed_twice_removes_the_attribute_once() {
+        let marks = marks(MODEL).expect("YAML");
+        let mut answer = json!({
+            "id": "urn:ngsi-ld:PotholeReport:1",
+            "type": ["PotholeReport", "ex:PotholeReport"],
+            "contactEmail": "jana@example.org",
+            "description": "Hlboká jama"
+        });
+        assert_eq!(
+            withhold(&mut answer, &marks),
+            vec!["PotholeReport.contactEmail"]
+        );
+        assert!(answer.get("contactEmail").is_none());
+        assert_eq!(answer["description"], "Hlboká jama");
+    }
 }

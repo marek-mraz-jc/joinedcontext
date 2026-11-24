@@ -38,6 +38,17 @@ struct FailingStore {
     conflicting: Mutex<BTreeSet<&'static str>>,
     /// How many conflicts were answered.
     conflicts: std::sync::atomic::AtomicUsize,
+    /// Methods that answer this many calls and fail every later one.
+    failing_after: Mutex<std::collections::BTreeMap<&'static str, usize>>,
+    /// When set, the first conflict answered removes the catalogue, as a concurrent delete
+    /// would: `get_catalogue` answers none from then on.
+    vanish_on_conflict: std::sync::atomic::AtomicBool,
+    catalogue_gone: std::sync::atomic::AtomicBool,
+    /// Whether every OData table's reads fail at the source, as a broken database would.
+    broken_tables: std::sync::atomic::AtomicBool,
+    /// Whether `search_page` answers a page without letting the caller choose it, as a store
+    /// with a broken search would.
+    skips_pick: std::sync::atomic::AtomicBool,
 }
 
 impl FailingStore {
@@ -47,7 +58,17 @@ impl FailingStore {
             failing: Mutex::new(BTreeSet::new()),
             conflicting: Mutex::new(BTreeSet::new()),
             conflicts: std::sync::atomic::AtomicUsize::new(0),
+            failing_after: Mutex::new(std::collections::BTreeMap::new()),
+            vanish_on_conflict: std::sync::atomic::AtomicBool::new(false),
+            catalogue_gone: std::sync::atomic::AtomicBool::new(false),
+            broken_tables: std::sync::atomic::AtomicBool::new(false),
+            skips_pick: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// `method` answers `calls` calls, then fails.
+    fn fail_after(&self, method: &'static str, calls: usize) {
+        self.failing_after.lock().unwrap().insert(method, calls);
     }
 
     fn conflict(&self, methods: &[&'static str]) {
@@ -64,6 +85,36 @@ impl FailingStore {
     fn heal(&self) {
         self.failing.lock().unwrap().clear();
         self.conflicting.lock().unwrap().clear();
+        self.failing_after.lock().unwrap().clear();
+        for flag in [
+            &self.vanish_on_conflict,
+            &self.catalogue_gone,
+            &self.broken_tables,
+            &self.skips_pick,
+        ] {
+            flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// The error `method` answers instead of the memory store's answer, if any.
+    fn refusal(&self, method: &str) -> Option<DataroomError> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.conflicting.lock().unwrap().contains(method) {
+            self.conflicts.fetch_add(1, SeqCst);
+            if self.vanish_on_conflict.load(SeqCst) {
+                self.catalogue_gone.store(true, SeqCst);
+            }
+            return Some(DataroomError::Conflict(format!("{method} conflicted")));
+        }
+        let spent = match self.failing_after.lock().unwrap().get_mut(method) {
+            Some(0) => true,
+            Some(left) => {
+                *left -= 1;
+                false
+            }
+            None => false,
+        };
+        (spent || self.fails(method)).then(|| DataroomError::Storage(format!("{method} failed")))
     }
 
     fn fails(&self, method: &str) -> bool {
@@ -75,16 +126,8 @@ macro_rules! forward {
     ($( $name:ident<$lt:lifetime>($($arg:ident : $ty:ty),*) -> $ret:ty; )*) => {
         $(
             fn $name<$lt>(&$lt self, $($arg: $ty),*) -> BoxFuture<$lt, Result<$ret>> {
-                if self.conflicting.lock().unwrap().contains(stringify!($name)) {
-                    self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    return Box::pin(async {
-                        Err(DataroomError::Conflict(concat!(stringify!($name), " conflicted").into()))
-                    });
-                }
-                if self.fails(stringify!($name)) {
-                    return Box::pin(async {
-                        Err(DataroomError::Storage(concat!(stringify!($name), " failed").into()))
-                    });
+                if let Some(e) = self.refusal(stringify!($name)) {
+                    return Box::pin(async move { Err(e) });
                 }
                 self.inner.$name($($arg),*)
             }
@@ -92,11 +135,32 @@ macro_rules! forward {
     };
 }
 
+/// An OData table whose source fails on every read, as a Postgres table does when its
+/// connection drops.
+struct BrokenTable(Arc<dyn odata_table::Table>);
+
+impl odata_table::Table for BrokenTable {
+    fn info(&self) -> &odata_table::TableInfo {
+        self.0.info()
+    }
+
+    fn fetch<'a>(
+        &'a self,
+        _plan: &'a odata_table::Plan,
+        _scope: &'a odata_table::Scope,
+    ) -> odata_table::Fetching<'a> {
+        Box::pin(async {
+            Err(odata_table::TableError::Source(
+                "pg: connection reset by peer at 10.0.0.7:5432".into(),
+            ))
+        })
+    }
+}
+
 impl Store for FailingStore {
     forward! {
         resolve_host<'a>(host: &'a str) -> Option<Catalogue>;
         list_catalogues<'a>(org_id: OrgId) -> Vec<Catalogue>;
-        get_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> Option<Catalogue>;
         upsert_catalogue<'a>(catalogue: Catalogue) -> Catalogue;
         save_catalogue<'a>(catalogue: Catalogue, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Catalogue;
         delete_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> bool;
@@ -139,7 +203,79 @@ impl Store for FailingStore {
         list_plugins<'a>(ctx: &'a RequestCtx) -> Vec<CataloguePlugin>;
         upsert_plugin<'a>(ctx: &'a RequestCtx, plugin: CataloguePlugin) -> CataloguePlugin;
         save_plugin<'a>(ctx: &'a RequestCtx, plugin: CataloguePlugin, activity: ActivityRow) -> CataloguePlugin;
-        odata_table<'a>(ctx: &'a RequestCtx, set_name: &'a str) -> Arc<dyn odata_table::Table>;
+    }
+
+    fn get_catalogue<'a>(
+        &'a self,
+        org_id: OrgId,
+        catalogue_id: CatalogueId,
+    ) -> BoxFuture<'a, Result<Option<Catalogue>>> {
+        if let Some(e) = self.refusal("get_catalogue") {
+            return Box::pin(async move { Err(e) });
+        }
+        if self
+            .catalogue_gone
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Box::pin(async { Ok(None) });
+        }
+        self.inner.get_catalogue(org_id, catalogue_id)
+    }
+
+    /// The trait's own reading over this store's methods (so a failing method fails the search
+    /// too), or a page chosen without the caller when `skips_pick` is set.
+    fn search_page<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        query: &'a dataroom_core::SearchQuery,
+        pick: &'a mut dataroom_core::PickPage<'_>,
+    ) -> BoxFuture<'a, Result<dataroom_core::SearchPage>> {
+        Box::pin(async move {
+            let publishers = self.list_publishers(ctx).await?;
+            if self.skips_pick.load(std::sync::atomic::Ordering::SeqCst) {
+                return Ok(dataroom_core::SearchPage {
+                    publishers,
+                    datasets: Vec::new(),
+                });
+            }
+            let candidates: Vec<dataroom_core::SearchCandidate> = self
+                .list_datasets(ctx)
+                .await?
+                .into_iter()
+                .filter(|ds| query.keeps(ds))
+                .map(|dataset| dataroom_core::SearchCandidate {
+                    dataset,
+                    rank: None,
+                })
+                .collect();
+            let mut by_id: std::collections::HashMap<String, Dataset> = candidates
+                .iter()
+                .map(|c| (c.dataset.id.clone(), c.dataset.clone()))
+                .collect();
+            let ids = pick(&publishers, candidates)?;
+            let datasets = ids.iter().filter_map(|id| by_id.remove(id)).collect();
+            Ok(dataroom_core::SearchPage {
+                publishers,
+                datasets,
+            })
+        })
+    }
+
+    fn odata_table<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        set_name: &'a str,
+    ) -> BoxFuture<'a, Result<Arc<dyn odata_table::Table>>> {
+        if let Some(e) = self.refusal("odata_table") {
+            return Box::pin(async move { Err(e) });
+        }
+        Box::pin(async move {
+            let table = self.inner.odata_table(ctx, set_name).await?;
+            if self.broken_tables.load(std::sync::atomic::Ordering::SeqCst) {
+                return Ok(Arc::new(BrokenTable(table)) as Arc<dyn odata_table::Table>);
+            }
+            Ok(table)
+        })
     }
 }
 
@@ -1484,6 +1620,17 @@ async fn ckan_dataset_and_resource_writes() {
     )
     .await;
     assert_eq!(a.status, StatusCode::FORBIDDEN, "{}", a.body);
+    // No name is never "in use": the operation decides, and refuses a record without one.
+    for body in [
+        json!({}),
+        json!({"name": ""}),
+        json!({"title": "Untitled", "owner_org": "city"}),
+    ] {
+        let a = ckan(app, "package_create", Some("tok-editor"), body.clone()).await;
+        assert!(a.status.is_client_error(), "{body}: {}", a.body);
+        assert!(!a.body.contains("already in use"), "{body}: {}", a.body);
+        assert_eq!(a.json()["success"], false, "{body}: {}", a.body);
+    }
     // A name the caller cannot see answers like a free one: the refusal, never "in use".
     for name in ["secret", "veiled", "inner"] {
         let a = ckan(
@@ -1784,6 +1931,33 @@ async fn ckan_dataset_and_resource_writes() {
 async fn ckan_organization_writes() {
     let w = world().await;
     let app = &w.app;
+    // A store that fails while checking the new id answers a storage error and keeps nothing:
+    // the same request succeeds once the store is back.
+    w.store.fail_after("get_publisher", 1);
+    let a = ckan(
+        app,
+        "organization_create",
+        Some("tok-admin"),
+        json!({"name": "flaky"}),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
+    assert!(!a.body.contains("get_publisher failed"), "{}", a.body);
+    w.store.heal();
+    assert!(w
+        .store
+        .get_publisher(&w.admin_ctx(), "org-flaky")
+        .await
+        .unwrap()
+        .is_none());
+    let a = ckan(
+        app,
+        "organization_create",
+        Some("tok-admin"),
+        json!({"name": "flaky"}),
+    )
+    .await;
+    assert_eq!(a.json()["result"]["id"], "org-flaky", "{}", a.body);
     let a = ckan(app, "organization_create", Some("tok-admin"), json!({})).await;
     assert_eq!(ckan_error(&a)["name"][0], "Missing value");
     let a = ckan(
@@ -3380,6 +3554,14 @@ async fn branding_logo_and_static_assets() {
     let a = logo().await;
     assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
     w.store.heal();
+    // A catalogue deleted between two tries is not found: the logo is not written anywhere.
+    w.store.conflict(&["save_catalogue"]);
+    w.store
+        .vanish_on_conflict
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let a = logo().await;
+    assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.body);
+    assert!(a.body.contains("catalogue not found"), "{}", a.body);
     w.store.heal();
 
     for (uri, ct) in [
@@ -4426,6 +4608,91 @@ async fn odata_refuses_what_it_does_not_serve() {
             StatusCode::NOT_FOUND,
             "{uri}"
         );
+    }
+}
+
+/// A source that fails under an OData read answers 500 on every path that reads it, and its
+/// text (an address of the database) stays in the server log.
+#[tokio::test]
+async fn odata_reads_answer_a_storage_error_when_the_source_fails() {
+    let w = world().await;
+    let sound = get(&w.app, "/odata/v4/Datasets/$count", None).await;
+    assert_eq!(sound.status, StatusCode::OK, "{}", sound.body);
+    w.store
+        .broken_tables
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    for uri in [
+        "/odata/v4/Datasets/$count",
+        "/odata/v4/Datasets('pkg-open')",
+        "/odata/v4/Datasets/$allowed?op=read&key=pkg-open",
+    ] {
+        let a = get(&w.app, uri, None).await;
+        assert_eq!(
+            a.status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{uri}: {}",
+            a.body
+        );
+        assert!(!a.body.contains("10.0.0.7"), "{uri}: {}", a.body);
+        assert_eq!(
+            a.header("content-type"),
+            "application/problem+json",
+            "{uri}"
+        );
+    }
+    w.store.heal();
+    let a = get(&w.app, "/odata/v4/Datasets('pkg-open')", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    // A $count filter outside the served subset is refused, not counted as zero.
+    let a = get(
+        &w.app,
+        "/odata/v4/Datasets/$count?$filter=tolower(name)%20eq%20'open'",
+        None,
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::NOT_IMPLEMENTED, "{}", a.body);
+}
+
+/// A store that answers a search page without letting the route choose it answers a storage
+/// error, never an empty result that looks like no match.
+#[tokio::test]
+async fn package_search_refuses_a_page_the_store_chose_alone() {
+    let w = world().await;
+    let a = ckan(&w.app, "package_search", None, json!({})).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(
+        a.json()["result"]["count"].as_u64().unwrap() > 0,
+        "{}",
+        a.body
+    );
+    w.store
+        .skips_pick
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let a = ckan(&w.app, "package_search", None, json!({"q": "open"})).await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
+    assert_eq!(a.json()["success"], false, "{}", a.body);
+    assert!(!a.body.contains("without choosing"), "{}", a.body);
+}
+
+/// The OData service document and a portal stylesheet are read on a catalogue's host only: an
+/// unknown host answers 404, as every other route does.
+#[tokio::test]
+async fn odata_service_document_and_portal_css_need_a_known_host() {
+    let w = world().await;
+    let a = get(&w.app, "/odata/v4/", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    for uri in ["/odata/v4/", "/portal-css/0123abcd.css"] {
+        let a = send(
+            &w.app,
+            Method::GET,
+            uri,
+            None,
+            &[("host", "elsewhere.test")],
+            Body::empty(),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::NOT_FOUND, "{uri}: {}", a.body);
+        assert!(!a.body.contains("value"), "{uri}: {}", a.body);
     }
 }
 

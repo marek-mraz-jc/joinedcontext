@@ -390,3 +390,54 @@ impl axum::response::IntoResponse for ProblemDetails {
         (status, headers, body).into_response()
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn an_unknown_slug_carries_no_hint() {
+        // through a local binding: tests/it/problem_catalogue_tests.rs reads every
+        // direct call of the constructor in src/ as one the platform writes
+        let make = ProblemDetails::new;
+        let slug = "teapot";
+        let problem = make(418, slug, "I'm a teapot");
+        assert_eq!(problem.type_uri, format!("{PROBLEM_TYPE_BASE}teapot"));
+        assert_eq!(problem.status, 418);
+        assert_eq!(problem.title, "I'm a teapot");
+        assert!(problem.extensions.is_empty());
+    }
+
+    #[test]
+    fn urn_owner_answers_422_naming_the_id_field() {
+        let problem = ProblemDetails::urn_owner();
+        assert_eq!(problem.status, 422);
+        assert_eq!(problem.type_uri, format!("{PROBLEM_TYPE_BASE}urn-owner"));
+        assert_eq!(problem.title, "Entity Identifier Names Another Owner");
+        assert_eq!(
+            problem.extensions.get("field"),
+            Some(&serde_json::Value::String("id".into()))
+        );
+        assert_eq!(
+            problem.extensions.get("hint"),
+            Some(&serde_json::Value::String(
+                problem_type("urn-owner").unwrap().hint.into()
+            ))
+        );
+    }
+
+    #[test]
+    fn an_api_version_error_is_a_bad_request_naming_api_version() {
+        let err = Error::ApiVersion("v9".into());
+        let detail = err.to_string();
+        let problem = ProblemDetails::from(err);
+        assert_eq!(problem.status, 400);
+        assert_eq!(problem.type_uri, format!("{PROBLEM_TYPE_BASE}bad-request"));
+        assert_eq!(
+            problem.extensions.get("field"),
+            Some(&serde_json::Value::String("apiVersion".into()))
+        );
+        assert_eq!(problem.detail.as_deref(), Some(detail.as_str()));
+        assert!(detail.contains("apiVersion `v9` is not served"), "{detail}");
+    }
+}

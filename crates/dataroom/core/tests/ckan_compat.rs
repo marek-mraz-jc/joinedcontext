@@ -304,6 +304,17 @@ fn an_update_keeps_the_stored_values_it_does_not_name() {
     assert!(fresh.id.starts_with("pkg-"));
     assert_eq!(fresh.visibility, Visibility::Public);
     assert_eq!(fresh.state, RecordState::Active);
+    // Neither a title, a name nor a record: no title is invented; empty or non-string
+    // translations are dropped.
+    let bare = dataset_from_ckan(
+        org,
+        cat,
+        &json!({"title": "", "title_translated": {"en": "", "de": 3}}),
+        None,
+        "sk",
+    );
+    assert!(bare.title.is_empty(), "{:?}", bare.title);
+    assert_eq!(bare.name, "");
 }
 
 #[test]
@@ -465,6 +476,18 @@ fn resources_views_and_licences_convert_alone() {
         distribution_to_ckan(&single, "pkg-x", 0, &[], "sk")["conforms_to"],
         "https://s/1"
     );
+    // Translated texts that are no string or empty are dropped; the plain text fills the
+    // default language.
+    let plain = distribution_from_ckan(
+        &json!({"url": "https://x/c", "name_translated": {"en": 5, "de": ""},
+                "description_translated": {"en": 5, "de": "", "cs": "Popis"},
+                "description": "Opis"}),
+        "pkg-x",
+        "res-c",
+        "sk",
+    );
+    assert!(plain.title.is_empty(), "{:?}", plain.title);
+    assert_eq!(plain.description, texts(&[("cs", "Popis"), ("sk", "Opis")]));
 
     let view: ResourceView = serde_json::from_value(json!({
         "orgId": Uuid::nil(), "catalogueId": Uuid::nil(),

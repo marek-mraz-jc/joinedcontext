@@ -280,3 +280,80 @@ impl OrganizationSpec {
                 .is_some_and(|label| label.ends_with('.'))
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn project_creation_anyone_conversions() {
+        let pc = ProjectCreation::try_from("anyone".to_string()).expect("parses anyone");
+        assert_eq!(pc, ProjectCreation::Anyone);
+        let s = String::from(ProjectCreation::Anyone);
+        assert_eq!(s, "anyone");
+        let s_admin = String::from(ProjectCreation::OrgAdmin);
+        assert_eq!(s_admin, "org-admin");
+        let s_group = String::from(ProjectCreation::Group("devs".to_string()));
+        assert_eq!(s_group, "group:devs");
+    }
+
+    #[test]
+    fn organization_spec_refuses_empty_contact_name() {
+        let spec = OrganizationSpec {
+            domain: "bb.sk".to_string(),
+            git_repository_url: None,
+            locales: vec!["sk".to_string()],
+            default_locale: "sk".to_string(),
+            contacts: vec![Contact {
+                role: ContactRole::Administrative,
+                name: "   ".to_string(),
+                email: "admin@bb.sk".to_string(),
+                phone: None,
+            }],
+            projects: ProjectsPolicy::default(),
+            policies: OrganizationPolicies::default(),
+            limits: OrganizationLimits::default(),
+            dcat_profiles: Vec::new(),
+            installation: false,
+            catalog: None,
+            appearance: OrganizationAppearance::default(),
+            dataset_fields: Vec::new(),
+        };
+        let err = spec
+            .validate()
+            .expect_err("empty contact name must be rejected");
+        assert!(err.to_string().contains("contacts.name"), "{err}");
+    }
+
+    #[test]
+    fn organization_spec_validates_catalog_when_present() {
+        let spec = OrganizationSpec {
+            domain: "bb.sk".to_string(),
+            git_repository_url: None,
+            locales: vec!["sk".to_string()],
+            default_locale: "sk".to_string(),
+            contacts: Vec::new(),
+            projects: ProjectsPolicy::default(),
+            policies: OrganizationPolicies::default(),
+            limits: OrganizationLimits::default(),
+            dcat_profiles: Vec::new(),
+            installation: false,
+            catalog: Some(crate::kinds::ProjectCatalog {
+                publisher: crate::kinds::Publisher {
+                    name: BTreeMap::new(),
+                    uri: Some("https://data.gov.sk/id/legal-subject/12345678".to_string()),
+                },
+                contact_point: None,
+            }),
+            appearance: OrganizationAppearance::default(),
+            dataset_fields: Vec::new(),
+        };
+        let err = spec.validate().expect_err("invalid catalog should fail");
+        assert!(
+            err.to_string()
+                .contains("give the text in at least one language"),
+            "{err}"
+        );
+    }
+}

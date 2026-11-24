@@ -4,8 +4,13 @@
 
 use serde_json::{json, Value};
 
-/// The most of the sandbox's answer the assistant holds (T-5510): the gateway's own body cap.
-const MAX_OUTCOME_BYTES: usize = 8 * 1024 * 1024;
+/// The most of the sandbox's answer the assistant holds: its 16 MiB output limit and the logs
+/// beside it (T-7774).
+const MAX_OUTCOME_BYTES: usize = 18 * 1024 * 1024;
+
+/// How long one script call may take: the sandbox's 10 s and 2 s for the transfer (T-7775 J),
+/// instead of the shared client's 120 s.
+const SCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
 /// The longest script the model may write, in characters.
 pub const MAX_CODE_CHARS: usize = 4_000;
@@ -43,10 +48,17 @@ pub async fn run(
     let answer = http
         .post(format!("{functions}/invoke"))
         .bearer_auth(token)
+        .timeout(SCRIPT_TIMEOUT)
         .json(&body)
         .send()
         .await
-        .map_err(|err| format!("the sandbox could not be reached: {}", err.without_url()))?;
+        .map_err(|err| match err.is_timeout() {
+            true => format!(
+                "the sandbox did not answer within {} s",
+                SCRIPT_TIMEOUT.as_secs()
+            ),
+            false => format!("the sandbox could not be reached: {}", err.without_url()),
+        })?;
     let status = answer.status();
     let body = jc_core::outbound::read_capped(answer, MAX_OUTCOME_BYTES)
         .await

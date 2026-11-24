@@ -2422,4 +2422,20 @@ mod tests {
         assert_eq!(refused.status(), StatusCode::UNPROCESSABLE_ENTITY);
         assert!(refused.headers().get(header::LOCATION).is_none());
     }
+
+    /// A refusal the authorizer marks hidden answers 404 and never repeats its reason (C11); a
+    /// visible one answers 403 with it.
+    #[test]
+    fn a_hidden_refusal_is_not_found_and_a_visible_one_forbidden() {
+        let hidden = decision_error(dataroom_core::Decision::deny_hidden("in catalogue x"));
+        assert!(
+            matches!(&hidden, DataroomError::NotFound(m) if m == "Not found"),
+            "{hidden:?}"
+        );
+        let visible = decision_error(dataroom_core::Decision::deny_visible("read-only"));
+        assert!(
+            matches!(&visible, DataroomError::Forbidden(m) if m == "read-only"),
+            "{visible:?}"
+        );
+    }
 }

@@ -420,3 +420,54 @@ fn scan_author_writes(texts: &[String]) -> AuthorWrites {
     }
     writes
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_a_not_after_that_is_no_duration() {
+        let mode = LifetimeMode {
+            from: Some(OBSERVED_AT.to_owned()),
+            not_after: Some("soon".to_owned()),
+            ..Default::default()
+        };
+        let err = mode
+            .end("spec.lifetime[0].entity")
+            .expect_err("no duration");
+        assert!(
+            matches!(&err, Error::Invalid { field, reason }
+                if field == "spec.lifetime[0].entity.notAfter"
+                    && reason.starts_with("`soon` is not a duration")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_more_attribute_entries_than_the_limit() {
+        let attribute = AttributeLifetime {
+            names: vec!["level".to_owned()],
+            from: None,
+            plus: None,
+            not_after: None,
+            rolling: Some("PT5M".to_owned()),
+            at: None,
+        };
+        let entry = Lifetime {
+            entity_type: "Sensor".to_owned(),
+            entity: None,
+            attributes: vec![attribute; LIFETIME_MAX_ATTRIBUTES + 1],
+        };
+        let err = validate_attributes("spec.lifetime[0]", &entry, &AuthorWrites::default())
+            .expect_err("too many entries");
+        assert_eq!(
+            err,
+            Error::Invalid {
+                field: "spec.lifetime[0].attributes".to_owned(),
+                reason: format!(
+                    "write at most {LIFETIME_MAX_ATTRIBUTES} attribute entries (PL-80)"
+                ),
+            }
+        );
+    }
+}

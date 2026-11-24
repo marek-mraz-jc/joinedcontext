@@ -176,4 +176,37 @@ mod tests {
         }
         assert!(presented(&HeaderMap::new()).is_none());
     }
+
+    /// A thread that panicked holding the store poisons its lock; minting, verifying, revoking
+    /// and the end of finished runs go on with what it held (T-7795).
+    #[tokio::test]
+    async fn a_poisoned_store_still_mints_verifies_and_revokes() {
+        let store = DataCredentials::default();
+        let held = presented(&bearer(&store.mint("run-1"))).expect("parsed").1;
+        let poisoner = store.clone();
+        let _ = std::thread::spawn(move || {
+            let _live = poisoner.inner.lock().expect("the lock");
+            panic!("a caller dies holding the store");
+        })
+        .join();
+        assert!(store.inner.is_poisoned());
+        assert!(store.verify("run-1", &held), "what it held survives");
+        let next = presented(&bearer(&store.mint("run-2"))).expect("parsed").1;
+        assert!(store.verify("run-2", &next));
+        // A Portal that cannot be reached ends nothing.
+        let runs = RunResolver::with_cached_at(
+            url::Url::parse("http://portal.invalid:8080").expect("a URL"),
+            serde_json::from_value(serde_json::json!({
+                "id": "run-1", "project": "p", "appName": "a", "endpointSlug": "e",
+                "allowsWrite": false, "branch": "b", "pathPrefix": "", "status": "building",
+                "ticketHash": "", "maxTokens": 1, "allowedHosts": [], "requestsPerMinute": 1,
+                "maxResponseBytes": 1, "createdBy": "u", "modelName": "m"
+            }))
+            .expect("a run"),
+        );
+        store.end_finished(&runs).await;
+        assert!(store.verify("run-1", &held));
+        store.revoke("run-1");
+        assert!(!store.verify("run-1", &held));
+    }
 }

@@ -712,7 +712,7 @@ mod tests {
         assert_eq!(broker.effective_address(), MqttAddress::Platform);
         // A broker committed before spec.address with a port keeps its dedicated port.
         broker.port = Some(18831);
-        assert_eq!(broker.validate().map_err(|e| e.to_string()), Ok(()));
+        broker.validate().expect("valid");
         assert_eq!(broker.effective_address(), MqttAddress::DedicatedPort);
         broker.address = Some(MqttAddress::Platform);
         let message = refusal(&broker);
@@ -735,7 +735,7 @@ mod tests {
             "{message}"
         );
         broker.hostname = Some("mqtt.city.example".into());
-        assert_eq!(broker.validate().map_err(|e| e.to_string()), Ok(()));
+        broker.validate().expect("valid");
         assert_eq!(broker.effective_address(), MqttAddress::CustomHostname);
         broker.port = Some(18831);
         assert!(refusal(&broker).contains("this broker's address is customHostname"));
@@ -777,7 +777,7 @@ mod tests {
             "roles": [{"name": "camera", "publish": ["${clientid}/a"]}]
         }))
         .expect("reads");
-        assert_eq!(read.validate().map_err(|e| e.to_string()), Ok(()));
+        read.validate().expect("valid");
         assert_eq!(
             read.effective_device_auth(),
             vec![MqttDeviceAuth::Token, MqttDeviceAuth::ClientCertificate]
@@ -803,7 +803,7 @@ mod tests {
             &["cameras/${clientid}/#", "status/${clientid}/up"],
             &["commands/${clientid}/+"],
         )]);
-        assert_eq!(camera.validate().map_err(|e| e.to_string()), Ok(()));
+        camera.validate().expect("valid");
         assert_eq!(camera.roles_of("cam-north").count(), 1);
         assert_eq!(camera.roles_of("cam-south").count(), 0);
     }
@@ -1021,7 +1021,7 @@ mod tests {
         assert!(refusal(&broker).contains("in capture mode"));
         let mut ingest = spec(vec![role("camera", &["${clientid}/a"], &[])]);
         ingest.mode = None;
-        assert_eq!(ingest.validate().map_err(|e| e.to_string()), Ok(()));
+        ingest.validate().expect("valid");
         assert_eq!(ingest.effective_mode(), MqttMode::Ingest);
     }
 
@@ -1032,7 +1032,7 @@ mod tests {
         broker.capture = Some(MqttCapture::default());
         assert!(refusal(&broker).contains("spec.mode: capture"));
         broker.mode = Some(MqttMode::Capture);
-        assert_eq!(broker.validate().map_err(|e| e.to_string()), Ok(()));
+        broker.validate().expect("valid");
         for (capture, field) in [
             (
                 MqttCapture {
@@ -1076,7 +1076,7 @@ mod tests {
     #[test]
     fn allowed_sources_take_v4_and_v6_networks_and_admit_only_inside() {
         let broker = sources(&["203.0.113.0/24", "2001:db8::/48", "198.51.100.7/32"]);
-        assert_eq!(broker.validate().map_err(|e| e.to_string()), Ok(()));
+        broker.validate().expect("valid");
         let ranges = broker.source_ranges().expect("readable");
         let admits = |ip: &str| {
             let ip = ip.parse().expect("an address");
@@ -1090,8 +1090,8 @@ mod tests {
         assert!(!admits("203.0.114.1"));
         assert!(!admits("2001:db9::1"));
         assert_eq!(
-            sources(&[]).source_ranges().map_err(|e| e.to_string()),
-            Ok(Vec::new())
+            sources(&[]).source_ranges().expect("readable"),
+            Vec::<SourceRange>::new()
         );
     }
 
@@ -1120,9 +1120,21 @@ mod tests {
         let many: Vec<String> = (0..33).map(|i| format!("10.0.{i}.0/24")).collect();
         let many: Vec<&str> = many.iter().map(String::as_str).collect();
         assert!(refusal(&sources(&many)).contains("more than 32"));
-        assert_eq!(
-            sources(&many[..32]).validate().map_err(|e| e.to_string()),
-            Ok(())
-        );
+        sources(&many[..32]).validate().expect("valid");
+    }
+    #[test]
+    fn validate_spec_checks_the_name_then_the_spec() {
+        let broker = spec(vec![role("camera", &["${clientid}/a"], &[])]);
+        let good = ObjectMeta::new("north-cams", "city");
+        broker.validate_spec(&good).expect("valid");
+        let bad = ObjectMeta::new("North_Cams", "city");
+        let message = broker
+            .validate_spec(&bad)
+            .expect_err("bad name")
+            .to_string();
+        assert!(message.contains("DNS-1123"), "{message}");
+        let mut empty = spec(Vec::new());
+        empty.limits.max_connections = 0;
+        assert!(empty.validate_spec(&good).is_err());
     }
 }

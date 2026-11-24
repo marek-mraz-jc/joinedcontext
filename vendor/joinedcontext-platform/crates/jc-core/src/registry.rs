@@ -141,3 +141,31 @@ impl KindInfo {
             .replace("{name}", name)
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn validate_yaml_refuses_an_unparsable_manifest_of_every_kind() {
+        for info in KINDS {
+            let err = validate_yaml(info.kind, "apiVersion: [unclosed")
+                .expect("a known kind")
+                .expect_err("the manifest does not parse");
+            assert!(
+                matches!(err, crate::Error::Parse(_)),
+                "{}: {err}",
+                info.kind
+            );
+            assert!(err.to_string().starts_with("manifest does not parse: "));
+        }
+    }
+
+    #[test]
+    fn validate_yaml_and_schema_of_know_no_unknown_kind() {
+        assert!(validate_yaml("NoSuchKind", "kind: NoSuchKind").is_none());
+        assert!(schema_of("NoSuchKind").is_none());
+        assert!(by_kind("NoSuchKind").is_none());
+        assert!(by_plural("nosuchkinds").is_none());
+    }
+}

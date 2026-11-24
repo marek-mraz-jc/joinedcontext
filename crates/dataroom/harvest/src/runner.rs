@@ -1362,7 +1362,7 @@ impl HarvestEngine {
 
     /// Records a claimed run failed when its task ended without a word (a panic), so its
     /// lease is released at once instead of at the deadline.
-    async fn release_lost_run(store: &dyn Store, ctx: &RequestCtx, run_id: &str) {
+    pub(crate) async fn release_lost_run(store: &dyn Store, ctx: &RequestCtx, run_id: &str) {
         let Ok(Some(mut run)) = store.get_harvest_run(ctx, run_id).await else {
             return;
         };
@@ -2994,6 +2994,10 @@ mod tests {
         // The address the record was published under, pinned as an address change pins it.
         let mut held = store.list_datasets(&ctx).await.unwrap().remove(0);
         held.uri = Some("https://opendata.bbsk.sk/dataset/pinned".into());
+        held.extras.insert(
+            "uri".into(),
+            "https://opendata.bbsk.sk/dataset/pinned".into(),
+        );
         store.upsert_dataset(&ctx, held.clone()).await.unwrap();
 
         let a = engine.run_source(&ctx, &store, &sources[1]).await.unwrap();
@@ -3027,6 +3031,11 @@ mod tests {
         assert_eq!(active[0].harvest_source_id.as_deref(), Some("a"));
         assert_eq!((&active[0].id, &active[0].name), (&held.id, &held.name));
         assert_eq!(active[0].uri, held.uri, "the IRI does not move");
+        assert_eq!(
+            active[0].extras.get("uri"),
+            held.extras.get("uri"),
+            "the held IRI extra moves with the record"
+        );
     }
 
     #[test]
@@ -3143,6 +3152,7 @@ mod tests {
                 "allowed.example.org".into(),
                 "rebind.example.org".into(),
                 "169.254.169.254".into(),
+                "gone.example.org".into(),
             ],
             rewrite_hosts: BTreeMap::new(),
             skip_items: BTreeMap::new(),
@@ -3193,6 +3203,12 @@ mod tests {
             "https://allowed.example.org/huge.ttl",
             Some("text/turtle"),
             "x".repeat(1024),
+        );
+        // 7. Redirect to a listed host whose name does not resolve -> refused!
+        fetcher.insert_redirect(
+            "https://allowed.example.org/to-gone",
+            302,
+            "https://gone.example.org/catalog.ttl",
         );
         // 6. Valid redirect hop pins DNS answer for the connection
         fetcher.insert_redirect(
@@ -3289,6 +3305,23 @@ mod tests {
         assert!(
             err_cap.to_string().contains("exceeded cap of 512 bytes"),
             "expected byte cap refusal, got {err_cap}"
+        );
+
+        // Test 7: a listed host the resolver does not know is refused before any fetch
+        let err_gone = engine
+            .checked_fetch(
+                "https://allowed.example.org/to-gone",
+                &source,
+                &[],
+                "text/turtle",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err_gone
+                .to_string()
+                .contains("unknown host gone.example.org"),
+            "expected DNS refusal, got {err_gone}"
         );
 
         // Test 6: Valid redirect hop succeeds and pins the resolved public IP for each hop

@@ -2840,6 +2840,8 @@ dependencies = [
 name = "joinedcontext-portal-fuzz"
 version = "0.0.0"
 dependencies = [
+ "axum",
+ "cookie",
  "jc-core",
  "joinedcontext-portal",
  "libfuzzer-sys",

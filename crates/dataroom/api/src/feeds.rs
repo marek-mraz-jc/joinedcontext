@@ -996,6 +996,55 @@ mod tests {
         assert_eq!(seen.verdicts.lock().unwrap().len(), 1);
     }
 
+    /// A Violation on the dataset node itself (no `sh:path`) names its shape as the gap; a
+    /// Warning keeps no record out of a feed.
+    #[test]
+    fn a_node_level_violation_names_its_shape_and_a_warning_nothing() {
+        let shapes = |severity: &str| {
+            dataroom_shacl::parse_shapes_graph(
+                &format!(
+                    "@prefix sh: <http://www.w3.org/ns/shacl#> . @prefix dcat: <http://www.w3.org/ns/dcat#> .
+                     @prefix ex: <http://example.org/> .
+                     ex:MustBeBlank a sh:NodeShape ; sh:targetClass dcat:Dataset ;
+                       sh:nodeKind sh:BlankNode ; sh:severity sh:{severity} ."
+                ),
+                &RdfLimits::uploaded_shapes(),
+            )
+            .unwrap()
+        };
+        let (org, id) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+        let cat: Catalogue = serde_json::from_value(serde_json::json!({
+            "orgId": org, "id": id, "name": "city",
+            "host": "data.city.test", "title": {"sk": "Katalóg"}, "description": {},
+            "defaultLanguage": "sk", "languages": ["sk"], "mainProfile": "dcat-ap-3.0.1",
+            "activeProfiles": [], "modified": "2026-11-01T10:00:00Z"
+        }))
+        .unwrap();
+        let ds: Dataset = serde_json::from_value(serde_json::json!({
+            "orgId": org, "catalogueId": id, "id": "pkg-a", "name": "pkg-a",
+            "title": {"sk": "Ovzdušie"}, "description": {"sk": "Popis"},
+            "publisherId": "city", "visibility": "public", "state": "active",
+            "issued": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z"
+        }))
+        .unwrap();
+        let stack = |severity: &str| dataroom_shacl::Stack {
+            record: dataroom_shacl::built_in_profiles().remove(0),
+            shapes: shapes(severity),
+            renderer: DcatProfile::eu(),
+            key: 7,
+        };
+        let missing = super::verdict(&stack("Violation"), &cat, &ds, None);
+        assert_eq!(missing.len(), 1, "{missing:?}");
+        assert!(
+            missing[0].contains("example.org/MustBeBlank"),
+            "{missing:?}"
+        );
+        assert!(
+            super::verdict(&stack("Warning"), &cat, &ds, None).is_empty(),
+            "a warning hides the record"
+        );
+    }
+
     #[test]
     fn a_record_hashes_the_same_through_the_writer_as_its_bytes() {
         use std::hash::Hasher;

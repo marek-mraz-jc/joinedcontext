@@ -34,6 +34,30 @@ test("a fixed page is clean: hidden words, an inline link and a labelled checkbo
   expect(await phoneHits(page)).toEqual([]);
 });
 
+test("a small button under a modal is no hit, the same button uncovered is one", async ({ page }) => {
+  const button = '<button style="min-width:0;min-height:0;width:30px;height:20px;padding:0;font-size:9px">Go</button>';
+  const modal = '<div style="position:fixed;inset:0;background:#fff"><p>The dialog</p></div>';
+  const fold = '<div style="height:1600px"></div>';
+  await page.setContent(page400(button + modal));
+  expect(await phoneHits(page)).toEqual([]);
+  // Below the fold of a page a modal locked: still covered once scrolled to, and the scroll stays put.
+  await page.setContent(page400(`<div style="overflow:hidden;height:800px">${fold}${button}</div>${modal}`));
+  expect(await phoneHits(page)).toEqual([]);
+  expect(await page.evaluate(() => document.querySelector("div")!.scrollTop)).toBe(0);
+  // Below the fold with nothing over it: measured.
+  await page.setContent(page400(fold + button));
+  expect(await phoneHits(page)).toHaveLength(2);
+  expect(await page.evaluate(() => scrollY)).toBe(0);
+  // Scrolled out of its own list, nothing over it: measured as a person scrolling the list sees it.
+  await page.setContent(page400(`<div style="overflow:auto;height:200px">${fold}${button}</div>`));
+  expect(await phoneHits(page)).toHaveLength(2);
+  await page.setContent(page400(button));
+  expect(await phoneHits(page)).toEqual([
+    { kind: "font", what: 'button "Go"', detail: "9.0 px, under 12" },
+    { kind: "target", what: 'button "Go"', detail: "30x20 px, under 44x44" },
+  ]);
+});
+
 test("a page wider than the phone and grey on white are hits", async ({ page }) => {
   await page.setContent(page400(`<p style="color:#aaa">Pale words</p><div style="width:520px;height:8px"></div>`));
   expect((await phoneHits(page)).map((hit) => hit.kind)).toEqual(["overflow", "contrast"]);

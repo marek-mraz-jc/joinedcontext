@@ -547,10 +547,36 @@ async fn a_sorted_page_links_on_and_what_a_history_refuses_besides() {
             StatusCode::BAD_REQUEST,
         ),
         ("Car_history?$skiptoken=3.garbage", StatusCode::BAD_REQUEST),
+        // a key whose aliases name no text id: no such row
+        (
+            "Car_history(id=@i,observedAt=@t)?@i=1&@t=2026-10-01T10:00:00Z",
+            StatusCode::NOT_FOUND,
+        ),
+        // the last instant a time can hold has no instant after it to end the read
+        (
+            "Car_history(id='urn:ngsi-ld:Car:8',observedAt=9999-12-31T23:59:59.999999Z)",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "Car_history?$filter=speed%20eq%20geometry'SRID=0;Point(1%202)'",
+            StatusCode::BAD_REQUEST,
+        ),
     ] {
         let (got, body) = get(&app, path).await;
         assert_eq!(got, status, "{path}: {body}");
     }
+    // a next link carries its own page: a $top beside it is a forged token
+    let (status, body) = get(
+        &app,
+        &format!(
+            "{}&$top=1",
+            next.trim_start_matches(PAST).trim_start_matches('/')
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{next}: {body}");
+    let (status, none) = get(&app, "Car_history?$top=0").await;
+    assert_eq!((status, rows(&none)), (StatusCode::OK, vec![]), "{none}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

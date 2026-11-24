@@ -1,0 +1,1 @@
+{"@context":{"dcat":"http://www.w3.org/ns/dcat#","dct":"http://purl.org/dc/terms/"},"@id":"https://feeds.example.org/ds/b","@type":"dcat:Dataset","dct:title":"B"}

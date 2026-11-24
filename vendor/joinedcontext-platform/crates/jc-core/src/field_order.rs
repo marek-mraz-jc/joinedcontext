@@ -200,4 +200,16 @@ mod tests {
         assert_eq!(label("eventSubCategory.value", "sk"), "Event sub category");
         assert_eq!(label("tags.value[0]", "en"), "Tags");
     }
+
+    #[test]
+    fn the_first_coordinate_reads_as_longitude() {
+        assert_eq!(label("location.value.coordinates[0]", "en"), "Longitude");
+        assert_eq!(label("location.value.coordinates[0]", "de"), "Längengrad");
+    }
+
+    #[test]
+    fn underscores_and_dashes_are_spelt_as_spaces() {
+        assert_eq!(label("pm_ten.value", "en"), "Pm ten");
+        assert_eq!(label("noise-level.value", "en"), "Noise level");
+    }
 }

@@ -397,7 +397,24 @@ mod tests {
             "information": [{"entities": [{"type": "Vehicle"}]}],
             "federation": federation,
         }))
-        .unwrap_or_else(|e| unreachable!("{e}"))
+        .expect("a registration spec")
+    }
+
+    #[test]
+    fn bare_name_references_without_a_kind_validate() {
+        let bare = spec(
+            serde_json::json!("air-quality"),
+            serde_json::json!({"identity": "serviceAccount", "serviceAccountRef": "hub-reader"}),
+        );
+        assert_eq!(bare.endpoint_ref.as_ref().and_then(|r| r.kind()), None);
+        assert_eq!(
+            bare.federation
+                .service_account_ref
+                .as_ref()
+                .and_then(|r| r.kind()),
+            None
+        );
+        assert_eq!(bare.validate(), Ok(()));
     }
 
     /// SHR-15 `live` (T-7422): an anonymous registration may name an Endpoint another project

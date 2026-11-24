@@ -561,7 +561,10 @@ async fn web_raw_file(
         .await;
     let (spool, binary) = match read {
         Ok((spool, Some(binary))) => (spool, binary),
-        Err(e @ ShakoError::Overloaded(_)) => return shako_api::gitea_error_response(&state, &e),
+        // A file past the spool budget exists: its answer names the budget, never a 404.
+        Err(e @ (ShakoError::Overloaded(_) | ShakoError::QuotaExceeded { .. })) => {
+            return shako_api::gitea_error_response(&state, &e);
+        }
         _ => return not_found_html(),
     };
     let content_type = if binary {

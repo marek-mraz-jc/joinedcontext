@@ -585,6 +585,19 @@ fn jc_map_config_reads_only_platform_ogc_layers() {
 }
 
 #[test]
+fn jc_map_config_without_a_tiles_address_draws_no_basemap_style() {
+    // No domain, only the API named: the layer is on the platform, no tiles server is.
+    let mut b = BrandingBlock::default();
+    b.apply_override_json(&json!({ "addresses": { "api": "https://api.city.example" } }));
+    let ogc = "https://api.city.example/api/endpoint/x/ogc/features/collections/Tree";
+    let ds = with_dists(dataset("trees", json!({})), vec![dist("r", ogc, json!({}))]);
+    let m = jc_map_config(&cat(), &ds, None, &b, "en").expect("map");
+    assert_eq!(m["basemap"], json!({}));
+    assert_eq!(m["layers"][0]["type"], "Tree");
+    assert_eq!(m["layers"][0]["items"], format!("{ogc}/items"));
+}
+
+#[test]
 fn jc_map_config_never_points_a_browser_at_another_host() {
     let c = cat();
     let off = "https://grafana.internal.example/api/endpoint/x/ogc/features/collections/A";
@@ -953,6 +966,67 @@ fn jc_about_edge_values() {
             .count(),
         1
     );
+}
+
+#[test]
+fn a_source_entry_without_an_address_shows_no_row() {
+    let ds = dataset(
+        "s",
+        json!({ "extras": { "source": "[{\"title\":\"No address\"},{\"url\":7},{\"url\":\"https://a.example/ok\",\"title\":\"<b>Ok</b>\"}]" } }),
+    );
+    let sources: Vec<(String, Option<String>)> = jc_about(&ds, None, "en", "sk")
+        .into_iter()
+        .filter(|r| r.key == "source")
+        .map(|r| (r.text, r.link))
+        .collect();
+    assert_eq!(
+        sources,
+        [(
+            "<b>Ok</b>".to_owned(),
+            Some("https://a.example/ok".to_owned())
+        )],
+        "the title stays raw text for the template to escape"
+    );
+}
+
+#[test]
+fn a_displayed_extra_shows_only_when_it_is_no_defined_field_and_has_text() {
+    let ds = dataset(
+        "x",
+        json!({ "extras": { "note": "kept", "blank": "  ", "x_funding": "not-a-value" } }),
+    );
+    let fields = dataroom_core::branding::BrandingDatasetFields {
+        organization: "bbsk".into(),
+        namespace: "https://bbsk.sk/ns/dataset-fields/bbsk/".into(),
+        fields: serde_json::from_value(json!([
+            { "name": "funding", "label": { "en": "Funding" }, "type": "enum",
+              "values": ["eu", "city"] }
+        ]))
+        .expect("definitions"),
+    };
+    let order: Vec<String> = [
+        "extras.note",
+        "extras.blank",
+        "extras.missing",
+        "extras.x_funding",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let rows = displayed_about(Vec::new(), &ds, &order, &fields, "en", "sk");
+    let shown: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|r| (r.label.as_str(), r.text.as_str()))
+        .collect();
+    // A blank or missing extra shows nothing; a defined field whose value its type refuses is
+    // not shown as plain text either.
+    assert_eq!(shown, [("note", "kept")]);
+    assert!(rows[0].link.is_none());
+
+    // With no definitions at all, the same extra still shows as plain text.
+    let none = dataroom_core::branding::BrandingDatasetFields::default();
+    let rows = displayed_about(Vec::new(), &ds, &order, &none, "en", "sk");
+    let shown: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+    assert_eq!(shown, ["note", "x_funding"]);
 }
 
 #[test]
@@ -1993,6 +2067,20 @@ fn jc_entity_type_reads_the_query_the_path_or_nothing() {
     assert_eq!(t(&ep("mcp")), None);
     assert_eq!(t("https://x.example/a"), None);
     assert_eq!(t("not a url"), None);
+}
+
+#[test]
+fn an_endpoint_path_with_an_empty_type_segment_names_no_type() {
+    let t = |u: &str| jc_entity_type(&dist("r", u, json!({})));
+    assert_eq!(t(&ep("ogc/features/collections/")), None);
+    assert_eq!(t(&ep("ogc/features/collections//items")), None);
+    assert_eq!(t(&ep("sta/v1.1/")), None);
+    assert_eq!(t(&ep("odata/v4//x")), None);
+    assert_eq!(
+        t("https://jc.example/api/endpoint/air"),
+        None,
+        "a slug alone"
+    );
 }
 
 #[test]

@@ -10,7 +10,9 @@ use dataroom_core::ops::HarvestRunner;
 use dataroom_core::ops::{execute_operation, OpContext};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
-    DataroomError, HarvestRun, HarvestRunState, PolicyAuthorizer, RequestCtx, Result, Store,
+    ActivityRow, Catalogue, CatalogueId, CataloguePlugin, DataroomError, Dataset, Distribution,
+    HarvestRun, HarvestRunState, HarvestSource, OrgId, PolicyAuthorizer, ProfileRecord, Publisher,
+    RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage, Store,
 };
 use dataroom_harvest::{
     cron_matches, harvest_principal, FetchResponse, HarvestEngine, HarvestScheduler, MapFetcher,
@@ -331,6 +333,24 @@ fn sunday_reads_as_seven_and_a_range_end_that_is_no_number_is_refused() {
     assert!(cron_matches("23 3 * * 1-x", sunday).is_err());
 }
 
+#[test]
+fn a_day_of_month_alone_fires_on_that_day_whatever_its_weekday() {
+    let first = TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::date(2026, 11, 1).at(0, 0, 0, 0))
+            .expect("in range"),
+    );
+    assert!(cron_matches("0 0 1 * *", first).unwrap());
+    assert!(!cron_matches("0 0 1 * *", at(0, 0)).unwrap(), "the 9th");
+    // both restricted: either matches (the 9th is a Monday)
+    assert!(cron_matches("0 0 1 * 1", at(0, 0)).unwrap());
+    assert!(!cron_matches("0 0 2 * 2", at(0, 0)).unwrap());
+    // a field out of its range, too few fields, or an empty expression is refused
+    assert!(cron_matches("0 0 32 * *", first).is_err());
+    assert!(cron_matches("0 0 1 *", first).is_err());
+    assert!(cron_matches("", first).is_err());
+}
+
 /// The spawned loop runs every enabled source in its first minute (paused time: the sleeps pass
 /// at once while the wall clock stays in one minute, so later checks run nothing).
 #[tokio::test(start_paused = true)]
@@ -342,6 +362,10 @@ async fn the_spawned_scheduler_runs_every_source_in_its_first_minute() {
         if !active_names(&w).await.is_empty() {
             break;
         }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    // Later checks in the same wall-clock minute run nothing.
+    for _ in 0..180 {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     handle.abort();
@@ -475,6 +499,114 @@ impl OutboundFetcher for Panicky {
     }
 }
 
+/// The memory store with named methods failing on demand, as Postgres fails when its
+/// connection drops.
+struct FailingStore {
+    inner: MemoryStore,
+    failing: std::sync::Mutex<std::collections::BTreeSet<&'static str>>,
+}
+
+impl FailingStore {
+    fn new(inner: MemoryStore) -> Self {
+        Self {
+            inner,
+            failing: std::sync::Mutex::default(),
+        }
+    }
+
+    fn fail(&self, method: &'static str) {
+        self.failing.lock().unwrap().insert(method);
+    }
+
+    fn refusal(&self, method: &str) -> Option<DataroomError> {
+        self.failing
+            .lock()
+            .unwrap()
+            .contains(method)
+            .then(|| DataroomError::Storage(format!("{method} failed")))
+    }
+}
+
+macro_rules! forward {
+    ($( $name:ident<$lt:lifetime>($($arg:ident : $ty:ty),*) -> $ret:ty; )*) => {
+        $(
+            fn $name<$lt>(&$lt self, $($arg: $ty),*) -> BoxFuture<$lt, Result<$ret>> {
+                if let Some(e) = self.refusal(stringify!($name)) {
+                    return Box::pin(async move { Err(e) });
+                }
+                self.inner.$name($($arg),*)
+            }
+        )*
+    };
+}
+
+impl Store for FailingStore {
+    forward! {
+        resolve_host<'a>(host: &'a str) -> Option<Catalogue>;
+        get_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> Option<Catalogue>;
+        list_catalogues<'a>(org_id: OrgId) -> Vec<Catalogue>;
+        upsert_catalogue<'a>(catalogue: Catalogue) -> Catalogue;
+        save_catalogue<'a>(catalogue: Catalogue, expected: Option<TimestampTz>, activity: ActivityRow) -> Catalogue;
+        delete_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> bool;
+        list_publishers<'a>(ctx: &'a RequestCtx) -> Vec<Publisher>;
+        get_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Publisher>;
+        upsert_publisher<'a>(ctx: &'a RequestCtx, publisher: Publisher) -> Publisher;
+        save_publisher<'a>(ctx: &'a RequestCtx, publisher: Publisher, expected: Option<TimestampTz>, activity: ActivityRow) -> Publisher;
+        merge_publishers<'a>(ctx: &'a RequestCtx, source: &'a str, target: &'a str, activity: ActivityRow) -> Publisher;
+        withdraw_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str, activity: ActivityRow) -> Publisher;
+        list_datasets<'a>(ctx: &'a RequestCtx) -> Vec<Dataset>;
+        get_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Dataset>;
+        upsert_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset) -> Dataset;
+        save_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset, expected: Option<TimestampTz>, activity: ActivityRow) -> Dataset;
+        withdraw_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Dataset;
+        purge_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str, activity: ActivityRow) -> ();
+        get_distribution<'a>(ctx: &'a RequestCtx, id: &'a str) -> Option<(Dataset, Distribution)>;
+        list_resource_views<'a>(ctx: &'a RequestCtx, resource_id: &'a str) -> Vec<ResourceView>;
+        get_resource_view<'a>(ctx: &'a RequestCtx, view_id: &'a str) -> Option<ResourceView>;
+        upsert_resource_view<'a>(ctx: &'a RequestCtx, view: ResourceView) -> ResourceView;
+        save_resource_view<'a>(ctx: &'a RequestCtx, view: ResourceView, activity: ActivityRow) -> ResourceView;
+        delete_resource_view<'a>(ctx: &'a RequestCtx, view_id: &'a str, activity: ActivityRow) -> ();
+        list_harvest_sources<'a>(ctx: &'a RequestCtx) -> Vec<HarvestSource>;
+        get_harvest_source<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<HarvestSource>;
+        upsert_harvest_source<'a>(ctx: &'a RequestCtx, source: HarvestSource) -> HarvestSource;
+        save_harvest_source<'a>(ctx: &'a RequestCtx, source: HarvestSource, activity: ActivityRow) -> HarvestSource;
+        delete_harvest_source<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> bool;
+        list_harvest_runs<'a>(ctx: &'a RequestCtx, source_id: Option<&'a str>) -> Vec<HarvestRun>;
+        get_harvest_run<'a>(ctx: &'a RequestCtx, run_id: &'a str) -> Option<HarvestRun>;
+        upsert_harvest_run<'a>(ctx: &'a RequestCtx, run: HarvestRun) -> HarvestRun;
+        claim_harvest_run<'a>(ctx: &'a RequestCtx, run: HarvestRun, stale_before: TimestampTz) -> bool;
+        record_activity<'a>(ctx: &'a RequestCtx, row: ActivityRow) -> ();
+        list_activity<'a>(ctx: &'a RequestCtx, object_id: Option<&'a str>, limit: usize) -> Vec<ActivityRow>;
+        upsert_shacl_report<'a>(ctx: &'a RequestCtx, report: ShaclValidationReport) -> ShaclValidationReport;
+        list_shacl_reports<'a>(ctx: &'a RequestCtx, dataset_id: Option<&'a str>, profile_id: Option<&'a str>) -> Vec<ShaclValidationReport>;
+        list_profiles<'a>(ctx: &'a RequestCtx) -> Vec<ProfileRecord>;
+        upsert_profile<'a>(ctx: &'a RequestCtx, profile: ProfileRecord) -> ProfileRecord;
+        save_profile<'a>(ctx: &'a RequestCtx, profile: ProfileRecord, activity: ActivityRow) -> ProfileRecord;
+        list_pages<'a>(ctx: &'a RequestCtx) -> Vec<StaticPage>;
+        upsert_page<'a>(ctx: &'a RequestCtx, page: StaticPage) -> StaticPage;
+        list_plugins<'a>(ctx: &'a RequestCtx) -> Vec<CataloguePlugin>;
+        upsert_plugin<'a>(ctx: &'a RequestCtx, plugin: CataloguePlugin) -> CataloguePlugin;
+        save_plugin<'a>(ctx: &'a RequestCtx, plugin: CataloguePlugin, activity: ActivityRow) -> CataloguePlugin;
+        odata_table<'a>(ctx: &'a RequestCtx, set_name: &'a str) -> Arc<dyn odata_table::Table>;
+    }
+}
+
+/// A read that breaks the store's run writes, then panics: the lost run cannot be released.
+struct BreaksThenPanics(Arc<FailingStore>);
+
+impl OutboundFetcher for BreaksThenPanics {
+    fn fetch_hop<'a>(
+        &'a self,
+        _target: &'a ValidatedTarget,
+        _accept: &'a str,
+        _max_bytes: usize,
+        _timeout: Duration,
+    ) -> BoxFuture<'a, Result<FetchResponse>> {
+        self.0.fail("upsert_harvest_run");
+        Box::pin(async { panic!("the read broke") })
+    }
+}
+
 /// A started run whose task panics is recorded failed at once and frees its source, without
 /// waiting for the deadline.
 #[tokio::test]
@@ -519,6 +651,212 @@ async fn a_run_whose_task_panics_is_recorded_failed_and_frees_the_source() {
         Some("harvest.lost")
     );
     assert!(done.finished_at.is_some());
+}
+
+/// A fetcher that changes the store under the run, then panics: `Finish` records the run
+/// succeeded first (as a run that ended just before its task broke), `Delete` removes the
+/// source and with it the run row.
+#[derive(Clone, Copy)]
+enum Before {
+    Finish,
+    Delete,
+}
+
+struct PanicsAfter {
+    store: MemoryStore,
+    ctx: RequestCtx,
+    before: Before,
+}
+
+impl OutboundFetcher for PanicsAfter {
+    fn fetch_hop<'a>(
+        &'a self,
+        _target: &'a ValidatedTarget,
+        _accept: &'a str,
+        _max_bytes: usize,
+        _timeout: Duration,
+    ) -> BoxFuture<'a, Result<FetchResponse>> {
+        Box::pin(async move {
+            match self.before {
+                Before::Finish => {
+                    let runs = self.store.list_harvest_runs(&self.ctx, None).await.unwrap();
+                    for mut run in runs {
+                        run.state = HarvestRunState::Succeeded;
+                        run.finished_at = Some(TimestampTz::now());
+                        self.store.upsert_harvest_run(&self.ctx, run).await.unwrap();
+                    }
+                }
+                Before::Delete => {
+                    assert!(self
+                        .store
+                        .delete_harvest_source(&self.ctx, "hub")
+                        .await
+                        .unwrap());
+                }
+            }
+            panic!("the read broke after the store moved")
+        })
+    }
+}
+
+/// A run whose task panics after its row was finished, or after its row is gone, is left as
+/// it is: the lost-run release writes nothing over a finished run and invents no row.
+#[tokio::test]
+async fn a_panicked_run_that_already_finished_or_vanished_is_left_alone() {
+    for before in [Before::Finish, Before::Delete] {
+        let w = world(&["hub.city.example"]).await;
+        w.store
+            .upsert_harvest_source(
+                &w.ctx,
+                source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+            )
+            .await
+            .unwrap();
+        let (subject, _) = harvest_principal(w.org, w.cat);
+        let ctx = RequestCtx::new(w.org, w.cat, subject);
+        let fetcher = PanicsAfter {
+            store: w.store.clone(),
+            ctx: ctx.clone(),
+            before,
+        };
+        let engine = Arc::new(engine_on(Arc::new(fetcher)));
+        let run = engine
+            .clone()
+            .start_source(ctx.clone(), Arc::new(w.store.clone()), {
+                w.store
+                    .get_harvest_source(&ctx, "hub")
+                    .await
+                    .unwrap()
+                    .unwrap()
+            })
+            .await
+            .expect("started");
+        // the task panics at once; give the release its turn
+        let settled = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let row = w.store.get_harvest_run(&ctx, &run.id).await.unwrap();
+                match (before, &row) {
+                    (Before::Finish, Some(r)) if r.state != HarvestRunState::Running => break row,
+                    (Before::Delete, None) => break row,
+                    _ => tokio::time::sleep(Duration::from_millis(5)).await,
+                }
+            }
+        })
+        .await
+        .expect("the store moved");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let after = w.store.get_harvest_run(&ctx, &run.id).await.unwrap();
+        match before {
+            Before::Finish => {
+                let r = after.expect("the finished row stays");
+                assert_eq!(r.state, HarvestRunState::Succeeded);
+                assert!(r.error.is_none());
+                assert!(r.logs.iter().all(|l| l.fingerprint != "harvest.lost"));
+                assert_eq!(settled.map(|s| s.state), Some(HarvestRunState::Succeeded));
+            }
+            Before::Delete => assert!(after.is_none(), "no row is invented: {after:?}"),
+        }
+    }
+}
+
+/// A scheduled run whose task panics is dropped from the outcome; the scheduler itself goes on.
+#[tokio::test]
+async fn a_scheduled_run_that_panics_is_left_out_of_the_outcome_and_frees_its_source() {
+    let w = world(&["hub.city.example"]).await;
+    let store = Arc::new(w.store.clone());
+    store
+        .upsert_harvest_source(
+            &w.ctx,
+            source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+        )
+        .await
+        .unwrap();
+    let mut earlier = running(&w, "run-earlier", TimestampTz::now());
+    earlier.state = HarvestRunState::Succeeded;
+    earlier.finished_at = Some(TimestampTz::now());
+    w.store.upsert_harvest_run(&w.ctx, earlier).await.unwrap();
+    let (_, grant) = harvest_principal(w.org, w.cat);
+    let s = HarvestScheduler::new(
+        Arc::new(engine_on(Arc::new(Panicky))),
+        store,
+        Arc::new(PolicyAuthorizer::new(vec![grant])),
+        vec![(w.org, w.cat)],
+    )
+    .with_retry_delay(Duration::ZERO);
+    assert!(s.run_all().await.is_empty());
+    // The panicked run's row is Failed at once, so the next scheduled check is not refused
+    // with a conflict until the harvest deadline.
+    let runs = w.store.list_harvest_runs(&w.ctx, None).await.unwrap();
+    assert_eq!(runs.len(), 2, "{runs:?}");
+    let (earlier, lost): (Vec<_>, Vec<_>) = runs.into_iter().partition(|r| r.id == "run-earlier");
+    assert_eq!(
+        earlier[0].state,
+        HarvestRunState::Succeeded,
+        "a finished run is left as it is"
+    );
+    assert_eq!(lost[0].state, HarvestRunState::Failed);
+    assert_eq!(
+        lost[0].error.as_deref(),
+        Some("the run stopped unexpectedly")
+    );
+    assert_eq!(lost[0].logs.last().unwrap().fingerprint, "harvest.lost");
+}
+
+/// A catalogue whose sources cannot be listed is skipped; its sources are not run and no run
+/// row is written.
+#[tokio::test]
+async fn a_catalogue_whose_sources_cannot_be_listed_runs_nothing() {
+    let w = world(&["hub.city.example"]).await;
+    w.store
+        .upsert_harvest_source(
+            &w.ctx,
+            source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+        )
+        .await
+        .unwrap();
+    let store = Arc::new(FailingStore::new(w.store.clone()));
+    store.fail("list_harvest_sources");
+    let (_, grant) = harvest_principal(w.org, w.cat);
+    let s = HarvestScheduler::new(
+        Arc::new(engine_on(Arc::new(Panicky))),
+        store,
+        Arc::new(PolicyAuthorizer::new(vec![grant])),
+        vec![(w.org, w.cat)],
+    );
+    assert!(s.run_all().await.is_empty());
+    assert!(w
+        .store
+        .list_harvest_runs(&w.ctx, None)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+/// A panicked run whose release cannot be written stays Running (the deadline frees it
+/// later); the scheduler still returns.
+#[tokio::test]
+async fn a_panicked_run_whose_release_cannot_be_written_stays_running() {
+    let w = world(&["hub.city.example"]).await;
+    w.store
+        .upsert_harvest_source(
+            &w.ctx,
+            source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+        )
+        .await
+        .unwrap();
+    let store = Arc::new(FailingStore::new(w.store.clone()));
+    let (_, grant) = harvest_principal(w.org, w.cat);
+    let s = HarvestScheduler::new(
+        Arc::new(engine_on(Arc::new(BreaksThenPanics(store.clone())))),
+        store,
+        Arc::new(PolicyAuthorizer::new(vec![grant])),
+        vec![(w.org, w.cat)],
+    )
+    .with_retry_delay(Duration::ZERO);
+    assert!(s.run_all().await.is_empty());
+    let runs = w.store.list_harvest_runs(&w.ctx, None).await.unwrap();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(runs[0].state, HarvestRunState::Running);
 }
 
 /// S11-14: `harvest_run.start` answers once the source is held, and the run goes on when the

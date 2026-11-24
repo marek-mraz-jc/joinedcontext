@@ -660,3 +660,271 @@ pub fn mount(manifest: &mut Value, slug: &str) -> Result<()> {
     metadata.insert(field.to_owned(), Value::String(value.to_owned()));
     Ok(())
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn validate_url_refuses_spaces_and_empty_authority() {
+        let err = validate_url("https://").unwrap_err();
+        assert!(err.to_string().contains("is not a repository URL"), "{err}");
+        let err = validate_url("https://repo.example/a b").unwrap_err();
+        assert!(err.to_string().contains("is not a repository URL"), "{err}");
+    }
+
+    #[test]
+    fn parameter_type_and_value_fits_coverage() {
+        assert_eq!(ParameterType::Integer.as_str(), "integer");
+        assert_eq!(ParameterType::Boolean.as_str(), "boolean");
+        assert_eq!(ParameterType::Secret.as_str(), "secret");
+
+        let num = ParameterValue::Number(serde_json::Number::from_f64(2.5).unwrap());
+        assert!(num.fits(ParameterType::Number));
+        assert!(!num.fits(ParameterType::Integer));
+    }
+
+    #[test]
+    fn validate_declaration_refuses_mismatched_enum_value() {
+        let decl = ParameterDeclaration {
+            kind: ParameterType::Integer,
+            default: None,
+            description: None,
+            allowed: vec![ParameterValue::String("not_a_number".into())],
+        };
+        let err = validate_declaration("spec.parameters.foo", &decl).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a value of its enum is not of type integer"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn resolve_parameters_requires_project_file_and_registry_entry() {
+        let p = ProjectSpec {
+            organization_ref: crate::envelope::Ref::Name("org".into()),
+            domain: None,
+            urn_owner: None,
+            catalog: None,
+            quotas: None,
+            repository: Some(ProjectRepository {
+                name: Some("repo".into()),
+                url: None,
+                secret_ref: None,
+            }),
+            git_ref: Some("main".into()),
+            version: None,
+            parameters: BTreeMap::new(),
+            apps: None,
+            visibility: None,
+        };
+        let e = p.clone();
+        let err = resolve_parameters(&p, &e).unwrap_err();
+        assert!(err.to_string().contains("resolves a project file"), "{err}");
+    }
+
+    #[test]
+    fn resolve_parameters_handles_default_and_renders_arrays() {
+        let p = ProjectSpec {
+            organization_ref: crate::envelope::Ref::Name("org".into()),
+            domain: None,
+            urn_owner: None,
+            catalog: None,
+            quotas: None,
+            repository: None,
+            git_ref: None,
+            version: None,
+            parameters: BTreeMap::from([(
+                "port".into(),
+                Parameter::Declaration(ParameterDeclaration {
+                    kind: ParameterType::Integer,
+                    default: Some(ParameterValue::Number(serde_json::Number::from(8080))),
+                    description: None,
+                    allowed: vec![],
+                }),
+            )]),
+            apps: None,
+            visibility: None,
+        };
+        let e = ProjectSpec {
+            organization_ref: crate::envelope::Ref::Name("org".into()),
+            domain: None,
+            urn_owner: None,
+            catalog: None,
+            quotas: None,
+            repository: Some(ProjectRepository {
+                name: Some("repo".into()),
+                url: None,
+                secret_ref: None,
+            }),
+            git_ref: Some("main".into()),
+            version: None,
+            parameters: BTreeMap::new(),
+            apps: None,
+            visibility: None,
+        };
+        let params = resolve_parameters(&p, &e).unwrap();
+        let mut val = serde_json::json!(["{param:port}"]);
+        params.render(&mut val).unwrap();
+        assert_eq!(val, serde_json::json!([8080]));
+    }
+
+    #[test]
+    fn resolve_parameters_refuses_declaration_in_registry_entry() {
+        let p = ProjectSpec {
+            organization_ref: crate::envelope::Ref::Name("org".into()),
+            domain: None,
+            urn_owner: None,
+            catalog: None,
+            quotas: None,
+            repository: None,
+            git_ref: None,
+            version: None,
+            parameters: BTreeMap::from([(
+                "port".into(),
+                Parameter::Declaration(ParameterDeclaration {
+                    kind: ParameterType::Integer,
+                    default: None,
+                    description: None,
+                    allowed: vec![],
+                }),
+            )]),
+            apps: None,
+            visibility: None,
+        };
+        let e = ProjectSpec {
+            organization_ref: crate::envelope::Ref::Name("org".into()),
+            domain: None,
+            urn_owner: None,
+            catalog: None,
+            quotas: None,
+            repository: Some(ProjectRepository {
+                name: Some("repo".into()),
+                url: None,
+                secret_ref: None,
+            }),
+            git_ref: Some("main".into()),
+            version: None,
+            parameters: BTreeMap::from([(
+                "port".into(),
+                Parameter::Declaration(ParameterDeclaration {
+                    kind: ParameterType::Integer,
+                    default: None,
+                    description: None,
+                    allowed: vec![],
+                }),
+            )]),
+            apps: None,
+            visibility: None,
+        };
+        let err = resolve_parameters(&p, &e).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a registry entry sets a value, not a declaration"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn mount_handles_unknown_kind_and_metadata_variants() {
+        let mut unknown = serde_json::json!({ "kind": "NonExistentKind" });
+        let err = mount(&mut unknown, "my-slug").unwrap_err();
+        assert!(err.to_string().contains("is not a manifest kind"), "{err}");
+
+        // a manifest that is no mapping has no kind either, and is refused for that first
+        let mut non_obj = serde_json::json!("not-a-map");
+        let err = mount(&mut non_obj, "my-slug").unwrap_err();
+        assert!(err.to_string().contains("is not a manifest kind"), "{err}");
+
+        let mut bad_meta = serde_json::json!({ "kind": "Endpoint", "metadata": "not-map" });
+        let err = mount(&mut bad_meta, "my-slug").unwrap_err();
+        assert!(err.to_string().contains("is a mapping"), "{err}");
+
+        let mut matching = serde_json::json!({
+            "kind": "Project",
+            "metadata": { "name": "my-slug" }
+        });
+        assert!(mount(&mut matching, "my-slug").is_ok());
+    }
+
+    fn spec_with(registry: bool, parameters: BTreeMap<String, Parameter>) -> ProjectSpec {
+        ProjectSpec {
+            organization_ref: crate::envelope::Ref::Name("org".into()),
+            domain: None,
+            urn_owner: None,
+            catalog: None,
+            quotas: None,
+            repository: registry.then(|| ProjectRepository {
+                name: Some("repo".into()),
+                url: None,
+                secret_ref: None,
+            }),
+            git_ref: registry.then(|| "main".to_owned()),
+            version: None,
+            parameters,
+            apps: None,
+            visibility: None,
+        }
+    }
+
+    #[test]
+    fn string_and_number_parameter_types_name_themselves() {
+        assert_eq!(ParameterType::String.as_str(), "string");
+        assert_eq!(ParameterType::Number.as_str(), "number");
+    }
+
+    #[test]
+    fn a_project_value_that_is_no_declaration_is_skipped_when_resolving() {
+        let project = spec_with(
+            false,
+            BTreeMap::from([(
+                "region".into(),
+                Parameter::Value(ParameterValue::String("north".into())),
+            )]),
+        );
+        let entry = spec_with(true, BTreeMap::new());
+        let params = resolve_parameters(&project, &entry).unwrap();
+        assert!(params.resolved.is_empty());
+        assert!(params.defaults.is_empty());
+    }
+
+    #[test]
+    fn a_declaration_without_a_default_takes_the_entry_value_and_records_no_default() {
+        let project = spec_with(
+            false,
+            BTreeMap::from([(
+                "port".into(),
+                Parameter::Declaration(ParameterDeclaration {
+                    kind: ParameterType::Integer,
+                    default: None,
+                    description: None,
+                    allowed: vec![],
+                }),
+            )]),
+        );
+        let entry = spec_with(
+            true,
+            BTreeMap::from([(
+                "port".into(),
+                Parameter::Value(ParameterValue::Number(serde_json::Number::from(9090))),
+            )]),
+        );
+        let params = resolve_parameters(&project, &entry).unwrap();
+        assert!(params.defaults.is_empty());
+        assert_eq!(
+            params.resolved.get("port"),
+            Some(&(
+                ParameterType::Integer,
+                ParameterValue::Number(serde_json::Number::from(9090))
+            ))
+        );
+    }
+
+    #[test]
+    fn mount_writes_metadata_when_the_manifest_has_none() {
+        let mut project = serde_json::json!({ "kind": "Project" });
+        mount(&mut project, "my-slug").unwrap();
+        assert_eq!(project["metadata"]["name"], "my-slug");
+    }
+}

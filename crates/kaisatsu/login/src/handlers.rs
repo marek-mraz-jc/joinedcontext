@@ -3357,4 +3357,74 @@ mod tests {
             "otpauth://totp/Helsinki:ana%40hel.fi?secret=JBSWY3DPEHPK3PXP&issuer=Helsinki&algorithm=SHA1&digits=6&period=30"
         );
     }
+
+    fn action_session(redirect_uri: &str, state: Option<&str>) -> AuthSession {
+        AuthSession {
+            id: "as-1".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            handle_hash: String::new(),
+            client_id: "edge".into(),
+            redirect_uri: redirect_uri.into(),
+            response_type: "code".into(),
+            response_mode: "query".into(),
+            scope: "openid".into(),
+            mapper_scopes: Vec::new(),
+            state: state.map(str::to_owned),
+            nonce: None,
+            code_challenge: String::new(),
+            code_challenge_method: String::new(),
+            acr_requested: None,
+            prompt: None,
+            login_hint: None,
+            ui_locales: None,
+            dpop_jkt: None,
+            csrf_token: String::new(),
+            step_state_json: String::new(),
+            pending_totp_secret: None,
+            webauthn_challenge: None,
+            pending_email_code_hash: None,
+            broker_state_json: None,
+            kc_action: Some("UPDATE_PASSWORD".into()),
+            kc_action_done: false,
+            user_id: None,
+            amr: Vec::new(),
+            acr_achieved: String::new(),
+            created_at: TimestampTz::now(),
+            expires_at: TimestampTz::now(),
+        }
+    }
+
+    #[test]
+    fn an_action_cancel_link_goes_back_to_the_client_with_its_state_only_when_given() {
+        let bundle = Bundle::for_locale("en");
+        let with = action_session("https://app.example/cb?x=1", Some("st-1"));
+        let (url, label) = cancel_link(&with, &bundle, true);
+        assert_eq!(
+            url,
+            "https://app.example/cb?x=1&kc_action_status=cancelled&state=st-1"
+        );
+        assert_eq!(label, bundle.get("doCancel"));
+        let without = action_session("https://app.example/cb", None);
+        let (url, _) = cancel_link(&without, &bundle, true);
+        assert_eq!(url, "https://app.example/cb?kc_action_status=cancelled");
+        // A stored redirect URI that is no URL, an action already done, or a page that is no
+        // action page: no cancel link.
+        for (session, on_page) in [
+            (action_session("not a url", None), true),
+            (
+                AuthSession {
+                    kc_action_done: true,
+                    ..action_session("https://app.example/cb", None)
+                },
+                true,
+            ),
+            (action_session("https://app.example/cb", None), false),
+        ] {
+            assert_eq!(
+                cancel_link(&session, &bundle, on_page),
+                (String::new(), String::new())
+            );
+        }
+    }
 }

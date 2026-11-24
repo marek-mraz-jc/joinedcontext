@@ -68,22 +68,25 @@ fn check_xml_nesting_depth(bytes: &[u8], max_depth: usize) -> Result<()> {
             let Some(gt) = rest.find('>') else {
                 break;
             };
+            // XML allows whitespace between the subset's `]` and the `>` (`] >`): when no `]>`
+            // ends it, the declarations run to the end of the input and are scanned there.
             let end = if rest[..gt].contains('[') {
-                match skip_to(rest, "]>") {
-                    Some(i) => i,
-                    None => break,
-                }
+                skip_to(rest, "]>")
             } else {
-                gt + 1
+                Some(gt + 1)
             };
+            let declarations = end.map_or(rest, |end| &rest[..end]);
             // A quoted `>` can end the doctype scan early and leave a declaration to be read
             // as a construct of its own, so a bare `!ENTITY` start is refused as well.
-            if rest.starts_with("!ENTITY") || rest[..end].contains("<!ENTITY") {
+            if rest.starts_with("!ENTITY") || declarations.contains("<!ENTITY") {
                 return Err(limit(
                     "entities",
                     "RDF/XML entity declarations are refused (entity expansion guard)".into(),
                 ));
             }
+            let Some(end) = end else {
+                break;
+            };
             rest = &rest[end..];
             continue;
         }
@@ -381,6 +384,38 @@ mod tests {
             Err(DataroomError::RdfLimitExceeded { kind, .. }) => Some(kind),
             _ => None,
         }
+    }
+
+    /// XML lets whitespace stand between a doctype's `]` and its `>`; entity declarations
+    /// there, or in a subset that never closes, are refused like any other (entity bomb guard).
+    #[test]
+    fn a1_entity_declarations_behind_a_spaced_or_missing_subset_close_are_refused() {
+        let body = format!(
+            "<rdf:RDF xmlns:rdf=\"{RDF_NS}\" xmlns:dct=\"http://purl.org/dc/terms/\">\
+             <rdf:Description rdf:about=\"https://e.org/ds\"><dct:title>&b;</dct:title>\
+             </rdf:Description></rdf:RDF>"
+        );
+        let subset = "<!ENTITY a \"aaaaaaaaaa\"><!ENTITY b \"&a;&a;&a;&a;&a;&a;&a;&a;\">";
+        for close in ["] >", "]\n>", "]\t \r\n>"] {
+            let doc = format!("<?xml version=\"1.0\"?><!DOCTYPE rdf:RDF [{subset}{close}{body}");
+            assert_eq!(refused_kind(&doc).as_deref(), Some("entities"), "{doc}");
+        }
+        let open = format!("<!DOCTYPE rdf:RDF [{subset}{body}");
+        assert_eq!(refused_kind(&open).as_deref(), Some("entities"), "{open}");
+        // A subset that never closes and declares nothing goes to the parser, which refuses it.
+        let unclosed = "<!DOCTYPE rdf:RDF [ <!ATTLIST x y CDATA #IMPLIED>";
+        assert!(
+            matches!(
+                parse_rdfxml(unclosed, &RdfLimits::default()),
+                Err(DataroomError::Rdf(_))
+            ),
+            "{unclosed}"
+        );
+        // A plain document is no refusal at all.
+        let plain = body.replace("&b;", "B");
+        assert_eq!(refused_kind(&plain), None);
+        let graph = parse_rdfxml(&plain, &RdfLimits::default()).expect("plain document");
+        assert_eq!(graph.len(), 1);
     }
 
     #[test]

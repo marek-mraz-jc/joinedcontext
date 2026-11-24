@@ -801,3 +801,292 @@ mod remote_url_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn sync_mode_display_and_as_str() {
+        assert_eq!(format!("{}", SyncMode::Mirror), "mirror");
+        assert_eq!(format!("{}", SyncMode::Oneshot), "oneshot");
+    }
+
+    #[test]
+    fn sync_origin_requires_exactly_one_set() {
+        let empty = SyncOrigin::default();
+        let err = empty.validate().expect_err("empty source is invalid");
+        assert!(
+            err.to_string()
+                .contains("exactly one of git, bundle or platformApi must be set"),
+            "{err}"
+        );
+
+        let multiple = SyncOrigin {
+            git: Some(GitOrigin {
+                url: "https://example.com/repo.git".into(),
+                git_ref: "main".into(),
+                path: None,
+                secret_ref: None,
+            }),
+            bundle: Some(BundleOrigin {
+                url: "https://example.com/bundle.tar.gz".into(),
+                secret_ref: None,
+            }),
+            platform_api: None,
+        };
+        let err = multiple
+            .validate()
+            .expect_err("multiple sources are invalid");
+        assert!(
+            err.to_string()
+                .contains("exactly one of git, bundle or platformApi must be set"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn git_origin_ref_must_not_be_empty() {
+        let origin = SyncOrigin {
+            git: Some(GitOrigin {
+                url: "https://example.com/repo.git".into(),
+                git_ref: "   ".into(),
+                path: None,
+                secret_ref: None,
+            }),
+            bundle: None,
+            platform_api: None,
+        };
+        let err = origin.validate().expect_err("empty ref is invalid");
+        assert!(err.to_string().contains("ref must not be empty"), "{err}");
+    }
+
+    #[test]
+    fn platform_api_and_secret_ref_labels_are_validated() {
+        let origin = SyncOrigin {
+            git: None,
+            bundle: None,
+            platform_api: Some(PlatformApiOrigin {
+                base_url: "https://example.com/api".into(),
+                project: "INVALID_PROJECT".into(),
+                secret_ref: None,
+            }),
+        };
+        let err = origin.validate().expect_err("invalid project is rejected");
+        assert!(
+            err.to_string().contains("source.platformApi.project"),
+            "{err}"
+        );
+
+        let origin_bad_secret = SyncOrigin {
+            git: Some(GitOrigin {
+                url: "https://example.com/repo.git".into(),
+                git_ref: "main".into(),
+                path: None,
+                secret_ref: Some(SecretRef {
+                    name: "INVALID_SECRET".into(),
+                    key: None,
+                    env_var: None,
+                }),
+            }),
+            bundle: None,
+            platform_api: None,
+        };
+        let err = origin_bad_secret
+            .validate()
+            .expect_err("invalid secret name is rejected");
+        assert!(err.to_string().contains("source.secretRef.name"), "{err}");
+    }
+
+    #[test]
+    fn schedule_validation_rejects_false_webhook_and_empty_schedule() {
+        let sched_false = Schedule {
+            interval: None,
+            webhook: Some(false),
+        };
+        let err = sched_false.validate().expect_err("webhook false rejected");
+        assert!(
+            err.to_string()
+                .contains("webhook: false is not a schedule, give an interval instead"),
+            "{err}"
+        );
+
+        let sched_empty = Schedule {
+            interval: None,
+            webhook: None,
+        };
+        let err = sched_empty.validate().expect_err("empty schedule rejected");
+        assert!(
+            err.to_string()
+                .contains("exactly one of interval or webhook must be set"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn bundle_item_validates_name_and_namespace() {
+        let bad_name = BundleItem {
+            kind: "Endpoint".into(),
+            namespace: Some("proj".into()),
+            name: "BAD_NAME".into(),
+            path: "endpoints/ep.yaml".into(),
+        };
+        let err = bad_name.validate().expect_err("bad name rejected");
+        assert!(err.to_string().contains("items.name"), "{err}");
+
+        let bad_ns = BundleItem {
+            kind: "Endpoint".into(),
+            namespace: Some("BAD_NAMESPACE".into()),
+            name: "ep".into(),
+            path: "endpoints/ep.yaml".into(),
+        };
+        let err = bad_ns.validate().expect_err("bad namespace rejected");
+        assert!(err.to_string().contains("items.namespace"), "{err}");
+    }
+
+    #[test]
+    fn bundle_spec_validates_exported_by_and_source_instance() {
+        let mut bundle = BundleSpec {
+            exported_at: "2026-01-01T00:00:00Z".parse::<TimestampTz>().unwrap(),
+            exported_by: "  ".into(),
+            source_instance: None,
+            source_revision: "abcdef01234567".into(),
+            items: vec![BundleItem {
+                kind: "Endpoint".into(),
+                namespace: Some("proj".into()),
+                name: "ep".into(),
+                path: "endpoints/ep.yaml".into(),
+            }],
+            native_files: Vec::new(),
+            files: Vec::new(),
+            omitted: 0,
+            readme: None,
+            schemas: None,
+            repositories: Vec::new(),
+            models: Vec::new(),
+        };
+        let err = bundle.validate().expect_err("blank exported_by rejected");
+        assert!(
+            err.to_string().contains("exportedBy must not be empty"),
+            "{err}"
+        );
+
+        bundle.exported_by = "admin".into();
+        bundle.source_instance = Some("http://insecure.example.com".into());
+        let err = bundle
+            .validate()
+            .expect_err("http source_instance rejected");
+        assert!(err.to_string().contains("sourceInstance"), "{err}");
+    }
+
+    #[test]
+    fn bundle_spec_validates_repositories_and_native_files() {
+        let valid_item = BundleItem {
+            kind: "Endpoint".into(),
+            namespace: Some("proj".into()),
+            name: "ep".into(),
+            path: "endpoints/ep.yaml".into(),
+        };
+        let mut bundle = BundleSpec {
+            exported_at: "2026-01-01T00:00:00Z".parse::<TimestampTz>().unwrap(),
+            exported_by: "admin".into(),
+            source_instance: None,
+            source_revision: "abcdef01234567".into(),
+            items: vec![valid_item],
+            native_files: vec!["/abs/file.yaml".into()],
+            files: Vec::new(),
+            omitted: 0,
+            readme: None,
+            schemas: None,
+            repositories: Vec::new(),
+            models: Vec::new(),
+        };
+        let err = bundle
+            .validate()
+            .expect_err("absolute native file rejected");
+        assert!(err.to_string().contains("nativeFiles"), "{err}");
+
+        bundle.native_files.clear();
+        bundle.repositories.push(BundleRepository {
+            name: "BAD_REPO".into(),
+            role: BundleRole::Project,
+            file: "repos/proj.bundle".into(),
+            head: "0123456789abcdef0123456789abcdef01234567".into(),
+        });
+        let err = bundle.validate().expect_err("invalid repo name rejected");
+        assert!(err.to_string().contains("repositories.name"), "{err}");
+
+        bundle.repositories[0].name = "repo-a".into();
+        bundle.repositories.push(BundleRepository {
+            name: "repo-a".into(),
+            role: BundleRole::Project,
+            file: "repos/proj2.bundle".into(),
+            head: "0123456789abcdef0123456789abcdef01234567".into(),
+        });
+        let err = bundle.validate().expect_err("duplicate repo name rejected");
+        assert!(
+            err.to_string()
+                .contains("a repository is listed once (MF-45)"),
+            "{err}"
+        );
+
+        bundle.repositories.pop();
+        bundle.repositories[0].file = "/abs/path.bundle".into();
+        let err = bundle.validate().expect_err("absolute repo file rejected");
+        assert!(err.to_string().contains("repositories.file"), "{err}");
+
+        bundle.repositories[0].file = "repos/proj.bundle".into();
+        bundle.repositories[0].head = "12345".into();
+        let err = bundle.validate().expect_err("short head rejected");
+        assert!(
+            err.to_string()
+                .contains("a head is a full commit id, 40 lowercase hexadecimal characters"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_model_with_an_invalid_origin_name_is_refused_naming_the_field() {
+        let bundle = BundleSpec {
+            exported_at: "2026-01-01T00:00:00Z".parse::<TimestampTz>().unwrap(),
+            exported_by: "admin".into(),
+            source_instance: None,
+            source_revision: "abcdef01234567".into(),
+            items: vec![BundleItem {
+                kind: "Endpoint".into(),
+                namespace: Some("proj".into()),
+                name: "ep".into(),
+                path: "endpoints/ep.yaml".into(),
+            }],
+            native_files: Vec::new(),
+            files: Vec::new(),
+            omitted: 0,
+            readme: None,
+            schemas: None,
+            repositories: Vec::new(),
+            models: vec![BundleModel {
+                name: "air-quality".into(),
+                version: crate::kinds::SemVer::new("1.0.0").unwrap(),
+                manifest: "models/air-quality.yaml".into(),
+                file: "models/air-quality.linkml.yaml".into(),
+                sha256: "0".repeat(64),
+                origin: BundleModelOrigin {
+                    organization: "city".into(),
+                    name: "Bad_Name".into(),
+                },
+            }],
+        };
+        let err = bundle.validate().unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                Error::Name {
+                    field: "models.origin.name",
+                    value,
+                    ..
+                } if value == "Bad_Name"
+            ),
+            "{err:?}"
+        );
+    }
+}

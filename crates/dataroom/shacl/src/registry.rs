@@ -1584,6 +1584,123 @@ mod tests {
         assert!(restarted.get(other_scope, "city-ext", None).is_none());
     }
 
+    /// Loading the store again adds nothing and keeps the cached stacks; a stored record whose
+    /// shapes no longer parse stays out and its pin answers "not found".
+    #[test]
+    fn load_stored_skips_held_and_unparseable_records() {
+        let registry = ProfileRegistry::new();
+        let cat = small_catalogue("city-ext");
+        let mut saved = profile("city-ext", "1", Some("dcat-ap-3.0.1"), NEEDS_KEYWORD);
+        saved.built_in = false;
+        let mut broken = profile(
+            "city-broken",
+            "1",
+            Some("dcat-ap-3.0.1"),
+            "this is not turtle",
+        );
+        broken.built_in = false;
+        let stored = [saved.clone(), broken];
+        registry.load_stored(test_ids(), &stored);
+        let first = registry.stack(test_ids(), "city-ext", Some("1")).unwrap();
+        registry.load_stored(test_ids(), &stored);
+        let again = registry.stack(test_ids(), "city-ext", Some("1")).unwrap();
+        assert!(
+            Arc::ptr_eq(&first, &again),
+            "nothing new, the stack is kept"
+        );
+        assert!(registry.get(test_ids(), "city-broken", Some("1")).is_none());
+        assert!(matches!(
+            registry.stack(test_ids(), "city-broken", Some("1")),
+            Err(DataroomError::NotFound(_))
+        ));
+        let reports = registry
+            .validate_dataset(&cat, &small_dataset("ok", true), None)
+            .unwrap();
+        assert_eq!(reports[0].profile_id, "city-ext");
+    }
+
+    /// A profile naming itself as its base is stacked once, not followed forever.
+    #[test]
+    fn a_profile_that_is_its_own_base_stacks_once() {
+        let registry = ProfileRegistry::new();
+        let cat = small_catalogue("loop");
+        let (saved, report) = registry
+            .upload_and_dry_run(
+                profile("loop", "1", Some("loop"), NEEDS_KEYWORD),
+                &cat,
+                &[small_dataset("ok", true)],
+                &BTreeMap::new(),
+            )
+            .expect("a self-based profile uploads");
+        assert!(!saved.built_in);
+        assert_eq!(
+            (report.total_datasets, report.failing_datasets),
+            (1, 1),
+            "the dataset has no keyword: {report:?}"
+        );
+        let stack = registry.stack(scope_of(&cat), "loop", Some("1")).unwrap();
+        assert_eq!(stack.record.id, "loop");
+        assert_eq!(
+            stack.renderer,
+            DcatProfile::eu(),
+            "no installed base: EU renders"
+        );
+    }
+
+    /// A re-upload of a held version that cannot stack leaves the version it replaced in place.
+    #[test]
+    fn a_refused_reupload_restores_the_version_it_replaced() {
+        let registry = ProfileRegistry::new();
+        let cat = small_catalogue("city-ext");
+        registry
+            .upload_and_dry_run(
+                profile("city-ext", "1", Some("dcat-ap-3.0.1"), NEEDS_KEYWORD),
+                &cat,
+                &[],
+                &BTreeMap::new(),
+            )
+            .expect("first upload");
+        let err = registry
+            .upload_and_dry_run(
+                profile("city-ext", "1", Some("nobody"), NEEDS_KEYWORD),
+                &cat,
+                &[],
+                &BTreeMap::new(),
+            )
+            .expect_err("an unknown base");
+        assert!(
+            matches!(&err, DataroomError::NotFound(m) if m.contains("nobody")),
+            "{err}"
+        );
+        let held = registry
+            .get(scope_of(&cat), "city-ext", Some("1"))
+            .expect("the first version is kept");
+        assert_eq!(held.base_profile.as_deref(), Some("dcat-ap-3.0.1"));
+        assert!(registry
+            .stack(scope_of(&cat), "city-ext", Some("1"))
+            .is_ok());
+    }
+
+    /// A form shows only predicate paths: an inverse or sequence path makes no field.
+    #[test]
+    fn form_layout_skips_paths_that_are_no_predicate() {
+        let shapes = parse_shapes_graph(
+            r#"@prefix sh: <http://www.w3.org/ns/shacl#> .
+            @prefix dcat: <http://www.w3.org/ns/dcat#> .
+            @prefix dct: <http://purl.org/dc/terms/> .
+            <https://e.org/a> a sh:NodeShape ; sh:targetClass dcat:Dataset ;
+              sh:property [ sh:path [ sh:inversePath dcat:dataset ] ; sh:minCount 1 ] ;
+              sh:property [ sh:path ( dcat:distribution dct:format ) ; sh:minCount 1 ] ;
+              sh:property [ sh:path dcat:keyword ; sh:minCount 1 ] ."#,
+            &RdfLimits::default(),
+        )
+        .expect("shapes");
+        let fields = derive_form_layout(&shapes, "http://www.w3.org/ns/dcat#Dataset");
+        let paths: Vec<&str> = fields.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["http://www.w3.org/ns/dcat#keyword"]);
+        assert!(derive_form_layout(&shapes, "https://e.org/Unknown").is_empty());
+    }
+
     #[test]
     fn a_report_that_is_no_json_is_a_storage_error_naming_the_dry_run() {
         let not_json = serde_json::from_str::<u8>("x").expect_err("x is no number");
