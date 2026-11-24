@@ -1444,4 +1444,68 @@ mod tests {
         let e = parse_yaml("a: {b: {c: {d: {e: 1}}}}", limits, &mut used).unwrap_err();
         assert_eq!(e, "the model nests deeper than 4 levels, deeper than Model Tools reads");
     }
+
+    fn view(source: &str) -> View {
+        let models = std::collections::BTreeMap::new();
+        let imports = Imports {
+            models: &models,
+            limits: Limits {
+                max_depth: 32,
+                max_elements: 10_000,
+            },
+        };
+        View::load(source, &imports).unwrap_or_else(|e| panic!("{e}: {source}"))
+    }
+
+    const BOUNDED: &str = "\
+id: https://x.example/m
+name: m
+default_prefix: m
+prefixes:
+  m: https://x.example/m/
+imports:
+  - linkml:types
+classes:
+  Base:
+    slots: [level]
+  Tighter:
+    is_a: Base
+    slots: [level]
+    slot_usage:
+      level:
+        maximum_value: 5
+        minimum_value: 2
+  Looser:
+    is_a: Base
+    slot_usage:
+      level:
+        maximum_value: 20
+        minimum_value: -1
+    attributes:
+      note: {}
+slots:
+  level:
+    range: integer
+    maximum_value: 10
+    minimum_value: 0
+  derived:
+    is_a: note
+";
+
+    #[test]
+    fn a_slot_usage_only_narrows_a_bound_and_slots_are_found_on_attributes_too() {
+        let v = view(BOUNDED);
+        let level = |class: &str| v.induced_slot("level", Some(class)).unwrap_or_default();
+        assert_eq!(level("Tighter")["maximum_value"], 5);
+        assert_eq!(level("Tighter")["minimum_value"], 2);
+        assert_eq!(level("Looser")["maximum_value"], 10, "a usage cannot widen a maximum");
+        assert_eq!(level("Looser")["minimum_value"], 0, "nor lower a minimum");
+        assert_eq!(v.class_slots("Tighter"), Ok(vec!["level".to_owned()]), "inherited once");
+        // Without a class a slot is a slot definition or any class's attribute.
+        assert_eq!(v.induced_slot("level", None).unwrap_or_default()["maximum_value"], 10);
+        assert!(v.induced_slot("note", None).is_ok());
+        // A slot whose parent is only an attribute inherits nothing from it, and stays a slot.
+        assert!(v.induced_slot("derived", None).is_ok());
+        assert!(v.induced_slot("nowhere", None).unwrap_err().starts_with("No such slot nowhere"));
+    }
 }

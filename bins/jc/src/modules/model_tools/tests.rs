@@ -1005,3 +1005,99 @@ async fn a_stopping_module_and_a_slow_compilation_answer_503() {
     let permit = tokio::time::timeout(Duration::from_secs(10), slots.acquire_owned()).await;
     assert!(permit.is_ok(), "the slot comes back when the job ends");
 }
+
+#[test]
+fn imported_definitions_never_replace_the_model_s_own() {
+    let shared = "\
+id: https://city.example/models/shared
+name: shared
+default_prefix: shared
+prefixes:
+  shared: https://city.example/models/shared/
+  city: https://elsewhere.example/city/
+  extra: https://extra.example/
+imports:
+  - linkml:types
+  - org.shared.v1
+classes:
+  ParkingSpot:
+    description: the import's own
+slots:
+  capacity:
+    range: string
+enums:
+  SpotStatus:
+    permissible_values:
+      broken: {}
+";
+    let model = MODEL.replace("  - ngsi-ld-core\n", "  - ngsi-ld-core\n  - org.shared.v1\n");
+    let mut body = source(&model);
+    body.insert("imports".to_owned(), json!({ "org.shared.v1": shared }));
+    let (_, out) = generate(&body);
+    assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
+    let broker = &out["brokerSchema"];
+    assert!(broker["classes"]["ParkingSpot"].get("description").is_none(), "{broker}");
+    assert_eq!(broker["slots"]["capacity"]["range"], "integer");
+    assert!(broker["enums"]["SpotStatus"]["permissible_values"].get("broken").is_none());
+    let ctx = &out["context"]["@context"];
+    assert_eq!(ctx["extra"], "https://extra.example/", "a prefix only the import declares");
+}
+
+#[test]
+fn usages_attributes_and_units_reach_each_artifact() {
+    let model = MODEL
+        .replace(
+            "    slots: [status, capacity]\n",
+            "    slots: [status, capacity, ref, code]\n    slot_usage:\n      ref:\n        identifier: true\n      code:\n        required: true\n    attributes:\n      capacity: {}\n",
+        )
+        .replace(
+            "enums:\n",
+            "  ref:\n    alias: reference\n  code:\n    any_of:\n      - description: no range\n      - range: ParkingSpot\n    unit:\n      symbol: pcs\nenums:\n",
+        )
+        .replacen("classes:\n", "classes:\n  Garage:\n    is_a: Entity\n    attributes:\n      capacity:\n        range: integer\n", 1);
+    // A usage that makes a slot the identifier: the broker refuses it beside Entity's id.
+    let (_, out) = generate(&source(&model));
+    assert!(errors_of(&out)[0].contains("a second identifier \"ref\""), "{out}");
+    let model = model.replace("      ref:\n        identifier: true\n", "      ref:\n        required: true\n");
+    let (_, out) = generate(&source(&model));
+    assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
+    let ctx = &out["context"]["@context"];
+    assert_eq!(ctx["reference"], json!({"@id": "city:ref"}), "the alias names the term");
+    assert_eq!(ctx["code"]["@type"], "@id", "any_of with a class and no literal type");
+    assert_eq!(
+        out["jsonSchema"]["definitions"]["ParkingSpot"]["properties"]["code"]["x-unit"],
+        json!({"symbol": "pcs", "exactMappings": []})
+    );
+    let e = errors_with("  status:\n", "  status:\n    slot_uri: :status\n");
+    assert!(e[0].contains("\":status\" is not an IRI, a CURIE on a declared prefix or an IRI-safe name"), "{e:?}");
+}
+
+#[test]
+fn a_type_with_neither_uri_nor_parent_or_a_type_cycle_is_named() {
+    let base = MODEL.replace("    range: integer\n", "    range: Loose\n");
+    let e = errors_of(&generate(&source(&(base.clone() + "types:\n  Loose:\n    description: no uri, no typeof\n"))).1);
+    assert!(e[0].starts_with("context: range 'Loose' names no type of the schema or its imports"), "{e:?}");
+    let e = errors_of(&generate(&source(&(base.clone() + "types:\n  Loose:\n    typeof: Other\n  Other:\n    typeof: Loose\n"))).1);
+    assert!(e.iter().any(|m| m.contains("Loose")), "a cycle is refused: {e:?}");
+    let e = errors_of(&generate(&source(&(base + "types:\n  Loose:\n    typeof: Ghost\n"))).1);
+    assert!(e.iter().any(|m| m.contains("Ghost") || m.contains("Loose")), "{e:?}");
+}
+
+#[test]
+fn more_document_shapes_are_refused_in_plain_words() {
+    assert_eq!(first_error("true\n"), "the schema document must be a mapping of LinkML fields, not a boolean");
+    assert_eq!(first_error("3\n"), "the schema document must be a mapping of LinkML fields, not a number");
+    let head = "id: https://x.example/m\nname: m\nimports:\n  - linkml:types\n";
+    for (body, expected) in [
+        ("prefixes:\n  p:\n    prefix_prefix: p\n", "Prefix.prefix_reference must be supplied"),
+        ("classes:\n  A:\n    annotations:\n      a:\n        tag: a\n        value: 1\n        annotations: [x]\n", "annotations are a map of tag to value"),
+    ] {
+        let e = first_error(&format!("{head}{body}"));
+        assert!(e.contains(expected), "{body}: {e}");
+    }
+    // An any_of item that is no map carries no range and is skipped.
+    assert!(!first_error(&format!("{head}slots:\n  s:\n    any_of: [3]\n")).contains("any_of"));
+    // A null class is a class with no metaslots, and an import of itself is read once.
+    let e = first_error(&format!("{head}classes:\n  Spare:\n"));
+    assert!(!e.contains("Spare"), "{e}");
+}
