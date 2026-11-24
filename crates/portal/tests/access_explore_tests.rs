@@ -333,6 +333,44 @@ async fn a_subject_who_reaches_nothing_gets_an_empty_list() {
     assert_eq!(body(&answer)["endpoints"], json!([]));
 }
 
+/// An Endpoint with no slug yet is not served, so it is not asked about; an answer admitting the
+/// subject to nothing in particular adds no row; a look the activity log cannot record still
+/// answers (EP-103: the record is logged, not a failure).
+#[tokio::test]
+async fn an_unslugged_endpoint_and_an_empty_grant_add_no_row_and_a_lost_record_keeps_the_answer() {
+    let r = rig().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "admitted": true, "permissions": [], "prohibitions": []
+        })))
+        .mount(&r.gateway)
+        .await;
+    r.state.mirror.upsert(common::envelope(
+        "Endpoint",
+        "draft",
+        "helsinki",
+        json!({ "contextSpaceRef": "air" }),
+    ));
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    let state = r.state.clone().with_db(pool);
+    let answer = explore(&state, admin(), json!({ "kind": "group", "name": "stewards" })).await;
+    assert_eq!(answer.status, 200, "{}", answer.text);
+    assert_eq!(body(&answer)["endpoints"], json!([]), "{}", answer.text);
+    let paths: Vec<String> = r
+        .gateway
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|request| request.url.path().to_owned())
+        .collect();
+    assert!(!paths.is_empty(), "the served Endpoints are asked about");
+    assert!(paths.iter().all(|path| !path.contains("//")), "{paths:?}");
+}
+
 /// Viewing another principal's access is an administrator's: anybody else is 403 before the
 /// realm or the gateway is asked.
 #[tokio::test]

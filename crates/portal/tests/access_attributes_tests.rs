@@ -280,6 +280,11 @@ async fn a_caller_who_may_not_read_the_endpoint_is_refused() {
     prohibiting(&r.gateway).await;
     let answer = common::send(&r.state, who("outsider"), "GET", ROUTE, None).await;
     assert_eq!(answer.status, 403, "{}", answer.text);
+    // Someone who reads nothing of the project learns nothing of its Endpoints: a 404 that reads
+    // as a name never created.
+    let stranger = common::send(&r.state, common::person("stranger"), "GET", ROUTE, None).await;
+    assert_eq!(stranger.status, 404, "{}", stranger.text);
+    assert!(!stranger.text.contains("may not read"), "{}", stranger.text);
     assert!(asked(&r.gateway).await.is_empty());
 }
 
