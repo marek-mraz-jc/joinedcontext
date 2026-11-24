@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
+import en from "../src/locales/en.json";
 
 // jsdom has no canvas: the stub shows the spec the chat's chart was given (T-6889).
 vi.mock("../src/components/panels/VegaChart", async (actual) => ({
@@ -144,6 +145,8 @@ interface Stub {
   chat?: { code: number; body: string };
   upload?: { code: number; body: unknown };
   files?: { code: number; body: unknown };
+  /** Read paths (after `/knowledge`) that answer 503, e.g. `/sources/bb-web/pages`. */
+  away?: string[];
 }
 
 const ANSWER = [
@@ -173,6 +176,9 @@ function renderAt(path: string, stub: Stub = {}) {
     if (url.pathname.endsWith("/auth/me")) return json(IDENTITY);
     if (url.pathname.endsWith("/branding")) return json({ instanceName: "joinedcontext", domain: "dev.example", languages: { default: "en", offered: ["en"] } });
     if (url.pathname.endsWith("/permissions/me")) return json(grants(stub.verbs ?? ["read", "propose"]));
+    if (request.method === "GET" && stub.away?.some((path) => url.pathname === `${base}${path}`)) {
+      return json({ type: "about:blank", title: "Service Unavailable", status: 503, detail: "the knowledge store is away" }, 503);
+    }
     if (url.pathname === `${base}/sources/bb-files/files` && request.method === "POST") {
       writes.push({ path: `${url.pathname}${url.search}`, body: await request.text() });
       const upload = stub.upload ?? { code: 201, body: { id: 8, name: "ziadosti.csv", mime: "text/csv", bytes: 8, passages: 3, status: "fetched" } };
@@ -445,6 +451,72 @@ describe("one source's pages and documents (T-3057, AG-113)", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Pages" }));
     await userEvent.click(await screen.findByRole("button", { name: "Links of https://www.banskabystrica.sk/" }));
     expect(await within(await screen.findByRole("dialog")).findByText("Document")).toBeInTheDocument();
+  });
+});
+
+describe("one source's documents, passages and failed reads (T-7540)", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("takes a selected document back into answers, without the pages below, when the person turns the subtree off", async () => {
+    const { writes } = renderAt("/projects/banskabystrica/knowledge/bb-web");
+    await userEvent.click(await screen.findByRole("tab", { name: "Documents" }));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select https://www.banskabystrica.sk/vzn.pdf" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: en.knowledge.source.subtree }));
+    await userEvent.click(screen.getByRole("button", { name: en.knowledge.source.include }));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toEqual({
+      path: "/api/v1/projects/banskabystrica/knowledge/sources/bb-web/inclusion",
+      body: { pages: [], documents: [9], subtree: false, included: true },
+    });
+  });
+
+  it("previews a page's passages from the tree", async () => {
+    renderAt("/projects/banskabystrica/knowledge/bb-web");
+    await userEvent.click(await screen.findByRole("button", { name: "Passages of https://www.banskabystrica.sk/" }));
+    expect(await within(await screen.findByRole("dialog")).findByText("Odpad vyvážame v utorok.")).toBeInTheDocument();
+  });
+
+  it("sorts the documents by every column", async () => {
+    renderAt("/projects/banskabystrica/knowledge/bb-web");
+    await userEvent.click(await screen.findByRole("tab", { name: "Documents" }));
+    const table = await screen.findByRole("table", { name: "Documents" });
+    for (const header of within(table).getAllByRole("columnheader")) {
+      const sort = header.querySelector<HTMLButtonElement>("button.jc-grid-sort-btn");
+      if (!sort) continue;
+      await userEvent.click(sort);
+      expect(header).toHaveAttribute("aria-sort", "ascending");
+      expect(within(table).getByText("VZN o odpade")).toBeInTheDocument();
+    }
+  });
+
+  it.each([
+    ["the tree", "/sources/bb-web/pages", async () => undefined],
+    ["a page's passages", "/sources/bb-web/passages", async () =>
+      userEvent.click(await screen.findByRole("button", { name: "Passages of https://www.banskabystrica.sk/" }))],
+    ["a page's links", "/sources/bb-web/pages/1/links", async () =>
+      userEvent.click(await screen.findByRole("button", { name: "Links of https://www.banskabystrica.sk/" }))],
+  ])("says %s could not be read, with a retry that asks again", async (_what, path, open) => {
+    const { fetchMock } = renderAt("/projects/banskabystrica/knowledge/bb-web", { away: [path] });
+    await open();
+    const asked = () => readsOf(fetchMock).filter((read) => read.startsWith(`/api/v1/projects/banskabystrica/knowledge${path}`)).length;
+    const retry = await screen.findByRole("button", { name: en.app.error.retry });
+    const before = asked();
+    await userEvent.click(retry);
+    await waitFor(() => expect(asked()).toBeGreaterThan(before));
+  });
+
+  it("says the search could not run, with a retry", async () => {
+    const { fetchMock } = renderAt("/projects/banskabystrica/knowledge/bb-web", { away: ["/sources/bb-web/search"] });
+    await userEvent.type(await screen.findByRole("searchbox", { name: "Question or words" }), "odpad{Enter}");
+    await userEvent.click(await screen.findByRole("button", { name: en.app.error.retry }));
+    await waitFor(() =>
+      expect(readsOf(fetchMock).filter((read) => read.includes("/sources/bb-web/search")).length).toBeGreaterThan(1),
+    );
   });
 });
 
