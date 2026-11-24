@@ -103,6 +103,48 @@ pub fn from_env(
 mod tests {
     use super::*;
 
+    /// REACH is one process-wide list: the tests that write it take turns.
+    static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn held() -> Vec<(String, SocketAddr)> {
+        REACH.read().unwrap().clone()
+    }
+
+    /// T-7180: a sign-in host joins at runtime only as a plain name on loopback, lowercased, and a
+    /// host reached already keeps the address it has.
+    #[tokio::test]
+    async fn an_added_host_is_a_plain_name_on_loopback_and_keeps_its_first_address() {
+        let _turn = SERIAL.lock().await;
+        let first: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let second: SocketAddr = "127.0.0.2:9090".parse().unwrap();
+        install(&[("git.reach.invalid".to_owned(), first)]);
+        add("Login.City.Example", first);
+        add("login.city.example", second);
+        add("v6.city.example", "[::1]:8080".parse().unwrap());
+        for refused in [
+            "",
+            "evil.example/x",
+            "evil.example:443",
+            "a b.example",
+            "ünï.example",
+        ] {
+            add(refused, first);
+        }
+        add("outside.example", "10.0.0.1:8080".parse().unwrap());
+        add("any.example", "0.0.0.0:8080".parse().unwrap());
+        let now = held();
+        install(&[]);
+        assert_eq!(
+            now,
+            vec![
+                ("git.reach.invalid".to_owned(), first),
+                ("login.city.example".to_owned(), first),
+                ("v6.city.example".to_owned(), "[::1]:8080".parse().unwrap()),
+            ]
+        );
+        assert!(held().is_empty(), "install(&[]) clears every reached host");
+    }
+
     fn lookup(reach: Option<&str>, hosts: Option<&str>) -> impl Fn(&str) -> Option<String> {
         let (reach, hosts) = (reach.map(str::to_owned), hosts.map(str::to_owned));
         move |k| match k {
@@ -115,6 +157,29 @@ mod tests {
     #[test]
     fn the_reach_is_loopback_named_hosts_both_or_neither() {
         assert_eq!(from_env(&lookup(None, None)).unwrap(), vec![]);
+        assert_eq!(
+            from_env(&lookup(Some(" "), Some(""))).unwrap(),
+            vec![],
+            "blank is unset"
+        );
+        let v6: SocketAddr = "[::1]:7000".parse().unwrap();
+        assert_eq!(
+            from_env(&lookup(
+                Some(" [::1]:7000 "),
+                Some("a.example,, ,b-1.example")
+            ))
+            .unwrap(),
+            vec![("a.example".to_owned(), v6), ("b-1.example".to_owned(), v6)],
+            "empty names between commas are skipped"
+        );
+        let Err(ConfigError::Invalid { var, reason }) = from_env(&lookup(
+            Some("127.0.0.1:1"),
+            Some("ok.example,bad_name.example"),
+        )) else {
+            panic!("an underscore is no plain host name")
+        };
+        assert_eq!(var, "JC_PORTAL_REACH_HOSTS");
+        assert_eq!(reason, "`bad_name.example` is not a plain host name");
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
         assert_eq!(
             from_env(&lookup(
@@ -134,6 +199,9 @@ mod tests {
             (Some("localhost:8080"), Some("city.example")),
             (Some("127.0.0.1:8080"), Some("city.example:443")),
             (Some("127.0.0.1:8080"), Some("evil.example/x")),
+            (Some("127.0.0.1:8080"), Some("city..example")),
+            (Some("127.0.0.1"), Some("city.example")),
+            (Some("   "), Some("city.example")),
         ] {
             assert!(
                 from_env(&lookup(reach, hosts)).is_err(),
@@ -145,6 +213,7 @@ mod tests {
     /// A reached host connects to the listener and names itself: what jc's router dispatches on.
     #[tokio::test]
     async fn a_reached_host_is_dialed_at_the_listener_under_its_own_name() {
+        let _turn = SERIAL.lock().await;
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

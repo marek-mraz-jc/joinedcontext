@@ -1,0 +1,1 @@
+{"client":{"clientId":"app","redirectUris":["https://a.example/cb"],"protocolMappers":[{"name":"p","protocol":"openid-connect","protocolMapper":"oidc-sha256-pairwise-sub-mapper","config":{"pairwiseSubAlgorithmSalt":"s"}}]},"alg":"RS256"}

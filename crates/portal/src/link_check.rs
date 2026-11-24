@@ -1197,9 +1197,8 @@ mod tests {
         assert_eq!(hits.load(Ordering::SeqCst), 0);
     }
 
-    #[tokio::test]
-    async fn a_run_reads_the_space_through_its_public_endpoint_and_asks_no_host_outside_the_inventory(
-    ) {
+    /// One public space `s1` fed by the pipeline `podujatia-a` from `a.example`.
+    fn one_space() -> Arc<Mirror> {
         let mirror = Arc::new(Mirror::new());
         mirror.upsert(manifest(
             "DataSource",
@@ -1223,6 +1222,182 @@ mod tests {
         mirror.upsert(manifest("Endpoint", "app", serde_json::json!({
             "audience": "public", "contextSpaceRef": { "kind": "ContextSpace", "name": "podujatia" }, "slug": "s1",
         })));
+        mirror
+    }
+
+    /// A gateway answering every ask with `answer(offset)` (the `offset` query value), counting
+    /// the asks; its address.
+    async fn gateway(
+        answer: impl Fn(usize) -> axum::response::Response + Clone + Send + Sync + 'static,
+    ) -> (Url, Arc<std::sync::atomic::AtomicUsize>) {
+        use axum::response::IntoResponse;
+        let asks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = Arc::clone(&asks);
+        let app = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+            let (seen, answer) = (Arc::clone(&seen), answer.clone());
+            async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                let offset = uri
+                    .query()
+                    .unwrap_or_default()
+                    .split('&')
+                    .find_map(|kv| kv.strip_prefix("offset="))
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+                answer(offset).into_response()
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let at = listener.local_addr().expect("address");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        (Url::parse(&format!("http://{at}/")).expect("gateway"), asks)
+    }
+
+    fn event_page(len: usize) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let page: Vec<Value> = (0..len)
+            .map(|i| serde_json::json!({ "id": format!("urn:ngsi-ld:Event:{i}"), "url": "https://elsewhere.example/e" }))
+            .collect();
+        axum::Json(page).into_response()
+    }
+
+    /// A space is read page by page until a page comes back short.
+    #[tokio::test]
+    async fn a_space_is_read_page_by_page_until_a_short_page() {
+        let (url, asks) = gateway(|offset| event_page(if offset == 0 { PAGE } else { 3 })).await;
+        let checker = Checker::new(
+            one_space(),
+            Arc::new(LinkStore::new(None, Default::default())),
+            url,
+        );
+        let space = spaces(&checker.mirror).remove(0);
+        let read = checker.entities(&space).await.expect("entities");
+        assert_eq!(read.len(), PAGE + 3);
+        assert_eq!(asks.load(Ordering::SeqCst), 2);
+    }
+
+    /// An Endpoint that refuses, answers no list or cannot be reached keeps no check of the
+    /// space's pipelines: nothing is judged on an answer that was not read.
+    #[tokio::test]
+    async fn a_space_whose_endpoint_fails_keeps_no_check() {
+        use axum::response::IntoResponse;
+        let (refusing, _) =
+            gateway(|_| axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response()).await;
+        let (garbled, _) =
+            gateway(|_| axum::Json(serde_json::json!({"not": "a list"})).into_response()).await;
+        let down = Url::parse("http://127.0.0.1:1/").expect("url");
+        for (gateway, says) in [(refusing, "answered 503"), (garbled, ""), (down, "")] {
+            let store = Arc::new(LinkStore::new(None, Default::default()));
+            let checker = Checker::new(one_space(), Arc::clone(&store), gateway);
+            let space = spaces(&checker.mirror).remove(0);
+            let failed = checker.entities(&space).await.expect_err("no entities");
+            assert!(failed.contains(says), "{failed}");
+            checker.run(TimestampTz::now()).await;
+            assert_eq!(store.get("bbsk", "podujatia-a").await.expect("read"), None);
+        }
+    }
+
+    /// The weekly start runs when the newest check is a week old or there is none, never while
+    /// one is under way, and not when the last one is recent.
+    #[tokio::test]
+    async fn a_run_starts_only_when_due_and_never_twice_at_once() {
+        let (url, asks) = gateway(|_| event_page(1)).await;
+        let store = Arc::new(LinkStore::new(None, Default::default()));
+        let checker = Arc::new(Checker::new(one_space(), Arc::clone(&store), url));
+        let now = TimestampTz::now();
+        checker.start_due(now);
+        checker.start_due(now);
+        for _ in 0..200 {
+            if !checker.running.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(StdDuration::from_millis(10)).await;
+        }
+        assert!(!checker.running.load(Ordering::Acquire), "the run ended");
+        assert_eq!(asks.load(Ordering::SeqCst), 1, "one run for two starts");
+        assert!(store
+            .get("bbsk", "podujatia-a")
+            .await
+            .expect("read")
+            .is_some());
+        checker.start_due(now + jiff::SignedDuration::from_hours(1));
+        for _ in 0..200 {
+            if !checker.running.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(StdDuration::from_millis(10)).await;
+        }
+        assert_eq!(
+            asks.load(Ordering::SeqCst),
+            1,
+            "a recent check is not run again"
+        );
+        checker.start_due(now + EVERY);
+        for _ in 0..200 {
+            if asks.load(Ordering::SeqCst) == 2 && !checker.running.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(StdDuration::from_millis(10)).await;
+        }
+        assert_eq!(
+            asks.load(Ordering::SeqCst),
+            2,
+            "a week-old check runs again"
+        );
+    }
+
+    /// A database the Portal cannot reach starts no run and keeps nothing, and says so in the
+    /// log rather than counting every link unchecked.
+    #[tokio::test]
+    async fn an_unreachable_store_starts_no_run_and_keeps_nothing() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(StdDuration::from_secs(5))
+            .connect_lazy("postgres://portal@127.0.0.1:1/never-reached")
+            .expect("a lazy pool");
+        let mirror = one_space();
+        mirror.upsert(
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Project",
+                "metadata": { "name": "bbsk", "namespace": crate::permissions::ORG_NAMESPACE },
+                "spec": { "organizationRef": "bbsk" },
+            }))
+            .expect("project"),
+        );
+        let (url, asks) = gateway(|_| event_page(1)).await;
+        let store = Arc::new(LinkStore::new(Some(pool), Arc::clone(&mirror)));
+        assert!(store.newest().await.is_err());
+        assert!(store.get("bbsk", "podujatia-a").await.is_err());
+        let checker = Arc::new(Checker::new(mirror, Arc::clone(&store), url));
+        checker.start_due(TimestampTz::now());
+        for _ in 0..800 {
+            if !checker.running.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(StdDuration::from_millis(10)).await;
+        }
+        assert!(
+            !checker.running.load(Ordering::Acquire),
+            "the start gave up"
+        );
+        assert_eq!(
+            asks.load(Ordering::SeqCst),
+            0,
+            "no run without its last date"
+        );
+        checker.run(TimestampTz::now()).await;
+        assert_eq!(
+            asks.load(Ordering::SeqCst),
+            1,
+            "a forced run reads and keeps nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_reads_the_space_through_its_public_endpoint_and_asks_no_host_outside_the_inventory(
+    ) {
+        let mirror = one_space();
         let found = spaces(&mirror);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].slug, "s1");

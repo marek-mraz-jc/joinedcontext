@@ -517,6 +517,47 @@ mod tests {
         );
     }
 
+    /// A front matter that never closes is markdown, not front matter; a heading with emphasis
+    /// takes its id from its words alone; a link of any scheme but http(s) and mailto goes
+    /// nowhere, however it is spelled.
+    #[test]
+    fn an_open_front_matter_an_emphasised_heading_and_a_foreign_scheme() {
+        assert_eq!(
+            split_front_matter("---\ntitle: x\n# Body"),
+            (None, "---\ntitle: x\n# Body")
+        );
+        assert_eq!(
+            split_front_matter("---\ntitle: \"\"\n---\n# B"),
+            (None, "# B"),
+            "an empty title"
+        );
+        let events: Vec<Event> = Parser::new("## Rate *limits* `here`\n").map(safe).collect();
+        let mut html = String::new();
+        html::push_html(&mut html, anchored(events).into_iter());
+        assert!(html.contains(r#"<h2 id="rate-limits-here">"#), "{html}");
+        for dest in [
+            "javascript:alert(1)",
+            " JavaScript:x",
+            "java\tscript:x",
+            "data:text/html,x",
+            "file:///etc/passwd",
+        ] {
+            assert_eq!(link(CowStr::from(dest)).as_ref(), "#", "{dest:?}");
+        }
+        for kept in [
+            "https://x.example/a",
+            "mailto:a@x.example",
+            "page#top",
+            "/abs/path",
+        ] {
+            assert_eq!(link(CowStr::from(kept)).as_ref(), kept);
+        }
+        assert_eq!(
+            link(CowStr::from("07-websocket.md#limits")).as_ref(),
+            "07-websocket#limits"
+        );
+    }
+
     #[test]
     fn a_heading_carries_the_id_a_link_to_it_uses() {
         let page = |markdown: &str| {

@@ -1,0 +1,1 @@
+{"source": "id: https://x.example/m\nname: m\nimports:\n  - linkml:types\n  - org.shared.v1\n", "imports": {"org.shared.v1": "id: https://x.example/s\nname: s\nslots:\n  label:\n    range: string\n"}}

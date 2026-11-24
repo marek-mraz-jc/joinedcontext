@@ -594,7 +594,11 @@ fn named(
                 out.insert(name, Value::Object(obj));
             }
         }
-        Some(_) => return Err(format!("{what} are a map of name to definition")),
+        Some(_) => {
+            return Err(format!(
+                "{what} definitions are a map of name to definition"
+            ));
+        }
     }
     Ok(out)
 }
@@ -1379,5 +1383,162 @@ mod tests {
         ] {
             assert!(!is_model_import(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn python_str_truthiness_and_json_escapes_follow_python() {
+        assert_eq!(py_str(&Value::Null), "None");
+        assert_eq!(py_str(&Value::Bool(false)), "False");
+        assert_eq!(py_str(&serde_json::json!(7)), "7");
+        assert_eq!(py_str(&serde_json::json!(["a", 1])), r#"["a", 1]"#);
+        assert_eq!(py_float(f64::NAN), "NaN");
+        assert_eq!(py_float(f64::INFINITY), "Infinity");
+        assert_eq!(py_float(f64::NEG_INFINITY), "-Infinity");
+        assert_eq!(py_float(1.5e20), "1.5e+20");
+        assert_eq!(py_float(-2.25e-7), "-2.25e-07");
+        assert_eq!(
+            py_json(&Value::String(
+                "q\"b\\n\nr\rt\tb\u{8}f\u{c}c\u{1}".to_owned()
+            )),
+            r#""q\"b\\n\nr\rt\tb\bf\fc\u0001""#
+        );
+        for (v, t) in [
+            (serde_json::json!(0), false),
+            (serde_json::json!(0.5), true),
+            (serde_json::json!(""), false),
+            (serde_json::json!("x"), true),
+            (serde_json::json!([]), false),
+            (serde_json::json!([0]), true),
+            (serde_json::json!({}), false),
+            (serde_json::json!({"a": 1}), true),
+            (Value::Null, false),
+        ] {
+            assert_eq!(truthy(Some(&v)), t, "{v}");
+        }
+        assert!(!truthy(None));
+        for (v, e) in [
+            (Value::Null, true),
+            (serde_json::json!([]), true),
+            (serde_json::json!([1]), false),
+            (serde_json::json!({}), true),
+            (serde_json::json!({"a": 1}), false),
+            (serde_json::json!(""), false),
+        ] {
+            assert_eq!(is_empty(Some(&v)), e, "{v}");
+        }
+        assert!(is_empty(None));
+        assert_eq!(camelcase("a__b"), "AB", "a run of underscores is one break");
+        assert!(!is_model_import("orgairv1"), "no dot");
+        assert_eq!(text_list(&Value::Null), Vec::<Value>::new());
+        assert_eq!(
+            text_list(&serde_json::json!(3)),
+            vec![Value::String("3".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_document_the_yaml_parser_refuses_says_why() {
+        let mut used = 0;
+        let limits = Limits {
+            max_depth: 4,
+            max_elements: 100,
+        };
+        let e = parse_yaml("a: [1, 2", limits, &mut used).unwrap_err();
+        assert!(e.contains("did not find expected"), "{e}");
+        let v = parse_yaml(
+            "1: one\ntrue: yes\n~: none\nf: 1.5\nbig: 18446744073709551615\nneg: -3\n",
+            limits,
+            &mut used,
+        );
+        assert_eq!(
+            v,
+            Ok(
+                serde_json::json!({"1": "one", "True": "yes", "None": "none", "f": 1.5, "big": 18446744073709551615u64, "neg": -3})
+            )
+        );
+        let e = parse_yaml("a: {b: {c: {d: {e: 1}}}}", limits, &mut used).unwrap_err();
+        assert_eq!(
+            e,
+            "the model nests deeper than 4 levels, deeper than Model Tools reads"
+        );
+    }
+
+    fn view(source: &str) -> View {
+        let models = std::collections::BTreeMap::new();
+        let imports = Imports {
+            models: &models,
+            limits: Limits {
+                max_depth: 32,
+                max_elements: 10_000,
+            },
+        };
+        View::load(source, &imports).unwrap_or_else(|e| panic!("{e}: {source}"))
+    }
+
+    const BOUNDED: &str = "\
+id: https://x.example/m
+name: m
+default_prefix: m
+prefixes:
+  m: https://x.example/m/
+imports:
+  - linkml:types
+classes:
+  Base:
+    slots: [level]
+  Tighter:
+    is_a: Base
+    slots: [level]
+    slot_usage:
+      level:
+        maximum_value: 5
+        minimum_value: 2
+  Looser:
+    is_a: Base
+    slot_usage:
+      level:
+        maximum_value: 20
+        minimum_value: -1
+    attributes:
+      note: {}
+slots:
+  level:
+    range: integer
+    maximum_value: 10
+    minimum_value: 0
+  derived:
+    is_a: note
+";
+
+    #[test]
+    fn a_slot_usage_only_narrows_a_bound_and_slots_are_found_on_attributes_too() {
+        let v = view(BOUNDED);
+        let level = |class: &str| v.induced_slot("level", Some(class)).unwrap_or_default();
+        assert_eq!(level("Tighter")["maximum_value"], 5);
+        assert_eq!(level("Tighter")["minimum_value"], 2);
+        assert_eq!(
+            level("Looser")["maximum_value"],
+            10,
+            "a usage cannot widen a maximum"
+        );
+        assert_eq!(level("Looser")["minimum_value"], 0, "nor lower a minimum");
+        assert_eq!(
+            v.class_slots("Tighter"),
+            Ok(vec!["level".to_owned()]),
+            "inherited once"
+        );
+        // Without a class a slot is a slot definition or any class's attribute.
+        assert_eq!(
+            v.induced_slot("level", None).unwrap_or_default()["maximum_value"],
+            10
+        );
+        assert!(v.induced_slot("note", None).is_ok());
+        // A slot whose parent is only an attribute inherits nothing from it, and stays a slot.
+        assert!(v.induced_slot("derived", None).is_ok());
+        assert!(
+            v.induced_slot("nowhere", None)
+                .unwrap_err()
+                .starts_with("No such slot nowhere")
+        );
     }
 }

@@ -1,0 +1,1 @@
+[{"roles":[{"name":"camera","serviceAccounts":["cam-west"],"publish":["cameras/${clientid}/#"]}],"limits":{"maxMessageBytes":16}},{"account":"cam-west","topic":"cameras/cam-west/frame","payload":"{\"t\":1}"}]

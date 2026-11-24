@@ -1,0 +1,1 @@
+{"client":{"clientId":"app","protocolMappers":[{"name":"g","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"true","access.token.claim":"true","id.token.claim":"true"}}]},"user":{"id":"u1","username":"ada","attributes":{"dept":["it"]}},"groups":[{"name":"staff","path":"/staff"}],"scope":"openid profile"}

@@ -356,11 +356,11 @@ pub fn schedule_seconds(schedule: &str) -> Option<u64> {
         if *hour != "*" {
             return None;
         }
-        n * 60
+        n.checked_mul(60)?
     } else if *hour == "*" {
         3_600
     } else if let Some(n) = step(hour) {
-        n * 3_600
+        n.checked_mul(3_600)?
     } else if *weekday != "*" {
         7 * 86_400
     } else if *day != "*" && *month != "*" {
@@ -381,7 +381,7 @@ pub fn target_seconds(period: Option<u64>, schedule: Option<&str>) -> Option<u64
         (_, Some(schedule)) => schedule_seconds(schedule)?,
         _ => return None,
     };
-    Some(every + (every / 12).max(MIN_SLACK))
+    Some(every.saturating_add((every / 12).max(MIN_SLACK)))
 }
 
 pub fn fresh_state(
@@ -771,6 +771,198 @@ mod tests {
         assert!(state.quality.db.is_some());
     }
 
+    /// A scanner of space `air` of project `helsinki`, whose model holds the class `Bus`, reading
+    /// through a realm `city` on `server` that hands the Portal's client token `t`.
+    async fn scanner_on(server: &wiremock::MockServer) -> Arc<Scanner> {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("POST"))
+            .and(path("/realms/city/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"access_token": "t"})))
+            .mount(server)
+            .await;
+        let watch = Watch::new(
+            server.uri(),
+            &format!("{}/realms/city", server.uri()),
+            "portal".to_owned(),
+            crate::auth::client_auth::ClientAuth::Secret("s".into()),
+        );
+        let schema = json!({ "definitions": { "Bus": { "type": "object", "properties": {
+            "speed": { "type": "number", "x-ngsi-ld-kind": "Property" }
+        }}}});
+        let model = crate::pipeline_validation::ModelSchema::compile(
+            "transport",
+            "1.0.0",
+            &schema,
+            &["Bus".to_owned()],
+            false,
+        );
+        let schemas = Arc::new(ModelSchemas::default());
+        schemas.replace(std::collections::HashMap::from([(
+            ("helsinki".to_owned(), "air".to_owned()),
+            Arc::new(model),
+        )]));
+        let mirror = Arc::new(Mirror::new());
+        Arc::new(Scanner {
+            watch: Arc::new(watch),
+            schemas,
+            mirror: mirror.clone(),
+            org_domain: "hel.fi".into(),
+            store: Arc::new(Store::new(None, mirror)),
+        })
+    }
+
+    fn bus(n: u32, speed: Value) -> Value {
+        json!({ "id": format!("urn:ngsi-ld:Bus:{n}"), "type": "Bus",
+                "modifiedAt": "2026-11-24T08:00:00Z",
+                "speed": { "type": "Property", "value": speed } })
+    }
+
+    /// DM-74: a run reads every class of a due space page by page with the scan's token and keeps
+    /// the space's report; a space nobody lists any more is dropped from the store.
+    #[tokio::test]
+    async fn a_run_reads_each_due_space_and_keeps_its_report() {
+        use wiremock::matchers::{bearer_token, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let scanner = scanner_on(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/cs/air/ngsi-ld/v1/entities"))
+            .and(query_param("type", "Bus"))
+            .and(bearer_token("t"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([bus(1, json!(40)), bus(2, json!("fast"))])),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        scanner.store.put("helsinki", "gone", report(&[]));
+        let spaces = scanner.schemas.spaces();
+        scanner.run(&spaces, &spaces).await;
+        let kept = scanner.store.get("helsinki", "air").expect("a report");
+        assert_eq!((kept.checked, kept.invalid, kept.truncated), (2, 1, false));
+        assert_eq!(kept.types[0].entity_type, "Bus");
+        assert_eq!(kept.types[0].newest, Some(at("2026-11-24T08:00:00Z")));
+        assert!(
+            scanner.store.get("helsinki", "gone").is_none(),
+            "no model, no report"
+        );
+    }
+
+    /// A space whose read fails keeps its last report and the run goes on: a refused page, a
+    /// realm that hands no token, a space whose model went away.
+    #[tokio::test]
+    async fn a_space_that_cannot_be_read_keeps_its_last_report() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let scanner = scanner_on(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/cs/air/ngsi-ld/v1/entities"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let before = report(&[("sh:datatype", "speed")]);
+        scanner.store.put("helsinki", "air", before.clone());
+        let air = [("helsinki".to_owned(), "air".to_owned())];
+        scanner.run(&air, &air).await;
+        assert_eq!(scanner.store.get("helsinki", "air"), Some(before.clone()));
+        assert_eq!(
+            scanner.space("t", "helsinki", "air").await,
+            Err("air answered 503 Service Unavailable for Bus".to_owned())
+        );
+        assert_eq!(
+            scanner.space("t", "helsinki", "water").await,
+            Err("helsinki/water names no model any more".to_owned())
+        );
+
+        let tokenless = MockServer::start().await;
+        let mut refused = Arc::try_unwrap(scanner_on(&tokenless).await)
+            .ok()
+            .expect("one owner");
+        refused.watch = Arc::new(Watch::new(
+            tokenless.uri(),
+            &format!("{}/realms/elsewhere", tokenless.uri()),
+            "portal".to_owned(),
+            crate::auth::client_auth::ClientAuth::Secret("s".into()),
+        ));
+        refused.store.put("helsinki", "air", before.clone());
+        refused.run(&air, &air).await;
+        assert_eq!(refused.store.get("helsinki", "air"), Some(before));
+    }
+
+    /// The reconciler's call starts a run only when a space is due and none runs; the run marks
+    /// itself finished, and the next start waits an hour.
+    #[tokio::test]
+    async fn a_run_starts_when_a_space_is_due_and_finishes() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let scanner = scanner_on(&server).await;
+        Mock::given(path("/cs/air/ngsi-ld/v1/entities"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([bus(1, json!(3))])))
+            .mount(&server)
+            .await;
+        scanner.start_if_due();
+        for _ in 0..200 {
+            if scanner.store.get("helsinki", "air").is_some()
+                && !scanner.store.running.load(Ordering::Acquire)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(
+            scanner.store.get("helsinki", "air").map(|q| q.checked),
+            Some(1)
+        );
+        assert!(!scanner.store.running.load(Ordering::Acquire), "finished");
+        scanner.store.by_space.write().unwrap().clear();
+        scanner.start_if_due();
+        assert!(
+            !scanner.store.running.load(Ordering::Acquire),
+            "an hour has not passed"
+        );
+        let nothing_due = scanner_on(&MockServer::start().await).await;
+        nothing_due
+            .schemas
+            .replace(std::collections::HashMap::new());
+        nothing_due.start_if_due();
+        assert!(
+            nothing_due.store.last_start.read().unwrap().is_none(),
+            "nothing due, no claim"
+        );
+    }
+
+    /// A thread that panicked holding the store's maps leaves them usable.
+    #[test]
+    fn a_poisoned_store_still_reads_and_writes() {
+        let store = Store::new(None, Arc::new(Mirror::new()));
+        std::thread::scope(|s| {
+            let _ = s
+                .spawn(|| {
+                    let _a = store.by_space.write().unwrap();
+                    let _b = store.new_rules.write().unwrap();
+                    let _c = store.last_start.write().unwrap();
+                    panic!("poison every map");
+                })
+                .join();
+        });
+        assert_eq!(
+            store.put("p", "s", report(&[("In", "status")])),
+            ["In status"]
+        );
+        assert!(store.get("p", "s").is_some());
+        assert_eq!(store.new_rules("p", "s"), ["In status"]);
+        assert_eq!(store.new_rules("p", "other"), Vec::<String>::new());
+        let now = at("2026-11-24T09:00:00Z");
+        assert!(store.claim(now));
+        store.keep_only(&[]);
+        assert!(store.get("p", "s").is_none());
+        assert!(format!("{store:?}").starts_with("Store {"));
+    }
+
     fn problem(rule: &str, path: &str) -> Problem {
         Problem {
             rule: rule.into(),
@@ -948,6 +1140,29 @@ mod tests {
         assert_eq!(schedule_seconds("@daily"), None);
         assert_eq!(schedule_seconds("*/5 2 * * *"), None);
         assert_eq!(schedule_seconds("*/0 * * * *"), None);
+        assert_eq!(schedule_seconds("*/x * * * *"), None);
+        assert_eq!(schedule_seconds("0 */-1 * * *"), None);
+        assert_eq!(schedule_seconds("* * * *"), None, "four fields");
+        assert_eq!(
+            schedule_seconds("0 2 1 6 *"),
+            Some(366 * 86_400),
+            "once a year"
+        );
+    }
+
+    /// A step past what seconds can count reads as no schedule (found by the schedule fuzz
+    /// target: `n * 60` overflowed and panicked on a manifest's cron text).
+    #[test]
+    fn a_step_too_large_to_count_reads_as_no_schedule() {
+        let huge = format!("*/{} * * * *", u64::MAX / 2);
+        assert_eq!(schedule_seconds(&huge), None);
+        let huge = format!("0 */{} * * *", u64::MAX / 1000);
+        assert_eq!(schedule_seconds(&huge), None);
+        assert_eq!(
+            target_seconds(Some(u64::MAX), None),
+            Some(u64::MAX),
+            "the slack saturates instead of wrapping to a target in the past"
+        );
     }
 
     #[test]

@@ -1,0 +1,1 @@
+spec.steps.kind eq "map" or not metadata.labels.x eq "y"
