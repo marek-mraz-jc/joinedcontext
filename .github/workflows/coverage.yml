@@ -54,6 +54,9 @@ jobs:
             dir: vendor/joinedcontext-platform
             args: "--workspace --exclude jc-core --lib --bins $PLATFORM_TESTS"
             then: "-p jc-core --lib --bins"
+            # jcctl's `it` modules that read examples/ingestion and library/blueprints, not vendored
+            # either (ci.yml runs only its portal_api_drift_tests::)
+            testargs: "-- --skip ingestion_examples_tests:: --skip library_blueprints_tests::"
     defaults: { run: { working-directory: "${{ matrix.dir }}" } }
     services:
       postgres:
@@ -129,7 +132,7 @@ jobs:
         run: |
           start=$(date +%s); out=coverage
           # shellcheck disable=SC2086
-          ${{ matrix.watch }} cargo llvm-cov ${{ matrix.args }} --locked --no-report --no-fail-fast || {
+          ${{ matrix.watch }} cargo llvm-cov ${{ matrix.args }} --locked --no-report --no-fail-fast ${{ matrix.testargs }} || {
             out=tests-failed
             echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
           }
