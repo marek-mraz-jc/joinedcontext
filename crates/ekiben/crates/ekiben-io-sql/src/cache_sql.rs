@@ -307,6 +307,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn close_drops_the_connection_and_a_memory_database_with_it() {
+        let c = cache(":memory:", "");
+        let db = c.db.get(&c.org).await.unwrap();
+        db.exec_raw("CREATE TABLE kv (k TEXT PRIMARY KEY, v BLOB)")
+            .await
+            .unwrap();
+        c.add("k", Bytes::from_static(b"v"), None).await.unwrap();
+        c.close().await.unwrap();
+        // The next call opens a new, empty database.
+        assert!(c
+            .get("k")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no such table"));
+    }
+
+    #[tokio::test]
     async fn a_missing_table_is_the_error_of_every_call() {
         let c = cache(":memory:", "");
         let e = |r: Result<(), CoreError>| r.unwrap_err().to_string();

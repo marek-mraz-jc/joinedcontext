@@ -754,9 +754,14 @@ mod tests {
 
     #[test]
     fn driver_lint_names_the_driver() {
-        assert!(Driver::parse("clickhouse")
-            .unwrap_err()
-            .contains("clickhouse"));
+        assert_eq!(
+            Driver::parse("clickhouse").unwrap_err(),
+            "driver clickhouse is not supported by ekiben (it runs postgres, mysql and sqlite)"
+        );
+        for d in [Driver::Postgres, Driver::MySql, Driver::Sqlite] {
+            assert_eq!(Driver::parse(d.name()), Ok(d));
+        }
+        assert_eq!(Driver::MySql.name(), "mysql");
         assert_eq!(
             Driver::parse("pgx").unwrap_err(),
             "sql: unknown driver \"pgx\" (forgotten import?)"
@@ -1044,7 +1049,7 @@ mod tests {
             ),
             ("u@tcp(h:1)/db?timeout=soon", "timeout: invalid duration"),
         ] {
-            let e = parse_mysql_dsn(dsn).err().expect(dsn).to_string();
+            let e = parse_mysql_dsn(dsn).expect_err(dsn).to_string();
             assert!(e.contains(why), "{dsn}: {e}");
         }
     }
@@ -1175,11 +1180,7 @@ mod tests {
         let (t, _) = parse_dsn(Driver::Postgres, u.as_str(), None).unwrap();
         let s = ConnSettings::from_config(&serde_json::Map::new(), None).unwrap();
         let db = open(&t, &s, &private_org()).await.unwrap();
-        let e = db
-            .exec_raw("SELECT 1")
-            .await
-            .err()
-            .expect("an unknown role");
+        let e = db.exec_raw("SELECT 1").await.expect_err("an unknown role");
         assert!(is_auth_error(Driver::Postgres, &e), "{e}");
     }
 
