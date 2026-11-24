@@ -1487,6 +1487,53 @@ mod tests {
         );
     }
 
+    /// PL-109: a history plan the target space cannot keep is red on each record carrying the
+    /// attribute (keep latest under a space that keeps the type's history), and an output whose
+    /// Endpoint the project does not hold is named, not judged by a model.
+    #[test]
+    fn a_history_plan_the_space_cannot_keep_and_an_endpoint_outside_the_project_are_red() {
+        let state = world();
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "ContextSpace".to_owned(),
+            metadata: ObjectMeta::new("vehicles", "helsinki"),
+            spec: json!({ "retention": [{ "entityType": "Bus", "history": "P30D" }] }),
+            status: None,
+        });
+        let mut planned = pipeline(json!([]));
+        planned["spec"]["history"] = json!([{ "type": "Bus", "attributes": [
+            { "names": ["speed"], "keep": "latest" },
+            { "names": ["position"], "keep": "every" }
+        ]}]);
+        let checked = check(&state, &planned, &[bus(json!(40))]);
+        let history: Vec<(&str, &str)> = checked.records[0]
+            .findings
+            .iter()
+            .filter(|f| f.source == Source::History)
+            .map(|f| (f.rule.as_str(), f.field.as_str()))
+            .collect();
+        assert_eq!(
+            history,
+            [("latest", "speed")],
+            "{:?}",
+            checked.records[0].findings
+        );
+        assert!(verdict_findings(&checked)
+            .iter()
+            .any(|f| f.path == "records[0].speed" && f.message.starts_with("speed: ")));
+
+        let mut outside = pipeline(json!([]));
+        outside["spec"]["outputs"][0]["targetEndpoint"] =
+            json!("urn:ngsi-ld:Endpoint:hel.fi:vehicles:not-held");
+        let checked = check(&state, &outside, &[bus(json!(40))]);
+        let finding = &checked.records[0].findings[0];
+        assert_eq!(
+            (finding.source, finding.rule.as_str()),
+            (Source::Endpoint, "targetEndpoint")
+        );
+        assert!(finding.reason.contains("not-held"), "{}", finding.reason);
+    }
+
     /// A test's mapping can make more records than one check takes: the first [`MAX_RECORDS`]
     /// are judged, the rest are not, and no error is raised for them.
     #[test]
