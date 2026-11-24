@@ -14,8 +14,10 @@
           </ul>
         </details></dd>
       {% else %}
-        <dt>{{ row.label }}</dt>
-        <dd>{% if let Some(link) = row.link %}<a href="{{ link }}" rel="noopener">{{ row.text }}</a>{% else %}{{ row.text }}{% endif %}</dd>
+        {# T-7745: the licence and publisher rows keep their look under any portal stylesheet #}
+        {% let keep = row.key == "license" || row.key == "publisher" %}
+        <dt{% if keep %} data-jc-keep{% endif %}>{{ row.label }}</dt>
+        <dd{% if keep %} data-jc-keep{% endif %}>{% if let Some(link) = row.link %}<a href="{{ link }}" rel="noopener">{{ row.text }}</a>{% else %}{{ row.text }}{% endif %}</dd>
       {% endif %}
     {% endfor %}
   </dl>

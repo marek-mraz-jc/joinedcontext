@@ -1,6 +1,6 @@
 //! The role taxonomy every organization starts from (PF-56, PF-71, T-0873).
 //!
-//! Ten roles, written as `Role` manifests into `users/roles/`: what a person may read, what
+//! Eleven roles, written as `Role` manifests into `users/roles/`: what a person may read, what
 //! each kind of editor may propose, who approves, and who may let data out to the public. They
 //! are a seed a person extends by proposing further roles, never a list the platform enforces:
 //! `jcctl roles seed` writes a file only where there is none, so an edited role stays edited.
@@ -191,6 +191,14 @@ pub fn taxonomy() -> Vec<Seeded> {
             name: "app-editor",
             purpose: "Writes the applications.",
             rules: vec![rule(vec!["App".into()], vec![Verb::Propose])],
+        },
+        Seeded {
+            name: "portal-editor",
+            purpose: "Proposes the open data portals' look, display, pages and stylesheet; an \
+                      Organization administrator approves each Change (T-7745). Bound at an \
+                      Organization it reaches that Organization's portals alone; a copy with a \
+                      `metadata.name` constraint reaches the named portals alone.",
+            rules: vec![rule(vec!["Portal".into()], vec![Verb::Read, Verb::Propose])],
         },
         Seeded {
             name: "steward",

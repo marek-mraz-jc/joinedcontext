@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { contrast, inherited, sourceOf, styleFaults, valueAt, withValue } from "../src/pages/portals/portalAppearance";
+import { contrast, cssFault, inherited, MAX_CSS_BYTES, sourceOf, styleFaults, valueAt, withValue } from "../src/pages/portals/portalAppearance";
 import { PortalAppearanceTab } from "../src/pages/portals/PortalAppearance";
 import { expectAxeClean, jsonResponse, problem, renderRoute } from "./pageHarness";
 
@@ -41,6 +41,13 @@ describe("the appearance model", () => {
     expect(styleFaults({ colours: { headerText: "#777777", headerBackground: "#888888" } })).toEqual({ "colours.headerText": "portals.appearance.fault.contrast" });
     expect(styleFaults({ colours: { headerText: "#ffffff", headerBackground: "#0b5394" }, fontSize: 14, buttonStyle: "outline" })).toEqual({});
     expect(contrast("#000000", "#ffffff")).toBeCloseTo(21, 0);
+  });
+
+  it("refuses a stylesheet over 32 KiB or holding markup before sending (T-7745)", () => {
+    expect(cssFault(undefined)).toBeUndefined();
+    expect(cssFault(".site-header { color: #ffffff }")).toBeUndefined();
+    expect(cssFault("a{}".padEnd(MAX_CSS_BYTES + 1, " "))).toBe("portals.appearance.css.fault.size");
+    expect(cssFault("a { color: red }</style>")).toBe("portals.appearance.css.fault.markup");
   });
 });
 
@@ -119,6 +126,37 @@ describe("the appearance tab", () => {
       fontSize: 17,
     });
     expect(await screen.findByText(/chg-44/)).toBeInTheDocument();
+  });
+
+  it("proposes the portal's own stylesheet, names the server's refusal with its line and resets it (T-7745)", async () => {
+    const user = userEvent.setup();
+    const sent: Sent[] = [];
+    const { container } = await openAppearance({ appearance: { css: ".hero { color: #ffffff }" } }, (path, request) => {
+      if (path === "/api/v1/projects/org/portals/bbsk-doprava" && request.method === "PUT") {
+        return request.json().then((body: Sent["body"]) => {
+          sent.push({ url: request.url, body });
+          return String(body.spec.appearance?.css ?? "").includes("@import")
+            ? problem(422, "spec.appearance.css: must be style rules and `@media` alone; `@import` is refused (line 1)")
+            : jsonResponse(request.url.includes("dryRun") ? { valid: true, verdict: { ok: true } } : CHANGE);
+        });
+      }
+      return undefined;
+    });
+    const sheet = await screen.findByLabelText(/^Stylesheet/);
+    expect(sheet).toHaveValue(".hero { color: #ffffff }");
+    expect(screen.getByText(/e\.g\. \.site-header \{ background: navy; color: white \}/)).toBeInTheDocument();
+    await expectAxeClean(container);
+    fireEvent.change(sheet, { target: { value: '@import "/x.css";' } });
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    expect(await screen.findByText("The appearance was refused")).toBeInTheDocument();
+    expect(screen.getAllByText(/`@import` is refused \(line 1\)/).length).toBeGreaterThan(0);
+    fireEvent.change(sheet, { target: { value: ".site-header { background: #0b5394 }" } });
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    expect(await screen.findByText(/chg-44/)).toBeInTheDocument();
+    expect(sent.at(-1)?.body.spec.appearance).toEqual({ css: ".site-header { background: #0b5394 }" });
+    await user.click(screen.getByRole("button", { name: "Reset Stylesheet to inherited" }));
+    expect(screen.getByLabelText(/^Stylesheet/)).toHaveValue("");
+    expect(screen.getByText("None: the theme alone")).toBeInTheDocument();
   });
 
   it("refuses low contrast before sending and shows a non-admin's 403 in words", async () => {

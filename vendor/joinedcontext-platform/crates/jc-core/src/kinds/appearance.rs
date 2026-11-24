@@ -2,9 +2,10 @@
 //! show of it (UIX-16, T-6772).
 //!
 //! Every member is optional and overrides the installation's branding file field by field; a
-//! member left out shows the installation's value. Each one is a validated value, never raw CSS
-//! or HTML: a colour is a hex triplet or sextet, a name is one line of plain text, a logo is an
-//! SVG without script, event handler, external reference or entity.
+//! member left out shows the installation's value. Each one is a validated value, never raw HTML:
+//! a colour is a hex triplet or sextet, a name is one line of plain text, a logo is an SVG without
+//! script, event handler, external reference or entity, and a Portal's own stylesheet (`css`) is
+//! tokenized and rewritten by [`super::stylesheet`].
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -65,6 +66,13 @@ pub struct OrganizationAppearance {
     /// Markdown (T-7031); a page or language left out shows the built-in text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pages: Vec<AppearancePage>,
+    /// A `kind: Portal`'s own stylesheet for its open data portal, at most 32 KiB (T-7745): style
+    /// rules and `@media` alone, every selector scoped to that portal's pages, properties from a
+    /// fixed list without `content`, positioning, `z-index` or hiding, `url()` only of
+    /// `/files/{sha256}/{name}` of the portal's files; e.g. `.site-header { background: navy }`.
+    /// An Organization's appearance refuses it: each portal carries its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub css: Option<String>,
     /// The open data portal's typeface, one of a fixed set of system font stacks, so no font is
     /// fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -641,6 +649,12 @@ impl OrganizationAppearance {
         }
         links("spec.appearance.navLinks", &self.nav_links)?;
         links("spec.appearance.footerLinks", &self.footer_links)?;
+        if let Some(css) = &self.css {
+            crate::kinds::stylesheet::scoped_stylesheet(
+                css,
+                crate::kinds::stylesheet::CHECK_CLASS,
+            )?;
+        }
         self.display.validate("spec.appearance.display", &[])
     }
 
@@ -697,6 +711,8 @@ impl OrganizationAppearance {
             home_widgets: list(&self.home_widgets, &under.home_widgets),
             opendata_widgets: list(&self.opendata_widgets, &under.opendata_widgets),
             pages: list(&self.pages, &under.pages),
+            // A stylesheet is the portal's own and never comes from the level under it (T-7745).
+            css: self.css.clone(),
             font: self.font.or(under.font),
             heading_font: self.heading_font.or(under.heading_font),
             body_font: self.body_font.or(under.body_font),
@@ -1247,7 +1263,6 @@ mod tests {
             json!({ "datasetList": "grid" }),
             json!({ "hero": { "title": "x", "css": "x" } }),
             json!({ "navLinks": [{ "label": "x", "url": "/", "target": "_blank" }] }),
-            json!({ "css": "body{}" }),
         ] {
             assert!(
                 serde_json::from_value::<OrganizationAppearance>(unknown.clone()).is_err(),
@@ -1384,10 +1399,12 @@ mod tests {
             let refusal = checked(appearance.clone()).expect_err(field).to_string();
             assert!(refusal.contains(field), "{appearance}: {refusal}");
         }
-        assert!(
-            serde_json::from_value::<OrganizationAppearance>(json!({ "css": "body{}" })).is_err(),
-            "raw CSS has no member"
-        );
+        // T-7745: a stylesheet is a member of its own, checked construct by construct.
+        let refusal = checked(json!({ "css": "@import \"/x.css\";" }))
+            .expect_err("@import")
+            .to_string();
+        assert!(refusal.contains("spec.appearance.css"), "{refusal}");
+        assert!(checked(json!({ "css": ".site-header { color: #ffffff }" })).is_ok());
     }
 
     /// Words that merely contain `on` or `href` are no handler and no reference.

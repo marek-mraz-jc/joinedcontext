@@ -843,9 +843,20 @@ fn a_display_hides_orders_and_renames_dataset_sections_and_resets() {
     let about = &shown[at("id=\"jc-about-title\"")..];
     let row = |label: &str| {
         about
-            .find(&format!("<dt>{label}</dt>"))
+            .find(&format!(">{label}</dt>"))
             .unwrap_or_else(|| panic!("{label}"))
     };
+    // T-7745: the licence and publisher rows keep their look under any portal stylesheet.
+    for kept in [esc_t("licence", "en"), esc_t("publisher", "en")] {
+        assert!(
+            about.contains(&format!("<dt data-jc-keep>{kept}</dt>")),
+            "{kept}"
+        );
+    }
+    assert!(
+        about.contains("<dt>x_kraj</dt>"),
+        "other rows are not pinned"
+    );
     assert!(row(&esc_t("licence", "en")) < row("x_kraj"));
     assert!(row("x_kraj") < row(&esc_t("publisher", "en")));
     assert!(

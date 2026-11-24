@@ -1,0 +1,14 @@
+# T-7745: the person who looks after an open data portal proposes its look, display, pages and
+# stylesheet; an Organization administrator approves each Change. Bound at an Organization
+# (`scope.organization`) it reaches that Organization's portals alone. To limit it to named
+# portals, propose a copy named `portal-editor-<portal>` with the constraint
+# `{ field: metadata.name, in: [<portal>] }`.
+apiVersion: joinedcontext.com/v1alpha1
+kind: Role
+metadata:
+  name: portal-editor
+  namespace: org
+spec:
+  rules:
+    - kinds: [Portal]
+      verbs: [read, propose]

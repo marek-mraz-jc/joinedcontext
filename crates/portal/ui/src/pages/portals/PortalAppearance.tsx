@@ -6,10 +6,10 @@ import type { Change } from "../../api/manifest";
 import { useOrganizationManifests } from "../../api/projects";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { Swatch } from "../../components/forms/widgets/AppearanceWidgets";
-import { Alert, Badge, Button, Card, Field, Input, Select } from "../../components/ui";
+import { Alert, Badge, Button, Card, Field, Input, Select, Textarea } from "../../components/ui";
 import type { PortalSpec } from "./PortalsArea";
 import { linesOf, usePortalChange } from "./PortalSources";
-import { inherited, sourceOf, STYLE_GROUPS, styleFaults, valueAt, withValue } from "./portalAppearance";
+import { CSS_EXAMPLE, CSS_FILE_EXAMPLE, cssFault, inherited, sourceOf, STYLE_GROUPS, styleFaults, valueAt, withValue } from "./portalAppearance";
 import type { Appearance, StyleField } from "./portalAppearance";
 
 const idOf = (path: string) => `appearance-${path.replace(/\./g, "-")}`;
@@ -30,6 +30,9 @@ export function PortalAppearanceTab({ name, spec }: { name: string; spec: Portal
   const [refusal, setRefusal] = useState<string[]>([]);
   const propose = usePortalChange(name);
   const faults = styleFaults(look);
+  const css = typeof look.css === "string" ? look.css : undefined;
+  const cssProblem = cssFault(css);
+  if (cssProblem) faults.css = cssProblem;
   const dirty = JSON.stringify(look) !== JSON.stringify(stored);
 
   const set = (path: string, value: string | number | undefined) => {
@@ -177,6 +180,46 @@ export function PortalAppearanceTab({ name, spec }: { name: string; spec: Portal
           </section>
         </Card>
       ))}
+      <Card padding="md">
+        <section aria-labelledby="appearance-css" className="space-y-3">
+          <h3 id="appearance-css" className="text-body font-semibold">
+            {t("portals.appearance.css.heading")}
+          </h3>
+          <p className="text-body text-fg-muted">{t("portals.appearance.css.lead")}</p>
+          {(() => {
+            const fault = tried || css !== undefined ? faults.css : undefined;
+            const errors = [fault ? t(fault) : undefined, refusedAt("css")].filter((e): e is string => e !== undefined);
+            return (
+              <Field
+                id="appearance-css-text"
+                label={t("portals.appearance.css.label")}
+                help={t("portals.appearance.css.hint", { example: CSS_EXAMPLE, file: CSS_FILE_EXAMPLE, important: "!important" })}
+                errors={errors.length > 0 ? errors : undefined}
+                aside={
+                  <span className="flex flex-wrap items-center gap-1">
+                    <Badge tone={css !== undefined ? "primary" : "neutral"}>{css !== undefined ? t("portals.appearance.from.portal") : t("portals.appearance.css.none")}</Badge>
+                    {css !== undefined ? (
+                      <Button size="sm" variant="ghost" aria-label={t("portals.appearance.resetField", { field: t("portals.appearance.css.label") })} onClick={() => set("css", undefined)}>
+                        {t("portals.appearance.reset")}
+                      </Button>
+                    ) : null}
+                  </span>
+                }
+              >
+                <Textarea
+                  id="appearance-css-text"
+                  rows={10}
+                  spellCheck={false}
+                  className="font-mono"
+                  value={css ?? ""}
+                  aria-invalid={errors.length > 0 || undefined}
+                  onChange={(e) => set("css", e.currentTarget.value === "" ? undefined : e.currentTarget.value)}
+                />
+              </Field>
+            );
+          })()}
+        </section>
+      </Card>
       <Card padding="md" className={dirty ? "sticky bottom-2 z-10 flex flex-wrap items-center gap-3 shadow-md" : "flex flex-wrap items-center gap-3"}>
         <p className="min-w-0 flex-1 basis-60 text-body text-fg-muted">{dirty ? t("portals.appearance.unpublished") : t("portals.appearance.published")}</p>
         <div className="flex flex-wrap gap-2">

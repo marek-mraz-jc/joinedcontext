@@ -13953,6 +13953,17 @@
         "choice": "Pick one of the listed values.",
         "number": "A whole number in the stated range.",
         "contrast": "Too little contrast: pick a colour of at least 4.5:1 on its background (WCAG AA)."
+      },
+      "css": {
+        "heading": "Own stylesheet",
+        "lead": "CSS for this portal's pages alone, at most 32 KiB. Each rule applies only on this portal; the licence and publisher lines always stay visible.",
+        "label": "Stylesheet",
+        "hint": "Style rules and @media only, e.g. {example}. Images: {file} as the Files tab lists them. Refused: @import, @font-face, content, position, z-index, display: none, {important}, :has() and attribute matches such as [href^=…].",
+        "none": "None: the theme alone",
+        "fault": {
+          "size": "At most 32 KiB.",
+          "markup": "Remove </: a stylesheet holds no markup."
+        }
       }
     }
   },

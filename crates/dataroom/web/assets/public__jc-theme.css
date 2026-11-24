@@ -982,3 +982,19 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
   .jc-row-2:has(> .jc-block-numbers:first-child) { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
   .jc-row-2:has(> .jc-block-numbers:last-child) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 }
+
+/* T-7745: a portal's own stylesheet (`spec.appearance.css`) may never take the licence and
+   publisher lines out of sight. Its declarations carry no !important and it may not hide, move,
+   layer or fade anything, so these win over any rule it holds, whatever the selector. Only a
+   page that links one carries `jc-portal-css`; every other page keeps the theme's look. */
+.jc-portal-css [data-jc-keep], .jc-portal-css [data-jc-keep] * {
+  font-size: max(.875rem, 1em) !important;
+  line-height: 1.5 !important;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  color: var(--jc-ink, #0f172a) !important;
+  background-color: var(--jc-paper, #ffffff) !important;
+  background-image: none !important;
+  text-shadow: none !important;
+}
+.jc-portal-css [data-jc-keep] a { color: var(--jc-link, var(--jc-primary, #0b5394)) !important; }

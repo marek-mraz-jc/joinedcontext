@@ -170,3 +170,20 @@ export const CONTRAST_PAIRS: [string, string][] = [
   ["colours.headerText", "colours.headerBackground"],
   ["colours.footerText", "colours.footerBackground"],
 ];
+
+/** The largest stylesheet a portal carries, as jc-core counts it: UTF-8 bytes (T-7745). */
+export const MAX_CSS_BYTES = 32 * 1024;
+export const CSS_EXAMPLE = ".site-header { background: navy; color: white }";
+export const CSS_FILE_EXAMPLE = 'url("/files/{sha256}/{name}")';
+
+/**
+ * What the editor refuses of a stylesheet before sending, as a locale key: its size and `</`.
+ * Every other rule (the property list, `url()`, selectors) jc-core checks at propose and names
+ * with its line.
+ */
+export function cssFault(css: string | undefined): string | undefined {
+  if (css === undefined) return undefined;
+  if (new TextEncoder().encode(css).length > MAX_CSS_BYTES) return "portals.appearance.css.fault.size";
+  if (css.includes("</")) return "portals.appearance.css.fault.markup";
+  return undefined;
+}

@@ -36,6 +36,9 @@ jc-time = { version = "0.1.0", path = "../../../../crates/shared/jc-time", featu
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 # The open data portal's page texts as safe HTML (T-7031); the version the Portal and shako lock.
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+# A Portal's own stylesheet is tokenized, checked and scoped to its portal (T-7745); the version the
+# root workspace already locks through scraper and selectors.
+cssparser = "0.37"
 axum = { version = "0.8", optional = true, default-features = false, features = ["json"] }
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter", "json"] }

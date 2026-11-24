@@ -647,6 +647,7 @@ pub fn router(state: DataroomState) -> Router {
         .route("/files/{sha256}/{name}", get(handle_serve_file))
         // Built-in theme static assets
         .route("/jc-theme.css", get(handle_jc_theme_css))
+        .route("/portal-css/{file}", get(handle_portal_css))
         .route("/jc-enums.json", get(handle_jc_enums_json))
         .route("/jc-logo.svg", get(handle_jc_logo_svg))
         .route("/logo.svg", get(handle_logo_svg))
@@ -1293,6 +1294,36 @@ async fn handle_jc_theme_css() -> Response {
         JC_THEME_CSS,
     )
         .into_response()
+}
+
+/// The stylesheet of the portal this host serves (T-7745), `{hash}.css` as its pages link it;
+/// another portal's hash, or a portal without one, is 404. The text is the one jc-core checked
+/// and scoped when jc handed over the portal's branding.
+async fn handle_portal_css(
+    State(state): State<DataroomState>,
+    headers: HeaderMap,
+    Path(file): Path<String>,
+) -> Response {
+    let (_, cat) = match state.resolve_context(&headers).await {
+        Ok(v) => v,
+        Err(e) => return problem_response(e),
+    };
+    let branding = state.branding_of(&cat);
+    match branding.layout.stylesheet {
+        Some(sheet) if file.strip_suffix(".css") == Some(sheet.hash.as_str()) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ],
+            sheet.css,
+        )
+            .into_response(),
+        _ => problem_response(DataroomError::NotFound(
+            "no such stylesheet on this portal".into(),
+        )),
+    }
 }
 
 /// One route per theme script (`dataroom_web::JC_SCRIPTS`): a fixed list, so no path reaches a
