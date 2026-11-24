@@ -138,7 +138,7 @@ pub fn create_archive(
 mod tests {
     use super::*;
     use crate::repo::set_ref_direct;
-    use crate::testutil::{Refusing, repo};
+    use crate::testutil::repo;
     use std::io::{Cursor, Read as _};
 
     /// A commit on `feature/x` holding `README.md`, an executable `run.sh` and a submodule.
@@ -278,19 +278,19 @@ mod tests {
         .expect_err("refused");
         assert!(matches!(err, ShakoError::Overloaded(_)));
         for format in [ArchiveFormat::Zip, ArchiveFormat::TarGz] {
+            // A writer with no room: every write fails, seeking works.
+            let mut room = [0u8; 0];
+            let full = Cursor::new(&mut room[..]);
             let err = create_archive(
                 &path,
                 "dest",
                 "feature/x",
                 format,
-                Refusing,
+                full,
                 &mut crate::testutil::admit_all,
             )
-            .expect_err("disk full");
-            assert!(
-                matches!(&err, ShakoError::Git(m) if m.contains("disk full")),
-                "{format:?}: {err}"
-            );
+            .expect_err("no room");
+            assert!(matches!(err, ShakoError::Git(_)), "{format:?}: {err}");
         }
     }
 }

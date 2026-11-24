@@ -878,10 +878,4 @@ pub(crate) mod testutil {
             Err(std::io::Error::other("disk full"))
         }
     }
-
-    impl std::io::Seek for Refusing {
-        fn seek(&mut self, _: std::io::SeekFrom) -> std::io::Result<u64> {
-            Ok(0)
-        }
-    }
 }
