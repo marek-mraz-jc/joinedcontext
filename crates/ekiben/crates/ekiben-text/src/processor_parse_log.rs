@@ -60,10 +60,8 @@ fn put_str(doc: &mut Doc, k: &str, v: Option<String>) {
     }
 }
 
-fn put_num(doc: &mut Doc, k: &str, v: Option<u8>) {
-    if let Some(v) = v {
-        doc.insert(k.to_string(), Value::Int(i64::from(v)));
-    }
+fn put_num(doc: &mut Doc, k: &str, v: u8) {
+    doc.insert(k.to_string(), Value::Int(i64::from(v)));
 }
 
 impl ParseLogProcessor {
@@ -148,9 +146,8 @@ impl ParseLogProcessor {
                 put_num(&mut doc, "facility", res.facility);
                 put_num(&mut doc, "severity", res.severity);
                 put_num(&mut doc, "priority", res.priority);
-                if res.version != 0 {
-                    doc.insert("version".into(), Value::Int(i64::from(res.version)));
-                }
+                // a message comes only from a parse that read its version (1 to 999)
+                doc.insert("version".into(), Value::Int(i64::from(res.version)));
                 put_str(&mut doc, "hostname", res.hostname);
                 put_str(&mut doc, "procid", res.proc_id);
                 put_str(&mut doc, "appname", res.appname);

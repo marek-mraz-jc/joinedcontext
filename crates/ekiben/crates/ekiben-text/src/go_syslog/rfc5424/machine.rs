@@ -517,18 +517,14 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 }
                 if m.c() < 225 {
                     if m.c() > 193 {
-                        if (194..=223).contains(&m.c()) {
-                            lbl = 70; continue;
-                        }
+                        lbl = 70; continue;
                     } else if m.c() >= 128 {
                         lbl = 13; continue;
                     }
                 } else if m.c() > 239 {
                     if m.c() > 243 {
-                        if 245 <= m.c() {
-                            lbl = 13; continue;
-                        }
-                    } else if m.c() >= 241 {
+                        lbl = 13; continue;
+                    } else {
                         lbl = 85; continue;
                     }
                 } else {
@@ -567,18 +563,14 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 }
                 if m.c() < 225 {
                     if m.c() > 193 {
-                        if (194..=223).contains(&m.c()) {
-                            lbl = 71; continue;
-                        }
+                        lbl = 71; continue;
                     } else if m.c() >= 128 {
                         lbl = 13; continue;
                     }
                 } else if m.c() > 239 {
                     if m.c() > 243 {
-                        if 245 <= m.c() {
-                            lbl = 13; continue;
-                        }
-                    } else if m.c() >= 241 {
+                        lbl = 13; continue;
+                    } else {
                         lbl = 86; continue;
                     }
                 } else {
@@ -1720,18 +1712,14 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 }
                 if m.c() < 225 {
                     if m.c() > 193 {
-                        if (194..=223).contains(&m.c()) {
-                            lbl = 184; continue;
-                        }
+                        lbl = 184; continue;
                     } else if m.c() >= 128 {
                         lbl = 17; continue;
                     }
                 } else if m.c() > 239 {
                     if m.c() > 243 {
-                        if 245 <= m.c() {
-                            lbl = 17; continue;
-                        }
-                    } else if m.c() >= 241 {
+                        lbl = 17; continue;
+                    } else {
                         lbl = 199; continue;
                     }
                 } else {
@@ -1778,18 +1766,14 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                 }
                 if m.c() < 225 {
                     if m.c() > 193 {
-                        if (194..=223).contains(&m.c()) {
-                            lbl = 185; continue;
-                        }
+                        lbl = 185; continue;
                     } else if m.c() >= 128 {
                         lbl = 17; continue;
                     }
                 } else if m.c() > 239 {
                     if m.c() > 243 {
-                        if 245 <= m.c() {
-                            lbl = 17; continue;
-                        }
-                    } else if m.c() >= 241 {
+                        lbl = 17; continue;
+                    } else {
                         lbl = 200; continue;
                     }
                 } else {
