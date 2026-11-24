@@ -345,8 +345,7 @@ mod tests {
                 mount(),
             )
             .await
-            .err()
-            .expect("refused");
+            .expect_err("refused");
             assert!(!e.is_empty(), "{organizations:?}");
         }
         let cfg = DaiyaSection {
