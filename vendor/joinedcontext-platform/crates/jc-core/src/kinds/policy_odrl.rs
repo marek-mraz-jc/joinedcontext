@@ -875,10 +875,7 @@ mod tests {
 
     #[test]
     fn render_then_import_is_the_manifest() -> Out<()> {
-        let policy = Policy::from_yaml(POLICY).map_err(|e| Refusal {
-            member: "fixture".into(),
-            reason: e.to_string(),
-        })?;
+        let policy = Policy::from_yaml(POLICY).expect("the fixture parses");
         let set = render(&policy)?;
         assert_eq!(set["uid"], "urn:joinedcontext:policy:ovzdusie:ovzdusie:air");
         assert_eq!(import(&set, &Names::default())?, policy);
@@ -890,10 +887,7 @@ mod tests {
     #[test]
     fn an_organization_assignee_has_no_odrl_form() -> Out<()> {
         let yaml = POLICY.replace("{ kind: role, id: public }", "{ kind: organization }");
-        let policy = Policy::from_yaml(&yaml).map_err(|e| Refusal {
-            member: "fixture".into(),
-            reason: e.to_string(),
-        })?;
+        let policy = Policy::from_yaml(&yaml).expect("the fixture parses");
         let refusal = render(&policy).err();
         assert_eq!(
             refusal.map(|r| r.member).as_deref(),
@@ -931,5 +925,623 @@ mod tests {
             Some("timerel=before;timeAt=B")
         );
         assert_eq!(temporal(None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use crate::kinds::policy::Operation;
+
+    /// The Policy identity an import needs before it reads the rules.
+    fn named() -> Names {
+        Names {
+            project: Some("helsinki".to_owned()),
+            space: Some("ilma".to_owned()),
+            name: Some("open".to_owned()),
+        }
+    }
+
+    fn sample_policy_envelope() -> Policy {
+        Policy::new(
+            ObjectMeta::new("air", "ovzdusie"),
+            PolicySpec {
+                context_space_ref: Ref::Typed(TypedRef {
+                    kind: "ContextSpace".to_owned(),
+                    name: "ovzdusie".to_owned(),
+                    namespace: None,
+                }),
+                effect: PolicyEffect::Permission,
+                assigner: "did:web:banskabystrica.sk".to_owned(),
+                assignee: Principal::new(PrincipalKind::Role, "public"),
+                operations: vec![OperationRef::Single(Operation::QueryEntity)],
+                actions: vec![],
+                information: vec![RegistrationInfo {
+                    entities: vec![EntitySelector {
+                        entity_type: "AirQualityObserved".to_owned(),
+                        id: None,
+                        id_pattern: None,
+                    }],
+                    property_names: vec![],
+                    relationship_names: vec![],
+                    attributes: Default::default(),
+                }],
+                q: None,
+                scope_q: None,
+                geo_q: None,
+                temporal_q: None,
+                rules: None,
+                validity: None,
+            },
+        )
+    }
+
+    #[test]
+    fn render_policy_missing_namespace_is_refused() {
+        let mut policy = sample_policy_envelope();
+        policy.metadata.namespace = None;
+        let err = render(&policy).unwrap_err();
+        assert_eq!(err.member, "metadata.namespace");
+        assert!(
+            err.reason.contains("a Policy names its project"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn render_policy_with_invalid_rules_expansion_is_refused() {
+        let mut policy = sample_policy_envelope();
+        policy.spec.rules = Some(vec![]);
+        let err = render(&policy).unwrap_err();
+        assert_eq!(err.member, "spec.rules");
+    }
+
+    #[test]
+    fn render_policy_with_attribute_capabilities_is_refused() {
+        let mut policy = sample_policy_envelope();
+        policy.spec.information[0].attributes.insert(
+            "pm10".to_owned(),
+            crate::kinds::policy::AttributeCapabilities {
+                read: Some(true),
+                ..Default::default()
+            },
+        );
+        let err = render(&policy).unwrap_err();
+        assert_eq!(err.member, "spec.information.attributes");
+        assert!(
+            err.reason
+                .contains("per-attribute capabilities have no ODRL form yet"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn import_non_object_document_is_refused() {
+        let err = import(&json!("not an object"), &named()).unwrap_err();
+        assert_eq!(err.member, "(document)");
+        assert!(
+            err.reason.contains("an ODRL policy is one JSON object"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn import_unexpected_type_or_connector_negotiation_is_refused() {
+        let bad_type = json!({
+            "@context": CONTEXTS,
+            "@type": "WrongType",
+            "assigner": "did:web:hel.fi"
+        });
+        let err = import(&bad_type, &named()).unwrap_err();
+        assert_eq!(err.member, "@type");
+        assert!(err.reason.contains("must be \"Set\""), "{}", err.reason);
+
+        let offer = json!({
+            "@context": CONTEXTS,
+            "@type": "Offer",
+            "assigner": "did:web:hel.fi"
+        });
+        let err = import(&offer, &named()).unwrap_err();
+        assert_eq!(err.member, "@type");
+        assert!(
+            err.reason
+                .contains("negotiated by a connector, not imported"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn import_missing_or_empty_assigner_is_refused() {
+        let doc = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "   "
+        });
+        let err = import(&doc, &named()).unwrap_err();
+        assert_eq!(err.member, "assigner");
+        assert!(
+            err.reason.contains("name the granting party"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn import_closed_profile_member_is_refused() {
+        let doc = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "profile": "some-profile"
+        });
+        let err = import(&doc, &named()).unwrap_err();
+        assert_eq!(err.member, "profile");
+        assert!(
+            err.reason
+                .contains("a Set imports on its own, without another policy or profile"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn import_party_refusals() {
+        let bad_type = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "assignee": {
+                "@type": "ngsi-ld:Alien",
+                "uid": "123"
+            }
+        });
+        let err = import(&bad_type, &named()).unwrap_err();
+        assert_eq!(err.member, "assignee.@type");
+        assert!(err.reason.contains("one of ngsi-ld:User"), "{}", err.reason);
+
+        let no_uid = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "assignee": {
+                "@type": "ngsi-ld:Role",
+                "uid": "  "
+            }
+        });
+        let err = import(&no_uid, &named()).unwrap_err();
+        assert_eq!(err.member, "assignee.uid");
+        assert!(err.reason.contains("name the party"), "{}", err.reason);
+
+        let not_party = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "assignee": 123
+        });
+        let err = import(&not_party, &named()).unwrap_err();
+        assert_eq!(err.member, "assignee");
+        assert!(
+            err.reason.contains("name the party's kind"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn import_rule_and_action_refusals() {
+        let not_obj = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [42]
+        });
+        let err = import(&not_obj, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0]");
+        assert!(
+            err.reason.contains("a rule is a JSON object"),
+            "{}",
+            err.reason
+        );
+
+        let no_assignee = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "action": ["ngsi-ld:queryEntity"]
+            }]
+        });
+        let err = import(&no_assignee, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].assignee");
+        assert!(
+            err.reason.contains("name who the rule is for"),
+            "{}",
+            err.reason
+        );
+
+        let non_array_action = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": "ngsi-ld:queryEntity"
+            }]
+        });
+        let err = import(&non_array_action, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].action");
+        assert!(
+            err.reason.contains("list the CIM 009 operations"),
+            "{}",
+            err.reason
+        );
+
+        let unknown_action = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:unknownOp"]
+            }]
+        });
+        let err = import(&unknown_action, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].action[0]");
+        assert!(
+            err.reason.contains("unknown action ngsi-ld:unknownOp"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn import_constraint_and_list_refusals() {
+        let non_obj_constraint = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "constraint": ["not an object"]
+            }]
+        });
+        let err = import(&non_obj_constraint, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].constraint[0]");
+        assert!(
+            err.reason.contains("a constraint is a JSON object"),
+            "{}",
+            err.reason
+        );
+
+        let missing_triple = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "constraint": [{
+                    "leftOperand": "ngsi-ld:q"
+                }]
+            }]
+        });
+        let err = import(&missing_triple, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].constraint[0]");
+        assert!(
+            err.reason
+                .contains("a constraint has leftOperand, operator and rightOperand"),
+            "{}",
+            err.reason
+        );
+
+        let non_array_list = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": 42
+        });
+        let err = import(&non_array_list, &named()).unwrap_err();
+        assert_eq!(err.member, "permission");
+        assert!(err.reason.contains("must be a list"), "{}", err.reason);
+
+        let non_str_operand = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "constraint": [{
+                    "leftOperand": "ngsi-ld:q",
+                    "operator": "eq",
+                    "rightOperand": 123
+                }]
+            }]
+        });
+        let err = import(&non_str_operand, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].constraint[0].rightOperand");
+        assert!(err.reason.contains("must be a string"), "{}", err.reason);
+
+        let dup_operand = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "constraint": [
+                    { "leftOperand": "ngsi-ld:q", "operator": "eq", "rightOperand": "a==1" },
+                    { "leftOperand": "ngsi-ld:q", "operator": "eq", "rightOperand": "b==2" }
+                ]
+            }]
+        });
+        let err = import(&dup_operand, &named()).unwrap_err();
+        assert!(
+            err.reason
+                .contains("this left operand is given twice in one rule"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn import_geo_and_validity_refusals() {
+        let bad_geo = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "constraint": [{
+                    "leftOperand": "ngsi-ld:geoQ",
+                    "operator": "ngsi-ld:within",
+                    "rightOperand": { "bad": "geo" }
+                }]
+            }]
+        });
+        let err = import(&bad_geo, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].constraint[0].rightOperand");
+        assert!(err.reason.contains("a geometry is"), "{}", err.reason);
+
+        let bad_validity = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "constraint": [{
+                    "leftOperand": "ngsi-ld:validity",
+                    "operator": "gteq",
+                    "rightOperand": "invalid-time"
+                }]
+            }]
+        });
+        let err = import(&bad_validity, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].constraint[0].rightOperand");
+        assert!(err.reason.contains("an RFC 3339 time"), "{}", err.reason);
+
+        let dup_validity = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "constraint": [
+                    { "leftOperand": "ngsi-ld:validity", "operator": "gteq", "rightOperand": "2027-01-01T00:00:00Z" },
+                    { "leftOperand": "ngsi-ld:validity", "operator": "gteq", "rightOperand": "2027-02-01T00:00:00Z" }
+                ]
+            }]
+        });
+        let err = import(&dup_validity, &named()).unwrap_err();
+        assert!(
+            err.reason
+                .contains("this validity bound is given twice in one rule"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn import_target_and_refinement_refusals() {
+        let non_obj_target = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "target": "not-an-object"
+            }]
+        });
+        let err = import(&non_obj_target, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].target");
+        assert!(err.reason.contains("a target is"), "{}", err.reason);
+
+        let bad_type = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "target": { "@type": "Wrong", "uid": "Sensor" }
+            }]
+        });
+        let err = import(&bad_type, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].target.@type");
+        assert!(
+            err.reason.contains("must be ngsi-ld:EntityType"),
+            "{}",
+            err.reason
+        );
+
+        let no_uid = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "target": { "@type": "ngsi-ld:EntityType" }
+            }]
+        });
+        let err = import(&no_uid, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].target.uid");
+        assert!(
+            err.reason.contains("name the Entity type"),
+            "{}",
+            err.reason
+        );
+
+        let bad_part = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "target": {
+                    "@type": "ngsi-ld:EntityType",
+                    "uid": "Sensor",
+                    "partOf": 123
+                }
+            }]
+        });
+        let err = import(&bad_part, &named()).unwrap_err();
+        assert_eq!(err.member, "permission[0].target.partOf");
+        assert!(
+            err.reason.contains("names the information entry"),
+            "{}",
+            err.reason
+        );
+
+        let make_refinement = |left: &str, op: &str, right: Value| {
+            json!({
+                "@context": CONTEXTS,
+                "@type": "Set",
+                "assigner": "did:web:hel.fi",
+                "permission": [{
+                    "assignee": "did:web:b.example",
+                    "action": ["ngsi-ld:queryEntity"],
+                    "target": {
+                        "@type": "ngsi-ld:EntityType",
+                        "uid": "Sensor",
+                        "refinement": [{
+                            "leftOperand": left,
+                            "operator": op,
+                            "rightOperand": right
+                        }]
+                    }
+                }]
+            })
+        };
+
+        let err = import(
+            &make_refinement("ngsi-ld:propertyNames", "isAnyOf", json!("not-a-list")),
+            &named(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.member,
+            "permission[0].target.refinement[0].rightOperand"
+        );
+        assert!(
+            err.reason.contains("a list of attribute names"),
+            "{}",
+            err.reason
+        );
+
+        let err = import(
+            &make_refinement("ngsi-ld:id", "eq", json!("invalid-urn")),
+            &named(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.member,
+            "permission[0].target.refinement[0].rightOperand"
+        );
+        assert!(err.reason.contains("an Entity URN"), "{}", err.reason);
+
+        let err = import(
+            &make_refinement("ngsi-ld:id", "gt", json!("urn:ngsi-ld:Sensor:1")),
+            &named(),
+        )
+        .unwrap_err();
+        assert_eq!(err.member, "permission[0].target.refinement[0].operator");
+        assert!(err.reason.contains("does not take gt"), "{}", err.reason);
+
+        let dup_refinement = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"],
+                "target": {
+                    "@type": "ngsi-ld:EntityType",
+                    "uid": "Sensor",
+                    "refinement": [
+                        { "leftOperand": "ngsi-ld:id", "operator": "eq", "rightOperand": "urn:ngsi-ld:Sensor:1" },
+                        { "leftOperand": "ngsi-ld:id", "operator": "eq", "rightOperand": "urn:ngsi-ld:Sensor:2" }
+                    ]
+                }
+            }]
+        });
+        let err = import(&dup_refinement, &named()).unwrap_err();
+        assert!(
+            err.reason
+                .contains("this left operand is given twice in one target"),
+            "{}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn import_inconsistent_validity_or_missing_identity_is_refused() {
+        let diff_validity = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [
+                {
+                    "assignee": "did:web:b.example",
+                    "action": ["ngsi-ld:queryEntity"],
+                    "constraint": [{ "leftOperand": "ngsi-ld:validity", "operator": "gteq", "rightOperand": "2027-01-01T00:00:00Z" }]
+                },
+                {
+                    "assignee": "did:web:b.example",
+                    "action": ["ngsi-ld:retrieveEntity"],
+                    "constraint": [{ "leftOperand": "ngsi-ld:validity", "operator": "gteq", "rightOperand": "2028-01-01T00:00:00Z" }]
+                }
+            ]
+        });
+        let err = import(&diff_validity, &named()).unwrap_err();
+        assert!(
+            err.reason
+                .contains("every rule carries the same ngsi-ld:validity"),
+            "{}",
+            err.reason
+        );
+
+        let no_identity = json!({
+            "@context": CONTEXTS,
+            "@type": "Set",
+            "assigner": "did:web:hel.fi",
+            "permission": [{
+                "assignee": "did:web:b.example",
+                "action": ["ngsi-ld:queryEntity"]
+            }]
+        });
+        let err = import(&no_identity, &Names::default()).unwrap_err();
+        assert_eq!(err.member, "uid");
+        assert!(err.reason.contains("names no Policy"), "{}", err.reason);
     }
 }

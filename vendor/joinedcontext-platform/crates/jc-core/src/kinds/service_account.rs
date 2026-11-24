@@ -690,3 +690,382 @@ mod registry_tests {
         assert_eq!(client_account("regtest-c-kpi"), None);
     }
 }
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+    use crate::kinds::ServiceAccount;
+
+    const VALID: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: ServiceAccount
+metadata:
+  name: vendorx-parking-push
+  namespace: bb-doprava
+spec:
+  owner: { user: "jana.k@bb" }
+  purpose: "VendorX cloud pushes ParkingSpot updates every 10 s"
+  roles:
+    - { role: space-writer, scope: { contextSpace: parking }, types: [ParkingSpot], operations: [createEntity, updateAttrs] }
+  credentials:
+    - kind: oauth-client
+      name: main
+  limits: { requestsPerMinute: 1200 }
+"#;
+
+    fn refusal(from: &str, to: &str) -> String {
+        let yaml = VALID.replacen(from, to, 1);
+        assert_ne!(yaml, VALID, "{from}");
+        ServiceAccount::from_yaml(&yaml)
+            .expect(&yaml)
+            .validate()
+            .expect_err(to)
+            .to_string()
+    }
+
+    #[test]
+    fn the_fixture_is_valid_and_its_credential_kind_has_its_wire_name() {
+        ServiceAccount::from_yaml(VALID)
+            .expect("parses")
+            .validate()
+            .expect("valid");
+        assert_eq!(CredentialKind::OauthClient.to_string(), "oauth-client");
+    }
+
+    #[test]
+    fn each_broken_field_is_refused_by_its_name() {
+        for (from, to, said) in [
+            ("user: \"jana.k@bb\"", "user: ' '", "spec.owner.user"),
+            ("purpose: \"VendorX cloud pushes ParkingSpot updates every 10 s\"", "purpose: ''", "spec.purpose"),
+            ("types: [ParkingSpot]", "types: ['bad type']", "bad type"),
+            ("operations: [createEntity, updateAttrs]", "operations: [createEntity, createEntity]", "spec.roles.operations"),
+            (
+                "    - kind: oauth-client\n      name: main\n",
+                "    - kind: oauth-client\n      name: main\n    - kind: oauth-client\n      name: main\n",
+                "spec.credentials.name",
+            ),
+            ("      name: main\n", "      name: Main_1\n", "Main_1"),
+            ("      name: main\n", "      name: main\n      ipAllowList: [10.0.0.0/x]\n", "ipAllowList"),
+            ("      name: main\n", "      name: main\n      ipAllowList: [10.0.0.0/999]\n", "ipAllowList"),
+            ("requestsPerMinute: 1200", "requestsPerMinute: 0", "spec.limits.requestsPerMinute"),
+        ] {
+            let refused = refusal(from, to);
+            assert!(refused.contains(said), "{said}: {refused}");
+        }
+    }
+
+    #[test]
+    fn an_account_without_a_namespace_skips_the_project_checks() {
+        let account = ServiceAccount::from_yaml(VALID).expect("parses");
+        let meta = ObjectMeta {
+            name: account.metadata.name.clone(),
+            namespace: None,
+            ..Default::default()
+        };
+        assert_eq!(account.spec.validate_spec(&meta), Ok(()));
+    }
+
+    #[test]
+    fn a_binding_valid_for_a_window_and_a_workload_binding_pass() {
+        let mut spec = ServiceAccount::from_yaml(VALID).expect("parses").spec;
+        let from = jc_time::parse_rfc3339("2026-01-01T00:00:00Z").unwrap();
+        let to = jc_time::parse_rfc3339("2026-01-02T00:00:00Z").unwrap();
+        spec.roles[0].validity = Some(BindingValidity {
+            not_before: Some(from.into()),
+            not_after: Some(to.into()),
+        });
+        spec.workload = Some(Workload {
+            kubernetes: KubernetesBinding {
+                namespace: "bb-doprava".into(),
+                service_account: "vendorx".into(),
+            },
+        });
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_workload_service_account_that_is_no_label_is_refused() {
+        let mut spec = ServiceAccount::from_yaml(VALID).expect("parses").spec;
+        spec.workload = Some(Workload {
+            kubernetes: KubernetesBinding {
+                namespace: "bb-doprava".into(),
+                service_account: "Bad_SA".into(),
+            },
+        });
+        let err = spec.validate().expect_err("not a DNS label");
+        assert!(
+            matches!(&err, Error::Name { value, .. } if value == "Bad_SA"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn the_client_registry_answers_recorded_clients_and_derives_the_rest() {
+        assert_eq!(derived_client_id("p", "a"), "p-a");
+        assert_eq!(keycloak_client_id("t7766-p", "a"), "t7766-p-a");
+        record_client("jc-0123", "t7766-p", "b");
+        assert_eq!(keycloak_client_id("t7766-p", "b"), "jc-0123");
+        assert_eq!(
+            client_account("jc-0123"),
+            Some(("t7766-p".to_owned(), "b".to_owned()))
+        );
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn role_scope_organization_validates_label() {
+        let scope_bad = RoleScope {
+            context_space: None,
+            project: None,
+            organization: Some("invalid_org_label!".into()),
+        };
+        assert!(scope_bad.validate("scope").is_err());
+
+        let scope_ok = RoleScope {
+            context_space: None,
+            project: None,
+            organization: Some("valid-org".into()),
+        };
+        assert!(scope_ok.validate("scope").is_ok());
+    }
+
+    #[test]
+    fn jwks_refuses_ec_with_rsa_fields_and_rsa_with_ec_fields() {
+        let jwks_ec = Jwks {
+            keys: vec![PublicJwk {
+                kty: "EC".into(),
+                kid: "k1".into(),
+                crv: Some("P-256".into()),
+                x: Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()),
+                y: Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()),
+                n: Some("modulus".into()),
+                e: None,
+                alg: None,
+                use_: None,
+            }],
+        };
+        let err = jwks_ec.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("an EC key carries no n or e"),
+            "{err}"
+        );
+
+        let jwks_rsa = Jwks {
+            keys: vec![PublicJwk {
+                kty: "RSA".into(),
+                kid: "k2".into(),
+                crv: Some("P-256".into()),
+                x: None,
+                y: None,
+                n: Some("A".repeat(345)),
+                e: Some("AQAB".into()),
+                alg: None,
+                use_: None,
+            }],
+        };
+        let err = jwks_rsa.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("an RSA key carries no crv, x or y"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_spec_refuses_platform_client_id_and_non_project_mqtt_scope() {
+        let sa_platform = ServiceAccountSpec {
+            owner: Owner {
+                user: "admin@bb".into(),
+            },
+            purpose: "testing".into(),
+            roles: vec![RoleBinding {
+                role: "viewer".into(),
+                scope: RoleScope {
+                    context_space: None,
+                    project: Some("portal".into()),
+                    organization: None,
+                },
+                types: vec![],
+                operations: vec![],
+                validity: None,
+            }],
+            credentials: vec![Credential {
+                kind: CredentialKind::OauthClient,
+                name: "main".into(),
+                expires_at: None,
+                ip_allow_list: vec![],
+                jwks: None,
+            }],
+            limits: None,
+            workload: None,
+            delegation: None,
+        };
+        let meta_platform = ObjectMeta {
+            name: "api".into(),
+            namespace: Some("portal".into()),
+            ..Default::default()
+        };
+        let err = sa_platform.validate_spec(&meta_platform).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("is the Keycloak client id of a platform workload"),
+            "{err}"
+        );
+
+        let sa_mqtt = ServiceAccountSpec {
+            owner: Owner {
+                user: "admin@bb".into(),
+            },
+            purpose: "testing".into(),
+            roles: vec![RoleBinding {
+                role: "mqtt/air/air-sensor".into(),
+                scope: RoleScope {
+                    context_space: Some("space1".into()),
+                    project: None,
+                    organization: None,
+                },
+                types: vec![],
+                operations: vec![],
+                validity: None,
+            }],
+            credentials: vec![Credential {
+                kind: CredentialKind::OauthClient,
+                name: "main".into(),
+                expires_at: None,
+                ip_allow_list: vec![],
+                jwks: None,
+            }],
+            limits: None,
+            workload: None,
+            delegation: None,
+        };
+        let err = sa_mqtt.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("an MQTT grant is scoped to `project`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn jwks_refuses_an_rsa_key_for_another_algorithm() {
+        let jwks = Jwks {
+            keys: vec![PublicJwk {
+                kty: "RSA".into(),
+                kid: "k3".into(),
+                crv: None,
+                x: None,
+                y: None,
+                n: Some("A".repeat(345)),
+                e: Some("AQAB".into()),
+                alg: Some("RS512".into()),
+                use_: None,
+            }],
+        };
+        assert_eq!(
+            jwks.validate(),
+            Err(Error::Name {
+                field: "spec.credentials.jwks",
+                value: "k3".into(),
+                reason: "an RSA key is for RS256",
+            })
+        );
+    }
+
+    #[test]
+    fn client_registry_operations_and_binding_validity_coverage() {
+        // A writer that panics poisons the registry; every reader and writer still answers.
+        let poisoner = std::thread::spawn(|| {
+            let _guard = CLIENTS.write();
+            panic!("a writer panics while it holds the client registry");
+        });
+        assert!(poisoner.join().is_err());
+        assert!(CLIENTS.is_poisoned());
+        set_client_registry(std::collections::BTreeMap::from([(
+            "custom-reg-id".into(),
+            ("proj1".into(), "account1".into()),
+        )]));
+        assert_eq!(
+            client_account("custom-reg-id"),
+            Some(("proj1".into(), "account1".into()))
+        );
+
+        record_client("custom-reg-id-2", "proj1", "account2");
+        assert_eq!(
+            client_account("custom-reg-id-2"),
+            Some(("proj1".into(), "account2".into()))
+        );
+        assert_eq!(keycloak_client_id("proj1", "account2"), "custom-reg-id-2");
+
+        let t1 = jc_time::parse_rfc3339("2026-01-01T00:00:00Z").unwrap();
+        let t2 = jc_time::parse_rfc3339("2026-01-02T00:00:00Z").unwrap();
+        let validity = BindingValidity {
+            not_before: Some(t1.into()),
+            not_after: Some(t2.into()),
+        };
+        assert!(validity.contains(t1));
+
+        let binding = RoleBinding {
+            role: "viewer".into(),
+            scope: RoleScope {
+                context_space: None,
+                project: Some("proj1".into()),
+                organization: None,
+            },
+            types: vec![],
+            operations: vec![],
+            validity: Some(validity),
+        };
+        assert!(binding.in_force(t1));
+
+        let bad_validity = BindingValidity {
+            not_before: Some(t2.into()),
+            not_after: Some(t1.into()),
+        };
+        let sa_invalid_window = ServiceAccountSpec {
+            owner: Owner {
+                user: "admin@bb".into(),
+            },
+            purpose: "testing".into(),
+            roles: vec![RoleBinding {
+                role: "viewer".into(),
+                scope: RoleScope {
+                    context_space: None,
+                    project: Some("proj1".into()),
+                    organization: None,
+                },
+                types: vec![],
+                operations: vec![],
+                validity: Some(bad_validity),
+            }],
+            credentials: vec![Credential {
+                kind: CredentialKind::OauthClient,
+                name: "main".into(),
+                expires_at: None,
+                ip_allow_list: vec![],
+                jwks: None,
+            }],
+            limits: None,
+            workload: None,
+            delegation: None,
+        };
+        let err = sa_invalid_window.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("notAfter must be after notBefore"),
+            "{err}"
+        );
+
+        let mut sa_bad_wl = sa_invalid_window;
+        sa_bad_wl.roles[0].validity = None;
+        sa_bad_wl.workload = Some(Workload {
+            kubernetes: KubernetesBinding {
+                namespace: "Bad_NS!".into(),
+                service_account: "sa".into(),
+            },
+        });
+        assert!(sa_bad_wl.validate().is_err());
+    }
+}

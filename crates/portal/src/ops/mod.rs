@@ -48,6 +48,8 @@ pub mod schemas;
 pub mod space_complete;
 pub mod space_reads;
 pub mod sync_sources;
+#[cfg(test)]
+pub(crate) mod testkit;
 pub mod verdict;
 pub mod views;
 pub mod workspaces;

@@ -35,6 +35,7 @@ pub struct Turn {
     visitor: String,
     log: Mutex<Log>,
     changed: watch::Sender<usize>,
+    stop: watch::Sender<bool>,
 }
 
 #[derive(Default)]
@@ -66,6 +67,7 @@ impl Turns {
             visitor: visitor.to_owned(),
             log: Mutex::new(Log::default()),
             changed: watch::Sender::new(0),
+            stop: watch::Sender::new(false),
         });
         let mut held = self.held.lock().ok()?;
         held.retain(|_, t| {
@@ -118,6 +120,20 @@ impl Turn {
             log.done.get_or_insert(now);
         }
         self.changed.send_modify(|n| *n += 1);
+    }
+
+    /// The visitor's Stop (T-7790): the answer's model loop ends at its next await.
+    pub fn cancel(&self) {
+        self.stop.send_replace(true);
+    }
+
+    /// Resolves once [`Turn::cancel`] was called; never otherwise.
+    pub async fn cancelled(&self) {
+        let mut stop = self.stop.subscribe();
+        // The sender lives in `self`, so `wait_for` ends only on a cancel.
+        if stop.wait_for(|stopped| *stopped).await.is_err() {
+            std::future::pending::<()>().await;
+        }
     }
 
     fn done(&self) -> Option<Instant> {
@@ -231,6 +247,28 @@ mod tests {
         let at = now + Duration::from_secs(1);
         assert!(matches!(turns.find("bb", "v", &first, at), Found::Missing));
         assert!(matches!(turns.find("bb", "v", &newest, at), Found::Live(_)));
+    }
+
+    #[tokio::test]
+    async fn a_cancel_wakes_the_answer_that_waits_on_it() {
+        let turns = Turns::default();
+        let (_, turn) = turns.start("bb", "v", Instant::now()).expect("held");
+        let waiting = tokio::time::timeout(Duration::from_millis(20), turn.cancelled()).await;
+        assert!(waiting.is_err(), "no cancel, no wake");
+        let waiter = tokio::spawn({
+            let turn = Arc::clone(&turn);
+            async move { turn.cancelled().await }
+        });
+        tokio::task::yield_now().await;
+        turn.cancel();
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("woken")
+            .expect("joined");
+        // A cancel before the wait counts too.
+        tokio::time::timeout(Duration::from_millis(20), turn.cancelled())
+            .await
+            .expect("already cancelled");
     }
 
     #[tokio::test]

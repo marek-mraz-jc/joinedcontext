@@ -1,0 +1,15 @@
+# Paths whose change needs the full test of every service before prod (T-7788): on the candidate
+# digest ci and every smoke shard green (smoke.yml ff-main), the jc-smoke judge run on jc-dev at
+# 0 new fails, and the assistant gate. Same syntax as assistant-gate-paths.txt.
+**/migrations/**
+**/Cargo.lock
+bins/jc/Dockerfile
+bins/jc/src/setup.rs
+bins/jc/src/modules/**
+deploy/**
+!deploy/components/*/images.yaml
+crates/kaisatsu/**
+vendor/joinedcontext-platform/crates/context-gateway/**
+vendor/joinedcontext-platform/crates/jc-core/**
+# Fuzz targets never ship in the image.
+!**/fuzz/**

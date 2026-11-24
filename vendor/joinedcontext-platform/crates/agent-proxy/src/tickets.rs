@@ -87,7 +87,22 @@ pub(crate) fn digests_equal(a: &[u8; 32], b: &[u8; 32]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::TicketCache;
+    use super::{digests_equal, TicketCache};
+
+    /// Digests that differ in any byte are unequal, two bytes differing the same way included:
+    /// the differences add up, they never cancel (T-7795).
+    #[test]
+    fn digests_differing_anywhere_are_unequal() {
+        let a = [7u8; 32];
+        assert!(digests_equal(&a, &a));
+        let mut once = a;
+        once[31] ^= 1;
+        assert!(!digests_equal(&a, &once));
+        let mut twice = a;
+        twice[0] ^= 1;
+        twice[1] ^= 1;
+        assert!(!digests_equal(&a, &twice));
+    }
     use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
     use std::sync::atomic::Ordering;
 
@@ -123,5 +138,35 @@ mod tests {
         tickets.forget("run-1");
         assert_eq!(tickets.verify(&reminted, "new").await, Ok(true));
         assert_eq!(tickets.hashed.load(Ordering::Relaxed), 5);
+    }
+
+    /// A closed Argon2 gate verifies nothing: the ticket is refused, never let through
+    /// unchecked (T-7795).
+    #[tokio::test]
+    async fn a_closed_argon2_gate_refuses_the_ticket() {
+        let cache = TicketCache::default();
+        cache.argon2.close();
+        let run = run_with_ticket("the-ticket");
+        assert!(!cache.verify(&run, "the-ticket").await.expect("a PHC hash"));
+        assert_eq!(cache.hashed.load(Ordering::Relaxed), 0);
+    }
+
+    /// A poisoned cache is skipped: every call pays its Argon2 verify again, a wrong ticket is
+    /// still refused, and forgetting a run does not panic (T-7795).
+    #[tokio::test]
+    async fn a_poisoned_cache_falls_back_to_argon2_on_every_call() {
+        let cache = TicketCache::default();
+        let poisoner = cache.clone();
+        let _ = std::thread::spawn(move || {
+            let _map = poisoner.verified.lock().expect("the lock");
+            panic!("a caller dies holding the cache");
+        })
+        .join();
+        let run = run_with_ticket("the-ticket");
+        assert!(cache.verify(&run, "the-ticket").await.expect("a PHC hash"));
+        assert!(cache.verify(&run, "the-ticket").await.expect("a PHC hash"));
+        assert!(!cache.verify(&run, "another").await.expect("a PHC hash"));
+        assert_eq!(cache.hashed.load(Ordering::Relaxed), 3);
+        cache.forget(&run.id);
     }
 }

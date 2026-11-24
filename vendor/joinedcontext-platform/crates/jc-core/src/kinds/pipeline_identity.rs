@@ -486,9 +486,13 @@ outputs: [{ targetEndpoint: "urn:ngsi-ld:Endpoint:zilina.sk:zilina-uniza:zilina-
             "zilina.sk",
             spaces,
         );
-        let [(name, write)] = derived.policies.as_slice() else {
-            panic!("one policy: {:?}", derived.policies);
-        };
+        assert_eq!(
+            derived.policies.len(),
+            1,
+            "one policy: {:?}",
+            derived.policies
+        );
+        let (name, write) = &derived.policies[0];
         assert_eq!(name, "pl-drepo-w-1");
         assert_eq!(write.context_space_ref.name(), "zilina-uniza");
         assert_eq!(

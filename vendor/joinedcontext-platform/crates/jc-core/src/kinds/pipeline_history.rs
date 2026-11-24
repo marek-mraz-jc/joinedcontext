@@ -250,6 +250,45 @@ mod tests {
     }
 
     #[test]
+    fn every_reading_folds_into_record_every() {
+        assert_eq!(Keep::Every.record(), Some("every"));
+    }
+
+    #[test]
+    fn a_plan_with_no_written_types_is_checked_without_them() {
+        let any = plan("- type: Bus\n  attributes: [{ names: [a], keep: every }]");
+        validate(&any, None).expect("no output names a type, so any type passes");
+    }
+
+    #[test]
+    fn more_types_than_the_limit_are_refused() {
+        let many: Vec<History> = (0..=LIFETIME_MAX_TYPES)
+            .map(|i| History {
+                entity_type: format!("Type{i}"),
+                attributes: vec![AttributeHistory {
+                    names: vec!["a".to_owned()],
+                    keep: Keep::Latest,
+                    heartbeat: None,
+                    observed_at: None,
+                }],
+            })
+            .collect();
+        assert_eq!(
+            validate(&many, None).expect_err("too many types"),
+            Error::Invalid {
+                field: "spec.history".to_owned(),
+                reason: format!("name one to {LIFETIME_MAX_TYPES} types (PL-106)"),
+            }
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "expected a refusal")]
+    fn refusal_of_a_valid_plan_is_no_refusal() {
+        refusal("- type: Vehicle\n  attributes: [{ names: [a], keep: every }]");
+    }
+
+    #[test]
     fn an_unknown_member_or_choice_does_not_parse() {
         assert!(serde_norway::from_str::<Vec<History>>(
             "- type: V\n  attributes: [{ names: [a], keep: sometimes }]"

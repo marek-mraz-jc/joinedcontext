@@ -1,9 +1,11 @@
 # Fuzzing the Portal's parsers of outside input (T-7656, T-7727, T-7729, T-7698, T-7699): label and
 # field selectors and the list filter and orderBy of a request's query string, the gateway's
 # Prometheus page, a pipeline's cron schedule, the masking of a record the runner posts, the list
-# query string and its cursor, a device's JSON Web Key Set, an MQTT test-publish body, and (T-7658) a
+# query string and its cursor, a device's JSON Web Key Set, an MQTT test-publish body, (T-7658) a
 # feedback body, a comment's mentions, a git bundle's header, an entity bound for the trash and an
-# Endpoint preview's body, and (T-7659) an export's revision and kinds filter, the secrets a bundle
+# Endpoint preview's body, (T-7605) the unverified `iss` of a bearer token, the double-submit
+# CSRF check over arbitrary headers, the login redirect target and an Organization realm list from
+# jc's host registry, and (T-7659) an export's revision and kinds filter, the secrets a bundle
 # strips and a visualization's title. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
@@ -21,6 +23,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
+axum = "0.8"
+cookie = { version = "0.18", features = ["percent-encode"] }
+url = "2"
 joinedcontext-portal = { path = ".." }
 jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
 
@@ -128,6 +133,34 @@ bench = false
 [[bin]]
 name = "preview_query"
 path = "fuzz_targets/preview_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_issuer_of"
+path = "fuzz_targets/auth_issuer_of.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_csrf_double_submit"
+path = "fuzz_targets/auth_csrf_double_submit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_login_redirect"
+path = "fuzz_targets/auth_login_redirect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_realms_parse"
+path = "fuzz_targets/auth_realms_parse.rs"
 test = false
 doc = false
 bench = false

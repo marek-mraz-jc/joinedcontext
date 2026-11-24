@@ -59,6 +59,6 @@ docker run --rm --user "$(id -u):$(id -g)" \
   -e CARGO_HOME="$cargo_home" -e HOME=/tmp -e CARGO_TERM_COLOR -e CARGO_INCREMENTAL -e CARGO_BUILD_JOBS "$@" \
   jc-build-base sh -euc '
     cargo --version
-    cargo build --release --locked -p jc -p kaisatsu-server
+    cargo build --release --locked -p jc -p kaisatsu-server -p functions
     if [ -n "${RUSTC_WRAPPER:-}" ]; then sccache --show-stats; fi
     ldd --version | head -1'

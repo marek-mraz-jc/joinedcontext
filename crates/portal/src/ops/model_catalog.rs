@@ -406,4 +406,266 @@ mod tests {
         );
         assert!(classes_of("not: [yaml").is_empty());
     }
+
+    use super::super::testkit::admin;
+    use super::super::{call, find};
+    use crate::error::ApiError;
+    use wiremock::matchers::{body_json, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// A Portal whose Model Tools is `server`.
+    fn on(server: &MockServer) -> crate::state::AppState {
+        let mut config = crate::config::Config::for_tests();
+        config.model_tools_url = Some(format!("{}/", server.uri()));
+        crate::state::AppState::new(config, None)
+    }
+
+    fn model(at: usize) -> Value {
+        json!({ "id": format!("dataModel.Parking/Spot{at}"), "name": format!("Spot{at}"),
+                "description": "a parking spot", "attributes": ["occupancy"] })
+    }
+
+    async fn run(state: &crate::state::AppState, op: &str, input: Value) -> Result<Value, OpError> {
+        call(
+            find(op).expect("listed"),
+            &admin(state),
+            state,
+            "helsinki",
+            input,
+        )
+        .await
+    }
+
+    /// A search reads the catalogue once, keeps the first 25 hits, says more follow and passes
+    /// the subject and a stale index through; a model that matches nothing is not listed.
+    #[tokio::test]
+    async fn a_search_keeps_the_first_hits_and_says_more_follow() {
+        let server = MockServer::start().await;
+        let mut models: Vec<Value> = (0..MAX_HITS + 3).map(model).collect();
+        models.push(json!({ "id": "dataModel.Weather/Rain", "name": "Rain", "attributes": [] }));
+        Mock::given(method("GET"))
+            .and(path("/catalog"))
+            .and(query_param("refresh", "false"))
+            .and(query_param("subject", "dataModel.Parking"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "subjects": [{ "name": "dataModel.Parking", "models": models }], "stale": true
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let state = on(&server);
+        let found = run(
+            &state,
+            SEARCH,
+            json!({ "q": " OCCUPANCY ", "subject": "dataModel.Parking" }),
+        )
+        .await
+        .expect("hits");
+        let hits = found["models"].as_array().expect("models");
+        assert_eq!(hits.len(), MAX_HITS, "{found}");
+        assert_eq!(
+            hits[0],
+            json!({ "id": "dataModel.Parking/Spot0", "name": "Spot0", "description": "a parking spot" })
+        );
+        assert_eq!(
+            (found["more"].as_bool(), found["stale"].as_bool()),
+            (Some(true), Some(true))
+        );
+    }
+
+    /// Exactly as many hits as fit is no "more"; no hit at all is an empty list, not an error.
+    #[tokio::test]
+    async fn a_search_that_fits_says_no_more_and_one_that_finds_nothing_is_empty() {
+        let server = MockServer::start().await;
+        let models: Vec<Value> = (0..2).map(model).collect();
+        Mock::given(method("GET"))
+            .and(path("/catalog"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "subjects": [{ "name": "dataModel.Parking", "models": models }]
+            })))
+            .mount(&server)
+            .await;
+        let state = on(&server);
+        let two = run(&state, SEARCH, json!({ "q": "spot" }))
+            .await
+            .expect("hits");
+        assert_eq!(two["models"].as_array().map(Vec::len), Some(2));
+        assert_eq!(
+            (two["more"].as_bool(), two["stale"].as_bool()),
+            (Some(false), Some(false))
+        );
+        let none = run(&state, SEARCH, json!({ "q": "tramway" }))
+            .await
+            .expect("an answer");
+        assert_eq!(none["models"], json!([]));
+    }
+
+    /// No Model Tools, a refusing one and one answering garbage are each a 503; none of them
+    /// names the internal address (the reason is logged, not told).
+    #[tokio::test]
+    async fn a_missing_or_failing_model_tools_is_a_503_that_hides_its_address() {
+        match run(
+            &crate::ops::testkit::state(),
+            SEARCH,
+            json!({ "q": "spot" }),
+        )
+        .await
+        {
+            Err(OpError::Api(ApiError::Unavailable(why))) => {
+                assert_eq!(why, "no model tools service is configured")
+            }
+            other => panic!("a 503, got {other:?}"),
+        }
+        for answer in [
+            ResponseTemplate::new(500),
+            ResponseTemplate::new(200).set_body_string("<html>"),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/catalog"))
+                .respond_with(answer)
+                .mount(&server)
+                .await;
+            match run(&on(&server), SEARCH, json!({ "q": "spot" })).await {
+                Err(OpError::Api(ApiError::Unavailable(why))) => {
+                    assert_eq!(why, "the model tools service did not answer");
+                    assert!(!why.contains(&server.uri()));
+                }
+                other => panic!("a 503, got {other:?}"),
+            }
+        }
+    }
+
+    /// An identifier the catalogue does not hold is refused at `/model` before Model Tools is
+    /// asked to compile it; a listed one comes back with its LinkML, its classes and its findings.
+    #[tokio::test]
+    async fn an_import_compiles_only_a_listed_model_and_names_its_classes() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/catalog"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "subjects": [{ "name": "dataModel.Parking", "models": [model(1)] }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/import-sdm"))
+            .and(body_json(json!({ "model": "dataModel.Parking/Spot1" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "linkml": "classes:\n  Spot1:\n    slots: [occupancy]\n",
+                "errors": ["occupancy has no unit"]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let state = on(&server);
+        match run(
+            &state,
+            IMPORT,
+            json!({ "model": "dataModel.Parking/Spot9" }),
+        )
+        .await
+        {
+            Err(OpError::InvalidInput { path, message }) => {
+                assert_eq!(path, "/model");
+                assert!(
+                    message.contains(
+                        "dataModel.Parking/Spot9 is not in the Smart Data Models catalogue"
+                    ),
+                    "{message}"
+                );
+            }
+            other => panic!("a 422, got {other:?}"),
+        }
+        let imported = run(
+            &state,
+            IMPORT,
+            json!({ "model": "dataModel.Parking/Spot1" }),
+        )
+        .await
+        .expect("imported");
+        assert_eq!(imported["model"], "dataModel.Parking/Spot1");
+        assert_eq!(
+            imported["classes"],
+            json!([{ "name": "Spot1", "slots": ["occupancy"] }])
+        );
+        assert_eq!(imported["errors"], json!(["occupancy has no unit"]));
+        assert!(imported["source"]
+            .as_str()
+            .is_some_and(|s| s.contains("Spot1")));
+    }
+
+    /// An import with no LinkML back lists no classes; a URL is refused by the body itself even
+    /// when the door's own check is skipped.
+    #[tokio::test]
+    async fn an_import_without_linkml_has_no_classes_and_a_url_never_reaches_model_tools() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/catalog"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "subjects": [{ "name": "dataModel.Parking", "models": [model(1)] }]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/import-sdm"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "errors": ["not converted"] })),
+            )
+            .mount(&server)
+            .await;
+        let state = on(&server);
+        let imported = run(
+            &state,
+            IMPORT,
+            json!({ "model": "dataModel.Parking/Spot1" }),
+        )
+        .await
+        .expect("an answer");
+        assert_eq!(imported["classes"], json!([]));
+        assert_eq!(imported["source"], Value::Null);
+        let op = find(IMPORT).expect("listed");
+        match (op.run)(
+            &admin(&state),
+            &state,
+            "helsinki",
+            json!({ "model": "https://evil.example/x" }),
+        )
+        .await
+        {
+            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/model"),
+            other => panic!("a 422, got {other:?}"),
+        }
+    }
+
+    /// Generate posts the source as written and answers Model Tools' artifacts; a blank source
+    /// is a 422 at `/source`, also when the body is reached directly.
+    #[tokio::test]
+    async fn generate_compiles_the_source_and_a_blank_one_is_refused() {
+        let server = MockServer::start().await;
+        let source = "id: https://hel.fi/models/air\nname: air\n";
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .and(body_json(json!({ "source": source })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "shacl": "@prefix sh: <x> ." })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let state = on(&server);
+        let built = run(&state, GENERATE, json!({ "source": source }))
+            .await
+            .expect("artifacts");
+        assert_eq!(built["shacl"], "@prefix sh: <x> .");
+        match run(&state, GENERATE, json!({ "source": " \n " })).await {
+            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/source"),
+            other => panic!("a 422, got {other:?}"),
+        }
+        let op = find(GENERATE).expect("listed");
+        match (op.run)(&admin(&state), &state, "helsinki", json!({ "source": "" })).await {
+            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/source"),
+            other => panic!("a 422, got {other:?}"),
+        }
+    }
 }

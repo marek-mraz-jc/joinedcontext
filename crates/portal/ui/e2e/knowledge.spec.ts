@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { writePhoneReport } from "./phoneCheck.cts";
 import { manifestReadsAsRest, restOrDoor } from "./manifestReads";
 
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
@@ -455,3 +456,59 @@ test.describe("an upload source (T-4869)", () => {
     await keep(p, "after-answer");
   });
 });
+
+// T-7790: the chat's states on the widget's render core, each run end to end in a browser. With
+// JC_EVIDENCE_DIR set, each is kept as <state>-1440.png and <state>-400.png, the phone shot with
+// its phone report beside it (phoneCheck.cts, T-7512).
+const CITED = [{ n: 1, url: "https://www.hel.fi/en/culture/libraries/oodi", title: "Oodi Central Library" }];
+const OPENING = { type: "Opening hours", columns: ["day", "opens", "closes"], rows: [["Monday", "08:00", "22:00"], ["Saturday", "10:00", "20:00"], ["Sunday", "10:00", "20:00"]] };
+const LONG_TEXT = "Oodi is open **08:00–22:00** on weekdays and 10:00–20:00 at the weekend [1].\n\n- The makerspace closes an hour earlier.\n- Holidays follow the weekend hours.";
+const STATE_CASES: { state: string; body?: string; headers?: Record<string, string>; hold?: boolean; see: RegExp }[] = [
+  { state: "progress", body: answerOf(["conversation", { id: CONVERSATION }], ["stage", { stage: "searching", topic: "Oodi opening hours", count: 6 }], ["stage", { stage: "checking", count: 6 }]), see: /Checking 6 passages/ },
+  { state: "streamed", body: answerOf(["conversation", { id: CONVERSATION }], ["stage", { stage: "answering", count: 1 }], ["delta", { text: "Oodi is open **08:00–22:00** on weekdays and 10:00–20:00 at the wee" }]), see: /on weekdays and 10:00–20:00 at the wee/ },
+  { state: "table", body: answerOf(["data", OPENING], ["answer", { text: "The library's hours, by day." }], ["done", { tokens: 9 }]), see: /The library's hours, by day/ },
+  { state: "chart", body: CHART_STATES[0][1], see: /PM10 rose to 24/ },
+  { state: "sources", body: answerOf(["answer", { text: LONG_TEXT }], ["citations", CITED], ["done", { tokens: 9, stagesMs: { route: 420, search: 900, answer: 1300 } }]), see: /Oodi Central Library/ },
+  { state: "followups", body: answerOf(["answer", { text: LONG_TEXT }], ["citations", CITED], ["followups", { questions: ["Is Oodi open on Easter Monday?", "Where is the makerspace?"] }], ["done", { tokens: 9 }]), see: /Is Oodi open on Easter Monday\?/ },
+  { state: "limit", body: answerOf(["error", { status: 429, title: "Daily Limit Reached", detail: "Asistent dnes dosiahol denný limit." }], ["done", {}]), headers: { "Retry-After": "5400" }, see: /has reached its limit\. Try again after/ },
+  { state: "error", body: answerOf(["citations", CITED], ["error", { status: 503, title: "Model Unavailable", detail: "Model asistenta neodpovedal." }], ["done", {}]), see: /model did not answer/ },
+  { state: "stopped", hold: true, see: /You stopped the answer/ },
+];
+
+for (const width of [1440, 400]) {
+  test.describe(`the assistant chat's states on the shared render core at ${width} px (T-7790)`, () => {
+    // The phone is a phone: touch and a mobile viewport, as the phone check needs (T-7512).
+    test.use(width === 400 ? { viewport: { width: 400, height: 860 }, hasTouch: true, isMobile: true } : { viewport: { width: 1440, height: 900 } });
+    for (const { state, body, headers, hold, see } of STATE_CASES) {
+      test(`${state} at ${width} px`, async ({ page: p }) => {
+        await stubApi(p);
+        await p.route("**/api/v1/projects/helsinki/knowledge/deployments/staff/chat", (route) =>
+          // A held answer never arrives: Stop ends the request.
+          hold ? new Promise<void>(() => undefined) : route.fulfill({ status: 200, contentType: "text/event-stream", headers, body }),
+        );
+        await p.goto("/projects/helsinki/knowledge?lang=en");
+        await p.getByRole("button", { name: "Ask staff" }).click();
+        const dialog = p.getByRole("dialog", { name: "Ask staff" });
+        const box = dialog.getByRole("textbox", { name: "Your question" });
+        await box.fill("When is Oodi open?");
+        await box.press("Enter");
+        if (hold) {
+          await expect(dialog.getByRole("status")).toHaveText(/Looking it up/);
+          await dialog.getByRole("button", { name: "Stop" }).click();
+        }
+        await expect(dialog.getByText(see).first()).toBeVisible();
+        if (state === "table") await expect(dialog.getByRole("button", { name: "Download CSV" })).toBeVisible();
+        if (state === "sources") await expect(dialog.getByText("Steps (3)")).toBeVisible();
+        if (state === "limit" || state === "error") await expect(dialog.getByRole("alert")).not.toContainText(/denný|neodpovedal/);
+        expect(await axeViolations(p)).toEqual([]);
+        const dir = process.env.JC_EVIDENCE_DIR;
+        if (!dir) return;
+        mkdirSync(dir, { recursive: true });
+        await p.waitForTimeout(300);
+        const shot = join(dir, `${state}-${width}.png`);
+        await p.screenshot({ path: shot });
+        if (width === 400) await writePhoneReport(p, shot);
+      });
+    }
+  });
+}
