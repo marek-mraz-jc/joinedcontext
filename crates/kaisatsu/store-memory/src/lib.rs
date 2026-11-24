@@ -316,7 +316,7 @@ impl MemoryStore {
                     let u_org = st
                         .users
                         .iter()
-                        .find(|u| u.id == c.user_id)
+                        .find(|u| u.realm_id == c.realm_id && u.id == c.user_id)
                         .and_then(|u| u.org_id.as_deref());
                     odata_defs::credential_to_row(c, u_org)
                 })
@@ -3074,6 +3074,344 @@ mod tests {
                     .is_some()
             );
         }
+    }
+
+    /// One row of every entity set in `realm`, each id `{realm}-{kind}`; the realm itself is
+    /// stored under the id `realm` and named `{realm}-name`.
+    fn seed_every_set(st: &mut State, realm: &str, org: &str) {
+        let now = TimestampTz::now();
+        let r = || realm.to_owned();
+        let id = |kind: &str| format!("{realm}-{kind}");
+        st.realms.insert(
+            r(),
+            RealmConfig {
+                id: r(),
+                realm: id("name"),
+                ..RealmConfig::default()
+            },
+        );
+        st.organizations.push(Organization {
+            id: id("org"),
+            realm_id: r(),
+            name: id("org"),
+            alias: id("org"),
+            enabled: true,
+            description: String::new(),
+            domains: vec![OrganizationDomain {
+                id: id("dom"),
+                realm_id: r(),
+                org_id: id("org"),
+                name: format!("{realm}.example"),
+                verified: true,
+                verification_token: None,
+                challenge_hash: None,
+                challenge_expires_at: None,
+            }],
+            attributes: HashMap::new(),
+            managed_by: None,
+        });
+        st.memberships.push(Membership {
+            id: id("ms"),
+            realm_id: r(),
+            org_id: id("org"),
+            person_id: "p".into(),
+            org_roles: Vec::new(),
+            created_at: now,
+        });
+        // The same person id in every realm, each in its own organization.
+        st.users.push(UserRepresentation {
+            id: "p".into(),
+            realm_id: r(),
+            org_id: Some(org.into()),
+            username: id("user"),
+            ..UserRepresentation::default()
+        });
+        st.credentials.push(CredentialRecord {
+            id: id("cred"),
+            realm_id: r(),
+            user_id: "p".into(),
+            ..CredentialRecord::default()
+        });
+        st.groups.push(GroupRepresentation {
+            id: id("group"),
+            ..group("g", None, "/g")
+        });
+        st.groups.last_mut().expect("group").realm_id = r();
+        st.group_members.push(GroupMemberRecord {
+            id: id("gm"),
+            realm_id: r(),
+            org_id: None,
+            group_id: id("group"),
+            user_id: "p".into(),
+        });
+        st.roles.push(RoleRepresentation {
+            id: id("role"),
+            realm_id: r(),
+            name: "viewer".into(),
+            ..RoleRepresentation::default()
+        });
+        st.role_mappings.push(RoleMappingRecord {
+            id: id("rm"),
+            realm_id: r(),
+            org_id: None,
+            principal_kind: "user".into(),
+            principal_id: "p".into(),
+            role_id: id("role"),
+            role_name: "viewer".into(),
+            client_uuid: None,
+        });
+        let mapper = |kind: &str| ProtocolMapperRepresentation {
+            id: id(kind),
+            name: id(kind),
+            ..ProtocolMapperRepresentation::default()
+        };
+        st.clients.push(ClientRepresentation {
+            id: id("client"),
+            realm_id: r(),
+            client_id: id("client"),
+            protocol_mappers: vec![mapper("client-mapper")],
+            ..ClientRepresentation::default()
+        });
+        st.client_scopes.push(ClientScopeRepresentation {
+            id: id("scope"),
+            realm_id: r(),
+            name: id("scope"),
+            protocol_mappers: vec![mapper("scope-mapper")],
+            ..ClientScopeRepresentation::default()
+        });
+        st.idps.push(IdentityProviderRepresentation {
+            internal_id: id("idp"),
+            realm_id: r(),
+            alias: id("idp"),
+            ..IdentityProviderRepresentation::default()
+        });
+        st.signing_keys.push(SigningKeyRecord {
+            id: id("key"),
+            realm_id: r(),
+            kid: id("key"),
+            algorithm: "ES256".into(),
+            status: "active".into(),
+            priority: 1,
+            public_jwk_json: "{}".into(),
+            encrypted_private_key: Vec::new(),
+            created_at: now,
+            activate_at: None,
+            expires_at: None,
+        });
+        st.sso_sessions.push(SsoSession {
+            id: id("sso"),
+            realm_id: r(),
+            org_id: None,
+            handle_hash: id("h"),
+            user_id: "p".into(),
+            username: "p".into(),
+            ip_address: String::new(),
+            user_agent: String::new(),
+            start: 0,
+            last_access: 0,
+            auth_time: 0,
+            acr: "1".into(),
+            amr: Vec::new(),
+            clients: HashMap::new(),
+            idle_expires_at: now,
+            max_expires_at: now,
+        });
+        st.client_sessions.push(ClientSession {
+            id: id("cs"),
+            realm_id: r(),
+            org_id: None,
+            sso_session_id: id("sso"),
+            client_id: id("client"),
+            user_id: "p".into(),
+            scopes: Vec::new(),
+            created_at: now,
+            last_access: now,
+        });
+        st.offline_sessions.push(OfflineSession {
+            id: id("off"),
+            realm_id: r(),
+            org_id: None,
+            user_id: "p".into(),
+            client_id: id("client"),
+            scopes: Vec::new(),
+            created_at: now,
+            last_access: now,
+            idle_expires_at: now,
+            max_expires_at: now,
+        });
+        st.consents.push(ConsentRecord {
+            id: id("consent"),
+            realm_id: r(),
+            org_id: None,
+            user_id: "p".into(),
+            client_id: id("client"),
+            granted_client_scopes: Vec::new(),
+            created_date: 0,
+            last_updated_date: 0,
+        });
+        st.required_actions.push(RequiredActionConfig {
+            id: id("ra"),
+            realm_id: r(),
+            ..RequiredActionConfig::default()
+        });
+        st.brandings.push(BrandingBlock {
+            id: id("brand"),
+            realm_id: r(),
+            ..BrandingBlock::default()
+        });
+        st.events.push(AuditEvent {
+            id: id("event"),
+            realm_id: r(),
+            org_id: None,
+            time: 0,
+            event_type: "LOGIN".into(),
+            client_id: None,
+            user_id: None,
+            session_id: None,
+            ip_address: String::new(),
+            error: None,
+            details: std::collections::BTreeMap::new(),
+        });
+        st.admin_events.push(AdminEvent {
+            id: id("admin-event"),
+            realm_id: r(),
+            org_id: None,
+            time: 0,
+            operation_type: "CREATE".into(),
+            resource_type: "USER".into(),
+            resource_path: "users/p".into(),
+            actor_id: "a".into(),
+            actor_client_id: None,
+            representation: None,
+        });
+        st.webauthn_credentials.push(WebAuthnCredentialRecord {
+            id: id("wa"),
+            realm_id: r(),
+            org_id: None,
+            user_id: "p".into(),
+            user_handle: id("uh"),
+            credential_id: id("cid"),
+            public_key_cose_json: "{}".into(),
+            cose_alg: -7,
+            sign_count: 0,
+            uv_initialized: false,
+            backup_eligible: false,
+            backup_state: false,
+            transports: Vec::new(),
+            attestation_type: "none".into(),
+            rp_id: "example.org".into(),
+            user_label: None,
+            created_at: now,
+            last_used_at: None,
+        });
+        st.email_outbox.push(EmailOutboxRecord {
+            id: id("mail"),
+            realm_id: r(),
+            org_id: None,
+            user_id: "p".into(),
+            to_address: "p@example.org".into(),
+            locale: "en".into(),
+            template_kind: "verify-email".into(),
+            action_jti: id("jti"),
+            actions: Vec::new(),
+            client_id: None,
+            redirect_uri: None,
+            lifespan_secs: 60,
+            issuer: "https://id.example.org".into(),
+            status: "queued".into(),
+            attempts: 0,
+            last_error: None,
+            next_attempt_at: now,
+            created_at: now,
+            sent_at: None,
+        });
+        st.idp_links.push(IdentityProviderLinkRecord {
+            id: id("link"),
+            realm_id: r(),
+            org_id: None,
+            user_id: "p".into(),
+            idp_alias: id("idp"),
+            external_user_id: id("ext"),
+            external_username: None,
+            created_at: now,
+        });
+    }
+
+    /// Each entity set answers the rows of the realm asked for and none of another realm; a
+    /// credential carries the organization of its own realm's person.
+    #[test]
+    fn every_entity_set_reads_only_its_realms_rows() {
+        let store = MemoryStore::default();
+        {
+            let mut st = store.inner.write();
+            seed_every_set(&mut st, "r", "hel");
+            seed_every_set(&mut st, "q", "esp");
+        }
+        let st = store.inner.read();
+        let ids = |realm: &str, set: &str| -> Vec<String> {
+            let mut ids: Vec<String> = store
+                .build_entity_rows(&st, realm, set)
+                .iter()
+                .map(|row| {
+                    let key = row.get("id").or_else(|| row.get("internalId"));
+                    key.and_then(Value::as_str).expect("key").to_owned()
+                })
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        let service = odata_defs::kaisatsu_odata_service();
+        assert_eq!(service.sets.len(), 26);
+        for def in &service.sets {
+            let want: Vec<String> = match def.set.as_str() {
+                "Realms" => vec!["r".into()],
+                "People" => vec!["p".into()],
+                "ProtocolMappers" => vec!["r-client-mapper".into(), "r-scope-mapper".into()],
+                set => {
+                    let kind = match set {
+                        "Organizations" => "org",
+                        "OrganizationDomains" => "dom",
+                        "Memberships" => "ms",
+                        "Groups" => "group",
+                        "GroupMembers" => "gm",
+                        "Roles" => "role",
+                        "RoleMappings" => "rm",
+                        "Applications" => "client",
+                        "ClientScopes" => "scope",
+                        "IdentityProviders" => "idp",
+                        "Credentials" => "cred",
+                        "Sessions" => "sso",
+                        "ClientSessions" => "cs",
+                        "OfflineSessions" => "off",
+                        "Consents" => "consent",
+                        "Events" => "event",
+                        "AdminEvents" => "admin-event",
+                        "SigningKeys" => "key",
+                        "RequiredActions" => "ra",
+                        "BrandingBlocks" => "brand",
+                        "WebAuthnCredentials" => "wa",
+                        "EmailOutbox" => "mail",
+                        "IdentityProviderLinks" => "link",
+                        other => panic!("no expectation for {other}"),
+                    };
+                    vec![format!("r-{kind}")]
+                }
+            };
+            assert_eq!(ids("r", &def.set), want, "{}", def.set);
+        }
+        assert_eq!(
+            ids("r-name", "Realms"),
+            ["r"],
+            "a realm is found by its name too"
+        );
+        assert!(ids("nowhere", "Realms").is_empty());
+        assert!(ids("r", "NoSuchSet").is_empty());
+        let creds = store.build_entity_rows(&st, "q", "Credentials");
+        assert_eq!(creds.len(), 1);
+        assert_eq!(
+            creds[0]["org_id"], "esp",
+            "the organization of q's own person"
+        );
     }
 
     /// Deleting a person drops their credentials, memberships, sessions, passkeys, links and
