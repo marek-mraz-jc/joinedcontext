@@ -909,6 +909,76 @@ async fn a_password_set_by_link_without_signing_out_keeps_other_sessions() {
     assert!(is_code(st, &h), "the new password signs in");
 }
 
+/// A link asking only for an authenticator app enrols it and leaves the password as it was.
+#[tokio::test]
+async fn an_authenticator_link_alone_enrols_the_app_and_keeps_the_password() {
+    let (app, store) = app().await;
+    let member = user(&store, MEMBER).await;
+    let link = action_link(&store, &["CONFIGURE_TOTP"], &member.id).await;
+    let (st, h, html) = open_action_link(&app, &link).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "action-token-form");
+    assert!(!html.contains("name=\"new_password\""), "{html}");
+    let cookie = h[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let session = extract_hidden_input(&html, "session_code");
+    let secret = store
+        .get_auth_session_by_id("dev", &session)
+        .await
+        .unwrap()
+        .unwrap()
+        .pending_totp_secret
+        .expect("the form generated a secret");
+    let realm = store.get_realm("dev").await.unwrap().unwrap();
+    let cred = CredentialRecord {
+        secret_data: serde_json::json!({ "value": secret }).to_string(),
+        credential_data: serde_json::json!({
+            "digits": realm.otp_policy_digits,
+            "period": realm.otp_policy_period,
+            "algorithm": realm.otp_policy_algorithm,
+            "secretEncoding": "BASE32",
+        })
+        .to_string(),
+        ..Default::default()
+    };
+    let code =
+        generate_totp_code_for_credential(&cred, jc_time::TimestampTz::now().as_second() as u64)
+            .unwrap();
+    let (st, _, html) = post_form(
+        &app,
+        ACTION,
+        &[
+            ("csrf_token", &extract_hidden_input(&html, "csrf_token")),
+            ("session_code", &session),
+            ("otp", &code),
+        ],
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "account-updated");
+    assert!(
+        store
+            .list_credentials("dev", &member.id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|c| c.credential_type == "otp")
+    );
+    let a = start(&app, "").await;
+    let (st, _, html) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(
+        html.contains("name=\"otp\""),
+        "the old password still works, now with the app"
+    );
+}
+
 #[tokio::test]
 async fn a_passkey_assertion_from_the_name_step_is_checked_for_anyone() {
     let (app, store) = app().await;
