@@ -601,3 +601,139 @@ async fn a_refused_connect_is_named_and_the_outbound_rule_holds_at_connect() {
         Err(CoreError::AccessDenied { .. })
     ));
 }
+
+/// A retained PUBLISH that arrives before the SUBACK is the first message read; a QoS 2 message
+/// is answered with PUBREC and its PUBREL with PUBCOMP; the input pings at its keepalive.
+#[tokio::test]
+async fn the_input_keeps_an_early_retained_message_and_completes_qos2() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (reg, ctx, _stop) = context(true);
+    let mut input = build(
+        json!({ "qos": 2, "topics": ["t"], "urls": [format!("tcp://{addr}")], "keepalive": 1 }),
+        &ctx,
+        &reg,
+    );
+    let broker = async {
+        let (mut s, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = read_packet(&mut s).await;
+        s.write_all(&[0x20, 0x02, 0x00, 0x00]).await.unwrap();
+        let (_, subscribe) = read_packet(&mut s).await;
+        let mut retained = publish("t", 0, 0, b"retained");
+        retained[0] |= 0x01;
+        s.write_all(&retained).await.unwrap();
+        // A PINGRESP before the SUBACK is skipped.
+        s.write_all(&[0xd0, 0x00]).await.unwrap();
+        s.write_all(&[0x90, 0x03, subscribe[0], subscribe[1], 0x02])
+            .await
+            .unwrap();
+        s
+    };
+    let (connected, mut s) = tokio::join!(input.connect(&ctx), broker);
+    connected.expect("connects");
+    let (batch, _) = input.read_batch(&ctx).await.expect("the retained message");
+    assert_eq!(batch[0].as_bytes_ref().as_ref(), b"retained");
+    assert_eq!(
+        batch[0].meta_get("mqtt_retained"),
+        Some(&BValue::Bool(true))
+    );
+
+    let mut exactly_once = publish("t", 2, 7, b"once");
+    exactly_once[0] |= 0x08;
+    s.write_all(&exactly_once).await.unwrap();
+    let (batch, _) = input.read_batch(&ctx).await.expect("the QoS 2 message");
+    assert_eq!(batch[0].meta_get("mqtt_qos"), Some(&BValue::Int(2)));
+    assert_eq!(
+        batch[0].meta_get("mqtt_duplicate"),
+        Some(&BValue::Bool(true))
+    );
+    let mut got = Vec::new();
+    loop {
+        let p = tokio::time::timeout(Duration::from_secs(5), read_packet(&mut s))
+            .await
+            .expect("a packet");
+        if p.0 == 0x50 {
+            assert_eq!(p.1, vec![0, 7], "PUBREC for message 7");
+            s.write_all(&[0x62, 0x02, 0x00, 0x07]).await.unwrap();
+        }
+        got.push(p.0);
+        if got.contains(&0x70) && got.contains(&0xc0) {
+            break;
+        }
+    }
+    input.close().await.unwrap();
+    assert!(matches!(
+        input.read_batch(&ctx).await,
+        Err(CoreError::NotConnected)
+    ));
+}
+
+/// A malformed PUBLISH ends the connection and the input dials again; a broker that refuses
+/// the subscription is dialled with backoff until the stream stops.
+#[tokio::test]
+async fn a_malformed_publish_redials_and_a_refused_subscription_backs_off_until_shutdown() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (reg, ctx, _stop) = context(true);
+    let mut input = build(
+        json!({ "qos": 0, "topics": ["t"], "urls": [format!("tcp://{addr}")] }),
+        &ctx,
+        &reg,
+    );
+    let (connected, (mut s, _, _)) = tokio::join!(input.connect(&ctx), accept(&listener));
+    connected.unwrap();
+    // A topic length past the packet's end.
+    s.write_all(&[0x30, 0x03, 0x00, 0x09, b't']).await.unwrap();
+    let server = tokio::spawn(async move {
+        let (mut s, _, _) = accept(&listener).await;
+        s.write_all(&publish("t", 0, 0, b"after")).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    });
+    let (batch, _) = tokio::time::timeout(Duration::from_secs(15), input.read_batch(&ctx))
+        .await
+        .expect("a message after the redial")
+        .expect("read");
+    assert_eq!(batch[0].as_bytes_ref().as_ref(), b"after");
+    server.abort();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (reg, ctx, stop) = context(true);
+    let mut input = build(
+        json!({ "qos": 1, "topics": ["t"], "urls": [format!("tcp://{addr}")] }),
+        &ctx,
+        &reg,
+    );
+    tokio::spawn(async move {
+        loop {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let _ = read_packet(&mut s).await;
+            s.write_all(&[0x20, 0x02, 0x00, 0x00]).await.unwrap();
+            let (_, sub) = read_packet(&mut s).await;
+            s.write_all(&[0x90, 0x03, sub[0], sub[1], 0x80])
+                .await
+                .unwrap();
+        }
+    });
+    input
+        .connect(&ctx)
+        .await
+        .expect("a refusal at subscribe keeps the stream");
+    assert!(!input.is_connected());
+    let stopper = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        stop.send(true).unwrap();
+    });
+    let read = tokio::time::timeout(Duration::from_secs(10), input.read_batch(&ctx))
+        .await
+        .expect("shutdown ends the wait");
+    assert!(matches!(read, Err(CoreError::EndOfInput)));
+    stopper.await.unwrap();
+    assert!(matches!(
+        input.read_batch(&ctx).await,
+        Err(CoreError::EndOfInput)
+    ));
+}
