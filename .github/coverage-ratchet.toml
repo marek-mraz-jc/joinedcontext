@@ -82,14 +82,14 @@
 "joinedcontext-policy" = { lines = 99.00, functions = 99.40 }
 "joinedcontext-portal" = { lines = 94.03, functions = 91.55 }
 "kaisatsu-admin" = { lines = 98.52, functions = 99.41 }
-"kaisatsu-core" = { lines = 99.95, functions = 99.67 }
+"kaisatsu-core" = { lines = 99.96, functions = 99.73 }
 "kaisatsu-crypto" = { lines = 99.70, functions = 100.00 }
 "kaisatsu-import" = { lines = 99.17, functions = 99.39 }
 "kaisatsu-login" = { lines = 99.09, functions = 99.54 }
 "kaisatsu-mcp" = { lines = 100.00, functions = 100.00 }
 "kaisatsu-oidc" = { lines = 99.01, functions = 99.71 }
 "kaisatsu-server" = { lines = 99.17, functions = 100.00 }
-"kaisatsu-store-memory" = { lines = 99.83, functions = 100.00 }
+"kaisatsu-store-memory" = { lines = 100.00, functions = 100.00 }
 "kaisatsu-store-pg" = { lines = 99.01, functions = 99.24 }
 "linkml-model" = { lines = 99.95, functions = 100.00 }
 "ngsild-jsonld" = { lines = 99.05, functions = 99.33 }
