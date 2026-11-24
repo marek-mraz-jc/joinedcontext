@@ -935,3 +935,107 @@ fn flow_line(prefix: &str, node: &Node) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    /// What `format` refuses `src` for.
+    fn refused(src: &str) -> &'static str {
+        match format(src) {
+            Err(FmtError::Unsupported { what, .. }) => what,
+            other => panic!("{src:?} is refused as unsupported, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn anchors_aliases_tags_and_complex_keys_are_left_alone() {
+        assert_eq!(refused("a: &x 1\nb: *x\n"), "an anchor, alias or tag");
+        assert_eq!(refused("a: !!str 1\n"), "an anchor, alias or tag");
+        assert_eq!(refused("a:\n  ? b\n"), "a complex key");
+    }
+
+    #[test]
+    fn a_flow_collection_must_close_and_hold_no_comment() {
+        assert_eq!(
+            refused("a: [1,\n  # c\n  2]\n"),
+            "a comment inside a flow collection"
+        );
+        assert_eq!(refused("a: [!t 1]\n"), "a tag");
+        assert_eq!(refused("a: {[x]: 1}\n"), "a key that is not a scalar");
+    }
+
+    #[test]
+    fn a_multi_line_flow_collection_is_laid_out_anew() {
+        assert_eq!(
+            format("a: [1,\n  2, null, true, 'x y']\n").expect("formats"),
+            "a:\n  - 1\n  - 2\n  - null\n  - true\n  - x y\n"
+        );
+        let map = format("a: {b: 1,\n  c: [d]}\n").expect("formats");
+        assert!(
+            map.contains("b: 1") && map.contains("c:") && map.contains("d"),
+            "{map}"
+        );
+    }
+
+    #[test]
+    fn a_quoted_string_over_two_lines_folds_into_one() {
+        assert_eq!(format("a: \"x\n  y\"\n").expect("formats"), "a: x y\n");
+    }
+
+    #[test]
+    fn a_block_scalar_keeps_its_lines() {
+        assert_eq!(
+            format("a: |+\n  x\n\nb: 1\n").expect("formats"),
+            "a: |+\n  x\n\nb: 1\n"
+        );
+        assert_eq!(
+            format("a: >-\n  x\n  y\n").expect("formats"),
+            "a: >-\n  x\n  y\n"
+        );
+    }
+
+    #[test]
+    fn comments_where_the_layout_cannot_keep_them_are_refused() {
+        assert_eq!(
+            refused("a:\n  # c\n  x\n"),
+            "a comment between a key and its value"
+        );
+        assert_eq!(
+            refused("a:\n  x # c\n"),
+            "a comment after a value on its own line"
+        );
+    }
+
+    #[test]
+    fn several_documents_keep_their_separators() {
+        assert_eq!(
+            format("a: 1\n---\nb: 2\n").expect("formats"),
+            "a: 1\n---\nb: 2\n"
+        );
+        assert_eq!(format("---\na: 1\n").expect("formats"), "---\na: 1\n");
+        assert!(matches!(
+            format("a: [\n"),
+            Err(FmtError::Unsupported { .. } | FmtError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn a_manifest_is_put_in_the_canonical_order() {
+        let src =
+            "# head\nspec: {a: 1}\nkind: X\nmetadata:\n  namespace: n\n  name: x\napiVersion: v\n";
+        let out = format(src).expect("formats");
+        assert!(
+            out.starts_with(
+                "# head\napiVersion: v\nkind: X\nmetadata:\n  name: x\n  namespace: n\n"
+            ),
+            "{out}"
+        );
+        assert_eq!(
+            format("b: 1\na: 2\n").expect("formats"),
+            "b: 1\na: 2\n",
+            "not a manifest: order kept"
+        );
+        assert_eq!(format("- 1\n- 2\n").expect("formats"), "- 1\n- 2\n");
+    }
+}

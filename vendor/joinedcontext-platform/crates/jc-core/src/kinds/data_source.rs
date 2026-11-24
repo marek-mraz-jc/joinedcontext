@@ -2823,7 +2823,14 @@ mod tests {
         .map(K::as_str);
         assert_eq!(
             kinds,
-            ["ckan", "arcgisFeature", "odata", "wfs", "ogcFeatures", "sensorThings"]
+            [
+                "ckan",
+                "arcgisFeature",
+                "odata",
+                "wfs",
+                "ogcFeatures",
+                "sensorThings"
+            ]
         );
     }
 
@@ -2846,16 +2853,40 @@ mod tests {
     #[test]
     fn a_field_of_another_paging_mode_is_refused_naming_it() {
         for (extra, field) in [
-            ("{ mode: offset, limit: 1, param: p }", "spec.http.paging.param"),
-            ("{ mode: cursor, cursor: c, cursorParam: a, start: 1 }", "spec.http.paging.start"),
-            ("{ mode: offset, limit: 1, sizeParam: n }", "spec.http.paging.sizeParam"),
-            ("{ mode: offset, limit: 1, size: 5 }", "spec.http.paging.size"),
-            ("{ mode: page, offsetParam: o }", "spec.http.paging.offsetParam"),
-            ("{ mode: page, limitParam: l }", "spec.http.paging.limitParam"),
+            (
+                "{ mode: offset, limit: 1, param: p }",
+                "spec.http.paging.param",
+            ),
+            (
+                "{ mode: cursor, cursor: c, cursorParam: a, start: 1 }",
+                "spec.http.paging.start",
+            ),
+            (
+                "{ mode: offset, limit: 1, sizeParam: n }",
+                "spec.http.paging.sizeParam",
+            ),
+            (
+                "{ mode: offset, limit: 1, size: 5 }",
+                "spec.http.paging.size",
+            ),
+            (
+                "{ mode: page, offsetParam: o }",
+                "spec.http.paging.offsetParam",
+            ),
+            (
+                "{ mode: page, limitParam: l }",
+                "spec.http.paging.limitParam",
+            ),
             ("{ mode: page, limit: 5 }", "spec.http.paging.limit"),
             ("{ mode: page, cursor: c }", "spec.http.paging.cursor"),
-            ("{ mode: page, cursorParam: c }", "spec.http.paging.cursorParam"),
-            ("{ mode: page, cursorHeader: X-C }", "spec.http.paging.cursorHeader"),
+            (
+                "{ mode: page, cursorParam: c }",
+                "spec.http.paging.cursorParam",
+            ),
+            (
+                "{ mode: page, cursorHeader: X-C }",
+                "spec.http.paging.cursorHeader",
+            ),
             ("{ mode: link, next: n }", "spec.http.paging.next"),
         ] {
             let said = paged(&format!("    records: data\n    paging: {extra}\n"))
@@ -2869,16 +2900,46 @@ mod tests {
     fn a_paging_parameter_header_or_body_path_out_of_its_alphabet_is_refused() {
         let long = "p".repeat(65);
         for (extra, field) in [
-            ("{ mode: page, param: 'a b' }".to_owned(), "spec.http.paging.param"),
-            (format!("{{ mode: page, sizeParam: {long}, size: 1 }}"), "spec.http.paging.sizeParam"),
-            ("{ mode: offset, offsetParam: 'o&x', limit: 1 }".to_owned(), "spec.http.paging.offsetParam"),
-            ("{ mode: offset, limitParam: '', limit: 1 }".to_owned(), "spec.http.paging.limitParam"),
-            ("{ mode: cursor, cursor: c, cursorParam: 'a=b' }".to_owned(), "spec.http.paging.cursorParam"),
-            ("{ mode: cursor, cursor: c, cursorHeader: 'X Cursor' }".to_owned(), "spec.http.paging.cursorHeader"),
-            ("{ mode: cursor, cursor: 'meta next', cursorParam: a }".to_owned(), "spec.http.paging.cursor"),
-            ("{ mode: nextUrl, next: 'a b' }".to_owned(), "spec.http.paging.next"),
-            ("{ mode: link, total: 'a\"b' }".to_owned(), "spec.http.paging.total"),
-            ("{ mode: link, more: '' }".to_owned(), "spec.http.paging.more"),
+            (
+                "{ mode: page, param: 'a b' }".to_owned(),
+                "spec.http.paging.param",
+            ),
+            (
+                format!("{{ mode: page, sizeParam: {long}, size: 1 }}"),
+                "spec.http.paging.sizeParam",
+            ),
+            (
+                "{ mode: offset, offsetParam: 'o&x', limit: 1 }".to_owned(),
+                "spec.http.paging.offsetParam",
+            ),
+            (
+                "{ mode: offset, limitParam: '', limit: 1 }".to_owned(),
+                "spec.http.paging.limitParam",
+            ),
+            (
+                "{ mode: cursor, cursor: c, cursorParam: 'a=b' }".to_owned(),
+                "spec.http.paging.cursorParam",
+            ),
+            (
+                "{ mode: cursor, cursor: c, cursorHeader: 'X Cursor' }".to_owned(),
+                "spec.http.paging.cursorHeader",
+            ),
+            (
+                "{ mode: cursor, cursor: 'meta next', cursorParam: a }".to_owned(),
+                "spec.http.paging.cursor",
+            ),
+            (
+                "{ mode: nextUrl, next: 'a b' }".to_owned(),
+                "spec.http.paging.next",
+            ),
+            (
+                "{ mode: link, total: 'a\"b' }".to_owned(),
+                "spec.http.paging.total",
+            ),
+            (
+                "{ mode: link, more: '' }".to_owned(),
+                "spec.http.paging.more",
+            ),
         ] {
             let said = paged(&format!("    records: data\n    paging: {extra}\n"))
                 .unwrap_or_else(|| panic!("{extra} is refused"));
@@ -2892,9 +2953,18 @@ mod tests {
             ("{ mode: page, sizeParam: n }", "spec.http.paging.size"),
             ("{ mode: offset }", "spec.http.paging.limit"),
             ("{ mode: offset, limit: 0 }", "spec.http.paging.limit"),
-            ("{ mode: cursor, cursorParam: a }", "spec.http.paging.cursor"),
-            ("{ mode: cursor, cursor: c }", "spec.http.paging.cursorParam"),
-            ("{ mode: cursor, cursor: c, cursorParam: a, cursorHeader: X-C }", "spec.http.paging.cursorParam"),
+            (
+                "{ mode: cursor, cursorParam: a }",
+                "spec.http.paging.cursor",
+            ),
+            (
+                "{ mode: cursor, cursor: c }",
+                "spec.http.paging.cursorParam",
+            ),
+            (
+                "{ mode: cursor, cursor: c, cursorParam: a, cursorHeader: X-C }",
+                "spec.http.paging.cursorParam",
+            ),
             ("{ mode: nextUrl }", "spec.http.paging.next"),
         ] {
             let said = paged(&format!("    records: data\n    paging: {extra}\n"))
@@ -2923,7 +2993,10 @@ mod tests {
             ("    format: csv\n", "csv"),
             ("    format: xlsx\n", "xlsx"),
             ("    format: shapefile\n", "shapefile"),
-            ("    archive: { format: zip, members: [a.txt] }\n", "archive"),
+            (
+                "    archive: { format: zip, members: [a.txt] }\n",
+                "archive",
+            ),
         ] {
             let said = paged(&format!("{extra}    paging: {{ mode: link }}\n"))
                 .unwrap_or_else(|| panic!("{extra} is refused"));
@@ -2936,16 +3009,46 @@ mod tests {
     fn paging_bounds_and_order_are_checked() {
         let long = "v".repeat(129);
         for (extra, field) in [
-            ("{ mode: link, maxPages: 0 }".to_owned(), "spec.http.paging.maxPages"),
-            ("{ mode: link, maxPages: 10001 }".to_owned(), "spec.http.paging.maxPages"),
-            ("{ mode: link, maxRecords: 0 }".to_owned(), "spec.http.paging.maxRecords"),
-            ("{ mode: link, delay: 61s }".to_owned(), "spec.http.paging.delay"),
-            ("{ mode: link, delay: 2h }".to_owned(), "spec.http.paging.delay"),
-            ("{ mode: link, delay: ms }".to_owned(), "spec.http.paging.delay"),
-            ("{ mode: link, orderBy: { param: 'a b', value: v } }".to_owned(), "spec.http.paging.orderBy.param"),
-            ("{ mode: link, orderBy: { param: o, value: '' } }".to_owned(), "spec.http.paging.orderBy.value"),
-            (format!("{{ mode: link, orderBy: {{ param: o, value: {long} }} }}"), "spec.http.paging.orderBy.value"),
-            ("{ mode: link, orderBy: { param: o, value: \"a\\tb\" } }".to_owned(), "spec.http.paging.orderBy.value"),
+            (
+                "{ mode: link, maxPages: 0 }".to_owned(),
+                "spec.http.paging.maxPages",
+            ),
+            (
+                "{ mode: link, maxPages: 10001 }".to_owned(),
+                "spec.http.paging.maxPages",
+            ),
+            (
+                "{ mode: link, maxRecords: 0 }".to_owned(),
+                "spec.http.paging.maxRecords",
+            ),
+            (
+                "{ mode: link, delay: 61s }".to_owned(),
+                "spec.http.paging.delay",
+            ),
+            (
+                "{ mode: link, delay: 2h }".to_owned(),
+                "spec.http.paging.delay",
+            ),
+            (
+                "{ mode: link, delay: ms }".to_owned(),
+                "spec.http.paging.delay",
+            ),
+            (
+                "{ mode: link, orderBy: { param: 'a b', value: v } }".to_owned(),
+                "spec.http.paging.orderBy.param",
+            ),
+            (
+                "{ mode: link, orderBy: { param: o, value: '' } }".to_owned(),
+                "spec.http.paging.orderBy.value",
+            ),
+            (
+                format!("{{ mode: link, orderBy: {{ param: o, value: {long} }} }}"),
+                "spec.http.paging.orderBy.value",
+            ),
+            (
+                "{ mode: link, orderBy: { param: o, value: \"a\\tb\" } }".to_owned(),
+                "spec.http.paging.orderBy.value",
+            ),
         ] {
             let said = paged(&format!("    records: data\n    paging: {extra}\n"))
                 .unwrap_or_else(|| panic!("{extra} is refused"));
@@ -3008,10 +3111,7 @@ mod tests {
     #[test]
     fn a_ckan_preset_pages_package_search_or_one_resources_rows() {
         let datasets = effective(CKAN, "{ kind: ckan, organization: helsinki }");
-        assert_eq!(
-            datasets.url,
-            format!("{CKAN}?fq=organization%3Ahelsinki")
-        );
+        assert_eq!(datasets.url, format!("{CKAN}?fq=organization%3Ahelsinki"));
         assert_eq!(datasets.records.as_deref(), Some("result.results"));
         let paging = datasets.paging.expect("paging");
         assert_eq!(paging.mode, HttpPagingMode::Offset);
@@ -3041,22 +3141,35 @@ mod tests {
         );
         let paging = read.paging.expect("paging");
         assert_eq!(paging.offset_param.as_deref(), Some("resultOffset"));
-        assert_eq!(paging.more.as_deref(), Some("properties.exceededTransferLimit"));
+        assert_eq!(
+            paging.more.as_deref(),
+            Some("properties.exceededTransferLimit")
+        );
         assert_eq!(paging.order_by.expect("order").value, "OBJECTID");
 
         let own = effective(
             &format!("{ARCGIS}?where=KIND%3D1"),
             "{ kind: arcgisFeature, outFields: [NAME], objectIdField: FID }",
         );
-        assert!(own.url.contains("where=KIND%3D1") && !own.url.contains("1%3D1"), "{}", own.url);
-        assert_eq!(own.paging.expect("paging").order_by.expect("order").value, "FID");
+        assert!(
+            own.url.contains("where=KIND%3D1") && !own.url.contains("1%3D1"),
+            "{}",
+            own.url
+        );
+        assert_eq!(
+            own.paging.expect("paging").order_by.expect("order").value,
+            "FID"
+        );
     }
 
     #[test]
     fn odata_wfs_ogc_and_sensorthings_presets_set_their_own_paging() {
         let odata = effective("https://h/odata/Stops", "{ kind: odata }");
         assert_eq!(odata.records.as_deref(), Some("value"));
-        assert_eq!(odata.paging.expect("paging").next.as_deref(), Some("@odata.nextLink"));
+        assert_eq!(
+            odata.paging.expect("paging").next.as_deref(),
+            Some("@odata.nextLink")
+        );
         let sized = effective("https://h/odata/Stops", "{ kind: odata, pageSize: 10 }");
         let paging = sized.paging.expect("paging");
         assert_eq!(paging.offset_param.as_deref(), Some("$skip"));
@@ -3067,55 +3180,139 @@ mod tests {
             wfs.url,
             "https://h/wfs?service=WFS&version=2.0.0&request=GetFeature&typeNames=avoindata%3Ax&srsName=EPSG%3A4326&outputFormat=application%2Fjson"
         );
-        assert_eq!(wfs.paging.expect("paging").total.as_deref(), Some("numberMatched"));
-        let srs = effective("https://h/wfs", "{ kind: wfs, typeNames: x, srsName: 'EPSG:3067' }");
+        assert_eq!(
+            wfs.paging.expect("paging").total.as_deref(),
+            Some("numberMatched")
+        );
+        let srs = effective(
+            "https://h/wfs",
+            "{ kind: wfs, typeNames: x, srsName: 'EPSG:3067' }",
+        );
         assert!(srs.url.contains("srsName=EPSG%3A3067"), "{}", srs.url);
 
-        let ogc = effective("https://h/collections/c/items", "{ kind: ogcFeatures, pageSize: 20 }");
+        let ogc = effective(
+            "https://h/collections/c/items",
+            "{ kind: ogcFeatures, pageSize: 20 }",
+        );
         assert_eq!(ogc.url, "https://h/collections/c/items?limit=20");
         assert_eq!(ogc.records.as_deref(), Some("features"));
-        assert_eq!(ogc.paging.expect("paging").next.as_deref(), Some("links[rel=next].href"));
+        assert_eq!(
+            ogc.paging.expect("paging").next.as_deref(),
+            Some("links[rel=next].href")
+        );
 
-        let sta = effective("https://h/v1.1/Things", "{ kind: sensorThings, expand: 'Datastreams/Observations' }");
-        assert_eq!(sta.url, "https://h/v1.1/Things?%24top=1000&%24expand=Datastreams%2FObservations");
-        assert_eq!(sta.paging.expect("paging").next.as_deref(), Some("@iot.nextLink"));
+        let sta = effective(
+            "https://h/v1.1/Things",
+            "{ kind: sensorThings, expand: 'Datastreams/Observations' }",
+        );
+        assert_eq!(
+            sta.url,
+            "https://h/v1.1/Things?%24top=1000&%24expand=Datastreams%2FObservations"
+        );
+        assert_eq!(
+            sta.paging.expect("paging").next.as_deref(),
+            Some("@iot.nextLink")
+        );
         let bare = effective("https://h/v1.1/Things", "{ kind: sensorThings }");
         assert_eq!(bare.url, "https://h/v1.1/Things?%24top=1000");
     }
 
     #[test]
     fn a_preset_refuses_paging_or_records_written_beside_it() {
-        refused(CKAN, "    preset: { kind: ckan }\n    paging: { mode: link }\n", "spec.http.paging");
-        refused(CKAN, "    preset: { kind: ckan }\n    records: data\n", "spec.http.records");
+        refused(
+            CKAN,
+            "    preset: { kind: ckan }\n    paging: { mode: link }\n",
+            "spec.http.paging",
+        );
+        refused(
+            CKAN,
+            "    preset: { kind: ckan }\n    records: data\n",
+            "spec.http.records",
+        );
     }
 
     #[test]
     fn a_preset_field_of_another_kind_is_refused() {
         for (preset, field) in [
-            ("{ kind: odata, organization: o }", "spec.http.preset.organization"),
-            ("{ kind: odata, resourceId: r }", "spec.http.preset.resourceId"),
-            ("{ kind: odata, objectIdField: f }", "spec.http.preset.objectIdField"),
-            ("{ kind: odata, outFields: [a] }", "spec.http.preset.outFields"),
-            ("{ kind: odata, typeNames: t }", "spec.http.preset.typeNames"),
+            (
+                "{ kind: odata, organization: o }",
+                "spec.http.preset.organization",
+            ),
+            (
+                "{ kind: odata, resourceId: r }",
+                "spec.http.preset.resourceId",
+            ),
+            (
+                "{ kind: odata, objectIdField: f }",
+                "spec.http.preset.objectIdField",
+            ),
+            (
+                "{ kind: odata, outFields: [a] }",
+                "spec.http.preset.outFields",
+            ),
+            (
+                "{ kind: odata, typeNames: t }",
+                "spec.http.preset.typeNames",
+            ),
             ("{ kind: odata, srsName: s }", "spec.http.preset.srsName"),
             ("{ kind: odata, expand: e }", "spec.http.preset.expand"),
         ] {
-            refused("https://h/odata/X", &format!("    preset: {preset}\n"), field);
+            refused(
+                "https://h/odata/X",
+                &format!("    preset: {preset}\n"),
+                field,
+            );
         }
     }
 
     #[test]
     fn a_preset_page_size_and_names_are_bounded() {
         for (url, preset, field) in [
-            (CKAN, "{ kind: ckan, pageSize: 0 }", "spec.http.preset.pageSize"),
-            (CKAN, "{ kind: ckan, pageSize: 10001 }", "spec.http.preset.pageSize"),
-            (CKAN, "{ kind: ckan, organization: 'a b' }", "spec.http.preset.organization"),
-            (DATASTORE, "{ kind: ckan, resourceId: 'a/b' }", "spec.http.preset.resourceId"),
-            (ARCGIS, "{ kind: arcgisFeature, outFields: [a], objectIdField: 'a-b' }", "spec.http.preset.objectIdField"),
-            ("https://h/wfs", "{ kind: wfs, typeNames: 'a b' }", "spec.http.preset.typeNames"),
-            ("https://h/wfs", "{ kind: wfs, typeNames: t, srsName: 'a/b' }", "spec.http.preset.srsName"),
-            ("https://h/Things", "{ kind: sensorThings, expand: 'a b' }", "spec.http.preset.expand"),
-            (ARCGIS, "{ kind: arcgisFeature, outFields: ['*'] }", "spec.http.preset.outFields"),
+            (
+                CKAN,
+                "{ kind: ckan, pageSize: 0 }",
+                "spec.http.preset.pageSize",
+            ),
+            (
+                CKAN,
+                "{ kind: ckan, pageSize: 10001 }",
+                "spec.http.preset.pageSize",
+            ),
+            (
+                CKAN,
+                "{ kind: ckan, organization: 'a b' }",
+                "spec.http.preset.organization",
+            ),
+            (
+                DATASTORE,
+                "{ kind: ckan, resourceId: 'a/b' }",
+                "spec.http.preset.resourceId",
+            ),
+            (
+                ARCGIS,
+                "{ kind: arcgisFeature, outFields: [a], objectIdField: 'a-b' }",
+                "spec.http.preset.objectIdField",
+            ),
+            (
+                "https://h/wfs",
+                "{ kind: wfs, typeNames: 'a b' }",
+                "spec.http.preset.typeNames",
+            ),
+            (
+                "https://h/wfs",
+                "{ kind: wfs, typeNames: t, srsName: 'a/b' }",
+                "spec.http.preset.srsName",
+            ),
+            (
+                "https://h/Things",
+                "{ kind: sensorThings, expand: 'a b' }",
+                "spec.http.preset.expand",
+            ),
+            (
+                ARCGIS,
+                "{ kind: arcgisFeature, outFields: ['*'] }",
+                "spec.http.preset.outFields",
+            ),
         ] {
             refused(url, &format!("    preset: {preset}\n"), field);
         }
@@ -3126,14 +3323,33 @@ mod tests {
         for (url, preset, field) in [
             (DATASTORE, "{ kind: ckan }", "spec.http.url"),
             (CKAN, "{ kind: ckan, resourceId: r }", "spec.http.url"),
-            ("https://gis.example.org/FeatureServer/0", "{ kind: arcgisFeature, outFields: [a] }", "spec.http.url"),
-            ("https://h/collections/c", "{ kind: ogcFeatures }", "spec.http.url"),
-            (ARCGIS, "{ kind: arcgisFeature }", "spec.http.preset.outFields"),
-            ("https://h/wfs", "{ kind: wfs }", "spec.http.preset.typeNames"),
+            (
+                "https://gis.example.org/FeatureServer/0",
+                "{ kind: arcgisFeature, outFields: [a] }",
+                "spec.http.url",
+            ),
+            (
+                "https://h/collections/c",
+                "{ kind: ogcFeatures }",
+                "spec.http.url",
+            ),
+            (
+                ARCGIS,
+                "{ kind: arcgisFeature }",
+                "spec.http.preset.outFields",
+            ),
+            (
+                "https://h/wfs",
+                "{ kind: wfs }",
+                "spec.http.preset.typeNames",
+            ),
         ] {
             refused(url, &format!("    preset: {preset}\n"), field);
         }
         // a trailing slash, a query and a fragment are not the path
-        assert_eq!(refusal(&format!("{CKAN}/?q=x#top"), "    preset: { kind: ckan }\n"), None);
+        assert_eq!(
+            refusal(&format!("{CKAN}/?q=x#top"), "    preset: { kind: ckan }\n"),
+            None
+        );
     }
 }

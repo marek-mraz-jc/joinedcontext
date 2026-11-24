@@ -569,18 +569,38 @@ spec:
     #[test]
     fn an_empty_image_name_or_zero_limit_is_refused_naming_the_field() {
         for (from, to, field) in [
-            ("image: ghcr.io/marek-mraz/jc-agent-runner", "image: ' '", "runtime.image"),
+            (
+                "image: ghcr.io/marek-mraz/jc-agent-runner",
+                "image: ' '",
+                "runtime.image",
+            ),
             ("name: claude-3-7-sonnet", "name: ' '", "model.name"),
-            ("maxTokensPerRun: 2000000", "maxTokensPerRun: 0", "model.maxTokensPerRun"),
+            (
+                "maxTokensPerRun: 2000000",
+                "maxTokensPerRun: 0",
+                "model.maxTokensPerRun",
+            ),
             ("stepsPerRun: 120", "stepsPerRun: 0", "limits.stepsPerRun"),
             (
                 "concurrentRunsPerOrganization: 2",
                 "concurrentRunsPerOrganization: 0",
                 "limits.concurrentRunsPerOrganization",
             ),
-            ("requestsPerMinute: 240", "requestsPerMinute: 0", "limits.requestsPerMinute"),
-            ("maxResponseBytes: 8388608", "maxResponseBytes: 0", "limits.maxResponseBytes"),
-            ("allowedHosts: [static.crates.io]", "allowedHosts: []", "egress.allowedHosts"),
+            (
+                "requestsPerMinute: 240",
+                "requestsPerMinute: 0",
+                "limits.requestsPerMinute",
+            ),
+            (
+                "maxResponseBytes: 8388608",
+                "maxResponseBytes: 0",
+                "limits.maxResponseBytes",
+            ),
+            (
+                "allowedHosts: [static.crates.io]",
+                "allowedHosts: []",
+                "egress.allowedHosts",
+            ),
             ("cpu: \"2\"", "cpu: \" \"", "workspace"),
             ("memory: 4Gi", "memory: ''", "workspace"),
         ] {
@@ -600,7 +620,12 @@ spec:
 
     #[test]
     fn an_access_block_lists_each_kind_and_endpoint_once_with_a_verb() {
-        let access = |block: &str| refusal("  tools: [shell]\n", &format!("  tools: [shell]\n  access:\n{block}"));
+        let access = |block: &str| {
+            refusal(
+                "  tools: [shell]\n",
+                &format!("  tools: [shell]\n  access:\n{block}"),
+            )
+        };
         for (block, field) in [
             (
                 "    kinds:\n      - { kind: Endpoint, verbs: [read] }\n      - { kind: Endpoint, verbs: [read] }\n",

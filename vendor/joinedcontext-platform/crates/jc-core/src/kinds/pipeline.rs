@@ -2397,7 +2397,15 @@ mod tests {
         .map(|k| k.as_str());
         assert_eq!(
             kinds,
-            ["bloblang", "mapping", "wasm", "container", "kpi", "datacube", "script"]
+            [
+                "bloblang",
+                "mapping",
+                "wasm",
+                "container",
+                "kpi",
+                "datacube",
+                "script"
+            ]
         );
     }
 
@@ -2416,21 +2424,34 @@ mod tests {
     fn a_prefixed_or_kept_id_needs_a_record_path_and_no_template() {
         for kind in [Mint::Prefixed, Mint::Keep] {
             assert!(mint(kind, Some("station.code"), None).validate("T").is_ok());
-            let none = mint(kind, None, None).validate("T").unwrap_err().to_string();
+            let none = mint(kind, None, None)
+                .validate("T")
+                .unwrap_err()
+                .to_string();
             assert!(none.contains("`from` names the record field"), "{none}");
-            let path = mint(kind, Some("a-b"), None).validate("T").unwrap_err().to_string();
+            let path = mint(kind, Some("a-b"), None)
+                .validate("T")
+                .unwrap_err()
+                .to_string();
             assert!(path.contains("record path"), "{path}");
             let both = mint(kind, Some("a"), Some("urn:ngsi-ld:T:{a}"))
                 .validate("T")
                 .unwrap_err()
                 .to_string();
-            assert!(both.contains("`template` belongs to `mint: template`"), "{both}");
+            assert!(
+                both.contains("`template` belongs to `mint: template`"),
+                "{both}"
+            );
         }
     }
 
     #[test]
     fn a_template_id_starts_with_the_type_names_a_field_and_holds_urn_text() {
-        let ok = mint(Mint::Template, None, Some("urn:ngsi-ld:Stop:hsl:{stop.id}-{n}"));
+        let ok = mint(
+            Mint::Template,
+            None,
+            Some("urn:ngsi-ld:Stop:hsl:{stop.id}-{n}"),
+        );
         assert!(ok.validate("Stop").is_ok());
         assert_eq!(
             ok.template_parts().expect("parts"),
@@ -2446,11 +2467,27 @@ mod tests {
             (Some("a"), Some("urn:ngsi-ld:Stop:{a}"), "`from` belongs to"),
             (None, Some("urn:ngsi-ld:Other:{a}"), "a template starts"),
             (None, Some("{a}"), "a template starts"),
-            (None, Some("urn:ngsi-ld:Stop:fixed"), "at least one `{field}`"),
+            (
+                None,
+                Some("urn:ngsi-ld:Stop:fixed"),
+                "at least one `{field}`",
+            ),
             (None, Some("urn:ngsi-ld:Stop:{a"), "is closed by a `}`"),
-            (None, Some("urn:ngsi-ld:Stop:{a b}"), "a `{field}` is a record path"),
-            (None, Some("urn:ngsi-ld:Stop:${a}"), "RFC 8141 characters only"),
-            (None, Some("urn:ngsi-ld:Stop:{a}}"), "RFC 8141 characters only"),
+            (
+                None,
+                Some("urn:ngsi-ld:Stop:{a b}"),
+                "a `{field}` is a record path",
+            ),
+            (
+                None,
+                Some("urn:ngsi-ld:Stop:${a}"),
+                "RFC 8141 characters only",
+            ),
+            (
+                None,
+                Some("urn:ngsi-ld:Stop:{a}}"),
+                "RFC 8141 characters only",
+            ),
         ] {
             let said_now = mint(Mint::Template, from, template)
                 .validate("Stop")
@@ -2531,8 +2568,14 @@ mod tests {
             &spec("{ endpointRef: { kind: Endpoint, name: e }, trigger: { subscription: { type: 'bad type' } } }"),
             "bad type",
         );
-        refused(&spec("{ endpointRef: { kind: Policy, name: e } }"), "Policy");
-        refused(&spec("{ endpointRef: { kind: Endpoint, name: Bad_Name } }"), "Bad_Name");
+        refused(
+            &spec("{ endpointRef: { kind: Policy, name: e } }"),
+            "Policy",
+        );
+        refused(
+            &spec("{ endpointRef: { kind: Endpoint, name: Bad_Name } }"),
+            "Bad_Name",
+        );
         refused(
             &spec("{ name: Bad_Name, endpointRef: { kind: Endpoint, name: e } }"),
             "Bad_Name",

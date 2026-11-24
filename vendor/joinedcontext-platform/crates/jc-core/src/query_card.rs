@@ -168,7 +168,10 @@ mod tests {
     #[test]
     fn a_card_without_reads_or_title_holds_only_the_endpoint_line_and_types() {
         let card = card("p/air", None, |_| false, &BTreeMap::new(), false);
-        assert_eq!(card, "NGSI-LD Endpoint p/air, ETSI GS CIM 009 / TS 104 175.");
+        assert_eq!(
+            card,
+            "NGSI-LD Endpoint p/air, ETSI GS CIM 009 / TS 104 175."
+        );
     }
 
     #[test]
@@ -180,7 +183,13 @@ mod tests {
 
     #[test]
     fn history_alone_gives_the_q_rules_and_the_history_line_without_geo() {
-        let card = card("p/a", None, |t| t == "query_temporal", &BTreeMap::new(), false);
+        let card = card(
+            "p/a",
+            None,
+            |t| t == "query_temporal",
+            &BTreeMap::new(),
+            false,
+        );
         assert!(card.contains("\nq: attr==value") && card.contains("\nHistory:"));
         assert!(!card.contains("\nGeo:"));
     }
@@ -245,9 +254,8 @@ classes:
 
     #[test]
     fn served_turns_brief_past_the_token_budget() {
-        let mut model = String::from(
-            "id: https://example.org/big\nname: big\ndefault_range: string\nslots:\n",
-        );
+        let mut model =
+            String::from("id: https://example.org/big\nname: big\ndefault_range: string\nslots:\n");
         for i in 0..400 {
             model.push_str(&format!("  attribute_with_a_long_name_{i}: {{}}\n"));
         }
