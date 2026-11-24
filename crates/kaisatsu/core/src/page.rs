@@ -561,6 +561,7 @@ mod tests {
             ("login", "n0nce")
         );
         assert_eq!(login.lang, "en");
+        assert_eq!(login.org, "City", "the organization above the card");
         assert_eq!(login.css_url, css_url("/auth"));
         assert_eq!(login.branding_css, branding.css_variables());
         assert!(login.logo_url.is_empty(), "no logo without an SVG");
