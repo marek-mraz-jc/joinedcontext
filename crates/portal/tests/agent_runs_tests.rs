@@ -5112,7 +5112,11 @@ mod durable_store {
             .into_iter()
             .map(|r| r.id)
             .collect();
-        assert_eq!(listed, [b.clone(), a.clone(), c.clone()], "newest first, then by id");
+        assert_eq!(
+            listed,
+            [b.clone(), a.clone(), c.clone()],
+            "newest first, then by id"
+        );
         let trees = RunFilter {
             app: Some("trees".into()),
             ..RunFilter::default()
@@ -5148,7 +5152,10 @@ mod durable_store {
             expired.iter().position(|id| *id == c).expect("c expired"),
             expired.iter().position(|id| *id == b).expect("b expired"),
         );
-        assert!(ec < eb && !expired.contains(&a), "soonest first: {expired:?}");
+        assert!(
+            ec < eb && !expired.contains(&a),
+            "soonest first: {expired:?}"
+        );
         let queued: Vec<String> = store
             .list_in_status(AgentRunStatus::Queued)
             .await
@@ -5552,6 +5559,32 @@ mod durable_store {
             !cause.to_string().contains("refused by the test"),
             "{cause}"
         );
+        // The update passes and the commit is refused (a deferred trigger): a store error, and
+        // the run keeps the status it had.
+        let deferred = format!("t7711_commit_{}", id.replace('-', "_"));
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE OR REPLACE FUNCTION {deferred}() RETURNS trigger AS $$ BEGIN \
+             IF NEW.id = '{id}' THEN RAISE EXCEPTION 'refused at commit'; END IF; \
+             RETURN NULL; END $$ LANGUAGE plpgsql"
+        )))
+        .execute(&pool)
+        .await
+        .expect("the function");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE CONSTRAINT TRIGGER {deferred} AFTER UPDATE ON agent_runs \
+             DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION {deferred}()"
+        )))
+        .execute(&pool)
+        .await
+        .expect("the trigger");
+        let at_commit = store.set_status(&id, AgentRunStatus::Starting, None).await;
+        super::drop_refusal(&pool, &deferred).await;
+        assert!(
+            matches!(at_commit, Err(StatusChangeError::Store(StoreError::Db(_)))),
+            "{at_commit:?}"
+        );
+        let kept = store.get_run(&id).await.expect("read").expect("held");
+        assert_eq!(kept.status, "queued");
     }
 }
 

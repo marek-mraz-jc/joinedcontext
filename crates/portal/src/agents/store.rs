@@ -1154,7 +1154,10 @@ mod tests {
         assert_eq!(read.files["src/App.tsx"], "x");
         assert_eq!(read.preview_url.as_deref(), Some("https://q.example"));
         assert!(read.first_frame_ms.is_some() && read.first_version_ms.is_some());
-        assert_eq!(read.first_version_ms, first.first_version_ms, "the first one stays");
+        assert_eq!(
+            read.first_version_ms, first.first_version_ms,
+            "the first one stays"
+        );
         assert_eq!(
             (read.endpoint_name.as_str(), read.endpoint_slug.as_str()),
             ("bikes", "s1")
@@ -1199,7 +1202,10 @@ mod tests {
         });
         assert!(poisoned.is_err());
         assert!(store.projects.is_poisoned());
-        assert_eq!(store.known().get("run-1").map(String::as_str), Some("helsinki"));
+        assert_eq!(
+            store.known().get("run-1").map(String::as_str),
+            Some("helsinki")
+        );
     }
 
     #[tokio::test]
