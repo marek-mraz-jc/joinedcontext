@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { label, markdown, sources } from "../src/pages/knowledge/answerFormat";
+import JCRender from "../src/generated/assistantRender";
 
-// T-3325, AG-117: the same reading of an answer as the public widget's (platform
-// crates/assistant/widget/render.test.js).
+// T-3325, AG-117, T-7790: the Portal chat reads an answer with the widget's own render core
+// (src/generated/assistantRender.js from platform crates/assistant/widget/render.js), so these
+// are the Portal's cases run against the one core both shells use.
 const upTo = (max: number) => (n: number) => n >= 1 && n <= max;
+const anyHost = () => true;
+const { label, sources } = JCRender;
+const markdown = (text: string, known?: (n: number) => boolean) => JCRender.markdown(text, known, anyHost);
 
 describe("an answer's Markdown", () => {
   it("reads a pipe table, the rule making its first row the header, as the widget does (T-4649)", () => {
@@ -22,7 +26,7 @@ describe("an answer's Markdown", () => {
 
   it("keeps a fenced block's lines as code, markers and HTML as typed", () => {
     expect(markdown("```\nconst a = \"**x**\";\n\n<script>alert(1)</script>\n```\nafter")).toEqual([
-      { tag: "pre", text: 'const a = "**x**";\n\n<script>alert(1)</script>' },
+      { tag: "pre", children: [{ tag: "code", children: ['const a = "**x**";\n\n<script>alert(1)</script>'] }] },
       { tag: "p", children: ["after"] },
     ]);
   });
@@ -104,7 +108,7 @@ describe("an answer's sources", () => {
       { n: 3, tool: "query_entities", endpoint: "helsinki-events" },
       { n: 4, url: "javascript:alert(1)" },
     ]);
-    expect(list).toEqual([
+    expect(list.map(({ url, title, live, endpoint, domain, numbers }) => ({ url, title, live, endpoint, domain, numbers }))).toEqual([
       { url: "https://opendata.dev.joinedcontext.com/dataset/helsinki-events", title: "Helsinki events", live: false, endpoint: null, domain: "opendata.dev.joinedcontext.com", numbers: [1, 2] },
       { url: null, title: null, live: true, endpoint: "helsinki-events", domain: "", numbers: [3] },
     ]);
@@ -120,11 +124,18 @@ describe("an answer's sources", () => {
       { n: 2, url: "upload:garden/kumpula-garden-rules.pdf#page=2", title: "Kumpula garden rules" },
       { n: 3, url: "upload:garden/minutes.docx", title: "Committee minutes" },
     ]);
-    expect(list).toEqual([
-      { url: null, title: "kumpula-garden-rules.pdf", live: false, endpoint: null, domain: "", numbers: [1, 2] },
-      { url: null, title: "Committee minutes", live: false, endpoint: null, domain: "", numbers: [3] },
+    expect(list.map((source) => [label(source), JCRender.safeUrl(source.url), source.numbers])).toEqual([
+      ["Kumpula garden rules", null, [1, 2]],
+      ["Committee minutes", null, [3]],
     ]);
     expect(position).toEqual({ 1: 1, 2: 1, 3: 2 });
-    expect(label(list[0])).toBe("kumpula-garden-rules.pdf");
+    expect(label({ url: "upload:garden/kumpula-garden-rules.pdf", title: null, endpoint: null })).toBe("kumpula-garden-rules.pdf");
+  });
+
+  it("keeps links only to the hosts it is given, as the widget does (T-4149, T-7790)", () => {
+    const city = (url: string) => JCRender.linkHost(url, ["banskabystrica.sk"]);
+    expect(JCRender.markdown("[radnica](https://www.banskabystrica.sk/k) [výhra](https://evil.example/claim)", null, city)).toEqual([
+      { tag: "p", children: [{ tag: "a", href: "https://www.banskabystrica.sk/k", children: ["radnica"] }, " (banskabystrica.sk)", " ", "výhra"] },
+    ]);
   });
 });
