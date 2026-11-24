@@ -12,7 +12,9 @@ import en from "../src/locales/en.json";
 import { SubscriptionsPage, toSubscriptionEnvelope } from "../src/routes/SubscriptionsPage";
 import type { SubscriptionForm } from "../src/routes/SubscriptionsPage";
 import { json, list, problem, renderPage } from "./page_contract";
-import { sortEachColumn } from "./routes_cov_grid";
+import { proposeWhenGreen, sortEachColumn } from "./routes_cov_grid";
+import { greenVerdict } from "./verdict";
+import subscriptionSchema from "./fixtures/kinds/Subscription.json";
 
 const PROJECT = "helsinki";
 
@@ -146,26 +148,74 @@ describe("the subscriptions grid", () => {
     expect(await screen.findByText("air-alert")).toBeInTheDocument();
   });
 
-  it("edits a subscription through the row menu, with the stored manifest in the form", async () => {
+  it("opens an empty form from New subscription", async () => {
     const user = userEvent.setup();
+    grid([]);
+    await user.click((await screen.findAllByRole("button", { name: en.subscriptions.add }))[0]);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: en.subscriptions.add })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(new RegExp(`^${en.subscriptions.field.name}`))).toHaveValue("");
+  });
+
+  function editable(puts: { dryRun: boolean; body: { kind: string; spec: Record<string, unknown> } }[]) {
     renderPage(<SubscriptionsPage project={PROJECT} />, {
       path: `/projects/${PROJECT}/subscriptions`,
-      answer: (url) => {
+      answer: async (url, request) => {
         if (url.pathname.endsWith("/permissions/me")) return propose();
+        if (url.pathname === "/api/v1/kinds/Subscription/schema") return json(subscriptionSchema);
+        if (url.pathname.endsWith("/subscriptions/air-alert") && request.method === "PUT") {
+          const dryRun = url.searchParams.get("dryRun") === "All";
+          puts.push({ dryRun, body: (await request.clone().json()) as never });
+          return dryRun
+            ? json(await greenVerdict(request, { valid: true }))
+            : json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "Change", metadata: { name: "chg-0a1b2c3d", namespace: PROJECT }, status: { lane: "green", phase: "PendingApproval" } }, 202);
+        }
         if (url.pathname.endsWith("/subscriptions/air-alert")) return json(ALERT);
         if (url.pathname.endsWith("/subscriptions")) return json(list([ALERT]));
         if (url.pathname.endsWith("/spaces")) return json(list(SPACES));
         return undefined;
       },
     });
+  }
+
+  async function openRowMenu(user: ReturnType<typeof userEvent.setup>, item: string) {
     const table = await screen.findByRole("table", { name: en.subscriptions.title });
     await screen.findByText("air-alert");
     const row = within(table).getAllByRole("row")[1];
     await user.click(within(row).getByRole("button", { name: /air-alert/ }));
-    await user.click(await screen.findByRole("menuitem", { name: en.resourceEdit.button }));
+    await user.click(await screen.findByRole("menuitem", { name: item }));
+  }
+
+  it("edits a subscription through the row menu and proposes the stored manifest back as a PUT", async () => {
+    const user = userEvent.setup();
+    const puts: { dryRun: boolean; body: { kind: string; spec: Record<string, unknown> } }[] = [];
+    editable(puts);
+    await openRowMenu(user, en.resourceEdit.button);
     const dialog = await screen.findByRole("dialog");
-    await waitFor(() => expect(within(dialog).getByDisplayValue("air-alert")).toBeInTheDocument());
-    expect(within(dialog).getByDisplayValue("https://hook.example.org/air")).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByDisplayValue("https://hook.example.org/air")).toBeInTheDocument());
+    await proposeWhenGreen(user, dialog, en.resourceEdit.propose);
+    await waitFor(() => expect(puts.some((put) => !put.dryRun)).toBe(true));
+    const sent = puts.find((put) => !put.dryRun)!.body;
+    expect(sent.kind).toBe("Subscription");
+    expect(sent.spec.throttling).toBe(60);
+  });
+
+  it("changes one field from the row's details and says the Change it opened", async () => {
+    const user = userEvent.setup();
+    const puts: { dryRun: boolean; body: { kind: string; spec: Record<string, unknown> } }[] = [];
+    editable(puts);
+    await openRowMenu(user, en.grid.details);
+    const dialog = await screen.findByRole("dialog");
+    const throttling = await within(dialog).findByRole("spinbutton", { name: en.grid.field.throttling });
+    await user.clear(throttling);
+    await user.type(throttling, "120");
+    await user.click(within(dialog).getByRole("button", { name: en.grid.propose }));
+    await waitFor(() => expect(puts.some((put) => !put.dryRun)).toBe(true));
+    expect(puts.find((put) => !put.dryRun)!.body.spec.throttling).toBe(120);
+    expect(await screen.findByRole("link", { name: en.changes.review })).toHaveAttribute(
+      "href",
+      `/projects/${PROJECT}/approvals/chg-0a1b2c3d`,
+    );
   });
 });
 

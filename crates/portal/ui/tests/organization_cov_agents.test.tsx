@@ -4,6 +4,7 @@
  */
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
@@ -60,7 +61,7 @@ interface Harness {
   items?: unknown[];
 }
 
-function renderAgent(element: JSX.Element, { agents, manifest, items = ITEMS }: Harness = {}) {
+function renderAgent(element: ReactElement, { agents, manifest, items = ITEMS }: Harness = {}) {
   const asked: string[] = [];
   renderPage(element, {
     path: "/organization/agents",

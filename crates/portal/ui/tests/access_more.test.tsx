@@ -117,7 +117,6 @@ describe("a service account's grants and access", () => {
   });
 
   it("reads what an account may do only once a person opens it", async () => {
-    const user = userEvent.setup();
     const asked: string[] = [];
     renderPage(<ServiceAccounts project="helsinki" />, {
       path: "/projects/helsinki/settings/accounts",

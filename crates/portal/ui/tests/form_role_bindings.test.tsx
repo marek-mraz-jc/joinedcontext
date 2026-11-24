@@ -405,8 +405,9 @@ describe("the role list's remaining states (T-7588)", () => {
   it("opens_the_grant_form_from_the_empty_list", async () => {
     const user = userEvent.setup();
     renderPage(page(), { path: `/projects/${PROJECT}`, answer: reads() });
-    const grants = await screen.findAllByRole("button", { name: /Grant a role/ });
-    await user.click(grants.at(-1) as HTMLElement);
+    // The empty list's own Grant, inside the empty state (the header has one too).
+    const empty = (await screen.findByText(i18n.t("access.roles.empty"))).parentElement?.parentElement as HTMLElement;
+    await user.click(within(empty).getByRole("button", { name: /Grant a role/ }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 });

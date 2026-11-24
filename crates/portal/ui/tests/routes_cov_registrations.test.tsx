@@ -13,7 +13,8 @@ import { RegistrationsPage, toRegistrationEnvelope } from "../src/routes/Registr
 import type { RegistrationForm } from "../src/routes/RegistrationsPage";
 import { RegistrationPage } from "../src/routes/RegistrationPage";
 import { json, list, problem, renderPage } from "./page_contract";
-import { sortEachColumn } from "./routes_cov_grid";
+import { proposeWhenGreen, sortEachColumn } from "./routes_cov_grid";
+import { greenVerdict } from "./verdict";
 
 const PROJECT = "helsinki";
 
@@ -42,6 +43,13 @@ const TWO = {
   status: { phase: "Error" },
 };
 
+const named = (kind: string, name: string) => ({
+  apiVersion: "joinedcontext.com/v1alpha1",
+  kind,
+  metadata: { name, namespace: PROJECT },
+  spec: {},
+});
+
 const propose = (verbs = ["propose"]) =>
   json({ grants: [{ rule: { kinds: ["ContextSourceRegistration"], verbs } }] });
 
@@ -60,6 +68,9 @@ describe("the registrations list", () => {
       answer: (url) => {
         if (url.pathname.endsWith("/permissions/me")) return propose();
         if (url.pathname.endsWith("/csrs")) return json(list([ONE, TWO]));
+        if (url.pathname.endsWith("/spaces")) return json(list([named("ContextSpace", "weather")]));
+        if (url.pathname.endsWith("/endpoints")) return json(list([named("Endpoint", "meteo")]));
+        if (url.pathname.endsWith("/serviceaccounts")) return json(list([named("ServiceAccount", "hub-sa")]));
         return undefined;
       },
     });
@@ -146,12 +157,20 @@ describe("the registrations list", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("edits a registration through the row menu, with the stored manifest in the form", async () => {
+  it("edits a registration through the row menu and proposes the stored manifest back as a PUT", async () => {
     const user = userEvent.setup();
+    const puts: { dryRun: boolean; body: { kind: string; spec: Record<string, unknown> } }[] = [];
     renderPage(<RegistrationsPage project={PROJECT} />, {
       path: `/projects/${PROJECT}/csrs`,
-      answer: (url) => {
+      answer: async (url, request) => {
         if (url.pathname.endsWith("/permissions/me")) return propose();
+        if (url.pathname.endsWith("/csrs/hub-meteo") && request.method === "PUT") {
+          const dryRun = url.searchParams.get("dryRun") === "All";
+          puts.push({ dryRun, body: (await request.clone().json()) as never });
+          return dryRun
+            ? json(await greenVerdict(request, { valid: true }))
+            : json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "Change", metadata: { name: "chg-0a1b2c3d", namespace: PROJECT }, status: { lane: "green", phase: "PendingApproval" } }, 202);
+        }
         if (url.pathname.endsWith("/csrs/hub-meteo")) return json(ONE);
         if (url.pathname.endsWith("/csrs")) return json(list([ONE]));
         return undefined;
@@ -162,8 +181,12 @@ describe("the registrations list", () => {
     await user.click(within(row).getByRole("button", { name: /hub-meteo/ }));
     await user.click(await screen.findByRole("menuitem", { name: en.resourceEdit.button }));
     const dialog = await screen.findByRole("dialog");
-    await waitFor(() => expect(within(dialog).getByDisplayValue("hub-meteo")).toBeInTheDocument());
-    expect(within(dialog).getByDisplayValue("WeatherObserved")).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByDisplayValue("WeatherObserved")).toBeInTheDocument());
+    await proposeWhenGreen(user, dialog, en.resourceEdit.propose);
+    await waitFor(() => expect(puts.some((put) => !put.dryRun)).toBe(true));
+    const sent = puts.find((put) => !put.dryRun)!.body;
+    expect(sent.kind).toBe("ContextSourceRegistration");
+    expect(sent.spec.endpointRef).toEqual({ kind: "Endpoint", name: "meteo" });
   });
 });
 

@@ -20,6 +20,7 @@ const ORGANIZATION = {
     domain: "hel.fi",
     projects: { creation: "anyone" },
     appearance: {
+      logoSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>',
       navLinks: [
         { label: "Open data", url: "/opendata" },
         { label: "Help", url: "https://hel.fi/help" },
@@ -80,6 +81,9 @@ describe("Organization → Settings, the page", () => {
     const reads = render();
     expect(await screen.findByText(en.organization.settings.creationAnyone)).toBeInTheDocument();
     expect(screen.getByText("Open data, Help")).toBeInTheDocument();
+    // The pasted logo is drawn as an image, never as inline markup.
+    const logo = screen.getByRole("img", { name: en.organization.field.appearance.logoSvg });
+    expect(logo.getAttribute("src")).toMatch(/^data:image\/svg\+xml;charset=utf-8,%3Csvg/);
     await waitFor(() => expect(reads.widgets).toBe(1));
   });
 

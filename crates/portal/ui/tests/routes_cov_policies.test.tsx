@@ -11,7 +11,8 @@ import en from "../src/locales/en.json";
 import { PoliciesPage, toPolicyEnvelope } from "../src/routes/PoliciesPage";
 import type { PolicyForm } from "../src/routes/PoliciesPage";
 import { json, list, problem, renderPage } from "./page_contract";
-import { sortEachColumn } from "./routes_cov_grid";
+import { proposeWhenGreen, sortEachColumn } from "./routes_cov_grid";
+import { greenVerdict } from "./verdict";
 
 const PROJECT = "helsinki";
 const DOMAIN = "hel.fi";
@@ -160,12 +161,36 @@ describe("the policies page", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
-  it("edits a policy through the row menu, with the stored manifest in the form", async () => {
+  it("opens an empty form from New policy", async () => {
     const user = userEvent.setup();
     renderPage(<PoliciesPage project={PROJECT} />, {
       path: `/projects/${PROJECT}/policies`,
       answer: (url) => {
         if (url.pathname.endsWith("/permissions/me")) return propose();
+        if (url.pathname.endsWith("/spaces")) return json(list(SPACES));
+        return undefined;
+      },
+    });
+    await user.click((await screen.findAllByRole("button", { name: en.policies.add }))[0]);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: en.policies.add })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(new RegExp(`^${en.policies.field.name}`))).toHaveValue("");
+  });
+
+  it("edits a policy through the row menu and proposes the stored manifest back as a PUT", async () => {
+    const user = userEvent.setup();
+    const puts: { dryRun: boolean; body: { kind: string; spec: Record<string, unknown> } }[] = [];
+    renderPage(<PoliciesPage project={PROJECT} />, {
+      path: `/projects/${PROJECT}/policies`,
+      answer: async (url, request) => {
+        if (url.pathname.endsWith("/permissions/me")) return propose();
+        if (url.pathname.endsWith("/policies/air-readers") && request.method === "PUT") {
+          const dryRun = url.searchParams.get("dryRun") === "All";
+          puts.push({ dryRun, body: (await request.clone().json()) as never });
+          return dryRun
+            ? json(await greenVerdict(request, { valid: true }))
+            : json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "Change", metadata: { name: "chg-0a1b2c3d", namespace: PROJECT }, status: { lane: "green", phase: "PendingApproval" } }, 202);
+        }
         if (url.pathname.endsWith("/policies/air-readers")) return json(READERS);
         if (url.pathname.endsWith("/policies")) return json(list([READERS]));
         if (url.pathname.endsWith("/spaces")) return json(list(SPACES));
@@ -179,6 +204,12 @@ describe("the policies page", () => {
     const dialog = await screen.findByRole("dialog");
     await waitFor(() => expect(within(dialog).getByDisplayValue("air-readers")).toBeInTheDocument());
     expect(within(dialog).getByText(en.policies.summary.title)).toBeInTheDocument();
+    await proposeWhenGreen(user, dialog, en.resourceEdit.propose);
+    await waitFor(() => expect(puts.some((put) => !put.dryRun)).toBe(true));
+    const sent = puts.find((put) => !put.dryRun)!.body;
+    expect(sent.kind).toBe("Policy");
+    expect(sent.spec.operations).toEqual(["retrieveOps"]);
+    expect(sent.spec.assigner).toBe("did:web:" + DOMAIN);
   });
 });
 

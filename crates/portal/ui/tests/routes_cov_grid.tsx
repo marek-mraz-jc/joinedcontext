@@ -2,7 +2,8 @@
  * The grid helpers the route coverage tests share: every column of an admin grid sorted from its
  * header menu, so a column's `text` is what the person's sort reads, not an unexercised line.
  */
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
+import { expect } from "vitest";
 import type { UserEvent } from "@testing-library/user-event";
 import en from "../src/locales/en.json";
 
@@ -43,4 +44,21 @@ export async function sortEachColumn(
     seen[label] = firstCells(table);
   }
   return seen;
+}
+
+/**
+ * Press Check when Propose is still closed behind "run the check first", wait for the green
+ * verdict to open it, then press Propose of the dialog (`proposeName`).
+ */
+export async function proposeWhenGreen(
+  user: UserEvent,
+  dialog: HTMLElement,
+  proposeName: string,
+): Promise<void> {
+  const propose = within(dialog).getByRole("button", { name: proposeName });
+  if (propose.getAttribute("aria-disabled") === "true") {
+    await user.click(within(dialog).getByRole("button", { name: en.form.check }));
+    await waitFor(() => expect(propose).not.toHaveAttribute("aria-disabled", "true"));
+  }
+  await user.click(propose);
 }

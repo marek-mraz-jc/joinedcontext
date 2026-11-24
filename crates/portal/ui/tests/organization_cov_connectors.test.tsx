@@ -2,7 +2,7 @@
  * Administration → Connectors: every column of the grid sorts the way it reads, a failed list
  * says why and Retry asks again, and a revoke that is dismissed or refused changes nothing.
  */
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
@@ -156,10 +156,11 @@ describe("Administration → Connectors: failures and a dismissed revoke", () =>
     await user.click(await screen.findByRole("button", { name: "Revoke connector alpha-bot" }));
     const dialog = await screen.findByRole("alertdialog", { name: "Revoke connector alpha-bot?" });
     await user.click(within(dialog).getByRole("button", { name: c.revoke }));
-    expect(await screen.findByText(/Revoking is for administrators/)).toBeInTheDocument();
+    // The refusal closes the dialog, so its reason is read on the page and not behind the modal.
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    const reason = await screen.findByText(/Revoking is for administrators/);
+    expect(reason.closest('[role="dialog"], [role="alertdialog"]')).toBeNull();
     expect(requests).toContain(`DELETE ${"a".repeat(26)}`);
-    // The confirmation stays open for another try; dismissing it shows the connector still active.
-    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: en.app.cancel }));
     expect(screen.getByRole("button", { name: "Revoke connector alpha-bot" })).toBeInTheDocument();
   });
 });

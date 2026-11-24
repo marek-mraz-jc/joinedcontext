@@ -90,6 +90,14 @@ describe("open data appearance: a failed read", () => {
   });
 });
 
+describe("open data appearance: no Organization", () => {
+  it("says there is no Organization to style when the list is empty", async () => {
+    renderAppearance({ organizations: () => json(list([])) });
+    expect(await screen.findByText(en.opendataAppearance.noOrganization)).toBeInTheDocument();
+    expect(screen.queryByTestId("opendata-appearance-editor")).toBeNull();
+  });
+});
+
 describe("open data appearance: history", () => {
   it("lists only the closed Changes that wrote a theme member", async () => {
     renderAppearance({
