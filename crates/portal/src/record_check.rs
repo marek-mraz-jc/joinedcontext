@@ -1487,6 +1487,180 @@ mod tests {
         );
     }
 
+    /// PL-109: a history plan the target space cannot keep is red on each record carrying the
+    /// attribute (keep latest under a space that keeps the type's history), and an output whose
+    /// Endpoint the project does not hold is named, not judged by a model.
+    #[test]
+    fn a_history_plan_the_space_cannot_keep_and_an_endpoint_outside_the_project_are_red() {
+        let state = world();
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "ContextSpace".to_owned(),
+            metadata: ObjectMeta::new("vehicles", "helsinki"),
+            spec: json!({ "retention": [{ "entityType": "Bus", "history": "P30D" }] }),
+            status: None,
+        });
+        let mut planned = pipeline(json!([]));
+        planned["spec"]["history"] = json!([{ "type": "Bus", "attributes": [
+            { "names": ["speed"], "keep": "latest" },
+            { "names": ["position"], "keep": "every" }
+        ]}]);
+        let checked = check(&state, &planned, &[bus(json!(40))]);
+        let history: Vec<(&str, &str)> = checked.records[0]
+            .findings
+            .iter()
+            .filter(|f| f.source == Source::History)
+            .map(|f| (f.rule.as_str(), f.field.as_str()))
+            .collect();
+        assert_eq!(
+            history,
+            [("latest", "speed")],
+            "{:?}",
+            checked.records[0].findings
+        );
+        assert!(verdict_findings(&checked)
+            .iter()
+            .any(|f| f.path == "records[0].speed" && f.message.starts_with("speed: ")));
+
+        let mut outside = pipeline(json!([]));
+        outside["spec"]["outputs"][0]["targetEndpoint"] =
+            json!("urn:ngsi-ld:Endpoint:hel.fi:vehicles:not-held");
+        let checked = check(&state, &outside, &[bus(json!(40))]);
+        let finding = &checked.records[0].findings[0];
+        assert_eq!(
+            (finding.source, finding.rule.as_str()),
+            (Source::Endpoint, "targetEndpoint")
+        );
+        assert!(finding.reason.contains("not-held"), "{}", finding.reason);
+    }
+
+    /// A test's mapping can make more records than one check takes: the first [`MAX_RECORDS`]
+    /// are judged, the rest are not, and no error is raised for them.
+    #[test]
+    fn a_trace_checks_its_first_hundred_records_only() {
+        let state = world();
+        let many = vec![bus(json!(1)); MAX_RECORDS + 3];
+        let checked =
+            check_trace(&state, "helsinki", &pipeline(json!([])), &many).expect("checked");
+        assert_eq!(checked.checked, MAX_RECORDS);
+        let none = check_trace(&state, "helsinki", &pipeline(json!([])), &[]).expect("checked");
+        assert_eq!((none.checked, none.ok), (0, true));
+        assert!(
+            !none.verdict(&pipeline(json!([])), &[]).ok,
+            "no record is no green"
+        );
+    }
+
+    /// A pipeline with no output names no Endpoint: every record, and every attribute asked
+    /// about, says so; a spec that does not parse is a 400 naming `pipeline.spec`.
+    #[test]
+    fn no_output_names_no_endpoint_and_a_broken_spec_is_a_400() {
+        let state = world();
+        let mut bare = pipeline(json!([]));
+        bare["spec"]["outputs"] = json!([]);
+        let checked = check(&state, &bare, &[bus(json!(1))]);
+        let finding = &checked.records[0].findings[0];
+        assert_eq!(
+            (finding.rule.as_str(), finding.reason.as_str()),
+            (
+                "targetEndpoint",
+                "the pipeline names no Endpoint to write through"
+            )
+        );
+        assert_eq!(checked.records[0].endpoint, None);
+        let names = ["speed".to_owned()];
+        let judged = writable(&state, "helsinki", &bare, "Bus", &names, now()).expect("judged");
+        assert_eq!(
+            judged,
+            [Writable {
+                name: "speed".into(),
+                writable: false,
+                reason: Some("the pipeline names no Endpoint to write through".into()),
+            }]
+        );
+        let mut broken = pipeline(json!([]));
+        broken["spec"]["outputs"] = json!("helsinki-all");
+        for refused in [
+            check_records(&state, "helsinki", &broken, &[], now()).map(|_| ()),
+            writable(&state, "helsinki", &broken, "Bus", &names, now()).map(|_| ()),
+        ] {
+            let Err(ApiError::BadRequest(message)) = refused else {
+                panic!("a 400, got {refused:?}")
+            };
+            assert!(message.starts_with("pipeline.spec: "), "{message}");
+        }
+    }
+
+    /// Each finding reads as `records[i].field` with the member first, or the record's source
+    /// when it names no member (AG-62).
+    #[test]
+    fn a_verdict_finding_names_the_member_or_the_source() {
+        let finding = |source, field: &str| Finding {
+            source,
+            rule: "r".into(),
+            field: field.into(),
+            reason: "why".into(),
+            access: None,
+        };
+        let checked = Checked {
+            ok: false,
+            checked: 1,
+            rejected: 1,
+            records: vec![RecordCheck {
+                index: 7,
+                ok: false,
+                endpoint: None,
+                findings: vec![
+                    finding(Source::Model, ""),
+                    finding(Source::Endpoint, ""),
+                    finding(Source::Lifetime, ""),
+                    finding(Source::History, ""),
+                    finding(Source::History, "speed"),
+                ],
+                expires: None,
+            }],
+        };
+        let read: Vec<(String, String)> = verdict_findings(&checked)
+            .into_iter()
+            .map(|f| (f.path, f.message))
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("records[7]", "model: why"),
+                ("records[7]", "endpoint: why"),
+                ("records[7]", "lifetime: why"),
+                ("records[7]", "history: why"),
+                ("records[7].speed", "speed: why"),
+            ]
+            .map(|(p, m)| (p.to_owned(), m.to_owned()))
+        );
+    }
+
+    /// Under per-pipeline identity a check writes as the pipeline's own account with the
+    /// Policies this draft derives (PL-19); without it, as the shared pipelines account.
+    #[test]
+    fn the_writer_is_the_pipelines_own_account_under_pipeline_identity() {
+        let spec: PipelineSpec =
+            serde_json::from_value(pipeline(json!([]))["spec"].clone()).expect("a spec");
+        let shared = world();
+        let (account, policies) = identity(&shared, "helsinki", "hsl-hfp-vehicles", &spec);
+        assert_eq!(account, crate::reconciler::streams::PIPELINE_ACCOUNT);
+        assert!(
+            policies.is_none(),
+            "the shared account keeps the Policies it has"
+        );
+        let mut config = Config::for_tests();
+        config.pipeline_identity = true;
+        let own = AppState::new(config, None);
+        let (account, policies) = identity(&own, "helsinki", "hsl-hfp-vehicles", &spec);
+        assert_eq!(
+            account,
+            jc_core::kinds::pipeline_identity::account_name("hsl-hfp-vehicles")
+        );
+        assert!(policies.is_some());
+    }
+
     #[test]
     fn records_are_capped_by_count_and_size() {
         let state = world();

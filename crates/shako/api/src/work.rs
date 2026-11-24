@@ -308,3 +308,102 @@ impl Seek for Spool {
         Ok(self.at)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn work(dir: &std::path::Path, spool: u64) -> GitWork {
+        GitWork::new(dir.to_path_buf(), spool, MEMORY_BYTES)
+    }
+
+    fn quota(e: &ShakoError) -> Option<(&str, u64)> {
+        match e {
+            ShakoError::QuotaExceeded { resource, limit } => Some((resource.as_str(), *limit)),
+            _ => None,
+        }
+    }
+
+    /// A body declared or sent past its limit is refused naming `request_body_bytes`; one within
+    /// it is spooled and answered back with its length.
+    #[tokio::test]
+    async fn a_body_past_its_limit_is_refused_and_one_within_is_spooled() -> ShakoResult<()> {
+        let dir = tempfile::tempdir().map_err(spool_io)?;
+        let work = work(dir.path(), 64 * MIB);
+        let org = OrgId::from_u128(1);
+        let mut declared = HeaderMap::new();
+        declared.insert(header::CONTENT_LENGTH, HeaderValue::from(11u64));
+        let refused = work.receive(org, &declared, Body::from("small"), 10).await;
+        assert_eq!(
+            refused.err().as_ref().and_then(quota),
+            Some(("request_body_bytes", 10))
+        );
+        let sent = work
+            .receive(org, &HeaderMap::new(), Body::from(vec![7u8; 11]), 10)
+            .await;
+        assert_eq!(
+            sent.err().as_ref().and_then(quota),
+            Some(("request_body_bytes", 10))
+        );
+        let spool = work
+            .receive(org, &HeaderMap::new(), Body::from("hello"), 10)
+            .await?;
+        let response = spool.respond("application/x-git").await?;
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], "5");
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .map_err(|e| ShakoError::Internal(e.to_string()))?;
+        assert_eq!(&bytes[..], b"hello");
+        Ok(())
+    }
+
+    /// A spool larger than the whole budget is refused naming `spool_bytes`, and so is a spool
+    /// grown past the cap its caller set.
+    #[tokio::test]
+    async fn a_spool_past_the_budget_or_its_cap_is_refused() -> ShakoResult<()> {
+        let dir = tempfile::tempdir().map_err(spool_io)?;
+        let work = work(dir.path(), 2 * MIB);
+        let org = OrgId::from_u128(2);
+        let big = work.spool(org, 3 * MIB).await;
+        assert_eq!(
+            big.err().as_ref().and_then(quota).map(|q| q.0),
+            Some("spool_bytes")
+        );
+        let mut spool = work.spool(org, 0).await?;
+        spool.cap(4);
+        assert_eq!(
+            spool.hold(5).err().as_ref().and_then(quota),
+            Some(("spool_bytes", 4))
+        );
+        assert!(spool.hold(4).is_ok());
+        let failed = spool.write(b"12345").err().map(|e| e.to_string());
+        assert!(
+            failed.is_some_and(|e| e.contains("spool_bytes")),
+            "the write says why"
+        );
+        assert!(
+            spool.refusal.is_some(),
+            "the refusal is kept for the job's caller"
+        );
+        Ok(())
+    }
+
+    /// A job that writes past the spool budget answers the spool's refusal, not the io error its
+    /// writer saw.
+    #[tokio::test]
+    async fn a_job_writing_past_the_budget_answers_the_spools_refusal() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let work = work(dir.path(), 2 * MIB);
+        let produced = work
+            .produce(OrgId::from_u128(3), |spool, _admit| {
+                spool
+                    .write_all(&vec![0u8; 3 * MIB as usize])
+                    .map_err(|e| ShakoError::Storage(e.to_string()))
+            })
+            .await;
+        assert_eq!(
+            produced.err().as_ref().and_then(quota).map(|q| q.0),
+            Some("spool_bytes")
+        );
+    }
+}

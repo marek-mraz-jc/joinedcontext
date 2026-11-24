@@ -223,15 +223,10 @@ impl IntoResponse for KaisatsuError {
                         Some(description.clone())
                     },
                 };
-                let json = serde_json::to_string(&body)
-                    .unwrap_or_else(|_| r#"{"error":"server_error"}"#.to_owned());
                 (
                     code,
-                    [
-                        (header::CONTENT_TYPE, "application/json"),
-                        (header::CACHE_CONTROL, "no-store"),
-                    ],
-                    json,
+                    [(header::CACHE_CONTROL, "no-store")],
+                    axum::Json(body),
                 )
                     .into_response()
             }
@@ -321,5 +316,33 @@ mod problem_tests {
         let nf = KaisatsuError::NotFound("user not found".into()).to_problem();
         assert_eq!(nf.status, 404);
         assert!(nf.detail.contains("user not found"));
+    }
+
+    /// RFC 6749 section 5.2: an OAuth error is a JSON body that is never cached, with no
+    /// `error_description` when there is nothing to say; an unknown status falls back to 400.
+    #[tokio::test]
+    async fn an_oauth_error_is_uncached_json_without_an_empty_description() {
+        for (err, status, body) in [
+            (
+                KaisatsuError::oauth(401, "invalid_client", ""),
+                StatusCode::UNAUTHORIZED,
+                serde_json::json!({ "error": "invalid_client" }),
+            ),
+            (
+                KaisatsuError::oauth(1000, "invalid_grant", "code used"),
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({ "error": "invalid_grant", "error_description": "code used" }),
+            ),
+        ] {
+            let response = err.into_response();
+            assert_eq!(response.status(), status);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+                .await
+                .expect("body");
+            let got: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+            assert_eq!(got, body);
+        }
     }
 }

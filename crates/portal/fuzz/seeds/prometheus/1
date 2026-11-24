@@ -1,0 +1,2 @@
+jc_quality_checks_total{space="air",type="T",rule="r",outcome="pass"} 12
+# HELP x
