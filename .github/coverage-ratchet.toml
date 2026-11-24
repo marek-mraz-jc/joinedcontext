@@ -60,7 +60,8 @@
 "ekiben-text" = { lines = 99.94, functions = 99.61 }
 "jc-audit" = { lines = 100.00, functions = 100.00 }
 "jc-chart" = { lines = 99.75, functions = 100.00 }
-"jc-door" = { lines = 97.40, functions = 100.00 }
+"jc-core" = { lines = 94.39, functions = 94.61 }
+"jc-door" = { lines = 97.78, functions = 100.00 }
 "jc-http" = { lines = 100.00, functions = 100.00 }
 "jc-limits" = { lines = 100.00, functions = 100.00 }
 "jc-pool" = { lines = 100.00, functions = 100.00 }
