@@ -46,7 +46,12 @@ jobs:
           - { ws: root, dir: ".", args: "nextest --profile ci --workspace" }
           - { ws: antares, dir: crates/antares, args: "nextest --profile ci --workspace" }
           - { ws: portal, dir: crates/portal, args: "--workspace -j 2" }
-          - { ws: platform, dir: vendor/joinedcontext-platform, args: "--workspace --lib --bins" }
+          # extra: a second measure folded into the same export; jcctl's `it` binary (T-7793), as
+          # ci.yml's platform-test runs it.
+          - ws: platform
+            dir: vendor/joinedcontext-platform
+            args: "--workspace --lib --bins"
+            extra: "-p jcctl --test it -- --skip ingestion_examples_tests:: --skip library_blueprints_tests::"
     defaults: { run: { working-directory: "${{ matrix.dir }}" } }
     services:
       postgres:
@@ -111,6 +116,13 @@ jobs:
             out=tests-failed
             echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
           }
+          if [ -n "${{ matrix.extra }}" ]; then
+            # shellcheck disable=SC2086
+            cargo llvm-cov --locked --no-report --no-fail-fast ${{ matrix.extra }} || {
+              out=tests-failed
+              echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
+            }
+          fi
           # the full export: the ratchet merges each function's instances from its records
           cargo llvm-cov report --json --output-path "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"
           gzip "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"
