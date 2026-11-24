@@ -165,6 +165,10 @@ impl Reader<'_> {
         for _ in 0..len {
             let key = match self.value(depth + 1)? {
                 Value::String(s) => s,
+                // Go cannot hash a slice or map key; its text would also double per nested key.
+                Value::Array(_) | Value::Object(_) => {
+                    return Err("msgpack: a map key must be a string, number, bool, bin or nil, not an array or map".to_string())
+                }
                 other => other.to_string_coerced(),
             };
             out.insert(key, self.value(depth + 1)?);
@@ -398,6 +402,21 @@ mod tests {
         let mut map = vec![0x81, 0xa1, b'k'];
         map.extend(nested(MAX_DEPTH));
         assert_eq!(decode(&map), Err("msgpack: exceeded max depth".to_string()));
+    }
+
+    #[test]
+    fn container_map_keys_are_refused_before_their_text_can_grow() {
+        let refused = Err(
+            "msgpack: a map key must be a string, number, bool, bin or nil, not an array or map"
+                .to_string(),
+        );
+        assert_eq!(decode(&[0x81, 0x90, 0xc0]), refused);
+        assert_eq!(decode(&[0x81, 0x80, 0xc0]), refused);
+        // Fuzz timeout (msgpack target): keys nested as maps, escaped once per level.
+        let mut nested_keys = vec![0x81; 40];
+        nested_keys.extend([0xa1, b'"', 0xc0]);
+        nested_keys.extend(vec![0xc0; 40]);
+        assert_eq!(decode(&nested_keys), refused);
     }
 
     #[test]

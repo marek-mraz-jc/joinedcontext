@@ -1012,6 +1012,10 @@ pub fn parse_go_duration_nanos(input: &str) -> Result<i64, String> {
     Ok(if neg { -res } else { res })
 }
 
+/// The largest number one ISO 8601 period component may hold: every sum of components then fits
+/// its field, and adding one to a date stays inside i64 arithmetic.
+const MAX_PERIOD_UNITS: f64 = 1e9;
+
 /// Parses an ISO 8601 duration (`P3Y6M4DT12H30M5S`, `PT2H`, `PT2.5S`, `P1W`, `P1D`)
 /// into `(years, months, weeks, days, nanos)`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -1057,17 +1061,44 @@ impl Iso8601Period {
                 return Err(format!("invalid ISO-8601 duration '{input}'"));
             }
             let num_str = &rest[..num_len];
-            let unit = rest.as_bytes()[num_len] as char;
-            rest = &rest[num_len + 1..];
+            // num_len < rest.len() and the number is ASCII, so a unit char follows.
+            let unit = rest[num_len..].chars().next().unwrap_or_default();
+            rest = &rest[num_len + unit.len_utf8()..];
             let val: f64 = num_str
                 .parse()
                 .map_err(|_| format!("invalid number in ISO-8601 duration '{input}'"))?;
+            if val.abs() > MAX_PERIOD_UNITS {
+                return Err(format!(
+                    "ISO-8601 duration '{input}': {num_str} is out of range (at most {MAX_PERIOD_UNITS} per unit)"
+                ));
+            }
+            let out_of_range = || format!("ISO-8601 duration '{input}' is out of range");
             if !in_time {
                 match unit {
-                    'Y' => period.years += val as i32,
-                    'M' => period.months += val as i32,
-                    'W' => period.weeks += val as i64,
-                    'D' => period.days += val as i64,
+                    'Y' => {
+                        period.years = period
+                            .years
+                            .checked_add(val as i32)
+                            .ok_or_else(out_of_range)?
+                    }
+                    'M' => {
+                        period.months = period
+                            .months
+                            .checked_add(val as i32)
+                            .ok_or_else(out_of_range)?
+                    }
+                    'W' => {
+                        period.weeks = period
+                            .weeks
+                            .checked_add(val as i64)
+                            .ok_or_else(out_of_range)?
+                    }
+                    'D' => {
+                        period.days = period
+                            .days
+                            .checked_add(val as i64)
+                            .ok_or_else(out_of_range)?
+                    }
                     _ => {
                         return Err(format!(
                             "invalid date unit '{unit}' in ISO-8601 duration '{input}'"
@@ -1075,20 +1106,22 @@ impl Iso8601Period {
                     }
                 }
             } else {
-                match unit {
-                    'H' => period.nanos += (val * 3600.0 * 1e9).round() as i64,
-                    'M' => period.nanos += (val * 60.0 * 1e9).round() as i64,
-                    'S' => {
-                        // Truncate beyond 1 decimal place as documented in Bento's parse_duration_iso8601
-                        let truncated = (val * 10.0).trunc() / 10.0;
-                        period.nanos += (truncated * 1e9).round() as i64;
-                    }
+                let nanos = match unit {
+                    'H' => (val * 3600.0 * 1e9).round(),
+                    'M' => (val * 60.0 * 1e9).round(),
+                    // Truncate beyond 1 decimal place as documented in Bento's parse_duration_iso8601
+                    'S' => ((val * 10.0).trunc() / 10.0 * 1e9).round(),
                     _ => {
                         return Err(format!(
                             "invalid time unit '{unit}' in ISO-8601 duration '{input}'"
                         ))
                     }
-                }
+                };
+                // 1e9 hours is past i64 nanoseconds: the cast saturates and checked_add refuses it.
+                period.nanos = period
+                    .nanos
+                    .checked_add(nanos as i64)
+                    .ok_or_else(out_of_range)?;
             }
         }
         Ok(period)
@@ -1096,28 +1129,30 @@ impl Iso8601Period {
 
     pub fn negate(self) -> Self {
         Self {
-            years: -self.years,
-            months: -self.months,
-            weeks: -self.weeks,
-            days: -self.days,
-            nanos: -self.nanos,
+            years: self.years.saturating_neg(),
+            months: self.months.saturating_neg(),
+            weeks: self.weeks.saturating_neg(),
+            days: self.days.saturating_neg(),
+            nanos: self.nanos.saturating_neg(),
         }
     }
 
     /// Approximate duration in nanoseconds matching `rickb777/period.DurationApprox`:
     /// 1 year = 365.2425 days (31556952s), 1 month = 30.436875 days (2629746s), 1 day = 86400s.
-    pub fn approx_nanos(&self) -> i64 {
-        let year_nanos = (self.years as i64) * 31_556_952_000_000_000;
-        let month_nanos = (self.months as i64) * 2_629_746_000_000_000;
-        let week_nanos = self.weeks * 7 * 86_400_000_000_000;
-        let day_nanos = self.days * 86_400_000_000_000;
-        year_nanos + month_nanos + week_nanos + day_nanos + self.nanos
+    /// An error past i64 nanoseconds (about 292 years).
+    pub fn approx_nanos(&self) -> Result<i64, String> {
+        let total = i128::from(self.years) * 31_556_952_000_000_000
+            + i128::from(self.months) * 2_629_746_000_000_000
+            + i128::from(self.weeks) * 7 * 86_400_000_000_000
+            + i128::from(self.days) * 86_400_000_000_000
+            + i128::from(self.nanos);
+        i64::try_from(total).map_err(|_| "ISO-8601 duration exceeds int64 nanoseconds".to_string())
     }
 
     pub fn add_to(&self, dt: &Zoned) -> Zoned {
-        let mut total_months = (i32::from(dt.year()) * 12 + (i32::from(dt.month()) - 1))
-            + self.years * 12
-            + self.months;
+        let mut total_months = (i64::from(dt.year()) * 12 + (i64::from(dt.month()) - 1))
+            + i64::from(self.years) * 12
+            + i64::from(self.months);
         let new_year = total_months.div_euclid(12);
         total_months = total_months.rem_euclid(12);
         let new_month = (total_months + 1) as u32;
@@ -1138,7 +1173,7 @@ impl Iso8601Period {
     }
 }
 
-fn days_in_month(year: i32, month: u32) -> u32 {
+fn days_in_month(year: i64, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         2 => {
@@ -1488,7 +1523,7 @@ mod tests {
         );
         assert_eq!(
             Iso8601Period::parse("P1Y1M1W1D")?.approx_nanos(),
-            31_556_952_000_000_000 + 2_629_746_000_000_000 + 8 * 86_400_000_000_000
+            Ok(31_556_952_000_000_000 + 2_629_746_000_000_000 + 8 * 86_400_000_000_000)
         );
         let errors = [
             ("1Y", "invalid ISO-8601 duration '1Y': must start with 'P'"),
@@ -1499,6 +1534,21 @@ mod tests {
             ("P1-2D", "invalid number in ISO-8601 duration 'P1-2D'"),
             ("P1X", "invalid date unit 'X' in ISO-8601 duration 'P1X'"),
             ("PT1D", "invalid time unit 'D' in ISO-8601 duration 'PT1D'"),
+            // A multi-byte unit is named, not sliced through (fuzz crash, time target).
+            ("P1Y2\u{4cf}", "invalid date unit '\u{4cf}' in ISO-8601 duration 'P1Y2\u{4cf}'"),
+            ("PT5\u{e9}", "invalid time unit '\u{e9}' in ISO-8601 duration 'PT5\u{e9}'"),
+            (
+                "P1000000001D",
+                "ISO-8601 duration 'P1000000001D': 1000000001 is out of range (at most 1000000000 per unit)",
+            ),
+            (
+                "P1000000000Y1000000000Y1000000000Y",
+                "ISO-8601 duration 'P1000000000Y1000000000Y1000000000Y' is out of range",
+            ),
+            (
+                "PT1000000000H1000000000H1000000000H",
+                "ISO-8601 duration 'PT1000000000H1000000000H1000000000H' is out of range",
+            ),
         ];
         for (input, want) in errors {
             assert_eq!(
@@ -1507,6 +1557,21 @@ mod tests {
                 "{input}"
             );
         }
+        // Past i64 nanoseconds the approximation is an error, not a wrapped number.
+        let far = Iso8601Period::parse("P300Y")?;
+        assert_eq!(
+            far.approx_nanos(),
+            Err("ISO-8601 duration exceeds int64 nanoseconds".to_string())
+        );
+        // Components summing to i32::MIN negate to i32::MAX instead of overflowing.
+        let low = Iso8601Period::parse("P-1000000000Y-1000000000Y-147483648Y")?;
+        assert_eq!((low.years, low.negate().years), (i32::MIN, i32::MAX));
+        // A date pushed past year 32767 keeps the original date, as one past jiff's range does.
+        let start = at("2026-01-31T10:00:00+01:00")?;
+        assert_eq!(
+            rfc(&Iso8601Period::parse("P1000000000Y")?.add_to(&start)),
+            rfc(&start)
+        );
         let month = Iso8601Period::parse("P1M")?;
         assert_eq!(
             rfc(&month.add_to(&at("2026-01-31T10:00:00+01:00")?)),

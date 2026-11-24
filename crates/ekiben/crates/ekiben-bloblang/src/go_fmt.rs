@@ -592,6 +592,10 @@ fn format_float(x: f64, verb: char, prec: Option<usize>) -> String {
 /// The decimal digits of `x` (no leading or trailing zeros; "0" for zero) and the place of the
 /// decimal point, rounded as `strconv` rounds for `verb` and `prec`.
 fn decimal_digits(x: f64, verb: char, prec: Option<usize>) -> (Vec<u8>, i64) {
+    // An f64's exact decimal has at most 1074 places and 767 significant digits, so rounding at
+    // 1100 is exact and the zeros past it are trimmed anyway; Rust's format! refuses a precision
+    // past u16::MAX that Go's 1e6 limit allows.
+    let prec = prec.map(|p| p.min(1100));
     let sci = match (verb, prec) {
         (_, None) => format!("{x:e}"),
         ('e' | 'E', Some(p)) => format!("{x:.p$e}"),
@@ -736,6 +740,28 @@ mod tests {
         assert_eq!(
             s("%v", vec![Value::Int(1), Value::Int(2)]),
             "1%!(EXTRA int64=2)"
+        );
+    }
+
+    #[test]
+    fn a_precision_past_u16_max_pads_zeros_as_go() {
+        // Fuzz crash (sprintf target): format! panicked on a precision above 65535.
+        let x = [Value::Float(1.5)];
+        assert_eq!(
+            sprintf("%.70000f", &x),
+            format!("1.5{}", "0".repeat(69_999))
+        );
+        assert_eq!(
+            sprintf("%.70000e", &x),
+            format!("1.5{}e+00", "0".repeat(69_999))
+        );
+        assert_eq!(sprintf("%.70000g", &x), "1.5");
+        assert_eq!(sprintf("%.1100f", &[Value::Float(5e-324)]).len(), 1102);
+        // The smallest subnormal's exact expansion still fits inside 1100 places.
+        let tiny = sprintf("%.1100f", &[Value::Float(5e-324)]);
+        assert!(
+            tiny.starts_with(&format!("0.{}494065645841246544", "0".repeat(323))),
+            "{tiny}"
         );
     }
 
