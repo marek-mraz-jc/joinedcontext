@@ -5119,19 +5119,20 @@ mod tests {
             st.offline_sessions[1].max_expires_at = past;
         }
         assert_eq!(store.sweep_expired().await.expect("sweep"), 8);
-        let st = store.inner.read();
-        assert_eq!(st.auth_sessions.len(), 1);
-        assert_eq!(st.auth_sessions[0].id, "as1");
-        assert_eq!(st.auth_codes.len(), 1);
-        assert_eq!(st.auth_codes[0].code_hash, "code1");
-        assert_eq!(st.par_requests.len(), 1);
-        assert_eq!(st.par_requests[0].request_uri_hash, "par1");
-        assert_eq!(st.revoked_tokens.len(), 1);
-        assert_eq!(st.revoked_tokens[0].jti_hash, "jti1");
-        assert_eq!(st.sso_sessions.len(), 2);
-        assert!(st.sso_sessions.iter().all(|s| s.realm_id == "q"));
-        assert_eq!(st.offline_sessions.len(), 6);
-        drop(st);
+        {
+            let st = store.inner.read();
+            assert_eq!(st.auth_sessions.len(), 1);
+            assert_eq!(st.auth_sessions[0].id, "as1");
+            assert_eq!(st.auth_codes.len(), 1);
+            assert_eq!(st.auth_codes[0].code_hash, "code1");
+            assert_eq!(st.par_requests.len(), 1);
+            assert_eq!(st.par_requests[0].request_uri_hash, "par1");
+            assert_eq!(st.revoked_tokens.len(), 1);
+            assert_eq!(st.revoked_tokens[0].jti_hash, "jti1");
+            assert_eq!(st.sso_sessions.len(), 2);
+            assert!(st.sso_sessions.iter().all(|s| s.realm_id == "q"));
+            assert_eq!(st.offline_sessions.len(), 6);
+        }
         assert_eq!(store.sweep_expired().await.expect("again"), 0);
     }
 
