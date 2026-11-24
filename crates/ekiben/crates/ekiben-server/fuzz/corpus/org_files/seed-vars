@@ -1,0 +1,3 @@
+HOST: db
+PORT: 5432
+TLS: true

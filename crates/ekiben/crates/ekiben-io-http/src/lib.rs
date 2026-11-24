@@ -21,6 +21,27 @@ pub mod websocket;
 
 use ekiben_core::Registry;
 
+/// The parsers that read bytes from outside (MQTT wire, multipart bodies, media types, paths), for
+/// fuzz/ (cargo fuzz): each must answer or refuse, never panic or allocate past its input.
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing {
+    /// Splits MQTT packets off `buf` and reads each PUBLISH; how many packets were whole.
+    #[cfg(feature = "websocket")]
+    pub fn mqtt_wire(mut buf: Vec<u8>) -> usize {
+        crate::mqtt::fuzz_wire(&mut buf)
+    }
+
+    /// Reads a Content-Type and, when it names a boundary, the multipart body under it.
+    pub fn multipart(content_type: &str, body: &[u8]) -> Option<usize> {
+        crate::http_server::fuzz_multipart(content_type, body)
+    }
+
+    /// Decodes a request path and matches it against a route pattern read from `pattern`.
+    pub fn path(pattern: &str, path: &str) -> Option<usize> {
+        crate::http_server::fuzz_path(pattern, path)
+    }
+}
+
 pub fn register_all(registry: &Registry) {
     processor::register(registry);
     input::register(registry);

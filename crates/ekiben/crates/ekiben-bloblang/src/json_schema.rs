@@ -254,6 +254,27 @@ impl<'s> Validator<'s> {
                 }
             }
         }
+        // Draft 4 `dependencies`: a present key demands other keys, or a schema of the object.
+        for (key, dep) in s
+            .get("dependencies")
+            .and_then(Json::as_object)
+            .into_iter()
+            .flatten()
+        {
+            if !obj.contains_key(key) {
+                continue;
+            }
+            match dep {
+                Json::Array(names) => {
+                    for name in names.iter().filter_map(Json::as_str) {
+                        if !obj.contains_key(name) {
+                            self.err(field, format!("has a dependency on {name}"));
+                        }
+                    }
+                }
+                sub => self.validate(sub, &Json::Object(obj.clone()), field, depth + 1)?,
+            }
+        }
         let props = s.get("properties").and_then(Json::as_object);
         let patterns = s
             .get("patternProperties")
@@ -444,6 +465,15 @@ mod tests {
         assert_eq!(run(s, serde_json::json!({"Name": "a", "age": 3})), Ok(()));
     }
 
+    #[test]
+    fn a_property_dependency_lists_what_it_needs() {
+        let s = r#"{"dependencies":{"card":["billing"]}}"#;
+        assert_eq!(run(s, serde_json::json!({"card": 1, "billing": 2})), Ok(()));
+        assert_eq!(run(s, serde_json::json!({"other": 1})), Ok(()));
+        let refused = run(s, serde_json::json!({"card": 1})).expect_err("billing is missing");
+        assert!(refused.contains("has a dependency on billing"), "{refused}");
+    }
+
     fn err(schema: &str, doc: serde_json::Value) -> String {
         run(schema, doc).expect_err("the document must be refused")
     }
@@ -479,13 +509,20 @@ mod tests {
             let d = match key {
                 "$ref" => r,
                 "properties" => serde_json::json!({ "properties": { "a": r } }),
+                "patternProperties" => serde_json::json!({ "patternProperties": { "^a$": r } }),
+                "additionalProperties" => serde_json::json!({ "additionalProperties": r }),
+                "items-schema" => serde_json::json!({ "items": r }),
                 other => serde_json::json!({ other: [r] }),
             };
             defs.insert(format!("d{i}"), d);
         }
         defs.insert(format!("d{levels}"), serde_json::json!({}));
         let schema = serde_json::json!({ "definitions": defs, "$ref": "#/definitions/d0" });
-        let doc = (0..levels).fold(serde_json::json!(1), |d, _| serde_json::json!({ "a": d }));
+        let doc = (0..levels).fold(serde_json::json!(1), |d, _| match key {
+            // `items` as a list validates a tuple: the document nests arrays.
+            "items" | "items-schema" => serde_json::json!([d]),
+            _ => serde_json::json!({ "a": d }),
+        });
         (schema.to_string(), doc)
     }
 
@@ -498,7 +535,15 @@ mod tests {
         let (deep, doc) = chain("$ref", MAX_DEPTH);
         assert_eq!(run(&deep, doc), over);
         // A wrapper and its `$ref` are two levels each.
-        for key in ["properties", "allOf", "anyOf"] {
+        for key in [
+            "properties",
+            "allOf",
+            "anyOf",
+            "patternProperties",
+            "additionalProperties",
+            "items",
+            "items-schema",
+        ] {
             let (ok, doc) = chain(key, (MAX_DEPTH - 1) / 2);
             assert_eq!(run(&ok, doc), Ok(()), "{key}");
             let (deep, doc) = chain(key, MAX_DEPTH / 2);

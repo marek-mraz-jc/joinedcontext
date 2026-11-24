@@ -90,9 +90,9 @@ impl Machine<'_> {
 /// The exported `SyslogMessage` (`syslog.Base`), as Bento reads it.
 #[derive(Debug, Default, PartialEq)]
 pub struct SyslogMessage {
-    pub priority: Option<u8>,
-    pub facility: Option<u8>,
-    pub severity: Option<u8>,
+    pub priority: u8,
+    pub facility: u8,
+    pub severity: u8,
     pub version: u16,
     pub timestamp: Option<GoTime>,
     pub hostname: Option<String>,
@@ -114,9 +114,9 @@ impl Output {
 
     fn export(self) -> SyslogMessage {
         SyslogMessage {
-            priority: Some(self.priority),
-            facility: Some(self.priority / 8),
-            severity: Some(self.priority % 8),
+            priority: self.priority,
+            facility: self.priority / 8,
+            severity: self.priority % 8,
             version: self.version,
             timestamp: if self.timestamp_set {
                 self.timestamp

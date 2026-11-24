@@ -4,7 +4,8 @@
  * panels read the same answer narrowed. Each panel has its loading, empty, refusal (403) and
  * failure states.
  */
-import { cleanup, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
@@ -137,6 +138,44 @@ describe("Organization → Data access", () => {
     render(<DataAccessMatrix />, () => json({ ...MATRIX, unanswered: 3 }));
     expect(await screen.findByText(/did not answer for 3 cells/)).toBeInTheDocument();
   });
+
+  it("reads the matrix again on Retry after a failure (T-7588)", async () => {
+    let reads = 0;
+    render(<DataAccessMatrix />, (path) => (path === "/api/v1/organization/data-access" ? (++reads === 1 ? broken() : json(MATRIX)) : undefined));
+    fireEvent.click(await screen.findByRole("button", { name: /try again|retry/i }));
+    expect(await screen.findByText("Traffic counts")).toBeInTheDocument();
+    expect(reads).toBe(2);
+  });
+
+  it("marks a cell the gateway did not answer and sorts a column by what each cell says (T-7588)", async () => {
+    const unanswered = { granted: false, rules: [], throughOrganization: false, unanswered: true };
+    const matrix = {
+      columns,
+      rows: [
+        row("counts", [cell([{ policy: "staff-traffic", rule: 1, types: ["TrafficFlowObserved"] }]), cell([], true)]),
+        row("vehicles", [cell([]), unanswered]),
+        { ...row("parking", [cell([])]), cells: [cell([])] },
+      ],
+      unanswered: 1,
+    };
+    const user = userEvent.setup();
+    render(<DataAccessMatrix />, () => json(matrix));
+    const table = await screen.findByRole("table", { name: en.dataAccess.title });
+    const vehicles = within(table).getByText("vehicles").closest("tr") as HTMLElement;
+    expect(within(vehicles).getByText(en.dataAccess.cellUnanswered)).toBeInTheDocument();
+    const names = () => [...table.querySelectorAll("tbody tr")].map((tr) => tr.querySelector("th, td")?.textContent ?? "");
+    await user.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: Group traffic-analysts` }));
+    await user.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortAsc }));
+    // The empty text of a missing cell sorts last; "Not granted" never appears in this column.
+    expect(names().map((name) => name.replace(/zz+.*/, ""))).toEqual([
+      expect.stringMatching(/vehicles/),
+      expect.stringMatching(/Traffic counts/),
+      expect.stringMatching(/parking/),
+    ]);
+    await user.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${en.dataAccess.everyone}` }));
+    await user.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDesc }));
+    expect(names()[0]).toMatch(/Traffic counts/);
+  });
 });
 
 describe("Group page: datasets this group reads", () => {
@@ -190,6 +229,15 @@ describe("Endpoint page: who can read this", () => {
     cleanup();
     render(<EndpointReaders slug="closedzzzzzzzzzzzzzzzzzz" audience="organization" />, forbidden);
     expect(await screen.findByText(en.dataAccess.adminOnly)).toBeInTheDocument();
+  });
+
+  it("says nobody reads an Endpoint without a slug, or one the answer has no row for, without asking twice (T-7588)", async () => {
+    const { requests } = render(<EndpointReaders slug="" audience="organization" />, () => undefined);
+    expect(await screen.findByText(en.dataAccess.endpointNobody)).toBeInTheDocument();
+    expect(requests.filter((r) => r.includes("data-access"))).toEqual([]);
+    cleanup();
+    render(<EndpointReaders slug="gonezzzzzzzzzzzzzzzzzzzz" audience="organization" />, () => json({ columns, rows: [], unanswered: 0 }));
+    expect(await screen.findByText(en.dataAccess.endpointNobody)).toBeInTheDocument();
   });
 });
 

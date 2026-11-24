@@ -72,6 +72,10 @@ pub(crate) fn eval_time_family(
         "ts_round" => Some((|| {
             let dur_nanos = ctx.eval_expr(get_first_arg(args, "duration")?)?.get_int()?;
             let dt = target_val.to_timestamp_coerced()?;
+            // Go's Time.Round returns the time unchanged for a duration <= 0.
+            if dur_nanos <= 0 {
+                return Ok(Value::Timestamp(dt));
+            }
             let rounded = round_local(&dt, dur_nanos)?;
             Ok(Value::Timestamp(rounded))
         })()),
@@ -103,9 +107,9 @@ pub(crate) fn eval_time_family(
             let t2_val = ctx.eval_expr(get_first_arg(args, "t2")?)?;
             let t1 = target_val.to_timestamp_coerced()?;
             let t2 = t2_val.to_timestamp_coerced()?;
-            let diff =
-                i64::try_from(t1.timestamp().as_nanosecond() - t2.timestamp().as_nanosecond())
-                    .map_err(|_| "timestamp difference overflows nanoseconds".to_string())?;
+            // Go's Time.Sub saturates at the Duration bounds instead of failing.
+            let nanos = t1.timestamp().as_nanosecond() - t2.timestamp().as_nanosecond();
+            let diff = i64::try_from(nanos).unwrap_or(if nanos > 0 { i64::MAX } else { i64::MIN });
             Ok(Value::Int(diff))
         })()),
         "ts_add_iso8601" => Some((|| {
@@ -131,7 +135,7 @@ pub(crate) fn eval_time_family(
         "parse_duration_iso8601" => Some((|| {
             let s = target_val.get_string()?;
             let period = Iso8601Period::parse(&s)?;
-            let nanos = period.approx_nanos();
+            let nanos = period.approx_nanos()?;
             Ok(Value::Int(nanos))
         })()),
         _ => None,

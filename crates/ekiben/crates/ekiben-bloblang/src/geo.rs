@@ -112,15 +112,21 @@ pub(crate) fn is_known_crs(code: u32) -> bool {
 
 /// The PROJ definition of a CRS named `EPSG:n`, by its OGC URN or URL, or a WGS 84 alias.
 fn crs(param: &str, name: &str) -> Result<Proj, String> {
+    crs_in(CRS, param, name)
+}
+
+/// [`crs`] over a given table, so a test can give it a definition PROJ refuses.
+fn crs_in(table: &[(u32, &str)], param: &str, name: &str) -> Result<Proj, String> {
     let code = epsg_code(name);
     let known = || {
-        CRS.iter()
+        table
+            .iter()
             .map(|(c, _)| format!("EPSG:{c}"))
             .collect::<Vec<_>>()
             .join(", ")
     };
     let def = code
-        .and_then(|code| CRS.iter().find(|(c, _)| *c == code))
+        .and_then(|code| table.iter().find(|(c, _)| *c == code))
         .ok_or_else(|| {
             format!(
                 "parameter {param}: {name:?} is not a known CRS; use one of {}",
@@ -579,4 +585,193 @@ fn position(out: &mut String, v: &Value, width: &mut Option<usize>) -> Result<()
         let _ = write!(out, "{f}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{ArgList, Assignment, Expr, Statement};
+
+    #[test]
+    fn a_method_no_family_implements_is_refused_at_run_time() {
+        // The parser refuses an unknown name; a tree built by hand reaches the end of the
+        // dispatch, where geo, the last family, answers None.
+        let query = Expr::MethodCall {
+            target: Box::new(Expr::Literal(Value::String("x".into()))),
+            name: "no_such_method".into(),
+            args: ArgList::Positional(Vec::new()),
+        };
+        let stmt = Statement::Single {
+            line: 1,
+            assignment: Assignment::Json(Default::default()),
+            query,
+        };
+        let exec = crate::Executor::new(
+            "test".into(),
+            Default::default(),
+            vec![stmt],
+            crate::Environment::new(),
+        );
+        let err = exec.exec_on_value(Value::Null).map(|_| ()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unrecognised method 'no_such_method'"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_position_reads_at_most_four_numbers() {
+        assert_eq!(
+            parse_wkt("POINT ZM (1 2 3 4 5)"),
+            Err("failed to parse WKT at byte 18: expected ')'".to_string())
+        );
+    }
+
+    #[test]
+    fn collections_nest_to_the_limit_and_no_deeper() {
+        let nested = |n: usize| {
+            format!(
+                "{}POINT(1 2){}",
+                "GEOMETRYCOLLECTION(".repeat(n),
+                ")".repeat(n)
+            )
+        };
+        let deepest = parse_wkt(&nested(MAX_GEO_DEPTH)).expect("at the limit");
+        let text = format_wkt(&deepest).expect("formats at the limit");
+        assert_eq!(text.matches("GEOMETRYCOLLECTION (").count(), MAX_GEO_DEPTH);
+        let deeper = obj(vec![
+            ("type", Value::String("GeometryCollection".into())),
+            ("geometries", arr(vec![deepest])),
+        ]);
+        assert_eq!(
+            format_wkt(&deeper),
+            Err(format!(
+                "the GeometryCollection nests deeper than {MAX_GEO_DEPTH}"
+            ))
+        );
+        let err = parse_wkt(&nested(MAX_GEO_DEPTH + 1))
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            err.ends_with(&format!(
+                "the GeometryCollection nests deeper than {MAX_GEO_DEPTH}"
+            )),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_wkt_fault_names_its_byte_and_reason() {
+        assert_eq!(
+            parse_wkt("POINT(1 x)"),
+            Err("failed to parse WKT at byte 8: a position of 1 numbers does not match the geometry's dimensions".to_string())
+        );
+    }
+
+    #[test]
+    fn crs84_names_end_in_a_colon_or_a_slash() {
+        assert_eq!(epsg_code("urn:ogc:def:crs:OGC:2:CRS84"), Some(4326));
+        assert_eq!(
+            epsg_code("http://www.opengis.net/def/crs/OGC/0/CRS84"),
+            Some(4326)
+        );
+        assert_eq!(epsg_code("CRS84"), None);
+    }
+
+    fn arr(items: Vec<Value>) -> Value {
+        Value::Array(items.into())
+    }
+
+    fn obj(pairs: Vec<(&str, Value)>) -> Value {
+        Value::Object(
+            pairs
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect::<std::collections::BTreeMap<_, _>>()
+                .into(),
+        )
+    }
+
+    #[test]
+    fn nesting_is_counted_through_arrays_and_collections_to_the_limit() {
+        let point = || arr(vec![Value::Float(24.9), Value::Float(60.1)]);
+        let wrap = |levels: usize| (0..levels).fold(point(), |v, _| arr(vec![v]));
+        let limit = MAX_GEO_DEPTH + 4;
+        assert!(geo_transform(&wrap(limit), "EPSG:4326", "EPSG:3857").is_ok());
+        let deep = geo_transform(&wrap(limit + 1), "EPSG:4326", "EPSG:3857");
+        assert_eq!(
+            deep,
+            Err(format!("the geometry nests deeper than {MAX_GEO_DEPTH}"))
+        );
+        // Each collection is two levels (the object and its geometries array), its Point's
+        // position one more: five collections fit, six do not.
+        let collections = |n: usize| {
+            (0..n).fold(
+                obj(vec![
+                    ("type", Value::String("Point".into())),
+                    ("coordinates", point()),
+                ]),
+                |g, _| {
+                    obj(vec![
+                        ("type", Value::String("GeometryCollection".into())),
+                        ("geometries", arr(vec![g])),
+                    ])
+                },
+            )
+        };
+        assert!(geo_transform(&collections(5), "EPSG:4326", "EPSG:3857").is_ok());
+        assert!(geo_transform(&collections(6), "EPSG:4326", "EPSG:3857").is_err());
+    }
+
+    #[test]
+    fn an_object_without_coordinates_or_geometries_is_named() {
+        let point = obj(vec![("type", Value::String("Point".into()))]);
+        assert_eq!(
+            geo_transform(&point, "EPSG:4326", "EPSG:3857"),
+            Err("geo_transform wants a GeoJSON geometry or a position, got an object without coordinates".to_string())
+        );
+        let collection = obj(vec![("type", Value::String("GeometryCollection".into()))]);
+        assert_eq!(
+            geo_transform(&collection, "EPSG:4326", "EPSG:3857"),
+            Err("a GeometryCollection needs geometries".to_string())
+        );
+    }
+
+    #[test]
+    fn one_coordinate_past_the_projection_is_refused() {
+        // LV95 maps this position to a finite x and an infinite y: one is enough to refuse it.
+        let far_south = arr(vec![Value::Float(2.6e6), Value::Float(-1e200)]);
+        assert_eq!(
+            geo_transform(&far_south, "EPSG:2056", "EPSG:2056"),
+            Err(
+                "geo_transform from EPSG:2056 to EPSG:2056: the position is outside the projection"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn a_crs_definition_proj_refuses_names_the_parameter_and_crs() {
+        let table = [(4326, "+proj=no_such_projection")];
+        let err = crs_in(&table, "from", "EPSG:4326").map(|_| ()).unwrap_err();
+        assert!(err.starts_with("parameter from: EPSG:4326: "), "{err}");
+        let err = crs_in(&table, "to", "EPSG:3857").map(|_| ()).unwrap_err();
+        assert!(
+            err.contains("EPSG:3857\" is not a known CRS; use one of EPSG:4326"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_pole_has_no_web_mercator_position() {
+        let pole = Value::Array(vec![Value::Float(0.0), Value::Float(90.0)].into());
+        let err = geo_transform(&pole, "EPSG:4326", "EPSG:3857")
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            err.starts_with("geo_transform from EPSG:4326 to EPSG:3857"),
+            "{err}"
+        );
+    }
 }

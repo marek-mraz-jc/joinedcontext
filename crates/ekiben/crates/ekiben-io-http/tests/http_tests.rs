@@ -1113,3 +1113,183 @@ async fn an_unexpected_status_quotes_the_servers_own_phrase_as_go_does() {
         assert!(err.contains(want), "{line}: {err}");
     }
 }
+
+/// Every http client config the client refuses, with the words that say what to fix.
+#[test]
+fn a_bad_http_client_config_is_refused_naming_the_field() {
+    use ekiben_io_http::client::HttpClient;
+    let env = Environment::new();
+    let url = |extra: serde_json::Value| {
+        let mut c = serde_json::json!({ "url": "https://api.example.org/x" });
+        c.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        c
+    };
+    for (conf, want) in [
+        (serde_json::json!("https://x"), "must be an object"),
+        (serde_json::json!({ "url": "  " }), "non-empty 'url'"),
+        (serde_json::json!({ "url": "ftp://x" }), "http"),
+        (
+            url(serde_json::json!({ "verb": "GET IT" })),
+            "invalid HTTP verb 'GET IT'",
+        ),
+        (
+            url(serde_json::json!({ "headers": { "X-A": "${! nope( }" } })),
+            "",
+        ),
+        (url(serde_json::json!({ "timeout": "soon" })), "soon"),
+        (url(serde_json::json!({ "retry_period": "soon" })), "soon"),
+        (
+            url(serde_json::json!({ "max_retry_backoff": "soon" })),
+            "soon",
+        ),
+        (url(serde_json::json!({ "payload": "${! nope( }" })), ""),
+        (
+            url(serde_json::json!({ "multipart": [{ "body": "${! nope( }" }] })),
+            "",
+        ),
+        (
+            url(serde_json::json!({ "oauth2": { "enabled": true, "token_url": "file:///etc/x" } })),
+            "",
+        ),
+        (
+            url(
+                serde_json::json!({ "oauth2": { "enabled": true, "token_url": "https://t", "endpoint_params": ["audience"] } }),
+            ),
+            "oauth2.endpoint_params maps a name to a list of strings",
+        ),
+        (
+            url(
+                serde_json::json!({ "oauth2": { "enabled": true, "token_url": "https://t", "endpoint_params": { "audience": "one" } } }),
+            ),
+            "audience is not",
+        ),
+    ] {
+        let err = HttpClient::from_json_config(&conf, "GET", &env)
+            .err()
+            .unwrap_or_else(|| panic!("{conf} must be refused"))
+            .to_string();
+        assert!(err.contains(want), "{conf}: {err}");
+    }
+    // Disabled auth blocks are read as absent.
+    let ok = HttpClient::from_json_config(
+        &url(serde_json::json!({ "oauth2": { "enabled": false }, "basic_auth": { "enabled": false } })),
+        "post",
+        &env,
+    )
+    .expect("disabled blocks");
+    assert_eq!(ok.raw_url(), "https://api.example.org/x");
+}
+
+type Seen = Arc<std::sync::Mutex<Vec<(String, HeaderMap, Vec<u8>)>>>;
+
+/// A server answering 200 `ok` that records each request's method, headers and body.
+async fn echo_server() -> (String, Seen) {
+    let seen: Seen = Arc::default();
+    let rec = seen.clone();
+    let app = Router::new().fallback(
+        move |method: axum::http::Method, headers: HeaderMap, body: axum::body::Bytes| {
+            let rec = rec.clone();
+            async move {
+                rec.lock()
+                    .unwrap()
+                    .push((method.to_string(), headers, body.to_vec()));
+                "ok"
+            }
+        },
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}"), seen)
+}
+
+/// Basic auth, a configured multipart body, a payload under its own Content-Type and a batch
+/// sent as multipart/mixed each reach the server as built; a header or payload that fails to
+/// interpolate fails the call before anything is sent.
+#[tokio::test]
+async fn the_client_sends_basic_auth_multipart_and_payload_bodies_as_configured() {
+    use ekiben_io_http::client::HttpClient;
+    let (base, seen) = echo_server().await;
+    let (_reg, _pctx, sctx) = setup_contexts(true);
+    let env = Environment::new();
+    let client = |extra: serde_json::Value| {
+        let mut c =
+            serde_json::json!({ "url": format!("{base}/in"), "verb": "POST", "retries": 0 });
+        c.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        HttpClient::from_json_config(&c, "POST", &env).expect("config")
+    };
+    let one = || vec![Part::new(b"body".to_vec())];
+
+    client(serde_json::json!({ "basic_auth": { "enabled": true, "username": "u", "password": "p:w" } }))
+        .send(one(), false, &sctx.org, &sctx.resources)
+        .await
+        .expect("basic auth");
+    client(serde_json::json!({ "multipart": [
+        { "content_type": "text/csv", "content_disposition": "form-data; name=\"f\"", "body": "a,b" },
+        { "body": "${! content() }" },
+    ] }))
+    .send(one(), false, &sctx.org, &sctx.resources)
+    .await
+    .expect("multipart");
+    client(serde_json::json!({ "payload": "{\"v\":1}", "headers": { "Content-Type": "application/json" } }))
+        .send(one(), false, &sctx.org, &sctx.resources)
+        .await
+        .expect("payload");
+    client(serde_json::json!({}))
+        .send(
+            vec![Part::new(b"m1".to_vec()), Part::new(b"m2".to_vec())],
+            true,
+            &sctx.org,
+            &sctx.resources,
+        )
+        .await
+        .expect("batch");
+
+    for (extra, want) in [
+        (
+            serde_json::json!({ "headers": { "X-N": "${! content().number() }" } }),
+            "header 'X-N' interpolation error",
+        ),
+        (
+            serde_json::json!({ "payload": "${! content().number() }" }),
+            "payload interpolation error",
+        ),
+    ] {
+        let err = client(extra.clone())
+            .send(one(), false, &sctx.org, &sctx.resources)
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{extra} must fail"))
+            .to_string();
+        assert!(err.contains(want), "{extra}: {err}");
+    }
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 4, "the refused interpolations sent nothing");
+    use base64::Engine as _;
+    let basic = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode("u:p:w")
+    );
+    assert_eq!(seen[0].1["authorization"], basic.as_str());
+    let ct = seen[1].1["content-type"].to_str().unwrap();
+    assert!(ct.starts_with("multipart/form-data; boundary="), "{ct}");
+    let body = String::from_utf8_lossy(&seen[1].2);
+    assert!(
+        body.contains(
+            "Content-Type: text/csv\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\na,b\r\n"
+        ),
+        "{body}"
+    );
+    assert!(body.contains("\r\n\r\nbody\r\n"), "{body}");
+    assert_eq!(seen[2].1["content-type"], "application/json");
+    assert_eq!(seen[2].2, b"{\"v\":1}");
+    let ct = seen[3].1["content-type"].to_str().unwrap();
+    assert!(ct.starts_with("multipart/mixed; boundary="), "{ct}");
+    let body = String::from_utf8_lossy(&seen[3].2);
+    assert!(body.contains("m1") && body.contains("m2"), "{body}");
+}

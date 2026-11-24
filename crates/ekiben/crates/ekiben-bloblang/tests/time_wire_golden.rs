@@ -49,7 +49,7 @@ const CASES: &[(&str, &str)] = &[
     (r#"root = "2026-10-25T01:00:00.5Z".ts_tz("Europe/Helsinki")"#, "\"2026-10-25T03:00:00.5+02:00\""),
     (r#"root = "2026-10-25T01:00:00Z".ts_format("2006", "Nowhere/Town")"#, "error: failed assignment (line 1): string literal: failed to parse timezone location name: unknown time zone Nowhere/Town"),
     (r#"root = "Sun Mar 29 02:30:00 +0100 CET 2026".ts_parse("Mon Jan 2 15:04:05 -0700 MST 2006")"#, "\"2026-03-29T02:30:00+01:00\""),
-    (r#"root = "29.3.2026 3:04PM".ts_parse("2.1.2006 3:04PM")"#, "\"2026-03-29T12:04:00Z\""),
+    (r#"root = "29.3.2026 3:04PM".ts_parse("2.1.2006 3:04PM")"#, "\"2026-03-29T15:04:00Z\""),
     (r#"root = "2026-02-30".ts_parse("2006-01-02")"#, "error: failed assignment (line 1): string literal: invalid date 2026-02-30"),
     // strftime both ways.
     (r#"root = "2026-03-29T01:00:00.123456789Z".ts_strftime("%a %A %b %B %d %e %H %I %M %S %f %p %P %z %Z %s %F %T %y %%", "Europe/Bratislava")"#, "Sun Sunday Mar March 29 29 03 03 00 00 123456 AM am +0200 +02:00 1774746000 2026-03-29 03:00:00 26 %"),
@@ -59,10 +59,10 @@ const CASES: &[(&str, &str)] = &[
     (r#"root = "2026-03-29T01:30:00.123456789+02:00".ts_unix_micro()"#, "1774740600123456"),
     (r#"root = "2026-03-29T01:30:00.123456789+02:00".ts_sub("2026-03-28T01:30:00Z".ts_parse("2006-01-02T15:04:05Z07:00"))"#, "79200123456789"),
     (r#"root = "2026-03-29T01:30:31.5+02:00".ts_round(60000000000)"#, "\"2026-03-29T01:31:00+02:00\""),
-    (r#"root = "2026-01-31T12:00:00+01:00".ts_add_iso8601("P1M1DT1H")"#, "\"2026-03-01T13:00:00+01:00\""),
-    (r#"root = "2024-02-29T12:00:00Z".ts_sub_iso8601("P1Y")"#, "\"2023-02-28T12:00:00Z\""),
+    (r#"root = "2026-01-31T12:00:00+01:00".ts_add_iso8601("P1M1DT1H")"#, "\"2026-03-04T13:00:00+01:00\""),
+    (r#"root = "2024-02-29T12:00:00Z".ts_sub_iso8601("P1Y")"#, "\"2023-03-01T12:00:00Z\""),
     // Go's %v of a time.Time, and the string a timestamp compares as.
-    (r#"root = "%v|%v".format("2026-03-29T01:30:00.12Z".ts_parse("2006-01-02T15:04:05Z07:00"), "2026-03-29T03:30:00+02:00".ts_parse("2006-01-02T15:04:05Z07:00"))"#, "2026-03-29 01:30:00.120 +0000 UTC|2026-03-29 03:30:00 +0200 +0200"),
+    (r#"root = "%v|%v".format("2026-03-29T01:30:00.12Z".ts_parse("2006-01-02T15:04:05Z07:00"), "2026-03-29T03:30:00+02:00".ts_parse("2006-01-02T15:04:05Z07:00"))"#, "2026-03-29 01:30:00.12 +0000 UTC|2026-03-29 03:30:00 +0200 +0200"),
     (r#"root = "2026-03-29T01:30:00.12Z".ts_parse("2006-01-02T15:04:05Z07:00") == "2026-03-29T01:30:00.120Z""#, "true"),
     (r#"root = "2026-03-29T01:30:00.12Z".ts_parse("2006-01-02T15:04:05Z07:00") == "2026-03-29T01:30:00.12Z""#, "false"),
     // NGSI-LD observedAt from a timestamp value: UTC, AutoSi digits.

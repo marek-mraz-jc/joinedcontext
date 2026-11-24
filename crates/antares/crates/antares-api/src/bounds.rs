@@ -23,13 +23,8 @@ use web_time::Instant as Clock;
 /// → bare 413 (6.3.4). Deployment knob (ANTARES_MAX_BODY_BYTES): the spec
 /// names no ceiling; 4 MiB is the DoS bound, raised where a trusted
 /// producer legitimately sends bigger batches. Read once at first use.
-pub static MAX_BODY_BYTES: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_MAX_BODY_BYTES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(4 * 1024 * 1024)
-});
+pub static MAX_BODY_BYTES: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_MAX_BODY_BYTES", 4 * 1024 * 1024));
 pub const MAX_URI_BYTES: usize = 8 * 1024; // → bare 414
 pub const MAX_JSON_DEPTH: usize = 64; // → 400 BadRequestData
 /// → 403 TooManyResults (5.5.6) on the NGSI-LD API, 413 on a surface
@@ -198,10 +193,16 @@ impl MemoryBudget {
         let pool = usize::try_from(self.answers()).unwrap_or(usize::MAX);
         st.answer_pool = AnswerPool::new(pool);
         st.max_answer_bytes = MAX_ANSWER_BYTES.min(pool);
-        st.context_bytes = self.implicit_contexts();
-        if let Some(text) = *CONTEXT_BYTES_PER_TENANT {
-            st.context_bytes = text.saturating_mul(HEAP_PER_TEXT_BYTE);
-        }
+        st.context_bytes = self.context_bytes(*CONTEXT_BYTES_PER_TENANT);
+    }
+
+    /// The per-Tenant @context byte cap: `text` bytes of JSON text at what a
+    /// byte costs in memory when [`CONTEXT_BYTES_PER_TENANT`] sets it, else
+    /// the budget's share.
+    fn context_bytes(self, text: Option<u64>) -> u64 {
+        text.map_or(self.implicit_contexts(), |t| {
+            t.saturating_mul(HEAP_PER_TEXT_BYTE)
+        })
     }
 }
 
@@ -515,13 +516,8 @@ pub use antares_ql::geo::MAX_GEO_VERTICES;
 /// spec sets no batch ceiling — 1000 is this broker's DoS-bounds default,
 /// raised where a trusted producer legitimately batches larger (e.g. a
 /// full-fleet upsert). Read once at first use.
-pub static MAX_BATCH_ITEMS: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_MAX_BATCH_ITEMS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(1_000)
-});
+pub static MAX_BATCH_ITEMS: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_MAX_BATCH_ITEMS", 1_000));
 /// What a stored @context costs of `AppState::context_bytes` per
 /// byte of its JSON text: the memory store holds it as a `serde_json::Value`,
 /// measured at ~4.3x the text (a 2 000-term @context, 92 KB of text, held
@@ -532,65 +528,40 @@ pub(crate) const HEAP_PER_TEXT_BYTE: u64 = 4;
 /// (Hosted, ImplicitlyCreated) one Tenant stores (S4-15). Each kind has the
 /// cap to itself, so reads with inline @contexts cannot use up what the
 /// Tenant may host. 1,000 unless set.
-pub static CONTEXTS_PER_TENANT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_CONTEXTS_PER_TENANT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(1_000)
-});
+pub static CONTEXTS_PER_TENANT: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_CONTEXTS_PER_TENANT", 1_000));
 /// Deployment knob (ANTARES_CONTEXT_BYTES_PER_TENANT): the bytes of JSON text
 /// those @contexts hold together. Unset, the memory budget's share
 /// ([`MemoryBudget::implicit_contexts`]) over what a byte of text costs in
 /// memory, 2 MiB at the default budget.
 pub static CONTEXT_BYTES_PER_TENANT: std::sync::LazyLock<Option<u64>> =
     std::sync::LazyLock::new(|| {
-        std::env::var("ANTARES_CONTEXT_BYTES_PER_TENANT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|n| *n > 0)
+        positive(
+            std::env::var("ANTARES_CONTEXT_BYTES_PER_TENANT")
+                .ok()
+                .as_deref(),
+        )
     });
 /// Deployment knob (ANTARES_CHANNELS_PER_TENANT): the inbound Channels one
 /// Tenant binds (S4-16), each a task and a bridge connection. 50 unless set.
-pub static CHANNELS_PER_TENANT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_CHANNELS_PER_TENANT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(50)
-});
+pub static CHANNELS_PER_TENANT: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_CHANNELS_PER_TENANT", 50));
 /// Deployment knob (ANTARES_CHANNELS_MAX): the Channels one process runs,
 /// every Tenant's together. 1,000 unless set.
-pub static CHANNELS_MAX: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_CHANNELS_MAX")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(1_000)
-});
+pub static CHANNELS_MAX: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_CHANNELS_MAX", 1_000));
 /// Deployment knob (ANTARES_MAX_LIMIT): the most Entities one query page
 /// answers (`limit`, 6.3.9; past it 403 TooManyResults). 1,000 unless set;
 /// read once at first use, and advertised by the MCP tools as their `limit`
 /// maximum (T-4800).
-pub static MAX_LIMIT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_MAX_LIMIT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(1_000)
-});
+pub static MAX_LIMIT: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_MAX_LIMIT", 1_000));
 /// Deployment knob (ANTARES_DEFAULT_LIMIT): the Entities a query page answers
 /// when the request names no `limit` (6.3.9 leaves it to the broker); the
 /// next page is Linked. 100 unless set, never above [`MAX_LIMIT`] (owner,
 /// T-4804); advertised by the MCP tools as their `limit` default.
-pub static DEFAULT_LIMIT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_DEFAULT_LIMIT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(100)
-        .min(*MAX_LIMIT)
-});
+pub static DEFAULT_LIMIT: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_DEFAULT_LIMIT", 100).min(*MAX_LIMIT));
 /// Deployment knob (ANTARES_TEMPORAL_INSTANCE_LIMIT): NGSI-LD 6.3.10, the
 /// most instances of one Attribute a temporal response serves; past it the
 /// representation is cut and answered 206 with a Content-Range. 1,000 unless
@@ -600,13 +571,8 @@ pub static DEFAULT_LIMIT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(
 /// as their `lastN` maximum. Read once at first use into
 /// `AppState::temporal_instance_limit`, which a test or the wasm broker
 /// (no process env; it reads `globalThis`) sets per state.
-pub static TEMPORAL_INSTANCE_LIMIT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_TEMPORAL_INSTANCE_LIMIT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(1_000)
-});
+pub static TEMPORAL_INSTANCE_LIMIT: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_TEMPORAL_INSTANCE_LIMIT", 1_000));
 
 /// [`TEMPORAL_INSTANCE_LIMIT`].
 pub fn temporal_instance_limit() -> usize {
@@ -630,12 +596,7 @@ pub const AGGREGATE_BUDGET: std::time::Duration = std::time::Duration::from_secs
 /// `AppState::temporal_default_instances`.
 pub static TEMPORAL_DEFAULT_INSTANCES: std::sync::LazyLock<usize> =
     std::sync::LazyLock::new(|| {
-        std::env::var("ANTARES_TEMPORAL_DEFAULT_INSTANCES")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|n| *n > 0)
-            .unwrap_or(100)
-            .min(temporal_instance_limit())
+        env_count("ANTARES_TEMPORAL_DEFAULT_INSTANCES", 100).min(temporal_instance_limit())
     });
 
 /// [`TEMPORAL_DEFAULT_INSTANCES`].
@@ -647,36 +608,21 @@ pub fn temporal_default_instances() -> usize {
 // fails like an unparseable payload (Table 6.3.17-1, warning 111) instead of
 // ballooning broker memory — one misbehaving peer must not break the
 // 500 MB RSS budget. Read once at first use.
-pub static MAX_FED_RESPONSE_BYTES: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_MAX_FED_RESPONSE_BYTES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(16 * 1024 * 1024)
-});
+pub static MAX_FED_RESPONSE_BYTES: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_MAX_FED_RESPONSE_BYTES", 16 * 1024 * 1024));
 // Deployment knob (ANTARES_FED_INFLIGHT): forwarded requests in flight for
 // the whole process. Per-request fan-out is bounded below; across requests
 // nothing was, and 6 000 open federated queries × 34 sources each held
 // 7.7 GB of buffers and connections. Callers over the cap wait their turn.
-pub static MAX_FED_INFLIGHT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_FED_INFLIGHT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(256)
-});
+pub static MAX_FED_INFLIGHT: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_FED_INFLIGHT", 256));
 pub static FED_INFLIGHT: std::sync::LazyLock<tokio::sync::Semaphore> =
     std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(*MAX_FED_INFLIGHT));
 // Deployment knob (ANTARES_FED_FANOUT): concurrent forwards per distributed
 // read. 4.3.6.1 orders the MERGE (4.5.5), never the requests, so forwards
 // run concurrently; this bounds how many at once per request.
-pub static MAX_FED_FANOUT: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_FED_FANOUT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(8)
-});
+pub static MAX_FED_FANOUT: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_FED_FANOUT", 8));
 /// 6.3.17: `NGSILD-Warning` values relayed from ONE Context Source. The
 /// clause makes a peer's warnings part of this broker's answer (4.3.6.4 puts
 /// a deeper hop's abnormality on the response that survived it), so the list
@@ -733,13 +679,8 @@ pub const DISCOVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(6
 /// and pages second, so the page cannot be pushed down). Without it one
 /// request over a tenant at the 100 000-registration target holds every match
 /// at once. Read once at first use.
-pub static MAX_FOLD_DOCS: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    std::env::var("ANTARES_DISCOVERY_SCAN_MAX")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(100_000)
-});
+pub static MAX_FOLD_DOCS: std::sync::LazyLock<usize> =
+    std::sync::LazyLock::new(|| env_count("ANTARES_DISCOVERY_SCAN_MAX", 100_000));
 
 /// The ceilings on the notification pipeline. Not input bounds: no request
 /// names them and none is rejected against them. They are published beside
@@ -936,11 +877,24 @@ pub static DELIVERY_WIDTH_PER_TENANT: std::sync::LazyLock<usize> = std::sync::La
 /// unparseable or zero — a zero would mint a semaphore that admits nobody
 /// and stop delivery altogether — and the ceiling bounds what a deployment
 /// can ask for where a larger number would be meaningless.
-fn count_from(raw: Option<&str>, default: usize, ceiling: usize) -> usize {
+pub(crate) fn count_from(raw: Option<&str>, default: usize, ceiling: usize) -> usize {
+    positive(raw).unwrap_or(default).min(ceiling)
+}
+
+/// A deployment knob's value: a number above zero, else `None` (unset, not a
+/// number, zero or negative), so a typo keeps the default instead of
+/// disabling the bound.
+pub(crate) fn positive<T: std::str::FromStr + PartialOrd + Default>(
+    raw: Option<&str>,
+) -> Option<T> {
     raw.and_then(|v| v.parse().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(default)
-        .min(ceiling)
+        .filter(|n| *n > T::default())
+}
+
+/// The count knob `name` from the process env, [`count_from`] without a
+/// ceiling.
+fn env_count(name: &str, default: usize) -> usize {
+    count_from(std::env::var(name).ok().as_deref(), default, usize::MAX)
 }
 /// Destinations and registrations the egress breaker tracks. Both maps are
 /// keyed by client-supplied strings, so they need a bound: at the ceiling the
@@ -1220,6 +1174,52 @@ mod tests {
         );
         drop(charge);
         assert_eq!(pool.held(), 0);
+    }
+
+    /// A share widens while the pool has room; asked for less than it holds
+    /// it stays, and refused it keeps what it held until it drops.
+    #[tokio::test]
+    async fn a_share_grows_with_room_and_keeps_its_bytes_when_refused() {
+        let pool = AnswerPool::with_wait(1000, std::time::Duration::ZERO);
+        let mut share = pool.share();
+        assert_eq!(share.bytes(), 0);
+        share.grow(400, "test").await.expect("room");
+        assert_eq!((share.bytes(), pool.held()), (400, 400));
+        share.grow(300, "test").await.expect("held already");
+        assert_eq!((share.bytes(), pool.held()), (400, 400), "never shrinks");
+        assert_eq!(
+            share.grow(1200, "test").await,
+            Err(AnswerRefusal::OverBudget)
+        );
+        assert_eq!((share.bytes(), pool.held()), (400, 400), "kept on refusal");
+        share.grow(1000, "test").await.expect("the whole pool");
+        assert_eq!(pool.held(), 1000);
+        drop(share);
+        assert_eq!(pool.held(), 0);
+    }
+
+    /// Each refusal reaches the client as the NGSI-LD answer its cause
+    /// names: 403 past one answer's bound, 503 with `Retry-After` while the
+    /// pool is full, 500 for a broken body.
+    #[test]
+    fn each_refusal_maps_to_its_ngsi_ld_answer() {
+        use axum::response::IntoResponse;
+        let answer = |r| crate::negotiate::ApiError::from(r).into_response();
+        assert_eq!(
+            answer(AnswerRefusal::TooLarge).status(),
+            StatusCode::FORBIDDEN
+        );
+        let full = answer(AnswerRefusal::OverBudget);
+        assert_eq!(full.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(full.headers().contains_key(axum::http::header::RETRY_AFTER));
+        assert_eq!(
+            answer(AnswerRefusal::Body).status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert!(matches!(
+            antares_model::NgsiError::from(AnswerRefusal::Body),
+            antares_model::NgsiError::InternalError(m) if m == "buffered answer body failed"
+        ));
     }
 
     /// N concurrent buffered answers share one pool: past it a read is
@@ -1632,6 +1632,26 @@ mod tests {
     /// a semaphore that admits nobody, and a per-tenant share above the
     /// width names a ceiling that can never fire. Both fall back rather
     /// than take the number as given.
+    #[test]
+    fn a_knob_is_a_number_above_zero_or_nothing() {
+        for bad in [
+            None,
+            Some(""),
+            Some("x"),
+            Some("0"),
+            Some("-5"),
+            Some("1.5"),
+        ] {
+            assert_eq!(positive::<u64>(bad), None, "{bad:?}");
+        }
+        assert_eq!(positive::<u64>(Some("2097152")), Some(2_097_152));
+        assert_eq!(positive::<usize>(Some("7")), Some(7));
+        let budget = MemoryBudget::default();
+        assert_eq!(budget.context_bytes(None), budget.implicit_contexts());
+        assert_eq!(budget.context_bytes(Some(1000)), 1000 * HEAP_PER_TEXT_BYTE);
+        assert_eq!(budget.context_bytes(Some(u64::MAX)), u64::MAX, "saturates");
+    }
+
     #[test]
     fn a_configured_count_falls_back_rather_than_disabling_delivery() {
         assert_eq!(count_from(None, 64, usize::MAX), 64, "unset is the default");

@@ -564,6 +564,68 @@ describe("the Applications tab", () => {
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("import it under another name");
     expect(sent.map((one) => one.search)).toEqual(["?format=app&dryRun=All"]);
   });
+
+  it("forgets the chosen archive and project when the import is cancelled (T-7588)", async () => {
+    const user = userEvent.setup();
+    renderApplications();
+    await user.click(await screen.findByRole("button", { name: en.appImport.button }));
+    let dialog = await screen.findByRole("dialog");
+    await user.upload(within(dialog).getByLabelText(en.appImport.file), new File(["PK"], "air-map-app.zip"));
+    await user.selectOptions(within(dialog).getByLabelText(new RegExp(en.appImport.project)), "espoo");
+    await user.click(within(dialog).getByRole("button", { name: en.form.cancel }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(screen.getByRole("button", { name: en.appImport.button }));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText(new RegExp(en.appImport.project))).toHaveValue("");
+    expectDenied(within(dialog).getByRole("button", { name: en.appImport.check }), en.appImport.noFile);
+  });
+
+  it("closes on Close once the import is proposed (T-7588)", async () => {
+    const user = userEvent.setup();
+    renderApplications();
+    await user.click(await screen.findByRole("button", { name: en.appImport.button }));
+    const dialog = await screen.findByRole("dialog");
+    await user.upload(within(dialog).getByLabelText(en.appImport.file), new File(["PK"], "air-map-app.zip"));
+    await user.selectOptions(within(dialog).getByLabelText(new RegExp(en.appImport.project)), "espoo");
+    await user.click(within(dialog).getByRole("button", { name: en.appImport.check }));
+    await user.click(await within(dialog).findByRole("button", { name: en.appImport.import }));
+    await within(dialog).findByText(/chg-9/);
+    await user.click(within(dialog).getAllByRole("button", { name: en.resourceDelete.close }).at(-1) as HTMLElement);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("sorts the Apps by lifecycle and by repository (T-7588)", async () => {
+    const user = userEvent.setup();
+    renderApplications();
+    await screen.findByRole("row", { name: /Air quality map/ });
+    const first = () => document.querySelector(".jc-data-grid tbody tr")?.textContent ?? "";
+    const A = en.organization.applications;
+    await user.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${A.lifecycle}` }));
+    await user.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortAsc }));
+    expect(first()).toMatch(/kiosk/);
+    await user.click(screen.getByRole("button", { name: `${en.entityGrid.columnMenu}: ${A.source}` }));
+    await user.click(screen.getByRole("menuitemradio", { name: en.entityGrid.sortDesc }));
+    expect(first()).toMatch(/Air quality map/);
+  });
+});
+
+describe("the Applications tab when a read fails (T-7588)", () => {
+  it("says why the Apps could not be read and reads every project's again on Retry", async () => {
+    const user = userEvent.setup();
+    let reads = 0;
+    renderPage(<OrganizationApplications />, {
+      path: "/organization/applications",
+      answer: (url) => {
+        if (url.pathname.endsWith("/permissions/me")) return json(ADMIN);
+        if (url.pathname === "/api/v1/projects") return json(list([{ name: "helsinki" }]));
+        if (url.pathname === "/api/v1/projects/helsinki/apps") return ++reads === 1 ? json({ title: "Unavailable", status: 503, detail: "the forge is not answering" }, 503) : json(list(APPS.helsinki));
+        return undefined;
+      },
+    });
+    expect(await screen.findByText(/the forge is not answering/)).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: en.app.error.retry }).at(-1) as HTMLElement);
+    expect(await screen.findByRole("row", { name: /Air quality map/ })).toBeInTheDocument();
+  });
 });
 
 describe("deleting a project (PF-77, PF-78)", () => {

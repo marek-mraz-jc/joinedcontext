@@ -105,13 +105,7 @@ function OrganizationMembers(): JSX.Element {
   const { t } = useTranslation();
   const permissions = usePermissions(ORG_NAMESPACE);
   const reads = mayRead(permissions.data, "RoleBinding");
-  if (permissions.isLoading) {
-    return (
-      <p role="status" className="text-body text-fg-muted">
-        {t("app.loading")}
-      </p>
-    );
-  }
+  // The page opens this section once the same permissions read answered (useAdministers' known).
   if (reads !== true) {
     return (
       <section

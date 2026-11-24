@@ -254,7 +254,7 @@ pub fn compile(query: &str) -> Result<JqFilter, String> {
 }
 
 /// gojq's `Run` iterator, collected; the first error stops it, and so does the budget.
-fn run(filter: &JqFilter, input: Val, meta: Val) -> Result<Vec<Value>, String> {
+pub fn run(filter: &JqFilter, input: Val, meta: Val) -> Result<Vec<Value>, String> {
     let limits = jaq_core::budget::Limits {
         steps: MAX_STEPS,
         time: MAX_TIME,
@@ -364,10 +364,9 @@ fn number_val(s: &str) -> Val {
     if let Ok(i) = s.parse::<i64>() {
         return int_val(i as i128);
     }
-    if s.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
-        if let Some(n) = Num::from_str_radix(s, 10) {
-            return Val::Num(n);
-        }
+    let integer = s.bytes().all(|b| b.is_ascii_digit() || b == b'-');
+    if let Some(n) = integer.then(|| Num::from_str_radix(s, 10)).flatten() {
+        return Val::Num(n);
     }
     Val::from(s.parse::<f64>().unwrap_or(f64::NAN))
 }

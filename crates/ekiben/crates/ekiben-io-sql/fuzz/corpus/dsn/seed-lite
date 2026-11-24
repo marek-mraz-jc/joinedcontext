@@ -1,0 +1,1 @@
+file:x.db?_pragma=foreign_keys(1)&mode=ro&cache=shared

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::future::IntoFuture;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -161,29 +162,15 @@ async fn main() {
     std::process::exit(exit_code);
 }
 
-/// Reads an `OrgQuotas` file for `ekiben run --quotas`; an unknown field is refused, so a typo
-/// never silently keeps a default.
+/// Reads an `OrgQuotas` file for `ekiben run --quotas`, refused as `quotas.yaml` refuses an
+/// organization's entry ([`ekiben_server::config_dir::quotas_from_map`]).
 fn load_quotas(path: &std::path::Path) -> Result<OrgQuotas, String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read quotas '{}': {e}", path.display()))?;
-    let value: serde_norway::Value =
-        serde_norway::from_str(&text).map_err(|e| format!("quotas '{}': {e}", path.display()))?;
-    let known: Vec<String> = serde_json::to_value(OrgQuotas::default())
-        .ok()
-        .and_then(|v| v.as_object().map(|m| m.keys().cloned().collect()))
-        .unwrap_or_default();
-    if let Some(map) = value.as_mapping() {
-        for key in map.keys() {
-            let name = key.as_str().unwrap_or_default();
-            if !known.iter().any(|k| k == name) {
-                return Err(format!(
-                    "quotas '{}': unknown field `{name}`",
-                    path.display()
-                ));
-            }
-        }
-    }
-    serde_norway::from_value(value).map_err(|e| format!("quotas '{}': {e}", path.display()))
+    serde_norway::from_str::<serde_json::Value>(&text)
+        .map_err(|e| e.to_string())
+        .and_then(|value| ekiben_server::config_dir::quotas_from_map(&value))
+        .map_err(|e| format!("quotas '{}': {e}", path.display()))
 }
 
 async fn run_cli(cli: Cli) -> Result<i32, String> {
@@ -221,8 +208,9 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
             }
             let stream_id = config
                 .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "run".to_string());
+                .unwrap_or(config.as_os_str())
+                .to_string_lossy()
+                .into_owned();
 
             let summary = run_stream_once(stream_id, stream_conf, reg, resources, None, access)
                 .await
@@ -255,10 +243,6 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
             ekiben_io_http::http_server::set_streams_mode();
             let reg = build_full_registry();
             let resources = ResourceManager::new();
-            let metrics_conf =
-                load_metrics_config(metrics.as_ref(), &resource_files, &global_sets)?;
-            let metrics_registry =
-                MetricsRegistry::with_config(metrics_conf).map_err(|e| e.to_string())?;
             // Streams mode reads only EKIBEN_VAR_* process variables and each organization's
             // own variables (E1): a hosted process's environment holds other modules' secrets.
             if org_tokens_file.is_some() && file_root.is_none() {
@@ -269,8 +253,7 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 );
             }
             let mut manager =
-                StreamManager::new(reg, resources.clone(), file_root, EnvAccess::AllowListed)
-                    .with_metrics_registry(metrics_registry);
+                StreamManager::new(reg, resources.clone(), file_root, EnvAccess::AllowListed);
             if org_tokens_file.is_some() {
                 manager = manager.with_org_file_roots();
             }
@@ -294,6 +277,13 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                     .map_err(|e| format!("{}: {e}", path.display()))?;
             }
 
+            // The `metrics:` sections of the same files (read once more), `--metrics` and `--set`.
+            let metrics_conf =
+                load_metrics_config(metrics.as_ref(), &resource_files, &global_sets)?;
+            let metrics_registry =
+                MetricsRegistry::with_config(metrics_conf).map_err(|e| e.to_string())?;
+            manager = manager.with_metrics_registry(metrics_registry);
+
             if let Some(addr) = ingest_addr {
                 let listener = TcpListener::bind(&addr)
                     .await
@@ -304,16 +294,14 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 let router = ekiben_io_ngsild::notification::ingest_router();
                 #[cfg(not(feature = "ngsild"))]
                 let router = ekiben_io_http::ingest::router();
-                tokio::spawn(async move {
-                    let served = axum::serve(
+                // axum::serve never returns: it handles a failed accept itself.
+                tokio::spawn(
+                    axum::serve(
                         listener,
                         router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
                     )
-                    .await;
-                    if let Err(e) = served {
-                        tracing::error!("ingest listener: {e}");
-                    }
-                });
+                    .into_future(),
+                );
             }
 
             for path in configs {
@@ -328,8 +316,9 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 }
                 let id = path
                     .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "stream".to_string());
+                    .unwrap_or(path.as_os_str())
+                    .to_string_lossy()
+                    .into_owned();
                 manager
                     .create_posted(id, conf, StreamConfig::posted_json(&raw))
                     .await
@@ -359,16 +348,20 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                 guard_probes: false,
                 oidc: None,
             };
-            let state = ServerState::new(manager, auth);
+            let stop = shutdown_signal()?;
+            let state = ServerState::new(manager.clone(), auth);
             let app = build_router(state);
 
             let bind_addr = format!("{host}:{port}");
             let listener = TcpListener::bind(&bind_addr)
                 .await
                 .map_err(|e| format!("failed to bind {bind_addr}: {e}"))?;
-            axum::serve(listener, app)
-                .await
-                .map_err(|e| format!("server error: {e}"))?;
+            // Ends only at the shutdown signal: axum handles a failed accept itself.
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(stop)
+                .await;
+            // A stop (SIGTERM from the orchestrator, ^C) drains each stream before the exit.
+            manager.stop_all(Duration::from_secs(10)).await;
             Ok(0)
         }
         Commands::Schedule { configs } => {
@@ -384,16 +377,22 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                     .map_err(|e| e.to_string())?;
                 let id = path
                     .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "scheduled".to_string());
+                    .unwrap_or(path.as_os_str())
+                    .to_string_lossy()
+                    .into_owned();
                 scheduler
                     .add_stream(id, conf, jiff::Timestamp::now())
                     .map_err(|e| e.to_string())?;
             }
 
+            let stop = shutdown_signal()?;
+            tokio::pin!(stop);
             loop {
                 let _ = scheduler.trigger_due(jiff::Timestamp::now());
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                tokio::select! {
+                    () = &mut stop => return Ok(0),
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {}
+                }
             }
         }
         Commands::Blobl { mapping, raw } => {
@@ -485,10 +484,25 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                     }
                 }
             }
-            let _ = OrgId::default();
             Ok(if any_errors { 1 } else { 0 })
         }
     }
+}
+
+/// Listens for SIGTERM (an orchestrator stopping the pod) and SIGINT (^C) from the start, so a
+/// signal that comes early is not lost.
+fn shutdown_signal() -> Result<impl std::future::Future<Output = ()>, String> {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut term =
+        signal(SignalKind::terminate()).map_err(|e| format!("cannot listen for SIGTERM: {e}"))?;
+    let mut int =
+        signal(SignalKind::interrupt()).map_err(|e| format!("cannot listen for SIGINT: {e}"))?;
+    Ok(async move {
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
+        }
+    })
 }
 
 fn parse_clock(text: &str) -> Result<jiff::Timestamp, String> {
@@ -513,6 +527,19 @@ mod tests {
         assert_eq!(quotas.max_in_flight_messages, 100_000);
         assert_eq!(quotas.max_concurrent_streams, 64);
         assert!(!quotas.allow_private_ips);
+    }
+
+    #[test]
+    fn a_quotas_file_must_be_a_map_of_limits_of_at_least_one() {
+        let err = load_quotas(file("[100000]\n").path()).expect_err("array");
+        assert!(err.ends_with("expected a map of quota fields"), "{err}");
+        let err = load_quotas(file("max_messages_per_sec: 0\n").path()).expect_err("zero");
+        assert!(
+            err.ends_with("max_messages_per_sec must be at least 1"),
+            "{err}"
+        );
+        let err = load_quotas(file("a: [\n").path()).expect_err("yaml");
+        assert!(err.starts_with("quotas '"), "{err}");
     }
 
     #[test]

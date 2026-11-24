@@ -171,6 +171,25 @@ describe("a route edited in the studio", () => {
     expect(screen.queryByTestId("flow-node-route-0-output-0")).not.toBeInTheDocument();
   });
 
+  it("renames a route, adds a second output and removes it again, keeping the route; its last output removes the route", async () => {
+    const seen = vi.fn();
+    render(<Host seen={seen} />);
+    await userEvent.click(screen.getByRole("button", { name: en.pipelines.flow.addRoute }));
+    const name = screen.getByTestId("flow-route-name");
+    await userEvent.clear(name);
+    await userEvent.type(name, "hot");
+    expect(seen).toHaveBeenLastCalledWith(expect.objectContaining({ routes: [expect.objectContaining({ name: "hot" })] }));
+    await userEvent.click(screen.getByTestId("flow-route-add-output"));
+    expect(seen).toHaveBeenLastCalledWith(
+      expect.objectContaining({ routes: [expect.objectContaining({ outputs: [{ mode: "upsert" }, { mode: "upsert" }] })] }),
+    );
+    await userEvent.click(screen.getByTestId("flow-output-remove"));
+    expect(seen).toHaveBeenLastCalledWith(expect.objectContaining({ routes: [expect.objectContaining({ name: "hot", outputs: [{ mode: "upsert" }] })] }));
+    expect(screen.getByTestId("flow-node-route-0-output-0")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("flow-output-remove"));
+    expect(seen).toHaveBeenLastCalledWith(expect.objectContaining({ routes: [] }));
+  });
+
   it("removes a route with Delete on its only output", async () => {
     const seen = vi.fn();
     render(<Host seen={seen} />);

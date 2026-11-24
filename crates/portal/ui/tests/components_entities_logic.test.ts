@@ -60,6 +60,14 @@ slots:
     range: string
 `;
 
+describe("parseModel on a source that does not parse (T-7588)", () => {
+  it("answers the empty model for an alias bomb instead of throwing", () => {
+    const bomb = `id: https://example.org/m\nname: m\na: &a [x]\nclasses: [${Array.from({ length: 120 }, () => "*a").join(", ")}]\n`;
+    expect(() => parseModel(bomb)).not.toThrow();
+    expect(parseModel(bomb).classes).toEqual([]);
+  });
+});
+
 describe("fieldOperations", () => {
   it("numbers an enum name the model already has with a trailing underscore", () => {
     const model = parseModel(MODEL);

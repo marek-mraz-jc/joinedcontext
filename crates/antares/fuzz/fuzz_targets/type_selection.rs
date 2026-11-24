@@ -11,10 +11,19 @@ fuzz_target!(|data: &[u8]| {
     if data.len() > 4096 {
         return;
     }
-    let Ok(sel) = std::str::from_utf8(data) else { return };
+    let Ok(sel) = std::str::from_utf8(data) else {
+        return;
+    };
     let ctx = CTX.get_or_init(antares_jsonld::core_context);
-    let _ = antares_ql::type_selection_matches(sel, &["https://example.org/T", "https://example.org/U"], ctx);
+    let _ = antares_ql::type_selection_matches(
+        sel,
+        &["https://example.org/T", "https://example.org/U"],
+        ctx,
+    );
     if sel.trim() != "*" {
-        assert!(!antares_ql::type_selection_matches(sel, &[], ctx), "{sel:?} matched an entity of no type");
+        assert!(
+            !antares_ql::type_selection_matches(sel, &[], ctx),
+            "{sel:?} matched an entity of no type"
+        );
     }
 });

@@ -40,14 +40,8 @@ pub(crate) fn string_list(
 ) -> Result<Vec<String>, CoreError> {
     obj.get(key)
         .and_then(JsonValue::as_array)
-        .ok_or_else(|| CoreError::config(format!("field {key}: expected a list of strings")))?
-        .iter()
-        .map(|v| {
-            v.as_str().map(String::from).ok_or_else(|| {
-                CoreError::config(format!("field {key}: expected a list of strings"))
-            })
-        })
-        .collect()
+        .and_then(|a| a.iter().map(|v| v.as_str().map(String::from)).collect())
+        .ok_or_else(|| CoreError::config(format!("field {key}: expected a list of strings")))
 }
 
 /// squirrel `Select(columns...).From(table).Where(where).Prefix(prefix).Suffix(suffix)`.
@@ -82,11 +76,7 @@ pub fn select_sql(
 /// `newSQLSelectInputFromConfig`.
 pub fn build(conf: &ComponentConfig, ctx: &StreamContext) -> Result<RowsInput, CoreError> {
     refuse_lint("input", conf, lint)?;
-    require(conf, &["driver", "dsn", "table", "columns"])?;
-    let obj = conf
-        .config
-        .as_object()
-        .ok_or_else(|| CoreError::config("sql_select: expected an object"))?;
+    let obj = require(conf, &["driver", "dsn", "table", "columns"])?;
     let conn = Conn::from_config(obj, "dsn", ctx)?;
     let s = |k: &str| obj.get(k).and_then(JsonValue::as_str);
     let query = select_sql(

@@ -1,0 +1,69 @@
+# Fuzzes the bloblang parsers and formatters that read outside input (T-7576): Go and strptime
+# time layouts, Go durations and ISO 8601 periods, Go's fmt verbs, json.Number decoding,
+# MessagePack, WKT, GML and JSON Schema. Each must answer a value or an error, never panic,
+# hang or allocate without bound. Run by hand: cargo +nightly fuzz run <target> --
+# -max_total_time=300. Not a member of the ekiben workspace.
+[package]
+name = "ekiben-bloblang-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ekiben-bloblang = { path = ".." }
+
+[[bin]]
+name = "time"
+path = "fuzz_targets/time.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sprintf"
+path = "fuzz_targets/sprintf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "go_json"
+path = "fuzz_targets/go_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "msgpack"
+path = "fuzz_targets/msgpack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wkt"
+path = "fuzz_targets/wkt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gml"
+path = "fuzz_targets/gml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_schema"
+path = "fuzz_targets/json_schema.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
