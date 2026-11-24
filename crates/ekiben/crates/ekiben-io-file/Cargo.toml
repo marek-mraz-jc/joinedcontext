@@ -9,7 +9,6 @@ publish = false
 ekiben-bloblang = { workspace = true }
 ekiben-core = { workspace = true }
 tokio = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
 jc-time = { workspace = true }
@@ -24,8 +23,6 @@ regex = { workspace = true }
 snap = { workspace = true }
 zstd = { workspace = true }
 glob = { workspace = true }
-thiserror = { workspace = true }
-tracing = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 

@@ -666,6 +666,104 @@ mod tests {
         assert!(message.contains("target Endpoint ep-b"), "{message}");
     }
 
+    /// A spec jc-core cannot read is left to the kind's validation, a DataSource the mirror does
+    /// not hold is judged by a read on every DataSource, and an output Endpoint no space holds
+    /// is the reference check's refusal, not this one.
+    #[test]
+    fn an_unreadable_spec_an_unknown_data_source_and_an_unknown_target() {
+        let state = world();
+        let mut broken = pipeline(data_source("secret-feed"), "ep-a");
+        broken["spec"]["sources"] = json!("feed");
+        assert_eq!(refusal(&state, &broken, Verb::Propose), None);
+        assert!(unstored(&state.mirror, "helsinki", &broken, "pl-route").is_empty());
+        let unknown = pipeline(data_source("never"), "ep-a");
+        assert_eq!(
+            refusal(&state, &unknown, Verb::Propose),
+            None,
+            "dev reads DataSources"
+        );
+        let Err(ApiError::Denied(message)) = check(
+            &state,
+            &person("stranger@hel.fi"),
+            "helsinki",
+            &unknown,
+            Verb::Propose,
+        ) else {
+            panic!("a stranger reads no DataSource")
+        };
+        assert!(message.contains("DataSource never"), "{message}");
+        assert_eq!(
+            refusal(
+                &state,
+                &pipeline(data_source("feed"), "no-such-endpoint"),
+                Verb::Propose
+            ),
+            None
+        );
+    }
+
+    /// A pipeline runs as its own `pl-{name}` under per-pipeline identity, else as the shared
+    /// account; a manifest without a name still answers an account.
+    #[test]
+    fn the_account_is_the_pipelines_own_under_pipeline_identity() {
+        let manifest = pipeline(data_source("feed"), "ep-a");
+        assert_eq!(
+            account(true, &manifest),
+            jc_core::kinds::pipeline_identity::account_name("route")
+        );
+        assert_eq!(
+            account(false, &manifest),
+            crate::reconciler::streams::PIPELINE_ACCOUNT
+        );
+        assert_eq!(
+            account(true, &json!({})),
+            jc_core::kinds::pipeline_identity::account_name("")
+        );
+    }
+
+    /// The first pipeline shape names its one source as `spec.source.endpointRef`; a `store`
+    /// whose validity starts later is not in force yet, one that started is.
+    #[test]
+    fn a_store_counts_from_its_start_and_the_first_shape_names_its_source() {
+        let first_shape = json!({
+            "apiVersion": "joinedcontext.com/v1alpha2",
+            "kind": "Pipeline",
+            "metadata": { "name": "route", "namespace": "helsinki" },
+            "spec": {
+                "class": "resident",
+                "source": { "endpointRef": { "kind": "Endpoint", "name": "shared", "namespace": "praha" },
+                            "query": { "type": "Vehicle" } },
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:a:ep-a",
+            }
+        });
+        let own = "helsinki/pl-route";
+        let state = world();
+        shared_by_praha(&state, &[]);
+        let refused = unstored(&state.mirror, "helsinki", &first_shape, "pl-route");
+        assert!(
+            refused[0].starts_with("spec.source.endpointRef: "),
+            "{refused:?}"
+        );
+        for (from, in_force) in [
+            ("2099-01-01T00:00:00Z", false),
+            ("2020-01-01T00:00:00Z", true),
+        ] {
+            let state = world();
+            shared_by_praha(&state, &[(own, "permission", json!(["store"]), None)]);
+            let mut policy = state
+                .mirror
+                .get("praha", "Policy", "share-0")
+                .expect("held");
+            policy.spec["validity"] = json!({ "from": from });
+            state.mirror.upsert(policy);
+            assert_eq!(
+                unstored(&state.mirror, "helsinki", &copy_of_praha(), "pl-route").is_empty(),
+                in_force,
+                "from {from}"
+            );
+        }
+    }
+
     #[test]
     fn other_kinds_and_the_bootstrap_group_pass() {
         let state = world();

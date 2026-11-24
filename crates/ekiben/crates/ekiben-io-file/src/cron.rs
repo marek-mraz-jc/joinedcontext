@@ -480,6 +480,37 @@ mod tests {
     }
 
     #[test]
+    fn a_range_below_the_field_minimum_is_refused_and_an_impossible_date_never_fires() {
+        assert_eq!(
+            parse("0 0 0 * *").expect_err("refused"),
+            "beginning of range (0) below minimum (1): 0"
+        );
+        // a step of 1 keeps a star a star: day of month `*/1` and Monday fire on Mondays only
+        assert_eq!(
+            next("0 0 */1 * 1", "2026-01-01T00:00:00Z"),
+            "2026-01-05T00:00:00+00:00"
+        );
+        // in the autumn fold the earlier 03:45 is already past at the later 03:30: the next day fires
+        assert_eq!(
+            next("TZ=Europe/Helsinki 0 45 3 * * *", "2026-10-25T01:30:00Z"),
+            "2026-10-26T01:45:00+00:00"
+        );
+        // a list is the union of its ranges, overlaps included
+        assert_eq!(
+            next("1-5,3 0 * * *", "2026-01-01T00:02:30Z"),
+            "2026-01-01T00:03:00+00:00"
+        );
+        assert_eq!(
+            parse("*/-1 * * * *").expect_err("refused"),
+            "negative number (-1) not allowed: -1"
+        );
+        assert!(parse("0 0 30 2 *")
+            .expect("parses")
+            .next(at("2026-01-01T00:00:00Z"))
+            .is_none());
+    }
+
+    #[test]
     fn bad_expressions_name_the_fault_like_robfig() {
         for (expr, want) in [
             ("bogus", "expected 5 to 6 fields, found 1: [bogus]"),

@@ -1416,6 +1416,16 @@ pub fn negotiate_locale(
 #[cfg(test)]
 mod tests {
 
+    /// A properties line is `key = value`; a blank line, a comment and a line without `=` add
+    /// nothing.
+    #[test]
+    fn a_properties_line_without_an_equals_sign_adds_nothing() {
+        let map = parse_properties("# comment\n\n a = one \nno equals here\nb=two=2\n");
+        assert_eq!(map.len(), 2, "{map:?}");
+        assert_eq!(map.get("a"), Some(&"one"));
+        assert_eq!(map.get("b"), Some(&"two=2"));
+    }
+
     /// P-4-07: a page render borrows the locale's parsed messages instead of reparsing them.
     #[test]
     fn for_locale_borrows_one_parsed_map_per_locale() {

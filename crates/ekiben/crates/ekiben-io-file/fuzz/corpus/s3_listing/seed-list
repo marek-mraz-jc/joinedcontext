@@ -1,0 +1,1 @@
+<ListBucketResult><IsTruncated>true</IsTruncated><Contents><Key>a&amp;b.txt</Key></Contents><NextContinuationToken>t1</NextContinuationToken></ListBucketResult>

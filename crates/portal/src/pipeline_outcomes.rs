@@ -721,6 +721,33 @@ mod tests {
         }
     }
 
+    /// A bare JWT and a PEM block are credentials wherever they sit; near misses of the JWT shape
+    /// (two segments, a short segment, a character outside base64url, no `eyJ` header) are not.
+    #[test]
+    fn a_bare_jwt_and_a_pem_block_are_credentials_and_near_misses_are_not() {
+        assert!(credential_shaped(&jwt()));
+        assert!(
+            credential_shaped(&format!("  {}  ", jwt())),
+            "trimmed first"
+        );
+        assert!(credential_shaped("-----BEGIN PRIVATE KEY-----\nMIIB\n"));
+        assert_eq!(
+            mask_text(&format!("token {} expired", jwt())),
+            format!("token {MASK} expired")
+        );
+        let [header, claims, signature] =
+            ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiJ4In0", "c2lnbmF0dXJl"];
+        for near in [
+            format!("{header}.{claims}"),
+            format!("{header}.{claims}.{signature}.{signature}"),
+            format!("{header}.abc.{signature}"),
+            format!("{header}.{claims}.sig+nature"),
+            format!("abcdJhbGci.{claims}.{signature}"),
+        ] {
+            assert!(!credential_shaped(&near), "{near}");
+        }
+    }
+
     #[test]
     fn ordinary_values_are_not_credentials() {
         for text in [
@@ -781,6 +808,73 @@ mod tests {
             .collect();
         assert_eq!(newest, [json!(59), json!(58), json!(56)]);
         assert!(store.groups("q", "a").await.expect("none").is_empty());
+    }
+
+    /// A sync drops the lists of pipelines a loaded project no longer holds and leaves a project
+    /// it did not read alone.
+    #[tokio::test]
+    async fn a_sync_forgets_the_lists_of_gone_pipelines_of_the_projects_it_read() {
+        let store = RejectedStore::new(None, Default::default());
+        for (project, pipeline) in [("p", "kept"), ("p", "gone"), ("unread", "any")] {
+            store
+                .reject(project, pipeline, &json!({}), &reason("id", "id", None))
+                .await
+                .expect("kept");
+        }
+        let loaded = BTreeMap::from([("p".to_owned(), HashSet::from(["kept".to_owned()]))]);
+        store.forget_gone(&loaded).await.expect("forgotten");
+        assert_eq!(store.count("p", "kept").await.unwrap(), 1);
+        assert_eq!(store.count("p", "gone").await.unwrap(), 0);
+        assert_eq!(
+            store.count("unread", "any").await.unwrap(),
+            1,
+            "not read, not touched"
+        );
+        let none = BTreeMap::from([("p".to_owned(), HashSet::new())]);
+        store.forget_gone(&none).await.expect("forgotten");
+        assert_eq!(
+            store.count("p", "kept").await.unwrap(),
+            0,
+            "a project with no pipeline"
+        );
+        assert!(store.take("p", "never", &[1]).await.unwrap().is_empty());
+    }
+
+    /// A thread that panicked holding the in-memory list leaves it usable: every read and write
+    /// goes on with what the list held.
+    #[tokio::test]
+    async fn a_poisoned_list_still_keeps_lists_counts_groups_takes_and_forgets() {
+        let store = RejectedStore::new(None, Default::default());
+        store
+            .reject("p", "a", &json!({"n": 1}), &reason("id", "id", None))
+            .await
+            .expect("kept");
+        let Inner::Memory(map) = &store.inner else {
+            panic!("a store without a database is in memory")
+        };
+        std::thread::scope(|s| {
+            let _ = s
+                .spawn(|| {
+                    let _held = map.write().unwrap();
+                    panic!("poison the list");
+                })
+                .join();
+        });
+        assert!(map.is_poisoned());
+        store
+            .reject("p", "a", &json!({"n": 2}), &reason("id", "id", None))
+            .await
+            .expect("kept after the poison");
+        assert_eq!(store.count("p", "a").await.unwrap(), 2);
+        assert_eq!(store.list("p", "a", 10, None).await.unwrap().len(), 2);
+        assert_eq!(store.groups("p", "a").await.unwrap()[0].count, 2);
+        let first = store.list("p", "a", 10, None).await.unwrap()[1].id;
+        assert_eq!(store.take("p", "a", &[first]).await.unwrap().len(), 1);
+        store
+            .forget_gone(&BTreeMap::new())
+            .await
+            .expect("nothing loaded");
+        assert_eq!(store.count("p", "a").await.unwrap(), 1);
     }
 
     #[tokio::test]
