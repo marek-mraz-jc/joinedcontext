@@ -551,6 +551,10 @@ mod tests {
         ] {
             assert!(exec(c, &sql, &[]).is_err(), "{sql} ran");
         }
+        // Two guards: with the attach limit lifted the authorizer still refuses.
+        c.set_limit(Limit::SQLITE_LIMIT_ATTACHED, 10).unwrap();
+        let e = exec(c, "ATTACH ':memory:' AS m", &[]).unwrap_err();
+        assert!(e.contains("not authorized"), "{e}");
         assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
         let mut n = 0;
         query(c, "SELECT a FROM t", &[], |_| {

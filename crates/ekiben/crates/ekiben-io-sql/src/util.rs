@@ -1306,12 +1306,19 @@ mod tests {
             "2024-01-02T03:04:05+24:00",
             "2024-01-02T03:04:05+05:60",
             "2024-01-02T03:04:05+0a",
+            "2024-01-02T03:04:05+24",
             "2024-01-02T03:04:05+123",
         ] {
             assert!(
                 parse_with_offset(t, "%Y-%m-%dT%H:%M:%S%.f").is_none(),
                 "{t}"
             );
+        }
+        // The widest offsets a clock has are offsets.
+        for (t, secs) in [("+23:59", 86_340), ("-23:59", -86_340), ("+23", 82_800)] {
+            let at = parse_with_offset(&format!("2024-01-02T00:00:00{t}"), "%Y-%m-%dT%H:%M:%S%.f")
+                .unwrap_or_else(|| panic!("{t}"));
+            assert_eq!(at.as_second(), 1_704_153_600 - secs, "{t}");
         }
         assert_eq!(
             db_error_text(&crate::sqlx::Error::RowNotFound),

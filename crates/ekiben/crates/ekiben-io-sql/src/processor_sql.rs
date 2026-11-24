@@ -436,6 +436,14 @@ mod tests {
             .unwrap();
         assert_eq!(bodies(&out), [r#"[{"name":"b"}]"#, "[]"]);
         assert!(p.process_batch(&ctx, Vec::new()).await.unwrap().is_empty());
+        // Closed, the next message opens a new memory database: the init statement ran once per
+        // component, so the seeded table is gone.
+        p.close().await.unwrap();
+        let out = p
+            .process_batch(&ctx, vec![Part::from_str(r#"{"id":2}"#)])
+            .await
+            .unwrap();
+        assert!(out[0][0].is_errored());
     }
 
     #[tokio::test]
@@ -586,6 +594,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(insert.processor_type(), "sql_insert");
+        let memory = build_insert(
+            &conf(
+                "sql_insert",
+                json!({"driver": "sqlite", "dsn": ":memory:", "init_statement": "CREATE TABLE t (a int)",
+                    "table": "t", "columns": ["a"], "args_mapping": "root = [ 1 ]"}),
+            ),
+            &ctx,
+        )
+        .unwrap();
+        let one = || vec![Part::from_str("{}")];
+        assert!(!memory.process_batch(&ctx, one()).await.unwrap()[0][0].is_errored());
+        memory.close().await.unwrap();
+        assert!(
+            memory.process_batch(&ctx, one()).await.unwrap()[0][0].is_errored(),
+            "closed, the memory database and its table are gone"
+        );
         assert!(insert
             .process_batch(&ctx, Vec::new())
             .await

@@ -1119,6 +1119,9 @@ mod tests {
         let (ok, _) = parse_dsn(Driver::Sqlite, "file:ok.db", Some(dir.path())).unwrap();
         let db = open(&ok, &settings, &org).await.unwrap();
         assert_eq!(db.driver(), Driver::Sqlite);
+        db.close().await;
+        let e = db.exec_raw("SELECT 1").await.unwrap_err();
+        assert_eq!(crate::util::db_error_text(&e), "sql: database is closed");
         let (missing, _) =
             parse_dsn(Driver::Sqlite, "file:none.db?mode=rw", Some(dir.path())).unwrap();
         let e = open(&missing, &settings, &org)

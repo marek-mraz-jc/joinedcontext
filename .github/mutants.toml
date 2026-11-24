@@ -43,6 +43,10 @@ exclude_re = [
   'ekiben-io-sql/src/lib\.rs:\d+:\d+: .* in fuzzing::lint_all',
   'ekiben-io-sql/src/lib\.rs:\d+:\d+: replace fuzzing::lint_all with \(\)',
   'ekiben-io-sql/src/util\.rs:\d+:\d+: (replace fuzz_values with \(\)|.* in fuzz_values)',
+  # T-7582 ekiben-io-sql sqlite parse_dsn: the OpenFlags it joins are distinct single bits, so `^` joins them alike.
+  'ekiben-io-sql/src/sqlite\.rs:\d+:\d+: replace \| with \^ in parse_dsn',
+  # T-7582 ekiben-io-sql parse_with_offset: the sign is 1 or -1, and x / 1 == x * 1, x / -1 == x * -1.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace \* with / in parse_with_offset',
   # T-7632 ekiben-io-ngsild status_text: a body of exactly ERROR_BODY_BYTES is cut at its own length either way.
   'ekiben-io-ngsild/src/client\.rs:\d+:\d+: replace > with >= in status_text',
   # T-7632 ekiben-io-ngsild: the next pass due exactly now sleeps zero either way; an equal timestamp
