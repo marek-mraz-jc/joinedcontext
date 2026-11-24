@@ -760,6 +760,45 @@ mod tests {
         &mut m.iter_mut().find(|(n, _)| n.ends_with(ext)).unwrap().1
     }
 
+    /// The fixture with a 4-byte field (`at` bytes into the central directory header) of the
+    /// member ending in `ext` set to `value`: 16 is its CRC-32, 24 its declared size.
+    fn patch_central(ext: &str, at: usize, value: u32) -> Vec<u8> {
+        let mut zip = rezip(|_| {});
+        let mut i = 0;
+        while let Some(off) = zip[i..].windows(4).position(|w| w == b"PK\x01\x02") {
+            let h = i + off;
+            let name_len = usize::from(u16::from_le_bytes([zip[h + 28], zip[h + 29]]));
+            if zip[h + 46..h + 46 + name_len].ends_with(ext.as_bytes()) {
+                zip[h + at..h + at + 4].copy_from_slice(&value.to_le_bytes());
+                return zip;
+            }
+            i = h + 4;
+        }
+        panic!("no {ext} member");
+    }
+
+    #[test]
+    fn a_member_whose_central_directory_lies_is_refused() {
+        let cap = u32::try_from(MAX_ARCHIVE_UNPACKED_BYTES).unwrap();
+        let err = features(&patch_central(".dbf", 24, cap + 1), 100).unwrap_err();
+        assert_eq!(
+            err,
+            format!("shapefile unpacks to more than {MAX_ARCHIVE_UNPACKED_BYTES} bytes")
+        );
+        // A size declared too small: the zip reader refuses past it.
+        let err = features(&patch_central(".shp", 24, 10), 100).unwrap_err();
+        assert!(
+            err.starts_with("failed to read ")
+                && err.ends_with("larger than its declared uncompressed size"),
+            "{err}"
+        );
+        let err = features(&patch_central(".prj", 16, 0xDEAD_BEEF), 100).unwrap_err();
+        assert!(
+            err.starts_with("failed to read ") && err.contains(".prj: "),
+            "{err}"
+        );
+    }
+
     #[test]
     fn the_prj_names_its_crs_by_authority_or_by_name() {
         let esri = br#"PROJCS["EUREF-FIN_GK25FIN",GEOGCS["GCS_EUREF_FIN",DATUM["D_ETRS_1989",SPHEROID["GRS_1980",6378137.0,298.257222101]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],PROJECTION["Transverse_Mercator"],UNIT["Meter",1.0]]"#;
@@ -799,6 +838,8 @@ mod tests {
         assert_eq!(name(b"CP1257"), Ok("windows-1257"));
         assert_eq!(name(b"ISO-8859-2"), Ok("ISO-8859-2"));
         assert!(name(b"klingon").unwrap_err().contains("\"klingon\""));
+        // A number that is no code page ekiben maps, and no encoding label either.
+        assert!(name(b"437").unwrap_err().contains("\"437\""));
         assert!(matches!(ldid_encoding(0x57), Encoding::Known(e) if e.name() == "windows-1252"));
         assert!(matches!(ldid_encoding(0x00), Encoding::Guess));
         assert!(matches!(ldid_encoding(0x02), Encoding::Unsupported(0x02)));
@@ -1135,6 +1176,15 @@ mod tests {
         assert_ne!(
             raw[0].to_json_value()["geometry"],
             projected[0].to_json_value()["geometry"]
+        );
+        // A geographic CRS read over projected metres puts the points off the globe.
+        let etrs89 = rezip(|m| {
+            *member(m, ".prj") = br#"GEOGCS["ETRS89",AUTHORITY["EPSG","4258"]]"#.to_vec();
+        });
+        let err = features(&etrs89, 100).unwrap_err();
+        assert!(
+            err.contains("record 1:") && err.contains("latitude is out of range"),
+            "{err}"
         );
         let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
         for i in 0..=crate::archive::MAX_ARCHIVE_MEMBERS {

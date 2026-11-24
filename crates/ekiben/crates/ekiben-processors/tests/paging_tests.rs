@@ -308,6 +308,52 @@ async fn unarchive_pages_hold_the_members_process_batch_returns() {
 }
 
 #[tokio::test]
+async fn unarchive_pages_flag_what_process_batch_flags_and_skip_an_empty_csv() {
+    let (reg, ctx) = make_ctx();
+    let cases: [(&str, &[u8], Option<&str>); 3] = [
+        ("csv", b"", None),
+        (
+            "json_documents",
+            b"{\"a\":1} {nope",
+            Some("key must be a string"),
+        ),
+        (
+            "csv",
+            b"id\n\xff\xfe\n",
+            Some("failed to parse message as csv: "),
+        ),
+    ];
+    for (format, doc, want) in cases {
+        let conf = ComponentConfig::from_json_value(
+            &serde_json::json!({"unarchive": {"format": format}}),
+            "noop",
+            None,
+        )
+        .unwrap();
+        let proc = reg.build_processor(&conf, &ctx, "0").unwrap();
+        let input = vec![Part::new(doc.to_vec())];
+        let pages: Vec<Batch> = match proc.pages(&ctx, input.clone(), 1) {
+            Ok(pages) => pages.collect(),
+            Err(_) => panic!("unarchive pages {format}"),
+        };
+        let one = proc.process_batch(&ctx, input).await.unwrap();
+        assert_eq!(messages(&pages), messages(&one), "{format}");
+        let flagged: Vec<String> = pages
+            .iter()
+            .flatten()
+            .filter_map(|p| p.error_get().map(|e| e.message.clone()))
+            .collect();
+        match want {
+            None => assert!(messages(&pages).is_empty(), "{format}"),
+            Some(want) => {
+                assert_eq!(flagged.len(), 1, "{format}: {flagged:?}");
+                assert!(flagged[0].contains(want), "{format}: {}", flagged[0]);
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_bad_csv_row_flags_its_whole_message_and_lets_no_row_through() {
     let (reg, ctx) = make_ctx();
     let conf = ComponentConfig::from_json_value(
