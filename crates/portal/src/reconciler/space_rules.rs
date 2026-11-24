@@ -346,11 +346,14 @@ mod tests {
     #[test]
     fn a_rule_quarantines_by_its_outcome_or_its_max_age() {
         let rule = |extra: Value| -> jc_core::kinds::QualityRule {
-            let mut base = json!({"name": "r", "entityType": "Vehicle", "attribute": "speed"});
-            if let (Some(b), Some(e)) = (base.as_object_mut(), extra.as_object()) {
-                b.extend(e.clone());
-            }
-            serde_json::from_value(base).expect("rule")
+            let mut base: serde_json::Map<String, Value> = serde_json::from_value(
+                json!({"name": "r", "entityType": "Vehicle", "attribute": "speed"}),
+            )
+            .expect("an object");
+            base.extend(
+                serde_json::from_value::<serde_json::Map<String, Value>>(extra).expect("an object"),
+            );
+            serde_json::from_value(Value::Object(base)).expect("rule")
         };
         assert!(!quarantines(&rule(json!({"kind": "range", "max": 1}))));
         assert!(quarantines(&rule(
@@ -368,12 +371,14 @@ mod tests {
     }
 
     fn quality(extra: Value) -> QualityRule {
-        let mut base = json!({"name": "fresh", "entityType": "Bus", "attribute": "speed",
-                              "kind": "freshness"});
-        if let (Some(b), Some(e)) = (base.as_object_mut(), extra.as_object()) {
-            b.extend(e.clone());
-        }
-        serde_json::from_value(base).expect("rule")
+        let mut base: serde_json::Map<String, Value> = serde_json::from_value(
+            json!({"name": "fresh", "entityType": "Bus", "attribute": "speed", "kind": "freshness"}),
+        )
+        .expect("an object");
+        base.extend(
+            serde_json::from_value::<serde_json::Map<String, Value>>(extra).expect("an object"),
+        );
+        serde_json::from_value(Value::Object(base)).expect("rule")
     }
 
     /// DM-91: only a `maxAge` rule reaches the broker, under every IRI pair of its class and

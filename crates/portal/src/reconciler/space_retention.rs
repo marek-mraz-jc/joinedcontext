@@ -351,6 +351,136 @@ mod tests {
         assert_eq!(retention.retained()["org-p-air"].removed_at, T0 + 2);
     }
 
+    /// A retained spaces file that does not parse or cannot be read starts empty, and one that
+    /// cannot be written keeps the state in memory: the Portal starts and syncs either way.
+    #[test]
+    fn an_unreadable_or_unwritable_state_file_costs_no_sync() {
+        let dir = std::env::temp_dir().join(format!("jc-retained-broken-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let garbled = dir.join("garbled.json");
+        std::fs::write(&garbled, b"{not json").expect("write");
+        assert!(SpaceRetention::new(Some(garbled)).retained().is_empty());
+        assert!(
+            SpaceRetention::new(Some(dir.clone())).retained().is_empty(),
+            "a directory"
+        );
+        let nowhere = SpaceRetention::new(Some(dir.join("missing/retained.json")));
+        nowhere.observe(&spaces(&["air"]), &brokers(), false, T0);
+        nowhere.observe(&[], &brokers(), false, T0 + 1);
+        assert_eq!(nowhere.retained().len(), 1, "kept in memory");
+        assert!(!dir.join("missing").exists());
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// A retained space still gone on the next run stays retained, and a purge of a tenant that
+    /// is not retained changes nothing.
+    #[test]
+    fn a_space_still_gone_stays_retained_and_an_unknown_purge_is_ignored() {
+        let retention = SpaceRetention::new(None);
+        retention.observe(&spaces(&["air", "noise"]), &brokers(), false, T0);
+        retention.observe(&spaces(&["noise"]), &brokers(), false, T0 + 1);
+        retention.observe(&spaces(&["noise"]), &brokers(), false, T0 + 2);
+        assert_eq!(retention.retained()["org-p-air"].removed_at, T0 + 1);
+        retention.purged("org-p-never");
+        assert_eq!(retention.retained().len(), 1);
+    }
+
+    #[test]
+    fn a_purge_date_reads_as_a_utc_minute() {
+        assert_eq!(date(T0), "2027-01-15 08:00 UTC");
+        assert_eq!(
+            date(u64::MAX),
+            u64::MAX.to_string(),
+            "past i64: the seconds"
+        );
+    }
+
+    fn envelope(
+        kind: &str,
+        name: &str,
+        conditions: Option<Vec<jc_core::Condition>>,
+    ) -> crate::resource::ResourceEnvelope {
+        use crate::resource::{ObjectMeta, Phase, ResourceEnvelope, Status, API_VERSION};
+        let namespace = if kind == "Organization" { "org" } else { name };
+        ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: ObjectMeta::new(name, namespace),
+            spec: serde_json::json!({}),
+            status: conditions.map(|conditions| Status {
+                phase: Phase::Pending,
+                observed_revision: None,
+                source_url: None,
+                conditions,
+                build: None,
+                shard: None,
+                domain_verification: None,
+                jobs: Vec::new(),
+                notifications: None,
+            }),
+        }
+    }
+
+    /// The `SpaceDataRetained` condition names each retained space of a project (of the
+    /// Organization for `org`) with its purge date, and leaves a project that holds none.
+    #[test]
+    fn each_project_holding_retained_data_is_marked_with_its_purge_dates() {
+        let mirror = Mirror::new();
+        let stale =
+            super::super::streams::make_condition(CONDITION, "True", "RemovedSpaceKept", "old");
+        mirror.upsert(envelope("Project", "p", Some(vec![])));
+        mirror.upsert(envelope("Project", "q", Some(vec![stale])));
+        mirror.upsert(envelope("Project", "untouched", Some(vec![])));
+        mirror.upsert(envelope("Project", "pending", None));
+        mirror.upsert(envelope("Organization", "city", Some(vec![])));
+        let retained = |project: &str, space: &str| Retained {
+            space: Space {
+                project: project.into(),
+                space: space.into(),
+                broker: "main".into(),
+            },
+            removed_at: T0,
+        };
+        let held = BTreeMap::from([
+            ("org-p-air".to_owned(), retained("p", "air")),
+            ("org-p-noise".to_owned(), retained("p", "noise")),
+            (
+                "org-org-x".to_owned(),
+                retained(crate::api::blueprints::ORG_NAMESPACE, "x"),
+            ),
+            ("org-pending-y".to_owned(), retained("pending", "y")),
+        ]);
+        mark(&mirror, &held);
+        let condition = |kind: &str, ns: &str, name: &str| {
+            mirror
+                .get(ns, kind, name)
+                .and_then(|e| e.status)
+                .and_then(|s| s.conditions.into_iter().find(|c| c.r#type == CONDITION))
+        };
+        let p = condition("Project", "p", "p")
+            .and_then(|c| c.message)
+            .expect("p is marked");
+        let until = date(T0 + GRACE_SECS);
+        assert!(
+            p.contains(&format!(
+                "ContextSpace air until {until}; ContextSpace noise until {until}"
+            )),
+            "{p}"
+        );
+        let org = condition("Organization", "org", "city")
+            .and_then(|c| c.message)
+            .expect("the Organization is marked");
+        assert!(org.contains("ContextSpace x"), "{org}");
+        assert!(
+            condition("Project", "q", "q").is_none(),
+            "nothing retained: the condition goes"
+        );
+        assert!(condition("Project", "untouched", "untouched").is_none());
+        assert!(mirror
+            .get("pending", "Project", "pending")
+            .is_some_and(|e| e.status.is_none()));
+    }
+
     #[test]
     fn a_space_removed_across_a_restart_is_still_retained() {
         let dir = std::env::temp_dir().join(format!("jc-retained-test-{}", std::process::id()));

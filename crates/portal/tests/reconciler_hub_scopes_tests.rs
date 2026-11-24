@@ -356,6 +356,107 @@ async fn without_the_hub_client_nothing_is_written() {
     );
 }
 
+/// The run's one outcome `*`, when the realm's answer stopped it.
+async fn stopped(keycloak: &MockServer, mirror: &Mirror) -> String {
+    let outcomes = sync(keycloak).converge(mirror).await;
+    match outcomes.as_slice() {
+        [only] if only.app == "*" => only.error.clone().unwrap_or_default(),
+        other => panic!("not stopped: {other:?}"),
+    }
+}
+
+/// A realm whose answer lacks what the run needs stops the run with an error naming it, and a
+/// refused create says which scope; an entry without a name is passed over.
+#[tokio::test]
+async fn a_realm_answer_the_run_cannot_use_stops_it_by_name() {
+    let keycloak = realm(Some(json!({ "clientId": "mcp-hub" }))).await;
+    let error = stopped(&keycloak, &mirror()).await;
+    assert!(error.contains("mcp-hub without an id"), "{error}");
+
+    let hub = json!({ "id": "hub-1", "clientId": "mcp-hub" });
+    let mut edited = desired(&air());
+    edited["description"] = json!("changed in the console");
+    let keycloak = realm(Some(hub.clone())).await;
+    scopes(
+        &keycloak,
+        json!([{ "id": "x" }, edited.clone()]),
+        json!([edited]),
+    )
+    .await;
+    let error = stopped(&keycloak, &mirror()).await;
+    assert!(
+        error.contains(&format!("listed endpoint:{AIR} without an id")),
+        "{error}"
+    );
+
+    let stale = desired(&HubEndpoint {
+        slug: QUIET.to_owned(),
+        ..air()
+    });
+    let keycloak = realm(Some(hub.clone())).await;
+    scopes(
+        &keycloak,
+        json!([{ "id": "x" }, held("s-1", desired(&air())), stale.clone()]),
+        json!([]),
+    )
+    .await;
+    let loaded = mirror();
+    loaded.hold_removals(false);
+    let error = stopped(&keycloak, &loaded).await;
+    assert!(
+        error.contains(&format!("listed endpoint:{QUIET} without an id")),
+        "{error}"
+    );
+
+    let refusing = realm(Some(hub)).await;
+    for request in [method("POST"), method("PUT"), method("DELETE")] {
+        Mock::given(request)
+            .and(path(format!("{REALM}/client-scopes")))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(1)
+            .mount(&refusing)
+            .await;
+    }
+    scopes(&refusing, json!([]), json!([])).await;
+    let error = stopped(&refusing, &mirror()).await;
+    assert!(
+        error.contains(&format!("creating endpoint:{AIR}")),
+        "{error}"
+    );
+}
+
+/// A linked scope the realm lists without an id or a name is passed over, not reported.
+#[tokio::test]
+async fn a_linked_scope_without_an_id_or_a_name_is_passed_over() {
+    let keycloak = realm(Some(json!({ "id": "hub-1", "clientId": "mcp-hub" }))).await;
+    let ours = held("s-1", desired(&air()));
+    scopes(&keycloak, json!([ours.clone()]), json!([ours.clone()])).await;
+    links(
+        &keycloak,
+        "default-client-scopes",
+        json!([{ "name": "endpoint:nameless" }]),
+    )
+    .await;
+    links(
+        &keycloak,
+        "optional-client-scopes",
+        json!([ours, { "id": "s-9" }]),
+    )
+    .await;
+    let outcomes = sync(&keycloak).converge(&mirror()).await;
+    assert!(writes(&keycloak).await.is_empty());
+    assert!(
+        outcomes
+            .iter()
+            .all(|o| o.error.is_none() && o.warnings.is_empty()),
+        "{outcomes:?}"
+    );
+    assert_eq!(
+        linked(&outcomes, &air().scope()).map(|c| c.1),
+        Some("Linked")
+    );
+}
+
 /// T-4445: a converged realm of 10,000 Endpoints and their 10,000 scopes is one linear wave
 /// that writes nothing. Before, each Endpoint searched the whole listing, and each scope the
 /// whole link list: 10^8 comparisons a wave.
