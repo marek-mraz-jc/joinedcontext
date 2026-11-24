@@ -578,7 +578,7 @@ mod tests {
     async fn a_problem_keeps_its_four_members_when_extra_is_no_object() {
         let (status, _, body) = problem_of(problem(
             StatusCode::CONFLICT,
-            "no-such-slug-here",
+            "quota",
             "Conflict",
             "taken".to_owned(),
             json!(["ignored"]),
@@ -587,7 +587,7 @@ mod tests {
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(
             body,
-            json!({"type": "https://joinedcontext.com/errors/no-such-slug-here", "title": "Conflict", "status": 409, "detail": "taken"})
+            json!({"type": "https://joinedcontext.com/errors/quota", "title": "Conflict", "status": 409, "detail": "taken"})
         );
     }
 
