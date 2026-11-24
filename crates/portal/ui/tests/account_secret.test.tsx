@@ -125,6 +125,57 @@ describe("AccountSecret (PF-37, T-5626)", () => {
     );
   });
 
+  it("copies each value, says Copied, and keeps Copy when the clipboard refuses", async () => {
+    stub({ noSecret: null, mayIssueSecret: true });
+    const writeText = vi
+      .fn<(text: string) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("denied"));
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    show();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Issue new secret" }),
+    );
+    await userEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "Issue new secret",
+      }),
+    );
+    const secret = await screen.findByLabelText("Client secret");
+    secret.focus();
+    expect((secret as HTMLInputElement).selectionEnd).toBe(
+      ISSUED.clientSecret.length,
+    );
+
+    const copySecret = screen.getByRole("button", {
+      name: "Copy Client secret",
+    });
+    await userEvent.click(copySecret);
+    expect(writeText).toHaveBeenLastCalledWith(ISSUED.clientSecret);
+    await waitFor(() => expect(copySecret).toHaveTextContent("Copied"));
+
+    const copyUrl = screen.getByRole("button", { name: "Copy Token URL" });
+    await userEvent.click(copyUrl);
+    expect(writeText).toHaveBeenLastCalledWith(ISSUED.tokenUrl);
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    expect(copyUrl).toHaveTextContent("Copy");
+    expect(copyUrl).not.toHaveTextContent("Copied");
+  });
+
+  it("closes the confirmation on Cancel without asking the Portal", async () => {
+    const sent = stub({ noSecret: null, mayIssueSecret: true });
+    show();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Issue new secret" }),
+    );
+    await userEvent.click(await screen.findByTestId("confirm-cancel"));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(sent.filter((call) => call.startsWith("POST"))).toEqual([]);
+  });
+
   it("says what failed when the Portal refuses, and shows no secret", async () => {
     stub(
       { noSecret: null, mayIssueSecret: true },

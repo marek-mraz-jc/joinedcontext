@@ -79,6 +79,8 @@ export function OrganizationConnectors(): JSX.Element {
   const revoke = useMutation({
     mutationFn: async (id: string) =>
       doorAction("portal_connector_revoke", { connector: id }),
+    // A refusal closes the dialog, so its reason shows on the page instead of behind the modal.
+    onError: () => setRevoking(null),
     onSuccess: async () => {
       setRevoking(null);
       await queryClient.invalidateQueries({ queryKey: QUERY });

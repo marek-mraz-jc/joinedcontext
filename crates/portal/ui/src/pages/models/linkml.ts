@@ -438,7 +438,14 @@ function parseSource(source: string): LinkmlModel {
   if (document.errors.length > 0) {
     return EMPTY_MODEL;
   }
-  const root = record(document.toJS({ maxAliasCount: 100 }));
+  // More than 100 aliases (a billion-laughs document) throws: a source that does not parse.
+  let tree: unknown;
+  try {
+    tree = document.toJS({ maxAliasCount: 100 });
+  } catch {
+    return EMPTY_MODEL;
+  }
+  const root = record(tree);
 
   const prefixes: Record<string, string> = {};
   for (const [prefix, target] of Object.entries(record(root.prefixes))) {
