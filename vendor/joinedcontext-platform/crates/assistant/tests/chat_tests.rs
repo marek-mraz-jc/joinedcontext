@@ -5640,10 +5640,11 @@ async fn small_talk_and_noise_never_reach_retrieval() {
             answer_of(&w.app, ask(json!({"message": message}), Some(ORIGIN))).await;
         assert_eq!(status, StatusCode::OK);
         let names: Vec<&str> = events.iter().map(|(n, _)| n.as_str()).collect();
+        // Only the first stage, sent as the question arrives (T-7789).
         assert!(
-            !names
-                .iter()
-                .any(|n| *n == "tool" || *n == "stage" || *n == "data"),
+            !events.iter().any(|(n, d)| n == "tool"
+                || n == "data"
+                || (n == "stage" && d["stage"] != "understanding")),
             "{message}: no step, search or read: {names:?}"
         );
         let answer = events
