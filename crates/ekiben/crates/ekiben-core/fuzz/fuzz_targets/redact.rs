@@ -12,11 +12,18 @@ fuzz_target!(|data: &[u8]| {
     let shown = redact_url_str(text);
     if let Ok(parsed) = url::Url::parse(text) {
         if let Some(pw) = parsed.password().filter(|p| p.len() > 8) {
-            // the same text may sit in the path or query; only the userinfo is a secret
-            let shown_pw = url::Url::parse(&shown)
-                .ok()
-                .and_then(|u| u.password().map(str::to_owned));
-            assert_ne!(shown_pw.as_deref(), Some(pw), "{text}");
+            // the userinfo copy must go; copies of the same text in the path or query may stay.
+            // Counted on the serialized input, where the password is written as password() reads.
+            assert!(
+                shown.matches(pw).count() < parsed.as_str().matches(pw).count(),
+                "{text}"
+            );
+            let shown_url = url::Url::parse(&shown).expect("redacted URL parses");
+            assert_eq!(
+                shown_url.password(),
+                Some(ekiben_core::redact::REDACTED_PLACEHOLDER),
+                "{text}"
+            );
         }
     }
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
