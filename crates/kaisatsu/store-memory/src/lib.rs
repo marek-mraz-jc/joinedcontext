@@ -5912,6 +5912,63 @@ mod tests {
         assert!(st.role_mappings.iter().any(|m| m.principal_id == "holder"));
     }
 
+    /// Realms list by name and a person's groups by path, whatever order they were stored in;
+    /// removing a client mapping from a person holding none of that client's roles leaves their
+    /// realm roles alone.
+    #[tokio::test]
+    async fn realms_and_a_persons_groups_list_in_order() {
+        let store = MemoryStore::default();
+        for name in ["zeta", "alpha", "mid"] {
+            store
+                .upsert_realm(RealmConfig {
+                    realm: name.into(),
+                    ..RealmConfig::default()
+                })
+                .await
+                .expect("realm");
+        }
+        let realms: Vec<String> = store
+            .list_realms()
+            .await
+            .expect("realms")
+            .into_iter()
+            .map(|r| r.realm)
+            .collect();
+        assert_eq!(realms, ["alpha", "mid", "zeta"]);
+        store.create_user(user("ada")).await.expect("person");
+        for name in ["zed", "abe"] {
+            let mut g = group(name, None, &format!("/{name}"));
+            g.id = name.into();
+            store.upsert_group(g).await.expect("group");
+            store.add_user_to_group(R, "ada", name).await.expect("join");
+        }
+        let paths: Vec<String> = store
+            .list_user_groups(R, "ada")
+            .await
+            .expect("groups")
+            .into_iter()
+            .map(|g| g.path)
+            .collect();
+        assert_eq!(paths, ["/abe", "/zed"]);
+        let app = store.upsert_client(client("app")).await.expect("client");
+        store.inner.write().users[0].realm_roles = vec!["reader".into()];
+        store
+            .remove_role_mapping(R, "user", "ada", Some(&app.id), "reader")
+            .await
+            .expect("remove");
+        let ada = store
+            .get_user_by_id(R, None, "ada")
+            .await
+            .expect("read")
+            .expect("person");
+        assert_eq!(
+            ada.realm_roles,
+            ["reader"],
+            "a client mapping is not a realm role"
+        );
+        assert!(!ada.client_roles.contains_key("app"));
+    }
+
     /// A row handed over without an id gets a fresh one, on its own and beside a person's update.
     #[tokio::test]
     async fn an_outbox_row_without_an_id_gets_a_fresh_one() {
