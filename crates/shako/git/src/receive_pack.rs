@@ -1388,4 +1388,104 @@ mod tests {
         let empty_ref = manifest("spec:\n  password: ${}\n");
         assert!(found("s.yaml", &empty_ref).is_some());
     }
+
+    /// One pack entry: its type and inflated size in git's header encoding, then `extra`
+    /// (an ofs-delta's base distance) and `data` deflated.
+    fn entry(kind: u8, data: &[u8], extra: &[u8]) -> Vec<u8> {
+        use std::io::Write as _;
+        let mut size = data.len() as u64;
+        let mut out = vec![(kind << 4) | (size & 0x0f) as u8];
+        size >>= 4;
+        while size > 0 {
+            *out.last_mut().expect("first byte") |= 0x80;
+            out.push((size & 0x7f) as u8);
+            size >>= 7;
+        }
+        out.extend_from_slice(extra);
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        z.write_all(data).expect("deflate");
+        out.extend(z.finish().expect("deflate"));
+        out
+    }
+
+    /// git's ofs-delta base distance: big-endian 7-bit groups, each but the last minus one.
+    fn distance(mut n: u64) -> Vec<u8> {
+        let mut out = vec![(n & 0x7f) as u8];
+        n >>= 7;
+        while n > 0 {
+            n -= 1;
+            out.insert(0, 0x80 | (n & 0x7f) as u8);
+            n >>= 7;
+        }
+        out
+    }
+
+    /// A whole pack file of `entries` with its header and SHA-1 trailer.
+    fn raw_pack(entries: &[Vec<u8>]) -> File {
+        use std::io::Write as _;
+        let mut bytes = b"PACK\0\0\0\x02".to_vec();
+        bytes.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+        for e in entries {
+            bytes.extend_from_slice(e);
+        }
+        let mut hasher = gix_hash::hasher(gix_hash::Kind::Sha1);
+        hasher.update(&bytes);
+        let trailer = hasher.try_finalize().expect("sha1");
+        bytes.extend_from_slice(trailer.as_bytes());
+        let mut file = tempfile::tempfile().expect("spool");
+        file.write_all(&bytes).expect("write");
+        std::io::Seek::rewind(&mut file).expect("rewind");
+        file
+    }
+
+    /// A chain of ofs-deltas on one blob, each based on the entry before it.
+    fn delta_chain(deltas: usize) -> Vec<Vec<u8>> {
+        let mut entries = vec![entry(3, b"x", &[])];
+        let mut offsets = vec![12u64];
+        for _ in 0..deltas {
+            let at = offsets.last().expect("base") + entries.last().expect("base").len() as u64;
+            let base = *offsets.last().expect("base");
+            entries.push(entry(6, &[1, 1, 0x01, b'y'], &distance(at - base)));
+            offsets.push(at);
+        }
+        entries
+    }
+
+    #[test]
+    fn the_pack_scan_refuses_deep_chains_huge_objects_and_broken_delta_headers() {
+        let (_, count) = scan_pack(&raw_pack(&delta_chain(MAX_DELTA_CHAIN_DEPTH)), 0)
+            .expect("a chain at the limit");
+        assert_eq!(count, MAX_DELTA_CHAIN_DEPTH as u64 + 1);
+        let err = scan_pack(&raw_pack(&delta_chain(MAX_DELTA_CHAIN_DEPTH + 1)), 0)
+            .expect_err("one past the limit");
+        assert!(
+            err.contains("delta chain depth 51 exceeds limit 50"),
+            "{err}"
+        );
+
+        // A small delta whose header claims a result past the object cap.
+        let mut huge = vec![1u8];
+        let mut size = MAX_SINGLE_OBJECT_BYTES + 1;
+        while size >= 0x80 {
+            huge.push(0x80 | (size & 0x7f) as u8);
+            size >>= 7;
+        }
+        huge.push(size as u8);
+        let pack = raw_pack(&[entry(3, b"x", &[]), entry(6, &huge, &distance(14))]);
+        let err = scan_pack(&pack, 0).expect_err("result too large");
+        assert!(err.contains("exceeds limit"), "{err}");
+
+        // A delta whose size header never ends.
+        let pack = raw_pack(&[entry(3, b"x", &[]), entry(6, &[0x80], &distance(14))]);
+        let err = scan_pack(&pack, 0).expect_err("truncated header");
+        assert!(err.contains("truncated delta header"), "{err}");
+
+        // A whole object over the cap, refused from its inflated size.
+        let blob = vec![0u8; MAX_SINGLE_OBJECT_BYTES as usize + 1];
+        let err = scan_pack(&raw_pack(&[entry(3, &blob, &[])]), 0).expect_err("object too large");
+        assert!(
+            err.contains(&format!("object size {}", blob.len())),
+            "{err}"
+        );
+    }
 }
