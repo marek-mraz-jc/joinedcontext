@@ -73,3 +73,69 @@ pub fn line_output(exec: &Executor, line: &str, raw: bool) -> Result<Vec<u8>, St
         Some(v) => v.to_go_json().into_bytes(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Broken;
+
+    impl std::io::Read for Broken {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("pipe closed"))
+        }
+    }
+
+    fn exec(mapping: &str) -> Executor {
+        Environment::new()
+            .compile_mapping(mapping)
+            .expect("mapping")
+    }
+
+    #[test]
+    fn unreadable_input_stops_with_one() {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let input = std::io::BufReader::new(Broken);
+        assert_eq!(run("root = this", false, input, &mut out, &mut err), 1);
+        assert_eq!(String::from_utf8_lossy(&err), "failed to read input\n");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn each_result_kind_prints_as_bento_prints_it() {
+        assert_eq!(
+            line_output(&exec("root = deleted()"), "{}", false).unwrap(),
+            b""
+        );
+        assert_eq!(
+            line_output(&exec("root = \"s\""), "{}", false).unwrap(),
+            b"s"
+        );
+        assert_eq!(
+            line_output(&exec("root = \"b\".bytes()"), "{}", false).unwrap(),
+            b"b"
+        );
+        assert_eq!(
+            line_output(&exec("root = {\"a\": 1}"), "x", false).unwrap(),
+            br#"{"a":1}"#
+        );
+        // Untouched: JSON input is re-encoded unless raw, anything else is printed as read.
+        let keep = exec("meta x = 1");
+        assert_eq!(
+            line_output(&keep, r#"{ "a" : 1 }"#, false).unwrap(),
+            br#"{"a":1}"#
+        );
+        assert_eq!(
+            line_output(&keep, r#"{ "a" : 1 }"#, true).unwrap(),
+            br#"{ "a" : 1 }"#
+        );
+        assert_eq!(line_output(&keep, "not json", false).unwrap(), b"not json");
+        let err = line_output(&exec("root = this.a"), "not json", false).unwrap_err();
+        assert!(
+            err.starts_with("unable to reference message as structured"),
+            "{err}"
+        );
+        let err = line_output(&exec("root = throw(\"no\")"), "{}", false).unwrap_err();
+        assert!(err.contains("no"), "{err}");
+    }
+}
