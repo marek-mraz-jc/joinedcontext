@@ -4,12 +4,14 @@
 #![no_main]
 
 use kaisatsu_core::RealmConfig;
-use kaisatsu_oidc::{CimdMetadata, validate_and_build_cimd_client};
+use kaisatsu_oidc::{validate_and_build_cimd_client, CimdMetadata};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     let text = String::from_utf8_lossy(data);
-    let (client_id, doc) = text.split_once('\0').unwrap_or(("https://app.example/cimd", &text));
+    let (client_id, doc) = text
+        .split_once('\0')
+        .unwrap_or(("https://app.example/cimd", &text));
     let Ok(doc) = serde_json::from_str::<CimdMetadata>(doc) else {
         return;
     };

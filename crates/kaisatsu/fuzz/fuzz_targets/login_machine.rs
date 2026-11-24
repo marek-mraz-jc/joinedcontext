@@ -3,17 +3,28 @@
 //! reaches the code step while a required second factor was never passed.
 #![no_main]
 
-use kaisatsu_login::{LoginInput, LoginPolicyContext, LoginState, transition};
+use kaisatsu_login::{transition, LoginInput, LoginPolicyContext, LoginState};
 use libfuzzer_sys::fuzz_target;
 
 fn input(b: u8) -> LoginInput {
     match b % 23 {
-        0 => LoginInput::SubmitIdentifier { user_id: "u1".into(), routed_idp: None },
-        1 => LoginInput::SubmitIdentifier { user_id: "u1".into(), routed_idp: Some("idp".into()) },
+        0 => LoginInput::SubmitIdentifier {
+            user_id: "u1".into(),
+            routed_idp: None,
+        },
+        1 => LoginInput::SubmitIdentifier {
+            user_id: "u1".into(),
+            routed_idp: Some("idp".into()),
+        },
         2 => LoginInput::StartPasskeyCeremony,
-        3 => LoginInput::UpstreamAssertionVerified { user_id: "u1".into() },
+        3 => LoginInput::UpstreamAssertionVerified {
+            user_id: "u1".into(),
+        },
         4 => LoginInput::VerifyPasswordOk,
-        5 => LoginInput::VerifyPasskeyOk { user_id: "u1".into(), user_verified: b & 0x80 != 0 },
+        5 => LoginInput::VerifyPasskeyOk {
+            user_id: "u1".into(),
+            user_verified: b & 0x80 != 0,
+        },
         6 => LoginInput::SwitchToWebAuthn2fa,
         7 => LoginInput::SwitchToRecoveryCode,
         8 => LoginInput::VerifyOtpOk,
@@ -24,13 +35,19 @@ fn input(b: u8) -> LoginInput {
         13 => LoginInput::CompleteUpdatePasswordOk,
         14 => LoginInput::CompleteVerifyEmailOk,
         15 => LoginInput::AcceptTermsOk,
-        16 => LoginInput::SelectOrganization { org_id: "o1".into() },
+        16 => LoginInput::SelectOrganization {
+            org_id: "o1".into(),
+        },
         17 => LoginInput::GrantConsent,
         18 => LoginInput::DenyConsent,
         19 => LoginInput::RequestPasswordReset,
-        20 => LoginInput::OpenResetLink { user_id: "u1".into() },
+        20 => LoginInput::OpenResetLink {
+            user_id: "u1".into(),
+        },
         21 => LoginInput::ConfirmLogout,
-        _ => LoginInput::SelectOrganization { org_id: String::new() },
+        _ => LoginInput::SelectOrganization {
+            org_id: String::new(),
+        },
     }
 }
 
@@ -43,8 +60,16 @@ fuzz_target!(|data: &[u8]| {
         second_factor_required: flags & 1 != 0,
         has_totp_credential: flags & 2 != 0,
         has_webauthn_credential: flags & 4 != 0,
-        pending_actions: if flags & 8 != 0 { vec!["VERIFY_EMAIL".into()] } else { Vec::new() },
-        org_choices: if flags & 16 != 0 { vec!["o1".into(), "o2".into()] } else { Vec::new() },
+        pending_actions: if flags & 8 != 0 {
+            vec!["VERIFY_EMAIL".into()]
+        } else {
+            Vec::new()
+        },
+        org_choices: if flags & 16 != 0 {
+            vec!["o1".into(), "o2".into()]
+        } else {
+            Vec::new()
+        },
         pinned_org: (flags & 32 != 0).then(|| "o1".into()),
         consent_required: flags & 64 != 0,
         app_action: (flags & 128 != 0).then(|| "UPDATE_PASSWORD".into()),

@@ -16,13 +16,17 @@ fuzz_target!(|data: &[u8]| {
         redirect_uris: registered.clone(),
         ..ClientRepresentation::default()
     };
-    client
-        .attributes
-        .insert("post.logout.redirect.uris".into(), patterns.replace('\n', "##"));
+    client.attributes.insert(
+        "post.logout.redirect.uris".into(),
+        patterns.replace('\n', "##"),
+    );
     let logout_ok = validate_post_logout_redirect_uri(&client, candidate);
     if accepted || logout_ok {
         let url = url::Url::parse(candidate.trim()).expect("accepted URI parses");
-        assert!(url.username().is_empty() && url.password().is_none(), "userinfo accepted");
+        assert!(
+            url.username().is_empty() && url.password().is_none(),
+            "userinfo accepted"
+        );
         assert!(url.fragment().is_none(), "fragment accepted");
     }
 });

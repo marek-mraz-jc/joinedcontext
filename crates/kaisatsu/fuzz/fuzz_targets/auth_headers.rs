@@ -3,8 +3,10 @@
 //! yields more than AUTH_COOKIE_HANDLES handles, each 43 base64url characters.
 #![no_main]
 
-use http::{HeaderMap, HeaderValue, header};
-use kaisatsu_oidc::{AUTH_COOKIE_HANDLES, add_auth_cookie, auth_cookie_holds, parse_authz_header, read_cookie};
+use http::{header, HeaderMap, HeaderValue};
+use kaisatsu_oidc::{
+    add_auth_cookie, auth_cookie_holds, parse_authz_header, read_cookie, AUTH_COOKIE_HANDLES,
+};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -27,5 +29,8 @@ fuzz_target!(|data: &[u8]| {
     assert!(handles.iter().all(|h| h.len() == 43));
     let _ = auth_cookie_holds(&headers, "0000");
     let set = add_auth_cookie(&headers, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 60);
-    assert!(set.contains("HttpOnly"), "auth cookie without HttpOnly: {set}");
+    assert!(
+        set.contains("HttpOnly"),
+        "auth cookie without HttpOnly: {set}"
+    );
 });
