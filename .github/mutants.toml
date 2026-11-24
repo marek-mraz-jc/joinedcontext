@@ -231,6 +231,10 @@ exclude_re = [
   # kaisatsu-import apply_realm_files: listing a re-applied person's groups when the file names none only adds a read;
   # `in_every_group` over an empty file list is true either way, so the plan and the writes are the same.
   'crates/kaisatsu/import/src/lib\.rs:.*replace match guard !file_groups\.is_empty\(\) with true in apply_realm_files',
+  # kaisatsu-store-memory: a session, code, PAR request, revocation or outbox retry expiring at exactly the
+  # microsecond TimestampTz::now() reads; a test reads the clock before the store does, so the two never tie
+  # and `>` and `>=` cannot be told apart. Past and future expiries are tested on each (T-7608).
+  'crates/kaisatsu/store-memory/src/lib\.rs:\d+:\d+: replace > with >= in <impl Store for MemoryStore>::(get_auth_session_by_id|consume_par_request|get_sso_session|get_sso_session_by_handle|list_user_sso_sessions|is_token_revoked|claim_outbox_batch|sweep_expired)',
   # daiya-expr classic_reduce avg: with no valid value the mean is never read (all_null answers None),
   # so dividing by a zero count or not is alike (T-7633).
   'daiya/expr/src/classic\.rs:\d+:\d+: replace > with >= in classic_reduce',
