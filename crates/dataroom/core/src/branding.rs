@@ -1342,10 +1342,8 @@ fn svg_tags(text: &str) -> Vec<SvgTag<'_>> {
                     }
                 }
             }
-            if name.is_empty() {
-                i += 1;
-                continue;
-            }
+            // An empty name (a stray `=`) stays in the list: an HTML parser reads what follows as
+            // an attribute of its own, so the check refuses it instead of skipping it.
             attributes.push((name, value));
         }
         tags.push(SvgTag { attributes });
@@ -1360,6 +1358,9 @@ fn svg_tags(text: &str) -> Vec<SvgTag<'_>> {
 /// only name a local `#fragment` or an embedded raster image; animation may not retarget them.
 fn check_svg_attribute(name: &str, value: &str) -> Result<()> {
     let refuse = |why: String| Err(DataroomError::field_error("logo", why));
+    if name.is_empty() {
+        return refuse(format!("SVG contains an attribute without a name before '{value}'"));
+    }
     if name.starts_with("on") && name.len() > 2 {
         return refuse(format!(
             "SVG contains forbidden event handler attribute '{name}'"

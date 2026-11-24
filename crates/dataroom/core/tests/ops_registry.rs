@@ -1555,6 +1555,198 @@ async fn source_test_needs_the_harvest_right_and_a_runner() {
     assert!(matches!(r, Err(DataroomError::NotSupported(_))), "{r:?}");
 }
 
+/// A runner or validator that leaves a hook out answers 501 naming the hook, never an empty success.
+#[tokio::test]
+async fn a_runner_or_validator_without_the_hook_answers_not_supported() {
+    let w = world().await;
+    let src = json!({"source": {"name": "nkod", "kind": "dcat-ap",
+        "url": "https://nkod.example/feed.ttl", "publisherId": "city",
+        "allowedHosts": ["nkod.example"]}});
+    w.run(&w.admin(), "harvest_source.propose", src)
+        .await
+        .unwrap();
+    let mut ops = w.ops();
+    ops.harvester = Some(Arc::new(Harvester));
+    ops.validator = Some(Arc::new(Validator { conforms: true }));
+    let admin = w.admin();
+    let not_supported = |r: Result<Value>| match r {
+        Err(DataroomError::NotSupported(m)) => m,
+        other => panic!("{other:?}"),
+    };
+    let run = |op: &'static str, input: Value| execute_operation(&ops, &admin, op, input);
+    assert_eq!(
+        not_supported(run("harvest_source.test", json!({"source": "nkod"})).await),
+        "this harvest runner tests no source"
+    );
+    assert_eq!(
+        not_supported(run("harvest_source.test", json!({"source": "nkod", "preview": true})).await),
+        "this harvest runner previews no source"
+    );
+    let profile = json!({"profile": {"id": "city-ext", "version": "1",
+        "uri": "https://example.org/p", "title": {"en": "City"}, "shapesTurtle": "",
+        "builtIn": false}});
+    assert_eq!(
+        not_supported(run("profile.propose", profile).await),
+        "this validator takes no uploaded profile"
+    );
+    assert_eq!(
+        not_supported(run("profile.activate", json!({"id": "city-ext", "version": "1"})).await),
+        "this validator dry-runs no profile"
+    );
+    // without any validator the activation names that, and an unknown member is refused first
+    assert_eq!(
+        not_supported(w.run(&admin, "profile.activate", json!({"id": "x", "version": "1"})).await),
+        "no validator holds the profiles here"
+    );
+    let r = w
+        .run(&admin, "profile.activate", json!({"id": "x", "version": "1", "colour": 1}))
+        .await;
+    assert!(field(&r, "input"), "{r:?}");
+    // a validator without a profile rule takes any profile the catalogue adds
+    let mut cat = run("catalogue.get", json!({})).await.unwrap();
+    cat["activeProfiles"] = json!([{"profileId": "city-ext", "version": "1"}]);
+    let saved = run("catalogue.propose", json!({"catalogue": cat})).await.unwrap();
+    assert_eq!(saved["activeProfiles"][0]["profileId"], "city-ext");
+    assert!(w.activity_ops().await.contains(&"catalogue.propose".into()));
+}
+
+#[tokio::test]
+async fn an_unknown_operation_name_is_not_found_and_a_read_only_connector_cannot_propose() {
+    let w = world().await;
+    match w.run(&w.admin(), "dataset.explode", json!({})).await {
+        Err(DataroomError::NotFound(m)) => assert_eq!(m, "unknown operation: dataset.explode"),
+        other => panic!("{other:?}"),
+    }
+    let mut connector = w.admin();
+    connector.subject.read_only = true;
+    let r = w
+        .run(
+            &connector,
+            "dataset.propose",
+            json!({"name": "novy", "title": "Nový", "notes": "Popis", "owner_org": "city"}),
+        )
+        .await;
+    assert!(matches!(&r, Err(DataroomError::Forbidden(m)) if m == "connector is read-only"), "{r:?}");
+    // the same call by the admin itself is a create
+    let made = w
+        .run(
+            &w.admin(),
+            "dataset.propose",
+            json!({"name": "novy", "title": "Nový", "notes": "Popis", "owner_org": "city"}),
+        )
+        .await
+        .unwrap();
+    // proposed again by name without an id, the stored record keeps its id
+    let again = w
+        .run(
+            &w.admin(),
+            "dataset.propose",
+            json!({"name": "novy", "title": "Novší", "notes": "Popis", "owner_org": "city"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(again["id"], made["id"]);
+    assert_eq!(again["title"], "Novší");
+}
+
+#[tokio::test]
+async fn a_resource_or_view_names_its_parent_or_its_own_id() {
+    let w = world().await;
+    for (op, input, why) in [
+        (
+            "resource.propose",
+            json!({"resource": {"name": "CSV"}}),
+            "name either the dataset of a new resource or the id of a stored one",
+        ),
+        (
+            "resource.propose",
+            json!({"dataset": "open", "id": "r-1", "resource": {"name": "CSV"}}),
+            "name either the dataset of a new resource or the id of a stored one",
+        ),
+        (
+            "resource_view.propose",
+            json!({"view": {"title": "Mapa", "view_type": "image_view"}}),
+            "name either the resource of a new view or the id of a stored one",
+        ),
+    ] {
+        match w.run(&w.admin(), op, input).await {
+            Err(DataroomError::Validation { fields, .. }) => {
+                assert_eq!(fields["id"], vec![why.to_string()], "{op}")
+            }
+            other => panic!("{op}: {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn allowed_reads_runs_and_publishers_like_their_calls() {
+    let w = world().await;
+    let ask = |op: &'static str, object: Option<&'static str>| {
+        let w = &w;
+        async move {
+            let mut input = json!({"operation": op});
+            if let Some(o) = object {
+                input["object"] = json!(o);
+            }
+            w.run(&w.admin(), "allowed", input).await.unwrap()
+        }
+    };
+    let gone = ask("harvest_run.get", Some("run-404")).await;
+    assert_eq!((gone["allowed"].clone(), gone["reason"].clone()), (json!(false), json!("not found")));
+    assert_eq!(ask("harvest_run.logs", None).await["allowed"], true);
+    let p = ask("publisher.propose", Some("city")).await;
+    assert_eq!(p["allowed"], true, "{p}");
+    let p = ask("publisher.propose", Some("nobody")).await;
+    assert_eq!(p["reason"], "publisher not found", "{p}");
+    // every run of the catalogue lists without naming a source
+    let runs = w.run(&w.admin(), "harvest_run.list", json!({})).await.unwrap();
+    assert_eq!(runs["runs"], json!([]), "{runs}");
+}
+
+#[tokio::test]
+async fn declaring_a_missing_catalogue_answers_none() {
+    let w = world().await;
+    let declared = dataroom_core::CatalogueDeclaration::default();
+    let gone = CatalogueId::from_uuid(Uuid::now_v7());
+    assert!(w.store.declare_catalogue(w.org, gone, &declared).await.unwrap().is_none());
+    // the stored one answers as it is when nothing is declared
+    let held = w.store.declare_catalogue(w.org, w.cat, &declared).await.unwrap();
+    assert_eq!(held.map(|c| c.name), Some("city".to_string()));
+}
+
+/// The OData scope hides what the caller may not read: every dataset row outside the visible
+/// ids, and for an outsider without a list every internal or withdrawn one and every distribution.
+#[tokio::test]
+async fn odata_scopes_follow_dataset_visibility() {
+    use dataroom_core::scope_for_context;
+    let w = world().await;
+    let paths = |scope: &odata_table::Scope| -> Vec<(String, Vec<Value>)> {
+        scope
+            .restrictions
+            .iter()
+            .map(|r| (r.path.join("/"), r.any_of.clone()))
+            .collect()
+    };
+    let outsider = w.outsider();
+    let ds = paths(&scope_for_context(&outsider, w.authz.as_ref(), "Datasets", None));
+    assert!(ds.contains(&("visibility".into(), vec![json!("public")])), "{ds:?}");
+    assert!(ds.contains(&("state".into(), vec![json!("active")])), "{ds:?}");
+    let dist = paths(&scope_for_context(&outsider, w.authz.as_ref(), "Distributions", None));
+    assert!(dist.contains(&("dataset_id".into(), Vec::new())), "{dist:?}");
+    let listed = paths(&scope_for_context(
+        &w.member(),
+        w.authz.as_ref(),
+        "ShaclResults",
+        Some(vec!["d-1".into()]),
+    ));
+    assert!(listed.contains(&("dataset_id".into(), vec![json!("d-1")])), "{listed:?}");
+    let ids = paths(&scope_for_context(&w.member(), w.authz.as_ref(), "Datasets", Some(vec!["d-1".into()])));
+    assert!(ids.contains(&("id".into(), vec![json!("d-1")])), "{ids:?}");
+    // a member without a list reads every dataset of the catalogue
+    let member = paths(&scope_for_context(&w.member(), w.authz.as_ref(), "Datasets", None));
+    assert!(!member.iter().any(|(p, _)| p == "visibility"), "{member:?}");
+}
+
 #[test]
 fn a_stored_run_error_reads_as_one_word() {
     use dataroom_core::ops::run_error_word;

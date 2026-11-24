@@ -197,3 +197,115 @@ fn footer_lines_and_taglines_drop_empty_entries() {
     );
     assert_eq!(plain.footer_lines, BrandingBlock::default().footer_lines);
 }
+
+#[test]
+fn a_url_field_is_typed_any_uri_and_three_digit_colours_expand() {
+    use dataroom_core::branding::{parse_rgb, BrandingDatasetFields};
+    let field: jc_core::kinds::DatasetField =
+        serde_json::from_value(json!({"name": "web", "label": {}, "type": "url"})).unwrap();
+    assert_eq!(BrandingDatasetFields::xsd_type(&field), Some("anyURI"));
+    assert_eq!(parse_rgb("#abc"), Some((0xaa, 0xbb, 0xcc)));
+    assert_eq!(parse_rgb("#a1b2c3"), Some((0xa1, 0xb2, 0xc3)));
+    for bad in ["red", "#abcd", "abc", "#ggg", ""] {
+        assert_eq!(parse_rgb(bad), None, "{bad:?}");
+    }
+}
+
+#[test]
+fn a_branding_string_is_json_first_then_the_yaml_block() {
+    let json = BrandingBlock::from_str_lossy(r#"{"instanceName": "Mesto Dáta", "noindex": true}"#);
+    assert_eq!(json.instance_name, "Mesto Dáta");
+    assert!(json.noindex);
+    let yaml = BrandingBlock::from_str_lossy(
+        "branding:\n  instanceName: 'Mesto'\n  noindex: true\n  domain: '{{ env \"DOMAIN\" | default \"city.example\" }}'\n  documentationBaseUrl: 'https://{{ .Values.host | default \"docs.city.example\" }}/guide'\n  city: '{{ default \"unterminated }}'\n  extra:\n    nested: value\n  languages:\n    - sk\n    - ''\n    - en\n    default: sk\n    note: ignored\n",
+    );
+    assert_eq!(yaml.instance_name, "Mesto");
+    assert!(yaml.noindex);
+    assert_eq!(yaml.domain, "city.example", "a Helm default resolves");
+    assert_eq!(yaml.documentation_base_url, "https://docs.city.example/guide");
+    assert_eq!(yaml.languages.offered, ["sk", "en"], "an empty code is skipped");
+    assert_eq!(yaml.languages.default, "sk");
+    assert_eq!(yaml.city, "{{ default \"unterminated }}", "a default without its closing quote stays as written");
+}
+
+#[test]
+fn an_override_keeps_the_level_above_wherever_a_value_is_unsafe_or_empty() {
+    let base = BrandingBlock::default();
+    let mut b = base.clone();
+    b.apply_override_json(&json!({
+        "colours": {"primary": "red", "secondary": "#12", "accent": 7, "background": "url(x)",
+                    "text": "#gggggg"},
+        "fonts": {"heading": "x; } body { color: red", "body": "url(https://evil.example/f)"},
+        "languages": {"default": "", "offered": ["", "  "]},
+        "tagline": 5, "ribbon": ["x"], "siteTitle": 3, "siteTagline": false,
+        "siteLogo": "../etc/passwd.svg", "samples": {"sk": ["", "  "], "en": "not a list"}
+    }));
+    assert_eq!(b.colours, base.colours);
+    assert_eq!(b.fonts, base.fonts);
+    assert_eq!(b.languages, base.languages);
+    assert_eq!((b.tagline.as_str(), b.ribbon.as_str()), (base.tagline.as_str(), base.ribbon.as_str()));
+    assert_eq!((&b.site_title, &b.site_tagline, &b.site_logo), (&base.site_title, &base.site_tagline, &base.site_logo));
+    assert!(b.samples.is_empty(), "{:?}", b.samples);
+
+    b.apply_override_json(&json!({"siteIssued": "2026-01-15", "siteTitle": {"sk": "", "en": "City"}}));
+    assert_eq!(b.site_issued.as_deref(), Some("2026-01-15"));
+    assert_eq!(b.site_title.get("en").map(String::as_str), Some("City"));
+    assert!(!b.site_title.contains_key("sk"), "an empty title is not taken");
+}
+
+#[test]
+fn the_header_tagline_and_logo_fall_back_in_order() {
+    let mut b = BrandingBlock::default();
+    b.site_tagline.clear();
+    b.tagline = "Otvorené dáta".into();
+    assert_eq!(b.site_tagline_in("sk").as_deref(), Some("Otvorené dáta"));
+    b.tagline.clear();
+    assert_eq!(b.site_tagline_in("sk"), None);
+
+    b.site_logo = Some("/assets/logo.svg".into());
+    assert_eq!(b.site_logo_path("/portal/"), "/portal/assets/logo.svg");
+    b.site_logo = Some("logo-city.png".into());
+    assert_eq!(b.site_logo_path("/portal"), "/portal/logo-city.png");
+    b.site_logo = Some("bad name.exe".into());
+    assert_eq!(b.site_logo_path(""), "/jc-logo.svg", "an unsafe name is never linked");
+}
+
+#[test]
+fn a_publisher_image_prefers_its_logo_then_the_fallback_logo_then_a_badge() {
+    use dataroom_core::branding::{resolve_publisher_branding, PublisherBranding};
+    let none = BTreeMap::new();
+    let fb = PublisherBranding {
+        initials: Some("BB".into()),
+        colour: Some("#112233".into()),
+        logo_url: Some("https://city.example/logo.png".into()),
+        ..PublisherBranding::default()
+    };
+    let (img, _) = resolve_publisher_branding(Some("https://own.example/l.svg"), &none, Some(&fb), "sk", "sk");
+    assert_eq!(img.as_deref(), Some("https://own.example/l.svg"));
+    let (img, _) = resolve_publisher_branding(Some(""), &none, Some(&fb), "sk", "sk");
+    assert_eq!(img.as_deref(), Some("https://city.example/logo.png"));
+    let badge = PublisherBranding { logo_url: Some(String::new()), ..fb.clone() };
+    let (img, _) = resolve_publisher_branding(None, &none, Some(&badge), "sk", "sk");
+    assert!(img.unwrap().starts_with("data:image/svg+xml;base64,"));
+    let bare = PublisherBranding { logo_url: None, colour: None, ..fb };
+    assert_eq!(resolve_publisher_branding(None, &none, Some(&bare), "sk", "sk").0, None);
+}
+
+#[test]
+fn svg_checks_skip_comments_and_declarations_but_never_an_attribute() {
+    use dataroom_core::branding::is_safe_logo_svg;
+    let err = logo_error(b"<svg-ish>no root</svg-ish>", "image/svg+xml");
+    assert!(err.contains("root <svg>"), "{err}");
+    let ok = [
+        "<?xml version=\"1.0\"?><!DOCTYPE svg><svg xmlns=\"http://www.w3.org/2000/svg\"><!-- a comment onload=x --></svg>",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0\"/></svg><!-- left open",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg><?xml left open",
+    ];
+    for svg in ok {
+        assert!(is_safe_logo_svg(svg), "{svg}");
+    }
+    // a stray `=` hides nothing: an HTML parser reads `onload` after it as an attribute
+    assert!(!is_safe_logo_svg("<svg = onload=\"alert(1)\"></svg>"));
+    let err = logo_error(b"<svg = width=\"10\"></svg>", "image/svg+xml");
+    assert!(err.contains("an attribute without a name"), "{err}");
+}
