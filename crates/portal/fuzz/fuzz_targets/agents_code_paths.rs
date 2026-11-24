@@ -27,7 +27,12 @@ fuzz_target!(|data: &[u8]| {
         );
     }
     let lines: Vec<&str> = text.lines().collect();
-    for line in code::outline(text).lines() {
+    // outline joins the kept lines with `\n`: split it back the same way, as `lines()` would
+    // strip a second trailing `\r` from a line that ended in `\r\r\n`.
+    for line in code::outline(text)
+        .split('\n')
+        .filter(|line| !line.is_empty())
+    {
         assert!(lines.contains(&line), "{line:?} not in {text:?}");
     }
     let kept = code::service_examples(text, |name| name.len() % 2 == 0);
