@@ -266,6 +266,51 @@ async fn the_base_members_and_a_distance_select_as_their_ngsi_ld_query() {
     }
 }
 
+/// A distance the store cannot read as a `near` query, and a planar literal anywhere a value
+/// is compared, are refused with the status that says why: 501 for a form the service may serve
+/// later, 400 for one no service can (F27, F30).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_distance_or_a_planar_literal_the_store_cannot_read_is_refused() {
+    let (_b, app) = broker().await.expect("broker");
+    let here = "geography'SRID=4326;Point(0%200)'";
+    let flat = "geometry'SRID=0;Point(1%202)'";
+    for (filter, want) in [
+        // two literals: no member to measure from
+        (
+            format!("geo.distance({here},{here})%20lt%205"),
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        // a lambda variable's location: no `near` names it
+        (
+            format!("scope/any(s:geo.distance(s,{here})%20lt%205)"),
+            StatusCode::BAD_REQUEST,
+        ),
+        // a bound past every float
+        (
+            format!("geo.distance(location,{here})%20lt%201e999"),
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (format!("speed%20eq%20{flat}"), StatusCode::BAD_REQUEST),
+        (format!("{flat}%20eq%20speed"), StatusCode::BAD_REQUEST),
+    ] {
+        let (status, answer) = send(
+            &app,
+            Method::GET,
+            &format!("{ROOT}/Car?$filter={filter}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, want, "{filter}: {answer}");
+        assert!(
+            answer
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .is_some_and(|m| !m.is_empty()),
+            "{filter}: {answer}"
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_vocab_value_matches_as_the_read_shows_it() {
     let (_b, app) = broker().await.expect("broker");

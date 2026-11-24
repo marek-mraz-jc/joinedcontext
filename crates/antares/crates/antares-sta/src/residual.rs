@@ -558,7 +558,8 @@ pub fn orderby(value: &str) -> Result<Vec<(Vec<String>, bool)>, Bad> {
         .filter(|s| !s.is_empty())
         .map(|item| {
             let mut words = item.split_whitespace();
-            let name = words.next().ok_or_else(|| usage(item))?;
+            // never empty: `item` is trimmed and not empty; "" would be refused by `word`
+            let name = words.next().unwrap_or_default();
             let desc = match words.next().map(str::to_ascii_lowercase).as_deref() {
                 None | Some("asc") => false,
                 Some("desc") => true,
@@ -769,6 +770,17 @@ mod tests {
         assert!(matches!(orderby("a sideways"), Err(Bad("$orderby", _))));
         assert!(orderby("a asc desc").is_err());
         assert!(orderby("'a'").is_err());
+        assert_eq!(orderby(" , ,").ok(), Some(vec![]));
+        assert_eq!(
+            orderby("a/b DESC, c").ok(),
+            Some(vec![
+                (vec!["a".into(), "b".into()], true),
+                (vec!["c".into()], false)
+            ])
+        );
+        assert!(
+            matches!(orderby("a,1"), Err(Bad("$orderby", m)) if m == "1 is not a property followed by asc or desc")
+        );
         let mut missing = vec![json!({"n": 1}), json!({"n": 2, "a": 1}), json!({"n": 3})];
         sort(&mut missing, &orderby("a desc").unwrap_or_default());
         let order: Vec<i64> = missing

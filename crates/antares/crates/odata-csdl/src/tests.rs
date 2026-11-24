@@ -293,12 +293,11 @@ fn an_invalid_model_writes_nothing() {
         write_xml(&model, &Limits::strict(), &mut xml_out),
         write_json(&model, &Limits::strict(), &mut json_out),
     ] {
-        let Err(CsdlError::Invalid(problems)) = refused else {
-            panic!("{refused:?}")
-        };
-        assert_eq!(
-            problems[0].to_string(),
-            "Test.Space.Empty: entity type without a key"
+        let refused = refused.map_err(|e| e.to_string()).expect_err("refused");
+        assert!(
+            refused.starts_with("invalid CSDL model (")
+                && refused.contains(" problems); Test.Space.Empty: entity type without a key"),
+            "{refused}"
         );
     }
     assert!(xml_out.is_empty() && json_out.is_empty());
@@ -337,12 +336,14 @@ fn a_failing_sink_is_an_io_error_wherever_it_fails() {
             } else {
                 write_json(&model, &Limits::strict(), &mut sink)
             };
-            let Err(err @ CsdlError::Io(_)) = result else {
-                panic!("{writer} at {room}: {result:?}")
-            };
-            assert_eq!(err.to_string(), "write failed: disk full");
+            assert_eq!(
+                result.map_err(|e| e.to_string()),
+                Err("write failed: disk full".to_owned()),
+                "{writer} at {room}"
+            );
         }
     }
+    assert!(std::io::Write::flush(&mut Full { room: 0 }).is_ok());
 }
 
 #[test]
@@ -397,6 +398,8 @@ fn errors_read_as_fixed_text() {
         Problem::InvalidPath,
         Problem::InvalidAppliesTo,
         Problem::EmptyReference,
+        Problem::FunctionWithoutReturnType,
+        Problem::UnknownImportOperation,
     ];
     let texts: std::collections::HashSet<_> = problems.iter().map(|p| p.as_str()).collect();
     assert_eq!(texts.len(), problems.len());
@@ -561,12 +564,49 @@ fn operations_and_imports_are_written_in_both_representations(
 }
 
 #[test]
+fn an_action_with_parameters_and_no_return_and_an_annotated_import_are_written(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut model = operations();
+    let schema = &mut model.schemas[0];
+    for o in &mut schema.operations {
+        if o.name == "Forget" {
+            o.parameters
+                .push(Parameter::new("who", TypeRef::single("Edm.String")).required());
+        }
+    }
+    if let Some(c) = schema.entity_container.as_mut() {
+        for i in &mut c.imports {
+            if i.name == "Forget" {
+                i.annotations = vec![Annotation::new(
+                    "Core.Description",
+                    Expr::String("forgets".into()),
+                )];
+            }
+        }
+    }
+    let mut xml = Vec::new();
+    write_xml(&model, &Limits::strict(), &mut xml)?;
+    let xml: String = String::from_utf8(xml)?.lines().map(str::trim).collect();
+    assert!(
+        xml.contains(
+            r#"<Action Name="Forget"><Parameter Name="who" Type="Edm.String" Nullable="false"/></Action>"#
+        ),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(
+            r#"<ActionImport Name="Forget" Action="o.Forget"><Annotation Term="Core.Description" String="forgets"/></ActionImport>"#
+        ),
+        "{xml}"
+    );
+    Ok(())
+}
+
+#[test]
 fn operations_are_validated() {
     let problems = |change: fn(&mut Schema)| {
         let mut model = operations();
-        if let Some(schema) = model.schemas.first_mut() {
-            change(schema);
-        }
+        model.schemas.iter_mut().take(1).for_each(change);
         match validate(&model, &Limits::strict()) {
             Err(CsdlError::Invalid(problems)) => problems.into_iter().map(|p| p.problem).collect(),
             _ => Vec::new(),
@@ -580,6 +620,7 @@ fn operations_are_validated() {
         ),
         [Problem::FunctionWithoutReturnType]
     );
+    assert_eq!(problems(|_| {}), [], "the fixture itself is valid");
     assert_eq!(
         problems(|s| if let Some(c) = s.entity_container.as_mut() {
             c.imports.push(OperationImport::new("Gone", "o.Gone"));
