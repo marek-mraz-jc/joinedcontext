@@ -4664,6 +4664,184 @@ mod tests {
         assert_eq!(revoked, ["r/ada-app-false", "r/ada-app-true"]);
     }
 
+    /// Revoking one SSO session's families (all, or one client's, whose client session goes
+    /// too) touches no other session or realm; a family is replaced by its id in its realm.
+    #[tokio::test]
+    async fn refresh_families_are_revoked_per_realm_session_and_client() {
+        let store = MemoryStore::default();
+        seed_sessions(&store);
+        store
+            .revoke_refresh_families_for_session(R, "s-ada", Some("app"))
+            .await
+            .expect("revoke one client");
+        let [client, _, revoked] = session_state(&store);
+        assert_eq!(revoked, ["r/ada-app-false", "r/ada-app-true"]);
+        assert!(!client.contains(&"r/s-ada-app".to_owned()));
+        assert!(client.contains(&"r/s-ada-other".to_owned()));
+        assert!(client.contains(&"q/s-ada-app".to_owned()));
+        assert_eq!(client.len(), 7);
+        store
+            .revoke_refresh_families_for_session(R, "s-bob", None)
+            .await
+            .expect("revoke a session");
+        let [client, _, revoked] = session_state(&store);
+        assert_eq!(
+            client.len(),
+            7,
+            "a whole-session revoke keeps the client sessions"
+        );
+        assert_eq!(
+            revoked,
+            [
+                "r/ada-app-false",
+                "r/ada-app-true",
+                "r/bob-app-false",
+                "r/bob-app-true",
+                "r/bob-other-false",
+                "r/bob-other-true"
+            ]
+        );
+        let mut again = store
+            .get_refresh_family("q", "ada-app-false")
+            .await
+            .expect("get")
+            .expect("q's family");
+        again.scope = "openid profile".into();
+        store.upsert_refresh_family(again).await.expect("again");
+        let scopes: Vec<(String, String)> = store
+            .inner
+            .read()
+            .refresh_families
+            .iter()
+            .filter(|f| f.id == "ada-app-false")
+            .map(|f| (f.realm_id.clone(), f.scope.clone()))
+            .collect();
+        assert_eq!(scopes.len(), 2, "{scopes:?}");
+        assert!(scopes.contains(&(R.to_owned(), "openid".to_owned())));
+        assert!(scopes.contains(&("q".to_owned(), "openid profile".to_owned())));
+    }
+
+    fn failure(realm: &str, key: &str, n: u32) -> LoginFailureRecord {
+        LoginFailureRecord {
+            id: format!("{realm}-{key}"),
+            realm_id: realm.into(),
+            target_key: key.into(),
+            num_failures: n,
+            last_failure_ms: 0,
+            last_ip_failure: String::new(),
+            locked_until: None,
+            window_started_at: TimestampTz::now(),
+        }
+    }
+
+    /// Login failures are one per realm and key: written, updated and cleared without touching
+    /// another key or realm.
+    #[tokio::test]
+    async fn login_failures_are_one_per_realm_and_key() {
+        let store = MemoryStore::default();
+        for (realm, key, n) in [(R, "ada", 1), (R, "bob", 2), ("q", "ada", 3)] {
+            store
+                .upsert_login_failure(failure(realm, key, n))
+                .await
+                .expect("put");
+        }
+        store
+            .upsert_login_failure(failure(R, "ada", 5))
+            .await
+            .expect("again");
+        let count = |realm: &'static str, key: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .get_login_failure(realm, key)
+                    .await
+                    .expect("get")
+                    .map(|f| f.num_failures)
+            }
+        };
+        assert_eq!(
+            (
+                count(R, "ada").await,
+                count(R, "bob").await,
+                count("q", "ada").await
+            ),
+            (Some(5), Some(2), Some(3))
+        );
+        let bump = |prev: Option<LoginFailureRecord>| {
+            let mut rec = prev.unwrap_or_else(|| failure(R, "new", 0));
+            rec.num_failures += 1;
+            rec
+        };
+        let got = store
+            .update_login_failure(R, "bob", &bump)
+            .await
+            .expect("update");
+        assert_eq!(got.num_failures, 3);
+        let fresh = store
+            .update_login_failure(R, "new", &bump)
+            .await
+            .expect("first");
+        assert_eq!(fresh.num_failures, 1);
+        assert_eq!(
+            (
+                count(R, "ada").await,
+                count(R, "bob").await,
+                count("q", "ada").await
+            ),
+            (Some(5), Some(3), Some(3))
+        );
+        assert_eq!(store.inner.read().login_failures.len(), 4);
+        store.clear_login_failure(R, "ada").await.expect("clear");
+        assert_eq!(
+            (
+                count(R, "ada").await,
+                count(R, "bob").await,
+                count("q", "ada").await
+            ),
+            (None, Some(3), Some(3))
+        );
+    }
+
+    /// A consent is one per realm, person and client: given again it replaces that one only.
+    #[tokio::test]
+    async fn consents_are_one_per_realm_person_and_client() {
+        let store = MemoryStore::default();
+        for (realm, who, c, scope) in [
+            (R, "ada", "app", "a"),
+            (R, "ada", "other", "b"),
+            (R, "bob", "app", "c"),
+            ("q", "ada", "app", "d"),
+            (R, "ada", "app", "e"),
+        ] {
+            store
+                .upsert_consent(ConsentRecord {
+                    realm_id: realm.into(),
+                    granted_client_scopes: vec![scope.into()],
+                    ..consent(who, c)
+                })
+                .await
+                .expect("consent");
+        }
+        let granted = |realm: &'static str, who: &'static str| {
+            let store = &store;
+            async move {
+                let mut got: Vec<(String, Vec<String>)> = store
+                    .list_consents(realm, who)
+                    .await
+                    .expect("list")
+                    .into_iter()
+                    .map(|c| (c.client_id, c.granted_client_scopes))
+                    .collect();
+                got.sort();
+                got
+            }
+        };
+        let g = |c: &str, s: &str| (c.to_owned(), vec![s.to_owned()]);
+        assert_eq!(granted(R, "ada").await, [g("app", "e"), g("other", "b")]);
+        assert_eq!(granted(R, "bob").await, [g("app", "c")]);
+        assert_eq!(granted("q", "ada").await, [g("app", "d")]);
+    }
+
     /// A rename may take a client id another realm uses; it renames this client's service
     /// account and no other person.
     #[tokio::test]

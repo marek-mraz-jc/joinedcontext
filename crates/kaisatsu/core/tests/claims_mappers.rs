@@ -249,6 +249,46 @@ fn built_in_claims_differ_per_token_kind() {
     assert!(at.get("realm_access").is_none() && at.get("resource_access").is_none());
 }
 
+/// The amr, acr, full-name, client-role and sub mappers write their claim where the built-in
+/// claims do not: user info without the profile scope, an empty amr, a claim name of their own,
+/// and `sub` back to the local id after a pairwise mapper.
+#[test]
+fn mappers_write_what_the_built_in_claims_leave_out() {
+    let ui = |kind: &str| mapper(kind, &[("userinfo.token.claim", "true")]);
+    let mut f = Fixture::new(vec![
+        ui("oidc-amr-mapper"),
+        ui("oidc-acr-mapper"),
+        ui("oidc-full-name-mapper"),
+        mapper(
+            "oidc-usermodel-client-role-mapper",
+            &[
+                ("usermodel.clientRoleMapping.clientId", "portal-api"),
+                ("claim.name", "pa"),
+            ],
+        ),
+        mapper(
+            "oidc-sha256-pairwise-sub-mapper",
+            &[
+                ("sectorIdentifierUri", "https://portal.example/callbacks"),
+                ("pairwiseSubAlgorithmSalt", "salt"),
+            ],
+        ),
+        mapper("oidc-sub-mapper", &[]),
+    ]);
+    f.scopes.clear();
+    let info = f.eval(TokenKind::UserInfo);
+    assert_eq!(info["amr"], json!(["pwd", "otp"]));
+    assert_eq!(info["acr"], "mfa");
+    assert_eq!(info["name"], "Alice Liddell");
+    let at = f.eval(TokenKind::AccessToken);
+    assert_eq!(at["pa"], json!(["reader"]));
+    assert_eq!(at["sub"], "u-1", "the sub mapper after the pairwise one");
+    f.amr.clear();
+    let at = f.eval(TokenKind::AccessToken);
+    assert_eq!(at["amr"], json!([]), "the amr mapper writes an empty list");
+    assert!(f.eval(TokenKind::UserInfo).get("amr").is_some());
+}
+
 /// IDN-02, TEN-04: a token says what kind of subject it names; a workload's token also carries its
 /// project's id, read from the client registry row and never from the client id's text. A mapper
 /// cannot write either claim, and a malformed id is left out for the verifier to refuse.
