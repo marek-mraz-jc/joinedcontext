@@ -1043,19 +1043,34 @@ mod tests {
         assert!(!store.is_durable());
         assert_eq!(format!("{store:?}"), "AgentStore { durable: false, .. }");
         // Writes for a run nobody created change nothing and fail nothing.
-        store.set_expiry("ghost", "2099-01-01T00:00:00Z").await.expect("no run");
+        store
+            .set_expiry("ghost", "2099-01-01T00:00:00Z")
+            .await
+            .expect("no run");
         store.invalidate_ticket("ghost").await.expect("no run");
         store.record_usage("ghost", 1, 1).await.expect("no run");
-        store.set_preview_url("ghost", "https://x.example").await.expect("no run");
+        store
+            .set_preview_url("ghost", "https://x.example")
+            .await
+            .expect("no run");
         store.record_first_version("ghost").await.expect("no run");
-        store.set_files("ghost", serde_json::json!({})).await.expect("no run");
+        store
+            .set_files("ghost", serde_json::json!({}))
+            .await
+            .expect("no run");
         store.set_title("ghost", "t").await.expect("no run");
         store.set_endpoints("ghost", &[]).await.expect("no run");
         store.set_merge_request("ghost", 1).await.expect("no run");
         assert!(store.get_run("ghost").await.expect("read").is_none());
-        assert!(store.events_since("ghost", 0).await.expect("read").is_empty());
+        assert!(store
+            .events_since("ghost", 0)
+            .await
+            .expect("read")
+            .is_empty());
         assert!(matches!(
-            store.set_status("ghost", AgentRunStatus::Cancelled, None).await,
+            store
+                .set_status("ghost", AgentRunStatus::Cancelled, None)
+                .await,
             Err(StatusChangeError::Unknown)
         ));
 
@@ -1072,9 +1087,16 @@ mod tests {
             .expect("read")
             .expect("a live run");
         assert_eq!(live.id, "run-a", "same second: the first id");
-        let expired = store.list_expired("2099-01-01T00:00:00Z").await.expect("read");
+        let expired = store
+            .list_expired("2099-01-01T00:00:00Z")
+            .await
+            .expect("read");
         assert_eq!(expired.len(), 2);
-        assert!(store.list_expired("2000-01-01T00:00:00Z").await.expect("read").is_empty());
+        assert!(store
+            .list_expired("2000-01-01T00:00:00Z")
+            .await
+            .expect("read")
+            .is_empty());
 
         let by_status = |status: &str| RunFilter {
             status: Some(status.to_owned()),
@@ -1091,34 +1113,56 @@ mod tests {
             .expect("read");
         let ids: Vec<&str> = queued.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, ["run-a", "run-b"]);
-        assert!(store.list_runs("helsinki", -1).await.expect("read").is_empty());
+        assert!(store
+            .list_runs("helsinki", -1)
+            .await
+            .expect("read")
+            .is_empty());
 
         store.set_title("run-a", "City bikes").await.expect("title");
-        store.set_merge_request("run-a", 7).await.expect("merge request");
+        store
+            .set_merge_request("run-a", 7)
+            .await
+            .expect("merge request");
         store
             .set_files("run-a", serde_json::json!({ "src/App.tsx": "x" }))
             .await
             .expect("files");
-        store.set_preview_url("run-a", "https://p.example").await.expect("url");
-        store.set_preview_url("run-a", "https://q.example").await.expect("url");
+        store
+            .set_preview_url("run-a", "https://p.example")
+            .await
+            .expect("url");
+        store
+            .set_preview_url("run-a", "https://q.example")
+            .await
+            .expect("url");
         store.record_first_version("run-a").await.expect("first");
         let endpoints = [crate::agents::endpoints::RunEndpoint {
             name: "bikes".into(),
             slug: "s1".into(),
             space: "transport".into(),
         }];
-        store.set_endpoints("run-a", &endpoints).await.expect("endpoints");
+        store
+            .set_endpoints("run-a", &endpoints)
+            .await
+            .expect("endpoints");
         let read = store.get_run("run-a").await.expect("read").expect("held");
         assert_eq!(read.title.as_deref(), Some("City bikes"));
         assert_eq!(read.merge_request, Some(7));
         assert_eq!(read.files["src/App.tsx"], "x");
         assert_eq!(read.preview_url.as_deref(), Some("https://q.example"));
         assert!(read.first_frame_ms.is_some() && read.first_version_ms.is_some());
-        assert_eq!((read.endpoint_name.as_str(), read.endpoint_slug.as_str()), ("bikes", "s1"));
+        assert_eq!(
+            (read.endpoint_name.as_str(), read.endpoint_slug.as_str()),
+            ("bikes", "s1")
+        );
         assert_eq!(read.endpoints[0]["space"], "transport");
         store.set_endpoints("run-a", &[]).await.expect("none");
         let read = store.get_run("run-a").await.expect("read").expect("held");
-        assert_eq!((read.endpoint_name.as_str(), &read.endpoints), ("", &serde_json::json!([])));
+        assert_eq!(
+            (read.endpoint_name.as_str(), &read.endpoints),
+            ("", &serde_json::json!([]))
+        );
     }
 
     /// T-7711: the project memory of run ids starts over when full instead of growing.

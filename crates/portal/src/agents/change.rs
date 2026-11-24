@@ -742,10 +742,16 @@ mod tests {
         let wrong = tool_call("```json\n{\"tool\":\"change_resource\",\"kind\":5}\n```")
             .expect("a call")
             .expect_err("kind is text");
-        assert!(wrong.starts_with("the change_resource call does not parse"), "{wrong}");
+        assert!(
+            wrong.starts_with("the change_resource call does not parse"),
+            "{wrong}"
+        );
         let after_prose = "```json\n{not: json}\n```\n```json\n{\"tool\":\"change_resource\",\"kind\":\"Role\",\"name\":\"r\",\"delete\":true}\n```";
         assert_eq!(
-            tool_call(after_prose).expect("a call").expect("parses").name,
+            tool_call(after_prose)
+                .expect("a call")
+                .expect("parses")
+                .name,
             "r"
         );
         assert!(tool_call("no fence").is_none());
@@ -788,10 +794,7 @@ mod tests {
             route("helsinki", "CkanInstance", "ckaninstances", "data", true),
             "/projects/helsinki/ckan?delete=data"
         );
-        assert_eq!(
-            page_of("ServiceAccount"),
-            Ok("settings/service-accounts")
-        );
+        assert_eq!(page_of("ServiceAccount"), Ok("settings/service-accounts"));
         assert!(page_of("Spaceship").is_err_and(|e| e.contains("not a kind")));
     }
 
@@ -916,7 +919,13 @@ mod tests {
             ),
             ("org", "Role", "roles", "r", "/organization/roles"),
             ("org", "Group", "groups", "g", "/organization/groups"),
-            ("org", "RoleBinding", "rolebindings", "b", "/organization/members"),
+            (
+                "org",
+                "RoleBinding",
+                "rolebindings",
+                "b",
+                "/organization/members",
+            ),
             (
                 "org",
                 "ServiceAccount",

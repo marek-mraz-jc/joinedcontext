@@ -501,7 +501,10 @@ mod tests {
             Shown::Outline(outlined) => outlined,
             other => format!("{other:?}"),
         };
-        assert!(outlined.starts_with("export") || outlined.contains("\nexport"), "{outlined}");
+        assert!(
+            outlined.starts_with("export") || outlined.contains("\nexport"),
+            "{outlined}"
+        );
         assert!(
             outlined.len() * 4 < template[form].len(),
             "{} of {}",

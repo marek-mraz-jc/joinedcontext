@@ -19,7 +19,11 @@ fuzz_target!(|data: &[u8]| {
     }
     let text = data_query::result_text(&folded);
     // 12 000 characters, the error flag and the line that names the cut.
-    assert!(text.chars().count() <= 12_000 + 100, "{}", text.chars().count());
+    assert!(
+        text.chars().count() <= 12_000 + 100,
+        "{}",
+        text.chars().count()
+    );
     let call = QueryCall {
         endpoint: "bikes".into(),
         name: "query_entities".into(),

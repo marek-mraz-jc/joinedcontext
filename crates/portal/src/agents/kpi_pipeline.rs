@@ -712,7 +712,11 @@ mod tests {
         assert_eq!(seconds_of("5w"), None, "no such unit");
         assert_eq!(seconds_of("5mm"), None, "one unit");
         assert_eq!(seconds_of("99999999999999999999s"), None, "over u64");
-        assert_eq!(seconds_of("18446744073709551615d"), None, "over u64 in seconds");
+        assert_eq!(
+            seconds_of("18446744073709551615d"),
+            None,
+            "over u64 in seconds"
+        );
         assert_eq!(seconds_of("300000000000000h"), None, "over u64 in seconds");
         let base = json!({ "name": "x", "type": "T", "attribute": "a", "agg": "avg" });
         let mut huge = base.clone();
@@ -722,9 +726,10 @@ mod tests {
             .contains("not a period"));
         let mut blank = base;
         blank["every"] = json!("  ");
-        assert!(trigger_of(&call(blank))
-            .unwrap_err()
-            .contains("say when"), "a blank period is no period");
+        assert!(
+            trigger_of(&call(blank)).unwrap_err().contains("say when"),
+            "a blank period is no period"
+        );
     }
 
     #[test]
@@ -734,14 +739,21 @@ mod tests {
         assert_eq!(iso_duration(900), "PT15M");
         assert_eq!(iso_duration(90), "PT90S");
         assert_eq!(
-            Trigger::Every { period: "15m".into(), seconds: 900 }.describe(),
+            Trigger::Every {
+                period: "15m".into(),
+                seconds: 900
+            }
+            .describe(),
             "every 15m"
         );
         assert_eq!(
             Trigger::OnChange(vec!["a".into(), "b".into()]).describe(),
             "on every change of a, b"
         );
-        assert_eq!(space_title("transportation-kpi"), "Transportation indicators");
+        assert_eq!(
+            space_title("transportation-kpi"),
+            "Transportation indicators"
+        );
         assert_eq!(space_title("air-quality"), "Air quality indicators");
         assert_eq!(space_title("-kpi"), "Indicators");
         assert_eq!(space_title(""), "Indicators");
@@ -750,14 +762,25 @@ mod tests {
     #[test]
     fn a_count_on_change_without_attributes_and_a_bad_space_are_refused() {
         let count = call(json!({ "name": "x", "type": "T", "agg": "count", "onChange": true }));
-        assert!(trigger_of(&count).unwrap_err().contains("watchedAttributes"));
-        assert_eq!(target_space("helsinki", Some("  ")).unwrap(), "helsinki-kpi");
-        assert_eq!(target_space("helsinki", Some("AIR-KPIS")).unwrap(), "air-kpi");
+        assert!(trigger_of(&count)
+            .unwrap_err()
+            .contains("watchedAttributes"));
+        assert_eq!(
+            target_space("helsinki", Some("  ")).unwrap(),
+            "helsinki-kpi"
+        );
+        assert_eq!(
+            target_space("helsinki", Some("AIR-KPIS")).unwrap(),
+            "air-kpi"
+        );
         assert!(target_space("helsinki", Some("ünicode")).is_err());
         assert!(target_space("helsinki", Some(&"a".repeat(70))).is_err());
         // An answer with a fence that is no JSON, then the call: the call is read.
         let answer = "```json\nnot json\n```\n```json\n{\"tool\":\"draft_kpi_pipeline\",\"name\":\"x\",\"agg\":\"sum\"}\n```";
-        assert_eq!(tool_call(answer).expect("a call").expect("parses").agg, Agg::Sum);
+        assert_eq!(
+            tool_call(answer).expect("a call").expect("parses").agg,
+            Agg::Sum
+        );
         assert!(tool_call("no fence at all").is_none());
     }
 
@@ -942,7 +965,10 @@ mod tests {
         let filtered = json!({ "name": "x", "type": "T", "attribute": "a", "agg": "avg",
                                "every": "15m", "q": " a>3 ", "targetSpace": "air" });
         let plan_ = plan(&call(filtered), &world(&bare, &[], &[])).expect("a plan");
-        assert_eq!(plan_.source_space, "helsinki", "no space ref: the project's own");
+        assert_eq!(
+            plan_.source_space, "helsinki",
+            "no space ref: the project's own"
+        );
         assert_eq!(plan_.pipeline["spec"]["source"]["query"]["q"], "a>3");
         let blank = json!({ "name": "x", "type": "T", "attribute": "a", "agg": "avg",
                             "every": "15m", "q": "  ", "targetSpace": "air" });

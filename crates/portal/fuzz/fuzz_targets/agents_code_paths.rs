@@ -12,11 +12,19 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     if code::writable(text) {
-        assert!(!text.split('/').any(|p| p.is_empty() || p == "." || p == ".."), "{text:?}");
+        assert!(
+            !text
+                .split('/')
+                .any(|p| p.is_empty() || p == "." || p == ".."),
+            "{text:?}"
+        );
         assert!(text != "src/main.tsx" && text != code::TYPES, "{text:?}");
     }
     if let Some((file, line)) = code::scope(text) {
-        assert!(line >= 1 && file.ends_with(".tsx") && code::writable(file), "{text:?}");
+        assert!(
+            line >= 1 && file.ends_with(".tsx") && code::writable(file),
+            "{text:?}"
+        );
     }
     let lines: Vec<&str> = text.lines().collect();
     for line in code::outline(text).lines() {

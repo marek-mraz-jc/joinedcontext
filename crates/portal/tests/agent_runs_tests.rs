@@ -5014,7 +5014,9 @@ mod durable_store {
 
     use joinedcontext_portal::agents::endpoints::RunEndpoint;
     use joinedcontext_portal::agents::run::{AgentRun, AgentRunStatus};
-    use joinedcontext_portal::agents::store::{AgentStore, RunFilter, StatusChangeError, StoreError};
+    use joinedcontext_portal::agents::store::{
+        AgentStore, RunFilter, StatusChangeError, StoreError,
+    };
     use serde_json::json;
     use sqlx::PgPool;
 
@@ -5046,7 +5048,10 @@ mod durable_store {
     }
 
     /// A store on `pool` whose mirror places `projects` in an Organization of the registry.
-    async fn store(pool: &PgPool, projects: &[&str]) -> (AgentStore, Arc<joinedcontext_portal::store::Mirror>) {
+    async fn store(
+        pool: &PgPool,
+        projects: &[&str],
+    ) -> (AgentStore, Arc<joinedcontext_portal::store::Mirror>) {
         let mirror = crate::common::keyed_mirror(pool, projects).await;
         (AgentStore::new(Some(pool.clone()), mirror.clone()), mirror)
     }
@@ -5064,15 +5069,30 @@ mod durable_store {
         let a = format!("{project}-a");
         let b = format!("{project}-b");
         store
-            .create_run(&run(&project, &a, "bikes", "2026-11-24T10:00:00Z", "2099-01-01T00:00:00Z"))
+            .create_run(&run(
+                &project,
+                &a,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
             .await
             .expect("created");
         store
-            .create_run(&run(&project, &b, "trees", "2026-11-24T11:00:00Z", "2000-01-01T00:00:00Z"))
+            .create_run(&run(
+                &project,
+                &b,
+                "trees",
+                "2026-11-24T11:00:00Z",
+                "2000-01-01T00:00:00Z",
+            ))
             .await
             .expect("created");
         let read = store.get_run(&a).await.expect("read").expect("held");
-        assert_eq!((read.project.as_str(), read.app_name.as_str()), (project.as_str(), "bikes"));
+        assert_eq!(
+            (read.project.as_str(), read.app_name.as_str()),
+            (project.as_str(), "bikes")
+        );
         let listed: Vec<String> = store
             .list_runs(&project, 10)
             .await
@@ -5129,7 +5149,11 @@ mod durable_store {
         // holds is no run.
         let other = AgentStore::new(Some(pool.clone()), mirror);
         assert_eq!(other.get_run(&b).await.expect("read").expect("found").id, b);
-        assert!(other.get_run(&fresh("nobody")).await.expect("read").is_none());
+        assert!(other
+            .get_run(&fresh("nobody"))
+            .await
+            .expect("read")
+            .is_none());
     }
 
     #[tokio::test]
@@ -5142,23 +5166,61 @@ mod durable_store {
         let (store, _) = store(&pool, &[]).await;
         let id = format!("{project}-a");
         let refused = store
-            .create_run(&run(&project, &id, "bikes", "2026-11-24T10:00:00Z", "2099-01-01T00:00:00Z"))
+            .create_run(&run(
+                &project,
+                &id,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
             .await
             .expect_err("no key, no run");
-        assert!(matches!(refused, StoreError::Unplaced(ref p) if *p == project), "{refused}");
-        assert!(refused.to_string().contains("Organizations page"), "{refused}");
+        assert!(
+            matches!(refused, StoreError::Unplaced(ref p) if *p == project),
+            "{refused}"
+        );
+        assert!(
+            refused.to_string().contains("Organizations page"),
+            "{refused}"
+        );
         let alone = store
-            .create_run_alone(&run(&project, &id, "bikes", "2026-11-24T10:00:00Z", "2099-01-01T00:00:00Z"))
+            .create_run_alone(&run(
+                &project,
+                &id,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
             .await;
         assert!(matches!(alone, Err(StoreError::Unplaced(_))), "{alone:?}");
-        assert!(store.list_runs(&project, 10).await.expect("listed").is_empty());
-        assert!(store.live_run_for_app(&project, "bikes").await.expect("read").is_none());
+        assert!(store
+            .list_runs(&project, 10)
+            .await
+            .expect("listed")
+            .is_empty());
+        assert!(store
+            .live_run_for_app(&project, "bikes")
+            .await
+            .expect("read")
+            .is_none());
         // Writes by an id no keyed project holds change nothing and fail nothing; an event for
         // it is refused, as the foreign key refused it before.
-        store.set_expiry(&id, "2099-01-01T00:00:00Z").await.expect("nothing to move");
-        store.invalidate_ticket(&id).await.expect("nothing to forget");
-        store.record_usage(&id, 5, 1).await.expect("nothing to count");
-        store.set_preview_url(&id, "https://x.example").await.expect("no run");
+        store
+            .set_expiry(&id, "2099-01-01T00:00:00Z")
+            .await
+            .expect("nothing to move");
+        store
+            .invalidate_ticket(&id)
+            .await
+            .expect("nothing to forget");
+        store
+            .record_usage(&id, 5, 1)
+            .await
+            .expect("nothing to count");
+        store
+            .set_preview_url(&id, "https://x.example")
+            .await
+            .expect("no run");
         store.record_first_version(&id).await.expect("no run");
         store.set_files(&id, json!({})).await.expect("no run");
         store.set_title(&id, "t").await.expect("no run");
@@ -5188,8 +5250,20 @@ mod durable_store {
         };
         let project = fresh("alone");
         let (store, _) = store(&pool, &[&project]).await;
-        let first = run(&project, &format!("{project}-1"), "bikes", "2026-11-24T10:00:00Z", "2099-01-01T00:00:00Z");
-        let second = run(&project, &format!("{project}-2"), "bikes", "2026-11-24T10:01:00Z", "2099-01-01T00:00:00Z");
+        let first = run(
+            &project,
+            &format!("{project}-1"),
+            "bikes",
+            "2026-11-24T10:00:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+        let second = run(
+            &project,
+            &format!("{project}-2"),
+            "bikes",
+            "2026-11-24T10:01:00Z",
+            "2099-01-01T00:00:00Z",
+        );
         assert!(store.create_run_alone(&first).await.expect("stored"));
         assert!(!store.create_run_alone(&second).await.expect("answered"));
         assert!(store.get_run(&second.id).await.expect("read").is_none());
@@ -5211,40 +5285,85 @@ mod durable_store {
         let (store, mirror) = store(&pool, &[&project]).await;
         let id = format!("{project}-a");
         store
-            .create_run(&run(&project, &id, "bikes", "2026-11-24T10:00:00Z", "2099-01-01T00:00:00Z"))
+            .create_run(&run(
+                &project,
+                &id,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
             .await
             .expect("created");
         // A store that has not seen the run writes through the project scan too.
         let store = AgentStore::new(Some(pool.clone()), mirror);
-        store.set_expiry(&id, "2098-01-01T00:00:00Z").await.expect("lease");
+        store
+            .set_expiry(&id, "2098-01-01T00:00:00Z")
+            .await
+            .expect("lease");
         store.invalidate_ticket(&id).await.expect("forgotten");
         store.record_usage(&id, 120, 2).await.expect("counted");
         store.record_usage(&id, 30, 1).await.expect("counted");
-        store.set_preview_url(&id, "https://preview.example/a").await.expect("url");
-        store.record_first_version(&id).await.expect("first version");
-        store.set_files(&id, json!({ "src/App.tsx": "x" })).await.expect("files");
+        store
+            .set_preview_url(&id, "https://preview.example/a")
+            .await
+            .expect("url");
+        store
+            .record_first_version(&id)
+            .await
+            .expect("first version");
+        store
+            .set_files(&id, json!({ "src/App.tsx": "x" }))
+            .await
+            .expect("files");
         store.set_title(&id, "City bikes").await.expect("title");
         let endpoints = [
-            RunEndpoint { name: "bikes".into(), slug: "s1".into(), space: "transport".into() },
-            RunEndpoint { name: "trees".into(), slug: "s2".into(), space: "green".into() },
+            RunEndpoint {
+                name: "bikes".into(),
+                slug: "s1".into(),
+                space: "transport".into(),
+            },
+            RunEndpoint {
+                name: "trees".into(),
+                slug: "s2".into(),
+                space: "green".into(),
+            },
         ];
-        store.set_endpoints(&id, &endpoints).await.expect("endpoints");
-        store.set_merge_request(&id, 42).await.expect("merge request");
+        store
+            .set_endpoints(&id, &endpoints)
+            .await
+            .expect("endpoints");
+        store
+            .set_merge_request(&id, 42)
+            .await
+            .expect("merge request");
         let read = store.get_run(&id).await.expect("read").expect("held");
-        assert!(read.expires_at.starts_with("2098-01-01"), "{}", read.expires_at);
+        assert!(
+            read.expires_at.starts_with("2098-01-01"),
+            "{}",
+            read.expires_at
+        );
         assert_ne!(read.ticket_hash, "h", "the ticket hash is gone");
         assert_eq!((read.tokens_used, read.steps), (150, 3));
-        assert_eq!(read.preview_url.as_deref(), Some("https://preview.example/a"));
+        assert_eq!(
+            read.preview_url.as_deref(),
+            Some("https://preview.example/a")
+        );
         assert!(read.first_version_ms.is_some());
         assert_eq!(read.files, json!({ "src/App.tsx": "x" }));
         assert_eq!(read.title.as_deref(), Some("City bikes"));
-        assert_eq!((read.endpoint_name.as_str(), read.endpoint_slug.as_str()), ("bikes", "s1"));
+        assert_eq!(
+            (read.endpoint_name.as_str(), read.endpoint_slug.as_str()),
+            ("bikes", "s1")
+        );
         assert_eq!(read.endpoints[1]["name"], "trees");
         assert_eq!(read.merge_request, Some(42));
         // No endpoint left: the first one's name and slug are empty.
         store.set_endpoints(&id, &[]).await.expect("none");
         let read = store.get_run(&id).await.expect("read").expect("held");
-        assert_eq!((read.endpoint_name.as_str(), read.endpoints.clone()), ("", json!([])));
+        assert_eq!(
+            (read.endpoint_name.as_str(), read.endpoints.clone()),
+            ("", json!([]))
+        );
     }
 
     #[tokio::test]
@@ -5258,18 +5377,37 @@ mod durable_store {
         let (a, b) = (format!("{project}-a"), format!("{project}-b"));
         for id in [&a, &b] {
             store
-                .create_run(&run(&project, id, id, "2026-11-24T10:00:00Z", "2099-01-01T00:00:00Z"))
+                .create_run(&run(
+                    &project,
+                    id,
+                    id,
+                    "2026-11-24T10:00:00Z",
+                    "2099-01-01T00:00:00Z",
+                ))
                 .await
                 .expect("created");
         }
-        let first = store.append_event(&a, "log", json!({ "n": 1 })).await.expect("appended");
-        let second = store.append_event(&a, "status", json!({ "n": 2 })).await.expect("appended");
-        store.append_event(&b, "log", json!({ "n": 3 })).await.expect("appended");
+        let first = store
+            .append_event(&a, "log", json!({ "n": 1 }))
+            .await
+            .expect("appended");
+        let second = store
+            .append_event(&a, "status", json!({ "n": 2 }))
+            .await
+            .expect("appended");
+        store
+            .append_event(&b, "log", json!({ "n": 3 }))
+            .await
+            .expect("appended");
         assert!(second.seq > first.seq, "{} then {}", first.seq, second.seq);
         let missed = store.events_since(&a, first.seq).await.expect("read");
         assert_eq!(missed.len(), 1);
         assert_eq!(missed[0].payload, json!({ "n": 2 }));
-        assert!(store.events_of(&[], &["log"]).await.expect("none").is_empty());
+        assert!(store
+            .events_of(&[], &["log"])
+            .await
+            .expect("none")
+            .is_empty());
         let logs = store
             .events_of(&[a.clone(), b.clone(), fresh("ghost")], &["log"])
             .await
@@ -5289,7 +5427,13 @@ mod durable_store {
         let (store, _) = store(&pool, &[&project]).await;
         let id = format!("{project}-a");
         store
-            .create_run(&run(&project, &id, "bikes", "2026-11-24T10:00:00Z", "2099-01-01T00:00:00Z"))
+            .create_run(&run(
+                &project,
+                &id,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
             .await
             .expect("created");
         let started = store
@@ -5303,10 +5447,19 @@ mod durable_store {
             .await
             .expect_err("starting does not publish");
         assert!(
-            matches!(refused, StatusChangeError::Refused { from: AgentRunStatus::Starting, to: AgentRunStatus::Published }),
+            matches!(
+                refused,
+                StatusChangeError::Refused {
+                    from: AgentRunStatus::Starting,
+                    to: AgentRunStatus::Published
+                }
+            ),
             "{refused}"
         );
-        assert_eq!(refused.to_string(), "a run in 'starting' does not move to 'published'");
+        assert_eq!(
+            refused.to_string(),
+            "a run in 'starting' does not move to 'published'"
+        );
         let failed = store
             .set_status(&id, AgentRunStatus::Failed, Some("the build broke"))
             .await
@@ -5315,7 +5468,10 @@ mod durable_store {
         assert!(failed.finished_at.is_some());
         assert!(matches!(
             store.set_status(&id, AgentRunStatus::Cancelled, None).await,
-            Err(StatusChangeError::Refused { from: AgentRunStatus::Failed, .. })
+            Err(StatusChangeError::Refused {
+                from: AgentRunStatus::Failed,
+                ..
+            })
         ));
     }
 
@@ -5332,7 +5488,13 @@ mod durable_store {
         let (store, _) = store(&pool, &[&project]).await;
         let id = format!("{project}-a");
         store
-            .create_run(&run(&project, &id, "bikes", "2026-11-24T10:00:00Z", "2099-01-01T00:00:00Z"))
+            .create_run(&run(
+                &project,
+                &id,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
             .await
             .expect("created");
         let name = format!("t7711_skip_{}", id.replace('-', "_"));
@@ -5352,7 +5514,13 @@ mod durable_store {
         let lost = store.set_status(&id, AgentRunStatus::Starting, None).await;
         super::drop_refusal(&pool, &name).await;
         assert!(
-            matches!(lost, Err(StatusChangeError::Refused { from: AgentRunStatus::Queued, to: AgentRunStatus::Starting })),
+            matches!(
+                lost,
+                Err(StatusChangeError::Refused {
+                    from: AgentRunStatus::Queued,
+                    to: AgentRunStatus::Starting
+                })
+            ),
             "{lost:?}"
         );
         let refuse = format!("t7711_refuse_{}", id.replace('-', "_"));
@@ -5363,7 +5531,10 @@ mod durable_store {
             panic!("a store error, got {broken:?}");
         };
         assert!(cause.to_string().contains("Start the run again"), "{cause}");
-        assert!(!cause.to_string().contains("refused by the test"), "{cause}");
+        assert!(
+            !cause.to_string().contains("refused by the test"),
+            "{cause}"
+        );
     }
 }
 

@@ -54,7 +54,10 @@ fuzz_target!(|data: &[u8]| {
         new_slug: "newslug",
     };
     if let Ok(plan) = kpi_pipeline::plan(&call, &world) {
-        assert_eq!(plan.pipeline["metadata"]["name"], Value::from(call.name.trim()));
+        assert_eq!(
+            plan.pipeline["metadata"]["name"],
+            Value::from(call.name.trim())
+        );
         assert_eq!(plan.pipeline["metadata"]["namespace"], "helsinki");
         assert_ne!(plan.target_space, plan.source_space);
         assert!(plan.target_space.ends_with("-kpi"));

@@ -606,11 +606,15 @@ mod tests {
             name: "get_entity".into(),
             arguments: json!({ "id": "x" }),
         };
-        let results: Vec<(QueryCall, String)> =
-            (0..MAX_CALLS).map(|i| (call.clone(), format!("answer {i}"))).collect();
+        let results: Vec<(QueryCall, String)> = (0..MAX_CALLS)
+            .map(|i| (call.clone(), format!("answer {i}")))
+            .collect();
         let section = results_section(&results);
         assert!(section.contains("No calls are left"), "{section}");
-        assert!(section.contains(&format!("### Call {MAX_CALLS} ")), "{section}");
+        assert!(
+            section.contains(&format!("### Call {MAX_CALLS} ")),
+            "{section}"
+        );
         let fewer = results_section(&results[..MAX_CALLS - 1]);
         assert!(fewer.contains("Call again if you need more"), "{fewer}");
         assert_eq!(results_section(&[]), "");
@@ -624,12 +628,27 @@ mod tests {
     #[test]
     fn each_endpoint_with_a_card_shows_it() {
         let endpoints = [
-            RunEndpoint { name: "bikes".into(), slug: "s1".into(), space: "t".into() },
-            RunEndpoint { name: "trees".into(), slug: "s2".into(), space: "g".into() },
-            RunEndpoint { name: "air".into(), slug: "s3".into(), space: "a".into() },
+            RunEndpoint {
+                name: "bikes".into(),
+                slug: "s1".into(),
+                space: "t".into(),
+            },
+            RunEndpoint {
+                name: "trees".into(),
+                slug: "s2".into(),
+                space: "g".into(),
+            },
+            RunEndpoint {
+                name: "air".into(),
+                slug: "s3".into(),
+                space: "a".into(),
+            },
         ];
         let cards = BTreeMap::from([
-            ("bikes".to_owned(), Some("Bike: availableBikeNumber (C62)".to_owned())),
+            (
+                "bikes".to_owned(),
+                Some("Bike: availableBikeNumber (C62)".to_owned()),
+            ),
             ("trees".to_owned(), None),
         ]);
         let text = cards_section(&endpoints, &cards);
@@ -821,11 +840,21 @@ mod tests {
         let shapes = tool_calls(
             "```json\n{\"tool\":\"query_endpoint\",\"endpoint\":\"e\",\"name\":\"q\",\"arguments\":[1]}\n```\n```json\n{\"tool\":\"query_endpoint\",\"endpoint\":\"e\",\"name\":\"  \"}\n```\n```json\n{oops}\n```\n```json\n{\"tool\":\"query_endpoint\",\"endpoint\":\" e \",\"name\":\"q\",\"arguments\":null}\n```",
         );
-        assert_eq!(shapes.len(), 3, "the broken fence is passed over: {shapes:?}");
+        assert_eq!(
+            shapes.len(),
+            3,
+            "the broken fence is passed over: {shapes:?}"
+        );
         assert_eq!(shapes[0], Err("arguments must be an object".to_owned()));
-        assert_eq!(shapes[1], Err("a query_endpoint call names no tool".to_owned()));
+        assert_eq!(
+            shapes[1],
+            Err("a query_endpoint call names no tool".to_owned())
+        );
         let trimmed = shapes[2].clone().expect("well formed");
-        assert_eq!((trimmed.endpoint.as_str(), trimmed.arguments.clone()), ("e", json!({})));
+        assert_eq!(
+            (trimmed.endpoint.as_str(), trimmed.arguments.clone()),
+            ("e", json!({}))
+        );
     }
 
     #[test]
@@ -975,7 +1004,8 @@ mod tests {
         let notes = reading_notes(&call, &endless);
         assert!(notes.contains("goes on past this page"), "{notes}");
         assert!(notes.contains("\"cursor\": \"c2\""), "{notes}");
-        let ended = json!({ "result": { "structuredContent": { "nextCursor": null, "total": 0 } } });
+        let ended =
+            json!({ "result": { "structuredContent": { "nextCursor": null, "total": 0 } } });
         assert!(reading_notes(&call, &ended).contains("whole set: 0"));
         let empty = json!({ "result": { "structuredContent": { "nextCursor": 5, "total": 9 } } });
         assert!(reading_notes(&call, &empty).contains("holds 0 of 9"));
@@ -1028,7 +1058,8 @@ mod tests {
         );
         // T-7711: a geometry whose coordinates hold no numbers folds to no box and no positions;
         // text that names coordinates but is no JSON stays as it came.
-        let odd = compact_geometry(&json!({ "type": "Polygon", "coordinates": [["a", true], null] }));
+        let odd =
+            compact_geometry(&json!({ "type": "Polygon", "coordinates": [["a", true], null] }));
         assert_eq!(odd, json!({ "type": "Polygon", "positions": 0 }));
         let prose = json!("the \"coordinates\" are secret");
         assert_eq!(compact_geometry(&prose), prose);

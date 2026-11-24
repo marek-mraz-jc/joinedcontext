@@ -19,8 +19,17 @@ fuzz_target!(|data: &[u8]| {
         "status": { "phase": "Ready" },
     });
     if let Ok(after) = change::patched(&current, &patch) {
-        for pointer in ["/apiVersion", "/kind", "/metadata/name", "/metadata/namespace"] {
-            assert_eq!(after.pointer(pointer), current.pointer(pointer), "{pointer}");
+        for pointer in [
+            "/apiVersion",
+            "/kind",
+            "/metadata/name",
+            "/metadata/namespace",
+        ] {
+            assert_eq!(
+                after.pointer(pointer),
+                current.pointer(pointer),
+                "{pointer}"
+            );
         }
         assert!(after.get("status").is_none(), "{after}");
         let mut before = current.clone();
