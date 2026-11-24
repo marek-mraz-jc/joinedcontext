@@ -261,6 +261,32 @@ async fn a_refresh_the_realm_fails_keeps_the_grant_and_a_new_refresh_token_is_ke
     );
 }
 
+/// A refreshed token is held for the lifespan the realm granted: the next call inside it asks
+/// the realm nothing.
+#[tokio::test]
+async fn a_refreshed_token_is_reused_for_its_lifespan() {
+    let realm = Realm::start(|path, body| {
+        if path.ends_with("/introspect") {
+            return introspection(body);
+        }
+        if body.contains("token-exchange") {
+            return exchange(Some(REFRESH));
+        }
+        reply(200, r#"{"access_token":"delegated-2","expires_in":300}"#)
+    })
+    .await;
+    let grants = Grants::new(config(&realm, &[]));
+    grants.bind(&run(), PERSON_TOKEN).await.expect("bound");
+    assert_eq!(grants.token("run-1").await.expect("a token"), "delegated-2");
+    let asked = realm.bodies_at("/token").len();
+    assert_eq!(grants.token("run-1").await.expect("a token"), "delegated-2");
+    assert_eq!(
+        realm.bodies_at("/token").len(),
+        asked,
+        "the held token was refreshed again"
+    );
+}
+
 /// Ending a run that holds no grant asks the realm nothing.
 #[tokio::test]
 async fn ending_a_run_without_a_grant_asks_the_realm_nothing() {
@@ -276,7 +302,11 @@ async fn ending_a_run_without_a_grant_asks_the_realm_nothing() {
 #[tokio::test]
 async fn a_revocation_refused_or_unheard_drops_the_grant_and_is_logged_without_the_token() {
     captured();
-    for (case, revoked) in [("refused", reply(400, "{}")), ("unheard", None)] {
+    for (case, revoked) in [
+        ("accepted", reply(200, "{}")),
+        ("refused", reply(400, "{}")),
+        ("unheard", None),
+    ] {
         let realm = Realm::start(move |path, body| {
             if path.ends_with("/introspect") {
                 return introspection(body);
@@ -297,6 +327,7 @@ async fn a_revocation_refused_or_unheard_drops_the_grant_and_is_logged_without_t
         assert_eq!(realm.bodies_at("/revoke").len(), 1, "{case}");
     }
     let lines = captured();
+    assert!(lines.contains("the run's grant is revoked"), "{lines}");
     assert!(
         lines.contains("the realm refused to revoke the run's grant"),
         "{lines}"

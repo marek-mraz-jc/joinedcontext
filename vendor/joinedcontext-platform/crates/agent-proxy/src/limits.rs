@@ -259,6 +259,19 @@ impl LimitManager {
 
 #[cfg(test)]
 mod tests {
+    /// The day a daily budget belongs to is today's, counted in whole days from the epoch: the
+    /// clock read beside it (a call across midnight may see the next day) and after 2026-11-24.
+    #[test]
+    fn the_budget_day_is_todays_day_since_the_epoch() {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_secs();
+        let day = super::utc_day();
+        assert!(day == secs / 86_400 || day == secs / 86_400 + 1, "{day}");
+        assert!(day >= 20_781, "{day}");
+    }
+
     use super::*;
 
     /// F-PLT1-013: the usage of a run the Portal no longer holds is dropped, an active run keeps
