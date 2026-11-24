@@ -40,9 +40,9 @@ map() {
     # (ci.yml ship-apps) build from crates/portal/builder
     /^bins\/jc\/Dockerfile$/ || /^crates\/portal\/Dockerfile$/ || /^crates\/portal\/apps\// || /^crates\/portal\/builder\// || /^crates\/portal\/scripts\/(app-integrity\.mjs|ci\/check-dockerfile-members\.py)$/ { on["dockerfiles"] = "true" }
     /(^|\/)Cargo\.(lock|toml)$/ || /(^|\/)deny\.toml$/ || /(^|\/)\.cargo\/audit\.toml$/ { on["supply"] = "true" }
-    # the vendored platform crates (platform-test), the assistant aside (a root member), and the
-    # root lockfile and manifest its lockfile repeats
-    /^vendor\/joinedcontext-platform\// && !/^vendor\/joinedcontext-platform\/crates\/assistant\// { on["platform"] = "true" }
+    # the vendored platform crates (platform-test), the assistant and the sandbox aside (root
+    # members), and the root lockfile and manifest its lockfile repeats
+    /^vendor\/joinedcontext-platform\// && !/^vendor\/joinedcontext-platform\/crates\/(assistant|functions)\// { on["platform"] = "true" }
     /^Cargo\.(lock|toml)$/ { on["platform"] = "true" }
     /^crates\/antares\// { on["antares"] = "true" }
     /^crates\/ekiben\// { on["ekiben"] = "true" }
@@ -200,6 +200,7 @@ if [ "${1:-}" = --selftest ]; then
   check 'vendor/viz/site/explore.html' 'root portal'
   check 'vendor/joinedcontext-platform/crates/context-gateway/src/lib.rs' 'root portal platform'
   check 'vendor/joinedcontext-platform/crates/assistant/src/lib.rs' 'root portal'
+  check 'vendor/joinedcontext-platform/crates/functions/src/lib.rs' 'root portal'
   check 'bins/jc/Dockerfile' 'root image dockerfiles'
   check 'Cargo.lock' 'root supply platform'
   check 'vendor/joinedcontext-platform/crates/jc-core/Cargo.toml' 'root portal supply platform'
