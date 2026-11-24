@@ -51,11 +51,16 @@ fuzz_target!(|data: &[u8]| {
         wrote: false,
     };
     let foreign = api.package.is_object()
-        && !api.package["extras"]
-            .as_array()
-            .is_some_and(|extras| extras.iter().any(|e| e["key"] == "generated_by" && e["value"] == GENERATOR));
+        && !api.package["extras"].as_array().is_some_and(|extras| {
+            extras
+                .iter()
+                .any(|e| e["key"] == "generated_by" && e["value"] == GENERATOR)
+        });
     let outcome = publish(&mut api, &desired);
     if foreign {
-        assert!(outcome.is_err() && !api.wrote, "a package somebody else made is never written");
+        assert!(
+            outcome.is_err() && !api.wrote,
+            "a package somebody else made is never written"
+        );
     }
 });
