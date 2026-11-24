@@ -485,3 +485,334 @@ fn parity() {
         }
     }
 }
+
+
+/// A model with every NGSI-LD kind, a type chain, units, an enum with meanings, an inline
+/// object, a relationship pair, an abstract parent and a slot name that is no identifier.
+const RICH: &str = r#"id: https://city.example/models/rich
+name: rich
+title: Rich
+version: 1.2.0
+description: Every kind of slot
+license: CC-BY-4.0
+default_prefix: city
+default_range: string
+prefixes:
+  city: https://city.example/models/rich/
+  linkml: https://w3id.org/linkml/
+  ext: https://ext.example/vocab#
+  qudt: https://qudt.org/vocab/unit/
+  skos: http://www.w3.org/2004/02/skos/core#
+emit_prefixes: [ext]
+imports:
+  - linkml:types
+  - ngsi-ld-core
+types:
+  Celsius:
+    typeof: Temperature
+    description: degrees
+  Temperature:
+    typeof: float
+classes:
+  Place:
+    is_a: Entity
+    abstract: true
+  Station:
+    is_a: Place
+    description: A measuring station
+    exact_mappings: [ext:Site]
+    id_prefixes: [ext]
+    slots: [label, spot, level, heat, state, tags, open, opened, started, at, page, home, my-slot, note, words, extra, payload, zones]
+    slot_usage:
+      level:
+        required: true
+        annotations:
+          shown: false
+    annotations:
+      open_world: true
+      rank: 3
+  Zone:
+    is_a: Entity
+    slots: [station]
+  Address:
+    attributes:
+      street:
+        alias: streetName
+slots:
+  label:
+    required: true
+    rank: 1
+    slot_uri: ext:label
+    annotations:
+      ngsi_ld_kind: LanguageProperty
+  spot:
+    annotations:
+      ngsi_ld_kind: GeoProperty
+  level:
+    range: integer
+    unit:
+      ucum_code: m
+      symbol: m
+      exact_mappings: [qudt:M]
+    annotations:
+      threshold: 4.5
+      strict: true
+  heat:
+    range: Celsius
+  state:
+    range: State
+  tags:
+    multivalued: true
+  open:
+    range: boolean
+  opened:
+    range: date
+  started:
+    range: datetime
+  at:
+    range: time
+  page:
+    range: uri
+  home:
+    range: Address
+    inlined: true
+  my-slot:
+    range: double
+  note:
+    annotations:
+      ngsi_ld_kind: JsonProperty
+  words:
+    annotations:
+      ngsi_ld_kind: VocabProperty
+  extra:
+    annotations:
+      ngsi_ld_kind: ListProperty
+  payload:
+    range: decimal
+    annotations:
+      jsonld_keyword: "@json"
+  zones:
+    range: Zone
+    multivalued: true
+    inverse: station
+    annotations:
+      ngsi_ld_kind: Relationship
+  station:
+    range: Station
+    inverse: zones
+    annotations:
+      ngsi_ld_kind: Relationship
+enums:
+  State:
+    description: The state
+    permissible_values:
+      on:
+        description: switched on
+        meaning: ext:On
+        annotations:
+          colour: green
+      off: {}
+  Empty:
+    permissible_values: {}
+"#;
+
+#[test]
+fn a_model_with_every_kind_of_slot_renders_each_artifact() {
+    let (status, out) = generate(&source(RICH));
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
+
+    let ctx = &out["context"]["@context"];
+    assert_eq!(ctx["ext"], "https://ext.example/vocab#", "emit_prefixes and mappings emit ext");
+    assert_eq!(ctx["heat"]["@type"], "xsd:float", "Celsius → Temperature → float");
+    assert_eq!(ctx["label"], json!({"@id": "ext:label", "@container": "@language"}));
+    assert_eq!(ctx["note"]["@type"], "@json");
+    assert_eq!(ctx["words"]["@type"], "@vocab");
+    assert_eq!(ctx["extra"]["@container"], "@list");
+    assert_eq!(ctx["zones"]["@type"], "@id");
+    assert_eq!(ctx["payload"], "@json", "a jsonld_keyword replaces the term");
+    assert_eq!(ctx["streetName"], json!({"@id": "city:street"}), "an attribute's alias");
+    assert_eq!(ctx["state"]["@context"]["meaning"], "@id");
+    assert_eq!(ctx["page"]["@type"], "xsd:anyURI");
+
+    let broker = &out["brokerSchema"];
+    for (key, value) in [("version", "1.2.0"), ("title", "Rich"), ("license", "CC-BY-4.0"), ("default_prefix", "city")] {
+        assert_eq!(broker[key], value, "{key}");
+    }
+    let station = &broker["classes"]["Station"];
+    assert_eq!(station["is_a"], "Place");
+    assert_eq!(station["description"], "A measuring station");
+    assert_eq!(
+        station["slot_usage"]["level"],
+        json!({"name": "level", "required": true, "annotations": {"shown": {"tag": "shown", "value": "false"}}}),
+        "only what the usage changes"
+    );
+    assert_eq!(station["annotations"]["rank"]["value"], "3", "a number annotation is text");
+    assert_eq!(broker["slots"]["heat"]["range"], "float", "a type resolves to its built-in");
+    assert_eq!(broker["slots"]["label"]["rank"], 1);
+    assert_eq!(
+        broker["slots"]["level"]["unit"],
+        json!({"ucum_code": "m", "symbol": "m", "exact_mappings": ["qudt:M"]})
+    );
+    assert_eq!(broker["slots"]["level"]["annotations"]["strict"]["value"], "true");
+    assert_eq!(broker["slots"]["level"]["annotations"]["threshold"]["value"], "4.5");
+    assert_eq!(
+        broker["enums"]["State"],
+        json!({"name": "State", "description": "The state", "permissible_values": {
+            "on": {"text": "on", "description": "switched on", "meaning": "ext:On",
+                   "annotations": {"colour": {"tag": "colour", "value": "green"}}},
+            "off": {"text": "off"}}})
+    );
+
+    assert_eq!(
+        out["jsonSchema"]["definitions"]["Station"]["properties"]["level"]["x-unit"],
+        json!({"ucumCode": "m", "symbol": "m", "exactMappings": ["qudt:M"]})
+    );
+
+    // The example is of Station: Place is abstract and Zone sorts after it.
+    let example = &out["example"];
+    assert_eq!(example["type"], "Station");
+    assert_eq!(example["id"], "urn:ngsi-ld:Station:city.example:example:1");
+    for (key, value) in [
+        ("label", json!({"en": "label"})),
+        ("spot", json!({"type": "Point", "coordinates": [0.0, 0.0]})),
+        ("level", json!(0)),
+        ("heat", json!(0.0)),
+        ("state", json!("off")),
+        ("tags", json!(["tags"])),
+        ("open", json!(true)),
+        ("opened", json!("2026-01-01")),
+        ("started", json!("2026-01-01T00:00:00Z")),
+        ("at", json!("00:00:00")),
+        ("page", json!("https://example.invalid/")),
+        ("home", json!({"street": "street"})),
+        ("extra", json!(["extra"])),
+        ("zones", json!(["urn:ngsi-ld:Zone:city.example:example:1"])),
+    ] {
+        assert_eq!(example[key], value, "{key}");
+    }
+
+    let ts = out["typescript"].as_str().unwrap_or_default();
+    for line in [
+        "export type Empty = never;",
+        "/** The state */\nexport type State = \"off\" | \"on\";",
+        "  label: string;",
+        "  spot?: Geometry | null;",
+        "  /** Unit: m. */\n  level: number;",
+        "  state?: State | null;",
+        "  tags?: string | null;",
+        "  open?: boolean | null;",
+        "  \"my-slot\"?: number | null;",
+        "  zones?: string | null;",
+        "} & { [attr: string]: string | number | boolean | Geometry | null };",
+        "export type EntityTypeName = \"Station\" | \"Zone\";",
+    ] {
+        assert!(ts.contains(line), "{line}\n{ts}");
+    }
+    assert!(!ts.contains("type: \"Place\""), "an abstract class has no row type");
+}
+
+/// `generate` on `MODEL` with `from` replaced by `to`, its `errors`.
+fn errors_with(from: &str, to: &str) -> Vec<String> {
+    assert!(MODEL.contains(from), "{from}");
+    let (status, out) = generate(&source(&MODEL.replacen(from, to, 1)));
+    assert_eq!(status, StatusCode::OK);
+    errors_of(&out)
+}
+
+#[test]
+fn context_failures_name_the_term_and_hold_back_the_example() {
+    let e = errors_with("  status:\n", "  status:\n    slot_uri: a:b:c\n");
+    assert!(e[0].starts_with("context: 'a:b:c' is neither a CURIE (prefix:name, one colon) nor a URI"), "{e:?}");
+    assert!(e.iter().any(|m| m == "example: the @context did not render"), "{e:?}");
+
+    let e = errors_with("  status:\n", "  status:\n    exact_mappings: [a:b:c]\n");
+    assert!(e[0].starts_with("context: Definition status - unrecognized prefix: a:b:c"), "{e:?}");
+
+    let e = errors_with("  ParkingSpot:\n", "  ParkingSpot:\n    class_uri: https://smartdatamodels.org/dataModel.Parking/ParkingSpot\n");
+    assert!(e[0].starts_with("context: these terms are minted under a namespace the organisation does not own"), "{e:?}");
+    assert!(e[0].ends_with("'ParkingSpot' → https://smartdatamodels.org/dataModel.Parking/ParkingSpot (reserved: https://smartdatamodels.org/)"), "{e:?}");
+    // The same IRI imported with its upstream source is no squat.
+    let e = errors_with(
+        "  ParkingSpot:\n",
+        "  ParkingSpot:\n    class_uri: https://smartdatamodels.org/dataModel.Parking/ParkingSpot\n    annotations:\n      upstream_source: https://github.com/smart-data-models/dataModel.Parking\n",
+    );
+    assert!(e.iter().all(|m| !m.contains("minted under")), "{e:?}");
+}
+
+#[test]
+fn the_context_follows_prefixes_mappings_and_any_of() {
+    let model = MODEL
+        .replace("  linkml: https://w3id.org/linkml/\n", "  linkml: https://w3id.org/linkml/\n  odd: https://odd.example/x\n")
+        .replace(
+            "slots:\n  status:\n",
+            "slots:\n  status:\n    exact_mappings: [https://nowhere.example/s, https://odd.example/xs, foreign:status]\n",
+        )
+        .replace("slots: [status, capacity]", "slots: [status, capacity, either, mixed, near, far]")
+        .replace(
+            "enums:\n",
+            "  either:\n    any_of:\n      - range: ParkingSpot\n      - range: integer\n  mixed:\n    any_of:\n      - range: ParkingSpot\n      - range: integer\n      - range: date\n  near:\n    any_of:\n      - range: ParkingSpot\n    slot_uri: https://odd.example/xnear\n  far:\n    slot_uri: https://far.example/far\nenums:\n",
+        );
+    let (_, out) = generate(&source(&model));
+    let ctx = &out["context"]["@context"];
+    assert_eq!(ctx["odd"], json!({"@id": "https://odd.example/x", "@prefix": true}), "{out}");
+    assert_eq!(ctx["foreign"], "http://example.org/UNKNOWN/foreign/", "an unknown mapping prefix");
+    assert_eq!(ctx["either"]["@type"], "xsd:integer", "a class or one literal type");
+    assert!(ctx["mixed"].get("@type").is_none(), "two literal types coerce to none: {ctx}");
+    assert_eq!(ctx["near"]["@id"], "odd:near");
+    assert_eq!(ctx["far"]["@id"], "https://far.example/far", "a URI no prefix covers stays whole");
+}
+
+#[test]
+fn without_a_default_prefix_the_vocab_is_the_model_id() {
+    for (id, vocab) in [
+        ("https://city.example/models/parking", "https://city.example/models/parking/"),
+        ("https://city.example/models/parking#", "https://city.example/models/parking#"),
+    ] {
+        let model = MODEL
+            .replace("id: https://city.example/models/parking\n", &format!("id: {id}\n"))
+            .replace("default_prefix: city\n", "")
+            .replace("default_range: string\n", "");
+        let (_, out) = generate(&source(&model));
+        assert_eq!(out["context"]["@context"]["@vocab"], vocab, "{out}");
+    }
+    let e = errors_with("default_prefix: city\n", "default_prefix: nowhere\n");
+    assert!(e[0].contains("default_prefix 'nowhere' is not declared under prefixes"), "{e:?}");
+}
+
+#[test]
+fn a_type_the_broker_cannot_hold_is_named_and_holds_back_every_saved_artifact() {
+    let model = MODEL.replace("    range: integer\n", "    range: Odd\n") + "types:\n  Odd:\n    uri: city:odd\n";
+    let (_, out) = generate(&source(&model));
+    let e = errors_of(&out);
+    assert!(e[0].starts_with("brokerSchema: slot 'capacity': range 'Odd' is not a class, an enum or a type based on one of"), "{e:?}");
+    assert_eq!(e[1], "jsonSchema, docs, example, typescript: the broker schema did not render");
+    assert!(out.get("context").is_some(), "the context renders on its own");
+}
+
+#[test]
+fn a_flag_the_broker_reads_otherwise_is_refused_before_a_save() {
+    let model = MODEL.replace("    is_a: Entity\n", "    is_a: Entity\n    annotations:\n      qb_dsd: \"False\"\n");
+    let (_, out) = generate(&source(&model));
+    let e = errors_of(&out);
+    assert!(e[0].starts_with("brokerSchema: the broker refuses this schema: "), "{e:?}");
+    assert!(out.get("brokerSchema").is_none());
+}
+
+#[test]
+fn the_saved_artifacts_refuse_reserved_names_endless_nesting_and_unmapped_members() {
+    let (_, out) = generate(&source(&MODEL.replace("SpotStatus", "Geometry")));
+    let e = errors_of(&out);
+    assert!(e.iter().any(|m| m.starts_with("typescript: 'Geometry' is a name jc-types.ts declares itself")), "{e:?}");
+
+    let head = &MODEL[..MODEL.find("classes:").unwrap_or_default()];
+    let nested = format!(
+        "{head}classes:\n  ParkingSpot:\n    is_a: Entity\n    slots: [child]\n  Box:\n    slots: [child]\nslots:\n  child:\n    range: Box\n    inlined: true\n"
+    );
+    let (_, out) = generate(&source(&nested));
+    let e = errors_of(&out);
+    assert!(e.iter().any(|m| m.contains("nests inline objects more than 8 deep")), "{e:?}");
+
+    let e = errors_with("  status:\n", "  status:\n    alias: state\n");
+    assert!(e.iter().any(|m| m.starts_with("example: the generated example carries members the generated @context does not define")), "{e:?}");
+}
