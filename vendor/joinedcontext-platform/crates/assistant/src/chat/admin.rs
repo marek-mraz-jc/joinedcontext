@@ -367,14 +367,23 @@ pub(super) async fn the_portal(state: &ChatState, headers: &HeaderMap) -> Result
     }
 }
 
-/// The site row of `source` in `project`, `404` when it has not been crawled.
-async fn site(state: &ChatState, project: &str, source: &str) -> Result<i64, Refusal> {
-    let mut tx = crate::project_scope(&state.pool, project)
+/// `project`'s scope: `404` for a name that is no project, `503` when the store cannot be
+/// reached, never a missing project for an outage.
+async fn scoped<'c>(
+    state: &ChatState,
+    project: &str,
+) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
+    crate::project_scope(&state.pool, project)
         .await
         .map_err(|err| match err {
             crate::Error::Project(_) => Box::new(problem(404, "no such project")),
             other => Box::new(failed(other)),
-        })?;
+        })
+}
+
+/// The site row of `source` in `project`, `404` when it has not been crawled.
+async fn site(state: &ChatState, project: &str, source: &str) -> Result<i64, Refusal> {
+    let mut tx = scoped(state, project).await?;
     let id: Option<i64> =
         sqlx::query_scalar("SELECT id FROM sites WHERE project = $1 AND source = $2")
             .bind(project)
@@ -401,8 +410,9 @@ async fn sources(
     if let Err(refused) = the_portal(&state, &headers).await {
         return *refused;
     }
-    let Ok(mut tx) = crate::project_scope(&state.pool, &project).await else {
-        return problem(404, "no such project");
+    let mut tx = match scoped(&state, &project).await {
+        Ok(tx) => tx,
+        Err(refused) => return *refused,
     };
     let sql = format!(
         "SELECT s.source, s.visibility, to_char(s.last_crawl AT TIME ZONE 'UTC', {UTC}) AS last_crawl, \
@@ -483,8 +493,9 @@ async fn errors(
         Ok(site) => site,
         Err(refused) => return *refused,
     };
-    let Ok(mut tx) = crate::project_scope(&state.pool, &project).await else {
-        return problem(404, "no such project");
+    let mut tx = match scoped(&state, &project).await {
+        Ok(tx) => tx,
+        Err(refused) => return *refused,
     };
     let rows: Result<Vec<(String, String, Option<String>)>, _> = sqlx::query_as(
         "SELECT url, kind, error FROM ( \
@@ -573,8 +584,9 @@ async fn pages(
         Ok(site) => site,
         Err(refused) => return *refused,
     };
-    let Ok(mut tx) = crate::project_scope(&state.pool, &project).await else {
-        return problem(404, "no such project");
+    let mut tx = match scoped(&state, &project).await {
+        Ok(tx) => tx,
+        Err(refused) => return *refused,
     };
     let q = level.q.as_deref().map(str::trim);
     if q.is_some_and(|q| !PAGE_QUERY.contains(&q.chars().count())) {
@@ -643,8 +655,9 @@ async fn documents(
         Ok(site) => site,
         Err(refused) => return *refused,
     };
-    let Ok(mut tx) = crate::project_scope(&state.pool, &project).await else {
-        return problem(404, "no such project");
+    let mut tx = match scoped(&state, &project).await {
+        Ok(tx) => tx,
+        Err(refused) => return *refused,
     };
     let sql = format!(
         "SELECT d.id, d.url, d.page_id, d.mime, d.bytes, d.pages, d.off_domain, d.status, d.included, d.excluded_by_admin, {}, \
@@ -744,8 +757,9 @@ async fn links(
         Ok(site) => site,
         Err(refused) => return *refused,
     };
-    let Ok(mut tx) = crate::project_scope(&state.pool, &project).await else {
-        return problem(404, "no such project");
+    let mut tx = match scoped(&state, &project).await {
+        Ok(tx) => tx,
+        Err(refused) => return *refused,
     };
     let found: Option<i64> =
         match sqlx::query_scalar("SELECT id FROM pages WHERE id = $1 AND site_id = $2")
@@ -799,8 +813,9 @@ async fn passages(
     if owner.page.is_some() == owner.document.is_some() {
         return problem(400, "name one page or one document: ?page= or ?document=");
     }
-    let Ok(mut tx) = crate::project_scope(&state.pool, &project).await else {
-        return problem(404, "no such project");
+    let mut tx = match scoped(&state, &project).await {
+        Ok(tx) => tx,
+        Err(refused) => return *refused,
     };
     let rows: Vec<(i32, String, Option<String>, String)> = match sqlx::query_as(
         "SELECT ordinal, text, lang, url FROM chunks WHERE site_id = $1 \
@@ -986,8 +1001,9 @@ async fn usage(
     if let Err(refused) = the_portal(&state, &headers).await {
         return *refused;
     }
-    let Ok(mut tx) = crate::project_scope(&state.pool, &project).await else {
-        return problem(404, "no such project");
+    let mut tx = match scoped(&state, &project).await {
+        Ok(tx) => tx,
+        Err(refused) => return *refused,
     };
     let rows: Vec<(String, i64, i64, i64)> = match sqlx::query_as(
         "SELECT to_char(day, 'YYYY-MM-DD'), requests, tokens_in, tokens_out FROM usage \
@@ -1078,10 +1094,13 @@ async fn files(
     if let Err(refused) = upload_source(&state, &project, &source) {
         return *refused;
     }
-    // A source no file was uploaded to yet holds none.
+    // A source no file was uploaded to yet holds none; a store that cannot be read says so.
     let site = match site(&state, &project, &source).await {
         Ok(site) => site,
-        Err(_) => return Json(json!({"items": []})).into_response(),
+        Err(refused) if refused.status() == StatusCode::NOT_FOUND => {
+            return Json(json!({"items": []})).into_response()
+        }
+        Err(refused) => return *refused,
     };
     match crate::upload::files(&state.pool, &project, site, &source).await {
         Ok(items) => Json(json!({"items": items})).into_response(),
