@@ -87,7 +87,7 @@
 "kaisatsu-import" = { lines = 99.17, functions = 99.39 }
 "kaisatsu-login" = { lines = 99.86, functions = 100.00 }
 "kaisatsu-mcp" = { lines = 100.00, functions = 100.00 }
-"kaisatsu-oidc" = { lines = 99.91, functions = 100.00 }
+"kaisatsu-oidc" = { lines = 99.94, functions = 100.00 }
 "kaisatsu-server" = { lines = 99.17, functions = 100.00 }
 "kaisatsu-store-memory" = { lines = 99.83, functions = 100.00 }
 "kaisatsu-store-pg" = { lines = 99.01, functions = 99.24 }

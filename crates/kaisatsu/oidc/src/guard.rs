@@ -668,10 +668,11 @@ mod tests {
             "https://localhost/",
             "https://other.example/",
         ] {
-            match guard.validate_url(raw, Some(&listed)) {
-                Ok(_) | Err(KaisatsuError::OutboundRefused(_)) => {}
-                Err(other) => panic!("{raw}: {other:?}"),
-            }
+            let got = guard.validate_url(raw, Some(&listed));
+            assert!(
+                matches!(got, Ok(_) | Err(KaisatsuError::OutboundRefused(_))),
+                "{raw}: {got:?}"
+            );
         }
     }
 
