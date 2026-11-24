@@ -1,0 +1,1 @@
+{"driver":"mysql","dsn":"x","query":"SELECT 1","unsafe_dynamic_query":true,"secret_name":"s","region":"r"}

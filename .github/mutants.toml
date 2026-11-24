@@ -41,6 +41,35 @@ exclude_re = [
   # T-7579 ekiben-io-http and ekiben-io-remote: the fuzzing helpers compile only with the `fuzzing` feature, which the
   # crates' tests never enable; fuzz/ drives them (cargo fuzz), so no test run can tell a mutant of them.
   'ekiben-io-(remote|http)/src/[a-z_]+\.rs:\d+:\d+: .*\bfuzz(ing::|_)',
+  # T-7582 ekiben-io-sql fuzzing: compiled only with the `fuzzing` feature for fuzz/ (cargo fuzz), never in the crate's
+  # tests, so no test builds a mutant of it; the dsn, lint and values fuzz targets run it.
+  'ekiben-io-sql/src/lib\.rs:\d+:\d+: .* in fuzzing::lint_all',
+  'ekiben-io-sql/src/lib\.rs:\d+:\d+: replace fuzzing::lint_all with \(\)',
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: (replace fuzz_values with \(\)|.* in fuzz_values)',
+  # T-7582 ekiben-io-sql sqlite parse_dsn: the OpenFlags it joins are distinct single bits, so `^` joins them alike.
+  'ekiben-io-sql/src/sqlite\.rs:\d+:\d+: replace \| with \^ in parse_dsn',
+  # T-7582 ekiben-io-sql parse_with_offset: the sign is 1 or -1, and x / 1 == x * 1, x / -1 == x * -1.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace \* with / in parse_with_offset',
+  # T-7582 ekiben-io-sql pq_text: the float is infinite there, and 0.0 is not, so > and >= pick the same sign.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace > with >= in pq_text',
+  # T-7582 ekiben-io-sql format_pq_ts: an offset of 0 took the 'Z' branch above, so < and <= pick the same sign.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace < with <= in format_pq_ts',
+  # T-7582 ekiben-io-sql encode_numeric: `+ 4` pads one more leading zero group, which the strip below drops again
+  # with its weight, so the wire form is the same.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace % with \+ in encode_numeric',
+  # T-7582 ekiben-io-sql PgRaw::produces: the statement was described first, so the server infers the oid the
+  # parameter already has; naming it or leaving it 0 binds the same type.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace <impl crate::sqlx::Encode<._, Postgres> for PgRaw>::produces -> Option<PgTypeInfo> with None',
+  # T-7582 ekiben-io-sql uuid nibbles: the high nibble is shifted past the low one, so `^` joins them as `|` does.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace \| with \^ in pg_text_to_binary',
+  # T-7582 ekiben-io-sql decode_numeric: one more group of fraction digits is cut by the truncate to dscale after it.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace < with <= in decode_numeric',
+  # T-7582 ekiben-io-sql parse_with_offset: index 10 ends the date, where the local part would be the date alone and
+  # the datetime format refuses it, so > 10 and >= 10 accept the same texts.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace > with >= in parse_with_offset',
+  # T-7582 ekiben-io-sql pg_time_of_day, mysql_binary_datetime: the value at the bound (86400 s, 1000000 us) makes
+  # Time::new refuse it right after, so < and <= refuse the same values.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace < with <= in (pg_time_of_day|mysql_binary_datetime)',
   # T-7632 ekiben-io-ngsild status_text: a body of exactly ERROR_BODY_BYTES is cut at its own length either way.
   'ekiben-io-ngsild/src/client\.rs:\d+:\d+: replace > with >= in status_text',
   # T-7632 ekiben-io-ngsild: the next pass due exactly now sleeps zero either way; an equal timestamp

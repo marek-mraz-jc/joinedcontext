@@ -163,12 +163,6 @@ pub(crate) async fn query_rows(
     Ok(rows)
 }
 
-fn object(conf: &ComponentConfig) -> Result<&serde_json::Map<String, JsonValue>, CoreError> {
-    conf.config
-        .as_object()
-        .ok_or_else(|| CoreError::config(format!("{}: expected an object", conf.component_type)))
-}
-
 fn args_mapping(
     obj: &serde_json::Map<String, JsonValue>,
     ctx: &ProcContext,
@@ -194,8 +188,7 @@ pub fn build_raw(
     ctx: &ProcContext,
 ) -> Result<SqlQueryProcessor, CoreError> {
     refuse_lint("processor", conf, lint_raw)?;
-    require(conf, &["driver", "dsn", "query"])?;
-    let obj = object(conf)?;
+    let obj = require(conf, &["driver", "dsn", "query"])?;
     Ok(SqlQueryProcessor {
         name: "sql_raw",
         db: LazyDb::new(Conn::from_parts(obj, "dsn", ctx.file_root.as_deref())?),
@@ -218,8 +211,7 @@ pub fn build_select(
     ctx: &ProcContext,
 ) -> Result<SqlQueryProcessor, CoreError> {
     refuse_lint("processor", conf, lint_select)?;
-    require(conf, &["driver", "dsn", "table", "columns"])?;
-    let obj = object(conf)?;
+    let obj = require(conf, &["driver", "dsn", "table", "columns"])?;
     let conn = Conn::from_parts(obj, "dsn", ctx.file_root.as_deref())?;
     let s = |k: &str| obj.get(k).and_then(JsonValue::as_str);
     let query = select_sql(
@@ -316,8 +308,7 @@ pub fn build_insert(
     ctx: &ProcContext,
 ) -> Result<SqlInsertProcessor, CoreError> {
     refuse_lint("processor", conf, lint_insert)?;
-    require(conf, &["driver", "dsn", "table", "columns", "args_mapping"])?;
-    let obj = object(conf)?;
+    let obj = require(conf, &["driver", "dsn", "table", "columns", "args_mapping"])?;
     let s = |k: &str| obj.get(k).and_then(JsonValue::as_str).map(String::from);
     let mapping = obj
         .get("args_mapping")
@@ -342,14 +333,9 @@ impl SqlInsertProcessor {
             rows.push(row.len());
             args.extend(row);
         }
-        let sql = insert_sql(
-            &self.table,
-            &self.columns,
-            &rows,
-            self.prefix.as_deref(),
-            self.suffix.as_deref(),
-            Placeholder::for_driver(self.db.conn.driver),
-        )?;
+        let (prefix, suffix) = (self.prefix.as_deref(), self.suffix.as_deref());
+        let ph = Placeholder::for_driver(self.db.conn.driver);
+        let sql = insert_sql(&self.table, &self.columns, &rows, prefix, suffix, ph)?;
         util::exec(db, &sql, &args)
             .await
             .map_err(|e| util::db_error_text(&e))
@@ -450,6 +436,14 @@ mod tests {
             .unwrap();
         assert_eq!(bodies(&out), [r#"[{"name":"b"}]"#, "[]"]);
         assert!(p.process_batch(&ctx, Vec::new()).await.unwrap().is_empty());
+        // Closed, the next message opens a new memory database: the init statement ran once per
+        // component, so the seeded table is gone.
+        p.close().await.unwrap();
+        let out = p
+            .process_batch(&ctx, vec![Part::from_str(r#"{"id":2}"#)])
+            .await
+            .unwrap();
+        assert!(out[0][0].is_errored());
     }
 
     #[tokio::test]
@@ -523,6 +517,130 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bodies(&out), [r#"[{"n":2}]"#]);
+    }
+
+    #[tokio::test]
+    async fn a_query_past_the_message_limit_and_a_failing_mapping_flag_the_message() {
+        let mut ctx = ctx();
+        ctx.org = OrgContext::new(
+            OrgId::new("o"),
+            OrgQuotas {
+                max_in_flight_messages: 1,
+                ..Default::default()
+            },
+        );
+        let p = build_raw(
+            &conf(
+                "sql_raw",
+                json!({"driver": "sqlite", "dsn": ":memory:", "init_statement": SEED,
+                    "query": "SELECT name FROM s"}),
+            ),
+            &ctx,
+        )
+        .unwrap();
+        let out = p
+            .process_batch(&ctx, vec![Part::from_str("{}")])
+            .await
+            .unwrap();
+        assert!(out[0][0].is_errored());
+        assert_eq!(p.processor_type(), "sql_raw");
+        p.close().await.unwrap();
+
+        // exec_only keeps the message; a failing statement flags it with the driver's words.
+        let exec = build_raw(
+            &conf(
+                "sql_raw",
+                json!({"driver": "sqlite", "dsn": ":memory:", "exec_only": true,
+                    "query": "INSERT INTO nope VALUES (1)"}),
+            ),
+            &ctx,
+        )
+        .unwrap();
+        exec.close().await.unwrap();
+        let out = exec
+            .process_batch(&ctx, vec![Part::from_str("{}")])
+            .await
+            .unwrap();
+        assert!(out[0][0].is_errored());
+        assert_eq!(bodies(&out), ["{}"]);
+
+        let throws = build_raw(
+            &conf(
+                "sql_raw",
+                json!({"driver": "sqlite", "dsn": ":memory:", "query": "SELECT 1",
+                    "args_mapping": "root = throw(\"no args\")"}),
+            ),
+            &ctx,
+        )
+        .unwrap();
+        let out = throws
+            .process_batch(&ctx, vec![Part::from_str("{}")])
+            .await
+            .unwrap();
+        assert!(out[0][0].is_errored());
+        throws.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sql_insert_flags_every_message_when_the_write_fails() {
+        let ctx = ctx();
+        let insert = build_insert(
+            &conf(
+                "sql_insert",
+                json!({"driver": "sqlite", "dsn": ":memory:", "table": "missing",
+                    "columns": ["a"], "args_mapping": "root = [ this.a ]"}),
+            ),
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(insert.processor_type(), "sql_insert");
+        let memory = build_insert(
+            &conf(
+                "sql_insert",
+                json!({"driver": "sqlite", "dsn": ":memory:", "init_statement": "CREATE TABLE t (a int)",
+                    "table": "t", "columns": ["a"], "args_mapping": "root = [ 1 ]"}),
+            ),
+            &ctx,
+        )
+        .unwrap();
+        let one = || vec![Part::from_str("{}")];
+        assert!(!memory.process_batch(&ctx, one()).await.unwrap()[0][0].is_errored());
+        memory.close().await.unwrap();
+        assert!(
+            memory.process_batch(&ctx, one()).await.unwrap()[0][0].is_errored(),
+            "closed, the memory database and its table are gone"
+        );
+        assert!(insert
+            .process_batch(&ctx, Vec::new())
+            .await
+            .unwrap()
+            .is_empty());
+        let out = insert
+            .process_batch(
+                &ctx,
+                vec![Part::from_str(r#"{"a":1}"#), Part::from_str(r#"{"a":2}"#)],
+            )
+            .await
+            .unwrap();
+        assert!(out[0].iter().all(Part::is_errored));
+        let out = insert
+            .process_batch(&ctx, vec![Part::from_str("not json")])
+            .await
+            .unwrap();
+        assert!(out[0][0].is_errored(), "a mapping error flags the message");
+        let e = build_insert(
+            &conf(
+                "sql_insert",
+                json!({"driver": "sqlite", "dsn": ":memory:", "table": "t",
+                    "columns": ["a"], "args_mapping": 1}),
+            ),
+            &ctx,
+        )
+        .err()
+        .expect("refused");
+        assert!(e
+            .to_string()
+            .contains("field args_mapping: expected a mapping string"));
     }
 
     #[test]

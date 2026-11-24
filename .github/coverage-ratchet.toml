@@ -47,6 +47,7 @@
 "ekiben-io-ngsild" = { lines = 99.19, functions = 99.34 }
 "ekiben-io-remote" = { lines = 99.75, functions = 98.57 }
 "ekiben-io-s3" = { lines = 99.02, functions = 100.00 }
+"ekiben-io-sql" = { lines = 100.00, functions = 100.00 }
 "ekiben-js" = { lines = 99.62, functions = 100.00 }
 "ekiben-linkml" = { lines = 100.00, functions = 100.00 }
 "ekiben-parquet" = { lines = 99.68, functions = 100.00 }
