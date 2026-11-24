@@ -163,9 +163,10 @@ fn an_unknown_bom_or_delimiter_names_the_parameter_and_an_example() {
 #[test]
 fn a_digit_sorts_before_a_letter_at_the_same_place() {
     let mut table = Table::default();
-    table.columns = ["zb", "z1"].map(String::from).to_vec();
+    // One attribute, so the two paths are ordered by `natural` alone.
+    table.columns = ["z.b", "z.1"].map(String::from).to_vec();
     table.settle(&[]);
-    assert_eq!(table.columns, vec!["id", "type", "z1", "zb"]);
+    assert_eq!(table.columns, vec!["id", "type", "z.1", "z.b"]);
 }
 
 #[test]
