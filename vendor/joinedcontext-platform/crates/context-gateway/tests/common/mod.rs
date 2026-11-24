@@ -21,6 +21,27 @@ pub const ISSUER: &str = "https://2.28.67.127.sslip.io/realms/joinedcontext";
 /// The key id the realm publishes.
 pub const KID: &str = "realm-key-1";
 
+/// Writes every gateway log line, down to TRACE, into a sink for the rest of the process
+/// (T-7767): a field of a log line is evaluated only when a subscriber takes the line, so
+/// without one a line whose field fails to format would pass every test. A test that captures
+/// lines sets its own subscriber, which this one does not replace.
+pub fn every_log_line() {
+    use tracing_subscriber::layer::SubscriberExt;
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(std::io::sink)
+            .with_max_level(tracing::Level::TRACE)
+            .finish()
+            .with(
+                tracing_subscriber::filter::Targets::new()
+                    .with_target("context_gateway", tracing::Level::TRACE)
+                    .with_target("personal_read", tracing::Level::TRACE),
+            );
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    });
+}
+
 /// A realm: one signing key, its JWKS, and the ability to mint a token.
 pub struct Realm {
     signing: EncodingKey,
@@ -29,6 +50,7 @@ pub struct Realm {
 
 impl Realm {
     pub fn new() -> Self {
+        every_log_line();
         let rng = SystemRandom::new();
         let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
             .expect("a key pair");
@@ -165,6 +187,7 @@ pub struct BrokerStub {
 impl BrokerStub {
     /// Starts the stub and answers `pages` in order.
     pub async fn start(pages: Vec<Value>) -> Self {
+        every_log_line();
         Self::serve(pages, None, true).await
     }
 

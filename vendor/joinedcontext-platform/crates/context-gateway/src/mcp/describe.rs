@@ -575,3 +575,76 @@ fn within_bound(format: &str, rendered: &Value) -> Result<(), String> {
          of them), or for one model major with `version`"
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A broker's class surface answering `answer` for every class.
+    fn reading(
+        answer: Result<&'static [u8], StatusCode>,
+    ) -> impl Fn(String) -> std::future::Ready<Result<Vec<u8>, StatusCode>> {
+        move |_| std::future::ready(answer.map(<[u8]>::to_vec))
+    }
+
+    /// T-7767: `entityType` narrows the LinkML of the classes it names; a value of another
+    /// shape, a formalism it cannot narrow, a class the view does not describe and a broker
+    /// that does not answer each refuse with what to do, never the broker's status or host.
+    #[tokio::test]
+    async fn entity_type_reads_each_named_class_and_refuses_what_it_cannot_narrow() {
+        let endpoint = crate::mcp::catalog::tests::fixture();
+        let sensor: &[u8] = br#"{"name":"Sensor","slots":["level"]}"#;
+        let read = classes_of(
+            &endpoint,
+            "linkml",
+            &json!(["Sensor", "Sensor"]),
+            reading(Ok(sensor)),
+        )
+        .await
+        .expect("two classes");
+        assert_eq!(read["format"], "linkml");
+        assert_eq!(read["classes"][1]["name"], "Sensor");
+        assert!(
+            classes_of(&endpoint, "summary", &json!("Sensor"), reading(Ok(sensor)))
+                .await
+                .is_ok()
+        );
+
+        let shape = classes_of(&endpoint, "linkml", &json!(5), reading(Ok(sensor))).await;
+        assert_eq!(
+            shape,
+            Err("`entityType` is one entity type or a list of them".to_owned())
+        );
+        let formalism = classes_of(&endpoint, "shacl", &json!("Sensor"), reading(Ok(sensor)))
+            .await
+            .expect_err("shacl is not narrowed");
+        assert!(
+            formalism.contains("ask for shacl without `entityType`"),
+            "{formalism}"
+        );
+        for unknown in [
+            reading(Err(StatusCode::NOT_FOUND)),
+            reading(Ok(b"not json")),
+        ] {
+            let refused = classes_of(&endpoint, "linkml", &json!("Secret"), unknown)
+                .await
+                .expect_err("no such class");
+            assert_eq!(
+                refused,
+                "`Secret` is not an entity type this endpoint describes for you"
+            );
+        }
+        let down = classes_of(
+            &endpoint,
+            "linkml",
+            &json!("Sensor"),
+            reading(Err(StatusCode::BAD_GATEWAY)),
+        )
+        .await
+        .expect_err("the broker is down");
+        assert_eq!(
+            down,
+            "the data model cannot be read right now; try again later"
+        );
+    }
+}

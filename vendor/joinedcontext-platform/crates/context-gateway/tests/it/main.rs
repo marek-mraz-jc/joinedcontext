@@ -181,6 +181,7 @@ mod router_routes_tests;
 mod schema_mappings_tests;
 mod schema_view_tests;
 mod scope_folding_tests;
+mod serve_build_tests;
 mod shared_model_tests;
 mod space_surface_tests;
 mod sta_view_tests;
