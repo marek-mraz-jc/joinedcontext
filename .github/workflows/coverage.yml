@@ -111,6 +111,10 @@ jobs:
             out=tests-failed
             echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
           }
+          # agent-proxy's route suites live in tests/, which the platform's --lib --bins leaves out (T-7795).
+          if [ "${{ matrix.ws }}" = platform ]; then
+            cargo llvm-cov --locked --no-report --no-fail-fast -p agent-proxy --tests || out=tests-failed
+          fi
           # the full export: the ratchet merges each function's instances from its records
           cargo llvm-cov report --json --output-path "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"
           gzip "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"
