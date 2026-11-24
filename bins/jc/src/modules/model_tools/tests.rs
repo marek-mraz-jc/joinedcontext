@@ -1063,7 +1063,8 @@ fn usages_attributes_and_units_reach_each_artifact() {
     assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
     let ctx = &out["context"]["@context"];
     assert_eq!(ctx["reference"], json!({"@id": "city:ref"}), "the alias names the term");
-    assert_eq!(ctx["code"]["@type"], "@id", "any_of with a class and no literal type");
+    // any_of with a class and no literal type coerces to `@id`, which a Property drops.
+    assert_eq!(ctx["code"], json!({"@id": "city:code"}));
     assert_eq!(
         out["jsonSchema"]["definitions"]["ParkingSpot"]["properties"]["code"]["x-unit"],
         json!({"symbol": "pcs", "exactMappings": []})
