@@ -1652,8 +1652,6 @@ impl Store for MemoryStore {
                         realm_id: client.realm_id.clone(),
                         org_id: client.org_id.clone(),
                         username: sa_username,
-                        enabled: true,
-                        email_verified: false,
                         service_account_client_id: Some(client.client_id.clone()),
                         created_timestamp: Some(TimestampTz::now().as_millis()),
                         ..Default::default()
@@ -4111,6 +4109,272 @@ mod tests {
             roles("elsewhere").await.get("other"),
             Some(&vec!["reader".to_owned()])
         );
+    }
+
+    fn confidential(realm: &str, id: &str, client_id: &str) -> ClientRepresentation {
+        ClientRepresentation {
+            id: id.into(),
+            realm_id: realm.into(),
+            client_id: client_id.into(),
+            org_id: Some("hel".into()),
+            public_client: false,
+            service_accounts_enabled: true,
+            ..Default::default()
+        }
+    }
+
+    /// A confidential client with service accounts gets `service-account-{clientId}`: an id of
+    /// its own, the client's organization, enabled and stamped; deleting the client takes that
+    /// account, its roles and mappings, and nothing of another client, person or realm.
+    #[tokio::test]
+    async fn a_client_comes_and_goes_with_its_own_service_account_roles_and_mappings() {
+        let store = MemoryStore::default();
+        store.create_user(user("ada")).await.expect("person");
+        for realm in [R, "q"] {
+            store
+                .upsert_client(confidential(realm, "c-app", "app"))
+                .await
+                .expect("client");
+            store
+                .upsert_client(confidential(realm, "c-other", "other"))
+                .await
+                .expect("client");
+            for container in ["c-app", "c-other"] {
+                store
+                    .upsert_role(RoleRepresentation {
+                        realm_id: realm.into(),
+                        name: format!("{container}-reader"),
+                        client_role: true,
+                        container_id: Some(container.into()),
+                        ..Default::default()
+                    })
+                    .await
+                    .expect("client role");
+            }
+        }
+        store
+            .upsert_role(RoleRepresentation {
+                realm_id: R.into(),
+                name: "realm-reader".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("realm role");
+        let account = store
+            .get_user_by_username_or_email(R, None, "service-account-app")
+            .await
+            .expect("read")
+            .expect("service account");
+        assert!(!account.id.is_empty() && account.id != "ada");
+        assert_eq!(account.org_id.as_deref(), Some("hel"));
+        assert!(account.enabled && !account.email_verified);
+        assert!(account.created_timestamp.is_some_and(|t| t > 0));
+        assert_eq!(account.service_account_client_id.as_deref(), Some("app"));
+        for (who, uuid) in [("ada", "c-app"), ("ada", "c-other")] {
+            let role = format!("{uuid}-reader");
+            store
+                .add_role_mapping(RoleMappingRecord {
+                    id: String::new(),
+                    realm_id: R.into(),
+                    org_id: None,
+                    principal_kind: "user".into(),
+                    principal_id: who.into(),
+                    role_id: role.clone(),
+                    role_name: role,
+                    client_uuid: Some(uuid.into()),
+                })
+                .await
+                .expect("mapping");
+        }
+
+        assert!(store.delete_client(R, None, "c-app").await.expect("delete"));
+        assert!(
+            store
+                .get_user_by_username_or_email(R, None, "service-account-app")
+                .await
+                .expect("read")
+                .is_none()
+        );
+        for (realm, name) in [
+            (R, "service-account-other"),
+            ("q", "service-account-app"),
+            (R, "ada"),
+        ] {
+            let kept = store.get_user_by_username_or_email(realm, None, name).await;
+            assert!(kept.expect("read").is_some(), "{realm} {name}");
+        }
+        let role_names = |realm: &'static str, container: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .list_roles(realm, Some(container))
+                    .await
+                    .expect("roles")
+                    .into_iter()
+                    .map(|r| r.name)
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert!(role_names(R, "c-app").await.is_empty());
+        assert_eq!(role_names(R, "c-other").await, ["c-other-reader"]);
+        assert_eq!(
+            role_names("q", "c-app").await,
+            ["c-app-reader"],
+            "q's client stays"
+        );
+        assert_eq!(store.list_roles(R, None).await.expect("realm").len(), 1);
+        let mapped = |uuid: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .list_role_mappings_for_principal(R, "user", "ada", Some(uuid))
+                    .await
+                    .expect("mappings")
+                    .len()
+            }
+        };
+        assert_eq!((mapped("c-app").await, mapped("c-other").await), (0, 1));
+    }
+
+    /// Scopes, identity providers and signing keys are found, replaced and deleted by their own
+    /// key within their realm: a second one of the realm and a namesake elsewhere stay.
+    #[tokio::test]
+    async fn scopes_providers_and_keys_are_kept_per_realm_by_their_key() {
+        let store = MemoryStore::default();
+        for realm in [R, "q"] {
+            for name in ["first", "second"] {
+                store
+                    .upsert_client_scope(ClientScopeRepresentation {
+                        id: format!("{realm}-{name}"),
+                        realm_id: realm.into(),
+                        name: name.into(),
+                        ..Default::default()
+                    })
+                    .await
+                    .expect("scope");
+                store
+                    .upsert_idp(IdentityProviderRepresentation {
+                        realm_id: realm.into(),
+                        alias: name.into(),
+                        ..Default::default()
+                    })
+                    .await
+                    .expect("idp");
+                store
+                    .upsert_signing_key(SigningKeyRecord {
+                        id: format!("{realm}-{name}"),
+                        realm_id: realm.into(),
+                        kid: name.into(),
+                        algorithm: "ES256".into(),
+                        status: "active".into(),
+                        priority: 1,
+                        public_jwk_json: "{}".into(),
+                        encrypted_private_key: Vec::new(),
+                        created_at: TimestampTz::now(),
+                        activate_at: None,
+                        expires_at: None,
+                    })
+                    .await
+                    .expect("key");
+            }
+        }
+        for key in ["second", "r-second"] {
+            let found = store.get_client_scope(R, key).await.expect("get");
+            assert_eq!(found.map(|s| s.id).as_deref(), Some("r-second"), "{key}");
+        }
+        assert!(
+            store
+                .get_client_scope(R, "q-first")
+                .await
+                .expect("get")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_client_scope(R, "nothing")
+                .await
+                .expect("get")
+                .is_none()
+        );
+        store
+            .upsert_idp(IdentityProviderRepresentation {
+                realm_id: R.into(),
+                alias: "second".into(),
+                enabled: false,
+                ..Default::default()
+            })
+            .await
+            .expect("idp again");
+        let idps = store.list_idps(R).await.expect("idps");
+        assert_eq!(idps.len(), 2);
+        assert!(idps.iter().any(|i| i.alias == "first" && i.enabled));
+        assert!(idps.iter().any(|i| i.alias == "second" && !i.enabled));
+        assert!(
+            store
+                .list_idps("q")
+                .await
+                .expect("q")
+                .iter()
+                .all(|i| i.enabled)
+        );
+        let ours = |realm: &'static str| {
+            let store = &store;
+            async move {
+                let mut keys: Vec<(String, String)> = store
+                    .list_signing_keys(realm)
+                    .await
+                    .expect("keys")
+                    .into_iter()
+                    .filter(|k| k.kid == "first" || k.kid == "second")
+                    .map(|k| (k.kid, k.status))
+                    .collect();
+                keys.sort();
+                keys
+            }
+        };
+        let second = store
+            .list_signing_keys(R)
+            .await
+            .expect("keys")
+            .into_iter()
+            .find(|k| k.kid == "second")
+            .expect("second");
+        store
+            .upsert_signing_key(SigningKeyRecord {
+                status: "passive".into(),
+                ..second
+            })
+            .await
+            .expect("key again");
+        let pair = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+        assert_eq!(
+            ours(R).await,
+            [pair("first", "active"), pair("second", "passive")]
+        );
+        assert_eq!(
+            ours("q").await,
+            [pair("first", "active"), pair("second", "active")]
+        );
+        assert!(
+            store
+                .delete_client_scope(R, "r-second")
+                .await
+                .expect("delete")
+        );
+        assert!(
+            !store
+                .delete_client_scope(R, "q-first")
+                .await
+                .expect("delete")
+        );
+        assert!(
+            store
+                .get_client_scope(R, "first")
+                .await
+                .expect("get")
+                .is_some()
+        );
+        assert_eq!(store.list_client_scopes("q").await.expect("q").len(), 2);
     }
 
     /// A rename may take a client id another realm uses; it renames this client's service

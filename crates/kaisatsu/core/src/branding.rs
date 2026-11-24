@@ -454,4 +454,24 @@ mod tests {
             assert!(is_safe_svg(safe), "{safe}");
         }
     }
+
+    /// WCAG 2 relative luminance and contrast ratio.
+    #[test]
+    fn luminance_and_contrast_follow_wcag() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        let lum = |c: &str| luminance(c).expect("colour");
+        assert!(near(lum("#000000"), 0.0));
+        assert!(near(lum("#ffffff"), 1.0));
+        assert!(near(lum("#ff0000"), 0.2126));
+        assert!(near(lum("#00ff00"), 0.7152));
+        assert!(near(lum("#0000ff"), 0.0722));
+        assert!(near(lum("#808080"), 0.215_861), "{}", lum("#808080"));
+        assert!(near(lum("#0a0a0a"), 0.003_035), "{}", lum("#0a0a0a"));
+        assert!(near(lum("#1d4ed8"), 0.106_679), "{}", lum("#1d4ed8"));
+        assert_eq!(luminance("blue"), None);
+        assert!(near(contrast(1.0, 0.0), 21.0));
+        assert!(near(contrast(0.0, 1.0), 21.0));
+        assert!(near(contrast(0.5, 0.5), 1.0));
+        assert!(near(contrast(0.2, 0.7), 0.75 / 0.25));
+    }
 }
