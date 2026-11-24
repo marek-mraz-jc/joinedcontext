@@ -4,7 +4,7 @@
 use crate::common;
 
 use common::*;
-use jcctl::roles::{self, RolesError};
+use jc_manifest::roles::{self, RolesError};
 use std::path::Path;
 use std::process::Command;
 

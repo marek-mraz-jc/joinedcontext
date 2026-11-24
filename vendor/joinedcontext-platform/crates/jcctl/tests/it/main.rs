@@ -3,7 +3,6 @@
 
 mod apisix_tests;
 mod apply_tests;
-mod assemble_tests;
 mod bao_http_tests;
 mod bench_org_tests;
 mod blueprint_tests;
@@ -22,7 +21,6 @@ mod drift_tests;
 mod export_tests;
 mod gateway_upsert_tests;
 mod git_bundle_tests;
-mod git_checkouts_tests;
 mod import_tests;
 mod ingestion_examples_tests;
 mod lanes_tests;
@@ -37,11 +35,9 @@ mod pipeline_render_tests;
 mod plan_tests;
 mod portal_api_drift_tests;
 mod portal_client_tests;
-mod preview_render_tests;
 mod publish_ckan_tests;
 mod rebuild_tests;
 mod reviewed_tests;
-mod roles_tests;
 mod seed_entities_tests;
 mod seed_replay_tests;
 mod service_account_reconciler_tests;

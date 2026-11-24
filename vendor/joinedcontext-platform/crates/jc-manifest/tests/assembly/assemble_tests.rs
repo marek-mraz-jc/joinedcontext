@@ -4,8 +4,8 @@
 use crate::common;
 
 use common::{temp_dir, write, ENDPOINT, ORG, PROJECT, SPACE};
-use jcctl::assemble::{assemble, assemble_reusing, Assembly, Directories, EntryStatus, Renders};
-use jcctl::loader::Repository;
+use jc_manifest::assemble::{assemble, assemble_reusing, Assembly, Directories, EntryStatus, Renders};
+use jc_manifest::loader::Repository;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
