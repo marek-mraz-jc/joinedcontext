@@ -6,7 +6,8 @@
 # Endpoint preview's body, (T-7605) the unverified `iss` of a bearer token, the double-submit
 # CSRF check over arbitrary headers, the login redirect target and an Organization realm list from
 # jc's host registry, and (T-7652) a forge's receive-pack answer, an App's host name under the apps
-# apex and an App repository's build workflow. Its own
+# apex and an App repository's build workflow, and (T-7784) a bucket's version list, the recipients
+# and identity an administrator pastes into a backup and a sealed bundle under its cap. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 [package]
@@ -27,6 +28,8 @@ axum = "0.8"
 cookie = { version = "0.18", features = ["percent-encode"] }
 url = "2"
 joinedcontext-portal = { path = ".." }
+age = { version = "0.12", default-features = false }
+zeroize = "1"
 jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
 
 [[bin]]
@@ -196,6 +199,34 @@ bench = false
 [[bin]]
 name = "kube_objects"
 path = "fuzz_targets/kube_objects.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "org_backup_versions"
+path = "fuzz_targets/org_backup_versions.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "org_backup_recipients"
+path = "fuzz_targets/org_backup_recipients.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "org_backup_identity"
+path = "fuzz_targets/org_backup_identity.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "org_backup_decrypt"
+path = "fuzz_targets/org_backup_decrypt.rs"
 test = false
 doc = false
 bench = false

@@ -1,0 +1,1 @@
+<ListVersionsResult><Version><Key>jc/a/bundle.zip</Key><VersionId>v2</VersionId><IsLatest>true</IsLatest><LastModified>2026-11-24T10:00:00.000Z</LastModified><Size>1024</Size></Version><DeleteMarker><Key>jc/a/bundle.zip</Key><VersionId>v3</VersionId><IsLatest>false</IsLatest><LastModified>2026-11-24T11:00:00.000Z</LastModified></DeleteMarker></ListVersionsResult>
