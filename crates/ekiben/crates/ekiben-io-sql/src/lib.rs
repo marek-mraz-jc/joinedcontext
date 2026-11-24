@@ -127,6 +127,27 @@ mod tests {
     use super::testing::{conf, stream_ctx};
     use serde_json::json;
 
+    /// A config that is no object gets lint_fields' one answer from every SQL component, and
+    /// the connection lint, which reads an object, adds nothing.
+    #[test]
+    fn a_config_that_is_no_object_is_named_once_by_every_lint() {
+        let lints: [(&str, fn(&serde_json::Value) -> Vec<String>); 8] = [
+            ("sql_raw input", crate::input_sql_raw::lint),
+            ("sql_select input", crate::input_sql_select::lint),
+            ("sql output", crate::output_sql_deprecated::lint),
+            ("sql_insert output", crate::output_sql_insert::lint),
+            ("sql_raw output", crate::output_sql_raw::lint),
+            ("sql_raw processor", crate::processor_sql::lint_raw),
+            ("sql_select processor", crate::processor_sql::lint_select),
+            ("sql_insert processor", crate::processor_sql::lint_insert),
+        ];
+        for (name, lint) in lints {
+            for conf in [json!(null), json!("driver: postgres"), json!([1]), json!(7)] {
+                assert_eq!(lint(&conf), vec!["expected object value"], "{name}: {conf}");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn every_component_builds_and_lints_by_its_registered_name() {
         let ctx = stream_ctx(None);
