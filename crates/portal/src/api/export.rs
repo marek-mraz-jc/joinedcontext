@@ -1535,7 +1535,10 @@ mod tests {
             .await
             .expect("an archive");
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("a zip");
-        let mut names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+        let mut names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.expect("a text name").into_owned())
+            .collect();
         names.sort();
         assert_eq!(
             names,
