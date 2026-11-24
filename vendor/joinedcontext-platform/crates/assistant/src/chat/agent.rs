@@ -1288,9 +1288,11 @@ pub(super) async fn name_sources(ask: &Ask<'_>, citations: &mut [Citation]) {
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
-        let looked = futures_util::future::join_all(distinct.iter().map(|slug| {
-            crate::endpoint_page_projects(ask.pool, slug, ask.sources, ask.public_only)
-        }))
+        let looked = futures_util::future::join_all(
+            distinct
+                .iter()
+                .map(|slug| super::routed::endpoint_page(ask, slug)),
+        )
         .await;
         let mut pages: HashMap<&String, Option<String>> = HashMap::new();
         for (slug, page) in distinct.into_iter().zip(looked) {
