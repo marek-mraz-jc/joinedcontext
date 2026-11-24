@@ -951,28 +951,28 @@ mod edge_tests {
     use super::*;
 
     /// What `format` refuses `src` for.
-    fn refused(src: &str) -> &'static str {
+    fn refused(src: &str) -> Option<&'static str> {
         match format(src) {
-            Err(FmtError::Unsupported { what, .. }) => what,
-            other => panic!("{src:?} is refused as unsupported, got {other:?}"),
+            Err(FmtError::Unsupported { what, .. }) => Some(what),
+            _ => None,
         }
     }
 
     #[test]
     fn anchors_aliases_tags_and_complex_keys_are_left_alone() {
-        assert_eq!(refused("a: &x 1\nb: *x\n"), "an anchor, alias or tag");
-        assert_eq!(refused("a: !!str 1\n"), "an anchor, alias or tag");
-        assert_eq!(refused("a:\n  ? b\n"), "a complex key");
+        assert_eq!(refused("a: &x 1\nb: *x\n"), Some("an anchor, alias or tag"));
+        assert_eq!(refused("a: !!str 1\n"), Some("an anchor, alias or tag"));
+        assert_eq!(refused("a:\n  ? b\n"), Some("a complex key"));
     }
 
     #[test]
     fn a_flow_collection_must_close_and_hold_no_comment() {
         assert_eq!(
             refused("a: [1,\n  # c\n  2]\n"),
-            "a comment inside a flow collection"
+            Some("a comment inside a flow collection")
         );
-        assert_eq!(refused("a: [!t 1]\n"), "a tag");
-        assert_eq!(refused("a: {[x]: 1}\n"), "a key that is not a scalar");
+        assert_eq!(refused("a: [!t 1]\n"), Some("a tag"));
+        assert_eq!(refused("a: {[x]: 1}\n"), Some("a key that is not a scalar"));
     }
 
     #[test]
@@ -1009,11 +1009,11 @@ mod edge_tests {
     fn comments_where_the_layout_cannot_keep_them_are_refused() {
         assert_eq!(
             refused("a:\n  # c\n  x\n"),
-            "a comment between a key and its value"
+            Some("a comment between a key and its value")
         );
         assert_eq!(
             refused("a:\n  x # c\n"),
-            "a comment after a value on its own line"
+            Some("a comment after a value on its own line")
         );
     }
 
@@ -1035,7 +1035,7 @@ mod edge_tests {
     #[test]
     fn a_value_starting_with_an_indicator_stays_quoted_and_formats_again() {
         for src in ["'?+'\n", "a: '?x'\n", "- '?'\n", "a: ['?b']\n"] {
-            let out = format(src).unwrap_or_else(|e| panic!("{src:?}: {e}"));
+            let out = format(src).expect(src);
             assert_eq!(
                 format(&out).as_deref().ok(),
                 Some(out.as_str()),
@@ -1074,5 +1074,110 @@ mod edge_tests {
             "not a manifest: order kept"
         );
         assert_eq!(format("- 1\n- 2\n").expect("formats"), "- 1\n- 2\n");
+    }
+
+    #[test]
+    fn a_text_without_content_formats_to_its_comments() {
+        assert_eq!(format(""), Ok(String::new()));
+        assert_eq!(format("# only\n"), Ok("# only\n".to_string()));
+        assert_eq!(refused("a: 1\n"), None, "valid input is not refused");
+    }
+
+    /// A `|+` block at the end of a document keeps its trailing blank lines, the layout drops
+    /// them, so the value would change: the file is refused instead of rewritten.
+    #[test]
+    fn a_kept_block_at_the_end_of_a_document_would_change_and_is_refused() {
+        assert_eq!(format("a: |+\n  x\n\n"), Err(FmtError::Changed));
+    }
+
+    #[test]
+    fn a_flow_collection_or_quoted_string_that_never_closes_inside_its_block_is_refused() {
+        assert_eq!(refused("[1,\n2]\n"), Some("an unclosed flow collection"));
+        assert_eq!(refused("\"x\ny\"\n"), Some("an unclosed quoted string"));
+    }
+
+    #[test]
+    fn a_comment_on_the_first_line_of_a_multi_line_flow_collection_is_a_parse_error() {
+        let err = format("a: [1, # c\n  2]\n").expect_err("refused");
+        assert!(
+            matches!(&err, FmtError::Parse(m) if m.starts_with("line 1: ")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_comment_under_a_block_scalar_indented_less_than_its_text_is_refused() {
+        assert_eq!(
+            refused("a: |\n    x\n  # c\nb: 1\n"),
+            Some("a block scalar indented less than its first line")
+        );
+    }
+
+    #[test]
+    fn a_line_left_after_the_root_node_is_refused() {
+        assert_eq!(refused(" x\ny\n"), Some("indentation that closes no block"));
+    }
+
+    #[test]
+    fn a_scalar_metadata_stays_as_written() {
+        let src = "apiVersion: v\nkind: K\nmetadata: x\n";
+        assert_eq!(format(src), Ok(src.to_string()));
+    }
+
+    #[test]
+    fn a_nested_sequence_holding_a_map_stays_on_the_dash_line() {
+        let src = "- - a: 1\n  - b\n";
+        assert_eq!(format(src), Ok(src.to_string()));
+    }
+}
+
+#[cfg(test)]
+mod remainder_tests {
+    use super::*;
+
+    #[test]
+    fn format_formats_explicit_block_and_quoted_keys() {
+        let res = format("a: |2\n  content\n").expect("formats explicit indentation block");
+        assert!(res.contains("content"));
+
+        let res = format("\"quoted:key\": value\n").expect("formats quoted key");
+        assert!(res.contains("value"));
+
+        let res = format("scalar_root\n").expect("formats scalar root");
+        assert_eq!(res, "scalar_root\n");
+
+        let res = format("a: {}\nb: []\nc:\n").expect("formats empty map and list and null");
+        assert!(res.contains("a: {}"));
+        assert!(res.contains("b: []"));
+        assert!(res.contains("c:"));
+    }
+
+    #[test]
+    fn format_handles_sequences_nested_under_keys_and_items() {
+        let same_indent_seq = "key:\n- item1\n- item2\n";
+        let res = format(same_indent_seq).expect("formats sequence at key indent");
+        assert!(res.contains("key:"));
+        assert!(res.contains("- item1"));
+
+        let nested_seq = "-\n  - inner1\n  - inner2\n";
+        let res = format(nested_seq).expect("formats sequence item containing sequence");
+        assert!(res.contains("inner1"));
+    }
+
+    #[test]
+    fn manifest_reordering_sorts_metadata_fields_and_preserves_lead_comments() {
+        let manifest = r#"# Top-level comment
+spec:
+  field: val
+apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  description: Project description
+  labels:
+    env: prod
+  name: my-project
+"#;
+        let res = format(manifest).expect("formats manifest");
+        assert!(res.starts_with("# Top-level comment\napiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: my-project"));
     }
 }

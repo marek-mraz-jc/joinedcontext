@@ -414,3 +414,151 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn is_of_type_matches_array_of_types() {
+        let entity = json!({ "type": ["Vehicle", "Machine"] });
+        assert!(is_of_type(&entity, "Vehicle"));
+        assert!(is_of_type(&entity, "Machine"));
+        assert!(!is_of_type(&entity, "Sensor"));
+
+        let non_string = json!({ "type": [123, true] });
+        assert!(!is_of_type(&non_string, "Vehicle"));
+
+        let not_array = json!({ "type": 42 });
+        assert!(!is_of_type(&not_array, "Vehicle"));
+    }
+
+    #[test]
+    fn positions_handles_non_array_coordinates() {
+        let rule = QualityRule {
+            name: "area-rule".to_string(),
+            entity_type: "Vehicle".to_string(),
+            kind: QualityKind::Area,
+            attribute: "loc".to_string(),
+            min: None,
+            max: None,
+            bbox: Some([
+                serde_json::Number::from_f64(10.0).unwrap(),
+                serde_json::Number::from_f64(10.0).unwrap(),
+                serde_json::Number::from_f64(20.0).unwrap(),
+                serde_json::Number::from_f64(20.0).unwrap(),
+            ]),
+            max_ahead: None,
+            max_age: None,
+            outcome: None,
+        };
+        let entity = json!({
+            "type": "Vehicle",
+            "loc": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": "not-array" } }
+        });
+        let rules = [rule];
+        let verdicts = on_write(&entity, &rules, SystemTime::now());
+        assert!(verdicts[0].broken.is_none());
+    }
+
+    #[test]
+    fn mark_handles_non_object_entity() {
+        let mut entity = json!("not-an-object");
+        let verdicts = Vec::new();
+        mark(&mut entity, &verdicts, SystemTime::now());
+        assert_eq!(entity, json!("not-an-object"));
+    }
+
+    #[test]
+    fn mark_handles_multiple_flags_on_same_attribute() {
+        let rule1 = QualityRule {
+            name: "rule-min".to_string(),
+            entity_type: "Vehicle".to_string(),
+            kind: QualityKind::Range,
+            attribute: "speed".to_string(),
+            min: Some(serde_json::Number::from(10)),
+            max: None,
+            bbox: None,
+            max_ahead: None,
+            max_age: None,
+            outcome: Some(QualityOutcome::Flag),
+        };
+        let rule2 = QualityRule {
+            name: "rule-max".to_string(),
+            entity_type: "Vehicle".to_string(),
+            kind: QualityKind::Range,
+            attribute: "speed".to_string(),
+            min: None,
+            max: Some(serde_json::Number::from(20)),
+            bbox: None,
+            max_ahead: None,
+            max_age: None,
+            outcome: Some(QualityOutcome::Flag),
+        };
+        let v1 = Verdict {
+            rule: &rule1,
+            broken: Some(QualityOutcome::Flag),
+        };
+        let v2 = Verdict {
+            rule: &rule2,
+            broken: Some(QualityOutcome::Flag),
+        };
+        let mut entity = json!({
+            "type": "Vehicle",
+            "speed": { "type": "Property", "value": 5 }
+        });
+        mark(&mut entity, &[v1, v2], SystemTime::now());
+        assert_eq!(
+            entity["speed"][QUALITY_FLAGS]["value"],
+            json!(["rule-min", "rule-max"])
+        );
+    }
+
+    #[test]
+    fn instances_mut_handles_array_and_null() {
+        let rule = QualityRule {
+            name: "flag-speed".to_string(),
+            entity_type: "Vehicle".to_string(),
+            kind: QualityKind::Range,
+            attribute: "speed".to_string(),
+            min: None,
+            max: None,
+            bbox: None,
+            max_ahead: None,
+            max_age: None,
+            outcome: Some(QualityOutcome::Flag),
+        };
+        let v = Verdict {
+            rule: &rule,
+            broken: None,
+        };
+        let mut entity = json!({
+            "type": "Vehicle",
+            "speed": [
+                { "type": "Property", "value": 10, "qualityFlags": { "type": "Property", "value": ["old"] } },
+                { "type": "Property", "value": 20 }
+            ],
+            "null_attr": null
+        });
+        mark(&mut entity, &[v], SystemTime::now());
+        assert!(entity["speed"][0].get(QUALITY_FLAGS).is_none());
+
+        let rule_null = QualityRule {
+            name: "null-rule".to_string(),
+            entity_type: "Vehicle".to_string(),
+            kind: QualityKind::Range,
+            attribute: "null_attr".to_string(),
+            min: None,
+            max: None,
+            bbox: None,
+            max_ahead: None,
+            max_age: None,
+            outcome: None,
+        };
+        let v_null = Verdict {
+            rule: &rule_null,
+            broken: None,
+        };
+        mark(&mut entity, &[v_null], SystemTime::now());
+    }
+}

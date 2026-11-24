@@ -809,7 +809,7 @@ mod tests {
             .expect("the analysis page has widgets");
         widgets.push(widget);
         let manifest = Dashboard::from_yaml(&serde_json::to_string(&value).expect("JSON"))
-            .map_err(|e| Error::Parse(e.to_string()))?;
+            .expect("the dashboard parses");
         manifest.validate()?;
         Ok(manifest)
     }
@@ -835,9 +835,12 @@ mod tests {
             },
             "transform": [{"filter": "isValid(datum.pm10) && datum.pm10 > 0"}]
         });
-        if let (Some(base), Some(extra)) = (spec.as_object_mut(), spec_extra.as_object()) {
-            base.extend(extra.clone());
-        }
+        let extra = spec_extra
+            .as_object()
+            .expect("the extra members are an object");
+        spec.as_object_mut()
+            .expect("the spec is an object")
+            .extend(extra.clone());
         serde_json::json!({
             "widgetType": "vega-lite",
             "endpointRef": "ep-air-quality",
@@ -947,15 +950,14 @@ mod tests {
         }
 
         let mut no_data = bars(serde_json::json!({}));
-        if let Some(w) = no_data.as_object_mut() {
-            w.remove("data");
-        }
+        no_data.as_object_mut().expect("a widget").remove("data");
         assert_eq!(field(vega_lite(no_data)).0, format!("{at}/data"));
 
         let mut no_endpoint = bars(serde_json::json!({}));
-        if let Some(w) = no_endpoint.as_object_mut() {
-            w.remove("endpointRef");
-        }
+        no_endpoint
+            .as_object_mut()
+            .expect("a widget")
+            .remove("endpointRef");
         assert_eq!(field(vega_lite(no_endpoint)).0, format!("{at}/endpointRef"));
 
         let mut long = bars(serde_json::json!({}));
@@ -971,6 +973,12 @@ mod tests {
         assert!(field(vega_lite(elsewhere))
             .1
             .contains("belong to a widget of type `vega-lite`"));
+    }
+
+    #[test]
+    #[should_panic(expected = "expected a refusal")]
+    fn field_of_a_valid_dashboard_is_no_refusal() {
+        field(vega_lite(bars(serde_json::json!({}))));
     }
 
     /// T-6786: the expression allow-list takes fields, the spec's params and the listed functions.
@@ -995,5 +1003,408 @@ mod tests {
         ] {
             assert!(expression(refused, "/e", &params).is_err(), "{refused}");
         }
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn chart_widget_with_grid_is_refused() {
+        let grid_val: Option<GridConfig> = serde_json::from_value(serde_json::json!({})).ok();
+        let widget = Widget {
+            widget_type: "bar-chart".into(),
+            endpoint_ref: Some("ep-1".into()),
+            entity_id: None,
+            property: Some("temperature".into()),
+            entity_type: Some("AirQualityObserved".into()),
+            q: None,
+            grid: grid_val,
+            data: None,
+            spec: None,
+        };
+        let err = chart_widget(&widget).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("`entityType` and `grid` belong to a widget of type `grid`"));
+    }
+
+    #[test]
+    fn vega_lite_widget_missing_spec_is_refused() {
+        let widget = Widget {
+            widget_type: "vega-lite".into(),
+            endpoint_ref: Some("ep-1".into()),
+            entity_id: None,
+            property: None,
+            entity_type: None,
+            q: None,
+            grid: None,
+            data: Some(
+                serde_json::from_value(serde_json::json!({
+                    "source": "csv",
+                    "type": "AirQualityObserved"
+                }))
+                .unwrap(),
+            ),
+            spec: None,
+        };
+        let err = vega_lite_widget(&widget, "/spec/pages/0/widgets/0").unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("a vega-lite widget carries its Vega-Lite 5 spec"));
+    }
+
+    #[test]
+    fn expressions_with_values_member_is_skipped() {
+        let spec = serde_json::json!({
+            "values": { "calculate": "window.location" }
+        });
+        assert!(expressions(&spec, "/spec", &[]).is_ok());
+    }
+
+    #[test]
+    fn expressions_with_nested_and_is_checked() {
+        let valid_nested = serde_json::json!({
+            "and": [
+                { "calculate": "datum.x + 1" }
+            ]
+        });
+        assert!(expressions(&valid_nested, "/spec", &[]).is_ok());
+
+        let invalid_nested = serde_json::json!({
+            "and": [
+                { "calculate": "window.location" }
+            ]
+        });
+        assert!(expressions(&invalid_nested, "/spec", &[]).is_err());
+    }
+
+    #[test]
+    fn expression_bounds_and_bracket_syntax_refusals() {
+        let long_expr = "a".repeat(1025);
+        let err = expression(&long_expr, "/spec", &[]).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("an expression is at most 1024 characters"));
+
+        let err = expression("datum[variable]", "/spec", &[]).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("a `[...]` member holds one quoted name or a number"));
+    }
+
+    #[test]
+    fn dashboard_spec_pages_and_grid_widget_validation() {
+        let empty_pages = DashboardSpec {
+            title: Text::from("Test"),
+            visibility: DashboardVisibility::Private,
+            pages: vec![],
+        };
+        let err = empty_pages.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a dashboard has at least one page"),
+            "{err}"
+        );
+
+        let no_ep = Page {
+            title: Some("Grid".into()),
+            layout: None,
+            layers: vec![],
+            widgets: vec![Widget {
+                widget_type: GRID_WIDGET.into(),
+                endpoint_ref: None,
+                entity_id: None,
+                property: None,
+                entity_type: Some("AirQualityObserved".into()),
+                q: None,
+                grid: None,
+                data: None,
+                spec: None,
+            }],
+        };
+        let dash = DashboardSpec {
+            title: Text::from("Test"),
+            visibility: DashboardVisibility::Private,
+            pages: vec![no_ep],
+        };
+        let err = dash.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("a grid widget names the Endpoint it reads through"));
+
+        let bad_type = Page {
+            title: Some("Grid".into()),
+            layout: None,
+            layers: vec![],
+            widgets: vec![Widget {
+                widget_type: GRID_WIDGET.into(),
+                endpoint_ref: Some("endpoint-1".into()),
+                entity_id: None,
+                property: None,
+                entity_type: Some("not_pascal".into()),
+                q: None,
+                grid: None,
+                data: None,
+                spec: None,
+            }],
+        };
+        let dash = DashboardSpec {
+            title: Text::from("Test"),
+            visibility: DashboardVisibility::Private,
+            pages: vec![bad_type],
+        };
+        let err = dash.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("an entity type is PascalCase, as NGSI-LD writes it"));
+
+        let no_type = Page {
+            title: Some("Grid".into()),
+            layout: None,
+            layers: vec![],
+            widgets: vec![Widget {
+                widget_type: GRID_WIDGET.into(),
+                endpoint_ref: Some("endpoint-1".into()),
+                entity_id: None,
+                property: None,
+                entity_type: None,
+                q: None,
+                grid: None,
+                data: None,
+                spec: None,
+            }],
+        };
+        let dash = DashboardSpec {
+            title: Text::from("Test"),
+            visibility: DashboardVisibility::Private,
+            pages: vec![no_type],
+        };
+        let err = dash.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("a grid widget names the entity type it shows"));
+
+        let valid_grid = Page {
+            title: Some("Grid".into()),
+            layout: None,
+            layers: vec![],
+            widgets: vec![Widget {
+                widget_type: GRID_WIDGET.into(),
+                endpoint_ref: Some("endpoint-1".into()),
+                entity_id: None,
+                property: None,
+                entity_type: Some("AirQualityObserved".into()),
+                q: None,
+                grid: serde_json::from_value(serde_json::json!({})).ok(),
+                data: None,
+                spec: None,
+            }],
+        };
+        let dash = DashboardSpec {
+            title: Text::from("Test"),
+            visibility: DashboardVisibility::Private,
+            pages: vec![valid_grid],
+        };
+        assert!(dash.validate().is_ok());
+    }
+
+    #[test]
+    fn layer_spec_validation_refusals() {
+        let empty_filter = LayerSpec {
+            source_endpoint_ref: "endpoint-1".into(),
+            entity_type: "AirQualityObserved".into(),
+            style: LayerStyle::Circle,
+            visible: true,
+            filter: Some(LayerFilter {
+                q: Some("   ".into()),
+                scope_q: None,
+                geo_q: None,
+            }),
+            color_by: None,
+            size_by: None,
+            popup_properties: vec![],
+        };
+        let err = empty_filter.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("a filter expression is not empty; leave the member out"));
+
+        let empty_color_prop = LayerSpec {
+            source_endpoint_ref: "endpoint-1".into(),
+            entity_type: "AirQualityObserved".into(),
+            style: LayerStyle::Circle,
+            visible: true,
+            filter: None,
+            color_by: Some(ColorBy {
+                property: "   ".into(),
+                palette: None,
+                domain: None,
+            }),
+            size_by: None,
+            popup_properties: vec![],
+        };
+        let err = empty_color_prop.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("the property the colour reads is named"));
+
+        let bad_domain = LayerSpec {
+            source_endpoint_ref: "endpoint-1".into(),
+            entity_type: "AirQualityObserved".into(),
+            style: LayerStyle::Circle,
+            visible: true,
+            filter: None,
+            color_by: Some(ColorBy {
+                property: "pm10".into(),
+                palette: None,
+                domain: Some([10.0, 5.0]),
+            }),
+            size_by: None,
+            popup_properties: vec![],
+        };
+        let err = bad_domain.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("`[min, max]` with min below max, both finite and not negative"));
+
+        let empty_size_prop = LayerSpec {
+            source_endpoint_ref: "endpoint-1".into(),
+            entity_type: "AirQualityObserved".into(),
+            style: LayerStyle::Circle,
+            visible: true,
+            filter: None,
+            color_by: None,
+            size_by: Some(SizeBy {
+                property: "   ".into(),
+                range: None,
+            }),
+            popup_properties: vec![],
+        };
+        let err = empty_size_prop.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("the property the size reads is named"));
+
+        let bad_range = LayerSpec {
+            source_endpoint_ref: "endpoint-1".into(),
+            entity_type: "AirQualityObserved".into(),
+            style: LayerStyle::Circle,
+            visible: true,
+            filter: None,
+            color_by: None,
+            size_by: Some(SizeBy {
+                property: "pm10".into(),
+                range: Some([-1.0, 5.0]),
+            }),
+            popup_properties: vec![],
+        };
+        let err = bad_range.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("`[min, max]` with min below max, both finite and not negative"));
+
+        let empty_popup = LayerSpec {
+            source_endpoint_ref: "endpoint-1".into(),
+            entity_type: "AirQualityObserved".into(),
+            style: LayerStyle::Circle,
+            visible: true,
+            filter: None,
+            color_by: None,
+            size_by: None,
+            popup_properties: vec!["   ".into()],
+        };
+        let err = empty_popup.validate().unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("a popup property is a property name"));
+    }
+
+    #[test]
+    fn a_grid_widget_without_a_grid_config_validates() {
+        let dash = DashboardSpec {
+            title: Text::from("Test"),
+            visibility: DashboardVisibility::Private,
+            pages: vec![Page {
+                title: Some("Grid".into()),
+                layout: None,
+                layers: vec![],
+                widgets: vec![Widget {
+                    widget_type: GRID_WIDGET.into(),
+                    endpoint_ref: Some("endpoint-1".into()),
+                    entity_id: None,
+                    property: None,
+                    entity_type: Some("AirQualityObserved".into()),
+                    q: None,
+                    grid: None,
+                    data: None,
+                    spec: None,
+                }],
+            }],
+        };
+        assert_eq!(dash.validate(), Ok(()));
+    }
+
+    #[test]
+    fn encodings_without_a_domain_or_range_validate() {
+        let layer = LayerSpec {
+            source_endpoint_ref: "endpoint-1".into(),
+            entity_type: "AirQualityObserved".into(),
+            style: LayerStyle::Circle,
+            visible: true,
+            filter: None,
+            color_by: Some(ColorBy {
+                property: "pm10".into(),
+                palette: None,
+                domain: None,
+            }),
+            size_by: Some(SizeBy {
+                property: "no2".into(),
+                range: None,
+            }),
+            popup_properties: vec!["pm10".into()],
+        };
+        assert_eq!(layer.validate(), Ok(()));
+    }
+
+    #[test]
+    fn ordered_helper_checks_bounds() {
+        assert!(ordered("field", &[0.0, 10.0], 0.0).is_ok());
+        assert!(ordered("field", &[f64::NAN, 10.0], 0.0).is_err());
+        assert!(ordered("field", &[10.0, 10.0], 0.0).is_err());
+        assert!(ordered("field", &[-1.0, 10.0], 0.0).is_err());
+    }
+
+    #[test]
+    fn validate_spec_on_dashboard_and_layer() {
+        let meta = ObjectMeta::new("dash-1", "helsinki");
+        let dash = DashboardSpec {
+            title: Text::from("Helsinki"),
+            visibility: DashboardVisibility::Project,
+            pages: vec![Page {
+                title: Some("P1".into()),
+                layout: None,
+                layers: vec!["layer-1".into()],
+                widgets: vec![],
+            }],
+        };
+        assert!(dash.validate_spec(&meta).is_ok());
+
+        let bad_meta = ObjectMeta::new("BAD_NAME", "helsinki");
+        assert!(dash.validate_spec(&bad_meta).is_err());
+
+        let layer_meta = ObjectMeta::new("layer-1", "helsinki");
+        let layer = LayerSpec {
+            source_endpoint_ref: "endpoint-1".into(),
+            entity_type: "AirQualityObserved".into(),
+            style: LayerStyle::Circle,
+            visible: true,
+            filter: None,
+            color_by: None,
+            size_by: None,
+            popup_properties: vec![],
+        };
+        assert!(layer.validate_spec(&layer_meta).is_ok());
     }
 }

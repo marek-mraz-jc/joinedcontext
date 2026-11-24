@@ -1414,3 +1414,388 @@ mod tests {
         assert!(facets_gap(&eleven).is_some());
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    fn valid_endpoint() -> EndpointSpec {
+        EndpointSpec {
+            context_space_ref: Ref::Name("air".into()),
+            slug: EndpointSlug::new("zt4qm7ge2xdv6ksb3ncf5arw2y").unwrap(),
+            audience: Audience::Public,
+            allowed_projects: vec![],
+            policy_ref: None,
+            policy_refs: None,
+            enabled_representations: None,
+            disabled_representations: vec![],
+            mcp: None,
+            rate_limits: None,
+            creates: None,
+            file_limits: None,
+            caching: None,
+            projection: None,
+            projection_ref: None,
+            publish: None,
+            catalog: None,
+            view_mapping_ref: None,
+            caller_role: false,
+            roles: vec![],
+            display: BTreeMap::new(),
+            facets: vec![],
+            representations: None,
+            deprecation: None,
+            audit: Audit::default(),
+        }
+    }
+
+    #[test]
+    fn endpoint_slug_as_ref_and_audience_display() {
+        let slug = EndpointSlug::new("zt4qm7ge2xdv6ksb3ncf5arw2y").expect("slug");
+        assert_eq!(slug.as_ref(), "zt4qm7ge2xdv6ksb3ncf5arw2y");
+        assert_eq!(Audience::Organization.as_str(), "organization");
+        assert_eq!(Audience::ProjectList.as_str(), "project-list");
+        assert_eq!(Audience::Public.as_str(), "public");
+        assert_eq!(format!("{}", Audience::Organization), "organization");
+    }
+
+    #[test]
+    fn representation_model_needs_and_missing_gaps() {
+        assert!(Representation::Sta.needs_model());
+        assert!(Representation::Ical.needs_model());
+        assert!(!Representation::Csv.needs_model());
+        assert_eq!(
+            Representation::Sta.missing_model_gap(),
+            Some("a type with a numeric attribute that declares its unit".into())
+        );
+        assert_eq!(Representation::Csv.missing_model_gap(), None);
+    }
+
+    #[test]
+    fn rate_limits_and_file_limits_bounds() {
+        let rl = RateLimits {
+            requests_per_minute: 10,
+            burst: Some(0),
+        };
+        let err = rl.validate().expect_err("burst 0");
+        assert!(err.to_string().contains("rateLimits.burst"), "{err}");
+
+        let fl_rows = FileLimits {
+            max_file_rows: Some(0),
+            max_file_bytes: None,
+        };
+        assert!(fl_rows.validate().is_err());
+
+        let fl_bytes = FileLimits {
+            max_file_rows: None,
+            max_file_bytes: Some(0),
+        };
+        assert!(fl_bytes.validate().is_err());
+    }
+
+    #[test]
+    fn creates_embed_origins_port_rules() {
+        let bad_port = Creates {
+            mint_ids: true,
+            per_day: Some(10),
+            embed_origins: vec!["https://example.com:443".into()],
+        };
+        let err = bad_port.validate().expect_err("default port 443 rejected");
+        assert!(err.to_string().contains("creates.embedOrigins"), "{err}");
+
+        let zero_port = Creates {
+            mint_ids: true,
+            per_day: Some(10),
+            embed_origins: vec!["https://example.com:0".into()],
+        };
+        assert!(zero_port.validate().is_err());
+
+        let ok_port = Creates {
+            mint_ids: true,
+            per_day: Some(10),
+            embed_origins: vec!["https://example.com:8443".into()],
+        };
+        ok_port.validate().expect("non-default port 8443 ok");
+    }
+
+    #[test]
+    fn endpoint_spec_context_space_ref_kind_and_view_mapping() {
+        let mut spec = valid_endpoint();
+        spec.context_space_ref = Ref::Typed(TypedRef {
+            kind: "Endpoint".into(),
+            name: "air".into(),
+            namespace: None,
+        });
+        let err = spec.validate().expect_err("kind must be ContextSpace");
+        assert!(matches!(
+            err,
+            Error::Kind {
+                expected: "ContextSpace",
+                ..
+            }
+        ));
+
+        let mut spec = valid_endpoint();
+        spec.view_mapping_ref = Some(TypedRef {
+            kind: "ContextSpace".into(),
+            name: "view1".into(),
+            namespace: None,
+        });
+        let err = spec.validate().expect_err("kind must be Mapping");
+        assert!(matches!(
+            err,
+            Error::Kind {
+                expected: "Mapping",
+                ..
+            }
+        ));
+
+        let mut spec = valid_endpoint();
+        spec.view_mapping_ref = Some(TypedRef {
+            kind: "Mapping".into(),
+            name: "Bad_Name!".into(),
+            namespace: None,
+        });
+        let err = spec.validate().expect_err("invalid view mapping name");
+        assert!(
+            err.to_string().contains("spec.viewMappingRef.name"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn endpoint_spec_facets_feed_and_widget_gaps() {
+        let mut spec = valid_endpoint();
+        spec.facets = vec!["invalid..facet".into()];
+        let err = spec.validate().expect_err("invalid facet");
+        assert!(err.to_string().contains("spec.facets"), "{err}");
+
+        let mut spec = valid_endpoint();
+        spec.representations = Some(crate::kinds::ical_mapping::Representations {
+            ical: vec![],
+            feed: vec![crate::kinds::feed_output::FeedOutput {
+                name: "bad_feed_name!".into(),
+                version: 1,
+                title: BTreeMap::new(),
+                description: BTreeMap::new(),
+                sources: vec![],
+                filter: crate::kinds::feed_output::FeedFilter::default(),
+                query: None,
+                lang: None,
+                limit: None,
+                sort: None,
+            }],
+            widget: vec![],
+        });
+        let err = spec.validate().expect_err("feed gaps");
+        assert!(
+            err.to_string().contains("spec.representations.feed"),
+            "{err}"
+        );
+
+        let mut spec = valid_endpoint();
+        spec.representations = Some(crate::kinds::ical_mapping::Representations {
+            ical: vec![],
+            feed: vec![],
+            widget: vec![serde_json::from_value(
+                serde_json::json!({"name": "Bad_Name!", "sources": []}),
+            )
+            .expect("a widget output")],
+        });
+        let err = spec.validate().expect_err("widget gaps");
+        assert!(
+            err.to_string().contains("spec.representations.widget"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn endpoint_spec_projection_ref_and_display() {
+        let mut spec = valid_endpoint();
+        spec.projection_ref = Some(TypedRef {
+            kind: "Mapping".into(),
+            name: "proj1".into(),
+            namespace: None,
+        });
+        let err = spec.validate().expect_err("kind must be ModelProjection");
+        assert!(matches!(
+            err,
+            Error::Kind {
+                expected: "ModelProjection",
+                ..
+            }
+        ));
+
+        let mut spec = valid_endpoint();
+        spec.projection_ref = Some(TypedRef {
+            kind: "ModelProjection".into(),
+            name: "Bad_Proj!".into(),
+            namespace: None,
+        });
+        let err = spec.validate().expect_err("invalid proj name");
+        assert!(err.to_string().contains("spec.projectionRef.name"), "{err}");
+
+        let mut spec = valid_endpoint();
+        spec.display.insert(
+            "bad_type_name".into(),
+            crate::display_order::Display::default(),
+        );
+        let err = spec.validate().expect_err("invalid display class name");
+        assert!(err.to_string().contains("bad_type_name"), "{err}");
+
+        let mut spec = valid_endpoint();
+        spec.display.insert(
+            "Sensor".into(),
+            crate::display_order::Display {
+                fields: vec!["temp".into(), "temp".into()],
+                summary: vec![],
+            },
+        );
+        let err = spec.validate().expect_err("duplicate in display.fields");
+        assert!(err.to_string().contains("spec.display.fields"), "{err}");
+
+        let mut spec = valid_endpoint();
+        spec.display.insert(
+            "Sensor".into(),
+            crate::display_order::Display {
+                fields: vec![],
+                summary: vec!["temp".into(), "temp".into()],
+            },
+        );
+        let err = spec.validate().expect_err("duplicate in display.summary");
+        assert!(err.to_string().contains("spec.display.summary"), "{err}");
+    }
+
+    #[test]
+    fn endpoint_spec_deprecation_and_catalog_dataset_conflicts() {
+        let mut spec = valid_endpoint();
+        spec.deprecation = Some(
+            serde_json::from_value(serde_json::json!({
+                "since": "2026-01-01", "sunset": "2027-01-01", "representations": ["sta"]
+            }))
+            .expect("a deprecation"),
+        );
+        let err = spec.validate().expect_err("sta is not served");
+        assert!(err.to_string().contains("sta"), "{err}");
+
+        let mut spec = valid_endpoint();
+        spec.publish = Some(crate::kinds::ckan::Publication {
+            ckan: Some(
+                serde_json::from_value(serde_json::json!({
+                    "instanceRef": "ckan-1", "organization": "org", "name": "dataset-one"
+                }))
+                .expect("a ckan publication"),
+            ),
+        });
+        spec.catalog = Some(crate::kinds::catalog::Catalog {
+            datasets: vec![serde_json::from_value(serde_json::json!({
+                "name": "ds-1", "title": {"en": "Sensors"}, "description": {"en": "Sensors"}, "types": ["Sensor"]
+            }))
+            .expect("a catalogue dataset")],
+            ..Default::default()
+        });
+        let err = spec
+            .validate()
+            .expect_err("datasets with publish.ckan.name");
+        assert!(err.to_string().contains("spec.publish.ckan.name"), "{err}");
+    }
+
+    #[test]
+    fn shared_space_reference_spec_and_opacity_validation() {
+        let ref_spec = SharedSpaceReferenceSpec {
+            endpoint_slug: Some(EndpointSlug::new("zt4qm7ge2xdv6ksb3ncf5arw2y").unwrap()),
+            endpoint_ref: None,
+            alias: "Bad_Alias!".into(),
+            schedule: None,
+            cached_token_secret_ref: None,
+        };
+        let err = ref_spec.validate().expect_err("invalid alias");
+        assert!(err.to_string().contains("spec.alias"), "{err}");
+
+        let ref_spec = SharedSpaceReferenceSpec {
+            endpoint_slug: None,
+            endpoint_ref: None,
+            alias: "alias1".into(),
+            schedule: None,
+            cached_token_secret_ref: None,
+        };
+        let err = ref_spec.validate().expect_err("neither slug nor ref");
+        assert!(err.to_string().contains("spec.endpointRef"), "{err}");
+
+        let ref_spec2 = SharedSpaceReferenceSpec {
+            endpoint_slug: Some(EndpointSlug::new("zt4qm7ge2xdv6ksb3ncf5arw2y").unwrap()),
+            endpoint_ref: Some(EndpointRef {
+                project: "proj".into(),
+                name: "ep1".into(),
+            }),
+            alias: "alias1".into(),
+            schedule: None,
+            cached_token_secret_ref: None,
+        };
+        let err2 = ref_spec2.validate().expect_err("both slug and ref");
+        assert!(err2.to_string().contains("spec.endpointRef"), "{err2}");
+
+        let spec = valid_endpoint();
+        let err = spec
+            .validate_opacity("project", "zt4qm7ge2xdv6ksb3ncf5arw2y")
+            .expect_err("not opaque");
+        assert!(err.to_string().contains("slug must not encode"), "{err}");
+
+        assert!(Audit::Off.is_off());
+        assert!(!Audit::Changes.is_off());
+        assert_eq!(spec.context_space(), Some("air"));
+    }
+
+    #[test]
+    fn foreign_ckan_instance_ref_rejected() {
+        let yaml = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: ep1\n  namespace: p1\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: air }\n  slug: zt4qm7ge2xdv6ksb3ncf5arw2y\n  audience: public\n  publish:\n    ckan:\n      instanceRef:\n        kind: CkanInstance\n        name: inst\n        namespace: other-project\n      organization: org\n";
+        let ep = crate::kinds::Endpoint::from_yaml(yaml).unwrap();
+        let err = ep.validate().expect_err("foreign ckan instance namespace");
+        assert!(
+            err.to_string().contains("publish.ckan.instanceRef"),
+            "{err}"
+        );
+    }
+    #[test]
+    fn sta_without_a_model_reports_its_gap() {
+        let mut spec = valid_endpoint();
+        spec.enabled_representations = Some(vec![Representation::Sta]);
+        let gaps = spec.representation_gaps(None).expect("no model to parse");
+        assert_eq!(
+            gaps,
+            vec!["`sta` needs a type with a numeric attribute that declares its unit".to_owned()]
+        );
+    }
+
+    #[test]
+    fn rate_limits_accept_a_positive_burst() {
+        let rl = RateLimits {
+            requests_per_minute: 10,
+            burst: Some(5),
+        };
+        rl.validate().expect("burst 5 is valid");
+        let zero = RateLimits {
+            requests_per_minute: 0,
+            burst: None,
+        };
+        let err = zero.validate().expect_err("zero rate");
+        assert!(
+            err.to_string().contains("requestsPerMinute must be >= 1"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rate_limits_accept_a_missing_burst_and_a_burst_of_one() {
+        let no_burst = RateLimits {
+            requests_per_minute: 1,
+            burst: None,
+        };
+        no_burst.validate().expect("no burst is valid");
+        let burst_one = RateLimits {
+            requests_per_minute: 1,
+            burst: Some(1),
+        };
+        burst_one.validate().expect("burst 1 is valid");
+    }
+}
