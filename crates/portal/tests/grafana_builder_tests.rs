@@ -1529,6 +1529,8 @@ async fn daiya_reading_closed() -> MockServer {
             { "uid": "bikes-closed-ds", "type": "ngsild-grafana-datasource",
               "url": format!("http://gateway:8080/api/endpoint/{CLOSED_SLUG}") },
             { "uid": "prometheus", "type": "prometheus", "url": "http://prometheus:9090" },
+            { "uid": "elsewhere-ds", "type": "ngsild-grafana-datasource",
+              "url": "http://gateway:8080/api/endpoint/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz" },
         ])))
         .with_priority(1)
         .mount(&server)
@@ -1759,6 +1761,10 @@ async fn a_dashboard_waiting_for_approval_reads_from_its_change_and_an_absent_on
             "Number": 5, "HtmlUrl": "https://shako.example/pulls/5", "State": "open",
             "Title": "add dashboard Bike stations", "Head": branch, "Base": "main",
             "Mergeable": true, "Merged": false
+        }, {
+            "Number": 6, "HtmlUrl": "https://shako.example/pulls/6", "State": "open",
+            "Title": "add dashboard Gone", "Head": format!("portal/grafana-{PROJECT}-{UID}"),
+            "Base": "main", "Mergeable": true, "Merged": false
         }]})))
         .with_priority(1)
         .mount(&shako)
@@ -1784,11 +1790,25 @@ async fn a_dashboard_waiting_for_approval_reads_from_its_change_and_an_absent_on
         "a Change's file is no base to edit from"
     );
 
-    let absent = send(
+    let branchless = send(
         &state,
         person("eva"),
         "GET",
         &format!("{BUILDER}/{UID}"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        branchless.status,
+        StatusCode::NOT_FOUND,
+        "a Change whose branch lost the file: {}",
+        branchless.text
+    );
+    let absent = send(
+        &state,
+        person("eva"),
+        "GET",
+        &format!("{BUILDER}/jcd-ffffffffffffffff"),
         None,
     )
     .await;
@@ -1964,4 +1984,151 @@ async fn saved_charts_need_a_database_and_something_to_move() {
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     assert!(answer.text.contains("nothing to move"), "{}", answer.text);
     assert!(committed_files(&shako, REPO).await.is_empty());
+
+    let uid = joinedcontext_portal::saved_charts::uid_of(PROJECT);
+    let fixture = std::fs::read_to_string(FIXTURE).expect("the fixture");
+    for (text, why) in [
+        ("not json".to_owned(), "not JSON"),
+        (
+            fixture
+                .replace(
+                    "Values of status (BikeHireDockingStation, endpoint bikes-open)",
+                    "Hand-written list",
+                )
+                .replace(FIXTURE_UID, &uid),
+            "not written by the builder",
+        ),
+    ] {
+        let shako = common::forge().await;
+        holds(&shako, &uid, "main", "blob-merged", &text).await;
+        let mut state = world(&shako, &grafana);
+        state.db = Some(pool.clone());
+        common::keyed_project(&state, &pool, PROJECT, "grafana-tests").await;
+        let answer = send(&state, person("eva"), "POST", &moves, Some(json!({}))).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{why}: {}",
+            answer.text
+        );
+        assert!(answer.text.contains(why), "{why}: {}", answer.text);
+    }
+}
+
+/// A file on main the builder cannot read back, as JSON or as choices, is refused by `file` on
+/// every door that reads one; a listed version whose file is gone is not found, and one that does
+/// not read back is refused by `version`.
+#[tokio::test]
+async fn a_file_the_builder_did_not_write_is_refused_by_the_door_that_reads_it() {
+    const OLD: &str = "6666666666666666666666666666666666666666";
+    const GONE: &str = "7777777777777777777777777777777777777777";
+    let shako = common::forge().await;
+    let grafana = daiya().await;
+    let state = world(&shako, &grafana);
+    let fixture = std::fs::read_to_string(FIXTURE).expect("the fixture");
+    let hand_written = fixture.replace(
+        "Values of status (BikeHireDockingStation, endpoint bikes-open)",
+        "Hand-written list",
+    );
+    assert_ne!(
+        hand_written, fixture,
+        "the fixture names its variable's source"
+    );
+    let other = "jcd-b1ce57a7105f0002";
+    holds(&shako, FIXTURE_UID, "main", "blob-1", "not json").await;
+    holds(
+        &shako,
+        other,
+        "main",
+        "blob-2",
+        &hand_written.replace(FIXTURE_UID, other),
+    )
+    .await;
+    for (uid, why) in [
+        (FIXTURE_UID, "not JSON"),
+        (other, "not written by the builder"),
+    ] {
+        let read = send(
+            &state,
+            person("eva"),
+            "GET",
+            &format!("{BUILDER}/{uid}"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            read.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            read.text
+        );
+        assert_eq!(body(&read)["errors"][0]["path"], "file", "{}", read.text);
+        assert!(read.text.contains(why), "{why}: {}", read.text);
+    }
+
+    history(&shako, FIXTURE_UID, &[(GONE, "eva"), (OLD, "ada")]).await;
+    holds(&shako, FIXTURE_UID, OLD, "blob-old", "[]").await;
+    let versions = format!("{BUILDER}/{FIXTURE_UID}/versions");
+    let gone = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{versions}/{GONE}"),
+        None,
+    )
+    .await;
+    assert_eq!(gone.status, StatusCode::NOT_FOUND, "{}", gone.text);
+    let old = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{versions}/{OLD}"),
+        None,
+    )
+    .await;
+    assert_eq!(old.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", old.text);
+    assert_eq!(body(&old)["errors"][0]["path"], "version", "{}", old.text);
+    history(&shako, other, &[(OLD, "ada")]).await;
+    holds(
+        &shako,
+        other,
+        OLD,
+        "blob-old",
+        &hand_written.replace(FIXTURE_UID, other),
+    )
+    .await;
+    let old = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{BUILDER}/{other}/versions/{OLD}"),
+        None,
+    )
+    .await;
+    assert_eq!(old.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", old.text);
+    assert!(
+        old.text.contains("not written by the builder"),
+        "{}",
+        old.text
+    );
+}
+
+/// A forge that fails listing pull requests fails the builder's start with the reason, rather
+/// than hiding the dashboards that wait for approval; a reader lists no Change and is answered.
+#[tokio::test]
+async fn a_forge_failing_to_list_changes_fails_the_start() {
+    let shako = common::forge().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let grafana = daiya().await;
+    let state = world(&shako, &grafana);
+    let start = send(&state, person("eva"), "GET", BUILDER, None).await;
+    assert!(start.status.is_server_error(), "{}", start.text);
+    let reader = send(&state, person("vera"), "GET", BUILDER, None).await;
+    assert_eq!(reader.status, StatusCode::OK, "{}", reader.text);
+    assert_eq!(body(&reader)["mayEdit"], false);
 }

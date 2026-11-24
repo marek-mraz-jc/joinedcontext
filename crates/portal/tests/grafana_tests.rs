@@ -853,6 +853,15 @@ async fn the_form_reports_a_failing_grafana_and_offers_no_types_without_a_model(
     assert!(!options.text.contains(PASSWORD), "{}", options.text);
 
     let state = world(None);
+    let stray = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{PAGE}/options?sql=1"),
+        None,
+    )
+    .await;
+    assert_eq!(stray.status, StatusCode::BAD_REQUEST, "{}", stray.text);
     let air = send(
         &state,
         person("vera"),
