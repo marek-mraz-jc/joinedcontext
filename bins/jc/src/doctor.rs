@@ -1036,9 +1036,18 @@ mod tests {
         ct: HashMap<String, usize>,
         certs: Option<Vec<CertificateState>>,
         registry: Option<Vec<RegistryRow>>,
+        /// The asks that fail: `dns:<host>`, `caa:<name>`, `ct`, `certs`, `registry`.
+        fail: Vec<String>,
     }
 
     impl Stub {
+        fn fails(&self, ask: &str) -> Result<(), String> {
+            match self.fail.iter().any(|f| f == ask) {
+                true => Err(format!("{ask} timed out")),
+                false => Ok(()),
+            }
+        }
+
         fn pointed(hosts: &[&str]) -> Self {
             let mut s = Self::default();
             for h in hosts {
@@ -1050,9 +1059,11 @@ mod tests {
 
     impl World for Stub {
         fn addresses(&self, host: &str) -> Result<Vec<IpAddr>, String> {
+            self.fails(&format!("dns:{host}"))?;
             Ok(self.dns.get(host).cloned().unwrap_or_default())
         }
         fn caa(&self, name: &str) -> Result<Vec<String>, String> {
+            self.fails(&format!("caa:{name}"))?;
             Ok(self.caa.get(name).cloned().unwrap_or_default())
         }
         fn http01(&self, host: &str) -> Result<u16, String> {
@@ -1063,12 +1074,19 @@ mod tests {
             }
         }
         fn issued_last_week(&self, domain: &str) -> Result<usize, String> {
+            self.fails("ct")?;
             Ok(self.ct.get(domain).copied().unwrap_or_default())
         }
         fn certificates(&self) -> Option<Result<Vec<CertificateState>, String>> {
+            if self.fails("certs").is_err() {
+                return Some(Err("the cluster refused the kubeconfig".into()));
+            }
             self.certs.clone().map(Ok)
         }
         fn registry(&self) -> Option<Result<Vec<RegistryRow>, String>> {
+            if self.fails("registry").is_err() {
+                return Some(Err("the Portal's database refused the connection".into()));
+            }
             self.registry.clone().map(Ok)
         }
     }
@@ -1119,6 +1137,72 @@ hosts = { portal = "smartcity.nitra.sk" }
             .filter(|(l, _)| *l == Level::Error)
             .map(|(_, t)| t.as_str())
             .collect()
+    }
+
+    /// Each ask that fails is named with what it means for the check, never a panic: the base
+    /// domain's address stops the run (pass --edge), the others are one line each.
+    #[test]
+    fn each_failed_ask_is_reported_with_what_to_do() {
+        let mut stub = Stub::pointed(ALL);
+        stub.dns.insert("city.example".into(), Vec::new());
+        let r = report_for(FIVE, &[], None, &stub);
+        assert_eq!(
+            errors(&r),
+            [
+                "city.example has no address record: the edge address is unknown; add its A record or pass --edge"
+            ]
+        );
+        stub.fail.push("dns:city.example".into());
+        let r = report_for(FIVE, &[], None, &stub);
+        assert_eq!(
+            errors(&r),
+            ["city.example: dns:city.example timed out; pass --edge"]
+        );
+
+        let mut stub = Stub::pointed(ALL);
+        stub.certs = Some(Vec::new());
+        stub.registry = Some(Vec::new());
+        stub.fail = ["dns:api.bbsk.sk", "caa:bbsk.sk", "ct", "certs", "registry"]
+            .map(str::to_owned)
+            .to_vec();
+        let r = report_for(FIVE, &[], None, &stub);
+        let out = text(&r);
+        for line in [
+            "Error api.bbsk.sk: dns:api.bbsk.sk timed out",
+            "Warn smartcity.bbsk.sk: CAA unreadable on bbsk.sk (caa:bbsk.sk timed out)",
+            "the weekly count is unknown",
+            "Error Certificates unreadable: the cluster refused the kubeconfig",
+            "Error host registry unreadable: the Portal's database refused the connection",
+        ] {
+            assert!(out.contains(line), "missing {line:?} in\n{out}");
+        }
+        assert!(r.failed());
+    }
+
+    /// An Organization's further Portal hosts are origins of their own; without login_host the
+    /// sign-in host is the default one and the report says so.
+    #[test]
+    fn further_portals_and_the_default_sign_in_host_are_named() {
+        let text_of = r#"
+base_domain = "city.example"
+
+[[organizations]]
+name = "nitra"
+catalogue_id = "00000000-0000-7000-8000-000000000012"
+hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
+"#;
+        let r = report_for(
+            text_of,
+            &[EDGE.parse().unwrap()],
+            None,
+            &Stub::pointed(&["city.example", "smartcity.nitra.sk", "mesto.nitra.sk"]),
+        );
+        let out = text(&r);
+        assert!(out.contains("mesto.nitra.sk"), "{out}");
+        assert!(
+            out.contains("sign-in on idm.city.example (login_host not set: the default)"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -1656,6 +1740,12 @@ hosts = { portal = "smartcity.nitra.sk" }
         assert_eq!(civil(0), "1970-01-01T00:00:00");
         assert_eq!(civil(1_763_164_800), "2025-11-15T00:00:00");
         assert_eq!(civil(951_782_400 + 3_661), "2000-02-29T01:01:01");
+    }
+
+    #[test]
+    fn a_single_label_is_its_own_registrable_name() {
+        assert_eq!(registrable("localhost"), "localhost");
+        assert_eq!(registrable("localhost."), "localhost.");
     }
 
     #[test]

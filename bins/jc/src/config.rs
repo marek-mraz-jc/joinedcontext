@@ -2623,6 +2623,27 @@ path_prefix = "/api/endpoint"
             e.contains("JCBIN_PORTAL_AGE_KEY_FILE") && !e.contains("AGE-SECRET"),
             "{e}"
         );
+        // As a file it is held by path and reported by name only.
+        let cfg = Config::merge(
+            cli(&[
+                "--role",
+                "portal",
+                "--portal-age-key-file",
+                "/run/age/key.txt",
+            ]),
+            FileConfig::default(),
+        )
+        .unwrap();
+        let secrets = Secrets::load_from(&cfg, &BTreeMap::new()).unwrap();
+        assert_eq!(
+            secrets.portal_age_key_file.as_deref(),
+            Some(Path::new("/run/age/key.txt"))
+        );
+        assert!(
+            secrets
+                .report()
+                .contains(&("portal-age-key", jc_secret::Source::File))
+        );
     }
 
     #[test]
@@ -2656,11 +2677,13 @@ path_prefix = "/api/endpoint"
         assert_eq!(assistant_env("JC_OIDC_CLIENT_SECRET"), None);
         assert_eq!(assistant_env("JC_ASSISTANT_UNSET_IN_TESTS"), None);
         // A set value is handed on; a blank one counts as unset; a refused key is never read.
-        let read = |k: &str| match k {
-            "JC_MODEL_BASE" => Some("https://models.example/v1".to_owned()),
-            "JC_ASSISTANT_TITLE" => Some("  ".to_owned()),
-            _ => Some("read".to_owned()),
-        };
+        let set = BTreeMap::from([
+            ("JC_MODEL_BASE", "https://models.example/v1"),
+            ("JC_ASSISTANT_TITLE", "  "),
+            ("JC_MODEL_KEY", "a-model-key"),
+            ("PATH", "/usr/bin"),
+        ]);
+        let read = |k: &str| set.get(k).map(|v| (*v).to_owned());
         assert_eq!(
             assistant_value("JC_MODEL_BASE", read).as_deref(),
             Some("https://models.example/v1")
@@ -2696,7 +2719,6 @@ path_prefix = "/api/endpoint"
                 pair(REFUSED_MODEL_KEY, ""),
             ])
         );
-        assert!(process_env().keys().all(|k| !k.starts_with("JC_PORTAL_")));
         let cfg = Config::merge(cli(&["--role", "dataroom"]), FileConfig::default()).unwrap();
         assert!(
             Secrets::load(&cfg)

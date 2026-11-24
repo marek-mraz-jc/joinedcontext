@@ -47,3 +47,6 @@ pub use module::Module;
 #[cfg(feature = "model-tools")]
 #[doc(hidden)]
 pub use modules::model_tools::generate as model_tools_generate;
+/// The slow-statement fingerprint, the entry of its fuzz target (bins/jc/fuzz).
+#[doc(hidden)]
+pub use slow::fingerprint as sql_fingerprint;

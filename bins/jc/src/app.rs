@@ -1116,14 +1116,14 @@ fn reserve_portal_internal(cfg: &Config) -> Result<Option<Arc<std::net::TcpListe
 }
 
 /// The Portal's internal listener as `JC_INTERNAL_BIND` names it, when it names a port.
-fn explicit_portal_internal(cfg: &Config) -> Option<SocketAddr> {
+fn explicit_portal_internal(
+    cfg: &Config,
+    env: impl Fn(&str) -> Option<String>,
+) -> Option<SocketAddr> {
     if !cfg.roles.contains(&Module::Portal) {
         return None;
     }
-    let addr: SocketAddr = crate::config::portal_env("JC_INTERNAL_BIND")?
-        .trim()
-        .parse()
-        .ok()?;
+    let addr: SocketAddr = env("JC_INTERNAL_BIND")?.trim().parse().ok()?;
     (addr.port() != 0).then_some(addr)
 }
 
@@ -1366,7 +1366,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     let portal_internal = reserve_portal_internal(cfg)?;
     siblings.portal_internal = match &portal_internal {
         Some(reserved) => Some(reserved.local_addr().map_err(StartError::Serve)?),
-        None => explicit_portal_internal(cfg),
+        None => explicit_portal_internal(cfg, crate::config::portal_env),
     };
     let tasks = TaskTracker::new();
     #[cfg(feature = "model-tools")]
@@ -1969,6 +1969,117 @@ mod tests {
             missing.is_empty(),
             "add to jc_core::names::RESERVED_LABELS: {missing:?}"
         );
+    }
+
+    /// The Portal's container in a role split: a remote module with a service credential gets a
+    /// loopback forwarder, the gateway and dataroom (no credential) their public base; a
+    /// credential the setup does not hold stops the start with the module named.
+    #[tokio::test]
+    async fn each_remote_module_is_reached_by_forwarder_or_public_base() {
+        let file = "[remote]\ntoken_url = \"http://127.0.0.1:9/token\"\nclient_id = \"portal\"\n\
+                    [remote.modules]\nshako = \"https://git.city.test\"\n\
+                    gateway = \"http://jc-data:8080\"\ndataroom = \"https://data.city.test\"\n";
+        let cfg = dev_config("portal", file);
+        let env = std::collections::BTreeMap::from([
+            (
+                "JCBIN_REMOTE_CLIENT_SECRET".to_owned(),
+                "remote-secret".to_owned(),
+            ),
+            (
+                "JCBIN_GATEWAY_CLIENT_SECRET".to_owned(),
+                "gateway-secret".to_owned(),
+            ),
+        ]);
+        let secrets = crate::config::Secrets::load_from(&cfg, &env).unwrap();
+        let plans = plan_mounts(&cfg).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare_with(
+            dir.path(),
+            &cfg.roles,
+            &std::collections::BTreeMap::new(),
+            &[crate::setup::Secret::ShakoToken],
+        )
+        .unwrap();
+        let mut siblings = Siblings::new(&plans, "127.0.0.1:8080".parse().unwrap());
+        let forwarders = remote_forwarders(&cfg, &secrets, &setup, &mut siblings)
+            .await
+            .unwrap();
+        assert_eq!(forwarders.len(), 1, "shako alone holds a credential");
+        let at = forwarders[0].0.local_addr().unwrap();
+        let shako = siblings.get(Module::Shako).unwrap();
+        assert_eq!(shako.public, "https://git.city.test");
+        assert_eq!(shako.internal, format!("http://{at}"));
+        for (module, base) in [
+            (Module::Gateway, "http://jc-data:8080"),
+            (Module::Dataroom, "https://data.city.test"),
+        ] {
+            let got = siblings.get(module).unwrap();
+            assert_eq!((got.public.as_str(), got.internal.as_str()), (base, base));
+        }
+
+        let bare =
+            Setup::prepare(dir.path(), &cfg.roles, &std::collections::BTreeMap::new()).unwrap();
+        let e = remote_forwarders(&cfg, &secrets, &bare, &mut siblings)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("no credential held for shako"), "{e}");
+        // No [remote] section: no forwarder.
+        let alone = dev_config("portal", "");
+        let none =
+            crate::config::Secrets::load_from(&alone, &std::collections::BTreeMap::new()).unwrap();
+        assert!(
+            remote_forwarders(&alone, &none, &bare, &mut siblings)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// `JC_INTERNAL_BIND` names the Portal's internal listener only with a port of its own;
+    /// without the Portal, unset, port 0 or no address, `jc` picks a loopback port itself.
+    #[test]
+    fn the_internal_bind_is_taken_only_as_an_address_with_a_port() {
+        let portal = dev_config("portal", "");
+        let bind = |v: &'static str| move |k: &str| (k == "JC_INTERNAL_BIND").then(|| v.to_owned());
+        assert_eq!(
+            explicit_portal_internal(&portal, bind(" 0.0.0.0:9100 ")),
+            Some("0.0.0.0:9100".parse().unwrap())
+        );
+        assert_eq!(explicit_portal_internal(&portal, bind("127.0.0.1:0")), None);
+        assert_eq!(
+            explicit_portal_internal(&portal, bind("internal:9100")),
+            None
+        );
+        assert_eq!(explicit_portal_internal(&portal, |_| None), None);
+        let viz = dev_config("viz", "");
+        assert_eq!(explicit_portal_internal(&viz, bind("0.0.0.0:9100")), None);
+    }
+
+    /// The registry's rows become each Organization's hosts: the first of each role wins, a
+    /// Portal site is added, a role the router gives no refusals is left out, names folded.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn registry_rows_become_organization_hosts() {
+        let hosts = registry_hosts([
+            ("Portal.A.test", "a", "working"),
+            ("second.a.test", "a", "working"),
+            ("data.a.test", "a", "opendata"),
+            ("data2.a.test", "a", "opendata"),
+            ("api.a.test", "a", "api"),
+            ("idm.a.test", "a", "signin"),
+            ("site.a.test", "a", "portal-site"),
+            ("plain.a.test", "a", "host"),
+            ("portal.b.test:443", "b", "working"),
+        ]);
+        let a = &hosts["a"];
+        assert_eq!(a.portal, "portal.a.test");
+        assert_eq!(a.opendata.as_deref(), Some("data.a.test"));
+        assert_eq!(a.api.as_deref(), Some("api.a.test"));
+        assert_eq!(a.idm.as_deref(), Some("idm.a.test"));
+        assert_eq!(a.portals, ["site.a.test"]);
+        assert_eq!(hosts["b"].portal, "portal.b.test");
+        assert_eq!(hosts.len(), 2);
     }
 
     /// T-7384: while the modules are built the listener answers `pong` to ekiben's ping on each

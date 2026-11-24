@@ -674,6 +674,44 @@ mod tests {
         assert!(!printed.contains("JBSW") && !printed.contains(&person(1)));
     }
 
+    /// A target realm where another account holds the username already refuses that copy: it
+    /// is counted, the run goes on, nothing of the other account changes. Without an operators
+    /// group nobody counts as an operator.
+    #[tokio::test]
+    async fn a_username_taken_in_the_target_is_counted_and_the_run_goes_on() {
+        let (store, _, hel, _) = fixture().await;
+        store
+            .create_user(UserRepresentation {
+                id: "someone-else".into(),
+                realm_id: hel.clone(),
+                username: "person1".into(),
+                enabled: true,
+                ..UserRepresentation::default()
+            })
+            .await
+            .unwrap();
+        let report = run(&store, "dev", &orgs(), "no-such-group", Mode::Apply)
+            .await
+            .unwrap();
+        let hel_counts = &report.realms["hel"];
+        assert_eq!((hel_counts.conflicts, hel_counts.copied), (1, 2));
+        assert!(
+            store
+                .get_user_by_id(&hel, None, &person(1))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let other = store
+            .get_user_by_id(&hel, None, "someone-else")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(other.username, "person1");
+        // Person 4 (an operator by the group the fixture names) is copied like anyone else.
+        assert_eq!(report.realms["bbsk"].copied, 2);
+    }
+
     #[tokio::test]
     async fn a_copy_that_changed_its_password_is_left_as_it_is() {
         let (store, _, hel, _) = fixture().await;
@@ -822,6 +860,78 @@ mod tests {
         std::fs::write(dir.path().join("state/kaisatsu-kek"), [7u8; 32]).unwrap();
         let e = main(args(path)).await.unwrap_err();
         assert!(e.contains("is empty"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn the_key_comes_from_the_kek_file_when_one_is_named() {
+        let (dir, _) = config("");
+        let kek = dir.path().join("kek");
+        let (_d, path) = config(&format!(
+            "[kaisatsu]\nkek_file = {:?}\n",
+            kek.display().to_string()
+        ));
+        // Named but missing: the secrets do not load.
+        let e = main(args(path.clone())).await.unwrap_err();
+        assert!(e.contains("kek"), "{e}");
+        // Named and present: no state file is needed, and the next missing piece is named.
+        std::fs::write(&kek, [b'k'; 32]).unwrap();
+        let e = main(args(path)).await.unwrap_err();
+        assert!(e.contains("names no database"), "{e}");
+    }
+
+    /// The whole command against kaisatsu's Postgres store: the source realm named by `--from`
+    /// is looked up there. Runs when `JC_PG_TEST_DATABASE_URL` names a superuser connection.
+    #[tokio::test]
+    async fn a_source_realm_missing_from_the_store_is_named() {
+        let Ok(admin) = std::env::var("JC_PG_TEST_DATABASE_URL") else {
+            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
+            return;
+        };
+        let db = format!("splitrealm{}", std::process::id());
+        let pool = sqlx::PgPool::connect(&admin).await.unwrap();
+        let (dir, _) = config("");
+        let mut section = String::from("[kaisatsu.database]\n");
+        for q in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(q))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let base = url::Url::parse(&admin).unwrap();
+        for (key, role) in [("url", "app"), ("migrate_url", "owner")] {
+            let role = format!("{db}_{role}");
+            let pw = format!("pw-{role}");
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+                 ALTER ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{pw}';
+                 GRANT CREATE, CONNECT ON DATABASE {db} TO {role};"
+            )))
+            .execute(&pool)
+            .await
+            .unwrap();
+            let file = dir.path().join(&role);
+            std::fs::write(&file, &pw).unwrap();
+            let host = base.host_str().unwrap();
+            let port = base.port().unwrap_or(5432);
+            let file_key = key.replace("url", "password_file");
+            section.push_str(&format!(
+                "{key} = \"postgres://{role}@{host}:{port}/{db}\"\n{file_key} = {:?}\n",
+                file.display().to_string()
+            ));
+        }
+        let (dir, path) = config(&format!("{section}{IDM_ORG}"));
+        std::fs::write(dir.path().join("state/kaisatsu-kek"), [b'k'; 32]).unwrap();
+        let mut a = args(path);
+        a.from = Some("nowhere".to_owned());
+        let e = main(a).await.unwrap_err();
+        assert!(
+            e.contains("realm 'nowhere' is not in kaisatsu's store"),
+            "{e}"
+        );
+        assert!(!e.contains("pw-"), "{e}");
     }
 
     #[test]

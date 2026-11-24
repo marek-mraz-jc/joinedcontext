@@ -1,5 +1,6 @@
-# Fuzzing Model Tools' `/generate` (bins/jc/src/modules/model_tools, T-7641) under libFuzzer:
-# `cargo +nightly fuzz run model_tools_generate corpus/model_tools_generate`. Not a workspace member.
+# Fuzzing jc's input parsers under libFuzzer: Model Tools' `/generate` (T-7641), jc.toml, the
+# door's credential compare, database URLs and the slow-statement fingerprint (T-7634).
+# `cargo +nightly fuzz run <target> corpus/<target>`. Not a workspace member.
 [package]
 name = "jc-fuzz"
 version = "0.0.0"
@@ -15,10 +16,40 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 serde_json = "1"
 jc = { path = "..", default-features = false, features = ["model-tools"] }
+axum = "0.8"
+url = "2"
 
 [[bin]]
 name = "model_tools_generate"
 path = "fuzz_targets/model_tools_generate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_file"
+path = "fuzz_targets/config_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "door_credential"
+path = "fuzz_targets/door_credential.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pg_section"
+path = "fuzz_targets/pg_section.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sql_fingerprint"
+path = "fuzz_targets/sql_fingerprint.rs"
 test = false
 doc = false
 bench = false

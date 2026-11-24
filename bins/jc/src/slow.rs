@@ -93,7 +93,7 @@ impl Visit for Fields {
 
 /// `sql`'s first [`FINGERPRINT_CHARS`] characters with whitespace collapsed and each literal
 /// (`'…'`, `E'…'`, `$tag$…$tag$` is left to its tag, a number not part of a name) as `?`.
-fn fingerprint(sql: &str) -> String {
+pub fn fingerprint(sql: &str) -> String {
     let mut out = String::new();
     let mut chars = sql.chars().peekable();
     let mut prev = ' ';
