@@ -701,6 +701,49 @@ async fn action_links_without_a_client_unknown_actions_and_forged_keys() {
     assert!(!html.contains("account has been updated"), "{html}");
 }
 
+#[tokio::test]
+async fn a_verify_email_step_for_an_address_already_verified_or_missing_sends_nothing_and_passes() {
+    let (app, store) = app().await;
+    let mut member = user(&store, MEMBER).await;
+    member.email = None;
+    member.email_verified = true;
+    member.required_actions = vec!["VERIFY_EMAIL".into()];
+    store.update_user(member.clone()).await.unwrap();
+    let a = start(&app, "").await;
+    let (st, h, html) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(html.contains("verify-email"), "{html}");
+    assert!(!is_code(st, &h));
+    // No address: no mail is queued.
+    let queued = store.list_outbox_rows("dev", None).await.unwrap();
+    assert!(!queued.iter().any(|r| r.user_id == member.id), "{queued:?}");
+    // Already verified (by the link in another tab): the step passes and the action is done.
+    let (st, h, html) = a.post(&app, &[("email_code", "")]).await;
+    assert!(
+        is_code(st, &h) || page_id(&html) == "org-choice",
+        "{st} {html}"
+    );
+    let after = user(&store, MEMBER).await;
+    assert!(
+        after.required_actions.is_empty(),
+        "{:?}",
+        after.required_actions
+    );
+}
+
+#[tokio::test]
+async fn a_code_step_whose_person_was_deleted_names_nobody() {
+    let (app, store) = app().await;
+    let a = start(&app, "").await;
+    let (_, _, html) = a.password(&app, STEWARD, STEWARD_PW).await;
+    assert!(html.contains("name=\"otp\""), "{html}");
+    let steward = user(&store, STEWARD).await;
+    store.delete_user("dev", None, &steward.id).await.unwrap();
+    let (st, _, html) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    assert!(!st.is_server_error(), "{st} {html}");
+    assert!(!html.contains(STEWARD), "{html}");
+}
+
 fn extract_input_value(html: &str, name: &str) -> String {
     let marker = format!("name=\"{name}\"");
     let i = html.find(&marker).expect("input");
