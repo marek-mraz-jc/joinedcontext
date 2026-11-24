@@ -816,3 +816,192 @@ fn the_saved_artifacts_refuse_reserved_names_endless_nesting_and_unmapped_member
     let e = errors_with("  status:\n", "  status:\n    alias: state\n");
     assert!(e.iter().any(|m| m.starts_with("example: the generated example carries members the generated @context does not define")), "{e:?}");
 }
+
+/// The first entry of `errors` for `text`, the whole answer when there is none.
+fn first_error(text: &str) -> String {
+    let (_, out) = generate(&source(text));
+    out["errors"]
+        .get(0)
+        .and_then(Value::as_str)
+        .map_or_else(|| out.to_string(), str::to_owned)
+}
+
+#[test]
+fn a_document_of_the_wrong_shape_is_refused_in_plain_words() {
+    let head = "id: https://x.example/m\nname: m\nimports:\n  - linkml:types\n";
+    for (body, expected) in [
+        ("classes:\n  A:\n    annotations: [a]\n", "annotations are a map of tag to value"),
+        ("classes: 3\n", "class definitions are a map of name to definition"),
+        ("classes:\n  - just text\n", "class entries are maps"),
+        ("classes:\n  - is_a: Entity\n", "class entries name themselves"),
+        ("slots:\n  s:\n    unit: 3\n", "a unit is a map (ucum_code, symbol, exact_mappings, ...)"),
+        ("slots:\n  s:\n    any_of: 3\n", "any_of is a list of slot expressions"),
+        ("prefixes: [a]\n", "prefixes are a map of prefix to IRI"),
+        ("classes:\n  A: 3\n", "class 'A' is not a map of metaslots"),
+    ] {
+        let e = first_error(&format!("{head}{body}"));
+        assert!(e.contains(expected), "{body}: {e}");
+    }
+    assert_eq!(first_error("- a\n- b\n"), "the schema document must be a mapping of LinkML fields, not a list");
+    assert!(first_error("just text\n").starts_with("the schema document must be a mapping of LinkML fields, not "));
+    assert!(first_error("name: m\n").contains("SchemaDefinition.id must be supplied"));
+}
+
+#[test]
+fn long_forms_and_lists_read_as_linkml_reads_them() {
+    let model = "\
+id: https://city.example/models/long
+default_prefix: long
+prefixes:
+  long:
+    prefix_prefix: long
+    prefix_reference: https://city.example/models/long/
+  linkml: https://w3id.org/linkml/
+imports:
+  - linkml:types
+  - ngsi-ld-core
+subsets:
+  core:
+    description: the core terms
+classes:
+  - name: Meter
+    is_a: Entity
+    slots: [reading, empty, counted]
+    annotations:
+      shown:
+        tag: shown
+        value: yes
+  - name: Spare
+slots:
+  reading:
+    range: 3
+  empty:
+    unit:
+  counted:
+    range: integer
+    inlined_as_list: true
+    any_of:
+      - range: integer
+types:
+  '3':
+    typeof: integer
+";
+    let (_, out) = generate(&source(model));
+    assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
+    let broker = &out["brokerSchema"];
+    assert_eq!(broker["name"], "long", "the name falls back to the id's last segment");
+    assert_eq!(broker["slots"]["reading"]["range"], "integer", "a number range is its text");
+    assert!(broker["slots"]["empty"].get("unit").is_none(), "a null unit is none");
+    assert_eq!(broker["classes"]["Meter"]["slot_usage"]["counted"]["inlined"], true, "inlined_as_list inlines: {broker}");
+    assert_eq!(broker["classes"]["Meter"]["annotations"]["shown"]["value"], "yes");
+    assert_eq!(broker["classes"]["Spare"]["name"], "Spare", "a class with no metaslots");
+    assert_eq!(out["context"]["@context"]["long"], "https://city.example/models/long/");
+}
+
+#[test]
+fn a_name_the_model_does_not_define_is_named() {
+    for (from, to, expected) in [
+        ("    is_a: Entity\n", "    is_a: Nowhere\n", "Nowhere"),
+        ("    slots: [status, capacity]\n", "    slots: [status, capacity, gone]\n", "No such slot gone"),
+        ("  capacity:\n", "  capacity:\n    is_a: absent\n", "absent"),
+    ] {
+        let e = errors_with(from, to);
+        assert!(e.iter().any(|m| m.contains(expected)), "{to}: {e:?}");
+    }
+}
+
+#[test]
+fn types_resolve_through_typeof_and_their_uri_coerces_the_term() {
+    let model = MODEL.replace("slots: [status, capacity]", "slots: [status, capacity, link, plain, odd, chained]")
+        .replace("enums:\n", "  link:\n    range: Link\n  plain:\n    range: Bare\n  odd:\n    range: Strange\n  chained:\n    range: Child\nenums:\n")
+        + "types:\n  Link:\n    typeof: uriorcurie\n    uri: http://www.w3.org/ns/shex#iri\n  Bare:\n    typeof: string\n    uri: xsd:string\n  Strange:\n    typeof: string\n    uri: odd:thing\n  Child:\n    typeof: Parent\n  Parent:\n    typeof: integer\n";
+    let (_, out) = generate(&source(&model));
+    let e = errors_of(&out);
+    assert!(e[0].starts_with("context: Unknown CURIE prefix: odd"), "{e:?}");
+    let fixed = model.replace("    uri: odd:thing\n", "    uri: thing\n");
+    let (_, out) = generate(&source(&fixed));
+    assert!(errors_of(&out)[0].starts_with("context: Unknown CURIE prefix: @base (thing)"), "{out}");
+    let fixed = model.replace("    uri: odd:thing\n", "    uri: xsd:token\n");
+    let (_, out) = generate(&source(&fixed));
+    assert_eq!(errors_of(&out), Vec::<String>::new(), "{out}");
+    let ctx = &out["context"]["@context"];
+    // A shex:iri type coerces to `@id`, which only a Relationship keeps: a Property drops it.
+    assert_eq!(ctx["link"], json!({"@id": "city:link"}), "{ctx}");
+    assert!(ctx["plain"].get("@type").is_none(), "xsd:string coerces to nothing");
+    assert_eq!(ctx["chained"]["@type"], "xsd:integer", "Child → Parent → integer");
+    assert_eq!(out["brokerSchema"]["slots"]["chained"]["range"], "integer");
+}
+
+#[test]
+fn a_default_prefix_written_as_the_model_iri_is_refused_before_a_save() {
+    let e = errors_with("default_prefix: city\n", "default_prefix: https://city.example/models/parking/\n");
+    assert!(
+        e.iter().any(|m| m.contains("brokerSchema: the broker refuses this schema: malformed LinkML schema: default_prefix \"https://city.example/models/parking/\" is not declared")),
+        "{e:?}"
+    );
+}
+
+#[tokio::test]
+async fn spawn_serves_on_a_loopback_port_until_shutdown() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let shutdown = CancellationToken::new();
+    let tasks = TaskTracker::new();
+    let addr = spawn(shutdown.clone(), &tasks).await.expect("bound");
+    assert!(addr.ip().is_loopback(), "{addr}");
+    let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    stream
+        .write_all(b"GET /healthz HTTP/1.1\r\nhost: model-tools\r\nconnection: close\r\n\r\n")
+        .await
+        .expect("write");
+    let mut reply = String::new();
+    stream.read_to_string(&mut reply).await.expect("read");
+    assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+    assert!(reply.contains("\"status\":\"ok\""), "{reply}");
+    shutdown.cancel();
+    tasks.close();
+    tokio::time::timeout(Duration::from_secs(5), tasks.wait())
+        .await
+        .expect("the listener stops on shutdown");
+    assert!(tokio::net::TcpStream::connect(addr).await.is_err());
+}
+
+#[tokio::test]
+async fn an_empty_body_asks_for_the_source() {
+    let (status, out) = call("POST", "/generate", Body::empty()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(errors_of(&out), vec!["'source' must be the LinkML document as a string".to_owned()]);
+}
+
+fn body_of(resp: Response) -> impl std::future::Future<Output = (StatusCode, Value)> {
+    async move {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap_or_default();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+}
+
+#[tokio::test]
+async fn a_stopping_module_and_a_slow_compilation_answer_503() {
+    let body = || Body::from(json!({"source": MODEL}).to_string());
+    let closed = Arc::new(Semaphore::new(1));
+    closed.close();
+    let state = State { slots: closed, timeout: COMPILE_TIMEOUT };
+    let (status, out) = body_of(generate_route(state, body()).await).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(errors_of(&out), vec!["model tools is stopping".to_owned()]);
+
+    // 150 000 YAML nodes take the parser milliseconds, a nanosecond's timeout none.
+    let big = format!(
+        "id: https://x.example/m\nname: m\nannotations:\n  a: [{}]\n",
+        vec!["x"; 150_000].join(", ")
+    );
+    let slots = Arc::new(Semaphore::new(1));
+    let state = State { slots: slots.clone(), timeout: Duration::from_nanos(1) };
+    let big = Body::from(json!({ "source": big }).to_string());
+    let (status, out) = body_of(generate_route(state, big).await).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(errors_of(&out), vec!["the generator did not answer within 0 s".to_owned()]);
+    // The compilation past its timeout keeps its slot until it ends.
+    let permit = tokio::time::timeout(Duration::from_secs(10), slots.acquire_owned()).await;
+    assert!(permit.is_ok(), "the slot comes back when the job ends");
+}

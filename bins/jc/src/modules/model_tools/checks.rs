@@ -521,9 +521,9 @@ imports:
         let mut m = Map::new();
         m.insert("source".to_owned(), Value::String(source.to_owned()));
         let (_, out) = generate(&m);
-        out["errors"]
-            .as_array()
-            .unwrap_or_else(|| panic!("no errors in {out}"))
+        let errors = out["errors"].as_array().cloned().unwrap_or_default();
+        assert!(out["errors"].is_array(), "no errors in {out}");
+        errors
             .iter()
             .map(|e| e.as_str().unwrap_or_default().to_owned())
             .collect()
