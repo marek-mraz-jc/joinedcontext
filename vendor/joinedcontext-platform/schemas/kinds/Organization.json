@@ -1,0 +1,2173 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AgentLimits": {
+      "additionalProperties": false,
+      "description": "`spec.limits.agents`: model spend in whole units of the currency the agent proxy's provider bills in, the day and the month in UTC.",
+      "properties": {
+        "spendPerDay": {
+          "description": "Spend a day; absent is no limit.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "spendPerMonth": {
+          "description": "Spend a month; absent is no limit.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AgentsPolicy": {
+      "additionalProperties": false,
+      "description": "`spec.policies.agents`.",
+      "properties": {
+        "models": {
+          "description": "The models the agent proxy lets a run call. Absent is every model the installation's agent profiles name; a model outside those is never reachable whatever this lists.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AppService": {
+      "description": "A platform service an App uses (AP-160, ADR-N-045): the closed set, so a name outside it is refused like any unknown field, with the six it may be.",
+      "oneOf": [
+        {
+          "description": "Who is signed in and what they may do; every App's (AP-161).",
+          "enum": [
+            "identity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The App's Endpoint; every App's (AP-161).",
+          "enum": [
+            "data"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Objects under the App's own storage prefix (AP-170).",
+          "enum": [
+            "files"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A message to people of the organization (AP-168).",
+          "enum": [
+            "email"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The schedules of a `wasm` App, `spec.server.jobs[]` (AP-162).",
+          "enum": [
+            "jobs"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A completion from a model of the organization's (AP-169).",
+          "enum": [
+            "ai"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "AppServiceLimits": {
+      "additionalProperties": false,
+      "description": "The per-App quotas of the platform services an Organization (`spec.limits.apps`) or a Project (`spec.apps.limits`) sets; an absent one takes the layer above (AP-165, ADR-N-045).",
+      "properties": {
+        "aiTokensPerDay": {
+          "description": "Model tokens, in and out, an App may use a day through `ai`.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "emailsPerDay": {
+          "description": "Messages an App may send a day through `email`.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "filesMiB": {
+          "description": "MiB an App may store through `files`.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AppearanceColours": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.colours`: each one a hex colour, `#rgb` or `#rrggbb`.",
+      "properties": {
+        "accent": {
+          "description": "Highlight colour, e.g. `#f59e0b`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "background": {
+          "description": "Page background, e.g. `#ffffff`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "footerBackground": {
+          "description": "The page footer, six hex digits after a hash, such as 0f172a.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "footerText": {
+          "description": "Text and links in the footer, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headerBackground": {
+          "description": "The open data portal's header bar, six hex digits after a hash, such as 0b5394.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "headerText": {
+          "description": "Text and links in the header bar, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "link": {
+          "description": "Links in the page, at least 4.5:1 on the background, six hex digits after a hash, such as 1d4ed8 (T-7744).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "primary": {
+          "description": "Primary action colour, e.g. `#0b5394`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secondary": {
+          "description": "Secondary colour for links and focus, e.g. `#0f766e`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "Body text, e.g. `#0f172a`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AppearanceDisplay": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.display` (T-7743): data only, every name one of a fixed list.",
+      "properties": {
+        "dataset": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DatasetDisplay"
+            }
+          ],
+          "description": "The dataset page."
+        },
+        "datasetList": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DatasetListDisplay"
+            }
+          ],
+          "description": "The dataset list."
+        }
+      },
+      "type": "object"
+    },
+    "AppearanceFont": {
+      "description": "`spec.appearance.font`: a system font stack, never a web font (T-7410).",
+      "oneOf": [
+        {
+          "description": "The platform's interface font.",
+          "enum": [
+            "system"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A humanist sans serif.",
+          "enum": [
+            "humanist"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A book serif.",
+          "enum": [
+            "serif"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A monospace font.",
+          "enum": [
+            "mono"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "AppearanceHero": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.hero`.",
+      "properties": {
+        "intro": {
+          "description": "The introduction under it in Markdown of at most 2 KiB, e.g. `Dáta mesta na **jednom mieste**.`; raw HTML shows as text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "The home page's heading, one line, e.g. `Otvorené dáta Banskej Bystrice`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "AppearanceLink": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.navLinks[]` and `footerLinks[]`.",
+      "properties": {
+        "label": {
+          "description": "The text of the link, e.g. `Mesto`.",
+          "type": "string"
+        },
+        "url": {
+          "description": "An `https://` or `http://` address or a path on the portal starting `/`, e.g. `https://www.banskabystrica.sk`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "url"
+      ],
+      "type": "object"
+    },
+    "AppearancePage": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.pages[]`: one page of the open data portal in one language (T-7031).",
+      "properties": {
+        "lang": {
+          "description": "The language as a two-letter code, e.g. `sk`.",
+          "type": "string"
+        },
+        "markdown": {
+          "description": "The page in Markdown, its first `# heading` the title, at most 16 KiB, e.g. `# Podpora\\n\\nNapíšte nám na opendata@mesto.sk.`; raw HTML shows as text.",
+          "type": "string"
+        },
+        "page": {
+          "description": "The page: `connector`, `privacy`, `terms`, `support` or `accessibility`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "lang",
+        "markdown",
+        "page"
+      ],
+      "type": "object"
+    },
+    "AppsPolicy": {
+      "additionalProperties": false,
+      "description": "`spec.policies.apps` (PF-103).",
+      "properties": {
+        "public": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PublicApps"
+            }
+          ],
+          "description": "Whether an App may be `public`; `refused` makes every door refuse a Change that sets an App public, and leaves the Apps already public as they are (PF-100, PF-103)."
+        },
+        "services": {
+          "description": "The platform services the organization's Apps may use (AP-163); absent is [`DEFAULT_ORGANIZATION_SERVICES`][crate::kinds::DEFAULT_ORGANIZATION_SERVICES].",
+          "items": {
+            "$ref": "#/definitions/AppService"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Build": {
+      "additionalProperties": false,
+      "description": "The artifact one build of an `App` published, as the build lane writes it back (AP-13a).",
+      "properties": {
+        "builtAt": {
+          "description": "When the build lane published it.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "commit": {
+          "description": "The commit of the source the artifact was built from, 7 to 40 lowercase hexadecimal characters.",
+          "type": "string"
+        },
+        "component": {
+          "description": "The digest of a `wasm` App's server component, taken from the checked bundle and stored by it in the object store; what the WASM host loads and checks (AP-151).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "description": "The artifact's digest, `sha256:` and 64 lowercase hexadecimal characters. The reconciler deploys this and nothing else (AP-72).",
+          "type": "string"
+        },
+        "sdkVersion": {
+          "description": "The version of the app SDK the artifact was built against.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "builtAt",
+        "commit",
+        "digest",
+        "sdkVersion"
+      ],
+      "type": "object"
+    },
+    "ButtonStyle": {
+      "description": "`spec.appearance.buttonStyle` (T-7744).",
+      "oneOf": [
+        {
+          "description": "The primary colour filled in.",
+          "enum": [
+            "filled"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The primary colour as border and text.",
+          "enum": [
+            "outline"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "CardShadow": {
+      "description": "`spec.appearance.cardShadow` (T-7744).",
+      "oneOf": [
+        {
+          "description": "Flat cards with a border only.",
+          "enum": [
+            "none"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A soft shadow under each card.",
+          "enum": [
+            "soft"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "description": "Status condition entry.",
+      "properties": {
+        "lastTransitionTime": {
+          "description": "Last transition timestamp.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "description": "Human-readable message.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Machine-readable reason code.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Status value (\"True\", \"False\", \"Unknown\").",
+          "type": "string"
+        },
+        "type": {
+          "description": "Type of condition (e.g. Reconciled, Ready).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "type"
+      ],
+      "type": "object"
+    },
+    "Contact": {
+      "additionalProperties": false,
+      "description": "Contact information for an organization role.",
+      "properties": {
+        "email": {
+          "description": "Contact email address.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Full name of the contact person or organizational unit.",
+          "type": "string"
+        },
+        "phone": {
+          "description": "Optional contact telephone number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ContactRole"
+            }
+          ],
+          "description": "Role of this contact."
+        }
+      },
+      "required": [
+        "email",
+        "name",
+        "role"
+      ],
+      "type": "object"
+    },
+    "ContactPoint": {
+      "additionalProperties": false,
+      "description": "The contact point of a dataset, a `vcard:Kind`.",
+      "properties": {
+        "email": {
+          "description": "A role address, never a person's own (EP-80): `vcard:hasEmail`.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The desk's name: `vcard:fn`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ContactRole": {
+      "description": "Functional responsibility of an organization contact.",
+      "oneOf": [
+        {
+          "description": "Administrative contact.",
+          "enum": [
+            "administrative"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Technical contact.",
+          "enum": [
+            "technical"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Data protection officer / GDPR contact.",
+          "enum": [
+            "data-protection"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Information security officer contact.",
+          "enum": [
+            "security"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The open-data desk: the role address a dataset's catalogue record names as its contact point, which the Portal prefills into an Endpoint's `spec.catalog` (EP-78, EP-80).",
+          "enum": [
+            "open-data"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ContentWidth": {
+      "description": "`spec.appearance.width`: how wide the open data portal's content runs (T-7744).",
+      "oneOf": [
+        {
+          "description": "About 60 rem, for reading.",
+          "enum": [
+            "narrow"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "About 76 rem, the built-in width.",
+          "enum": [
+            "normal"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "About 90 rem, for wide tables.",
+          "enum": [
+            "wide"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "DataLimits": {
+      "additionalProperties": false,
+      "description": "`spec.limits.data`.",
+      "properties": {
+        "uploadMegabytes": {
+          "description": "The largest upload or import, in MiB; at most the edge's body.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "DatasetDisplay": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.display.dataset`: each list left empty shows the level above's.",
+      "properties": {
+        "about": {
+          "description": "The about table's rows in order, each at most once; a row left out is hidden. A DCAT field name (`publisher`, `license`, `rights`, `source`, `keyword`, `accrualPeriodicity`, `issued`, `modified`, `nextUpdate`, `spatial`, `temporal`, `contactPoint`, `identifier`, `conformsTo`) or a dataset extra as `extras.<key>`, e.g. `[license, publisher, modified]`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sections": {
+          "description": "The sections that show, in order, each at most once; a section left out is hidden. One of `publisher`, `subscribe`, `explorer`, `map`, `visualizations`, `dashboards`, `about`, `live`, `mcp`, `resources`, `additional-info`, `shacl`, e.g. `[{name: about}, {name: resources}]`.",
+          "items": {
+            "$ref": "#/definitions/DisplaySection"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "DatasetField": {
+      "additionalProperties": false,
+      "description": "One extra metadata field of an Organization's datasets (T-7746).",
+      "properties": {
+        "label": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The label the dataset form and page show, per language, such as `{sk: Zdroj financovania}`.",
+          "type": "object"
+        },
+        "name": {
+          "description": "A DNS label, unique in the Organization, such as `funding`; the dataset extra is `x_<name>` and the DCAT property `https://<installation domain>/ns/dataset-fields/<org>/<name>`.",
+          "type": "string"
+        },
+        "required": {
+          "description": "Whether every dataset of the Organization must fill it.",
+          "type": "boolean"
+        },
+        "type": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DatasetFieldType"
+            }
+          ],
+          "description": "What the field holds: `text`, `number`, `date`, `url` or `enum`."
+        },
+        "values": {
+          "description": "The values an `enum` field offers, at most 50; only `enum` takes them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "label",
+        "name",
+        "type"
+      ],
+      "type": "object"
+    },
+    "DatasetFieldType": {
+      "description": "What a field holds.",
+      "oneOf": [
+        {
+          "description": "One line of text.",
+          "enum": [
+            "text"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A decimal number, such as `12.5`.",
+          "enum": [
+            "number"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A calendar date, `YYYY-MM-DD`.",
+          "enum": [
+            "date"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "An `https://` address.",
+          "enum": [
+            "url"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "One of the field's `values`.",
+          "enum": [
+            "enum"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "DatasetListDisplay": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.display.datasetList`.",
+      "properties": {
+        "fields": {
+          "description": "What each dataset shows after its title, in order, as a table column or a card line: `notes`, `format`, `publisher`, `modified`, e.g. `[format, modified]`; empty shows the level above's.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "DatasetListLayout": {
+      "description": "`spec.appearance.datasetList`.",
+      "oneOf": [
+        {
+          "description": "One card per dataset with its description.",
+          "enum": [
+            "cards"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "One table row per dataset.",
+          "enum": [
+            "table"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "DcatProfile": {
+      "description": "A national DCAT-AP profile an Organization serves its records in (docs API/08).",
+      "oneOf": [
+        {
+          "description": "DCAT-AP-SK 2.0.1, which data.slovensko.sk harvests.",
+          "enum": [
+            "dcat-ap-sk"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "DCAT-AP-CZ 2026-09-23, which the Czech NKOD harvests.",
+          "enum": [
+            "dcat-ap-cz"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "DisplaySection": {
+      "additionalProperties": false,
+      "description": "`spec.appearance.display.dataset.sections[]`.",
+      "properties": {
+        "heading": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Its heading per language in place of the built-in one, plain text, e.g. `{sk: O dátach, en: About the data}`; a Portal's languages are those of `spec.languages`.",
+          "type": "object"
+        },
+        "name": {
+          "description": "The section, e.g. `about`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "EdgeLimits": {
+      "additionalProperties": false,
+      "description": "`spec.limits.edge`.",
+      "properties": {
+        "maxRequestBodyMegabytes": {
+          "description": "The largest request body the edge accepts, in MiB.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "requestsPerMinute": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EdgeRates"
+            }
+          ],
+          "description": "Requests a minute per route class."
+        }
+      },
+      "type": "object"
+    },
+    "EdgeRates": {
+      "additionalProperties": false,
+      "description": "`spec.limits.edge.requestsPerMinute`.",
+      "properties": {
+        "api": {
+          "description": "The Portal API, per token.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "dataRead": {
+          "description": "Context-space reads (`GET`, `HEAD`), per token.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "dataWrite": {
+          "description": "Context-space writes (every other method), per token.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "publicEndpoint": {
+          "description": "A public endpoint, per address.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "web": {
+          "description": "The Portal's pages, per address.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "GatewayLimits": {
+      "additionalProperties": false,
+      "description": "`spec.limits.gateway`.",
+      "properties": {
+        "maxRequestBodyMegabytes": {
+          "description": "The largest request body the gateway accepts, in MiB; at most the edge's.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "MqttAddress": {
+      "description": "How a broker is addressed from outside (ADR-N-048 §2.11).",
+      "oneOf": [
+        {
+          "description": "`<name>.<project>.mqtt.<domain>` on 8883.",
+          "enum": [
+            "platform"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A port of the allowance's `ports`.",
+          "enum": [
+            "dedicatedPort"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A name of the allowance's `customHostnames`, one the city owns, on 8883.",
+          "enum": [
+            "customHostname"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MqttAllowance": {
+      "additionalProperties": false,
+      "description": "`spec.limits.mqtt` of an Organization or `spec.quotas.mqtt` of a Project. Every number is optional; an absent one is its catalog default once `enabled` is `true`.",
+      "properties": {
+        "addresses": {
+          "description": "The address kinds the project may use; absent is `[platform]`.",
+          "items": {
+            "$ref": "#/definitions/MqttAddress"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "brokers": {
+          "description": "How many `MqttBroker` manifests the project may hold.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "clientCaRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SecretRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The secret holding the project's device client CA certificate (never its key), required when `deviceAuth` holds `clientCertificate`; only a project's own `spec.quotas.mqtt` sets it."
+        },
+        "connections": {
+          "description": "The sum of `spec.limits.maxConnections` over the project's brokers.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "customHostnames": {
+          "description": "Hostnames the city owns that an org admin assigned to this project, at most 10; only a project's own `spec.quotas.mqtt` lists them.",
+          "items": {
+            "$ref": "#/definitions/MqttHostname"
+          },
+          "type": "array"
+        },
+        "deviceAuth": {
+          "description": "How devices may authenticate; absent is `[token]`.",
+          "items": {
+            "$ref": "#/definitions/MqttDeviceAuth"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "enabled": {
+          "default": false,
+          "description": "Whether the project may declare brokers at all; off unless an org admin turns it on.",
+          "type": "boolean"
+        },
+        "maxMessageBytes": {
+          "description": "The ceiling of each broker's `spec.limits.maxMessageBytes`.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "messagesPerSecond": {
+          "description": "The sum of `maxConnections` × `messagesPerSecond` over the project's brokers.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "modes": {
+          "description": "The broker modes the project may use; absent is `[ingest]`.",
+          "items": {
+            "$ref": "#/definitions/MqttMode"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "ports": {
+          "description": "Dedicated ports from 18830–18849 an org admin assigned to this project.",
+          "items": {
+            "format": "uint16",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "MqttDeviceAuth": {
+      "description": "How a device proves who it is when it connects (ADR-N-048 §2.12).",
+      "oneOf": [
+        {
+          "description": "A Keycloak access token of a ServiceAccount as the CONNECT password.",
+          "enum": [
+            "token"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A client certificate the project's client CA signed, its common name the ServiceAccount.",
+          "enum": [
+            "clientCertificate"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MqttHostname": {
+      "additionalProperties": false,
+      "description": "One hostname an org admin assigned to a project (ADR-N-048 §2.11).",
+      "properties": {
+        "certificateRef": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SecretRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The secret holding the certificate the edge serves for `name`; absent, cert-manager issues one by HTTP-01 once the name resolves to the edge."
+        },
+        "name": {
+          "description": "A lowercase DNS name the city owns and points at the edge by CNAME, e.g. `mqtt.city.example`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "MqttMode": {
+      "description": "What a broker does with a message (ADR-N-048 §2.10).",
+      "oneOf": [
+        {
+          "description": "Devices publish and nothing else; the project's pipelines are the only subscribers.",
+          "enum": [
+            "ingest"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "`ingest`, and the Portal keeps the newest messages for the project's stewards.",
+          "enum": [
+            "capture"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Devices may also subscribe, each under its own `${clientid}`.",
+          "enum": [
+            "relay"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "MultiLanguageMap": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Multi-language map keyed by ISO 639-1 two-letter lowercase language codes",
+      "propertyNames": {
+        "pattern": "^[a-z]{2}$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "ObjectMeta": {
+      "additionalProperties": false,
+      "description": "Metadata envelope attached to every platform resource (MF-02).",
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value annotations for provenance and ownership (MF-08).",
+          "type": "object"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable description: one string, or the legacy map per locale (UI-50, PF-24)."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Key-value labels for filtering (MF-10).",
+          "type": "object"
+        },
+        "name": {
+          "description": "Resource name (DNS-1123 label).",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "Resource namespace (\"org\" or project slug).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Text"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Human-readable title: one string, or the legacy map per locale (UI-50, PF-24)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "OrganizationAppearance": {
+      "additionalProperties": false,
+      "description": "`spec.appearance` (UIX-16).",
+      "properties": {
+        "bodyFont": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AppearanceFont"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The body text's typeface over `font`, from the same fixed set, e.g. `system`."
+        },
+        "buttonStyle": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ButtonStyle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How buttons look: `filled` (the default) or `outline`."
+        },
+        "cardShadow": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CardShadow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whether cards carry a shadow: `soft` (the default) or `none`."
+        },
+        "city": {
+          "description": "The city or region the Organization serves, e.g. `Banská Bystrica`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "colours": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppearanceColours"
+            }
+          ],
+          "description": "The colour tokens, each a hex colour such as `#0b5394`."
+        },
+        "contactEmail": {
+          "description": "The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "css": {
+          "description": "A `kind: Portal`'s own stylesheet for its open data portal, at most 32 KiB (T-7745): style rules and `@media` alone, every selector scoped to that portal's pages, properties from a fixed list without `content`, positioning, `z-index` or hiding, `url()` only of `/files/{sha256}/{name}` of the portal's files; e.g. `.site-header { background: navy }`. An Organization's appearance refuses it: each portal carries its own.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "datasetList": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DatasetListLayout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the open data portal lists datasets: `cards` (the default) or a compact `table`."
+        },
+        "display": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppearanceDisplay"
+            }
+          ],
+          "description": "Which parts of the open data portal's dataset and dataset list pages show, in which order and under which heading (T-7743); a page left out shows the level above's."
+        },
+        "faviconSvg": {
+          "description": "The favicon as an SVG document of at most 64 KiB, under the same rules as the logo.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "font": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AppearanceFont"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The open data portal's typeface, one of a fixed set of system font stacks, so no font is fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410)."
+        },
+        "fontSize": {
+          "description": "The base text size in pixels, 14 to 18, e.g. `16`.",
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "footerLinks": {
+          "description": "Links the open data portal's footer adds after its own, under the same rules.",
+          "items": {
+            "$ref": "#/definitions/AppearanceLink"
+          },
+          "type": "array"
+        },
+        "headingFont": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AppearanceFont"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The headings' typeface over `font`, from the same fixed set, e.g. `serif` (T-7744)."
+        },
+        "hero": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppearanceHero"
+            }
+          ],
+          "description": "The open data portal's home hero: its title and an introduction in Markdown."
+        },
+        "homeWidgets": {
+          "description": "Dashboards the Organization's Portal home page shows, each `project/name` of one of its projects, e.g. `doprava/prehlad`; a viewer sees only those they may read (T-6779).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "instanceName": {
+          "description": "Full name on page titles and the login page, e.g. `Mesto Banská Bystrica`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "licenseDefault": {
+          "description": "The licence a new dataset starts with, e.g. `CC-BY-4.0`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "logoSvg": {
+          "description": "The logo as an SVG document of at most 64 KiB, without script, event handler or external reference.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "navLinks": {
+          "description": "Links the open data portal's header adds after its own, at most 8, each a label and an `https://` address or a path on the portal, e.g. `{label: Mesto, url: https://mesto.sk}`.",
+          "items": {
+            "$ref": "#/definitions/AppearanceLink"
+          },
+          "type": "array"
+        },
+        "opendataWidgets": {
+          "description": "Dashboards the Organization's open data portal shows on its catalogue home, each `project/name` of one of its projects with `visibility: public`, e.g. `doprava/prehlad`; anonymous readers see them (T-6780).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pages": {
+          "description": "The texts of the open data portal's own pages, each one page in one language in Markdown (T-7031); a page or language left out shows the built-in text.",
+          "items": {
+            "$ref": "#/definitions/AppearancePage"
+          },
+          "type": "array"
+        },
+        "publisher": {
+          "description": "The legal publisher named in the footer and the open data portal, e.g. `Mesto Banská Bystrica`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "radius": {
+          "description": "The corner radius of cards, buttons and fields in pixels, 0 to 24, e.g. `8`.",
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "shortName": {
+          "description": "Short name on sidebars and tabs, e.g. `BB`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "width": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContentWidth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How wide the content runs: `narrow`, `normal` (the default) or `wide`."
+        }
+      },
+      "type": "object"
+    },
+    "OrganizationLimits": {
+      "additionalProperties": false,
+      "description": "`spec.limits`: the organization's numbers (ADR-N-035 §3). Every field is optional; an absent one is its [`CATALOG`] default.",
+      "properties": {
+        "agents": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AgentLimits"
+            }
+          ],
+          "description": "Model spend of the assistant and agent runs."
+        },
+        "apps": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppServiceLimits"
+            }
+          ],
+          "description": "The per-App quotas of the platform services (AP-165)."
+        },
+        "data": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/DataLimits"
+            }
+          ],
+          "description": "Uploads and imports."
+        },
+        "edge": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EdgeLimits"
+            }
+          ],
+          "description": "What the edge admits."
+        },
+        "gateway": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/GatewayLimits"
+            }
+          ],
+          "description": "What the context gateway admits."
+        },
+        "mqtt": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MqttAllowance"
+            }
+          ],
+          "description": "The MQTT allowance every project gets, off by default (PF-117, ADR-N-048 §2.9)."
+        },
+        "people": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PeopleLimits"
+            }
+          ],
+          "description": "Invitations."
+        },
+        "pipelines": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PipelineLimits"
+            }
+          ],
+          "description": "Pipeline outcomes and tests."
+        },
+        "signIn": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SignInLimits"
+            }
+          ],
+          "description": "How long a sign-in lasts."
+        }
+      },
+      "type": "object"
+    },
+    "OrganizationPolicies": {
+      "additionalProperties": false,
+      "description": "`spec.policies`: the organization's choices (ADR-N-035 §3).",
+      "properties": {
+        "agents": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AgentsPolicy"
+            }
+          ],
+          "description": "What the assistant and agent runs may use."
+        },
+        "apps": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppsPolicy"
+            }
+          ],
+          "description": "What the organization's Apps may be."
+        },
+        "signIn": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SignInPolicy"
+            }
+          ],
+          "description": "How people sign in."
+        }
+      },
+      "type": "object"
+    },
+    "OrganizationSpec": {
+      "additionalProperties": false,
+      "description": "Desired specification of an [`Organization`][crate::kinds::Organization] resource (PF-01, PF-02, PF-25, PF-41).",
+      "properties": {
+        "appearance": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/OrganizationAppearance"
+            }
+          ],
+          "description": "What the Organization's Portal, open data portal and login page show of it, each member over the installation's branding (UIX-16)."
+        },
+        "catalog": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProjectCatalog"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The catalogue publisher a project of this Organization takes when it names none of its own (ADR-N-058 section 2.3, EP-127)."
+        },
+        "contacts": {
+          "description": "Administrative, technical, data protection, or security contacts.",
+          "items": {
+            "$ref": "#/definitions/Contact"
+          },
+          "type": "array"
+        },
+        "datasetFields": {
+          "description": "Up to 20 extra metadata fields its datasets fill in the dataset form, each stored as the dataset extra `x_<name>` and served in DCAT (T-7746).",
+          "items": {
+            "$ref": "#/definitions/DatasetField"
+          },
+          "type": "array"
+        },
+        "dcatProfiles": {
+          "description": "The national DCAT-AP profiles the records of its Endpoints are also served in, besides DCAT-AP 3.0, which is always served (EP-27, docs API/08 section 5).",
+          "items": {
+            "$ref": "#/definitions/DcatProfile"
+          },
+          "type": "array"
+        },
+        "defaultLocale": {
+          "description": "Organization fallback default locale, MUST be one of [`Self::locales`] (PF-25, PF-26).",
+          "type": "string"
+        },
+        "domain": {
+          "description": "Verified internet FQDN, the `{orgDomain}` of every entity URN (PF-41).",
+          "type": "string"
+        },
+        "gitRepositoryUrl": {
+          "description": "Git repository URL of the one Org Repository in Gitea (PF-02).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installation": {
+          "description": "The installation's Organization, which owns the repository, the gateway's `{orgDomain}` and the installation-wide kinds; with several Organizations exactly one sets it, and the legacy `org.yaml` counts as setting it (PF-121, ADR-N-058).",
+          "type": "boolean"
+        },
+        "limits": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/OrganizationLimits"
+            }
+          ],
+          "description": "The organization's numbers: edge rates, body sizes, sessions, invitations, model spend, pipeline outcomes and uploads (ADR-N-035, PF-96)."
+        },
+        "locales": {
+          "description": "Ordered list of supported locales, most preferred first (PF-25).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "policies": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/OrganizationPolicies"
+            }
+          ],
+          "description": "The organization's choices: public apps, the password policy, the models agents may use (ADR-N-035, PF-96)."
+        },
+        "projects": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ProjectsPolicy"
+            }
+          ],
+          "default": {
+            "creation": "org-admin",
+            "visibility": "organization"
+          },
+          "description": "How projects are opened and who sees them (PF-61, PF-65)."
+        }
+      },
+      "required": [
+        "defaultLocale",
+        "domain",
+        "locales"
+      ],
+      "type": "object"
+    },
+    "PasswordPolicy": {
+      "additionalProperties": false,
+      "description": "`spec.policies.signIn.password`: written to the realm's password policy.",
+      "properties": {
+        "history": {
+          "description": "How many earlier passwords a new one may not repeat; 0 to 24.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "minLength": {
+          "description": "The shortest password the realm accepts; at least 12.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PeopleLimits": {
+      "additionalProperties": false,
+      "description": "`spec.limits.people`.",
+      "properties": {
+        "invitationHours": {
+          "description": "Hours an invitation link stays usable.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Phase": {
+      "description": "Lifecycle phase enumeration.",
+      "oneOf": [
+        {
+          "description": "Resource manifest is in draft state.",
+          "enum": [
+            "Draft"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is pending review or approval.",
+          "enum": [
+            "Pending"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource deployment is in progress.",
+          "enum": [
+            "Deploying"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Resource is live and active in cluster.",
+          "enum": [
+            "Live"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reconciliation error.",
+          "enum": [
+            "Error"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The platform holds something the repository does not declare, or no longer holds what it does (CC-21, UI-25). Configuration cannot reach this phase — every component reads it from the repository (CC-72) — so it is a space whose seed entities the broker answers differently, and the two resolutions of UI-26 are what a person does about it.",
+          "enum": [
+            "Drifted"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "PipelineLimits": {
+      "additionalProperties": false,
+      "description": "`spec.limits.pipelines`.",
+      "properties": {
+        "rejectedKept": {
+          "description": "Rejected records a pipeline keeps, newest first.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sampleMegabytes": {
+          "description": "The largest sample a pipeline test takes, in MiB; at most the edge's body.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ProjectCatalog": {
+      "additionalProperties": false,
+      "description": "A Project's `spec.catalog`: the body that publishes its data, which the project's own catalogue names and every record whose Endpoint names no publisher carries (EP-127, docs API/08 section 6).",
+      "properties": {
+        "contactPoint": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContactPoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The desk that answers for the project's datasets."
+        },
+        "publisher": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Publisher"
+            }
+          ],
+          "description": "The publishing body, with its registry IRI: a catalogue's publisher is an IRI."
+        }
+      },
+      "required": [
+        "publisher"
+      ],
+      "type": "object"
+    },
+    "ProjectCreation": {
+      "description": "Who may open a project (PF-65). `group:<name>` names a `Group` of the organization.",
+      "oneOf": [
+        {
+          "description": "Every signed-in person of the organization.",
+          "enum": [
+            "Anyone"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The members of one group.",
+          "properties": {
+            "Group": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "Group"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Whoever holds `propose` on `Project`, the seeded `org-admin`.",
+          "enum": [
+            "OrgAdmin"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ProjectVisibility": {
+      "description": "Who holds the seeded `viewer` role at organization scope (PF-61).",
+      "oneOf": [
+        {
+          "description": "Every signed-in person of the organization reads every project.",
+          "enum": [
+            "organization"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Only a principal a binding names reads a project.",
+          "enum": [
+            "members"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ProjectsPolicy": {
+      "additionalProperties": false,
+      "description": "The organization's rules for its projects (PF-61, PF-65).",
+      "properties": {
+        "creation": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ProjectCreation"
+            }
+          ],
+          "default": "org-admin",
+          "description": "Who may open a project: `anyone`, `group:<name>` or `org-admin` (PF-65)."
+        },
+        "nameCooldownDays": {
+          "description": "How long a deleted project's name stays reserved, in days (PF-78). Absent is [`DEFAULT_NAME_COOLDOWN_DAYS`]; `0` frees the name the moment the project is gone.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "quota": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Quotas"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The quota every project the organization opens starts from (PF-73). A project may lower a value in the yellow lane; raising one above this is the red lane and an `org-admin`."
+        },
+        "visibility": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ProjectVisibility"
+            }
+          ],
+          "default": "organization",
+          "description": "Who holds the seeded `viewer` role at organization scope: every signed-in person of the organization (`organization`, the default) or only whoever a binding names (`members`) (PF-61)."
+        }
+      },
+      "type": "object"
+    },
+    "PublicApps": {
+      "description": "Whether the organization's Apps may be public (PF-103).",
+      "oneOf": [
+        {
+          "description": "An App may be public.",
+          "enum": [
+            "allowed"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "No Change may set an App public.",
+          "enum": [
+            "refused"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "Publisher": {
+      "additionalProperties": false,
+      "description": "The publisher of a dataset, a `foaf:Agent`.",
+      "properties": {
+        "name": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The publisher's name per language: `foaf:name`.",
+          "type": "object"
+        },
+        "uri": {
+          "description": "The publisher's own IRI, its web site or registry entry.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Quotas": {
+      "additionalProperties": false,
+      "description": "Structural resource quotas per project (PF-17).\n\nAn absent field leaves the dimension to the organization's default, and both stay under the deployment's ceiling ([`crate::kinds::OrganizationBounds::quota_ceiling`]): no project is unlimited (LIM-01, T-6716).",
+      "properties": {
+        "agentRunsPerDay": {
+          "description": "Maximum number of agent runs the project starts in one day (PF-73, PF-74).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "apps": {
+          "description": "Maximum number of Apps the project deploys (PF-73).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "contextSpaces": {
+          "description": "Maximum number of active Context Spaces.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "entitiesPerSpace": {
+          "description": "Maximum number of entities one Context Space of the project holds (PF-73).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ingestEventsPerSecond": {
+          "description": "Maximum ingestion rate in events per second.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "minPipelinePeriodSeconds": {
+          "description": "The shortest clock a Pipeline of the project may run on, in seconds: its `spec.period` and the shortest gap of its `spec.schedule` (PL-116). A floor, not a count, so it is no PF-73 dimension; the stricter of the project's and the organization's value holds.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mqtt": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MqttAllowance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The project's own MQTT allowance, written only by an org admin; it replaces the organization's `spec.limits.mqtt` as a whole (PF-117, ADR-N-048 §2.9)."
+        },
+        "publicEndpoints": {
+          "description": "Maximum number of public endpoints.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "requestsPerMinute": {
+          "description": "Maximum requests per minute one Endpoint of the project serves (PF-73, EP-17).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "residentPipelines": {
+          "description": "Maximum number of resident streaming pipelines.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SecondFactor": {
+      "description": "`spec.policies.signIn.secondFactor`.",
+      "oneOf": [
+        {
+          "description": "Every member signs in with an authenticator app.",
+          "enum": [
+            "required"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The deployment's floor decides.",
+          "enum": [
+            "optional"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "description": "Reference to a credential stored in SOPS or OpenBao (PF-36).\n\n`deny_unknown_fields` is a security control: it rejects inline `value:` or `password:` fields at parse time, enforcing that secrets never appear in Git or manifest files.",
+      "properties": {
+        "envVar": {
+          "description": "Optional environment variable name for injection into runners.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "Optional key within secret.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Secret name in secret store.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "SignInLimits": {
+      "additionalProperties": false,
+      "description": "`spec.limits.signIn`: written to the edge session and the realm alike (AP-29).",
+      "properties": {
+        "sessionIdleMinutes": {
+          "description": "Minutes without a request before a session ends.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sessionMaxHours": {
+          "description": "Hours after sign-in when a session ends whatever happens.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SignInPolicy": {
+      "additionalProperties": false,
+      "description": "`spec.policies.signIn`.",
+      "properties": {
+        "password": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PasswordPolicy"
+            }
+          ],
+          "description": "The realm's password policy."
+        },
+        "secondFactor": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SecondFactor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whether every member must sign in with an authenticator app: `required` asks each one to set it up at their next sign-in; `optional` or absent keeps the deployment's floor. It only raises that floor: under a `required` deployment, `optional` has no effect. Service accounts are never asked."
+        }
+      },
+      "type": "object"
+    },
+    "Status": {
+      "additionalProperties": false,
+      "description": "Server-computed lifecycle and reconciliation status (MF-04). Never stored in Git.",
+      "properties": {
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Build"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the build lane published for an `App`, and the only place its artifact is named (AP-13a). Written back by the build lane in the commit that publishes the artifact; an App without it renders no pod, and no other principal may set it (AP-73)."
+        },
+        "conditions": {
+          "description": "Reconciler condition transitions.",
+          "items": {
+            "$ref": "#/definitions/Condition"
+          },
+          "type": "array"
+        },
+        "observedRevision": {
+          "description": "Git commit revision observed during reconciliation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Phase"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Current lifecycle phase."
+        },
+        "shard": {
+          "description": "The shard of the WASM host a `wasm` App runs on, recorded at its first publish and kept; the edge's route to the App's server is rendered from it (AP-149).",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Text": {
+      "anyOf": [
+        {
+          "description": "The form every new manifest writes.",
+          "type": "string"
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MultiLanguageMap"
+            }
+          ],
+          "description": "The legacy `{locale: text}` map."
+        }
+      ],
+      "description": "A human label or description (UI-50): one plain string in the author's language. The legacy language map is still read, through release `v0.9`, and resolves to one string."
+    }
+  },
+  "description": "Kubernetes-style resource envelope (MF-01..MF-04).",
+  "properties": {
+    "apiVersion": {
+      "description": "API version: [`API_VERSION`], or a version [`serves`] accepts for this kind.",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Resource kind name (must match [`Kind::KIND`]).",
+      "type": "string"
+    },
+    "metadata": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ObjectMeta"
+        }
+      ],
+      "description": "Metadata identifying and labeling the resource."
+    },
+    "spec": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/OrganizationSpec"
+        }
+      ],
+      "description": "Desired spec state."
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Status"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Server-computed status. Stripped during export and serialization."
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "ResourceEnvelope_for_OrganizationSpec",
+  "type": "object"
+}
