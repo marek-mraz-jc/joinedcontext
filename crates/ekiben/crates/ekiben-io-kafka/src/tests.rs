@@ -248,6 +248,15 @@ fn unsafe_and_unsupported_settings_are_refused_with_a_fix() {
             },
             "topics: ( is not a regular expression",
         ),
+        // T-7799: compiles only inside the `^(?:...)$` wrapper
+        (
+            {
+                let mut c = with("topics", json!(["a)|(.*"]));
+                c["regexp_topics"] = json!(true);
+                c
+            },
+            "topics: a)|(.* is not a regular expression",
+        ),
     ] {
         let e = refusal(c.clone());
         assert!(e.contains(needle), "{c}: {e}");

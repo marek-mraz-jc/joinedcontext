@@ -450,6 +450,20 @@ mod tests {
     }
 
     #[test]
+    fn a_websocket_door_on_a_root_that_is_not_https_keeps_its_scheme() {
+        let root = "http://gateway.local/api/endpoint/6b4yq/";
+        let d = distributions(root, &entry(true, true, false), &index(), "ds1", "sk");
+        let ws = d
+            .iter()
+            .find(|d| d.format.as_deref() == Some("WebSocket"))
+            .expect("a WebSocket door");
+        assert_eq!(ws.access_url, format!("{root}ws"));
+        // an empty root still names the paths alone
+        let d = distributions("", &entry(true, true, false), &index(), "ds1", "sk");
+        assert_eq!(d[0].access_url, "ngsi-ld/v1/entities");
+    }
+
+    #[test]
     fn a_model_without_all_seven_files_lists_nothing() {
         let mut idx = index();
         idx["models"][1]["artifacts"]

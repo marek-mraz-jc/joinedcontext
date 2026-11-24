@@ -143,3 +143,109 @@ impl<W: Write> Write for Sideband<W> {
         self.out.flush()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::{Refusing, pack_count, put, repo};
+
+    #[test]
+    fn the_job_size_counts_two_of_the_largest_object_and_saturates() {
+        assert_eq!(job_bytes(0, 0), 0);
+        assert_eq!(job_bytes(10, 2), 20 + 2 * BYTES_PER_OBJECT);
+        assert_eq!(job_bytes(u64::MAX, 1), u64::MAX);
+        assert_eq!(job_bytes(1, u64::MAX), u64::MAX);
+    }
+
+    #[test]
+    fn a_pack_holds_every_asked_object_once_admitted() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, true);
+        let tip = put(&path, "main", "a.txt", b"hello\n");
+        let handle = crate::repo::open_isolated(&path).expect("open");
+        let tree = handle
+            .find_commit(tip)
+            .expect("commit")
+            .tree_id()
+            .expect("tree")
+            .detach();
+        let mut asked = 0;
+        let mut out = Vec::new();
+        write_pack(&handle, &[tip, tree], &mut out, &mut |bytes| {
+            asked = bytes;
+            Ok(())
+        })
+        .expect("pack");
+        assert_eq!(pack_count(&out), Some(2));
+        assert!(asked >= 2 * BYTES_PER_OBJECT, "{asked}");
+
+        // A loose object (a tag written outside any pack) is deflated afresh.
+        let tag = crate::testutil::annotated_tag(&path, "v1", tip, gix_object::Kind::Commit);
+        let handle = crate::repo::open_isolated(&path).expect("reopen");
+        let mut loose = Vec::new();
+        write_pack(
+            &handle,
+            &[tag, tip],
+            &mut loose,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("pack");
+        assert_eq!(pack_count(&loose), Some(2));
+
+        // A refusal stops it before a byte is written.
+        let mut none = Vec::new();
+        let err = write_pack(&handle, &[tip], &mut none, &mut |_| {
+            Err(ShakoError::Overloaded("busy".into()))
+        })
+        .expect_err("refused");
+        assert!(matches!(err, ShakoError::Overloaded(_)), "{err}");
+        assert!(none.is_empty());
+
+        // An id the repository does not hold, and a writer that fails, are Git errors.
+        let missing =
+            gix_hash::ObjectId::from_hex(b"1111111111111111111111111111111111111111").expect("id");
+        let err = write_pack(
+            &handle,
+            &[missing],
+            Vec::new(),
+            &mut crate::testutil::admit_all,
+        )
+        .expect_err("missing object");
+        assert!(matches!(err, ShakoError::Git(_)), "{err}");
+        let err = write_pack(&handle, &[tip], Refusing, &mut crate::testutil::admit_all)
+            .expect_err("writer");
+        assert!(
+            matches!(&err, ShakoError::Git(m) if m.contains("pack writing failed")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn sideband_frames_hold_at_most_the_frame_size_and_flush_the_rest() {
+        let mut out = Vec::new();
+        {
+            let mut band = Sideband::new(&mut out, 4);
+            assert_eq!(band.write(b"abcdef").expect("write"), 4);
+            assert_eq!(band.write(b"ef").expect("write"), 2);
+            band.flush().expect("flush");
+            // Nothing held: a second flush writes nothing more.
+            band.flush().expect("flush again");
+        }
+        let lines = crate::pktline::parse_all_pkt_lines(&out).expect("parse");
+        assert_eq!(
+            lines,
+            [
+                crate::pktline::PktLine::Data(b"\x01abcd".to_vec()),
+                crate::pktline::PktLine::Data(b"\x01ef".to_vec()),
+            ]
+        );
+        let mut failing = Sideband::new(Refusing, 2);
+        assert!(
+            failing.write(b"ab").is_err(),
+            "a full frame goes out at once"
+        );
+        let mut held = Sideband::new(Refusing, 8);
+        assert_eq!(held.write(b"ab").expect("held"), 2);
+        assert!(held.flush().is_err());
+    }
+}

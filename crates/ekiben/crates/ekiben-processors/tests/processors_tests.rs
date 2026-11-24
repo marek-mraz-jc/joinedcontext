@@ -429,6 +429,48 @@ async fn archive_unarchive_all_formats_and_split() {
     );
 }
 
+/// `n` as a tar header's NUL-terminated octal field.
+fn octal(field: &mut [u8], n: u64) {
+    let digits = format!("{n:0w$o}", w = field.len() - 1);
+    field[..digits.len()].copy_from_slice(digits.as_bytes());
+    field[digits.len()] = 0;
+}
+
+#[tokio::test]
+async fn unarchive_refuses_a_tar_that_unpacks_past_the_cap() {
+    // A GNU sparse member: one stored byte at the end of a hole, so a 2 KiB archive unpacks
+    // to one byte past MAX_ARCHIVE_UNPACKED_BYTES.
+    let cap = ekiben_processors::archive::MAX_ARCHIVE_UNPACKED_BYTES;
+    let mut header = tar::Header::new_gnu();
+    header.set_path("big.bin").unwrap();
+    header.set_entry_type(tar::EntryType::GNUSparse);
+    header.set_mode(0o644);
+    header.set_size(1);
+    let gnu = header.as_gnu_mut().unwrap();
+    octal(&mut gnu.realsize, cap + 1);
+    octal(&mut gnu.sparse[0].offset, cap);
+    octal(&mut gnu.sparse[0].numbytes, 1);
+    header.set_cksum();
+    let mut archive = header.as_bytes().to_vec();
+    let mut data = [0u8; 512];
+    data[0] = b'x';
+    archive.extend_from_slice(&data);
+    archive.extend_from_slice(&[0u8; 1024]);
+
+    let (reg, ctx) = make_ctx("org1");
+    let procs = parse_procs("- unarchive:\n    format: tar\n", &reg, &ctx);
+    let res = execute_all(&ctx, &procs, vec![vec![Part::new(archive)]])
+        .await
+        .unwrap();
+    assert_eq!(res[0].len(), 1);
+    assert_eq!(
+        res[0][0].error_get().map(|e| e.message.clone()),
+        Some(format!(
+            "tar archive unpacked size exceeds safety limit ({cap} bytes)"
+        ))
+    );
+}
+
 #[tokio::test]
 async fn xml_xxe_refused_and_cache_rate_limit_org_isolation() {
     let (reg, ctx_a) = make_ctx("org-a");

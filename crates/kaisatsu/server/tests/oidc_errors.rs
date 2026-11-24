@@ -301,7 +301,11 @@ async fn revocation_under_an_injected_mount() {
 #[tokio::test]
 async fn scope_refusals_and_client_token_settings() {
     let (app, store, _) = app().await;
-    for (id, name, re) in [("sc-fam", "fam", "[a-z]+"), ("sc-badre", "badre", "(")] {
+    for (id, name, re) in [
+        ("sc-fam", "fam", "[a-z]+"),
+        ("sc-badre", "badre", "("),
+        ("sc-escre", "escre", "abc)|(.*"),
+    ] {
         store
             .upsert_client_scope(ClientScopeRepresentation {
                 id: id.into(),
@@ -320,7 +324,7 @@ async fn scope_refusals_and_client_token_settings() {
     }
     client(&store, "scoped", |c| {
         c.default_client_scopes = vec!["fam".into()];
-        c.optional_client_scopes = vec!["badre".into()];
+        c.optional_client_scopes = vec!["badre".into(), "escre".into()];
         c.attributes
             .insert("access.token.lifespan".into(), "123".into());
     })
@@ -334,6 +338,13 @@ async fn scope_refusals_and_client_token_settings() {
     );
     // A parameterized scope whose configured pattern does not compile: refused, not admitted.
     let (st, body) = cc(&app, "scoped", Some("badre:x")).await;
+    assert_eq!(
+        (st, err(&body).as_str()),
+        (StatusCode::BAD_REQUEST, "invalid_scope"),
+        "{body}"
+    );
+    // T-7799: a pattern that compiles only inside the `^(?:...)$` wrapper admits nothing.
+    let (st, body) = cc(&app, "scoped", Some("escre:zzz")).await;
     assert_eq!(
         (st, err(&body).as_str()),
         (StatusCode::BAD_REQUEST, "invalid_scope"),
@@ -1209,6 +1220,77 @@ async fn a_browser_authorize_error_is_a_page_naming_the_parameter_and_the_way_ba
     let (st, _, body) = get(&app, &format!("{auth}?{}", bad_redirect("named-app")), None).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
     assert!(!err(&body).is_empty(), "{body}");
+}
+
+#[tokio::test]
+async fn introspection_revocation_and_logout_read_tokens_with_claims_missing() {
+    let (app, store, kek) = app().await;
+    let member = user_id(&store, "demo.orgmember@hel.fi").await;
+    let now = jc_time::TimestampTz::now().as_second();
+    let introspect = "/realms/dev/protocol/openid-connect/token/introspect";
+    let revoke = "/realms/dev/protocol/openid-connect/revoke";
+    let creds = [
+        ("client_id", "apisix-gateway"),
+        ("client_secret", APISIX_CLIENT_WORD),
+    ];
+    // A token that names its own username and no azp: the username is kept as signed and no
+    // client_id is made up.
+    let token = realm_token(
+        &store,
+        &kek,
+        json!({ "iss": ISSUER, "sub": member, "typ": "Bearer", "username": "signed-name",
+            "jti": "introspect-named", "iat": now, "exp": now + 300 }),
+    )
+    .await;
+    let mut form = creds.to_vec();
+    form.push(("token", token.as_str()));
+    let (st, _, body) = post_form(&app, introspect, &form, None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let v = json_of(&body);
+    assert_eq!(v["active"], true, "{body}");
+    assert_eq!(v["username"], "signed-name", "{body}");
+    assert!(v.get("client_id").is_none(), "{body}");
+
+    // Revocation without a token, or with an empty one, is the RFC 7009 200 and revokes nothing.
+    for extra in [None, Some("")] {
+        let mut form = creds.to_vec();
+        if let Some(t) = extra {
+            form.push(("token", t));
+        }
+        let (st, _, body) = post_form(&app, revoke, &form, None).await;
+        assert_eq!(st, StatusCode::OK, "{extra:?}: {body}");
+    }
+    // An access token of this client without a jti: 200, and nothing is marked revoked.
+    let no_jti = realm_token(
+        &store,
+        &kek,
+        json!({ "iss": ISSUER, "sub": member, "typ": "Bearer", "azp": "apisix-gateway",
+            "iat": now, "exp": now + 300 }),
+    )
+    .await;
+    let mut form = creds.to_vec();
+    form.push(("token", no_jti.as_str()));
+    let (st, _, body) = post_form(&app, revoke, &form, None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let mut form = creds.to_vec();
+    form.push(("token", no_jti.as_str()));
+    let (_, _, body) = post_form(&app, introspect, &form, None).await;
+    assert_eq!(json_of(&body)["active"], true, "{body}");
+
+    // An id_token_hint naming neither session nor subject is still a hint: the sign-out page,
+    // ending no session.
+    let hint = realm_token(
+        &store,
+        &kek,
+        json!({ "iss": ISSUER, "typ": "ID", "azp": "apisix-gateway", "iat": now, "exp": now + 300 }),
+    )
+    .await;
+    let (st, _, html) = get(&app, &format!("{LOGOUT}?id_token_hint={hint}"), None).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(
+        !html.contains("logout_csrf_token"),
+        "no confirmation needed: {html}"
+    );
 }
 
 #[tokio::test]

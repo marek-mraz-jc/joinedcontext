@@ -173,3 +173,39 @@ async fn a_move_on_a_closed_pool_names_the_catalogue() {
     assert!(msg.starts_with(&format!("move catalogue {cat}")), "{msg}");
     db.drop_it().await;
 }
+
+#[tokio::test]
+async fn a_record_the_reindex_cannot_read_fails_the_migration_and_keeps_rls_forced() {
+    let Some(db) = Scratch::create(
+        "a_record_the_reindex_cannot_read_fails_the_migration_and_keeps_rls_forced",
+    )
+    .await
+    else {
+        return;
+    };
+    let owner = PgStore::from_pool_unchecked(db.admin.clone());
+    owner.migrate().await.expect("migrate");
+    // A row an older build left unindexed whose record no longer reads as a dataset.
+    db.run(
+        "INSERT INTO dataroom.cat_dataset (org_id, catalogue_id, id, name, title, publisher_id,
+                                           doc, search_v)
+         VALUES (gen_random_uuid(), gen_random_uuid(), 'bad', 'bad', 'bad', 'city',
+                 '\"not a dataset\"'::jsonb, 0)",
+    )
+    .await;
+    let msg = storage(owner.migrate().await);
+    assert!(
+        msg.starts_with("migration failed")
+            && msg.contains("search reindex: ")
+            && msg.contains("Dataset"),
+        "{msg}"
+    );
+    let (forced,): (bool,) = sqlx::query_as(
+        "SELECT relforcerowsecurity FROM pg_class WHERE oid = 'dataroom.cat_dataset'::regclass",
+    )
+    .fetch_one(&db.admin)
+    .await
+    .expect("rls flag");
+    assert!(forced, "the failed reindex rolls its NO FORCE back");
+    db.drop_it().await;
+}

@@ -420,6 +420,73 @@ mod tests {
         }
     }
 
+    /// Malformed or oversized Turtle and N-Triples end in a named refusal, never a partial
+    /// graph: a syntax error, a bad language tag, an unknown prefix, bytes over the cap.
+    #[test]
+    fn malformed_or_oversized_turtle_and_ntriples_are_refused() {
+        let limits = RdfLimits::default();
+        assert!(parse_turtle("", &limits).expect("empty").is_empty());
+        assert!(parse_ntriples_bytes(b"", &limits)
+            .expect("empty")
+            .is_empty());
+        for bad in [
+            "<https://e.org/s> <https://e.org/p> .",
+            "ex:s ex:p ex:o .",
+            "<https://e.org/s> <https://e.org/p> \"x\"@-bad .",
+            "<https://e.org/s> <https://e.org/p> \"unterminated .",
+        ] {
+            let got = kind(parse_turtle(bad, &limits).expect_err(bad));
+            assert!(got.starts_with("rdf: Turtle syntax error"), "{bad}: {got}");
+        }
+        let got = kind(
+            parse_ntriples_bytes(b"<https://e.org/s> <https://e.org/p> .\n", &limits).unwrap_err(),
+        );
+        assert!(got.starts_with("rdf: N-Triples syntax error"), "{got}");
+
+        let tiny = RdfLimits {
+            max_bytes: 8,
+            ..RdfLimits::default()
+        };
+        let doc = "<https://e.org/s> <https://e.org/p> <https://e.org/o> .\n";
+        assert_eq!(kind(parse_turtle(doc, &tiny).unwrap_err()), "bytes");
+        assert_eq!(
+            kind(parse_ntriples_bytes(doc.as_bytes(), &tiny).unwrap_err()),
+            "bytes"
+        );
+        let one = RdfLimits {
+            max_triples: 1,
+            ..RdfLimits::default()
+        };
+        let two = format!("{doc}<https://e.org/s> <https://e.org/p> <https://e.org/o2> .\n");
+        assert_eq!(
+            kind(parse_ntriples_bytes(two.as_bytes(), &one).unwrap_err()),
+            "triples"
+        );
+        let short = RdfLimits {
+            max_literal_length: 4,
+            ..RdfLimits::default()
+        };
+        let long = format!(
+            "<https://e.org/s> <https://e.org/p> \"{}\" .",
+            "x".repeat(10_000)
+        );
+        assert_eq!(
+            kind(parse_turtle(&long, &short).unwrap_err()),
+            "literal-length"
+        );
+        let whole = parse_turtle(&long, &limits).expect("a long literal under the cap");
+        let lit = whole
+            .triples
+            .iter()
+            .next()
+            .and_then(|t| t.object.as_literal());
+        assert_eq!(
+            lit.map(|l| l.value.len()),
+            Some(10_000),
+            "kept whole, never cut"
+        );
+    }
+
     fn kind(e: DataroomError) -> String {
         match e {
             DataroomError::RdfLimitExceeded { kind, .. } => kind,

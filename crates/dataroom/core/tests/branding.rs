@@ -390,6 +390,56 @@ fn yaml_colours_fonts_and_a_logo_svg_reach_the_block() {
     ));
 }
 
+#[test]
+fn yaml_languages_keep_a_default_alone_or_an_offered_list_alone() {
+    let neutral = BrandingBlock::default();
+    let only_default =
+        BrandingBlock::from_yaml_lossy("branding:\n  languages:\n    default: 'sk'\n");
+    assert_eq!(only_default.languages.default, "sk");
+    assert_eq!(only_default.languages.offered, neutral.languages.offered);
+    let only_offered = BrandingBlock::from_yaml_lossy(
+        "branding:\n  languages:\n    - 'cs'\n    - \"de\"\n    - ''\n",
+    );
+    assert_eq!(only_offered.languages.default, neutral.languages.default);
+    assert_eq!(only_offered.languages.offered, ["cs", "de"]);
+    // neither: the block keeps the neutral languages
+    let none = BrandingBlock::from_yaml_lossy("branding:\n  languages:\n    other: x\n");
+    assert_eq!(none.languages, neutral.languages);
+}
+
+#[test]
+fn nested_colours_take_each_valid_hex_and_keep_the_rest() {
+    let neutral = BrandingBlock::default();
+    let bad = BrandingBlock::from_json_lossy(&json!({"colours": {
+        "primary": "red", "secondary": "#12", "accent": "url(x)", "background": "#gggggg"
+    }}));
+    assert_eq!(bad.colours, neutral.colours);
+    // the American spelling, some keys missing, one valid
+    let some = BrandingBlock::from_json_lossy(
+        &json!({"colors": {"accent": "#abcdef", "text": 5, "primary": 5, "secondary": null, "background": []}}),
+    );
+    assert_eq!(some.colours.accent, "#abcdef");
+    assert_eq!(some.colours.primary, neutral.colours.primary);
+    assert_eq!(some.colours.text, neutral.colours.text);
+    // an empty object changes nothing
+    let empty = BrandingBlock::from_json_lossy(&json!({"colours": {}}));
+    assert_eq!(empty.colours, neutral.colours);
+}
+
+#[test]
+fn an_offered_list_of_blank_or_non_string_entries_keeps_the_level_above() {
+    let neutral = BrandingBlock::default();
+    let b = BrandingBlock::from_json_lossy(
+        &json!({"languages": {"default": "", "offered": ["  ", "", 7, null]}}),
+    );
+    assert_eq!(b.languages, neutral.languages);
+    let b = BrandingBlock::from_json_lossy(&json!({"languages": {"offered": [" sk ", 3]}}));
+    assert_eq!(b.languages.offered, ["sk"]);
+    // not an array: ignored
+    let b = BrandingBlock::from_json_lossy(&json!({"languages": {"offered": "sk"}}));
+    assert_eq!(b.languages.offered, neutral.languages.offered);
+}
+
 fn png(width: u32, height: u32, ihdr: &[u8; 4]) -> Vec<u8> {
     let mut b = b"\x89PNG\r\n\x1a\n\0\0\0\r".to_vec();
     b.extend_from_slice(ihdr);

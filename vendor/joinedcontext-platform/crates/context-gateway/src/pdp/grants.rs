@@ -138,7 +138,7 @@ fn selects(info: &RegistrationInfo, kind: &str, id: &str) -> bool {
             && match (&selector.id, &selector.id_pattern) {
                 (Some(named), _) => named.to_string() == id,
                 // anchored at both ends, as the broker anchors it
-                (None, Some(pattern)) => antares_ql::regex::compile(&format!("^(?:{pattern})$"))
+                (None, Some(pattern)) => antares_ql::regex::compile_anchored(pattern)
                     .is_ok_and(|compiled| compiled.is_match(id)),
                 (None, None) => true,
             }
@@ -235,6 +235,28 @@ pub fn per_grant(read: &super::evaluator::Constraints) -> Vec<super::evaluator::
 #[cfg(test)]
 mod per_grant_tests {
     use super::*;
+
+    /// T-7799: a registration's `idPattern` that compiles only inside the `^(?:...)$` wrapper
+    /// selects no id.
+    #[test]
+    fn a_selector_pattern_closing_the_wrapper_selects_nothing() {
+        let info = |pattern: &str| RegistrationInfo {
+            entities: vec![jc_core::kinds::EntitySelector {
+                entity_type: "Car".to_owned(),
+                id: None,
+                id_pattern: Some(pattern.to_owned()),
+            }],
+            property_names: Vec::new(),
+            relationship_names: Vec::new(),
+            attributes: std::collections::BTreeMap::new(),
+        };
+        let escape = info("urn:x:a)|(.*");
+        for id in ["urn:x:a", "urn:y:b", "x"] {
+            assert!(!selects(&escape, "Car", id), "{id}");
+        }
+        let fine = info("urn:x:a|urn:x:b");
+        assert!(selects(&fine, "Car", "urn:x:b") && !selects(&fine, "Car", "urn:x:bb"));
+    }
 
     /// F-PLT2-004: each read carries one grant's types with that grant's filter alone.
     #[test]

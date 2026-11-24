@@ -662,9 +662,10 @@ impl Rule {
     pub fn selects_id(&self, id: &str) -> bool {
         (self.ids.is_empty() && self.id_patterns.is_empty())
             || self.ids.iter().any(|i| i == id)
-            || self.id_patterns.iter().any(|p| {
-                antares_ql::regex::compile(&format!("^(?:{p})$")).is_ok_and(|re| re.is_match(id))
-            })
+            || self
+                .id_patterns
+                .iter()
+                .any(|p| antares_ql::regex::compile_anchored(p).is_ok_and(|re| re.is_match(id)))
     }
 
     /// Whether the rule has a condition beside its types.
@@ -2322,7 +2323,7 @@ pub(crate) fn shared_id_patterns(rules: &[Rule]) -> Option<&[String]> {
         |r: &Rule| !r.is_conditional() && r.ids.is_empty() && r.id_patterns == first.id_patterns;
     let exact = |p: &String| {
         antares_store::filter::id_pattern_sql(p).is_some()
-            && antares_ql::regex::compile(&format!("^(?:{p})$")).is_ok()
+            && antares_ql::regex::compile_anchored(p).is_ok()
     };
     (narrows(first)
         && typed.all(narrows)
@@ -2384,7 +2385,7 @@ pub(crate) async fn united_id_patterns(
 ) -> Result<Option<Vec<String>>, antares_model::NgsiError> {
     let exact = |p: &String| {
         antares_store::filter::id_pattern_sql(p).is_some()
-            && antares_ql::regex::compile(&format!("^(?:{p})$")).is_ok()
+            && antares_ql::regex::compile_anchored(p).is_ok()
     };
     let first = naming(rules, groups).next().map(shows);
     let alike = naming(rules, groups).all(|r| {
@@ -3897,6 +3898,20 @@ mod tests {
             .flat_map(|(_, v)| v.as_array().into_iter().flatten())
             .collect();
         assert_eq!(values, [&json!({"value": "ana"})], "{image}");
+    }
+
+    /// T-7799: a stored pattern that parses only inside the `^(?:...)$`
+    /// wrapper selects nothing, and no view hands it to the store.
+    #[test]
+    fn a_pattern_closing_the_wrapper_selects_nothing() {
+        let bad = Rule {
+            id_patterns: vec!["urn:x:a)|(.*".into()],
+            ..rule("Tree", &["name"])
+        };
+        for id in ["urn:x:a", "urn:x:b", "urn:x:a)", "anything"] {
+            assert!(!bad.selects_id(id), "{id}");
+        }
+        assert_eq!(shared_id_patterns(std::slice::from_ref(&bad)), None);
     }
 
     /// T-5826: the store decides a view's reads only when every typed rule

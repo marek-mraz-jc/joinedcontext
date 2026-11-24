@@ -1,0 +1,1 @@
+root = this.b.re_replace_all("(x)", "$1$1").slug()

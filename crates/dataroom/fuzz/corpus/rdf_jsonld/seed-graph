@@ -1,0 +1,1 @@
+{"@graph":[{"@id":"https://e.org/a","http://e.org/p":[{"@value":"1","@type":"http://www.w3.org/2001/XMLSchema#integer"},{"@id":"_:b"}]},{"@id":"_:b","http://e.org/q":"x"}]}

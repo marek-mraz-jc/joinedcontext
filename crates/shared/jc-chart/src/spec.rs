@@ -1124,4 +1124,37 @@ mod tests {
         assert_eq!(view["joinedcontext.com/pointsTruncated"], json!(true));
         assert!(!view.to_string().contains("secret") && !view.to_string().contains("urn:x"));
     }
+
+    #[test]
+    fn the_view_takes_one_point_past_its_cap_and_the_chart_every_drawn_one() {
+        let door = Door {
+            max_points: 5,
+            max_view_points: 1,
+            ..DOOR
+        };
+        let spec = look(json!({ "mark": "point", "encoding": {
+            "x": { "field": "a", "type": "quantitative" },
+            "y": { "field": "b", "type": "quantitative" } } }))
+        .expect("a point chart");
+        let rows: Vec<Map<String, Value>> = (0..4)
+            .map(|n| {
+                json!({ "a": n, "b": n * 2 })
+                    .as_object()
+                    .cloned()
+                    .expect("row")
+            })
+            .collect();
+        let charted = chart_of(&spec, &rows, &door);
+        assert_eq!(charted.chart.points.len(), 4);
+        assert_eq!(charted.view_points.len(), 2, "one more than the view shows");
+        assert!(!charted.truncated);
+        let view = view_of(&spec, &charted, &door);
+        assert_eq!(
+            view["joinedcontext.com/chartPoints"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(view["joinedcontext.com/pointsTruncated"], json!(true));
+    }
 }

@@ -227,6 +227,17 @@ fn check_url(key: &str, raw: &str) -> Result<(), String> {
     if url.username().is_empty() {
         return Err(format!("{key} must name the database role"));
     }
+    // The driver also takes the role and the password from the query: a `password` there is a
+    // secret in the config file, a `user` a login other than the one checked here.
+    if let Some((name, _)) = url
+        .query_pairs()
+        .find(|(name, _)| matches!(name.as_ref(), "password" | "user"))
+    {
+        return Err(format!(
+            "{key} must not set `{name}` in its query: name the role before the @ and put the \
+             password in the password file"
+        ));
+    }
     PgConnectOptions::from_str(raw).map_err(|_| format!("{key} is not a Postgres URL"))?;
     Ok(())
 }
@@ -285,6 +296,16 @@ mod tests {
             ("postgres://db/jc", "must name the database role"),
             ("mysql://shako@db/jc", "postgres:// scheme"),
             ("not a url", "is not a URL"),
+            // Found by the pg_section fuzz target: the driver reads both from the query.
+            (
+                "postgres://shako@db/jc?password=leaked",
+                "must not set `password`",
+            ),
+            (
+                "postgres://shako@db/jc?sslmode=disable&user=postgres",
+                "must not set `user`",
+            ),
+            ("postgres://shako@db/jc?user=", "must not set `user`"),
         ] {
             let err = section(bad).validate().unwrap_err();
             assert!(err.contains(says), "{bad}: {err}");
@@ -301,6 +322,224 @@ mod tests {
         s.migrate_password_file = None;
         s.max_connections = Some(0);
         assert!(s.validate().is_err());
+    }
+
+    #[test]
+    fn the_maintenance_pair_goes_together_and_parses() {
+        let mut s = section("postgres://antares_app@db/jc");
+        s.maintenance_url = Some("postgres://antares_maint@db/jc".into());
+        assert!(s.validate().unwrap_err().contains("maintenance_url and"));
+        s.maintenance_password_file = Some("/run/maint".into());
+        assert!(s.validate().is_ok());
+        s.maintenance_url = Some("postgres://antares_maint:x@db/jc".into());
+        assert!(s.validate().unwrap_err().starts_with("maintenance_url"));
+        s.maintenance_url = None;
+        assert!(s.validate().unwrap_err().contains("go together"));
+        s.maintenance_password_file = None;
+        s.max_connections = Some(12);
+        assert_eq!(s.max_connections(), 12);
+    }
+
+    #[test]
+    fn the_owner_split_needs_three_distinct_logins() {
+        let mut s = section("postgres://antares@db/jc");
+        assert!(
+            s.require_owner_split(false)
+                .unwrap_err()
+                .contains("migrate_url is required")
+        );
+        s.migrate_url = Some("postgres://antares@db/jc".into());
+        let e = s.require_owner_split(false).unwrap_err();
+        assert!(
+            e.contains("both name `antares`") && e.contains("antares_app"),
+            "{e}"
+        );
+        s.url = "postgres://antares_app@db/jc".into();
+        assert!(s.require_owner_split(false).is_ok());
+        assert!(
+            s.require_owner_split(true)
+                .unwrap_err()
+                .contains("maintenance_url is required")
+        );
+        for same in ["antares_app", "antares"] {
+            s.maintenance_url = Some(format!("postgres://{same}@db/jc"));
+            let e = s.require_owner_split(true).unwrap_err();
+            assert!(
+                e.contains(&format!("names `{same}`")) && e.contains("antares_maint"),
+                "{e}"
+            );
+        }
+        s.maintenance_url = Some("postgres://antares_maint@db/jc".into());
+        assert!(s.require_owner_split(true).is_ok());
+        // A URL that is no Postgres URL names its key.
+        s.maintenance_url = Some("postgres://antares_maint@db:notaport/jc".into());
+        assert_eq!(
+            s.require_owner_split(true).unwrap_err(),
+            "maintenance_url does not parse"
+        );
+        s.migrate_url = Some("postgres://antares@db:notaport/jc".into());
+        assert_eq!(
+            s.require_owner_split(false).unwrap_err(),
+            "migrate_url does not parse"
+        );
+        s.url = "postgres://antares_app@db:notaport/jc".into();
+        assert_eq!(s.app_role().unwrap_err(), "url does not parse");
+    }
+
+    #[test]
+    fn each_role_url_takes_its_own_password_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, value: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, value).unwrap();
+            path
+        };
+        let mut s = section("postgres://antares_app@db/jc");
+        s.password_file = write("app", "a");
+        assert!(s.migrate_url_with_password().unwrap().is_none());
+        assert!(s.maintenance_url_with_password().unwrap().is_none());
+        s.migrate_url = Some("postgres://antares@db/jc".into());
+        s.migrate_password_file = Some(write("owner", "o p/q\n"));
+        s.maintenance_url = Some("postgresql://antares_maint@db:5433/jc".into());
+        s.maintenance_password_file = Some(write("maint", "m\n"));
+        // A password with URL delimiters is percent-encoded, never splits the URL.
+        assert_eq!(
+            s.migrate_url_with_password().unwrap().unwrap().expose(),
+            "postgres://antares:o%20p%2Fq@db/jc"
+        );
+        assert_eq!(
+            s.maintenance_url_with_password().unwrap().unwrap().expose(),
+            "postgresql://antares_maint:m@db:5433/jc"
+        );
+        assert!(s.migrate_options().unwrap().is_some());
+        // A missing migration password file is an error naming the file, not a silent None.
+        s.migrate_password_file = Some(dir.path().join("gone"));
+        assert!(s.migrate_options().unwrap_err().contains("gone"));
+        assert!(
+            s.migrate_url_with_password()
+                .unwrap_err()
+                .contains("cannot read")
+        );
+        // A URL check runs before the file is read.
+        s.url = "postgres://antares_app:leak@db/jc".into();
+        let e = s.app_url_with_password().unwrap_err();
+        assert!(e.starts_with("url must not carry a password"), "{e}");
+        s.url = "postgres://antares_app@db:notaport/jc".into();
+        assert!(s.app_options().unwrap_err().contains("does not parse"));
+        // A URL the URL parser takes and the Postgres driver does not.
+        let e = section("postgres://antares_app@db/jc?sslmode=sometimes")
+            .validate()
+            .unwrap_err();
+        assert_eq!(e, "url is not a Postgres URL");
+    }
+
+    /// T-7488 against a real server: each unsafe request login is refused with the reason and
+    /// the setting to change; a login that owns nothing passes. Runs when
+    /// `JC_PG_TEST_DATABASE_URL` names a superuser connection (as tests/restart_pg.rs).
+    #[tokio::test]
+    async fn every_unsafe_request_login_is_refused_with_its_reason() {
+        let Some(admin_url) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
+            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
+            return;
+        };
+        let admin = connect(PgConnectOptions::from_str(&admin_url).unwrap(), 1)
+            .await
+            .unwrap();
+        let p = format!("pgrole{}", std::process::id());
+        let pw = "pg-role-test-pw";
+        for (role, how) in [
+            ("owner", "NOLOGIN"),
+            ("ok", "LOGIN NOBYPASSRLS"),
+            ("bypass", "LOGIN BYPASSRLS"),
+            ("member", "LOGIN NOBYPASSRLS"),
+            ("owns", "LOGIN NOBYPASSRLS"),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "DROP ROLE IF EXISTS {p}_{role}"
+            )))
+            .execute(&admin)
+            .await
+            .unwrap();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "CREATE ROLE {p}_{role} {how} PASSWORD '{pw}'"
+            )))
+            .execute(&admin)
+            .await
+            .unwrap();
+        }
+        for q in [
+            format!("GRANT {p}_owner TO {p}_member"),
+            format!("CREATE TABLE public.{p}_t (id int)"),
+            format!("ALTER TABLE public.{p}_t OWNER TO {p}_owns"),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(q))
+                .execute(&admin)
+                .await
+                .unwrap();
+        }
+        let base = PgConnectOptions::from_str(&admin_url).unwrap();
+        let check = |role: &str| {
+            let opts = base.clone().username(&format!("{p}_{role}")).password(pw);
+            let owner = format!("{p}_owner");
+            async move {
+                let pool = connect(opts, 1).await.unwrap();
+                let got = refuse_unsafe_request_role("url", &pool, &owner).await;
+                pool.close().await;
+                got
+            }
+        };
+        assert_eq!(check("ok").await, Ok(()));
+        for (role, why) in [
+            ("bypass", "has BYPASSRLS".to_owned()),
+            ("member", format!("is a member of the owner `{p}_owner`")),
+            ("owns", format!("owns public.{p}_t")),
+        ] {
+            let e = check(role).await.unwrap_err();
+            assert!(e.contains(&format!("`{p}_{role}` (url) {why}")), "{e}");
+            assert!(e.contains("migrate as") && !e.contains(pw), "{e}");
+        }
+        // The superuser itself.
+        let e = refuse_unsafe_request_role("url", &admin, "nobody")
+            .await
+            .unwrap_err();
+        assert!(e.contains("is a superuser"), "{e}");
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP TABLE public.{p}_t")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        for role in ["owner", "ok", "bypass", "member", "owns"] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP ROLE {p}_{role}")))
+                .execute(&admin)
+                .await
+                .unwrap();
+        }
+        // A closed pool: the check names the setting.
+        admin.close().await;
+        let e = refuse_unsafe_request_role("migrate_url", &admin, "x")
+            .await
+            .unwrap_err();
+        assert!(
+            e.starts_with("migrate_url: the request login check failed"),
+            "{e}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_server_is_an_error_naming_postgres() {
+        // Bound and never listening: the port stays refused for the test's life.
+        let closed = tokio::net::TcpSocket::new_v4().unwrap();
+        closed.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = closed.local_addr().unwrap().port();
+        let opts = PgConnectOptions::new()
+            .host("127.0.0.1")
+            .port(port)
+            .username("nobody")
+            .password("pw");
+        // max 0 is raised to one connection, not a pool that never connects.
+        let e = connect(opts, 0).await.unwrap_err();
+        assert!(e.starts_with("cannot connect to Postgres"), "{e}");
+        assert!(!e.contains("pw"), "{e}");
+        drop(closed);
     }
 
     #[test]

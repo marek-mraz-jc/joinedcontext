@@ -33,8 +33,16 @@ impl Secret {
 
     /// `bytes` random bytes as lower-case hex (`2 * bytes` characters).
     pub fn generate(bytes: usize) -> Result<Self, String> {
+        Self::generate_from(bytes, getrandom::fill)
+    }
+
+    /// As [`Self::generate`], with `fill` as the random source.
+    fn generate_from(
+        bytes: usize,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>,
+    ) -> Result<Self, String> {
         let mut buf = Zeroizing::new(vec![0u8; bytes]);
-        if let Err(e) = getrandom::fill(&mut buf) {
+        if let Err(e) = fill(&mut buf) {
             // Only an operating system without a random source fails here.
             return Err(format!("no randomness: {e}"));
         }
@@ -251,6 +259,31 @@ mod tests {
         assert_eq!(a.expose().len(), 64);
         assert!(a.expose().bytes().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);
+        assert_eq!(Secret::generate(0).unwrap().expose(), "");
+    }
+
+    #[test]
+    fn a_missing_random_source_is_an_error_never_a_weak_secret() {
+        let err = Secret::generate_from(32, |buf| {
+            buf.fill(0xab);
+            Err(getrandom::Error::UNSUPPORTED)
+        })
+        .expect_err("no randomness, no secret");
+        assert!(err.starts_with("no randomness: "), "{err}");
+        assert!(
+            !err.contains("abab"),
+            "the half-filled buffer never shows: {err}"
+        );
+        let filled = Secret::generate_from(2, |buf| {
+            buf.copy_from_slice(&[0x0f, 0xa0]);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            filled.expose(),
+            "0fa0",
+            "lower-case hex of the source's bytes"
+        );
     }
 
     #[test]

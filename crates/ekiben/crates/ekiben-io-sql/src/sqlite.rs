@@ -375,18 +375,16 @@ mod tests {
             .with(|c| {
                 exec(c, "CREATE TABLE t (a int)", &[])?;
                 exec(c, "INSERT INTO t VALUES (?)", &[Value::Int(7)])?;
-                let mut n = 0;
+                let mut n = Value::Null;
                 query(c, "SELECT a FROM t", &[], |v| {
-                    if let Value::Int(a) = v.get_path(&["a".to_string()]) {
-                        n = a;
-                    }
+                    n = v.get_path(&["a".to_string()]);
                     true
                 })?;
                 Ok(n)
             })
             .await
             .unwrap();
-        assert_eq!(n, 7);
+        assert_eq!(n, Value::Int(7));
         assert_eq!(
             db.with(|_| Err::<(), _>("the closure's error".to_string()))
                 .await

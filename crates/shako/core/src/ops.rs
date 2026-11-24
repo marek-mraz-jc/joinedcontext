@@ -1634,4 +1634,71 @@ mod tests {
         assert!(!xml.contains("Property Name=\"Secret\""));
         assert!(!xml.contains("Property Name=\"Credential\""));
     }
+
+    #[test]
+    fn scope_find_and_allowed_follow_the_callers_rights() {
+        use crate::auth::{LocalAuthorizer, Principal, RoleBinding, Subject};
+        let inst = crate::ids::InstanceId::from_u128(1);
+        let org = crate::ids::OrgId::from_u128(1);
+        let authz = LocalAuthorizer::new(vec![RoleBinding {
+            org_id: org,
+            principal: Principal::User("w".into()),
+            actions: vec![Action::Write],
+            project_id: None,
+            repo: None,
+        }]);
+        let ctx = |login: &str| {
+            RequestCtx::new(inst, org, Subject::authenticated(login, login, vec![org]))
+        };
+        let scope = scope_for_context(&ctx("w"), &authz);
+        for held in ["forge:read", "forge:propose", "forge:write"] {
+            assert!(scope.holds(held), "{held}");
+        }
+        for missing in ["forge:approve", "forge:admin", "forge:publish"] {
+            assert!(!scope.holds(missing), "{missing}");
+        }
+
+        let reg = OperationRegistry::default();
+        for alias in [
+            "CreateRepository",
+            "Shako.CreateRepository",
+            "createrepository",
+            "jc_forge_create_repository",
+            "create-repo",
+        ] {
+            assert_eq!(
+                reg.find(alias).map(|op| op.name),
+                Some("CreateRepository"),
+                "{alias}"
+            );
+        }
+        assert!(reg.find("Shako.NoSuchThing").is_none());
+
+        let target = ObjectTarget::Instance {
+            instance_id: inst,
+            org_id: org,
+        };
+        assert!(
+            reg.check_allowed(&authz, &ctx("w"), "CreateRepository", &target, true)
+                .allowed
+        );
+        // An operation name the registry does not know falls back to its action word, then to Admin.
+        assert!(
+            reg.check_allowed(&authz, &ctx("w"), "push", &target, true)
+                .allowed
+        );
+        assert!(
+            !reg.check_allowed(&authz, &ctx("w"), "frobnicate", &target, true)
+                .allowed
+        );
+        let hidden = reg.check_allowed(&authz, &ctx("w"), "CreateRepository", &target, false);
+        assert!(!hidden.allowed && !hidden.visible);
+        let stranger = reg.check_allowed(&authz, &ctx("nobody"), "read", &target, true);
+        assert!(!stranger.allowed);
+
+        let shared = OperationRegistry::shared();
+        assert!(Arc::ptr_eq(&shared, &OperationRegistry::shared()));
+        assert_eq!(shared.csdl_xml(), reg.csdl_xml());
+        assert!(Arc::ptr_eq(&shared.model(), &shared.model()));
+    }
 }

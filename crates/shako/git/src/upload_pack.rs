@@ -312,11 +312,10 @@ fn handle_upload_pack_v2(repo_path: &Path, lines: &[PktLine]) -> ShakoResult<Ans
     while idx < lines.len() && lines[idx] == PktLine::Flush {
         idx += 1;
     }
-    if idx >= lines.len() {
-        return Ok(Vec::new().into());
-    }
-    let first = lines[idx]
-        .as_text()
+    // `handle_upload_pack` answers a body of flush packets alone before it gets here.
+    let first = lines
+        .get(idx)
+        .and_then(PktLine::as_text)
         .ok_or_else(|| ShakoError::BadRequest("expected v2 command pkt-line".into()))?;
     let cmd = first
         .strip_prefix("command=")
@@ -1054,11 +1053,9 @@ fn collect_filtered_tree_objects(
 
 #[cfg(test)]
 mod tests {
-    use super::collect_reachable_objects_for_check;
     use crate::repo::{
         CommitAuthor, FileChangeOp, FileOpKind, commit_file_changes, init_bare_repo,
     };
-    use gix_hash::ObjectId;
     use shako_core::{InstanceId, RepoId};
 
     /// P-6-02: the tip shortcut keeps the gate's answer: a tip and an older commit of a ref are
@@ -1119,5 +1116,572 @@ mod tests {
         assert!(!has(dangling), "a commit no ref reaches");
         let both = collect_reachable_objects_for_check(&repo, &[tip, dangling]).expect("gate");
         assert!(both.contains(&tip) && !both.contains(&dangling));
+    }
+
+    use super::*;
+    use crate::repo::set_ref_direct;
+    use crate::testutil::{DELIM, FLUSH, annotated_tag, pack_count, pkt, put, repo, text};
+    use std::path::PathBuf;
+
+    /// `main`: the initial commit, then `a.txt`, a 2000-byte `big.bin` (tagged `v1`) and
+    /// `dir/c.txt`, one commit each; `refs/pull/1/head` on the first of them. A clone of `main`
+    /// is 13 objects: 4 commits, 5 trees, 4 blobs.
+    struct Fixture {
+        _tmp: tempfile::TempDir,
+        path: PathBuf,
+        c1: ObjectId,
+        c2: ObjectId,
+        c3: ObjectId,
+        tag: ObjectId,
+    }
+
+    fn fixture() -> Fixture {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        let c1 = put(&path, "main", "a.txt", b"one\n");
+        let c2 = put(&path, "main", "big.bin", &[b'x'; 2000]);
+        let c3 = put(&path, "main", "dir/c.txt", b"three\n");
+        let tag = annotated_tag(&path, "v1", c2, gix_object::Kind::Commit);
+        set_ref_direct(&path, "refs/pull/1/head", &c1.to_string()).expect("pull ref");
+        Fixture {
+            _tmp: tmp,
+            path,
+            c1,
+            c2,
+            c3,
+            tag,
+        }
+    }
+
+    fn serve(path: &Path, protocol: Option<&str>, lines: &[&str]) -> ShakoResult<Vec<u8>> {
+        let mut out = Vec::new();
+        handle_upload_pack(
+            path,
+            protocol,
+            &pkt(lines),
+            &mut out,
+            &mut crate::testutil::admit_all,
+        )?;
+        Ok(out)
+    }
+
+    fn v2(path: &Path, command: &str, args: &[&str]) -> ShakoResult<Vec<u8>> {
+        let command = format!("command={command}");
+        let mut lines = vec![command.as_str(), "agent=git/2.47", DELIM];
+        lines.extend_from_slice(args);
+        lines.push(FLUSH);
+        serve(path, Some("version=2"), &lines)
+    }
+
+    fn fetch(path: &Path, args: &[&str]) -> ShakoResult<Vec<u8>> {
+        v2(path, "fetch", args)
+    }
+
+    fn status(result: ShakoResult<Vec<u8>>) -> u16 {
+        result.expect_err("refused").status_code()
+    }
+
+    #[test]
+    fn the_advertised_refs_hide_pull_refs_and_peel_annotated_tags() {
+        let f = fixture();
+        let handle = open_isolated(&f.path).expect("open");
+        handle
+            .reference(
+                "refs/notes/commits",
+                f.c1,
+                gix::refs::transaction::PreviousValue::Any,
+                "a ref outside heads and tags",
+            )
+            .expect("notes ref");
+        let (head, refs) = collect_advertised_refs(&handle, false).expect("refs");
+        assert_eq!(head.as_deref(), Some("refs/heads/main"));
+        let names: Vec<_> = refs.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["HEAD", "refs/heads/main", "refs/tags/v1"]);
+        assert_eq!(refs[0].symref_target.as_deref(), Some("refs/heads/main"));
+        assert_eq!((refs[2].oid, refs[2].peeled), (f.tag, Some(f.c2)));
+        assert_eq!(refs[1].peeled, None);
+        let (_, hidden) = collect_advertised_refs(&handle, true).expect("refs");
+        assert!(hidden.iter().any(|r| r.name == "refs/pull/1/head"));
+        assert!(hidden.iter().all(|r| r.name != "refs/notes/commits"));
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let unborn = open_isolated(&repo(tmp.path(), 2, false)).expect("open");
+        let (head, refs) = collect_advertised_refs(&unborn, true).expect("refs");
+        assert_eq!(head.as_deref(), Some("refs/heads/main"));
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn the_v0_advertisement_names_capabilities_even_for_an_empty_repository() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let empty = text(&advertise_upload_pack(&repo(tmp.path(), 2, false), None).expect("adv"));
+        assert!(
+            empty.contains("0000000000000000000000000000000000000000 capabilities^{}\0symref=HEAD:refs/heads/main multi_ack"),
+            "{empty}"
+        );
+        let f = fixture();
+        let adv = text(&advertise_upload_pack(&f.path, Some("version=1")).expect("adv"));
+        assert!(
+            adv.contains(&format!("{} refs/tags/v1^{{}}", f.c2)),
+            "{adv}"
+        );
+        assert!(!adv.contains("refs/pull/"), "{adv}");
+        let v2 = text(&advertise_upload_pack(&f.path, Some("version=0: version=2")).expect("v2"));
+        assert!(
+            v2.contains("ls-refs=unborn") && v2.contains("object-info"),
+            "{v2}"
+        );
+        assert!(advertise_upload_pack(&tmp.path().join("none"), None).is_err());
+    }
+
+    #[test]
+    fn a_filter_spec_parses_each_supported_form_and_refuses_the_rest() {
+        let cases = [
+            ("blob:none", ObjectFilter::BlobNone),
+            (" blob:limit=10 ", ObjectFilter::BlobLimit(10)),
+            ("blob:limit=2k", ObjectFilter::BlobLimit(2048)),
+            ("blob:limit=3M", ObjectFilter::BlobLimit(3 << 20)),
+            ("blob:limit=1g", ObjectFilter::BlobLimit(1 << 30)),
+            ("blob:limit=4K", ObjectFilter::BlobLimit(4096)),
+            ("tree:0", ObjectFilter::TreeDepth(0)),
+            ("tree:3", ObjectFilter::TreeDepth(3)),
+        ];
+        for (spec, want) in cases {
+            assert_eq!(ObjectFilter::parse(spec).expect(spec), want);
+        }
+        for bad in [
+            "blob:limit=",
+            "blob:limit=-1",
+            "blob:limit=xk",
+            "blob:limit=99999999999999999999",
+            "blob:limit=18446744073709551615k",
+            "blob:limit=18446744073709551615m",
+            "blob:limit=18446744073709551615g",
+            "tree:x",
+            "sparse:oid=abc",
+            "",
+        ] {
+            let err = ObjectFilter::parse(bad).expect_err(bad);
+            assert_eq!(err.status_code(), 400, "{bad}");
+        }
+        assert_eq!(ObjectFilter::default(), ObjectFilter::None);
+    }
+
+    #[test]
+    fn a_negotiation_reads_plain_or_gzip_within_its_limit() {
+        use std::io::Write as _;
+        let body = b"0009done\n".repeat(3);
+        let plain = crate::testutil::spooled(&body);
+        let mut asked = Vec::new();
+        let read = read_negotiation(&plain, false, 1 << 20, &mut |n| {
+            asked.push(n);
+            Ok(())
+        })
+        .expect("plain");
+        assert_eq!(read, body);
+        assert_eq!(asked[0], (1 << 20) * NEGOTIATION_BYTES_PER_BYTE);
+
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&body).expect("gzip");
+        let zipped = crate::testutil::spooled(&gz.finish().expect("gzip"));
+        assert_eq!(
+            read_negotiation(&zipped, true, 1 << 20, &mut crate::testutil::admit_all)
+                .expect("gzip"),
+            body
+        );
+
+        let err = read_negotiation(&plain, false, 4, &mut crate::testutil::admit_all)
+            .expect_err("over limit");
+        assert!(
+            matches!(&err, ShakoError::QuotaExceeded { resource, limit: 4 } if resource == "request_body_bytes"),
+            "{err}"
+        );
+        let err = read_negotiation(&plain, false, 1 << 20, &mut |_| {
+            Err(ShakoError::Overloaded("busy".into()))
+        })
+        .expect_err("not admitted");
+        assert!(matches!(err, ShakoError::Overloaded(_)), "{err}");
+        let err = read_negotiation(&plain, true, 1 << 20, &mut crate::testutil::admit_all)
+            .expect_err("no gzip");
+        assert_eq!(err.status_code(), 400, "{err}");
+        let empty = crate::testutil::spooled(b"");
+        assert!(
+            read_negotiation(&empty, false, 0, &mut crate::testutil::admit_all)
+                .expect("empty")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_empty_body_or_flushes_alone_answer_nothing() {
+        let f = fixture();
+        assert!(serve(&f.path, None, &[]).expect("empty").is_empty());
+        assert!(
+            serve(&f.path, Some("version=2"), &[FLUSH, FLUSH])
+                .expect("flushes")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_v2_request_names_a_known_command_first() {
+        let f = fixture();
+        assert_eq!(
+            status(serve(&f.path, Some("version=2"), &[FLUSH, DELIM])),
+            400
+        );
+        let err = serve(&f.path, Some("version=2"), &["want x", FLUSH]).expect_err("no command");
+        assert!(err.to_string().contains("expected command="), "{err}");
+        let err = v2(&f.path, "push", &[]).expect_err("unknown");
+        assert!(
+            err.to_string()
+                .contains("unsupported protocol v2 command 'push'"),
+            "{err}"
+        );
+        // A leading flush, a command with no arguments, and a v2 body without the header.
+        let listed = text(
+            &serve(
+                &f.path,
+                Some("version=2"),
+                &[FLUSH, "command=ls-refs", FLUSH],
+            )
+            .expect("ls"),
+        );
+        assert!(listed.contains("refs/heads/main"), "{listed}");
+        let bare =
+            text(&serve(&f.path, None, &["command=ls-refs", DELIM, "peel", FLUSH]).expect("ls"));
+        assert!(bare.contains(&format!("peeled:{}", f.c2)), "{bare}");
+        // Arguments stop at a response-end packet; a delimiter among them is skipped.
+        let mut body = pkt(&["command=ls-refs", DELIM, "ref-prefix refs/tags/", DELIM]);
+        body.extend_from_slice(b"0002");
+        body.extend_from_slice(&pkt(&["ref-prefix refs/heads/", FLUSH]));
+        let mut out = Vec::new();
+        handle_upload_pack(
+            &f.path,
+            Some("version=2"),
+            &body,
+            &mut out,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("ls");
+        let out = text(&out);
+        assert!(
+            out.contains("refs/tags/v1") && !out.contains("refs/heads/main"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn ls_refs_filters_by_prefix_and_adds_symrefs_peels_and_the_unborn_head() {
+        let f = fixture();
+        let ls = |args: &[&str]| text(&v2(&f.path, "ls-refs", args).expect("ls-refs"));
+        let heads = ls(&["symrefs", "ref-prefix refs/heads/"]);
+        assert_eq!(heads, format!("003d{} refs/heads/main\n0000", f.c3));
+        let head = ls(&["symrefs", "ref-prefix HEAD"]);
+        assert!(
+            head.contains("HEAD symref-target:refs/heads/main"),
+            "{head}"
+        );
+        let tags = ls(&["peel", "ref-prefix refs/tags/"]);
+        assert!(
+            tags.contains(&format!("{} refs/tags/v1 peeled:{}", f.tag, f.c2)),
+            "{tags}"
+        );
+        assert!(!ls(&[]).contains("refs/pull/"));
+        assert!(ls(&["ref-prefix refs/pull/"]).contains(&format!("{} refs/pull/1/head", f.c1)));
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let unborn = repo(tmp.path(), 2, false);
+        let ls = |args: &[&str]| text(&v2(&unborn, "ls-refs", args).expect("ls-refs"));
+        assert!(ls(&["unborn", "symrefs"]).contains("unborn HEAD symref-target:refs/heads/main"));
+        assert_eq!(ls(&["unborn"]), "0010unborn HEAD\n0000");
+        assert_eq!(ls(&["unborn", "ref-prefix refs/heads/"]), "0000");
+        assert_eq!(ls(&[]), "0000");
+    }
+
+    #[test]
+    fn object_info_answers_sizes_and_refuses_bad_or_missing_ids() {
+        let f = fixture();
+        let oid_line = format!("oid {}", f.c1);
+        let sized = text(&v2(&f.path, "object-info", &["size", &oid_line]).expect("info"));
+        let size = open_isolated(&f.path)
+            .expect("open")
+            .find_header(f.c1)
+            .expect("hdr")
+            .size();
+        assert!(sized.starts_with("0009size\n"), "{sized}");
+        assert!(sized.contains(&format!("{} {size}\n", f.c1)), "{sized}");
+        let bare = text(&v2(&f.path, "object-info", &[&oid_line]).expect("info"));
+        assert_eq!(bare, format!("002d{}\n0000", f.c1));
+        assert_eq!(status(v2(&f.path, "object-info", &["oid xyz"])), 400);
+        let missing = "oid 1111111111111111111111111111111111111111";
+        assert_eq!(status(v2(&f.path, "object-info", &[missing])), 404);
+    }
+
+    #[test]
+    fn a_v2_fetch_refuses_every_malformed_or_unreachable_argument() {
+        let f = fixture();
+        let want = format!("want {}", f.c3);
+        let tmp_orphan = put(&f.path, "orphan", "o.txt", b"o\n");
+        crate::repo::delete_branch(&f.path, "orphan").expect("drop the branch");
+        let orphan = format!("want {tmp_orphan}");
+        let cases: [(&[&str], &str); 13] = [
+            (&[&want, "packfile-uris https"], "packfile-uris is refused"),
+            (&["want zz"], "invalid want oid"),
+            (&[&want, "have zz"], "invalid have oid"),
+            (&[&want, "shallow zz"], "invalid shallow oid"),
+            (&[&want, "deepen x"], "invalid deepen depth"),
+            (&[&want, "deepen-since x"], "invalid deepen-since"),
+            (
+                &["want-ref refs/heads/main", "want-ref refs/heads/main"],
+                "duplicate want-ref",
+            ),
+            (&["want-ref refs/heads/none"], "not found"),
+            (&["want-ref refs/heads/a..b"], "want-ref"),
+            (&[&want, "deepen 1", "deepen-since 5"], "cannot be combined"),
+            (
+                &[&want, "deepen 1", "deepen-not main"],
+                "cannot be combined",
+            ),
+            (&["done"], "at least one want"),
+            (&[&orphan, "done"], "is not reachable"),
+        ];
+        for (args, says) in cases {
+            let err = fetch(&f.path, args).expect_err(says);
+            assert_eq!(err.status_code(), 400, "{says}: {err}");
+            assert!(err.to_string().contains(says), "{says}: {err}");
+        }
+        assert_eq!(status(fetch(&f.path, &[&want, "filter nope"])), 400);
+    }
+
+    #[test]
+    fn a_v2_fetch_negotiates_haves_then_sends_the_pack() {
+        let f = fixture();
+        let want = format!("want {}", f.c3);
+        let have = format!("have {}", f.c1);
+        let unknown = "have 1111111111111111111111111111111111111111";
+
+        let clone = fetch(&f.path, &[&want, "done"]).expect("clone");
+        let head = text(&clone);
+        assert!(head.starts_with("000dpackfile\n"), "{head}");
+        assert!(!head.contains("acknowledgments"));
+        assert_eq!(pack_count(&clone), Some(13));
+
+        let incremental = fetch(&f.path, &[&want, &have]).expect("with a common have");
+        let head = text(&incremental);
+        assert!(
+            head.starts_with(&format!(
+                "0014acknowledgments\n0031ACK {}\n000aready\n0001000dpackfile\n",
+                f.c1
+            )),
+            "{head}"
+        );
+        assert_eq!(
+            pack_count(&incremental),
+            Some(9),
+            "c2 and c3 with their trees and blobs"
+        );
+
+        let lost = fetch(&f.path, &[&want, unknown]).expect("no common have");
+        assert_eq!(text(&lost), "0014acknowledgments\n0008NAK\n0000");
+        let waiting = fetch(&f.path, &[&want, &have, "wait-for-done"]).expect("waits");
+        assert!(text(&waiting).ends_with(&format!("ACK {}\n0000", f.c1)));
+        assert_eq!(pack_count(&waiting), None);
+        // No haves at all: ready at once.
+        let fresh = fetch(&f.path, &[&want]).expect("no haves");
+        assert!(text(&fresh).contains("NAK\n000aready\n"));
+        assert_eq!(pack_count(&fresh), Some(13));
+
+        let banded = fetch(&f.path, &[&want, &have, "sideband-all"]).expect("sideband-all");
+        let head = text(&banded);
+        assert!(head.starts_with("0015\u{1}acknowledgments\n"), "{head}");
+        assert!(head.contains("\u{1}packfile\n"), "{head}");
+    }
+
+    #[test]
+    fn a_v2_fetch_cuts_history_by_depth_time_or_ref_and_reports_it() {
+        let f = fixture();
+        let want = format!("want {}", f.c3);
+        let shallow = fetch(&f.path, &[&want, "deepen 1", "done"]).expect("deepen");
+        let head = text(&shallow);
+        assert!(
+            head.contains(&format!("shallow-info\n0035shallow {}\n0001", f.c3)),
+            "{head}"
+        );
+        assert_eq!(pack_count(&shallow), Some(7));
+
+        let client = format!("shallow {}", f.c3);
+        let deeper = fetch(
+            &f.path,
+            &[&want, &client, "deepen 3", "deepen-relative", "done"],
+        )
+        .expect("deepen further");
+        let head = text(&deeper);
+        assert!(head.contains(&format!("unshallow {}", f.c3)), "{head}");
+        assert!(head.contains(&format!("shallow {}", f.c1)), "{head}");
+
+        let not = fetch(
+            &f.path,
+            &[&want, "deepen-not main~2", "deepen-not nope", "done"],
+        )
+        .expect("deepen-not");
+        assert_eq!(pack_count(&not), Some(9));
+        let since = fetch(&f.path, &[&want, "deepen-since 4102444800", "done"]).expect("since");
+        assert_eq!(pack_count(&since), Some(0), "every commit is older");
+        let all = fetch(&f.path, &[&want, "deepen-since 0", "done"]).expect("since");
+        assert_eq!(pack_count(&all), Some(13));
+
+        let by_ref = fetch(&f.path, &["want-ref refs/heads/main", "done"]).expect("want-ref");
+        let head = text(&by_ref);
+        assert!(
+            head.contains(&format!("wanted-refs\n003d{} refs/heads/main\n0001", f.c3)),
+            "{head}"
+        );
+        assert_eq!(pack_count(&by_ref), Some(13));
+    }
+
+    #[test]
+    fn a_v2_fetch_filters_objects_and_serves_tags_trees_and_blobs_asked_by_id() {
+        let f = fixture();
+        let want = format!("want {}", f.c3);
+        let count = |args: &[&str]| pack_count(&fetch(&f.path, args).expect("fetch"));
+        assert_eq!(count(&[&want, "filter blob:none", "done"]), Some(9));
+        assert_eq!(count(&[&want, "filter blob:limit=100", "done"]), Some(12));
+        assert_eq!(count(&[&want, "filter tree:0", "done"]), Some(4));
+        assert_eq!(count(&[&want, "filter tree:1", "done"]), Some(11));
+        assert_eq!(count(&[&want, "include-tag", "done"]), Some(14));
+        let c1 = format!("want {}", f.c1);
+        assert_eq!(
+            count(&[&c1, "include-tag", "done"]),
+            Some(6),
+            "v1 is not on c1's history"
+        );
+        let tag = format!("want {}", f.tag);
+        assert_eq!(count(&[&tag, "done"]), Some(10), "the tag and c2's history");
+
+        let handle = open_isolated(&f.path).expect("open");
+        let tree = handle
+            .find_commit(f.c1)
+            .expect("c1")
+            .tree_id()
+            .expect("tree")
+            .detach();
+        let tree_want = format!("want {tree}");
+        assert_eq!(
+            count(&[&tree_want, "done"]),
+            Some(3),
+            "the tree, README.md and a.txt"
+        );
+        let blob = gix_object::compute_hash(gix_hash::Kind::Sha1, gix_object::Kind::Blob, b"one\n")
+            .expect("hash");
+        let blob_want = format!("want {blob}");
+        assert_eq!(count(&[&blob_want, "filter blob:none", "done"]), Some(1));
+    }
+
+    #[test]
+    fn a_v0_fetch_refuses_bad_lines_and_both_sideband_sizes() {
+        let f = fixture();
+        let v0 = |lines: &[&str]| serve(&f.path, None, lines);
+        let want = format!("want {}", f.c3);
+        let both = format!("want {} side-band side-band-64k", f.c3);
+        let dropped = format!("want {}", put(&f.path, "x", "x", b"x"));
+        crate::repo::delete_branch(&f.path, "x").expect("unreachable once dropped");
+        let cases: [&[&str]; 9] = [
+            &[&both, FLUSH, "done"],
+            &["want zz", FLUSH],
+            &[&want, "shallow zz", FLUSH],
+            &[&want, "deepen x", FLUSH],
+            &[&want, "deepen-since x", FLUSH],
+            &[&want, "filter nope", FLUSH],
+            &[&want, FLUSH, "have zz", "done"],
+            &[
+                "want 1111111111111111111111111111111111111111",
+                FLUSH,
+                "done",
+            ],
+            &[&dropped, FLUSH, "done"],
+        ];
+        for lines in cases {
+            assert_eq!(status(v0(lines)), 400, "{lines:?}");
+        }
+        assert!(v0(&[FLUSH, "done"]).expect("no wants").is_empty());
+    }
+
+    #[test]
+    fn a_v0_fetch_acknowledges_as_each_multi_ack_mode_says() {
+        let f = fixture();
+        let v0 = |caps: &str, rest: &[&str]| {
+            let want = format!("want {} {caps}", f.c3);
+            let mut lines = vec![want.as_str(), FLUSH];
+            lines.extend_from_slice(rest);
+            serve(&f.path, None, &lines).expect("v0")
+        };
+        let have = format!("have {}", f.c1);
+        let unknown = "have 1111111111111111111111111111111111111111";
+        let c1 = f.c1;
+
+        let out = v0("multi_ack_detailed no-done side-band-64k", &[&have, FLUSH]);
+        let head = text(&out);
+        assert!(
+            head.starts_with(&format!(
+                "0038ACK {c1} common\n0037ACK {c1} ready\n0008NAK\n0031ACK {c1}\n"
+            )),
+            "{head}"
+        );
+        assert_eq!(pack_count(&out), Some(9));
+        let out = v0("multi_ack_detailed", &[&have, FLUSH]);
+        assert_eq!(
+            text(&out),
+            format!("0038ACK {c1} common\n0037ACK {c1} ready\n0008NAK\n")
+        );
+        assert_eq!(
+            text(&v0("multi_ack_detailed", &[unknown, FLUSH])),
+            "0008NAK\n"
+        );
+        assert_eq!(
+            text(&v0("multi_ack", &[&have, FLUSH])),
+            format!("003aACK {c1} continue\n0008NAK\n")
+        );
+        assert_eq!(
+            text(&v0("ofs-delta", &[&have, FLUSH])),
+            format!("0031ACK {c1}\n")
+        );
+        assert_eq!(text(&v0("ofs-delta", &[unknown, FLUSH])), "0008NAK\n");
+
+        let out = v0("multi_ack", &[&have, "done"]);
+        assert!(text(&out).starts_with(&format!("003aACK {c1} continue\n0031ACK {c1}\nPACK")));
+        let out = v0("multi_ack_detailed", &[&have, "done"]);
+        assert!(text(&out).starts_with(&format!("0038ACK {c1} common\n0031ACK {c1}\nPACK")));
+        let out = v0("side-band", &["done"]);
+        assert!(text(&out).starts_with("0008NAK\n"));
+        assert_eq!(pack_count(&out), Some(13));
+        let nul = format!("want {}\0side-band-64k", f.c3);
+        let out = serve(&f.path, None, &[&nul, FLUSH, "done"]).expect("caps after NUL");
+        assert_eq!(pack_count(&out), Some(13));
+        assert!(text(&out).contains("\u{1}PACK"), "banded");
+    }
+
+    #[test]
+    fn a_v0_fetch_reports_shallow_boundaries_before_acknowledging() {
+        let f = fixture();
+        let want = format!("want {}", f.c3);
+        let out = serve(&f.path, None, &[&want, "deepen 1", FLUSH, "done"]).expect("deepen");
+        assert!(text(&out).starts_with(&format!("0035shallow {}\n00000008NAK\n", f.c3)));
+        assert_eq!(pack_count(&out), Some(7));
+        let client = format!("shallow {}", f.c3);
+        let out = serve(
+            &f.path,
+            None,
+            &[&want, &client, "deepen-since 0", FLUSH, "done"],
+        )
+        .expect("since");
+        assert!(text(&out).starts_with(&format!("0037unshallow {}\n0000", f.c3)));
+        let out = serve(&f.path, None, &[&want, "deepen-not main~1", FLUSH, "done"]).expect("not");
+        assert!(text(&out).starts_with("00000008NAK\n"));
+        assert_eq!(
+            pack_count(&out),
+            Some(7),
+            "c3 alone with its two trees and four blobs"
+        );
     }
 }

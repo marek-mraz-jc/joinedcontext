@@ -55,6 +55,44 @@ async fn run(ctx: &ProcContext, proc: &Arc<dyn Processor>, msgs: &[&str]) -> Vec
         .expect("processed")
 }
 
+/// What `tracing` logs on this thread while the guard lives.
+fn capture_logs() -> (
+    Arc<std::sync::Mutex<Vec<u8>>>,
+    tracing::subscriber::DefaultGuard,
+) {
+    let buf = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = buf.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(move || LogSink(sink.clone()))
+        .finish();
+    (buf, tracing::subscriber::set_default(subscriber))
+}
+
+struct LogSink(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogSink {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn logged(buf: &std::sync::Mutex<Vec<u8>>) -> String {
+    String::from_utf8_lossy(
+        &buf.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    )
+    .into_owned()
+}
+
 fn bodies(batches: &[Vec<Part>]) -> Vec<Vec<String>> {
     batches
         .iter()
@@ -134,6 +172,10 @@ async fn group_by_refuses_a_bad_group_and_leaves_a_failing_check_groupless() {
             "group_by:\n  - check: \"true\"\n    processors: 1\n",
             "group '0' parse error: field processors must be a list",
         ),
+        (
+            "group_by:\n  - check: \"true\"\n    processors:\n      - 5\n",
+            "expected object for component config, got 5",
+        ),
     ] {
         let err = build(&ctx, yaml)
             .err()
@@ -146,6 +188,13 @@ async fn group_by_refuses_a_bad_group_and_leaves_a_failing_check_groupless() {
     )
     .expect("built");
     assert_eq!(proc.processor_type(), "group_by");
+    // A group without processors only gathers its messages.
+    let gather = build(&ctx, "group_by:\n  - check: this.n > 1\n").expect("built");
+    let out = run(&ctx, &gather, &[r#"{"n":5}"#, r#"{"n":0}"#, r#"{"n":7}"#]).await;
+    assert_eq!(
+        bodies(&out),
+        vec![vec![r#"{"n":5}"#, r#"{"n":7}"#], vec![r#"{"n":0}"#]]
+    );
     let out = run(&ctx, &proc, &[r#"{"n":5}"#, "not json", r#"{"n":0}"#]).await;
     assert_eq!(
         bodies(&out),
@@ -350,6 +399,7 @@ impl Cache for DownCache {
 
 #[tokio::test]
 async fn cached_flags_each_message_it_cannot_key_time_or_read() {
+    let (logs, _guard) = capture_logs();
     let ctx = make_ctx();
     let foo = add_cache(&ctx, "foo");
     let proc = build(
@@ -435,6 +485,12 @@ cached:
     assert_eq!(&errs[7..], ["", ""]);
     assert!(foo.get("skip").await.is_err());
     assert!(foo.get("skip2").await.is_err());
+    let logs = logged(&logs);
+    assert!(
+        logs.contains("skip_on check failed: failed to execute skip_on mapping")
+            && logs.contains("caching will be skipped as a precaution"),
+        "{logs}"
+    );
 
     // A cache store that is down flags the message on read; a failed write still answers.
     for (get_hits, want) in [
@@ -465,6 +521,48 @@ cached:
     }
 }
 
+#[tokio::test]
+async fn cached_stores_a_result_its_children_emptied() {
+    let ctx = make_ctx();
+    let foo = add_cache(&ctx, "foo");
+    let proc = build(
+        &ctx,
+        "cached:\n  key: k\n  cache: foo\n  skip_on: errored()\n  processors:\n    - mapping: root = deleted()\n",
+    )
+    .expect("built");
+    let out = run(&ctx, &proc, &["x"]).await;
+    assert!(bodies(&out).iter().all(Vec::is_empty), "{:?}", bodies(&out));
+    // Version 1, a batch of no messages: the next run reads the empty result back.
+    assert_eq!(
+        &foo.get("k").await.expect("cached")[..],
+        b"\0\0\0\x01\0\0\0\0"
+    );
+    let again = run(&ctx, &proc, &["x"]).await;
+    assert!(bodies(&again).iter().all(Vec::is_empty));
+}
+
+#[tokio::test]
+async fn a_metric_value_that_is_no_integer_is_logged_and_not_counted() {
+    let (logs, _guard) = capture_logs();
+    let ctx = make_ctx();
+    let proc = build(
+        &ctx,
+        "metric:\n  type: counter_by\n  name: bytes_total\n  value: ${! json(\"n\") }\n",
+    )
+    .expect("built");
+    let out = run(&ctx, &proc, &[r#"{"n":"x"}"#, r#"{"n":4}"#]).await;
+    assert_eq!(bodies(&out), vec![vec![r#"{"n":"x"}"#, r#"{"n":4}"#]]);
+    assert!(out[0].iter().all(|p| !p.is_errored()));
+    assert_eq!(ctx.metrics.get_counter("bytes_total"), 4);
+    let logs = logged(&logs);
+    assert!(
+        logs.contains("metric value is not a valid integer for type CounterBy")
+            && logs.contains("metric=bytes_total")
+            && logs.contains(r#"value=Some("x")"#),
+        "{logs}"
+    );
+}
+
 #[test]
 fn cached_refuses_a_config_it_cannot_build() {
     let ctx = make_ctx();
@@ -486,6 +584,10 @@ fn cached_refuses_a_config_it_cannot_build() {
         (
             "cached:\n  cache: foo\n  key: k\n",
             "field processors is required",
+        ),
+        (
+            "cached:\n  cache: foo\n  key: k\n  processors:\n    - 5\n",
+            "expected object for component config, got 5",
         ),
         (
             "group_by_value:\n  value: ${! ( }\n",

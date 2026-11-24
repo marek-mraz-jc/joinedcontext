@@ -129,7 +129,7 @@ pub(crate) fn eval_function(
         "uuid_v7" => Ok(Value::String(Uuid::now_v7().to_string())),
         "pi" => Ok(Value::Float(std::f64::consts::PI)),
         "hostname" => Ok(Value::String(
-            std::env::var("HOSTNAME").unwrap_or_else(|_| "ekiben".to_string()),
+            std::env::var("HOSTNAME").unwrap_or(String::from("ekiben")),
         )),
         // ekiben runs without a tracer, so these answer what Bento answers with tracing off.
         "tracing_id" => Ok(Value::String("0".repeat(32))),
@@ -239,7 +239,10 @@ pub(crate) fn eval_function(
         "range" => eval_range_fn(args, ctx),
         "count" => {
             let counter_name = eval_single_string_arg(args, "name", None, ctx)?;
-            let mut map = ctx.named_counters.lock().unwrap();
+            let mut map = ctx
+                .named_counters
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             let entry = map.entry(counter_name).or_insert(0);
             *entry += 1;
             Ok(Value::Int(*entry))
@@ -391,13 +394,19 @@ fn eval_counter_fn(
         }
     }
 
-    let mut counters = ctx.stateful_counters.lock().unwrap();
+    let mut counters = ctx
+        .stateful_counters
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let current = counters.entry(state_id).or_insert(min_val - 1);
 
     if let Some(se) = set_expr {
         drop(counters);
         let set_v = ctx.eval_expr(se)?;
-        let mut counters = ctx.stateful_counters.lock().unwrap();
+        let mut counters = ctx
+            .stateful_counters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let current = counters.entry(state_id).or_insert(min_val - 1);
         match set_v {
             Value::Null => return Ok(Value::Int(*current)),
@@ -667,15 +676,22 @@ fn crockford(v: u128) -> String {
 /// oklog/ulid: 48-bit milliseconds and 80 random bits, 26 Crockford base32 characters; within
 /// one millisecond (or a clock that went back) the entropy grows by one, so ids keep their order.
 fn ulid() -> Result<u128, String> {
-    const ENTROPY_MAX: u128 = (1 << 80) - 1;
     let ms = u64::try_from(unix_floor(clock(), 1_000_000).unwrap_or_default()).unwrap_or(0)
         & ((1 << 48) - 1);
     let mut st = ULID_STATE.lock().unwrap_or_else(PoisonError::into_inner);
-    if ms > st.0 {
-        let entropy = random12()[..10]
+    next_ulid(&mut st, ms, || {
+        random12()[..10]
             .iter()
-            .fold(0u128, |acc, b| (acc << 8) | u128::from(*b));
-        *st = (ms, entropy);
+            .fold(0u128, |acc, b| (acc << 8) | u128::from(*b))
+    })
+}
+
+/// One ulid step over (last millisecond, last entropy): a later millisecond takes fresh entropy,
+/// the same one (or a clock gone back) adds one, and refuses once the 80 bits are spent.
+fn next_ulid(st: &mut (u64, u128), ms: u64, fresh: impl FnOnce() -> u128) -> Result<u128, String> {
+    const ENTROPY_MAX: u128 = (1 << 80) - 1;
+    if ms > st.0 {
+        *st = (ms, fresh());
     } else if st.1 == ENTROPY_MAX {
         return Err("ulid: monotonic entropy exhausted within one millisecond".to_string());
     } else {
@@ -717,18 +733,23 @@ fn eval_snowflake_fn(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Va
     let mut st = SNOWFLAKE_STATE
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
+    next_snowflake(&mut st, now);
+    Ok(Value::String(
+        ((st.0 << 22) | (node << 12) | st.1).to_string(),
+    ))
+}
+
+/// One snowflake step over (last millisecond, last step): a later millisecond starts at step 0;
+/// within one millisecond the 12-bit step counts up and, once it wraps, moves to the next one.
+fn next_snowflake(st: &mut (i64, i64), now: i64) {
     if now > st.0 {
         *st = (now, 0);
     } else {
         st.1 = (st.1 + 1) & 4095;
         if st.1 == 0 {
-            // The step ran out within one millisecond: move on to the next one.
             st.0 += 1;
         }
     }
-    Ok(Value::String(
-        ((st.0 << 22) | (node << 12) | st.1).to_string(),
-    ))
 }
 
 #[cfg(test)]
@@ -746,10 +767,79 @@ mod tests {
     }
 
     fn text(v: Value) -> String {
-        match v {
-            Value::String(s) => s,
-            other => panic!("expected a string, got {other:?}"),
+        v.get_string().expect("a string")
+    }
+
+    #[test]
+    fn a_hand_built_call_with_arguments_the_parser_refuses_is_an_error() {
+        use crate::ast::{ArgList, Assignment, Expr, Statement};
+        // params.rs refuses these when a mapping compiles; a hand-built tree reaches the
+        // functions' own guards.
+        let call = |name: &str, args: ArgList| {
+            crate::executor::Executor::new(
+                "t".into(),
+                std::sync::Arc::new(HashMap::new()),
+                vec![Statement::Single {
+                    line: 1,
+                    assignment: Assignment::Json(smallvec::SmallVec::new()),
+                    query: Expr::FunctionCall {
+                        name: name.into(),
+                        args,
+                        state_id: 0,
+                    },
+                }],
+                Environment::new(),
+            )
+            .exec_on_value(Value::Null)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        };
+        let one = || Expr::Literal(Value::Int(1));
+        let unknown = || ArgList::Named(vec![("foo".to_string(), one())]);
+        for f in ["counter", "random_int", "nanoid"] {
+            assert_eq!(
+                call(f, unknown()),
+                Err("failed assignment (line 1): unknown parameter foo".to_string()),
+                "{f}"
+            );
         }
+        assert_eq!(
+            call("env", ArgList::Positional(vec![one(), one(), one()])),
+            Err(
+                "failed assignment (line 1): wrong number of arguments, expected 1, got 3"
+                    .to_string()
+            )
+        );
+        assert_eq!(call("nanoid", ArgList::Positional(vec![])), Ok(()));
+        assert_eq!(
+            call("env", ArgList::Named(vec![])),
+            Err("failed assignment (line 1): missing parameter: name".to_string())
+        );
+    }
+
+    #[test]
+    fn ulid_steps_take_fresh_entropy_count_up_and_refuse_when_spent() {
+        let mut st = (5u64, 0u128);
+        assert_eq!(super::next_ulid(&mut st, 6, || 9), Ok((6u128 << 80) | 9));
+        assert_eq!(super::next_ulid(&mut st, 6, || 0), Ok((6u128 << 80) | 10));
+        assert_eq!(super::next_ulid(&mut st, 4, || 0), Ok((6u128 << 80) | 11));
+        let mut spent = (6u64, (1u128 << 80) - 1);
+        assert_eq!(
+            super::next_ulid(&mut spent, 6, || 0),
+            Err("ulid: monotonic entropy exhausted within one millisecond".to_string())
+        );
+    }
+
+    #[test]
+    fn snowflake_steps_count_within_a_millisecond_and_carry_when_they_wrap() {
+        let mut st = (10i64, 0i64);
+        super::next_snowflake(&mut st, 11);
+        assert_eq!(st, (11, 0));
+        super::next_snowflake(&mut st, 11);
+        assert_eq!(st, (11, 1));
+        let mut full = (11i64, 4095i64);
+        super::next_snowflake(&mut full, 11);
+        assert_eq!(full, (12, 0), "the step wraps into the next millisecond");
     }
 
     #[test]
