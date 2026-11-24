@@ -102,7 +102,7 @@ mod tests {
         assert_eq!(at("30 9-17 * * 6,0"), Some(false));
         assert_eq!(at("0,30 14 6 10 *"), Some(true));
         assert_eq!(at("10/20 * * * *"), Some(true)); // 10, 30, 50
-        // a step counts from the range's start: 5/3 is 5, 8, 11 ... (mutants, T-7766)
+                                                     // a step counts from the range's start: 5/3 is 5, 8, 11 ... (mutants, T-7766)
         assert_eq!(matches("5/3 * * * *", 8, 0, 1, 1, 0), Some(true));
         assert_eq!(matches("5/3 * * * *", 9, 0, 1, 1, 0), Some(false));
     }
