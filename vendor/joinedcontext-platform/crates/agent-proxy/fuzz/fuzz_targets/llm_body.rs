@@ -7,7 +7,12 @@ use agent_proxy::routes::llm::fuzzing;
 use libfuzzer_sys::fuzz_target;
 
 const EFFORTS: [&str; 4] = ["low", "medium", "high", "max"];
-const RESTS: [&str; 4] = ["v1/chat/completions", "v1/messages", "chat/completions", "messages"];
+const RESTS: [&str; 4] = [
+    "v1/chat/completions",
+    "v1/messages",
+    "chat/completions",
+    "messages",
+];
 
 fuzz_target!(|data: &[u8]| {
     let [knob, l0, l1, l2, body @ ..] = data else {

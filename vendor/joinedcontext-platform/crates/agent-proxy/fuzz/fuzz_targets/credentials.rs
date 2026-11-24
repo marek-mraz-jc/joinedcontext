@@ -12,7 +12,11 @@ fuzz_target!(|data: &[u8]| {
     let ticket = parts.next().unwrap_or_default();
     let bearer = parts.next().unwrap_or_default();
     let mut headers = HeaderMap::new();
-    for (name, value) in [("x-jc-run-id", run), ("x-jc-run-ticket", ticket), ("authorization", bearer)] {
+    for (name, value) in [
+        (auth::RUN_HEADER, run),
+        (auth::TICKET_HEADER, ticket),
+        ("authorization", bearer),
+    ] {
         if let Ok(value) = HeaderValue::from_bytes(value) {
             headers.insert(name, value);
         }

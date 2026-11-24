@@ -256,11 +256,26 @@ fn is_runs_own_workload(client_id: &str, run_id: &str) -> bool {
 pub mod fuzzing {
     use super::*;
 
-    /// What is read from the headers is never empty and never carries the header's padding.
+    /// What is read from the headers is never empty; a run id from the two headers never carries
+    /// their padding. A bearer's run id may hold anything, which `run_id_is_well_formed` refuses
+    /// before the id is used.
     pub fn credentials(headers: &HeaderMap) {
         if let Some((run, ticket)) = super::credentials(headers) {
             assert!(!run.is_empty() && !ticket.is_empty());
-            assert_eq!(run.trim(), run);
+            let given = |name: &str| {
+                headers
+                    .get(name)
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| !value.trim().is_empty())
+            };
+            if given(RUN_HEADER) && given(TICKET_HEADER) {
+                assert_eq!(run.trim(), run);
+            } else {
+                assert!(
+                    !run.contains('.'),
+                    "a bearer's run id ends at its first dot"
+                );
+            }
         }
         if let Some((run, secret)) = crate::data_credential::presented(headers) {
             assert!(!run.is_empty() && !secret.is_empty());
