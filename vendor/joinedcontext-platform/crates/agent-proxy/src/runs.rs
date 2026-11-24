@@ -272,6 +272,34 @@ mod tests {
         ));
     }
 
+    /// A record the Portal answered is held for five seconds: the next resolve inside them asks
+    /// the Portal nothing (T-7795).
+    #[tokio::test]
+    async fn an_answered_record_is_held_for_its_five_seconds() {
+        let portal = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": "run-1", "project": "p", "appName": "a", "endpointSlug": "e",
+                    "allowsWrite": false, "branch": "b", "pathPrefix": "", "status": "building",
+                    "ticketHash": "", "maxTokens": 1, "allowedHosts": [], "requestsPerMinute": 1,
+                    "maxResponseBytes": 1, "createdBy": "u", "modelName": "m"
+                })),
+            )
+            .expect(1)
+            .mount(&portal)
+            .await;
+        let resolver =
+            RunResolver::with_cached_at(Url::parse(&portal.uri()).expect("a URL"), run("building"));
+        resolver.cache.write().await.clear();
+        for _ in 0..2 {
+            assert_eq!(
+                resolver.resolve("run-1").await.expect("the run").id,
+                "run-1"
+            );
+        }
+    }
+
     /// A Portal base that cannot hold a path asks nobody and says so (T-7795).
     #[tokio::test]
     async fn a_portal_base_that_cannot_hold_a_path_asks_nobody() {

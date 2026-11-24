@@ -567,5 +567,7 @@ mod tests {
         let raw = r#"[{"organization":"bbsk","issuer":"https://idm.bbsk.sk/realms/bbsk","jwks_url":"https://idm.bbsk.sk/realms/bbsk/protocol/openid-connect/certs"}]"#;
         assert_eq!(held.replace(raw, &installation).expect("taken"), 1);
         assert_eq!(held.current()[0].organization, "bbsk");
+        // The debug form is the set it holds.
+        assert!(format!("{held:?}").contains("idm.bbsk.sk"), "{held:?}");
     }
 }

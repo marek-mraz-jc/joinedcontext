@@ -157,6 +157,8 @@ async fn the_watch_reports_each_probe_to_the_portal() {
     assert_eq!(first["source"], "probe");
     assert!(!first.to_string().contains("mock-model-key"));
     assert!(logged().contains("the model key, as the provider describes it"));
+    // A report the Portal took (204) is not logged as a refusal.
+    assert!(!logged().contains("status=204"), "{}", logged());
 
     // The key on another provider: the watch asks nobody and returns.
     model_key::watch(proxy("http://portal.invalid", None)).await;
