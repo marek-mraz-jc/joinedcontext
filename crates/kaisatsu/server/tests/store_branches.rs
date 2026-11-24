@@ -828,3 +828,81 @@ async fn a_sign_in_pins_an_organization_named_by_id_or_alias_and_survives_an_org
     assert_eq!(st, StatusCode::OK, "{body}");
     assert!(body.contains("data-page-id=\"login-org-choice\""), "{body}");
 }
+
+#[tokio::test]
+async fn the_outbox_sends_nothing_without_an_active_key_and_a_failing_realm_stops_no_pass() {
+    let (app, store, faults, kek) = app().await;
+    let (st, _, _) = post_form(&app, RESET, &[("username", MEMBER)], None).await;
+    assert_eq!(st, StatusCode::OK);
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+    let sink = kaisatsu_login::RecordingSender::new();
+    let dispatcher =
+        kaisatsu_login::OutboxDispatcher::new(faults.clone(), kek, Arc::new(sink.clone()));
+    // The batch of the realm cannot be claimed: the pass logs it and sends nothing.
+    faults.fail("claim_outbox_batch", 0, 1, fault_store::storage);
+    assert_eq!(dispatcher.dispatch_all_realms(&mount()).await.unwrap(), 0);
+    // No active signing key: no link is minted, the mail waits for a retry.
+    faults.empty("list_signing_keys", 0, u32::MAX);
+    assert_eq!(dispatcher.dispatch_all_realms(&mount()).await.unwrap(), 0);
+    assert!(sink.drain().is_empty());
+    let rows = store.list_outbox_rows("dev", None).await.unwrap();
+    assert!(
+        rows.iter()
+            .any(|r| r.template_kind == "RESET_CREDENTIALS" && r.status != "sent"),
+        "{rows:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_codes_mapper_scope_already_among_the_defaults_is_applied_once() {
+    let (app, store, _, _) = app().await;
+    let mut edge = store
+        .get_client_by_client_id("dev", "edge")
+        .await
+        .unwrap()
+        .unwrap();
+    edge.default_client_scopes
+        .push("context-broker-main".into());
+    edge.optional_client_scopes
+        .push("context-broker-main".into());
+    store.upsert_client(edge).await.unwrap();
+    let member = store
+        .get_user_by_username_or_email("dev", None, MEMBER)
+        .await
+        .unwrap()
+        .unwrap();
+    let (_, sso) = browser_login(&app).await;
+    let session = sso_session(&store).await;
+    let now = jc_time::TimestampTz::now();
+    store
+        .put_auth_code(AuthorizationCodeRecord {
+            code_hash: sha256_hex("mapper-code"),
+            realm_id: "dev".into(),
+            org_id: None,
+            client_id: "edge".into(),
+            user_id: member.id,
+            sso_session_id: session.id,
+            redirect_uri: CALLBACK.into(),
+            scope: "openid".into(),
+            mapper_scopes: vec!["context-broker-main".into()],
+            code_challenge: sha256_base64url(VERIFIER),
+            code_challenge_method: "S256".into(),
+            nonce: None,
+            acr: session.acr,
+            amr: session.amr,
+            dpop_jkt: None,
+            auth_time: session.auth_time,
+            consumed: false,
+            created_at: now,
+            expires_at: now + jiff::SignedDuration::from_secs(60),
+        })
+        .await
+        .unwrap();
+    let tokens = exchange(&app, "mapper-code").await;
+    let rt = tokens["refresh_token"].as_str().unwrap();
+    let (st, body) = refresh(&app, rt).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let _ = sso;
+}
