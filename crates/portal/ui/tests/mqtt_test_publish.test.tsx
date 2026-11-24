@@ -131,6 +131,31 @@ describe("the Test a message dialog", () => {
     });
   });
 
+  it("sends the account, topic and payload the person changed, and a new account clears the last result", async () => {
+    const sent = render({
+      run: () => json({ clientId: "espoo-cam-2", published: false, steps: [{ step: "acl", outcome: "ok", reason: "allowed" }] }),
+      watch: () => json({}),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: en.mqttbrokers.test.open }));
+    const dialog = await screen.findByRole("dialog");
+    const topic = () => within(dialog).getByLabelText(new RegExp(`^${en.mqttbrokers.test.topic}`)) as HTMLInputElement;
+    fireEvent.change(topic(), { target: { value: "cameras/espoo-cam-1/typed" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: en.mqttbrokers.test.run }));
+    expect(await within(dialog).findByText("allowed")).toBeInTheDocument();
+
+    // Another account: its own sample topic, and the result of the first no longer stands beside it.
+    fireEvent.change(within(dialog).getByLabelText(new RegExp(en.mqttbrokers.test.account)), { target: { value: "cam-2" } });
+    expect(topic().value).toBe("cameras/espoo-cam-2/reading");
+    expect(within(dialog).queryByText("allowed")).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText(new RegExp(`^${en.mqttbrokers.test.payload}`)), { target: { value: '{"humidity": 40}' } });
+    fireEvent.click(within(dialog).getByRole("button", { name: en.mqttbrokers.test.run }));
+    expect(await within(dialog).findByText("allowed")).toBeInTheDocument();
+    expect(sent.map((call) => call.body)).toEqual([
+      { account: "cam-1", topic: "cameras/espoo-cam-1/typed", payload: '{"temperature": 21.5}' },
+      { account: "cam-2", topic: "cameras/espoo-cam-2/reading", payload: '{"humidity": 40}' },
+    ]);
+  });
+
   it("shows the server's refusal of a field as an alert", async () => {
     render({
       run: () => problem(422, "topic: a device publishes on one topic: no + or # wildcard"),
