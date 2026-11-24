@@ -239,7 +239,10 @@ pub(crate) mod tests {
     /// logged-out one, a revoked one and a request with no session name nobody: no exchange.
     fn bearer(value: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        headers.insert(axum::http::header::AUTHORIZATION, value.parse().expect("header"));
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            value.parse().expect("header"),
+        );
         headers
     }
 
@@ -285,7 +288,10 @@ pub(crate) mod tests {
         assert!(!refused.contains(foreign), "{refused}");
 
         state.oidc = None;
-        for headers in [bearer(&format!("Bearer {KEPT}")), cookie_session(&state, &session, Some(KEPT))] {
+        for headers in [
+            bearer(&format!("Bearer {KEPT}")),
+            cookie_session(&state, &session, Some(KEPT)),
+        ] {
             let error = endpoint_token(&state, &headers, "closedslug")
                 .await
                 .expect_err("no client");
@@ -306,7 +312,10 @@ pub(crate) mod tests {
         session_over.expires_at = now - 1;
         for session in [access_over, session_over] {
             let headers = cookie_session(&state, &session, Some(KEPT));
-            assert_eq!(endpoint_token(&state, &headers, "closedslug").await, Ok(None));
+            assert_eq!(
+                endpoint_token(&state, &headers, "closedslug").await,
+                Ok(None)
+            );
         }
     }
 
@@ -319,7 +328,11 @@ pub(crate) mod tests {
             let b64 = |v: &serde_json::Value| {
                 base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string())
             };
-            format!("{}.{}.sig", b64(&json!({"alg": "none"})), b64(&json!({"exp": exp})))
+            format!(
+                "{}.{}.sig",
+                b64(&json!({"alg": "none"})),
+                b64(&json!({"exp": exp}))
+            )
         };
         let now = session::now_unix();
         for (exp, exchanges) in [(now + 600, 1), (now + 10, 2)] {

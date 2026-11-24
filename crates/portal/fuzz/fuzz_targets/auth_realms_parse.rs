@@ -22,7 +22,9 @@ fn fixtures() -> &'static (OidcConfig, Vec<OrganizationHost>) {
             .iter()
             .map(|name| OrganizationHost {
                 organization: (*name).to_owned(),
-                base: format!("https://portal.{name}.example").parse().expect("base"),
+                base: format!("https://portal.{name}.example")
+                    .parse()
+                    .expect("base"),
             })
             .collect();
         (installation, hosts)
@@ -42,7 +44,10 @@ fuzz_target!(|data: &[u8]| {
         for s in &settings {
             assert!(hosts.iter().any(|h| h.organization == s.organization));
             assert!(matches!(s.issuer.scheme(), "http" | "https"));
-            assert!(s.jwks_url.path().ends_with("/protocol/openid-connect/certs"));
+            assert!(s
+                .jwks_url
+                .path()
+                .ends_with("/protocol/openid-connect/certs"));
         }
     }
 });

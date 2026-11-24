@@ -204,6 +204,14 @@ mod tests {
         authorization(&format!("Bearer {}", sign(signer, "k1", &claims)))
     }
 
+    /// `Err(UNAUTHORIZED)` is a 401 refusal; any other error reads `Err(false)`.
+    const UNAUTHORIZED: bool = true;
+
+    /// The refusal as whether it is the 401, so verdicts compare (`ApiError` is not `PartialEq`).
+    fn code(error: ApiError) -> bool {
+        matches!(error, ApiError::Unauthorized)
+    }
+
     fn authorization(value: &str) -> HeaderMap {
         let mut headers = HeaderMap::new();
         headers.insert(header::AUTHORIZATION, value.parse().expect("header"));
@@ -213,21 +221,34 @@ mod tests {
     /// Only `Bearer <token>` with a non-blank token is a presented token; any other shape is 401.
     #[test]
     fn only_a_non_blank_bearer_is_presented() {
-        assert_eq!(presented(&authorization("Bearer abc")), Ok("abc"));
-        for refused in ["Bearer ", "Bearer    ", "Basic abc", "bearer abc", "abc", "Bearer"] {
+        assert_eq!(
+            presented(&authorization("Bearer abc")).map_err(code),
+            Ok("abc")
+        );
+        for refused in [
+            "Bearer ",
+            "Bearer    ",
+            "Basic abc",
+            "bearer abc",
+            "abc",
+            "Bearer",
+        ] {
             assert_eq!(
-                presented(&authorization(refused)),
-                Err(ApiError::Unauthorized),
+                presented(&authorization(refused)).map_err(code),
+                Err(UNAUTHORIZED),
                 "{refused:?}"
             );
         }
-        assert_eq!(presented(&HeaderMap::new()), Err(ApiError::Unauthorized));
+        assert_eq!(
+            presented(&HeaderMap::new()).map_err(code),
+            Err(UNAUTHORIZED)
+        );
         let mut opaque = HeaderMap::new();
         opaque.insert(
             header::AUTHORIZATION,
             axum::http::HeaderValue::from_bytes(b"Bearer \xff").expect("bytes"),
         );
-        assert_eq!(presented(&opaque), Err(ApiError::Unauthorized));
+        assert_eq!(presented(&opaque).map_err(code), Err(UNAUTHORIZED));
     }
 
     /// PF-46: a route's own client with a token for this listener passes; the same realm's
@@ -236,18 +257,36 @@ mod tests {
     async fn a_route_opens_for_its_own_client_and_this_listener_alone() {
         let (state, signer) = portal();
         let own = bearer(&signer, INTERNAL_AUDIENCE, Some("context-gateway"));
-        assert_eq!(authenticate_workload(&state, &own, Some("context-gateway")).await, Ok(()));
-        assert_eq!(authenticate_workload(&state, &own, Some(" context-gateway ")).await, Ok(()));
+        assert_eq!(
+            authenticate_workload(&state, &own, Some("context-gateway"))
+                .await
+                .map_err(code),
+            Ok(())
+        );
+        assert_eq!(
+            authenticate_workload(&state, &own, Some(" context-gateway "))
+                .await
+                .map_err(code),
+            Ok(())
+        );
         for (headers, why) in [
-            (bearer(&signer, INTERNAL_AUDIENCE, Some("agent-proxy")), "another client"),
-            (bearer(&signer, "portal-api", Some("context-gateway")), "the API audience"),
+            (
+                bearer(&signer, INTERNAL_AUDIENCE, Some("agent-proxy")),
+                "another client",
+            ),
+            (
+                bearer(&signer, "portal-api", Some("context-gateway")),
+                "the API audience",
+            ),
             (bearer(&signer, INTERNAL_AUDIENCE, None), "no client"),
             (HeaderMap::new(), "no token"),
             (authorization("Bearer not-a-jwt"), "garbled token"),
         ] {
             assert_eq!(
-                authenticate_workload(&state, &headers, Some("context-gateway")).await,
-                Err(ApiError::Unauthorized),
+                authenticate_workload(&state, &headers, Some("context-gateway"))
+                    .await
+                    .map_err(code),
+                Err(UNAUTHORIZED),
                 "{why}"
             );
         }
@@ -261,15 +300,19 @@ mod tests {
         let token = bearer(&signer, INTERNAL_AUDIENCE, Some("context-gateway"));
         for expected in [None, Some(""), Some("   ")] {
             assert_eq!(
-                authenticate_workload(&state, &token, expected).await,
-                Err(ApiError::Unauthorized),
+                authenticate_workload(&state, &token, expected)
+                    .await
+                    .map_err(code),
+                Err(UNAUTHORIZED),
                 "{expected:?}"
             );
         }
         state.bearer = None;
         assert_eq!(
-            authenticate_workload(&state, &token, Some("context-gateway")).await,
-            Err(ApiError::Unauthorized)
+            authenticate_workload(&state, &token, Some("context-gateway"))
+                .await
+                .map_err(code),
+            Err(UNAUTHORIZED)
         );
         assert_eq!(
             authenticate_pipeline_runner(
@@ -277,8 +320,9 @@ mod tests {
                 &bearer(&signer, INTERNAL_AUDIENCE, Some("pipeline-runner")),
                 None
             )
-            .await,
-            Err(ApiError::Unauthorized)
+            .await
+            .map_err(code),
+            Err(UNAUTHORIZED)
         );
     }
 
@@ -289,20 +333,28 @@ mod tests {
         let (mut state, signer) = portal();
         let gateway = bearer(&signer, INTERNAL_AUDIENCE, Some("context-gateway"));
         let proxy = bearer(&signer, INTERNAL_AUDIENCE, Some("agent-proxy"));
-        assert_eq!(authenticate_gateway(&state, &gateway).await, Ok(()));
-        assert_eq!(authenticate_agent_proxy(&state, &proxy).await, Ok(()));
         assert_eq!(
-            authenticate_gateway(&state, &proxy).await,
-            Err(ApiError::Unauthorized)
+            authenticate_gateway(&state, &gateway).await.map_err(code),
+            Ok(())
         );
         assert_eq!(
-            authenticate_agent_proxy(&state, &gateway).await,
-            Err(ApiError::Unauthorized)
+            authenticate_agent_proxy(&state, &proxy).await.map_err(code),
+            Ok(())
         );
-        state.config.gateway_client_id = None;
         assert_eq!(
-            authenticate_gateway(&state, &gateway).await,
-            Err(ApiError::Unauthorized)
+            authenticate_gateway(&state, &proxy).await.map_err(code),
+            Err(UNAUTHORIZED)
+        );
+        assert_eq!(
+            authenticate_agent_proxy(&state, &gateway)
+                .await
+                .map_err(code),
+            Err(UNAUTHORIZED)
+        );
+        Arc::make_mut(&mut state.config).gateway_client_id = None;
+        assert_eq!(
+            authenticate_gateway(&state, &gateway).await.map_err(code),
+            Err(UNAUTHORIZED)
         );
     }
 
@@ -315,22 +367,38 @@ mod tests {
         for client in ["praha-pipelines", "praha-pl-odpad"] {
             let headers = bearer(&signer, INTERNAL_AUDIENCE, Some(client));
             assert_eq!(
-                authenticate_pipeline_of(&state, &headers, "praha", "odpad").await,
+                authenticate_pipeline_of(&state, &headers, "praha", "odpad")
+                    .await
+                    .map_err(code),
                 Ok(()),
                 "{client}"
             );
         }
         for (headers, why) in [
-            (bearer(&signer, INTERNAL_AUDIENCE, Some("zilina-pipelines")), "another project"),
-            (bearer(&signer, INTERNAL_AUDIENCE, Some("praha-pl-other")), "another pipeline"),
-            (bearer(&signer, INTERNAL_AUDIENCE, Some("pipeline-runner")), "the runner"),
+            (
+                bearer(&signer, INTERNAL_AUDIENCE, Some("zilina-pipelines")),
+                "another project",
+            ),
+            (
+                bearer(&signer, INTERNAL_AUDIENCE, Some("praha-pl-other")),
+                "another pipeline",
+            ),
+            (
+                bearer(&signer, INTERNAL_AUDIENCE, Some("pipeline-runner")),
+                "the runner",
+            ),
             (bearer(&signer, INTERNAL_AUDIENCE, None), "no client"),
-            (bearer(&signer, "portal-api", Some("praha-pipelines")), "the API audience"),
+            (
+                bearer(&signer, "portal-api", Some("praha-pipelines")),
+                "the API audience",
+            ),
             (HeaderMap::new(), "no token"),
         ] {
             assert_eq!(
-                authenticate_pipeline_of(&state, &headers, "praha", "odpad").await,
-                Err(ApiError::Unauthorized),
+                authenticate_pipeline_of(&state, &headers, "praha", "odpad")
+                    .await
+                    .map_err(code),
+                Err(UNAUTHORIZED),
                 "{why}"
             );
         }
@@ -345,38 +413,59 @@ mod tests {
         let runner = bearer(&signer, INTERNAL_AUDIENCE, Some("pipeline-runner"));
         let harness = bearer(&signer, INTERNAL_AUDIENCE, Some("praha-pl-pipeline-test"));
         let account = bearer(&signer, INTERNAL_AUDIENCE, Some("praha-pipelines"));
-        assert_eq!(authenticate_pipeline_runner(&state, &runner, None).await, Ok(()));
-        assert_eq!(authenticate_pipeline_runner(&state, &runner, Some("praha")).await, Ok(()));
-        assert_eq!(authenticate_pipeline_runner(&state, &harness, Some("praha")).await, Ok(()));
-        assert_eq!(authenticate_pipeline_runner(&state, &account, Some("praha")).await, Ok(()));
+        assert_eq!(
+            authenticate_pipeline_runner(&state, &runner, None)
+                .await
+                .map_err(code),
+            Ok(())
+        );
+        assert_eq!(
+            authenticate_pipeline_runner(&state, &runner, Some("praha"))
+                .await
+                .map_err(code),
+            Ok(())
+        );
+        assert_eq!(
+            authenticate_pipeline_runner(&state, &harness, Some("praha"))
+                .await
+                .map_err(code),
+            Ok(())
+        );
+        assert_eq!(
+            authenticate_pipeline_runner(&state, &account, Some("praha"))
+                .await
+                .map_err(code),
+            Ok(())
+        );
         for (headers, project, why) in [
             (&harness, None, "a harness with no running test's project"),
             (&harness, Some("zilina"), "another project's test"),
             (&account, Some("zilina"), "another project's account"),
         ] {
             assert_eq!(
-                authenticate_pipeline_runner(&state, headers, project).await,
-                Err(ApiError::Unauthorized),
+                authenticate_pipeline_runner(&state, headers, project)
+                    .await
+                    .map_err(code),
+                Err(UNAUTHORIZED),
                 "{why}"
             );
         }
         for blank in [None, Some("  ".to_owned())] {
-            state.config.pipeline_runner_client_id = blank;
+            Arc::make_mut(&mut state.config).pipeline_runner_client_id = blank;
             assert_eq!(
-                authenticate_pipeline_runner(&state, &runner, Some("praha")).await,
-                Err(ApiError::Unauthorized)
+                authenticate_pipeline_runner(&state, &runner, Some("praha"))
+                    .await
+                    .map_err(code),
+                Err(UNAUTHORIZED)
             );
         }
         // A token with no client never equals a blank configuration.
-        state.config.pipeline_runner_client_id = Some(String::new());
+        Arc::make_mut(&mut state.config).pipeline_runner_client_id = Some(String::new());
         assert_eq!(
-            authenticate_pipeline_runner(
-                &state,
-                &bearer(&signer, INTERNAL_AUDIENCE, None),
-                None
-            )
-            .await,
-            Err(ApiError::Unauthorized)
+            authenticate_pipeline_runner(&state, &bearer(&signer, INTERNAL_AUDIENCE, None), None)
+                .await
+                .map_err(code),
+            Err(UNAUTHORIZED)
         );
     }
 

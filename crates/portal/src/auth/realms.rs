@@ -549,17 +549,23 @@ mod tests {
         };
         let (hel, ba) = (realm("hel"), realm("ba"));
         let derived = jc_core::Secret::new("s").for_realm("hel", "portal-api");
-        assert_eq!(secret(&hel.config.auth), derived.expose());
+        assert_eq!(secret(&hel.config.auth).as_deref(), Some(derived.expose()));
         assert_ne!(secret(&hel.config.auth), secret(&ba.config.auth));
-        assert_ne!(secret(&hel.config.auth), "s", "the installation's secret");
+        assert_ne!(
+            secret(&hel.config.auth).as_deref(),
+            Some("s"),
+            "the installation's secret"
+        );
         // The reconciler's syncers sign in to the realm with its own admin secret (T-7288).
         let (id, auth) = hel.admin_auth(&admin);
         assert_eq!(id, "portal-reconciler");
         assert_eq!(
-            secret(&auth),
-            jc_core::Secret::new("r")
-                .for_realm("hel", "portal-reconciler")
-                .expose()
+            secret(&auth).as_deref(),
+            Some(
+                jc_core::Secret::new("r")
+                    .for_realm("hel", "portal-reconciler")
+                    .expose()
+            )
         );
         assert_ne!(secret(&auth), secret(&ba.admin_auth(&admin).1));
         // A federated assertion names no secret and stays as it is.
@@ -602,7 +608,10 @@ mod tests {
         assert_eq!(oidc.issuer.as_str(), "https://idm.hel.test/realms/hel");
         assert_eq!(hel.issuer(), "https://idm.hel.test/realms/hel");
         assert_eq!(oidc.client_id, "portal-api");
-        assert_eq!(oidc.admin_url.as_ref().map(Url::as_str), Some("https://idm.hel.test/"));
+        assert_eq!(
+            oidc.admin_url.as_ref().map(Url::as_str),
+            Some("https://idm.hel.test/")
+        );
         assert_eq!(hel.backchannel, "https://idm.hel.test/realms/hel");
         assert!(hel.people.is_none());
     }
@@ -620,7 +629,10 @@ mod tests {
         realms.retain(&["hel".to_owned(), "zz".to_owned()]);
         assert_eq!(realms.keys(), ["hel"]);
         assert!(realms.get("ba").is_none());
-        assert_eq!(realms.get("hel").map(|r| r.organization.clone()).as_deref(), Some("hel"));
+        assert_eq!(
+            realms.get("hel").map(|r| r.organization.clone()).as_deref(),
+            Some("hel")
+        );
 
         let held = realms.clone();
         let poisoned = std::thread::spawn(move || {
@@ -641,10 +653,11 @@ mod tests {
     async fn a_realm_is_discovered_on_first_use_and_a_silent_one_is_unavailable() {
         // Port 9 refuses at once.
         let silent = realm_at("hel", "http://127.0.0.1:9");
-        match silent.client().await {
-            Err(ApiError::Unavailable(why)) => assert!(why.contains("hel"), "{why}"),
-            other => panic!("unavailable, got {:?}", other.map(|_| ())),
-        }
+        let refused = silent.client().await.map(|_| ());
+        assert!(
+            matches!(&refused, Err(ApiError::Unavailable(why)) if why.contains("hel")),
+            "{refused:?}"
+        );
         let server = crate::auth::oidc::tests::mock_realm().await;
         let raw = format!(
             "[{}]",
@@ -669,8 +682,8 @@ mod tests {
     async fn an_apps_token_is_verified_by_its_organizations_realm_alone() {
         use crate::auth::bearer::tests::{keypair, now, sign, ISSUER};
         use crate::resource::{ObjectMeta, ResourceEnvelope};
-        let envelope = |kind: &str, name: &str, namespace: &str, spec: serde_json::Value| {
-            ResourceEnvelope {
+        let envelope =
+            |kind: &str, name: &str, namespace: &str, spec: serde_json::Value| ResourceEnvelope {
                 api_version: crate::resource::API_VERSION.into(),
                 kind: kind.into(),
                 metadata: ObjectMeta {
@@ -680,8 +693,7 @@ mod tests {
                 },
                 spec,
                 status: None,
-            }
-        };
+            };
         let mut state = AppState::new(crate::config::Config::for_tests(), None);
         let org = crate::permissions::ORG_NAMESPACE;
         state.mirror.upsert(envelope(
@@ -690,9 +702,15 @@ mod tests {
             org,
             serde_json::json!({ "organizationRef": { "name": "hel" } }),
         ));
-        state.mirror.upsert(envelope("Project", "free", org, serde_json::json!({})));
-        state.mirror.upsert(envelope("App", "dash", "air", serde_json::json!({})));
-        state.mirror.upsert(envelope("App", "plain", "free", serde_json::json!({})));
+        state
+            .mirror
+            .upsert(envelope("Project", "free", org, serde_json::json!({})));
+        state
+            .mirror
+            .upsert(envelope("App", "dash", "air", serde_json::json!({})));
+        state
+            .mirror
+            .upsert(envelope("App", "plain", "free", serde_json::json!({})));
 
         let (installation_key, installation_set) = keypair("inst");
         let installation_verifier = BearerVerifier::with_jwks_url(
@@ -707,11 +725,18 @@ mod tests {
         hel.bearer.install(&hel_set);
         state.organization_realms = set_of(vec![hel]);
 
-        assert_eq!(of_app(&state, "dash").map(|r| r.organization.clone()).as_deref(), Some("hel"));
+        assert_eq!(
+            of_app(&state, "dash")
+                .map(|r| r.organization.clone())
+                .as_deref(),
+            Some("hel")
+        );
         assert!(of_app(&state, "plain").is_none());
         assert!(of_app(&state, "ghost").is_none());
         assert_eq!(
-            app_oidc(&state, "dash").map(|c| c.issuer.to_string()).as_deref(),
+            app_oidc(&state, "dash")
+                .map(|c| c.issuer.to_string())
+                .as_deref(),
             Some("https://idm.hel.test/realms/hel")
         );
         assert_eq!(
@@ -721,39 +746,53 @@ mod tests {
 
         let token = |key: &jsonwebtoken::EncodingKey, kid: &str, iss: &str, app: &str| {
             let client = crate::reconciler::app_clients::client_id(app);
-            sign(key, kid, &serde_json::json!({
-                "iss": iss, "typ": "Bearer", "aud": client, "azp": client, "sub": "pia",
-                "exp": now() + 60, "iat": now(),
-                "resource_access": { client.clone(): { "roles": ["editor"] } },
-            }))
+            sign(
+                key,
+                kid,
+                &serde_json::json!({
+                    "iss": iss, "typ": "Bearer", "aud": client, "azp": client, "sub": "pia",
+                    "exp": now() + 60, "iat": now(),
+                    "resource_access": { client.clone(): { "roles": ["editor"] } },
+                }),
+            )
         };
         let hel_issuer = "https://idm.hel.test/realms/hel";
-        let (_, roles) = verify_app_token(&state, "dash", &token(&hel_key, "hel", hel_issuer, "dash"))
-            .await
-            .expect("the App's realm");
+        let (_, roles) =
+            verify_app_token(&state, "dash", &token(&hel_key, "hel", hel_issuer, "dash"))
+                .await
+                .expect("the App's realm");
         assert_eq!(roles, ["editor"]);
-        let (_, roles) = verify_app_token(&state, "plain", &token(&installation_key, "inst", ISSUER, "plain"))
-            .await
-            .expect("the installation's realm");
+        let (_, roles) = verify_app_token(
+            &state,
+            "plain",
+            &token(&installation_key, "inst", ISSUER, "plain"),
+        )
+        .await
+        .expect("the installation's realm");
         assert_eq!(roles, ["editor"]);
         for (app, signed) in [
             ("dash", token(&installation_key, "inst", ISSUER, "dash")),
             ("plain", token(&hel_key, "hel", hel_issuer, "plain")),
             ("dash", token(&hel_key, "hel", hel_issuer, "plain")),
         ] {
-            assert_eq!(
-                verify_app_token(&state, app, &signed).await.map(|_| ()),
-                Err(ApiError::Unauthorized),
+            assert!(
+                matches!(
+                    verify_app_token(&state, app, &signed).await,
+                    Err(ApiError::Unauthorized)
+                ),
                 "{app}"
             );
         }
         state.bearer = None;
-        assert_eq!(
-            verify_app_token(&state, "plain", &token(&installation_key, "inst", ISSUER, "plain"))
-                .await
-                .map(|_| ()),
+        assert!(matches!(
+            verify_app_token(
+                &state,
+                "plain",
+                &token(&installation_key, "inst", ISSUER, "plain")
+            )
+            .await,
             Err(ApiError::Unauthorized)
-        );
+        ));
     }
 
     /// T-7133, T-7142: on an Organization's host its realm checks and exchanges the tokens it
@@ -776,9 +815,15 @@ mod tests {
         state.organization_realms = set_of(vec![realm_at("hel", "http://127.0.0.1:9")]);
         let hel_token = jwt("http://127.0.0.1:9/realms/hel/");
         let installation_token = jwt("https://idm.example.test/realms/jc");
-        assert_eq!(issuer_of(&hel_token).as_deref(), Some("http://127.0.0.1:9/realms/hel"));
+        assert_eq!(
+            issuer_of(&hel_token).as_deref(),
+            Some("http://127.0.0.1:9/realms/hel")
+        );
         assert_eq!(issuer_of("not-a-jwt"), None);
-        let host = hosts().into_iter().find(|h| h.organization == "hel").expect("hel");
+        let host = hosts()
+            .into_iter()
+            .find(|h| h.organization == "hel")
+            .expect("hel");
 
         let (on_hel, foreign, here_org) = scope(host.clone(), {
             let state = state.clone();
@@ -795,7 +840,10 @@ mod tests {
         assert_eq!(on_hel.as_deref(), Some("hel"));
         assert!(!foreign);
         assert_eq!(here_org.as_deref(), Some("hel"));
-        assert!(of_token(&state, &hel_token).is_none(), "off the Organization's host");
+        assert!(
+            of_token(&state, &hel_token).is_none(),
+            "off the Organization's host"
+        );
         assert!(here(&state).is_none());
 
         let realm = state.organization_realms.get("hel").expect("hel");
@@ -803,7 +851,10 @@ mod tests {
             verifier(&state, Some(&realm)).expect("the realm's"),
             &realm.bearer
         ));
-        assert!(verifier(&state, None).is_none(), "a Portal with no realm verifies nothing");
+        assert!(
+            verifier(&state, None).is_none(),
+            "a Portal with no realm verifies nothing"
+        );
 
         // The realm that issued it is asked, and it does not answer: a 503 naming it, never the
         // installation's client.
@@ -812,11 +863,15 @@ mod tests {
             async move { exchanger(&state, &hel_token).await.map(|_| ()) }
         })
         .await;
-        assert!(matches!(&exchanged, Err(ApiError::Unavailable(why)) if why.contains("hel")), "{exchanged:?}");
-        match exchanger(&state, &installation_token).await {
-            Err(ApiError::Unavailable(why)) => assert!(why.contains("no Keycloak client"), "{why}"),
-            other => panic!("unavailable, got {:?}", other.map(|_| ())),
-        }
+        assert!(
+            matches!(&exchanged, Err(ApiError::Unavailable(why)) if why.contains("hel")),
+            "{exchanged:?}"
+        );
+        let refused = exchanger(&state, &installation_token).await.map(|_| ());
+        assert!(
+            matches!(&refused, Err(ApiError::Unavailable(why)) if why.contains("no Keycloak client")),
+            "{refused:?}"
+        );
     }
 
     #[test]

@@ -235,7 +235,10 @@ mod tests {
             reqwest::header::HeaderValue::from_bytes(b"\xff7").expect("bytes"),
         );
         assert_eq!(paced_wait(&opaque).as_secs(), 5);
-        opaque.insert("x-ratelimit-reset", reqwest::header::HeaderValue::from_static("11"));
+        opaque.insert(
+            "x-ratelimit-reset",
+            reqwest::header::HeaderValue::from_static("11"),
+        );
         assert_eq!(paced_wait(&opaque).as_secs(), 11);
     }
 
@@ -502,8 +505,13 @@ mod tests {
         // errors naming what is wrong and never the token.
         let lone = scratch("no-namespace");
         std::fs::write(lone.join("token"), "own-pod-token").expect("token");
-        let err = ClientAuth::minted(&lone, "https://kubernetes.default.svc", "portal-reconciler", "aud")
-            .expect_err("no namespace");
+        let err = ClientAuth::minted(
+            &lone,
+            "https://kubernetes.default.svc",
+            "portal-reconciler",
+            "aud",
+        )
+        .expect_err("no namespace");
         assert_eq!(err, format!("no namespace at {}", lone.display()));
         let err = ClientAuth::minted(&mount("bad-api"), "not a url", "portal-reconciler", "aud")
             .expect_err("no API server");
@@ -515,7 +523,10 @@ mod tests {
         let shown = format!("{:?}", ClientAuth::Secret("s3cr3t-do-not-leak".into()));
         assert!(!shown.contains("s3cr3t"), "{shown}");
         assert_eq!(shown, "Secret([redacted])");
-        let path = format!("{:?}", ClientAuth::Assertion(PathBuf::from("/var/run/token")));
+        let path = format!(
+            "{:?}",
+            ClientAuth::Assertion(PathBuf::from("/var/run/token"))
+        );
         assert_eq!(path, "Assertion(\"/var/run/token\")");
     }
 }

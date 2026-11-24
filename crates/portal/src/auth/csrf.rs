@@ -451,7 +451,10 @@ mod tests {
         };
         let (config_a, alice_a) = (config.clone(), alice.clone());
         let (on_a, taken_on_a) = scope(host, async move {
-            let bound = Bound { session: &alice_a, config: &config_a };
+            let bound = Bound {
+                session: &alice_a,
+                config: &config_a,
+            };
             let token = bound.token();
             let taken = bound.accepts(token.as_str());
             (token, taken)
@@ -459,21 +462,36 @@ mod tests {
         .await;
         assert!(on_a.as_str().starts_with("a."), "prefixed by its host");
         assert!(taken_on_a);
-        let bound = Bound { session: &alice, config: &config };
+        let bound = Bound {
+            session: &alice,
+            config: &config,
+        };
         assert!(!bound.accepts(on_a.as_str()), "refused off its host");
         assert!(!bound.accepts(""));
 
         let (jar, issued) = issue(CookieJar::new(), Some(bound));
         assert_eq!(issued, bound.token().as_str());
-        assert_eq!(jar.get(CSRF_COOKIE).map(Cookie::value), Some(issued.as_str()));
+        assert_eq!(
+            jar.get(CSRF_COOKIE).map(Cookie::value),
+            Some(issued.as_str())
+        );
         assert!(!needs_token(&jar, Some(bound)));
         // Another session's cookie is no token of this one.
         let bob = person("f:1:bob");
-        let (bobs, _) = issue(CookieJar::new(), Some(Bound { session: &bob, config: &config }));
+        let (bobs, _) = issue(
+            CookieJar::new(),
+            Some(Bound {
+                session: &bob,
+                config: &config,
+            }),
+        );
         assert!(needs_token(&bobs, Some(bound)));
         // Without a session any cookie will do, and no cookie needs one.
         let (anonymous, minted) = issue(CookieJar::new(), None);
-        assert_eq!(anonymous.get(CSRF_COOKIE).map(Cookie::value), Some(minted.as_str()));
+        assert_eq!(
+            anonymous.get(CSRF_COOKIE).map(Cookie::value),
+            Some(minted.as_str())
+        );
         assert_ne!(minted, issued);
         assert!(!needs_token(&anonymous, None));
         assert!(needs_token(&CookieJar::new(), None));
@@ -494,8 +512,20 @@ mod tests {
         assert_eq!(legacy.name(), LEGACY_APP_CSRF_COOKIE);
         assert_eq!(legacy.value(), token.as_str());
         assert_eq!(
-            (legacy.path(), legacy.http_only(), legacy.secure(), legacy.same_site(), legacy.max_age()),
-            (current.path(), current.http_only(), current.secure(), current.same_site(), current.max_age())
+            (
+                legacy.path(),
+                legacy.http_only(),
+                legacy.secure(),
+                legacy.same_site(),
+                legacy.max_age()
+            ),
+            (
+                current.path(),
+                current.http_only(),
+                current.secure(),
+                current.same_site(),
+                current.max_age()
+            )
         );
         assert_eq!(current.max_age(), Some(time::Duration::hours(12)));
     }
@@ -514,11 +544,24 @@ mod tests {
         assert!(!double_submitted(&opaque, None));
         let config = crate::config::Config::for_tests();
         let alice = person("f:1:alice");
-        let bound = Bound { session: &alice, config: &config };
+        let bound = Bound {
+            session: &alice,
+            config: &config,
+        };
         let own = bound.token();
-        assert!(!double_submitted(&headers_with(Some(own.as_str()), None), Some(bound)));
-        assert!(double_submitted(&headers_with(None, Some(own.as_str())), Some(bound)));
-        assert!(!is_allowed(&Method::PUT, &headers_with(None, Some(&token)), Some(bound)));
+        assert!(!double_submitted(
+            &headers_with(Some(own.as_str()), None),
+            Some(bound)
+        ));
+        assert!(double_submitted(
+            &headers_with(None, Some(own.as_str())),
+            Some(bound)
+        ));
+        assert!(!is_allowed(
+            &Method::PUT,
+            &headers_with(None, Some(&token)),
+            Some(bound)
+        ));
         assert!(is_allowed(&Method::OPTIONS, &HeaderMap::new(), Some(bound)));
     }
 
@@ -545,7 +588,10 @@ mod tests {
         };
         let token = new_token();
         let mut bearer = HeaderMap::new();
-        bearer.insert(axum::http::header::AUTHORIZATION, "Bearer eyJ.x.y".parse().expect("h"));
+        bearer.insert(
+            axum::http::header::AUTHORIZATION,
+            "Bearer eyJ.x.y".parse().expect("h"),
+        );
         for (method, headers, status) in [
             ("GET", HeaderMap::new(), 200),
             ("HEAD", HeaderMap::new(), 200),
@@ -558,7 +604,10 @@ mod tests {
             assert_eq!(answer.status().as_u16(), status, "{method}");
             if status == 403 {
                 assert_eq!(
-                    answer.headers().get(axum::http::header::CONTENT_TYPE).map(|v| v.as_bytes()),
+                    answer
+                        .headers()
+                        .get(axum::http::header::CONTENT_TYPE)
+                        .map(|v| v.as_bytes()),
                     Some(&b"application/problem+json"[..])
                 );
             }
