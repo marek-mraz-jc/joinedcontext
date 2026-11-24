@@ -155,11 +155,11 @@ export default defineConfig({
       exclude: ["src/main.tsx", "src/api/schema.d.ts", "src/**/*.d.ts"],
       reporter: ["text-summary", "json-summary"],
       reportsDirectory: "coverage",
-      // Measured on 2026-11-23 over the whole suite (701 files, 7 836 cases, T-7590): lines 93.05,
-      // statements 91.94, functions 88.52, branches 83.22. Each threshold is that number floored
+      // Measured on 2026-11-24 over the whole suite (817 files, 8 778 cases, T-7589): lines 97.62,
+      // statements 96.97, functions 95.77, branches 87.79. Each threshold is that number floored
       // to the whole percent, so a single line does not flap the build and the figure can only be
       // raised by hand when the suite has earned it.
-      thresholds: { lines: 94, statements: 93, functions: 89, branches: 84 },
+      thresholds: { lines: 97, statements: 96, functions: 95, branches: 87 },
     },
   },
 });
