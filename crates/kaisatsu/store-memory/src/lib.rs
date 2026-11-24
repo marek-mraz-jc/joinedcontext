@@ -4128,6 +4128,15 @@ mod tests {
     #[tokio::test]
     async fn a_client_comes_and_goes_with_its_own_service_account_roles_and_mappings() {
         let store = MemoryStore::default();
+        // Stored first: a person of another realm whose service account names a client `app`.
+        store
+            .create_user(UserRepresentation {
+                realm_id: "elsewhere".into(),
+                service_account_client_id: Some("app".into()),
+                ..user("stray")
+            })
+            .await
+            .expect("stray account");
         store.create_user(user("ada")).await.expect("person");
         for realm in [R, "q"] {
             store
@@ -4198,6 +4207,7 @@ mod tests {
             (R, "service-account-other"),
             ("q", "service-account-app"),
             (R, "ada"),
+            ("elsewhere", "stray"),
         ] {
             let kept = store.get_user_by_username_or_email(realm, None, name).await;
             assert!(kept.expect("read").is_some(), "{realm} {name}");
