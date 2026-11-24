@@ -2,7 +2,8 @@
 # draw (jc-chart), requests through the router's host table and id addresses (jc-router), tenancy
 # keys and internal names (jc-types) and secret files (jc-secret). Each input must end in an
 # answer or a refusal, never a panic, a hang or an allocation past the input's size.
-# `cargo +nightly fuzz run <target> corpus/<target> -- -max_total_time=300`. Not a workspace member.
+# From the jc root: `cargo +nightly fuzz run --fuzz-dir crates/shared/fuzz <target>
+# crates/shared/fuzz/corpus/<target> -- -max_total_time=300`. Not a workspace member.
 [package]
 name = "jc-shared-fuzz"
 version = "0.0.0"

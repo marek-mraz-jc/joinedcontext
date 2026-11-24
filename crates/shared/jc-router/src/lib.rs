@@ -2485,23 +2485,15 @@ mod tests {
             host: Some("smartcity.zilina.sk".into()),
             path_prefix: Some(prefix.into()),
         };
-        match swap.mount_hosts(&[spec("portal", "/api/"), spec("gateway", "/api")]) {
+        assert_eq!(
+            swap.mount_hosts(&[spec("portal", "/api/"), spec("gateway", "/api")]),
             Err(RouterError::OverlappingMounts {
-                first,
-                second,
-                host,
-                prefix,
-            }) => assert_eq!(
-                (
-                    first.as_str(),
-                    second.as_str(),
-                    host.as_str(),
-                    prefix.as_str()
-                ),
-                ("portal", "gateway", "smartcity.zilina.sk", "/api")
-            ),
-            other => panic!("{other:?}"),
-        }
+                first: "portal".into(),
+                second: "gateway".into(),
+                host: "smartcity.zilina.sk".into(),
+                prefix: "/api".into(),
+            })
+        );
         assert!(matches!(
             swap.mount_hosts(&[spec("portal", "/a?b")]),
             Err(RouterError::InvalidPrefix(_))

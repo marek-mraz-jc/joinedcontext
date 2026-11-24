@@ -25,7 +25,7 @@ static JC: LazyLock<JcRouter> = LazyLock::new(|| {
         .shared("city.example")
         .and_then(|t| t.shared("*.apps.city.example"))
         .and_then(|t| t.organization("bratislava"))
-        .and_then(|t| t.organization_id("zilina", ID))
+        .and_then(|t| t.organization_id("zilina", "sk_zilina"))
         .and_then(|t| t.bound("opendata.example.com", "bratislava", "/data"))
         .expect("rows");
     let module = |name: &str, prefix: Option<&str>| {
