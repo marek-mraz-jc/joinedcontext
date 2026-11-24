@@ -244,7 +244,7 @@ fn pg_text_to_binary(
         1114 | 1184 => {
             let t = s();
             let micros =
-                parse_pg_timestamp(&t, oid == 1184).ok_or_else(|| pg_invalid(type_name, &t))?;
+                parse_pg_timestamp(&t).ok_or_else(|| pg_invalid(type_name, &t))?;
             micros.to_be_bytes().to_vec()
         }
         1082 => {
@@ -309,7 +309,7 @@ fn utc(local: DateTime) -> Option<Timestamp> {
 }
 
 /// Microseconds since 2000-01-01 of a postgres timestamp text (ISO forms, `T` or space).
-fn parse_pg_timestamp(text: &str, with_tz: bool) -> Option<i64> {
+fn parse_pg_timestamp(text: &str) -> Option<i64> {
     let t = text.trim();
     match t.to_ascii_lowercase().as_str() {
         "infinity" => return Some(i64::MAX),
@@ -328,9 +328,8 @@ fn parse_pg_timestamp(text: &str, with_tz: bool) -> Option<i64> {
             .ok()?
             .to_datetime(Time::midnight()))?
     };
-    // ponytail: a text without an offset is read as UTC for timestamptz (the session TimeZone of
-    // a stock postgres image); a non-UTC session TimeZone is a listed gap.
-    let _ = with_tz;
+    // ponytail: a text without an offset is read as UTC for timestamp and timestamptz alike (the
+    // session TimeZone of a stock postgres image); a non-UTC session TimeZone is a listed gap.
     let since = ts.as_nanosecond() - utc(PG_EPOCH)?.as_nanosecond();
     // whole microseconds, toward zero
     i64::try_from(since / 1_000).ok()
@@ -1226,6 +1225,12 @@ mod tests {
             pg_decode(3802, "jsonb", b"\x01{}".to_vec(), false).unwrap(),
             Value::String("{}".into())
         );
+        // float4 reads as the shortest float64 that prints the same, as lib/pq parses its text.
+        assert_eq!(
+            pg_decode(700, "float4", 1.1f32.to_be_bytes().to_vec(), false).unwrap(),
+            Value::Float(1.1)
+        );
+        assert_eq!(f32_as_go(-2.5), -2.5);
         assert_eq!(
             pg_decode(26, "oid", 7u32.to_be_bytes().to_vec(), false).unwrap(),
             Value::String("7".into())
@@ -1533,7 +1538,7 @@ mod tests {
             pg_text_to_binary(17, "bytea", b"\\x0aff", false).unwrap(),
             vec![10, 255]
         );
-        let micros = parse_pg_timestamp("2000-01-01T00:00:01Z", true).unwrap();
+        let micros = parse_pg_timestamp("2000-01-01T00:00:01Z").unwrap();
         assert_eq!(micros, 1_000_000);
         assert_eq!(
             pg_text_to_binary(2950, "uuid", b"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", false)
@@ -1796,7 +1801,7 @@ mod tests {
             "2024-13-02",
             "junk",
         ] {
-            got.push(format!("pg {s:?} {:?}", parse_pg_timestamp(s, true)));
+            got.push(format!("pg {s:?} {:?}", parse_pg_timestamp(s)));
             got.push(format!("pg date {s:?} {:?}", pg_date_days(s)));
             got.push(format!(
                 "sqlite parse {s:?} {:?}",
