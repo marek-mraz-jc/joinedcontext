@@ -3643,6 +3643,47 @@ async fn a_router_that_fails_searches_the_question_and_a_refusal_is_not_cached()
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// T-7772: the turn's transcript is stored after `done`, its question and spend before it. A second
+/// question sent the moment the first one's `done` arrives, the stream still open, meets
+/// `messagesPerConversation` as before.
+#[tokio::test]
+async fn a_question_sent_at_done_still_meets_the_conversation_limit() {
+    use futures_util::StreamExt;
+    let mut limited = deployment(Channel::Public, 1_000_000, 10);
+    if let Some(budget) = limited.spec.budget.as_mut() {
+        budget.messages_per_conversation = 1;
+    }
+    let w = world("chatatdone", limited).await;
+    script(
+        &w.proxy,
+        vec![completion(json!({"role": "assistant", "content": "Áno."}), 50); 2],
+    )
+    .await;
+    let response = w
+        .app
+        .clone()
+        .oneshot(ask(json!({"message": "a"}), Some(ORIGIN)))
+        .await
+        .expect("an answer");
+    let mut stream = response.into_body().into_data_stream();
+    let mut text = String::new();
+    while !text.contains("event: done") {
+        let chunk = stream.next().await.expect("done arrives").expect("a chunk");
+        text.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    let first = events_in(&text);
+    let id = first[0].1["id"].as_str().expect("an id").to_owned();
+    let (status, body, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "b", "conversation": id}), Some(ORIGIN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body:?}");
+    assert_eq!(body[0].1["title"], "Conversation Budget Spent");
+    drop(stream);
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// T-4149: the owner's limits hold before any model call: a question past `questionChars`, the
 /// 11th question of a minute from one visitor (`429`, `Retry-After`, in Slovak), a conversation
 /// past `messagesPerConversation`, and a deployment switched off.
