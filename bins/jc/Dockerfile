@@ -3,7 +3,7 @@
 # embedded. Build from the repository root: `docker build -f bins/jc/Dockerfile .`
 # .github/workflows/image.yml builds, smoke-tests, pushes by digest and signs it. It compiles jc
 # on the runner and hands the result in as this file's `build` stage
-# (`--build-context build=<dir holding jc, kaisatsu and an empty 0700 state/>`), so only the final
+# (`--build-context build=<dir holding jc, kaisatsu, jc-functions and an empty 0700 state/>`), so only the final
 # stage runs there; a plain `docker build` compiles everything below.
 
 # The Portal UI and the App SDK bundles the Portal embeds (rust-embed reads crates/portal/ui/dist
