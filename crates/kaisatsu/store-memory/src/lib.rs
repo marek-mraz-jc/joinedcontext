@@ -3076,6 +3076,171 @@ mod tests {
         }
     }
 
+    /// Deleting a person drops their credentials, memberships, sessions, passkeys, links and
+    /// user role mappings, and nothing of another person or of the same id in another realm.
+    #[tokio::test]
+    async fn deleting_a_person_drops_their_rows_only() {
+        let store = MemoryStore::default();
+        let now = TimestampTz::now();
+        let team = store
+            .upsert_group(GroupRepresentation {
+                id: "ada".into(),
+                ..group("team", None, "/team")
+            })
+            .await
+            .expect("group");
+        for (realm, id) in [(R, "ada"), (R, "bob"), ("r2", "ada")] {
+            store
+                .create_user(UserRepresentation {
+                    realm_id: realm.into(),
+                    ..user(id)
+                })
+                .await
+                .expect("person");
+            store
+                .upsert_credential(CredentialRecord {
+                    id: format!("{realm}-{id}-pw"),
+                    realm_id: realm.into(),
+                    user_id: id.into(),
+                    ..CredentialRecord::default()
+                })
+                .await
+                .expect("credential");
+            store
+                .upsert_sso_session(SsoSession {
+                    id: format!("{realm}-{id}-sso"),
+                    realm_id: realm.into(),
+                    org_id: None,
+                    handle_hash: format!("{realm}-{id}-h"),
+                    user_id: id.into(),
+                    username: id.into(),
+                    ip_address: "127.0.0.1".into(),
+                    user_agent: "t".into(),
+                    start: 1,
+                    last_access: 1,
+                    auth_time: 1,
+                    acr: "1".into(),
+                    amr: Vec::new(),
+                    clients: HashMap::new(),
+                    idle_expires_at: now + jiff::SignedDuration::from_hours(1),
+                    max_expires_at: now + jiff::SignedDuration::from_hours(2),
+                })
+                .await
+                .expect("session");
+            store
+                .insert_webauthn_credential(WebAuthnCredentialRecord {
+                    id: format!("{realm}-{id}-wa"),
+                    realm_id: realm.into(),
+                    org_id: None,
+                    user_id: id.into(),
+                    user_handle: format!("{realm}-{id}-uh"),
+                    credential_id: format!("{realm}-{id}-cid"),
+                    public_key_cose_json: "{}".into(),
+                    cose_alg: -7,
+                    sign_count: 0,
+                    uv_initialized: true,
+                    backup_eligible: false,
+                    backup_state: false,
+                    transports: Vec::new(),
+                    attestation_type: "none".into(),
+                    rp_id: "example.org".into(),
+                    user_label: None,
+                    created_at: now,
+                    last_used_at: None,
+                })
+                .await
+                .expect("passkey");
+            store
+                .upsert_idp_link(IdentityProviderLinkRecord {
+                    id: format!("{realm}-{id}-link"),
+                    realm_id: realm.into(),
+                    org_id: None,
+                    user_id: id.into(),
+                    idp_alias: "google".into(),
+                    external_user_id: format!("{realm}-{id}-ext"),
+                    external_username: None,
+                    created_at: now,
+                })
+                .await
+                .expect("link");
+            store
+                .add_role_mapping(RoleMappingRecord {
+                    id: String::new(),
+                    realm_id: realm.into(),
+                    org_id: None,
+                    principal_kind: "user".into(),
+                    principal_id: id.into(),
+                    role_id: "viewer".into(),
+                    role_name: "viewer".into(),
+                    client_uuid: None,
+                })
+                .await
+                .expect("mapping");
+            if realm == R {
+                store
+                    .add_user_to_group(R, id, &team.id)
+                    .await
+                    .expect("member");
+            }
+        }
+        store
+            .add_role_mapping(RoleMappingRecord {
+                id: String::new(),
+                realm_id: R.into(),
+                org_id: None,
+                principal_kind: "group".into(),
+                principal_id: team.id.clone(),
+                role_id: "viewer".into(),
+                role_name: "viewer".into(),
+                client_uuid: None,
+            })
+            .await
+            .expect("group mapping");
+
+        assert!(store.delete_user(R, None, "ada").await.expect("delete"));
+        let counts = |realm: &'static str, id: &'static str| {
+            let store = &store;
+            async move {
+                [
+                    store.list_credentials(realm, id).await.expect("c").len(),
+                    store.list_user_groups(realm, id).await.expect("g").len(),
+                    store
+                        .list_user_sso_sessions(realm, id)
+                        .await
+                        .expect("s")
+                        .len(),
+                    store
+                        .list_webauthn_credentials(realm, id)
+                        .await
+                        .expect("w")
+                        .len(),
+                    store
+                        .list_idp_links_for_user(realm, id)
+                        .await
+                        .expect("l")
+                        .len(),
+                    store
+                        .list_role_mappings_for_principal(realm, "user", id, None)
+                        .await
+                        .expect("m")
+                        .len(),
+                ]
+            }
+        };
+        assert_eq!(counts(R, "ada").await, [0, 0, 0, 0, 0, 0], "ada is gone");
+        assert_eq!(counts(R, "bob").await, [1, 1, 1, 1, 1, 1], "bob keeps his");
+        assert_eq!(
+            counts("r2", "ada").await,
+            [1, 0, 1, 1, 1, 1],
+            "ada of r2 keeps hers"
+        );
+        let kept = store
+            .list_role_mappings_for_principal(R, "group", &team.id, None)
+            .await
+            .expect("group mappings");
+        assert_eq!(kept.len(), 1, "the group's own mapping stays");
+    }
+
     #[tokio::test]
     async fn deleting_a_group_drops_its_role_mappings_and_keeps_the_others() {
         let store = MemoryStore::default();
