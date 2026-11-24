@@ -146,11 +146,7 @@ pub(crate) fn new_raw_output(
 /// `newSQLRawOutputFromConfig`.
 pub fn build(conf: &ComponentConfig, ctx: &StreamContext) -> Result<SqlRawOutput, CoreError> {
     refuse_lint("output", conf, lint)?;
-    require(conf, &["driver", "dsn", "query"])?;
-    let obj = conf
-        .config
-        .as_object()
-        .ok_or_else(|| CoreError::config("sql_raw: expected an object"))?;
+    let obj = require(conf, &["driver", "dsn", "query"])?;
     let unsafe_dyn = obj
         .get("unsafe_dynamic_query")
         .and_then(JsonValue::as_bool)
@@ -198,5 +194,128 @@ impl Output for SqlRawOutput {
     async fn close(&self) -> Result<(), CoreError> {
         self.out.close().await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{conf, stream_ctx};
+    use ekiben_core::Part;
+    use serde_json::json;
+
+    fn count(dsn: &str) -> i64 {
+        rusqlite::Connection::open(dsn)
+            .unwrap()
+            .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn sql_raw_runs_its_query_per_message_once_connected() {
+        let dir = tempfile::tempdir().unwrap();
+        let dsn = dir.path().join("o.db").display().to_string();
+        let ctx = stream_ctx(None);
+        let out = build(
+            &conf("sql_raw", json!({"driver": "sqlite", "dsn": dsn,
+                "init_statement": "CREATE TABLE t (a int)",
+                "query": "INSERT INTO t VALUES (?)", "args_mapping": "root = [ this.a ]"})),
+            &ctx,
+        )
+        .unwrap();
+        out.close().await.unwrap();
+        assert!(!out.is_connected());
+        assert!(matches!(
+            out.write_batch(&ctx, vec![Part::from_str("{}")]).await,
+            Err(CoreError::NotConnected)
+        ));
+        out.connect(&ctx).await.unwrap();
+        out.connect(&ctx).await.unwrap();
+        assert!(out.is_connected());
+        out.write_batch(&ctx, vec![Part::from_str(r#"{"a":1}"#), Part::from_str(r#"{"a":2}"#)])
+            .await
+            .unwrap();
+        assert_eq!(count(&dsn), 2);
+        let e = out
+            .write_batch(&ctx, vec![Part::from_str(r#"{"a":[1]}"#)])
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("unsupported type []interface {}"), "{e}");
+        out.close().await.unwrap();
+        assert!(!out.is_connected());
+    }
+
+    #[tokio::test]
+    async fn dynamic_queries_mappings_and_sql_errors_fail_the_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let dsn = dir.path().join("o.db").display().to_string();
+        let ctx = stream_ctx(None);
+        let dynamic = build(
+            &conf("sql_raw", json!({"driver": "sqlite", "dsn": dsn, "unsafe_dynamic_query": true,
+                "init_statement": "CREATE TABLE t (a int)",
+                "query": "INSERT INTO t VALUES (${! this.a })"})),
+            &ctx,
+        )
+        .unwrap();
+        dynamic.connect(&ctx).await.unwrap();
+        dynamic
+            .write_batch(&ctx, vec![Part::from_str(r#"{"a":5}"#)])
+            .await
+            .unwrap();
+        assert_eq!(count(&dsn), 1);
+        let e = dynamic
+            .write_batch(&ctx, vec![Part::from_str("not json")])
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("query interpolation error"), "{e}");
+        let deleted = build(
+            &conf("sql_raw", json!({"driver": "sqlite", "dsn": dsn,
+                "query": "INSERT INTO t VALUES (?)", "args_mapping": "root = deleted()"})),
+            &ctx,
+        )
+        .unwrap();
+        deleted.connect(&ctx).await.unwrap();
+        let e = deleted
+            .write_batch(&ctx, vec![Part::from_str("{}")])
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("mapping returned deleted message"), "{e}");
+        let bad = build(
+            &conf("sql_raw", json!({"driver": "sqlite", "dsn": dsn, "query": "INSERT INTO nope VALUES (1)"})),
+            &ctx,
+        )
+        .unwrap();
+        bad.connect(&ctx).await.unwrap();
+        let e = bad.write_batch(&ctx, vec![Part::from_str("{}")]).await.unwrap_err();
+        assert!(e.to_string().contains("no such table: nope"), "{e}");
+        assert!(bad.is_connected(), "a statement error keeps the connection");
+        assert!(lint(&json!({"driver": "sqlite", "dsn": "x", "query": "q", "max_in_flight": "4"}))
+            .contains(&"field max_in_flight: expected an integer".to_string()));
+    }
+
+    #[tokio::test]
+    async fn a_lost_connection_closes_the_pool_and_reports_not_connected() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for c in l.incoming() {
+                drop(c);
+            }
+        });
+        let ctx = stream_ctx(None);
+        let out = build(
+            &conf("sql_raw", json!({"driver": "postgres",
+                "dsn": format!("host=127.0.0.1 port={port} sslmode=disable connect_timeout=2"),
+                "query": "SELECT 1"})),
+            &ctx,
+        )
+        .unwrap();
+        out.connect(&ctx).await.unwrap();
+        assert!(out.is_connected(), "the pool opens lazily");
+        assert!(matches!(
+            out.write_batch(&ctx, vec![Part::from_str("{}")]).await,
+            Err(CoreError::NotConnected)
+        ));
+        assert!(!out.is_connected(), "the stream reconnects");
     }
 }

@@ -132,7 +132,7 @@ impl SqliteDb {
             }
         })
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::util::err_text)?
     }
 
     pub fn close(&self) {
@@ -285,6 +285,224 @@ mod tests {
         assert!(parse_dsn("x.db?_pragma=a;drop", None).is_err());
         assert!(parse_dsn("x.db?_pragma=journal_mode(wal;drop)", None).is_err());
         assert!(parse_dsn(":memory:", None).unwrap().path.is_none());
+    }
+
+    #[test]
+    fn dsn_modes_caches_and_pragmas_set_what_modernc_sets() {
+        let rw = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let ro = parse_dsn("x.db?mode=ro", None).unwrap();
+        assert_eq!(
+            ro.flags,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        );
+        assert_eq!(parse_dsn("x.db?mode=rw", None).unwrap().flags, rw);
+        assert_eq!(
+            parse_dsn("x.db?mode=rwc", None).unwrap().flags,
+            rw | OpenFlags::SQLITE_OPEN_CREATE
+        );
+        assert!(parse_dsn("file:x.db?mode=memory", None)
+            .unwrap()
+            .path
+            .is_none());
+        assert!(parse_dsn("", None).unwrap().path.is_none());
+        let shared = parse_dsn("x.db?cache=shared", None).unwrap().flags;
+        assert!(shared.contains(OpenFlags::SQLITE_OPEN_SHARED_CACHE));
+        let private = parse_dsn("x.db?cache=private", None).unwrap().flags;
+        assert!(private.contains(OpenFlags::SQLITE_OPEN_PRIVATE_CACHE));
+        assert!(!private.contains(OpenFlags::SQLITE_OPEN_SHARED_CACHE));
+        // A pragma without parentheses keeps its name and runs without a value.
+        let bare = parse_dsn("x.db?_pragma=foreign_keys&_pragma=busy_timeout(5000)", None).unwrap();
+        assert_eq!(
+            bare.pragmas,
+            vec![
+                ("foreign_keys".to_string(), String::new()),
+                ("busy_timeout".to_string(), "5000".to_string())
+            ]
+        );
+        for (dsn, why) in [
+            ("x.db?mode=wal", "mode wal is not supported"),
+            ("x.db?cache=none", "parameter cache is not supported"),
+            ("x.db?_loc=auto", "parameter _loc is not supported"),
+            ("x.db?_pragma=(1)", "invalid _pragma"),
+            ("x.db?_pragma=a b(1)", "invalid _pragma"),
+        ] {
+            let e = parse_dsn(dsn, None).expect_err(dsn).to_string();
+            assert!(e.contains(why), "{dsn}: {e}");
+        }
+    }
+
+    #[test]
+    fn open_runs_the_pragmas_and_names_what_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = parse_dsn(
+            "file:p.db?_pragma=foreign_keys(1)&_pragma=optimize",
+            Some(dir.path()),
+        )
+        .unwrap();
+        let db = SqliteDb::open(&t).unwrap();
+        let guard = db.0.lock().unwrap();
+        let mut fk = Vec::new();
+        query(guard.as_ref().unwrap(), "PRAGMA foreign_keys", &[], |v| {
+            fk.push(v.to_go_json());
+            true
+        })
+        .unwrap();
+        assert_eq!(fk, vec![r#"{"foreign_keys":1}"#]);
+        drop(guard);
+        // mode=rw never creates the file.
+        let missing = parse_dsn("file:none.db?mode=rw", Some(dir.path())).unwrap();
+        assert!(SqliteDb::open(&missing).is_err());
+        assert!(!dir.path().join("none.db").exists());
+        // A pragma SQLite refuses to run is the open's error.
+        let bad = parse_dsn(":memory:?_pragma=journal_mode(')", None).unwrap();
+        let e = SqliteDb::open(&bad).err().expect("an unclosed quote");
+        assert!(e.contains("unrecognized token"), "{e}");
+        let refused = parse_dsn(":memory:?_pragma=query_only(1)", None).unwrap();
+        let db = SqliteDb::open(&refused).unwrap();
+        let guard = db.0.lock().unwrap();
+        let e = exec(guard.as_ref().unwrap(), "CREATE TABLE t (a int)", &[]).unwrap_err();
+        assert!(e.contains("readonly"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn with_runs_on_the_connection_until_it_is_closed() {
+        let db = SqliteDb::open(&parse_dsn(":memory:", None).unwrap()).unwrap();
+        let n = db
+            .with(|c| {
+                exec(c, "CREATE TABLE t (a int)", &[])?;
+                exec(c, "INSERT INTO t VALUES (?)", &[Value::Int(7)])?;
+                let mut n = 0;
+                query(c, "SELECT a FROM t", &[], |v| {
+                    if let Value::Int(a) = v.get_path(&["a".to_string()]) {
+                        n = a;
+                    }
+                    true
+                })?;
+                Ok(n)
+            })
+            .await
+            .unwrap();
+        assert_eq!(n, 7);
+        assert_eq!(
+            db.with(|_| Err::<(), _>("the closure's error".to_string()))
+                .await
+                .unwrap_err(),
+            "the closure's error"
+        );
+        let other = db.clone();
+        db.close();
+        assert_eq!(
+            other.with(|_| Ok(())).await.unwrap_err(),
+            "sql: database is closed"
+        );
+        // Closing twice is harmless.
+        other.close();
+    }
+
+    #[test]
+    fn arguments_bind_as_modernc_binds_them() {
+        use rusqlite::types::Value as S;
+        let t = parse_time("2024-01-02 03:04:05.5+02:00").unwrap();
+        let cases = [
+            (Value::Null, S::Null),
+            (Value::Nothing, S::Null),
+            (Value::Delete, S::Null),
+            (Value::Array(vec![Value::Int(1)].into()), S::Null),
+            (Value::Object(Default::default()), S::Null),
+            (Value::Bool(true), S::Integer(1)),
+            (Value::Bool(false), S::Integer(0)),
+            (Value::Int(-3), S::Integer(-3)),
+            (Value::Uint(9), S::Integer(9)),
+            (Value::Float(1.25), S::Real(1.25)),
+            (Value::Number("1E2".into()), S::Text("1E2".into())),
+            (Value::String("s".into()), S::Text("s".into())),
+            (Value::Bytes(vec![0, 255]), S::Blob(vec![0, 255])),
+            (
+                Value::Timestamp(t),
+                S::Text("2024-01-02 03:04:05.5+02:00".into()),
+            ),
+        ];
+        for (v, want) in cases {
+            assert_eq!(to_sql(&v), want, "{v:?}");
+        }
+    }
+
+    #[test]
+    fn times_print_nanos_and_negative_offsets() {
+        let t = parse_time("2024-01-02 03:04:05.123456789-05:30").unwrap();
+        assert_eq!(time_text(&t), "2024-01-02 03:04:05.123456789-05:30");
+        let t = parse_time("2024-01-02T03:04:05.100+0100").unwrap();
+        assert_eq!(time_text(&t), "2024-01-02 03:04:05.1+01:00");
+        let t = parse_time("2024-01-02 03:04:05+0000").unwrap();
+        assert_eq!(time_text(&t), "2024-01-02 03:04:05+00:00");
+        for (s, want) in [
+            ("2024-01-02T03:04:05", "2024-01-02 03:04:05+00:00"),
+            ("2024-01-02 03:04", "2024-01-02 03:04:00+00:00"),
+            ("2024-01-02T03:04", "2024-01-02 03:04:00+00:00"),
+            ("2024-01-02", "2024-01-02 00:00:00+00:00"),
+            ("2024-01-02T03:04:05.25-01:00", "2024-01-02 03:04:05.25-01:00"),
+        ] {
+            assert_eq!(time_text(&parse_time(s).expect(s)), want, "{s}");
+        }
+        for bad in ["", "2024-13-02", "2024-01-02 25:00", "03:04:05"] {
+            assert!(parse_time(bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn only_declared_time_columns_parse_their_text() {
+        let text = |s: &'static str| ValueRef::Text(s.as_bytes());
+        let ts = column_value(text("2024-01-02"), Some("timestamp"));
+        assert!(matches!(ts, Value::Timestamp(_)), "{ts:?}");
+        for decl in ["DATE", "Time", "DATETIME"] {
+            assert!(matches!(
+                column_value(text("2024-01-02 03:04"), Some(decl)),
+                Value::Timestamp(_)
+            ));
+        }
+        // Text that is not a time stays text, in a time column too.
+        assert_eq!(
+            column_value(text("soon"), Some("DATETIME")),
+            Value::String("soon".into())
+        );
+        assert_eq!(
+            column_value(text("2024-01-02"), Some("TEXT")),
+            Value::String("2024-01-02".into())
+        );
+        assert_eq!(
+            column_value(text("2024-01-02"), None),
+            Value::String("2024-01-02".into())
+        );
+        assert_eq!(column_value(ValueRef::Null, None), Value::Null);
+        assert_eq!(
+            column_value(ValueRef::Blob(&[0xff, b'a']), None),
+            Value::String("\u{fffd}a".into())
+        );
+    }
+
+    #[test]
+    fn query_stops_when_asked_and_reports_sql_errors() {
+        let db = SqliteDb::open(&parse_dsn(":memory:", None).unwrap()).unwrap();
+        let guard = db.0.lock().unwrap();
+        let c = guard.as_ref().unwrap();
+        exec(c, "CREATE TABLE t (a int); INSERT INTO t VALUES (1), (2), (3)", &[]).unwrap();
+        let mut seen = 0;
+        query(c, "SELECT a FROM t", &[], |_| {
+            seen += 1;
+            seen < 2
+        })
+        .unwrap();
+        assert_eq!(seen, 2);
+        let e = query(c, "SELECT nope FROM t", &[], |_| true).unwrap_err();
+        assert!(e.contains("no such column"), "{e}");
+        let e = query(c, "SELECT a FROM t WHERE a = ?", &[], |_| true).unwrap_err();
+        assert!(!e.is_empty());
+        let e = exec(c, "INSERT INTO t VALUES (?)", &[Value::Int(1), Value::Int(2)]).unwrap_err();
+        assert!(!e.is_empty());
+        assert!(exec(c, "NOT SQL", &[]).is_err());
+        // A runtime error while stepping rows is the query's error too.
+        let e = query(c, "SELECT abs(-9223372036854775808)", &[], |_| true).unwrap_err();
+        assert!(e.contains("overflow"), "{e}");
     }
 
     #[test]

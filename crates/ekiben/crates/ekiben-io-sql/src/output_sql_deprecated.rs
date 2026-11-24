@@ -37,10 +37,50 @@ pub fn lint(conf: &JsonValue) -> Vec<String> {
 /// `newSQLDeprecatedOutputFromConfig`.
 pub fn build(conf: &ComponentConfig, ctx: &StreamContext) -> Result<SqlRawOutput, CoreError> {
     refuse_lint("output", conf, lint)?;
-    require(conf, &["driver", "data_source_name", "query"])?;
-    let obj = conf
-        .config
-        .as_object()
-        .ok_or_else(|| CoreError::config("sql: expected an object"))?;
+    let obj = require(conf, &["driver", "data_source_name", "query"])?;
     new_raw_output("sql", obj, "data_source_name", false, ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{conf, stream_ctx};
+    use ekiben_core::{Output, Part};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn sql_reads_its_dsn_from_data_source_name_and_has_no_conn_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let dsn = dir.path().join("d.db").display().to_string();
+        rusqlite::Connection::open(&dsn)
+            .unwrap()
+            .execute_batch("CREATE TABLE t (a int)")
+            .unwrap();
+        let ctx = stream_ctx(None);
+        let out = build(
+            &conf("sql", json!({"driver": "sqlite", "data_source_name": dsn,
+                "query": "INSERT INTO t VALUES (?)", "args_mapping": "root = [ 7 ]"})),
+            &ctx,
+        )
+        .unwrap();
+        out.connect(&ctx).await.unwrap();
+        out.write_batch(&ctx, vec![Part::from_str("{}")]).await.unwrap();
+        let a: i64 = rusqlite::Connection::open(&dsn)
+            .unwrap()
+            .query_row("SELECT a FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(a, 7);
+        // init_statement and the other connection fields came after this spec.
+        let errs = lint(&json!({"driver": "sqlite", "data_source_name": "x", "query": "q",
+            "init_statement": "x"}));
+        assert_eq!(errs, ["field init_statement not recognised"]);
+        let e = build(&conf("sql", json!({"driver": "sqlite", "dsn": "x", "query": "q"})), &ctx)
+            .err()
+            .expect("refused");
+        assert!(e.to_string().contains("dsn not recognised"), "{e}");
+        let e = build(&conf("sql", json!({"driver": "sqlite", "query": "q"})), &ctx)
+            .err()
+            .expect("refused");
+        assert!(e.to_string().contains("field data_source_name is required"), "{e}");
+    }
 }

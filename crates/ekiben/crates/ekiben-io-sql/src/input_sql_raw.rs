@@ -109,14 +109,19 @@ pub(crate) fn refuse_lint(
     }
 }
 
-/// Bento checks required fields when it parses a config, not at lint.
-pub(crate) fn require(conf: &ComponentConfig, required: &[&str]) -> Result<(), CoreError> {
-    match lint_fields(&conf.config, required, required)
-        .into_iter()
-        .find(|e| e.ends_with("is required"))
-    {
-        Some(e) => Err(CoreError::config(format!("{} {e}", conf.component_type))),
-        None => Ok(()),
+/// Bento checks required fields when it parses a config, not at lint; gives the config object.
+pub(crate) fn require<'a>(
+    conf: &'a ComponentConfig,
+    required: &[&str],
+) -> Result<&'a serde_json::Map<String, JsonValue>, CoreError> {
+    let err = |e: String| CoreError::config(format!("{} {e}", conf.component_type));
+    let obj = conf
+        .config
+        .as_object()
+        .ok_or_else(|| err("expected object value".into()))?;
+    match required.iter().find(|k| !obj.contains_key(**k)) {
+        Some(k) => Err(err(format!("field {k} is required"))),
+        None => Ok(obj),
     }
 }
 
@@ -298,11 +303,7 @@ impl Input for RowsInput {
 /// `newSQLRawInputFromConfig`.
 pub fn build(conf: &ComponentConfig, ctx: &StreamContext) -> Result<RowsInput, CoreError> {
     refuse_lint("input", conf, lint)?;
-    require(conf, &["driver", "dsn", "query"])?;
-    let obj = conf
-        .config
-        .as_object()
-        .ok_or_else(|| CoreError::config("sql_raw: expected an object"))?;
+    let obj = require(conf, &["driver", "dsn", "query"])?;
     let conn = Conn::from_config(obj, "dsn", ctx)?;
     let query = obj
         .get("query")
@@ -310,4 +311,124 @@ pub fn build(conf: &ComponentConfig, ctx: &StreamContext) -> Result<RowsInput, C
         .unwrap_or_default()
         .to_string();
     RowsInput::new("sql_raw", conn, query, obj, ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{conf, stream_ctx};
+    use ekiben_core::BatchError;
+    use serde_json::json;
+    use std::time::Duration;
+
+    /// A file database holding `t (a)` with the rows 1, 2 and 3.
+    fn seeded() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let dsn = dir.path().join("in.db").display().to_string();
+        rusqlite::Connection::open(&dsn)
+            .unwrap()
+            .execute_batch("CREATE TABLE t (a int); INSERT INTO t VALUES (1), (2), (3)")
+            .unwrap();
+        (dir, dsn)
+    }
+
+    fn body(b: &Batch) -> String {
+        String::from_utf8_lossy(&b[0].as_bytes_ref()).into_owned()
+    }
+
+    #[test]
+    fn require_names_the_component_and_the_missing_field() {
+        let e = require(&conf("sql_raw", json!("x")), &["dsn"]).unwrap_err();
+        assert_eq!(e.to_string(), CoreError::config("sql_raw expected object value").to_string());
+        let e = require(&conf("sql_raw", json!({"driver": "sqlite"})), &["driver", "dsn"])
+            .unwrap_err();
+        assert!(e.to_string().contains("sql_raw field dsn is required"), "{e}");
+        let e = build(&conf("sql_raw", json!({"driver": "sqlite", "dsn": ":memory:",
+            "query": "x", "nope": 1})), &stream_ctx(None))
+        .err()
+        .expect("refused");
+        assert!(e.to_string().contains("input sql_raw: field nope not recognised"), "{e}");
+        let e = build(&conf("sql_raw", json!({"driver": "sqlite", "dsn": ":memory:",
+            "query": "x", "args_mapping": "root = ("})), &stream_ctx(None))
+        .err()
+        .expect("refused");
+        assert!(!e.to_string().is_empty());
+        let e = build(&conf("sql_raw", json!({"driver": "sqlite", "dsn": 5, "query": "x"})), &stream_ctx(None))
+            .err()
+            .expect("refused");
+        assert!(e.to_string().contains("field dsn is required"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_nacked_row_is_read_again_and_the_input_ends_once_all_are_acked() {
+        let (_dir, dsn) = seeded();
+        let ctx = stream_ctx(None);
+        let mut input = build(
+            &conf("sql_raw", json!({"driver": "sqlite", "dsn": dsn,
+                "query": "SELECT a FROM t WHERE a >= ? ORDER BY a", "args_mapping": "root = [2]"})),
+            &ctx,
+        )
+        .unwrap();
+        assert!(matches!(input.read_batch(&ctx).await, Err(CoreError::NotConnected)));
+        assert!(!input.is_connected());
+        input.connect(&ctx).await.unwrap();
+        input.connect(&ctx).await.unwrap();
+        assert!(input.is_connected());
+        let (first, ack1) = input.read_batch(&ctx).await.unwrap();
+        assert_eq!(body(&first), r#"{"a":2}"#);
+        ack1.nack(BatchError::new(first, "write failed"));
+        let (again, ack) = input.read_batch(&ctx).await.unwrap();
+        assert_eq!(body(&again), r#"{"a":2}"#, "the nacked row comes back first");
+        ack.ack();
+        let (third, ack3) = input.read_batch(&ctx).await.unwrap();
+        assert_eq!(body(&third), r#"{"a":3}"#);
+        // The rows are spent but one is in flight: the input waits for its verdict.
+        let late = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            ack3.nack(BatchError::new(Vec::new(), "late"));
+        });
+        let (replayed, ack) = input.read_batch(&ctx).await.unwrap();
+        assert_eq!(body(&replayed), r#"{"a":3}"#);
+        late.await.unwrap();
+        ack.ack();
+        assert!(matches!(input.read_batch(&ctx).await, Err(CoreError::EndOfInput)));
+        input.close().await.unwrap();
+        input.close().await.unwrap();
+        assert!(!input.is_connected());
+    }
+
+    #[tokio::test]
+    async fn without_replays_the_input_ends_after_the_last_row_and_passes_query_errors() {
+        let (_dir, dsn) = seeded();
+        let ctx = stream_ctx(None);
+        let mut input = build(
+            &conf("sql_raw", json!({"driver": "sqlite", "dsn": dsn, "auto_replay_nacks": false,
+                "query": "SELECT a FROM t ORDER BY a LIMIT 1"})),
+            &ctx,
+        )
+        .unwrap();
+        input.connect(&ctx).await.unwrap();
+        let (b, ack) = input.read_batch(&ctx).await.unwrap();
+        ack.nack(BatchError::new(b, "dropped"));
+        assert!(matches!(input.read_batch(&ctx).await, Err(CoreError::EndOfInput)));
+
+        let mut bad = build(
+            &conf("sql_raw", json!({"driver": "sqlite", "dsn": dsn, "query": "SELECT nope FROM t"})),
+            &ctx,
+        )
+        .unwrap();
+        bad.connect(&ctx).await.unwrap();
+        let e = bad.read_batch(&ctx).await.err().expect("a query error");
+        assert!(e.to_string().contains("no such column"), "{e}");
+        assert!(matches!(bad.read_batch(&ctx).await, Err(CoreError::EndOfInput)));
+        // An args_mapping that does not give an array fails the connect.
+        let mut odd = build(
+            &conf("sql_raw", json!({"driver": "sqlite", "dsn": dsn, "query": "SELECT 1",
+                "args_mapping": "root = \"x\""})),
+            &ctx,
+        )
+        .unwrap();
+        let e = odd.connect(&ctx).await.unwrap_err();
+        assert!(e.to_string().contains("non-array result"), "{e}");
+    }
 }

@@ -70,14 +70,10 @@ pub fn lint(conf: &JsonValue) -> Vec<String> {
 
 pub fn build(conf: &ComponentConfig, ctx: &StreamContext) -> Result<SqlCache, CoreError> {
     refuse_lint("cache", conf, lint)?;
-    require(
+    let obj = require(
         conf,
         &["driver", "dsn", "table", "key_column", "value_column"],
     )?;
-    let obj = conf
-        .config
-        .as_object()
-        .ok_or_else(|| CoreError::config("sql cache: expected an object"))?;
     let text = |k: &str| {
         obj.get(k)
             .and_then(JsonValue::as_str)
@@ -311,6 +307,71 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(upsert.get("k").await.unwrap(), Bytes::from_static(b"3"));
+    }
+
+    #[tokio::test]
+    async fn a_missing_table_is_the_error_of_every_call() {
+        let c = cache(":memory:", "");
+        let e = |r: Result<(), CoreError>| r.unwrap_err().to_string();
+        assert!(e(c.delete("k").await).contains("sql cache: no such table: kv"));
+        assert!(e(c.set("k", Bytes::from_static(b"v"), None).await).contains("no such table"));
+        assert!(e(c.add("k", Bytes::from_static(b"v"), None).await).contains("no such table"));
+        assert!(c.get("k").await.unwrap_err().to_string().contains("no such table"));
+    }
+
+    #[tokio::test]
+    async fn values_read_back_as_the_column_holds_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let dsn = dir.path().join("c.db").display().to_string();
+        table(&dsn).await;
+        rusqlite::Connection::open(&dsn)
+            .unwrap()
+            .execute_batch("INSERT INTO kv VALUES ('null', NULL), ('n', 42), ('b', x'6869')")
+            .unwrap();
+        let c = cache(&dsn, "");
+        assert_eq!(c.get("null").await.unwrap(), Bytes::new());
+        assert_eq!(c.get("n").await.unwrap(), Bytes::from_static(b"42"));
+        assert_eq!(c.get("b").await.unwrap(), Bytes::from_static(b"hi"));
+    }
+
+    #[tokio::test]
+    async fn build_refuses_what_lint_refuses_and_needs_every_column() {
+        let ctx = crate::testing::stream_ctx(None);
+        let conf = |v| crate::testing::conf("sql", v);
+        let e = build(&conf(json!({"driver": "sqlite", "dsn": ":memory:", "table": "a;b",
+            "key_column": "k", "value_column": "v"})), &ctx)
+        .err()
+        .expect("refused");
+        assert!(e.to_string().contains("cache sql: field table"), "{e}");
+        let e = build(&conf(json!({"driver": "sqlite", "dsn": ":memory:", "table": "kv",
+            "key_column": "k"})), &ctx)
+        .err()
+        .expect("refused");
+        assert!(e.to_string().contains("field value_column is required"), "{e}");
+    }
+
+    /// postgres refuses a duplicate key by SQLSTATE (23505), not by a text sqlite would print.
+    #[tokio::test]
+    async fn a_postgres_duplicate_key_is_key_already_exists() {
+        let Some(dsn) = std::env::var("PG_DSN").ok().filter(|s| !s.is_empty()) else {
+            eprintln!("PG_DSN not set: this test runs in CI's ekiben job");
+            return;
+        };
+        let ctx = crate::testing::stream_ctx(None);
+        let c = build(
+            &crate::testing::conf("sql", json!({"driver": "postgres", "dsn": dsn,
+                "table": "ekiben_cache_dup", "key_column": "k", "value_column": "v",
+                "init_statement": "DROP TABLE IF EXISTS ekiben_cache_dup; CREATE TABLE ekiben_cache_dup (k text PRIMARY KEY, v text)"})),
+            &ctx,
+        )
+        .unwrap();
+        c.add("k", Bytes::from_static(b"1"), None).await.unwrap();
+        assert!(matches!(
+            c.add("k", Bytes::from_static(b"2"), None).await,
+            Err(CoreError::KeyAlreadyExists(_))
+        ));
+        assert_eq!(c.get("k").await.unwrap(), Bytes::from_static(b"1"));
+        c.close().await.unwrap();
     }
 
     #[test]
