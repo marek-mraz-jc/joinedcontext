@@ -383,6 +383,105 @@ mod tests {
         assert!(report.rules.is_empty());
     }
 
+    const PAGE: &str = "jc_quality_checks_total{space=\"air\",type=\"AirQualityObserved\",rule=\"pm10-plausible\",outcome=\"fail\"} 4\n";
+
+    /// The gateway is read on the first refresh and not again inside a minute; its counters
+    /// become the latest reading of the space's report.
+    #[tokio::test]
+    async fn a_refresh_reads_the_gateway_once_a_minute_at_most() {
+        use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
+        let gateway = MockServer::start().await;
+        Mock::given(matchers::method("GET"))
+            .and(matchers::path("/metrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(PAGE))
+            .expect(1)
+            .mount(&gateway)
+            .await;
+        let readings = Readings::new(Some(format!("{}/", gateway.uri())));
+        readings.refresh().await;
+        readings.refresh().await;
+        let report = readings.report("air", &[rule("pm10-plausible", "pm10")]);
+        assert!(report.at.is_some());
+        assert_eq!(report.rules.len(), 1, "{report:?}");
+        assert_eq!(report.rules[0].attribute, "pm10");
+    }
+
+    /// A gateway that refuses, cannot be reached or is not configured leaves the readings as
+    /// they were: still none, so the page says no reading rather than all passing.
+    #[tokio::test]
+    async fn a_gateway_that_does_not_answer_leaves_no_reading() {
+        use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
+        let gateway = MockServer::start().await;
+        Mock::given(matchers::path("/metrics"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&gateway)
+            .await;
+        let refusing = Readings::new(Some(gateway.uri()));
+        assert_eq!(
+            refusing.read().await,
+            Err(format!(
+                "{}/metrics answered 503 Service Unavailable",
+                gateway.uri()
+            ))
+        );
+        refusing.refresh().await;
+        assert_eq!(refusing.report("air", &[]).at, None);
+
+        // A bound socket that does not listen: the connection is refused.
+        let closed = tokio::net::TcpSocket::new_v4().unwrap();
+        closed.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let gone = Readings::new(Some(format!("http://{}", closed.local_addr().unwrap())));
+        assert!(gone.read().await.is_err());
+        gone.refresh().await;
+        assert_eq!(gone.report("air", &[]).at, None);
+
+        let unset = Readings::new(None);
+        assert_eq!(unset.read().await, Ok(()), "no gateway, nothing to read");
+        let unset = Arc::new(unset);
+        unset.start_hourly();
+        assert_eq!(unset.report("air", &[]).at, None);
+    }
+
+    /// The hourly reader takes its first reading at once, so the windows have a base before
+    /// anyone opens the page.
+    #[tokio::test]
+    async fn the_hourly_reader_reads_at_once() {
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let gateway = MockServer::start().await;
+        Mock::given(wiremock::matchers::path("/metrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(PAGE))
+            .mount(&gateway)
+            .await;
+        let readings = Arc::new(Readings::new(Some(gateway.uri())));
+        readings.start_hourly();
+        for _ in 0..200 {
+            if readings.report("air", &[]).at.is_some() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("the hourly reader took no reading in 5 s");
+    }
+
+    /// A thread that panicked holding the readings leaves them usable.
+    #[test]
+    fn poisoned_readings_still_record_and_report() {
+        let readings = Readings::new(None);
+        std::thread::scope(|s| {
+            let _ = s
+                .spawn(|| {
+                    let _kept = readings.kept.lock().unwrap();
+                    let _latest = readings.latest.lock().unwrap();
+                    panic!("poison both");
+                })
+                .join();
+        });
+        readings.record(reading(0, &[("air", "pm10-plausible", "fail", 4.0)]));
+        let report = readings.report("air", &[]);
+        assert_eq!(report.at, Some(at(0)));
+        assert_eq!(report.rules.len(), 1);
+    }
+
     #[test]
     fn the_windows_count_what_grew_inside_them_and_name_the_attribute() {
         let readings = Readings::new(None);

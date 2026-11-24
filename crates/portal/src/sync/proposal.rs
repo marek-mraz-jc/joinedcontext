@@ -361,6 +361,120 @@ mod tests {
         );
     }
 
+    /// A forge that cannot list its open merge requests still gets the proposal: a new merge
+    /// request is opened, a path the source dropped is deleted where the branch has it and
+    /// skipped where it never had it, and an auto-merged proposal is merged.
+    #[tokio::test]
+    async fn a_proposal_opens_deletes_and_merges_when_the_open_list_is_unreadable() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let (server, shako) = forge(&[("models/old.yaml", "old\n")]).await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/PullRequests")))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.OpenPullRequest")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "Number": 9, "HtmlUrl": "https://forge/pulls/9", "State": "open",
+                "Title": "sync", "Head": "sync/x", "HeadSha": "abc", "Base": "main"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/PullRequests(9)/Shako.Merge")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut files = BTreeMap::new();
+        files.insert("models/new.yaml".to_owned(), "new".to_owned());
+        let pull = open(
+            &shako,
+            &Proposal {
+                branch: "sync/x",
+                title: "sync",
+                body: "{}",
+                files,
+                removed: vec!["models/old.yaml".to_owned(), "models/never.yaml".to_owned()],
+                auto_merge: true,
+                line: Some("sync/x"),
+            },
+        )
+        .await
+        .expect("proposed");
+        assert_eq!(pull.number, 9, "a new merge request");
+        let committed: Vec<(String, String)> = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|request| request.url.path() == format!("{repo}/Shako.CommitFiles"))
+            .filter_map(|request| serde_json::from_slice::<serde_json::Value>(&request.body).ok())
+            .flat_map(|commit| commit["Files"].as_array().cloned().unwrap_or_default())
+            .map(|file| {
+                (
+                    file["operation"].as_str().unwrap_or_default().to_owned(),
+                    file["path"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            committed,
+            [
+                ("upload".to_owned(), "models/new.yaml".to_owned()),
+                ("delete".to_owned(), "models/old.yaml".to_owned())
+            ],
+            "the dropped path the branch never had is skipped"
+        );
+        assert!(
+            calls(&server, "POST")
+                .await
+                .iter()
+                .all(|p| !p.ends_with("/Shako.Close")),
+            "nothing listed, nothing superseded"
+        );
+    }
+
+    /// A branch the forge refuses for another reason than "exists" stops the proposal.
+    #[tokio::test]
+    async fn a_branch_the_forge_refuses_stops_the_proposal() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let (server, shako) = forge(&[]).await;
+        Mock::given(method("POST"))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/Shako.CreateBranch",
+            ))
+            .respond_with(
+                ResponseTemplate::new(403).set_body_json(serde_json::json!({ "message": "no" })),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        let refused = open(
+            &shako,
+            &Proposal {
+                branch: "sync/x",
+                title: "sync",
+                body: "{}",
+                files: BTreeMap::new(),
+                removed: Vec::new(),
+                auto_merge: false,
+                line: None,
+            },
+        )
+        .await;
+        assert!(refused.is_err(), "{refused:?}");
+        assert!(calls(&server, "POST")
+            .await
+            .iter()
+            .all(|p| !p.ends_with("/Shako.OpenPullRequest")));
+    }
+
     #[test]
     fn a_proposal_supersedes_its_own_lines_older_branches_and_no_other_line() {
         let open = [

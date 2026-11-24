@@ -417,6 +417,101 @@ async fn a_moved_project_reads_only_under_its_new_organization() {
     assert_eq!(drafts_under(&state, new, &project).await, 1);
 }
 
+/// What `apply` answers for a move of `project` to `to` inside a transaction it rolls back: the
+/// refusal's words, or `applied` when it moved.
+async fn applied_now(state: &AppState, project: &str, to: &str) -> String {
+    use joinedcontext_portal::project_move::{apply, Approval, MoveError};
+    let mut tx = pool(state).begin().await.expect("a transaction");
+    let approval = Approval {
+        id: "00000000-0000-0000-0000-000000000000",
+        approver: "ops-b",
+        source_ip: None,
+    };
+    let answer = match apply(&mut tx, &state.mirror, &approval, project, to).await {
+        Err(MoveError::Refused(message)) => message,
+        Err(MoveError::Db(err)) => format!("db: {err}"),
+        Ok(_) => "applied".to_owned(),
+    };
+    tx.rollback().await.expect("rolled back");
+    answer
+}
+
+/// An approval checks the plan's rules again under the registry row's lock (T-7305): what
+/// changed since the plan was read (the project gone, the target no longer active, the manifest
+/// naming another Organization, a branch opened) refuses the move, and the plan names the live
+/// branch as a blocker.
+#[tokio::test]
+async fn an_approval_rechecks_the_move_under_the_registry_lock() {
+    let state = world().await;
+    let from = run("hel");
+    let to = run("bbsk");
+    let project = run("stale");
+    placed(&state, &project, &from, &to).await;
+    manifest(&state, &project, &to);
+
+    let unknown = applied_now(&state, &run("never"), &to).await;
+    assert!(
+        unknown.ends_with("is no project of the registry with an Organization"),
+        "{unknown}"
+    );
+    let nowhere = run("nowhere");
+    assert_eq!(
+        applied_now(&state, &project, &nowhere).await,
+        format!("organization: '{nowhere}' is no active Organization of the registry")
+    );
+    manifest(&state, &project, &from);
+    let named = applied_now(&state, &project, &to).await;
+    assert!(
+        named.contains(&format!("names Organization '{from}' in its manifest")),
+        "{named}"
+    );
+    manifest(&state, &project, &to);
+
+    let owner = owner_pool().await;
+    let (parent,): (String,) = sqlx::query_as(
+        "SELECT id::text FROM project_ids WHERE name = $1 AND parent IS NULL AND deleted_at IS NULL",
+    )
+    .bind(&project)
+    .fetch_one(&owner)
+    .await
+    .expect("the registry row");
+    let branch = jc_types::ProjectId::mint();
+    sqlx::query(
+        "INSERT INTO project_ids (id, name, parent, organization) VALUES ($1::uuid, $2, $3::uuid, $4)",
+    )
+    .bind(branch.to_string())
+    .bind(format!("b-{}", branch.path_segment()))
+    .bind(&parent)
+    .bind(&from)
+    .execute(&owner)
+    .await
+    .expect("a branch row");
+    sqlx::query(
+        "INSERT INTO project_branches (id, created_by, expires_at) VALUES ($1::uuid, 'ana', now() + interval '7 days')",
+    )
+    .bind(branch.to_string())
+    .execute(&owner)
+    .await
+    .expect("a live branch");
+    assert_eq!(
+        applied_now(&state, &project, &to).await,
+        format!("project: '{project}' has 1 live branch(es); merge or close them first")
+    );
+    let planned =
+        joinedcontext_portal::project_move::plan(pool(&state), &state.mirror, &project, &to)
+            .await
+            .expect("read")
+            .expect("a live project");
+    assert!(
+        planned
+            .blockers
+            .iter()
+            .any(|b| b.contains("1 live branch(es)")),
+        "{:?}",
+        planned.blockers
+    );
+}
+
 /// A project named like the Organization it moves to (jc-dev's bbsk into bbsk) moves: the
 /// Organization's reserved project never answers for a project's name (TEN-11).
 #[tokio::test]
