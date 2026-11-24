@@ -169,6 +169,28 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_element_is_a_document_only_at_the_top_and_an_open_one_at_eof_fails() {
+        let conf = serde_json::json!({"operator": "to_json"});
+        let s =
+            XmlDocumentScanner::from_config(conf.as_object().expect("object")).expect("scanner");
+        let docs = s.documents(b"<a><b/></a><c/>").expect("documents");
+        let keys: Vec<String> = docs
+            .iter()
+            .map(|v| {
+                v.to_json_value()
+                    .as_object()
+                    .expect("object")
+                    .keys()
+                    .cloned()
+                    .collect()
+            })
+            .collect();
+        assert_eq!(keys, ["a", "c"]);
+        let e = s.documents(b"<a>1</a><b>").expect_err("refused");
+        assert!(e.to_string().contains("unexpected EOF"), "{e}");
+    }
+
+    #[test]
     fn a_mismatched_end_tag_is_a_syntax_error() {
         let conf = serde_json::json!({"operator": "to_json"});
         let e = XmlDocumentScanner::from_config(conf.as_object().expect("object"))
