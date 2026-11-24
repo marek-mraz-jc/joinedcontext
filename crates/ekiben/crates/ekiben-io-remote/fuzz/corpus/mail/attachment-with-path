@@ -1,0 +1,17 @@
+From: Exports <exports@stat.example.org>
+Subject: Daily export
+Date: Sun, 15 Nov 2026 06:00:00 +0100
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b"
+
+--b
+Content-Type: text/plain
+
+Today.
+--b
+Content-Type: application/octet-stream; name="a.xlsx"
+Content-Disposition: attachment; filename="../../etc/a.xlsx"
+Content-Transfer-Encoding: base64
+
+UEstZmlyc3Q=
+--b--

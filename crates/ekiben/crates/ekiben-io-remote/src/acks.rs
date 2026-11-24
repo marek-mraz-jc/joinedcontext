@@ -80,8 +80,12 @@ mod tests {
             .nack(BatchError::new(Vec::new(), "output refused"));
         assert_eq!(acks.ready(), vec!["a"]);
         let late = acks.responder("c");
+        let late_nack = acks.responder("e");
         let _lost = acks.responder("d");
-        tokio::spawn(async move { late.ack() });
+        tokio::spawn(async move {
+            late.ack();
+            late_nack.nack(BatchError::new(Vec::new(), "output refused"));
+        });
         assert_eq!(acks.all(Duration::from_millis(200)).await, vec!["c"]);
     }
 }

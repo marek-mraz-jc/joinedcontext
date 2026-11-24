@@ -8,6 +8,8 @@ publish = false
 [features]
 # The websocket input (tokio-websockets client over ekiben's own TCP and TLS).
 default = ["websocket"]
+# `ekiben_io_http::fuzzing`: the wire and request parsers for fuzz/ (cargo fuzz).
+fuzzing = []
 websocket = ["dep:tokio-websockets", "dep:rustls", "dep:tokio-rustls", "dep:rustls-native-certs", "dep:rustls-pki-types"]
 
 [dependencies]

@@ -310,12 +310,8 @@ impl FtpInput {
     }
 
     /// The files of the directory to read this run, by name, at most `max_files`.
-    async fn list(&mut self) -> Result<(), CoreError> {
+    async fn list(&mut self, stream: &mut AsyncRustlsFtpStream) -> Result<(), CoreError> {
         let dir = self.dir.clone();
-        let stream = self
-            .stream
-            .as_mut()
-            .ok_or_else(|| CoreError::other("ftp: not connected"))?;
         let names = stream.nlst(Some(&dir)).await;
         let names = names.map_err(|e| self.failed(&format!("NLST {dir}"), e))?;
         let mut names: Vec<String> = names
@@ -343,14 +339,14 @@ impl FtpInput {
         Ok(())
     }
 
-    async fn read_file(&mut self, name: &str) -> Result<Vec<u8>, CoreError> {
+    async fn read_file(
+        &self,
+        stream: &mut AsyncRustlsFtpStream,
+        name: &str,
+    ) -> Result<Vec<u8>, CoreError> {
         let path = self.path_of(name);
         let cap = self.max_file_bytes;
         let timeout = self.timeout;
-        let stream = self
-            .stream
-            .as_mut()
-            .ok_or_else(|| CoreError::other("ftp: not connected"))?;
         let mut transfer = stream
             .retr_as_stream(&path)
             .await
@@ -385,28 +381,46 @@ impl FtpInput {
     }
 
     /// Deletes or renames what the pipeline acknowledged.
-    async fn settle(&mut self, names: Vec<String>) -> Result<(), CoreError> {
-        let after = self.after.clone();
-        if after == AfterAck::Keep || names.is_empty() {
-            return Ok(());
-        }
+    async fn settle(&self, stream: &mut AsyncRustlsFtpStream, names: Vec<String>) {
+        let rename = match &self.after {
+            AfterAck::Keep => return,
+            AfterAck::Delete => None,
+            AfterAck::Rename(suffix) => Some(suffix),
+        };
         for name in names {
             let path = self.path_of(&name);
-            let stream = self
-                .stream
-                .as_mut()
-                .ok_or_else(|| CoreError::other("ftp: not connected"))?;
-            let done = match &after {
-                AfterAck::Delete => stream.rm(&path).await,
-                AfterAck::Rename(suffix) => stream.rename(&path, &format!("{path}{suffix}")).await,
-                AfterAck::Keep => Ok(()),
+            let done = match rename {
+                None => stream.rm(&path).await,
+                Some(suffix) => stream.rename(&path, &format!("{path}{suffix}")).await,
             };
             if let Err(e) = done {
                 // The file stays and is read again next run: a duplicate rather than a loss.
                 tracing::warn!(path = %path, error = %e, "ftp: an acknowledged file was not removed");
             }
         }
-        Ok(())
+    }
+
+    /// One step of a run on the open connection: the next file, or the end of the run.
+    async fn next(
+        &mut self,
+        stream: &mut AsyncRustlsFtpStream,
+    ) -> Result<(Batch, AckResponder), CoreError> {
+        if !self.listed {
+            self.list(stream).await?;
+        }
+        let ready = self.acks.ready();
+        self.settle(stream, ready).await;
+        let Some(name) = self.pending.pop_front() else {
+            let rest = self.acks.all(ACK_WAIT).await;
+            self.settle(stream, rest).await;
+            return Err(CoreError::EndOfInput);
+        };
+        let body = self.read_file(stream, &name).await?;
+        let mut part = Part::new(body.clone());
+        part.meta_set_str("ftp_path", self.path_of(&name));
+        part.meta_set_str("ftp_size", body.len().to_string());
+        let ack = self.acks.responder(name);
+        Ok((vec![part], ack))
     }
 }
 
@@ -427,23 +441,14 @@ impl Input for FtpInput {
         &mut self,
         ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
-        self.connect(ctx).await?;
-        if !self.listed {
-            self.list().await?;
-        }
-        let ready = self.acks.ready();
-        self.settle(ready).await?;
-        let Some(name) = self.pending.pop_front() else {
-            let rest = self.acks.all(ACK_WAIT).await;
-            self.settle(rest).await?;
-            return Err(CoreError::EndOfInput);
+        let mut stream = match self.stream.take() {
+            Some(stream) => stream,
+            None => self.open(ctx).await?,
         };
-        let body = self.read_file(&name).await?;
-        let mut part = Part::new(body.clone());
-        part.meta_set_str("ftp_path", self.path_of(&name));
-        part.meta_set_str("ftp_size", body.len().to_string());
-        let ack = self.acks.responder(name);
-        Ok((vec![part], ack))
+        // The connection stays open whatever the step answers; close() or drop ends it.
+        let step = self.next(&mut stream).await;
+        self.stream = Some(stream);
+        step
     }
 
     fn is_connected(&self) -> bool {
@@ -455,6 +460,16 @@ impl Input for FtpInput {
             let _ = stream.quit().await;
         }
         Ok(())
+    }
+}
+
+#[cfg(feature = "fuzzing")]
+pub(crate) fn fuzz_names(text: &str) {
+    if let Ok((host, port)) = host_port(text) {
+        assert!(!host.is_empty() && port != 0 && !host.contains(['/', '@', ' ']));
+    }
+    if let Ok((dir, _)) = split_path(text) {
+        assert!(dir.starts_with('/') && !dir.split('/').any(|seg| seg == ".."));
     }
 }
 

@@ -228,6 +228,10 @@ async fn run(
     ack: impl Fn(&str) -> bool,
 ) -> Vec<(String, Vec<u8>, BTreeMap<String, String>)> {
     let mut seen = Vec::new();
+    input.connect(ctx).await.expect("connect");
+    assert!(input.is_connected());
+    // A second connect keeps the open connection.
+    input.connect(ctx).await.expect("connect again");
     loop {
         match input.read_batch(ctx).await {
             Ok((batch, responder)) => {
@@ -264,6 +268,7 @@ async fn run(
         }
     }
     input.close().await.expect("close");
+    assert!(!input.is_connected());
     seen
 }
 
@@ -284,6 +289,7 @@ async fn ftp_session<S: AsyncRead + AsyncWrite + Unpin>(
     log: Log,
     tls: Option<TlsAcceptor>,
     pasv_ip: &str,
+    faults: Faults,
 ) {
     let mut s = BufReader::new(stream);
     let mut data: Option<TcpListener> = None;
@@ -292,7 +298,30 @@ async fn ftp_session<S: AsyncRead + AsyncWrite + Unpin>(
     while let Some(cmd) = line(&mut s).await {
         log.lock().unwrap().push(cmd.clone());
         let (verb, arg) = cmd.split_once(' ').unwrap_or((cmd.as_str(), ""));
-        let reply = match verb.to_ascii_uppercase().as_str() {
+        let upper = verb.to_ascii_uppercase();
+        let reply = match upper.as_str() {
+            v if faults.contains(&v) => "550 refused by the test server".to_string(),
+            "PASV" if faults.contains(&"pasv-full") => {
+                // A listener whose accept queue is full: a connect to it hangs until timeout.
+                let socket = tokio::net::TcpSocket::new_v4().unwrap();
+                socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+                let l = socket.listen(0).unwrap();
+                let addr = l.local_addr().unwrap();
+                for _ in 0..4 {
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(100),
+                        tokio::net::TcpStream::connect(addr),
+                    )
+                    .await
+                    .map(|c| c.map(|c| std::mem::forget(c)));
+                }
+                std::mem::forget(l);
+                format!(
+                    "227 Entering Passive Mode (127,0,0,1,{},{})",
+                    addr.port() / 256,
+                    addr.port() % 256
+                )
+            }
             "USER" => "331 password please".to_string(),
             "PASS" if arg == "s3cret" => "230 logged in".into(),
             "PASS" => "530 not logged in".into(),
@@ -337,6 +366,23 @@ async fn ftp_session<S: AsyncRead + AsyncWrite + Unpin>(
                             .await
                             .unwrap();
                         let (conn, _) = l.accept().await.unwrap();
+                        if faults.contains(&"retr-hang") && verb.eq_ignore_ascii_case("RETR") {
+                            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                            return;
+                        }
+                        if let (true, Some(acceptor), true) = (
+                            faults.contains(&"retr-cut") && verb.eq_ignore_ascii_case("RETR"),
+                            &tls,
+                            protect,
+                        ) {
+                            // Half the file, then a close without TLS close_notify: a cut transfer.
+                            let mut conn = acceptor.accept(conn).await.unwrap();
+                            let _ = conn.write_all(&body[..body.len() / 2]).await;
+                            let _ = conn.flush().await;
+                            drop(conn);
+                            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                            return;
+                        }
                         match (&tls, protect) {
                             (Some(acceptor), true) => {
                                 let mut conn = acceptor.accept(conn).await.unwrap();
@@ -349,7 +395,11 @@ async fn ftp_session<S: AsyncRead + AsyncWrite + Unpin>(
                                 let _ = conn.shutdown().await;
                             }
                         }
-                        "226 done".into()
+                        if faults.contains(&"retr-451") && verb.eq_ignore_ascii_case("RETR") {
+                            "451 transfer aborted".into()
+                        } else {
+                            "226 done".into()
+                        }
                     }
                     _ => "550 no such file".into(),
                 }
@@ -390,6 +440,20 @@ async fn ftp_session<S: AsyncRead + AsyncWrite + Unpin>(
 
 /// An FTP server on 127.0.0.1 holding `files`; with `tls`, it answers AUTH TLS.
 async fn ftp_server(files: Files, tls: Option<TlsAcceptor>, pasv_ip: &'static str) -> (u16, Log) {
+    ftp_server_with(files, tls, pasv_ip, &[]).await
+}
+
+/// Faults a test server injects: a verb it refuses (`TYPE`, `NLST`, `RETR`, `DELE`, `SELECT`, ...)
+/// or a named misbehaviour (`hang-greeting`, `bad-greeting`, `retr-hang`, `retr-cut`, ...).
+type Faults = &'static [&'static str];
+
+/// `ftp_server` misbehaving on cue (`Faults`).
+async fn ftp_server_with(
+    files: Files,
+    tls: Option<TlsAcceptor>,
+    pasv_ip: &'static str,
+    faults: Faults,
+) -> (u16, Log) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let log: Log = Arc::default();
@@ -398,6 +462,15 @@ async fn ftp_server(files: Files, tls: Option<TlsAcceptor>, pasv_ip: &'static st
         while let Ok((mut conn, _)) = listener.accept().await {
             let (files, log, tls) = (files.clone(), log.clone(), tls.clone());
             tokio::spawn(async move {
+                if faults.contains(&"hang-greeting") {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    return;
+                }
+                if faults.contains(&"bad-greeting") {
+                    let _ = conn.write_all(b"421 too many users\r\n").await;
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    return;
+                }
                 conn.write_all(b"220 test ftp\r\n").await.unwrap();
                 match tls {
                     Some(acceptor) => {
@@ -417,9 +490,9 @@ async fn ftp_server(files: Files, tls: Option<TlsAcceptor>, pasv_ip: &'static st
                         let Ok(secured) = acceptor.accept(conn).await else {
                             return;
                         };
-                        ftp_session(secured, files, log, Some(acceptor), pasv_ip).await;
+                        ftp_session(secured, files, log, Some(acceptor), pasv_ip, faults).await;
                     }
-                    None => ftp_session(conn, files, log, None, pasv_ip).await,
+                    None => ftp_session(conn, files, log, None, pasv_ip, faults).await,
                 }
             });
         }
@@ -571,6 +644,120 @@ async fn ftps_refuses_an_untrusted_certificate_and_names_a_failed_login() {
     assert!(err.contains("refused"), "{err}");
 }
 
+/// A plain FTP input (the org has `allow_plain_ftp`) against `ftp_server_with(faults)`, with a
+/// one-second timeout so a server that hangs fails the read fast.
+async fn faulty_ftp(
+    faults: Faults,
+    extra: Value,
+) -> (ekiben_io_remote::FtpInput, StreamContext, Files) {
+    let files = exports();
+    let (port, _) = ftp_server_with(files.clone(), None, "127,0,0,1", faults).await;
+    let ctx = context(OrgQuotas {
+        allow_plain_ftp: true,
+        ..loopback()
+    });
+    let mut c = json!({
+        "address": format!("127.0.0.1:{port}"),
+        "tls": "none",
+        "username": "city",
+        "password": "s3cret",
+        "path": "/exports/*.csv",
+        "timeout": "1s",
+    });
+    c.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let input = ekiben_io_remote::FtpInput::from_config(&conf("ftp", c), &ctx).expect("config");
+    (input, ctx, files)
+}
+
+/// Every step of an FTP session that the server refuses, drops or never answers fails the read
+/// with the step and the path named, within the timeout.
+#[tokio::test]
+async fn each_ftp_step_the_server_refuses_or_stalls_fails_the_read_naming_the_step() {
+    for (faults, want) in [
+        (&["hang-greeting"][..], "no greeting within 1s"),
+        (&["bad-greeting"], "greeting: "),
+        (&["TYPE"], "TYPE I: "),
+        (&["NLST"], "NLST /exports: "),
+        (&["pasv-full"], "NLST /exports: "),
+        (&["RETR"], "ftp RETR /exports/a.csv: "),
+        (&["retr-hang"], "ftp RETR /exports/a.csv: no data within 1s"),
+        (&["retr-451"], "451"),
+    ] {
+        let (mut input, ctx, _) = faulty_ftp(faults, json!({})).await;
+        let started = std::time::Instant::now();
+        let err = input
+            .read_batch(&ctx)
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{faults:?} must fail the read"))
+            .to_string();
+        assert!(err.contains(want), "{faults:?}: {err}");
+        assert!(err.contains("ftp "), "{faults:?}: {err}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{faults:?}"
+        );
+    }
+}
+
+/// FTPS: a data connection the server cuts mid-file without TLS close_notify fails the read; the
+/// half file is never given to the pipeline.
+#[tokio::test]
+async fn an_ftps_transfer_cut_mid_file_fails_the_read() {
+    let (pem, acceptor) = tls();
+    let (port, _) = ftp_server_with(exports(), Some(acceptor), "127,0,0,1", &["retr-cut"]).await;
+    let ctx = context(loopback());
+    let config = json!({ "address": format!("localhost:{port}"), "root_cas": pem, "username": "city", "password": "s3cret", "path": "/exports/*.csv", "timeout": "1s" });
+    let mut input =
+        ekiben_io_remote::FtpInput::from_config(&conf("ftp", config), &ctx).expect("config");
+    let err = input
+        .read_batch(&ctx)
+        .await
+        .err()
+        .expect("a cut transfer")
+        .to_string();
+    assert!(err.starts_with("ftp RETR /exports/a.csv: "), "{err}");
+}
+
+/// A file the server will not delete after the ack stays where it was (read again next run, a
+/// duplicate rather than a loss) and the run still ends; a path at the root lists `/`.
+#[tokio::test]
+async fn an_acked_file_the_server_will_not_delete_stays_and_a_root_path_lists_slash() {
+    let (mut input, ctx, files) = faulty_ftp(&["DELE"], json!({ "delete_on_finish": true })).await;
+    let seen = run(&mut input, &ctx, |_| true).await;
+    assert_eq!(seen.len(), 2);
+    assert_eq!(
+        files
+            .lock()
+            .unwrap()
+            .keys()
+            .filter(|k| k.ends_with(".csv"))
+            .count(),
+        2,
+        "the refused deletes leave both files"
+    );
+
+    let (mut input, ctx, files) = faulty_ftp(&[], json!({ "path": "/*.csv" })).await;
+    *files.lock().unwrap() = BTreeMap::from([
+        ("/top.csv".to_string(), b"id\n9\n".to_vec()),
+        ("/top.txt".to_string(), b"not a csv".to_vec()),
+    ]);
+    let seen = run(&mut input, &ctx, |_| true).await;
+    assert_eq!(
+        seen.iter()
+            .map(|s| (s.0.as_str(), s.1.as_slice()))
+            .collect::<Vec<_>>(),
+        vec![("/top.csv", &b"id\n9\n"[..])]
+    );
+    assert_eq!(
+        files.lock().unwrap().len(),
+        2,
+        "keep is the default: nothing removed"
+    );
+}
+
 // ---------------------------------------------------------------- IMAP
 
 fn mail(from: &str, subject: &str, attachments: &[(&str, &[u8])]) -> Vec<u8> {
@@ -611,6 +798,15 @@ mod base64_lite {
 
 /// An IMAPS server whose INBOX holds `mails` by UID; it answers what the input sends and logs it.
 async fn imap_server(mails: BTreeMap<u32, Vec<u8>>, acceptor: TlsAcceptor) -> (u16, Log) {
+    imap_server_with(mails, acceptor, &[]).await
+}
+
+/// `imap_server` misbehaving on cue (`Faults`).
+async fn imap_server_with(
+    mails: BTreeMap<u32, Vec<u8>>,
+    acceptor: TlsAcceptor,
+    faults: Faults,
+) -> (u16, Log) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let log: Log = Arc::default();
@@ -619,10 +815,34 @@ async fn imap_server(mails: BTreeMap<u32, Vec<u8>>, acceptor: TlsAcceptor) -> (u
         while let Ok((conn, _)) = listener.accept().await {
             let (mails, log, acceptor) = (mails.clone(), log.clone(), acceptor.clone());
             tokio::spawn(async move {
+                let hang = || tokio::time::sleep(std::time::Duration::from_secs(10));
+                if faults.contains(&"tls-hang") {
+                    hang().await;
+                    return;
+                }
+                if faults.contains(&"plain") {
+                    let mut conn = conn;
+                    let _ = conn.write_all(b"* OK plain imap, no TLS\r\n").await;
+                    hang().await;
+                    return;
+                }
                 let Ok(tls) = acceptor.accept(conn).await else {
                     return;
                 };
                 let mut s = BufReader::new(tls);
+                if faults.contains(&"no-greeting") {
+                    hang().await;
+                    return;
+                }
+                if faults.contains(&"close") {
+                    let _ = s.get_mut().shutdown().await;
+                    return;
+                }
+                if faults.contains(&"bad-greeting") {
+                    let _ = s.get_mut().write_all(b"\x01\x02 not imap\r\n").await;
+                    hang().await;
+                    return;
+                }
                 s.get_mut()
                     .write_all(b"* OK [CAPABILITY IMAP4rev1 MOVE] test imap ready\r\n")
                     .await
@@ -632,7 +852,26 @@ async fn imap_server(mails: BTreeMap<u32, Vec<u8>>, acceptor: TlsAcceptor) -> (u
                     let (tag, rest) = cmd.split_once(' ').unwrap_or((cmd.as_str(), ""));
                     let upper = rest.to_ascii_uppercase();
                     let mut reply: Vec<u8> = Vec::new();
-                    if upper.starts_with("LOGIN") {
+                    let refused = faults.iter().any(|f| upper.starts_with(f))
+                        || (faults.contains(&"fetch-size") && upper.contains("RFC822.SIZE"))
+                        || (faults.contains(&"fetch-body") && upper.contains("BODY.PEEK"));
+                    if upper.starts_with("LOGIN") && faults.contains(&"login-hang") {
+                        hang().await;
+                        return;
+                    } else if refused && upper.starts_with("UID STORE") {
+                        // A NO to STORE is read as done too: garbage, then the line drops.
+                        let _ = s.get_mut().write_all(b"\x01\x02 not imap\r\n").await;
+                        return;
+                    } else if refused {
+                        // async-imap reads a NO to CAPABILITY, SEARCH or FETCH as an empty
+                        // answer: garbage makes the refusal an error.
+                        let _ = s.get_mut().write_all(b"\x01\x02 not imap\r\n").await;
+                        hang().await;
+                        return;
+                    } else if upper.starts_with("CAPABILITY") && faults.contains(&"no-move") {
+                        reply
+                            .extend(format!("* CAPABILITY IMAP4rev1\r\n{tag} OK done\r\n").bytes());
+                    } else if upper.starts_with("LOGIN") {
                         if rest.contains("\"s3cret\"") {
                             reply.extend(format!("{tag} OK LOGIN completed\r\n").bytes());
                         } else {
@@ -664,13 +903,17 @@ async fn imap_server(mails: BTreeMap<u32, Vec<u8>>, acceptor: TlsAcceptor) -> (u
                             .unwrap_or(0);
                         if let Some(body) = mails.get(&uid) {
                             if upper.contains("RFC822.SIZE") {
+                                let size = if faults.contains(&"big") {
+                                    999_999_999
+                                } else {
+                                    body.len()
+                                };
                                 reply.extend(
-                                    format!(
-                                        "* {uid} FETCH (UID {uid} RFC822.SIZE {})\r\n",
-                                        body.len()
-                                    )
-                                    .bytes(),
+                                    format!("* {uid} FETCH (UID {uid} RFC822.SIZE {size})\r\n")
+                                        .bytes(),
                                 );
+                            } else if faults.contains(&"nobody") {
+                                reply.extend(format!("* {uid} FETCH (UID {uid})\r\n").bytes());
                             } else {
                                 reply.extend(
                                     format!(
@@ -856,4 +1099,154 @@ async fn imap_moves_an_acked_mail_and_names_a_failed_login() {
             "{bad}"
         );
     }
+}
+
+/// An IMAP input for `imap_server_with(faults)` with a one-second timeout.
+async fn faulty_imap(
+    mails: BTreeMap<u32, Vec<u8>>,
+    faults: Faults,
+    extra: Value,
+) -> (ekiben_io_remote::ImapInput, StreamContext, Log) {
+    let (pem, acceptor) = tls();
+    let (port, log) = imap_server_with(mails, acceptor, faults).await;
+    let ctx = context(loopback());
+    let mut c = json!({
+        "address": format!("localhost:{port}"),
+        "root_cas": pem,
+        "username": "city",
+        "password": "s3cret",
+        "timeout": "1s",
+    });
+    c.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let input = ekiben_io_remote::ImapInput::from_config(&conf("imap", c), &ctx).expect("config");
+    (input, ctx, log)
+}
+
+/// Every step of an IMAP session that the server refuses, drops or never answers fails the read
+/// with the step named, within the timeout; after_ack: move needs a server with MOVE.
+#[tokio::test]
+async fn each_imap_step_the_server_refuses_or_stalls_fails_the_read_naming_the_step() {
+    let moving = json!({ "after_ack": "move", "move_to": "INBOX/Done" });
+    for (faults, extra, want) in [
+        (
+            &["tls-hang"][..],
+            json!({}),
+            "TLS: no handshake within the timeout",
+        ),
+        (&["plain"], json!({}), "TLS: "),
+        (
+            &["no-greeting"],
+            json!({}),
+            "greeting: none within the timeout",
+        ),
+        (
+            &["close"],
+            json!({}),
+            "greeting: the server closed the connection",
+        ),
+        (&["bad-greeting"], json!({}), "greeting: "),
+        (
+            &["login-hang"],
+            json!({}),
+            "login: no answer within the timeout",
+        ),
+        (&["CAPABILITY"], moving.clone(), "CAPABILITY: "),
+        (
+            &["no-move"],
+            moving.clone(),
+            "the server has no MOVE (RFC 6851)",
+        ),
+        (&["SELECT"], json!({}), "SELECT INBOX: "),
+        (&["UID SEARCH"], json!({}), "SEARCH: "),
+        (&["fetch-size"], json!({}), "FETCH RFC822.SIZE: "),
+        (&["fetch-body"], json!({}), "FETCH BODY.PEEK[]: "),
+    ] {
+        let (mut input, ctx, _) = faulty_imap(inbox(), faults, extra).await;
+        let started = std::time::Instant::now();
+        let err = input
+            .read_batch(&ctx)
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("{faults:?} must fail the read"))
+            .to_string();
+        assert!(err.contains(want), "{faults:?}: {err}");
+        assert!(
+            err.starts_with("imap localhost:") || err.contains("imap localhost:"),
+            "{faults:?}: {err}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{faults:?}"
+        );
+    }
+}
+
+/// Mails the input cannot use are left unread and the run goes on: one larger than the cap
+/// allows, one the server sends no body for, one that does not parse, an attachment with no
+/// name or over the cap. A mail with an attachment still unacked is not flagged, and a flag the
+/// server refuses leaves the mail unread without failing the run.
+#[tokio::test]
+async fn unusable_mails_are_left_unread_and_a_refused_flag_does_not_fail_the_run() {
+    for faults in [&["big"][..], &["nobody"]] {
+        let (mut input, ctx, log) = faulty_imap(inbox(), faults, json!({})).await;
+        assert!(
+            run(&mut input, &ctx, |_| true).await.is_empty(),
+            "{faults:?}"
+        );
+        assert!(
+            !log.lock().unwrap().iter().any(|c| c.contains("UID STORE")),
+            "{faults:?}"
+        );
+    }
+
+    let nameless = b"From: <exports@stat.example.org>\r\nSubject: s\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"b\"\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nbody\r\n--b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment\r\nContent-Transfer-Encoding: base64\r\n\r\nUEs=\r\n--b--\r\n".to_vec();
+    let mails = BTreeMap::from([
+        (
+            1,
+            mail(
+                "exports@stat.example.org",
+                "Daily export",
+                &[("big.xlsx", b"PK-larger-than-cap"), ("ok.xlsx", b"PK")],
+            ),
+        ),
+        (2, Vec::new()),
+        (3, nameless),
+        (
+            4,
+            mail(
+                "exports@stat.example.org",
+                "Daily export",
+                &[("a.xlsx", b"PK"), ("b.csv", b"id")],
+            ),
+        ),
+    ]);
+    let (mut input, ctx, log) = faulty_imap(mails, &[], json!({ "max_attachment_bytes": 4 })).await;
+    let seen = run(&mut input, &ctx, |key| !key.contains("b.csv")).await;
+    assert_eq!(
+        seen.iter().map(|s| s.0.as_str()).collect::<Vec<_>>(),
+        vec!["ok.xlsx", "a.xlsx", "b.csv"]
+    );
+    let stores: Vec<_> = log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c.contains("UID STORE"))
+        .cloned()
+        .collect();
+    assert_eq!(
+        stores.len(),
+        1,
+        "mail 4 has an unacked attachment: {stores:?}"
+    );
+    assert!(stores[0].contains("UID STORE 1 "), "{stores:?}");
+
+    let one = BTreeMap::from([(2, inbox().remove(&2).unwrap())]);
+    let (mut input, ctx, log) = faulty_imap(one, &["UID STORE"], json!({})).await;
+    assert_eq!(run(&mut input, &ctx, |_| true).await.len(), 1);
+    assert!(
+        log.lock().unwrap().iter().any(|c| c.contains("UID STORE")),
+        "the refused flag was tried"
+    );
 }

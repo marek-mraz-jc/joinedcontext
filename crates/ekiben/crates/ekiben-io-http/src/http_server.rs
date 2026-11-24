@@ -1404,3 +1404,20 @@ fn build_sync_response(conf: &HttpServerConf, batches: Vec<Batch>) -> Response {
     *resp.headers_mut() = headers;
     resp
 }
+
+#[cfg(feature = "fuzzing")]
+pub(crate) fn fuzz_multipart(content_type: &str, body: &[u8]) -> Option<usize> {
+    let (_, params) = parse_media_type(content_type).ok()?;
+    parse_multipart(body, params.get("boundary")?)
+        .ok()
+        .map(|parts| parts.len())
+}
+
+#[cfg(feature = "fuzzing")]
+pub(crate) fn fuzz_path(pattern: &str, path: &str) -> Option<usize> {
+    let pattern = PathPattern::parse(pattern).ok()?;
+    let _ = pattern.as_str();
+    pattern
+        .matches(&percent_decode(path))
+        .map(|vars| vars.len())
+}
