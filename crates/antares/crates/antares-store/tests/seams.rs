@@ -246,6 +246,10 @@ struct Recorder {
 }
 #[async_trait::async_trait]
 impl TemporalDriver for Recorder {
+    // a count of its own, so the defaults built on it show they read it
+    async fn attr_instance_count(&self, _t: &TenantId) -> Result<u64, NgsiError> {
+        Ok(7)
+    }
     async fn temporal_append(
         &self,
         _t: &TenantId,
@@ -784,4 +788,275 @@ async fn no_temporal_answers_every_bookkeeping_call_benignly() {
         .await
         .expect_err("no history to read");
     assert_eq!(e.kind(), "OperationNotSupported");
+}
+
+/// A Tenant holds at most `count` @context documents of at most `bytes` together: the count is
+/// judged first, and a put that reaches the byte cap exactly still fits.
+#[test]
+fn context_caps_admit_up_to_both_limits() {
+    let caps = ContextCaps {
+        count: 2,
+        bytes: 100,
+    };
+    assert_eq!(caps.admit(2, 0, 0), ContextPut::PastCount);
+    assert_eq!(caps.admit(3, 200, 1), ContextPut::PastCount);
+    assert_eq!(caps.admit(1, 0, 0), ContextPut::Stored);
+    assert_eq!(caps.admit(1, 60, 40), ContextPut::Stored);
+    assert_eq!(caps.admit(1, 60, 41), ContextPut::PastBytes);
+    assert_eq!(caps.admit(1, u64::MAX, 1), ContextPut::PastBytes);
+}
+
+/// A row is charged its `bytes` member, else the length of the document it holds, else nothing.
+#[test]
+fn a_context_row_is_charged_its_bytes() {
+    assert_eq!(
+        context_row_bytes(&serde_json::json!({"bytes": 7, "body": {"@context": "x"}})),
+        7
+    );
+    assert_eq!(
+        context_row_bytes(&serde_json::json!({"body": {"@context": {"a": "b"}}})),
+        9
+    );
+    assert_eq!(context_row_bytes(&serde_json::json!({})), 0);
+}
+
+/// Only the shared-database modes back several instances, and a mode prints its own name.
+#[test]
+fn store_modes_name_themselves_and_only_databases_are_shared() {
+    for (mode, shared) in [
+        (StoreMode::Memory, false),
+        (StoreMode::File, false),
+        (StoreMode::Postgres, true),
+        (StoreMode::Timescale, true),
+    ] {
+        assert_eq!(mode.is_pg(), shared, "{mode}");
+        assert_eq!(mode.to_string(), mode.as_str());
+    }
+}
+
+/// ADR-0021: a Cached copy belongs to nobody and every call reaches it; a hosted row belongs
+/// to its owner, a row without one to the default Tenant, and no other Tenant reaches it.
+#[test]
+fn a_context_row_belongs_to_its_owner_and_a_cached_copy_to_nobody() {
+    let city = TenantId::new("city").expect("tenant");
+    let other = TenantId::new("other").expect("tenant");
+    let cached = serde_json::json!({"kind": "Cached"});
+    let hosted = serde_json::json!({"kind": "Hosted", "owner": "city"});
+    let legacy = serde_json::json!({"kind": "Hosted"});
+    assert_eq!(context_row_owner(&cached), None);
+    assert_eq!(context_row_owner(&hosted), Some("city"));
+    assert_eq!(context_row_owner(&legacy), Some(TenantId::DEFAULT));
+    assert!(context_row_visible(&cached, None));
+    assert!(context_row_visible(&cached, Some(&other)));
+    assert!(context_row_visible(&hosted, Some(&city)));
+    assert!(!context_row_visible(&hosted, Some(&other)));
+    assert!(!context_row_visible(&hosted, None));
+    // a Tenant's counters on a Cached row, as a put stores them
+    let row = serde_json::json!({"kind": "Cached", "usage": {"city": {"numberOfHits": 4, "lastUsage": "t"}}});
+    assert_eq!(
+        context_row_used(&row, Some(&city)),
+        Some(&serde_json::json!({"numberOfHits": 4, "lastUsage": "t"}))
+    );
+    assert_eq!(context_row_used(&row, Some(&other)), None);
+    assert_eq!(context_row_used(&row, None), None);
+    let view = context_row_view(
+        row.clone(),
+        Some(&city),
+        context_row_used(&row, Some(&city)),
+    )
+    .expect("used");
+    assert_eq!(
+        context_row_usage(&view),
+        serde_json::json!({"numberOfHits": 4, "lastUsage": "t"})
+    );
+    assert_eq!(
+        context_row_usage(&serde_json::json!({})),
+        serde_json::json!({"numberOfHits": 0, "lastUsage": null})
+    );
+}
+
+/// The remaining defaults of a driver that overrides nothing: never wedged, no commit queue, no
+/// type index, no id remap, no attribute pairs; and the delivery and forward stamps through
+/// `mutate`.
+#[tokio::test]
+async fn the_stamping_and_index_defaults_answer_as_documented() {
+    let t = tenant();
+    let d = OneDoc(std::sync::Mutex::new(None));
+    assert!(!d.wedged().await);
+    assert_eq!(d.commit_queue(), None);
+    assert_eq!(d.entity_type_names(&t).await.expect("types"), None);
+    assert_eq!(d.remapped_id(&t, "urn:a").await.expect("remap"), None);
+    assert_eq!(d.entity_attr_pairs(&t).await.expect("pairs"), None);
+    assert!(d
+        .record_delivery(&t, Kind::Subscription, "s", "t1")
+        .await
+        .expect("absent")
+        .is_none());
+    d.create(
+        &t,
+        Kind::Subscription,
+        "s",
+        serde_json::json!({"id": "s", "status": "failed", "notification": {"timesSent": 1, "lastSuccess": "t0"}}),
+    )
+    .await
+    .expect("create");
+    let delivered = d
+        .record_delivery(&t, Kind::Subscription, "s", "t1")
+        .await
+        .expect("stamp")
+        .expect("present");
+    assert_eq!(delivered.prev_success, Some(Value::from("t0")));
+    assert!(delivered.doc.get("status").is_none(), "{}", delivered.doc);
+    let n = &delivered.doc["notification"];
+    assert_eq!(
+        (n["timesSent"].clone(), n["lastSuccess"].clone()),
+        (2.into(), "t1".into())
+    );
+    assert_eq!(
+        (n["lastNotification"].clone(), n["status"].clone()),
+        ("t1".into(), "ok".into())
+    );
+    // three attempts of one id book three sends; an empty list books nothing
+    let booked = d
+        .record_deliveries(&t, Kind::Subscription, &[("s", "t2", 3)])
+        .await
+        .expect("stamps");
+    assert_eq!(booked.len(), 1);
+    let doc = &booked[0].as_ref().expect("present").doc;
+    assert_eq!(doc["notification"]["timesSent"], 5);
+    assert!(d
+        .record_deliveries(&t, Kind::Subscription, &[])
+        .await
+        .expect("none")
+        .is_empty());
+
+    let r = OneDoc(std::sync::Mutex::new(None));
+    assert!(r
+        .record_forward(&t, "r", "t1", true)
+        .await
+        .expect("absent")
+        .is_none());
+    r.create(&t, Kind::Registration, "r", serde_json::json!({"id": "r"}))
+        .await
+        .expect("create");
+    let ok = r
+        .record_forward(&t, "r", "t1", true)
+        .await
+        .expect("ok")
+        .expect("present");
+    assert_eq!(
+        (ok["timesSent"].clone(), ok["status"].clone()),
+        (1.into(), "ok".into())
+    );
+    assert_eq!(ok["lastSuccess"], "t1");
+    assert!(ok.get("timesFailed").is_none(), "{ok}");
+    let failed = r
+        .record_forward(&t, "r", "t2", false)
+        .await
+        .expect("ok")
+        .expect("present");
+    assert_eq!(
+        (failed["timesSent"].clone(), failed["timesFailed"].clone()),
+        (2.into(), 1.into())
+    );
+    assert_eq!(
+        (failed["lastFailure"].clone(), failed["status"].clone()),
+        ("t2".into(), "failed".into())
+    );
+    assert_eq!(
+        failed["lastSuccess"], "t1",
+        "a failure keeps the last success"
+    );
+}
+
+/// A temporal driver records history unless it says otherwise; without a store, the boxed
+/// mutate reaches no document.
+#[tokio::test]
+async fn a_temporal_driver_is_supported_unless_it_keeps_none() {
+    let t = tenant();
+    let recorder = Recorder::default();
+    assert!(recorder.supported());
+    // the bounded count and the usage read the driver's own count when it keeps no other
+    let bound = std::time::Duration::from_millis(10);
+    assert_eq!(
+        recorder
+            .attr_instance_count_within(&t, bound)
+            .await
+            .expect("within"),
+        7
+    );
+    assert_eq!(
+        recorder
+            .attr_instance_usage(&t, bound)
+            .await
+            .expect("usage"),
+        (7, 0)
+    );
+    let none = NoTemporal
+        .mutate_boxed(&t, "urn:a", Box::new(|_| Ok(())))
+        .await
+        .expect("no store");
+    assert_eq!(none, None);
+}
+
+/// 4.5.6: a scope change appends to a held scope instance array, and replaces a scope that is
+/// not one (plain strings) with a fresh instance array.
+#[tokio::test]
+async fn a_scope_change_appends_to_instances_and_replaces_anything_else() {
+    let t = tenant();
+    let mut scope = ev(TemporalOp::ScopeChanged, "urn:a", "scope", 0);
+    scope.instance = serde_json::json!({"type": "Property", "value": "/new"});
+    let d = Recorder::default();
+    d.create(
+        &t,
+        "urn:a",
+        serde_json::json!({"id": "urn:a", "scope": [{"type": "Property", "value": "/old"}]}),
+    )
+    .await
+    .expect("create");
+    d.event_list(std::slice::from_ref(&scope))
+        .await
+        .expect("drain");
+    let doc = d.get(&t, "urn:a").await.expect("get").expect("doc");
+    assert_eq!(doc["scope"].as_array().map(Vec::len), Some(2), "{doc}");
+    assert_eq!(doc["scope"][1]["value"], "/new");
+
+    let d = Recorder::default();
+    d.create(
+        &t,
+        "urn:a",
+        serde_json::json!({"id": "urn:a", "scope": ["/a", "/b"]}),
+    )
+    .await
+    .expect("create");
+    d.event_list(&[scope]).await.expect("drain");
+    let doc = d.get(&t, "urn:a").await.expect("get").expect("doc");
+    assert_eq!(
+        doc["scope"],
+        serde_json::json!([{"type": "Property", "value": "/new"}]),
+        "{doc}"
+    );
+}
+
+/// A store without provenance takes `@provenance` out of every instance it keeps, and only that.
+#[test]
+fn provenance_leaves_every_instance() {
+    let mut instance = serde_json::json!({"value": 1, "@provenance": {"actor": "a"}});
+    assert_eq!(
+        take_provenance(&mut instance),
+        Some(serde_json::json!({"actor": "a"}))
+    );
+    assert_eq!(instance, serde_json::json!({"value": 1}));
+    assert_eq!(take_provenance(&mut instance), None);
+    assert_eq!(take_provenance(&mut Value::from(3)), None);
+    let mut doc = serde_json::json!({
+        "id": "urn:a",
+        "speed": [{"value": 1, "@provenance": {"actor": "a"}}, {"value": 2}],
+        "load": [{"value": 3, "@provenance": {}}],
+    });
+    strip_provenance(&mut doc);
+    assert_eq!(
+        doc,
+        serde_json::json!({"id": "urn:a", "speed": [{"value": 1}, {"value": 2}], "load": [{"value": 3}]})
+    );
 }
