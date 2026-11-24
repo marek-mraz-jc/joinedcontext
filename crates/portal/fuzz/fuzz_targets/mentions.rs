@@ -15,7 +15,10 @@ fuzz_target!(|data: &[u8]| {
         assert!(!mention.is_empty() && mention.len() <= 256, "{mention:?}");
         assert!(!mention.starts_with('@'), "{mention:?}");
         assert_eq!(mention, &mention.to_ascii_lowercase());
-        assert!(lower.contains(&format!("@{mention}")), "{mention:?} in {text:?}");
+        assert!(
+            lower.contains(&format!("@{mention}")),
+            "{mention:?} in {text:?}"
+        );
         assert!(!found[..i].contains(mention), "{mention:?} twice");
     }
 });

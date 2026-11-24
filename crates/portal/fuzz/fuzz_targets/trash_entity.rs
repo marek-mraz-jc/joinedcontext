@@ -9,7 +9,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     if let Ok((urn, kind)) = urn_and_type(&entity) {
-        assert!(urn.starts_with(&format!("urn:ngsi-ld:{kind}:")), "{urn:?} {kind:?}");
+        assert!(
+            urn.starts_with(&format!("urn:ngsi-ld:{kind}:")),
+            "{urn:?} {kind:?}"
+        );
         assert!(urn.len() <= 1024 && !urn.chars().any(char::is_whitespace));
         assert!(kind.chars().next().is_some_and(|c| c.is_ascii_alphabetic()));
     }

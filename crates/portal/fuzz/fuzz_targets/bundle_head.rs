@@ -9,6 +9,8 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(head.len(), 40);
         assert!(head.bytes().all(|b| b.is_ascii_hexdigit()));
         assert!(data.starts_with(b"# v2 git bundle"));
-        assert!(data.windows(head.len() + 5).any(|w| w == format!("{head} HEAD").as_bytes()));
+        assert!(data
+            .windows(head.len() + 5)
+            .any(|w| w == format!("{head} HEAD").as_bytes()));
     }
 });

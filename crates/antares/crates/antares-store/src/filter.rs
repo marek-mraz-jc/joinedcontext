@@ -1022,6 +1022,8 @@ mod id_literal_tests {
             assert!(!written.contains(spans), "{pattern}: {written}");
         }
         assert_eq!(sql("^[5a]$").as_deref(), Some("^^[5a]$$"));
+        // fuzz store_id_pattern (T-7595): the empty rule selects only the empty id
+        assert_eq!(sql("").as_deref(), Some("^$"));
         // every bounded repetition form a rule writes
         assert_eq!(
             sql("^urn:x:a?b{2,}c{2,5}d*$").as_deref(),

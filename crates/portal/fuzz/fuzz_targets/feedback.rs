@@ -10,11 +10,19 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let scrubbed = scrub(text);
-    assert_eq!(scrub(&scrubbed), scrubbed, "scrubbing twice changes nothing");
+    assert_eq!(
+        scrub(&scrubbed),
+        scrubbed,
+        "scrubbing twice changes nothing"
+    );
     if let Ok(page) = page_of(text) {
         assert!(page.starts_with('/'), "{page:?}");
         assert!(!page.contains(['?', '#', '@', ' ', '\n']), "{page:?}");
-        assert_eq!(page_of(&page).ok().as_deref(), Some(page.as_str()), "a kept page stays");
+        assert_eq!(
+            page_of(&page).ok().as_deref(),
+            Some(page.as_str()),
+            "a kept page stays"
+        );
     }
     if let Ok(bytes) = screenshot_of(text) {
         assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));

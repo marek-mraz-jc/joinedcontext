@@ -10,7 +10,10 @@ fuzz_target!(|data: &[u8]| {
     };
     if let Ok(query) = query_of(&request) {
         assert!(query.starts_with("type="), "{query:?}");
-        assert!(query.contains("&limit=") && query.contains("&offset="), "{query:?}");
+        assert!(
+            query.contains("&limit=") && query.contains("&offset="),
+            "{query:?}"
+        );
         assert!(!query.contains([' ', '#', '\n']), "{query:?}");
         assert!(request.id.len() <= 100);
     }
