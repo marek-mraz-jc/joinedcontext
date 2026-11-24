@@ -1,0 +1,11 @@
+{# dataset page section `explorer` (T-7743): included once per place the resolved display lists it #}
+{% if let Some(exp) = explorer %}
+<section class="jc-preview jc-explorer sdk-datagrid" data-grid-config="{{ exp.grid_config }}" aria-labelledby="jc-explorer-title">
+  <div class="jc-preview-head">
+    <h2 id="jc-explorer-title">{% if let Some(h) = sec.heading %}{{ h }}{% else %}{{ exp.title }}{% endif %}</h2>
+  </div>
+  <p class="jc-lead">{{ exp.lead }}</p>
+  <iframe class="jc-viz-frame jc-explorer-frame" title="{{ exp.title }}" src="{{ exp.src }}" data-jc-viz="{{ exp.origin }}"
+          referrerpolicy="no-referrer" allow="clipboard-write" sandbox="{{ exp.sandbox }}"></iframe>
+</section>
+{% endif %}

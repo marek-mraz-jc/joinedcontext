@@ -2889,6 +2889,23 @@
         "wide_layout.test.tsx"
       ]
     },
+    "src/pages/portals/PortalAppearance.tsx": {
+      "controls": {
+        "Button": 3
+      },
+      "tests": [
+        "portal_appearance.test.tsx"
+      ]
+    },
+    "src/pages/portals/PortalDisplay.tsx": {
+      "controls": {
+        "Button": 6,
+        "Checkbox": 1
+      },
+      "tests": [
+        "portal_display.test.tsx"
+      ]
+    },
     "src/pages/portals/PortalLayout.tsx": {
       "controls": {
         "Button": 17,

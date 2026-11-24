@@ -9,6 +9,10 @@
       "class": "FREE",
       "reason": "a hex colour the person types for the open data portal (primary, accent, background, text), e.g. #0b5394; jc-core refuses a non-hex value and a text or primary colour below WCAG AA on the background (422 naming spec.appearance.colours)"
     },
+    "src/pages/portals/PortalAppearance.tsx :: portals.appearance.field.${field.path}": {
+      "class": "FREE",
+      "reason": "a Portal's own name, contact e-mail, licence or hex colour typed over the inherited one, e.g. #0b5394; jc-core refuses a non-hex colour, a pair below WCAG AA and an e-mail that is no address (422 naming the spec.appearance field)"
+    },
     "src/pages/mcp/AiConnectorsPage.tsx :: Find a project, space or Endpoint": {
       "class": "FREE",
       "reason": "a search over the tick tree below it: it narrows the list and submits nothing"

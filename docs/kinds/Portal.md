@@ -33,13 +33,19 @@ Desired specification of a `Portal` (ODP-08).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
+| `bodyFont` | [AppearanceFont](#appearancefont) | no | The body text's typeface over `font`, from the same fixed set, e.g. `system`. |
+| `buttonStyle` | [ButtonStyle](#buttonstyle) | no | How buttons look: `filled` (the default) or `outline`. |
+| `cardShadow` | [CardShadow](#cardshadow) | no | Whether cards carry a shadow: `soft` (the default) or `none`. |
 | `city` | string | no | The city or region the Organization serves, e.g. `Banská Bystrica`. |
 | `colours` | [AppearanceColours](#appearancecolours) | no | The colour tokens, each a hex colour such as `#0b5394`. |
 | `contactEmail` | string | no | The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`. |
 | `datasetList` | [DatasetListLayout](#datasetlistlayout) | no | How the open data portal lists datasets: `cards` (the default) or a compact `table`. |
+| `display` | [AppearanceDisplay](#appearancedisplay) | no | Which parts of the open data portal's dataset and dataset list pages show, in which order and under which heading (T-7743); a page left out shows the level above's. |
 | `faviconSvg` | string | no | The favicon as an SVG document of at most 64 KiB, under the same rules as the logo. |
 | `font` | [AppearanceFont](#appearancefont) | no | The open data portal's typeface, one of a fixed set of system font stacks, so no font is fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410). |
+| `fontSize` | integer (uint8) | no | The base text size in pixels, 14 to 18, e.g. `16`. |
 | `footerLinks` | list of [AppearanceLink](#appearancelink) | no | Links the open data portal's footer adds after its own, under the same rules. |
+| `headingFont` | [AppearanceFont](#appearancefont) | no | The headings' typeface over `font`, from the same fixed set, e.g. `serif` (T-7744). |
 | `hero` | [AppearanceHero](#appearancehero) | no | The open data portal's home hero: its title and an introduction in Markdown. |
 | `homeWidgets` | list of string | no | Dashboards the Organization's Portal home page shows, each `project/name` of one of its projects, e.g. `doprava/prehlad`; a viewer sees only those they may read (T-6779). |
 | `instanceName` | string | no | Full name on page titles and the login page, e.g. `Mesto Banská Bystrica`. |
@@ -51,6 +57,7 @@ Desired specification of a `Portal` (ODP-08).
 | `publisher` | string | no | The legal publisher named in the footer and the open data portal, e.g. `Mesto Banská Bystrica`. |
 | `radius` | integer (uint8) | no | The corner radius of cards, buttons and fields in pixels, 0 to 24, e.g. `8`. |
 | `shortName` | string | no | Short name on sidebars and tabs, e.g. `BB`. |
+| `width` | [ContentWidth](#contentwidth) | no | How wide the content runs: `narrow`, `normal` (the default) or `wide`. |
 
 ## PortalPage
 
@@ -101,6 +108,24 @@ One source of a portal (ODP-10). No source carries a credential in this version.
 | `type` | [PortalSourceType](#portalsourcetype) | yes | The source's type, e.g. `dcat-ap`. |
 | `url` | string | no | A harvested catalogue's address, `https://` only. |
 
+## AppearanceFont
+
+`spec.appearance.font`: a system font stack, never a web font (T-7410).
+
+Type: one of `"system"`, `"humanist"`, `"serif"`, `"mono"`
+
+## ButtonStyle
+
+`spec.appearance.buttonStyle` (T-7744).
+
+Type: one of `"filled"`, `"outline"`
+
+## CardShadow
+
+`spec.appearance.cardShadow` (T-7744).
+
+Type: one of `"none"`, `"soft"`
+
 ## AppearanceColours
 
 `spec.appearance.colours`: each one a hex colour, `#rgb` or `#rrggbb`.
@@ -109,6 +134,11 @@ One source of a portal (ODP-10). No source carries a credential in this version.
 |---|---|---|---|
 | `accent` | string | no | Highlight colour, e.g. `#f59e0b`. |
 | `background` | string | no | Page background, e.g. `#ffffff`. |
+| `footerBackground` | string | no | The page footer, six hex digits after a hash, such as 0f172a. |
+| `footerText` | string | no | Text and links in the footer, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff. |
+| `headerBackground` | string | no | The open data portal's header bar, six hex digits after a hash, such as 0b5394. |
+| `headerText` | string | no | Text and links in the header bar, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff. |
+| `link` | string | no | Links in the page, at least 4.5:1 on the background, six hex digits after a hash, such as 1d4ed8 (T-7744). |
 | `primary` | string | no | Primary action colour, e.g. `#0b5394`. |
 | `secondary` | string | no | Secondary colour for links and focus, e.g. `#0f766e`. |
 | `text` | string | no | Body text, e.g. `#0f172a`. |
@@ -119,11 +149,14 @@ One source of a portal (ODP-10). No source carries a credential in this version.
 
 Type: one of `"cards"`, `"table"`
 
-## AppearanceFont
+## AppearanceDisplay
 
-`spec.appearance.font`: a system font stack, never a web font (T-7410).
+`spec.appearance.display` (T-7743): data only, every name one of a fixed list.
 
-Type: one of `"system"`, `"humanist"`, `"serif"`, `"mono"`
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `dataset` | [DatasetDisplay](#datasetdisplay) | no | The dataset page. |
+| `datasetList` | [DatasetListDisplay](#datasetlistdisplay) | no | The dataset list. |
 
 ## AppearanceLink
 
@@ -153,6 +186,12 @@ Type: one of `"system"`, `"humanist"`, `"serif"`, `"mono"`
 | `markdown` | string | yes | The page in Markdown, its first `# heading` the title, at most 16 KiB, e.g. `# Podpora\n\nNapíšte nám na opendata@mesto.sk.`; raw HTML shows as text. |
 | `page` | string | yes | The page: `connector`, `privacy`, `terms`, `support` or `accessibility`. |
 
+## ContentWidth
+
+`spec.appearance.width`: how wide the open data portal's content runs (T-7744).
+
+Type: one of `"narrow"`, `"normal"`, `"wide"`
+
 ## PortalRow
 
 One row of a page: one to three blocks side by side, stacked on a phone.
@@ -175,6 +214,23 @@ The most a harvest run of a source reads before it fails and changes nothing (OD
 Where a [`PortalSource`] takes its datasets from (ODP-10).
 
 Type: one of `"endpoints"`, `"dcat-ap"`, `"ckan-action"`, `"nkod-sparql"`, `"arcgis-hub"`, `"arcgis-rest"`, `"ogc-records"`
+
+## DatasetDisplay
+
+`spec.appearance.display.dataset`: each list left empty shows the level above's.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `about` | list of string | no | The about table's rows in order, each at most once; a row left out is hidden. A DCAT field name (`publisher`, `license`, `rights`, `source`, `keyword`, `accrualPeriodicity`, `issued`, `modified`, `nextUpdate`, `spatial`, `temporal`, `contactPoint`, `identifier`, `conformsTo`) or a dataset extra as `extras.<key>`, e.g. `[license, publisher, modified]`. |
+| `sections` | list of [DisplaySection](#displaysection) | no | The sections that show, in order, each at most once; a section left out is hidden. One of `publisher`, `subscribe`, `explorer`, `map`, `visualizations`, `dashboards`, `about`, `live`, `mcp`, `resources`, `additional-info`, `shacl`, e.g. `[{name: about}, {name: resources}]`. |
+
+## DatasetListDisplay
+
+`spec.appearance.display.datasetList`.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `fields` | list of string | no | What each dataset shows after its title, in order, as a table column or a card line: `notes`, `format`, `publisher`, `modified`, e.g. `[format, modified]`; empty shows the level above's. |
 
 ## PortalBlock
 
@@ -267,6 +323,15 @@ Files of the portal's store to download.
 |---|---|---|---|
 | `files` | list of string | yes | One to 12 files of the portal, each `/files/{sha256}/{name}`. |
 | `title` | map of string | no | The heading per language. |
+
+## DisplaySection
+
+`spec.appearance.display.dataset.sections[]`.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `heading` | map of string | no | Its heading per language in place of the built-in one, plain text, e.g. `{sk: O dátach, en: About the data}`; a Portal's languages are those of `spec.languages`. |
+| `name` | string | yes | The section, e.g. `about`. |
 
 ## PortalNumber
 

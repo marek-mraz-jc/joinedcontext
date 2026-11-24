@@ -1,0 +1,26 @@
+{# dataset page section `mcp` (T-7743): included once per place the resolved display lists it #}
+{% if let Some(m) = mcp %}
+{# closed by default (owner 2026-11-11, T-6745): the setup steps are for the few who connect an assistant #}
+<details class="jc-live jc-mcp">
+  <summary>
+    {% include "jc/icons/chevron-right.svg" %}
+    <h2 id="jc-mcp-title">{% if let Some(h) = sec.heading %}{{ h }}{% else %}{{ labels.mcp }}{% endif %}</h2>
+    <p class="jc-mcp-lead">{{ labels.mcp_lead }}</p>
+  </summary>
+  <div class="jc-mcp-body">
+    <div>
+      <div class="jc-code">
+        <div class="jc-code-head"><span id="jc-mcp-url-label">{{ labels.mcp_url }}</span><button type="button" class="jc-code-copy" data-jc-copy="jc-mcp-url" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}" aria-label="{{ labels.copy }}: {{ labels.mcp_url }}"><span class="jc-code-copy-label" aria-hidden="true">{{ labels.copy }}</span></button></div>
+        <p id="jc-mcp-url" class="jc-code-url" aria-labelledby="jc-mcp-url-label">{{ m.url_wbr|safe }}</p>
+      </div>
+      {# T-7030: the setup steps live once, on /connector; here only the address and the way there #}
+      <p class="jc-mcp-links">
+        <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#claude">Claude</a>
+        <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#chatgpt">ChatGPT</a>
+        <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#grok">Grok</a>
+        <a class="btn btn-default" href="{{ chrome.lang_prefix }}/connector#other">{{ labels.any_client }}</a>
+      </p>
+    </div>
+  </div>
+</details>
+{% endif %}
