@@ -790,6 +790,15 @@ mod tests {
     }
 
     #[test]
+    fn a_block_that_is_no_yaml_map_does_not_parse() {
+        let err = parse("[").expect_err("no catalogue").to_string();
+        assert!(
+            err.starts_with("invalid spec.catalog `") && err.ends_with("`: does not parse"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn a_full_block_parses_and_renders_the_authority_iris() {
         let catalog = parse(
             "publisher: { name: { en: City of Helsinki }, uri: https://www.hel.fi/ }\n\

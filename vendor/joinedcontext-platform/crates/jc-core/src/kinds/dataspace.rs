@@ -777,4 +777,47 @@ mod edge_tests {
         spec.state = AgreementState::Requested;
         assert!(!spec.is_active(mid));
     }
+
+    fn provider(offer_ref: Ref) -> DataAgreementSpec {
+        DataAgreementSpec {
+            role: AgreementRole::Provider,
+            offer_ref: Some(offer_ref),
+            remote_participant: Did::new("did:web:remote.fi").expect("did"),
+            agreement_id: "agree-1".into(),
+            state: AgreementState::Requested,
+            validity: Validity {
+                from: None,
+                to: None,
+            },
+            token_secret_ref: None,
+            constraints: AgreementConstraints::default(),
+        }
+    }
+
+    #[test]
+    fn a_provider_naming_its_offer_without_a_kind_or_validity_is_valid() {
+        assert_eq!(provider(Ref::Name("offer-1".into())).validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_provider_naming_a_typed_data_offer_is_valid() {
+        let spec = provider(Ref::Typed(crate::envelope::TypedRef {
+            kind: "DataOffer".into(),
+            name: "offer-1".into(),
+            namespace: None,
+        }));
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_provider_without_an_offer_ref_is_refused() {
+        let mut spec = provider(Ref::Name("offer-1".into()));
+        spec.offer_ref = None;
+        let err = spec.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("offerRef is required for provider role (DS-07)"),
+            "{err}"
+        );
+    }
 }

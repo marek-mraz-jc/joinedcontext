@@ -847,4 +847,84 @@ mod edge_tests {
         });
         assert!(mount(&mut matching, "my-slug").is_ok());
     }
+
+    fn spec_with(registry: bool, parameters: BTreeMap<String, Parameter>) -> ProjectSpec {
+        ProjectSpec {
+            organization_ref: crate::envelope::Ref::Name("org".into()),
+            domain: None,
+            urn_owner: None,
+            catalog: None,
+            quotas: None,
+            repository: registry.then(|| ProjectRepository {
+                name: Some("repo".into()),
+                url: None,
+                secret_ref: None,
+            }),
+            git_ref: registry.then(|| "main".to_owned()),
+            version: None,
+            parameters,
+            apps: None,
+            visibility: None,
+        }
+    }
+
+    #[test]
+    fn string_and_number_parameter_types_name_themselves() {
+        assert_eq!(ParameterType::String.as_str(), "string");
+        assert_eq!(ParameterType::Number.as_str(), "number");
+    }
+
+    #[test]
+    fn a_project_value_that_is_no_declaration_is_skipped_when_resolving() {
+        let project = spec_with(
+            false,
+            BTreeMap::from([(
+                "region".into(),
+                Parameter::Value(ParameterValue::String("north".into())),
+            )]),
+        );
+        let entry = spec_with(true, BTreeMap::new());
+        let params = resolve_parameters(&project, &entry).unwrap();
+        assert!(params.resolved.is_empty());
+        assert!(params.defaults.is_empty());
+    }
+
+    #[test]
+    fn a_declaration_without_a_default_takes_the_entry_value_and_records_no_default() {
+        let project = spec_with(
+            false,
+            BTreeMap::from([(
+                "port".into(),
+                Parameter::Declaration(ParameterDeclaration {
+                    kind: ParameterType::Integer,
+                    default: None,
+                    description: None,
+                    allowed: vec![],
+                }),
+            )]),
+        );
+        let entry = spec_with(
+            true,
+            BTreeMap::from([(
+                "port".into(),
+                Parameter::Value(ParameterValue::Number(serde_json::Number::from(9090))),
+            )]),
+        );
+        let params = resolve_parameters(&project, &entry).unwrap();
+        assert!(params.defaults.is_empty());
+        assert_eq!(
+            params.resolved.get("port"),
+            Some(&(
+                ParameterType::Integer,
+                ParameterValue::Number(serde_json::Number::from(9090))
+            ))
+        );
+    }
+
+    #[test]
+    fn mount_writes_metadata_when_the_manifest_has_none() {
+        let mut project = serde_json::json!({ "kind": "Project" });
+        mount(&mut project, "my-slug").unwrap();
+        assert_eq!(project["metadata"]["name"], "my-slug");
+    }
 }

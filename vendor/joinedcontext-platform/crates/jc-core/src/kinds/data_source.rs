@@ -2789,7 +2789,7 @@ mod tests {
         let yaml = format!(
             "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: src\n  namespace: helsinki\nspec:\n  type: http\n  http:\n    url: {url}\n{extra}"
         );
-        DataSource::from_yaml(&yaml).unwrap_or_else(|e| panic!("{yaml}\n{e}"))
+        DataSource::from_yaml(&yaml).expect("the test manifest parses")
     }
 
     /// The refusal of a paged source at `https://api.example.org/items`, or `None` when valid.
@@ -2802,8 +2802,11 @@ mod tests {
     }
 
     fn refused(url: &str, extra: &str, field: &str) {
-        let said = refusal(url, extra).unwrap_or_else(|| panic!("{extra} is refused"));
-        assert!(said.contains(field), "{field}: {said}");
+        let said = refusal(url, extra).unwrap_or_default();
+        assert!(
+            said.contains(field),
+            "{extra} is refused naming {field}: {said}"
+        );
     }
 
     #[test]
@@ -2889,8 +2892,8 @@ mod tests {
             ),
             ("{ mode: link, next: n }", "spec.http.paging.next"),
         ] {
-            let said = paged(&format!("    records: data\n    paging: {extra}\n"))
-                .unwrap_or_else(|| panic!("{extra} is refused"));
+            let said =
+                paged(&format!("    records: data\n    paging: {extra}\n")).unwrap_or_default();
             assert!(said.contains(field), "{field}: {said}");
             assert!(said.contains("another paging mode"), "{said}");
         }
@@ -2941,8 +2944,8 @@ mod tests {
                 "spec.http.paging.more",
             ),
         ] {
-            let said = paged(&format!("    records: data\n    paging: {extra}\n"))
-                .unwrap_or_else(|| panic!("{extra} is refused"));
+            let said =
+                paged(&format!("    records: data\n    paging: {extra}\n")).unwrap_or_default();
             assert!(said.contains(field), "{field}: {said}");
         }
     }
@@ -2967,8 +2970,8 @@ mod tests {
             ),
             ("{ mode: nextUrl }", "spec.http.paging.next"),
         ] {
-            let said = paged(&format!("    records: data\n    paging: {extra}\n"))
-                .unwrap_or_else(|| panic!("{extra} is refused"));
+            let said =
+                paged(&format!("    records: data\n    paging: {extra}\n")).unwrap_or_default();
             assert!(said.contains(field), "{field}: {said}");
         }
     }
@@ -2981,8 +2984,7 @@ mod tests {
             "{ mode: link, total: numberMatched }",
             "{ mode: link, maxRecords: 10 }",
         ] {
-            let said = paged(&format!("    paging: {paging}\n"))
-                .unwrap_or_else(|| panic!("{paging} is refused"));
+            let said = paged(&format!("    paging: {paging}\n")).unwrap_or_default();
             assert!(said.contains("spec.http.records"), "{said}");
         }
     }
@@ -2998,8 +3000,7 @@ mod tests {
                 "archive",
             ),
         ] {
-            let said = paged(&format!("{extra}    paging: {{ mode: link }}\n"))
-                .unwrap_or_else(|| panic!("{extra} is refused"));
+            let said = paged(&format!("{extra}    paging: {{ mode: link }}\n")).unwrap_or_default();
             assert!(said.contains("spec.http.paging"), "{said}");
             assert!(said.contains(named), "{named}: {said}");
         }
@@ -3050,8 +3051,8 @@ mod tests {
                 "spec.http.paging.orderBy.value",
             ),
         ] {
-            let said = paged(&format!("    records: data\n    paging: {extra}\n"))
-                .unwrap_or_else(|| panic!("{extra} is refused"));
+            let said =
+                paged(&format!("    records: data\n    paging: {extra}\n")).unwrap_or_default();
             assert!(said.contains(field), "{field}: {said}");
         }
     }
@@ -3094,9 +3095,7 @@ mod tests {
 
     fn effective(url: &str, preset: &str) -> HttpConnection {
         let source = source(url, &format!("    preset: {preset}\n"));
-        source
-            .validate()
-            .unwrap_or_else(|e| panic!("{preset}: {e}"));
+        assert_eq!(source.validate(), Ok(()), "{preset}");
         let http = source.spec.http.as_ref().expect("http");
         http.effective().into_owned()
     }
@@ -3554,9 +3553,7 @@ mod edge_tests {
             "{err}"
         );
 
-        if let Some(ref mut http) = source.http {
-            http.format = None;
-        }
+        source.http.as_mut().expect("http").format = None;
         let err = source.validate().unwrap_err();
         assert!(
             err.to_string()
@@ -3564,10 +3561,9 @@ mod edge_tests {
             "{err}"
         );
 
-        if let Some(ref mut http) = source.http {
-            http.format = Some(HttpBodyFormat::Xlsx);
-            http.sheet = Some("Sheet:Invalid".into());
-        }
+        let http = source.http.as_mut().expect("http");
+        http.format = Some(HttpBodyFormat::Xlsx);
+        http.sheet = Some("Sheet:Invalid".into());
         let err = source.validate().unwrap_err();
         assert!(
             err.to_string()
@@ -3663,10 +3659,9 @@ mod edge_tests {
             "{err}"
         );
 
-        if let Some(ref mut mqtt) = source.mqtt {
-            mqtt.topics = vec!["sensors/#".into()];
-            mqtt.qos = Some(3);
-        }
+        let mqtt = source.mqtt.as_mut().expect("mqtt");
+        mqtt.topics = vec!["sensors/#".into()];
+        mqtt.qos = Some(3);
         let err = source.validate().unwrap_err();
         assert!(
             err.to_string()
@@ -3919,5 +3914,115 @@ mod edge_tests {
                 .contains("a polled feed is read with GET or POST"),
             "{err}"
         );
+    }
+
+    fn bare(source_type: DataSourceType) -> DataSourceSpec {
+        DataSourceSpec {
+            source_type,
+            mqtt: None,
+            http: None,
+            web_socket: None,
+            gtfs_rt: None,
+            webhook: None,
+            tls: None,
+            input: None,
+            secrets: vec![],
+            personal_fields: vec![],
+        }
+    }
+
+    fn http_at(url: &str) -> HttpConnection {
+        HttpConnection {
+            url: url.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn validate_spec_without_a_namespace_checks_the_whole_source() {
+        let meta = ObjectMeta {
+            name: "feed".into(),
+            namespace: None,
+            ..Default::default()
+        };
+        let mut source = bare(DataSourceType::Http);
+        source.http = Some(http_at("https://example.com/data.json"));
+        assert_eq!(source.validate_spec(&meta), Ok(()));
+        source.http = Some(http_at("ftp://example.com/data.json"));
+        let err = source.validate_spec(&meta).unwrap_err();
+        assert!(err.to_string().contains("spec.http.url"), "{err}");
+    }
+
+    #[test]
+    fn an_xlsx_body_with_a_valid_sheet_name_is_accepted() {
+        let mut source = bare(DataSourceType::Http);
+        source.http = Some(HttpConnection {
+            format: Some(HttpBodyFormat::Xlsx),
+            sheet: Some("Stations 2026".into()),
+            ..http_at("https://example.com/stations.xlsx")
+        });
+        assert_eq!(source.validate(), Ok(()));
+    }
+
+    #[test]
+    fn tls_without_a_ca_cert_ref_is_accepted() {
+        let mut source = bare(DataSourceType::Http);
+        source.http = Some(http_at("https://example.com/data.json"));
+        source.tls = Some(TlsSettings::default());
+        assert_eq!(source.validate(), Ok(()));
+        assert!(source.secret_refs().is_empty());
+    }
+
+    #[test]
+    fn runner_secret_with_a_lowercase_env_var_is_refused_by_the_runner_check() {
+        let mut source = bare(DataSourceType::Runner("nats".into()));
+        source.input = Some(json!({ "subject": "events" }));
+        source.secrets = vec![SecretRef {
+            name: "nats-login".into(),
+            key: None,
+            env_var: Some("lowercase".into()),
+        }];
+        let err = source.validate_runner("nats", "/data/").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("envVar must match [A-Z][A-Z0-9_]*"),
+            "{err}"
+        );
+        assert!(err.to_string().contains("spec.secrets.envVar"), "{err}");
+    }
+
+    #[test]
+    fn a_wrapper_input_without_its_child_key_has_nothing_to_check() {
+        let empty = json!({});
+        assert_eq!(
+            validate_input_tree("batched", empty.as_object().unwrap(), &[], "/data/"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn secret_refs_is_empty_when_no_reference_is_configured() {
+        for source_type in [
+            DataSourceType::Mqtt,
+            DataSourceType::Http,
+            DataSourceType::WebSocket,
+        ] {
+            let source = bare(source_type.clone());
+            assert!(source.secret_refs().is_empty(), "{source_type}");
+        }
+
+        let mut mqtt = bare(DataSourceType::Mqtt);
+        mqtt.mqtt = Some(MqttConnection::default());
+        mqtt.tls = Some(TlsSettings::default());
+        assert!(mqtt.secret_refs().is_empty());
+
+        let mut http = bare(DataSourceType::Http);
+        http.http = Some(http_at("https://example.com"));
+        http.tls = Some(TlsSettings::default());
+        assert!(http.secret_refs().is_empty());
+
+        let mut ws = bare(DataSourceType::WebSocket);
+        ws.tls = Some(TlsSettings::default());
+        assert!(ws.secret_refs().is_empty());
     }
 }

@@ -1180,4 +1180,33 @@ mod edge_tests {
             "{err}"
         );
     }
+
+    #[test]
+    fn a_bound_with_min_below_max_validates() {
+        let bounds = OrganizationBounds(BTreeMap::from([(
+            "spec.projects.quota.contextSpaces".to_string(),
+            Bound {
+                min: Some(1),
+                max: Some(10),
+            },
+        )]));
+        assert_eq!(bounds.validate(), Ok(()));
+    }
+
+    #[test]
+    fn limits_inside_every_bound_pass() {
+        let spec = org(serde_json::json!({"limits": {
+            "edge": {"maxRequestBodyMegabytes": 32},
+            "gateway": {"maxRequestBodyMegabytes": 16},
+            "signIn": {"sessionIdleMinutes": 30, "sessionMaxHours": 8}
+        }}));
+        assert_eq!(spec.check_limits(&OrganizationBounds::safety()), Ok(()));
+    }
+
+    #[test]
+    fn an_extra_that_is_no_object_leaves_the_required_members() {
+        let spec = org(serde_json::Value::Null);
+        assert_eq!(spec.setting(EDGE_BODY), None);
+        assert_eq!(spec.check_limits(&OrganizationBounds::safety()), Ok(()));
+    }
 }

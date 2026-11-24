@@ -1,7 +1,7 @@
 use super::*;
 
 fn fmt(src: &str) -> String {
-    let out = format(src).unwrap_or_else(|e| panic!("{e}\n{src}"));
+    let out = format(src).expect(src);
     assert_eq!(
         format(&out).as_deref(),
         Ok(out.as_str()),

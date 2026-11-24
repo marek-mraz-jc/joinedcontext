@@ -764,4 +764,49 @@ mod edge_tests {
         assert!(spec.allows_transition_to(DataModelLifecycle::Published));
         assert!(!spec.allows_transition_to(DataModelLifecycle::Retired));
     }
+    #[test]
+    fn rejects_an_origin_project_that_is_no_namespace() {
+        let origin = DataModelOrigin {
+            project: "BAD PROJECT".into(),
+            space: None,
+            name: "model".into(),
+            version: SemVer::new("1.0.0").unwrap(),
+            commit: "01234567".into(),
+        };
+        let err = origin.validate().expect_err("invalid origin project");
+        assert!(err.to_string().contains("origin.project"), "{err}");
+    }
+
+    #[test]
+    fn an_origin_without_a_space_validates() {
+        let origin = DataModelOrigin {
+            project: "my-project".into(),
+            space: None,
+            name: "model".into(),
+            version: SemVer::new("1.0.0").unwrap(),
+            commit: "01234567".into(),
+        };
+        origin.validate().expect("valid origin");
+    }
+
+    #[test]
+    fn a_consumer_without_a_namespace_validates() {
+        let spec = DataModelSpec {
+            context_space_ref: Some("space".into()),
+            linkml: "model.linkml.yaml".into(),
+            version: SemVer::new("1.0.0").unwrap(),
+            lifecycle: DataModelLifecycle::Draft,
+            classes: Vec::new(),
+            source: None,
+            origin: None,
+            artifacts: GeneratedArtifacts::default(),
+            open_world: false,
+            consumers: vec![TypedRef {
+                kind: "Endpoint".into(),
+                name: "air".into(),
+                namespace: None,
+            }],
+        };
+        spec.validate().expect("valid spec");
+    }
 }

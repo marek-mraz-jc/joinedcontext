@@ -195,6 +195,21 @@ mod tests {
     }
 
     #[test]
+    fn verdict_names_a_parse_failure_and_a_refusal_that_is_not_invalid() {
+        let parse = verdict(serde_json::json!({ "roles": [], "bogus": true })).expect("refused");
+        assert!(parse.starts_with("parse: "), "{parse}");
+        assert!(parse.contains("bogus"), "{parse}");
+        let named = verdict(serde_json::json!({
+            "roles": [{ "name": "Bad_Name", "publish": ["air/${clientid}/pm10"] }]
+        }))
+        .expect("refused");
+        assert!(
+            named.starts_with("invalid metadata.name `Bad_Name`"),
+            "{named}"
+        );
+    }
+
+    #[test]
     fn a_filter_covers_what_it_reaches_and_no_more() {
         assert!(covers("air/#", "air/${clientid}/pm10"));
         assert!(covers("air/+/pm10", "air/${clientid}/pm10"));

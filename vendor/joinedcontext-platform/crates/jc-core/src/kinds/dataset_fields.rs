@@ -288,8 +288,14 @@ mod tests {
     fn field_of(err: Error) -> String {
         match err {
             Error::Invalid { field, .. } => field,
-            other => panic!("expected Invalid, got {other:?}"),
+            other => format!("not an Invalid error: {other}"),
         }
+    }
+
+    #[test]
+    fn field_of_names_an_error_of_another_kind() {
+        let said = field_of(Error::Locale("xx".to_owned()));
+        assert!(said.starts_with("not an Invalid error: "), "{said}");
     }
 
     #[test]

@@ -809,7 +809,7 @@ mod tests {
             .expect("the analysis page has widgets");
         widgets.push(widget);
         let manifest = Dashboard::from_yaml(&serde_json::to_string(&value).expect("JSON"))
-            .map_err(|e| Error::Parse(e.to_string()))?;
+            .expect("the dashboard parses");
         manifest.validate()?;
         Ok(manifest)
     }
@@ -835,9 +835,12 @@ mod tests {
             },
             "transform": [{"filter": "isValid(datum.pm10) && datum.pm10 > 0"}]
         });
-        if let (Some(base), Some(extra)) = (spec.as_object_mut(), spec_extra.as_object()) {
-            base.extend(extra.clone());
-        }
+        let extra = spec_extra
+            .as_object()
+            .expect("the extra members are an object");
+        spec.as_object_mut()
+            .expect("the spec is an object")
+            .extend(extra.clone());
         serde_json::json!({
             "widgetType": "vega-lite",
             "endpointRef": "ep-air-quality",
@@ -947,15 +950,14 @@ mod tests {
         }
 
         let mut no_data = bars(serde_json::json!({}));
-        if let Some(w) = no_data.as_object_mut() {
-            w.remove("data");
-        }
+        no_data.as_object_mut().expect("a widget").remove("data");
         assert_eq!(field(vega_lite(no_data)).0, format!("{at}/data"));
 
         let mut no_endpoint = bars(serde_json::json!({}));
-        if let Some(w) = no_endpoint.as_object_mut() {
-            w.remove("endpointRef");
-        }
+        no_endpoint
+            .as_object_mut()
+            .expect("a widget")
+            .remove("endpointRef");
         assert_eq!(field(vega_lite(no_endpoint)).0, format!("{at}/endpointRef"));
 
         let mut long = bars(serde_json::json!({}));
@@ -971,6 +973,12 @@ mod tests {
         assert!(field(vega_lite(elsewhere))
             .1
             .contains("belong to a widget of type `vega-lite`"));
+    }
+
+    #[test]
+    #[should_panic(expected = "expected a refusal")]
+    fn field_of_a_valid_dashboard_is_no_refusal() {
+        field(vega_lite(bars(serde_json::json!({}))));
     }
 
     /// T-6786: the expression allow-list takes fields, the spec's params and the listed functions.
@@ -1311,6 +1319,53 @@ mod edge_tests {
         assert!(err
             .to_string()
             .contains("a popup property is a property name"));
+    }
+
+    #[test]
+    fn a_grid_widget_without_a_grid_config_validates() {
+        let dash = DashboardSpec {
+            title: Text::from("Test"),
+            visibility: DashboardVisibility::Private,
+            pages: vec![Page {
+                title: Some("Grid".into()),
+                layout: None,
+                layers: vec![],
+                widgets: vec![Widget {
+                    widget_type: GRID_WIDGET.into(),
+                    endpoint_ref: Some("endpoint-1".into()),
+                    entity_id: None,
+                    property: None,
+                    entity_type: Some("AirQualityObserved".into()),
+                    q: None,
+                    grid: None,
+                    data: None,
+                    spec: None,
+                }],
+            }],
+        };
+        assert_eq!(dash.validate(), Ok(()));
+    }
+
+    #[test]
+    fn encodings_without_a_domain_or_range_validate() {
+        let layer = LayerSpec {
+            source_endpoint_ref: "endpoint-1".into(),
+            entity_type: "AirQualityObserved".into(),
+            style: LayerStyle::Circle,
+            visible: true,
+            filter: None,
+            color_by: Some(ColorBy {
+                property: "pm10".into(),
+                palette: None,
+                domain: None,
+            }),
+            size_by: Some(SizeBy {
+                property: "no2".into(),
+                range: None,
+            }),
+            popup_properties: vec!["pm10".into()],
+        };
+        assert_eq!(layer.validate(), Ok(()));
     }
 
     #[test]

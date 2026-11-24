@@ -669,3 +669,43 @@ pub struct Condition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_transition_time: Option<jc_time::TimestampTz>,
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use crate::kinds::ScopeDefinitionSpec;
+
+    fn scope_root() -> ResourceEnvelope<ScopeDefinitionSpec> {
+        ResourceEnvelope::new(
+            ObjectMeta::new("geo-root", "mesto"),
+            ScopeDefinitionSpec {
+                scope_string: "/geo".into(),
+                is_root: true,
+                is_child_of: None,
+            },
+        )
+    }
+
+    #[test]
+    fn a_status_without_a_build_validates() {
+        let mut envelope = scope_root();
+        envelope.status = Some(Status {
+            observed_revision: Some("0123456".into()),
+            ..Status::default()
+        });
+        envelope
+            .validate()
+            .expect("a status without a build is valid");
+    }
+
+    #[test]
+    fn rejects_an_api_version_the_kind_is_not_served_at() {
+        let mut envelope = scope_root();
+        envelope.api_version = API_VERSION_V1ALPHA2.into();
+        let refused = envelope.validate();
+        assert!(
+            matches!(&refused, Err(Error::ApiVersion(version)) if version == API_VERSION_V1ALPHA2),
+            "not refused: {refused:?}"
+        );
+    }
+}

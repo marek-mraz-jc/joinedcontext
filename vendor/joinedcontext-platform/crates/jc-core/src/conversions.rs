@@ -325,4 +325,50 @@ mod edge_tests {
             "urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air"
         );
     }
+
+    #[test]
+    fn to_v1alpha1_reads_an_empty_step_list_as_no_compute() {
+        let mut body = serde_json::json!({
+            "apiVersion": API_VERSION_V1ALPHA2,
+            "kind": "Pipeline",
+            "metadata": { "name": "air", "namespace": "ovzdusie" },
+            "spec": {
+                "class": "resident",
+                "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } }],
+                "steps": [],
+                "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air" }]
+            }
+        });
+        to_v1alpha1(&mut body).unwrap();
+        assert_eq!(body["apiVersion"], API_VERSION);
+        assert!(body["spec"].get("steps").is_none());
+        assert!(body["spec"].get("compute").is_none());
+        assert_eq!(
+            body["spec"]["source"]["dataSourceRef"]["name"],
+            serde_json::json!("mqtt")
+        );
+    }
+
+    #[test]
+    fn to_v1alpha1_refuses_two_steps_as_more_than_one_entry() {
+        let mut body = serde_json::json!({
+            "apiVersion": API_VERSION_V1ALPHA2,
+            "kind": "Pipeline",
+            "metadata": { "name": "air", "namespace": "ovzdusie" },
+            "spec": {
+                "class": "resident",
+                "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } }],
+                "steps": [
+                    { "kind": "bloblang", "bloblang": "root = this" },
+                    { "kind": "bloblang", "bloblang": "root = this" }
+                ],
+                "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air" }]
+            }
+        });
+        let err = to_v1alpha1(&mut body)
+            .expect_err("two steps refused")
+            .to_string();
+        assert!(err.contains("spec.steps"), "{err}");
+        assert!(err.contains("more than one entry"), "{err}");
+    }
 }

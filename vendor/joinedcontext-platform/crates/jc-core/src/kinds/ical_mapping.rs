@@ -2029,4 +2029,77 @@ mod edge_tests {
         let gaps = field_model_gaps(&model, "Event", IcalField::Categories, &remap_cat, true);
         assert!(gaps.is_empty(), "{gaps:?}");
     }
+
+    #[test]
+    fn a_preset_query_stores_scope_q() {
+        let filter = OutputFilter::from_query("scopeQ=/city", &["Event"]).expect("reads");
+        assert_eq!(filter.scope_q.as_deref(), Some("/city"));
+        assert_eq!(filter.q, None);
+    }
+
+    #[test]
+    fn no_field_takes_an_unknown_remap() {
+        for field in IcalField::ALL {
+            assert!(!field.allows("nonsense"), "{field:?}");
+        }
+    }
+
+    #[test]
+    fn id_and_type_are_required_core_slots() {
+        let id = core_slot("id").expect("id is core");
+        assert_eq!(id.range, "uri");
+        assert!(id.required);
+        assert_eq!(id.kind, None);
+        let kind = core_slot("type").expect("type is core");
+        assert_eq!(kind.range, "string");
+        assert!(kind.required);
+        assert!(core_slot("name").is_none());
+    }
+
+    #[test]
+    fn permissible_values_that_are_neither_a_map_nor_a_list_are_none() {
+        let schema: Value =
+            serde_norway::from_str("enums:\n  Color:\n    permissible_values: red\n").unwrap();
+        let model = Model { schema: &schema };
+        assert_eq!(model.enum_values("Color"), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_slot_is_looked_up_through_at_most_eight_ancestors() {
+        let mut yaml = String::from("classes:\n");
+        for i in 0..9 {
+            yaml.push_str(&format!("  C{i}:\n    is_a: C{}\n", i + 1));
+        }
+        yaml.push_str("  C9:\n    attributes:\n      deep:\n        range: string\n");
+        let schema: Value = serde_norway::from_str(&yaml).unwrap();
+        let model = Model { schema: &schema };
+        assert!(
+            model.slot("C0", "deep").is_none(),
+            "nine levels up is too far"
+        );
+        assert_eq!(
+            model.slot("C2", "deep").expect("seven levels").range,
+            "string"
+        );
+    }
+
+    #[test]
+    fn slot_usage_overrides_the_global_slot() {
+        let yaml = "classes:\n  Event:\n    slots: [start]\n    slot_usage:\n      start:\n        range: datetime\n        required: true\nslots:\n  start:\n    range: string\n";
+        let schema: Value = serde_norway::from_str(yaml).unwrap();
+        let model = Model { schema: &schema };
+        let slot = model.slot("Event", "start").expect("declared");
+        assert_eq!(slot.range, "datetime");
+        assert!(slot.required);
+    }
+
+    #[test]
+    fn nothing_fits_a_constant_or_fixed_field() {
+        let schema = Value::Null;
+        let model = Model { schema: &schema };
+        let slot = Slot::core("string", None, false);
+        assert!(!fits(&model, &slot, Accepts::Constant));
+        assert!(!fits(&model, &slot, Accepts::Fixed));
+        assert!(fits(&model, &slot, Accepts::Text));
+    }
 }

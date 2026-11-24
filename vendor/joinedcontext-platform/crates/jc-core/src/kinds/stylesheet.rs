@@ -1290,4 +1290,97 @@ mod edge_tests {
             int_value: None
         }));
     }
+    #[test]
+    fn whitespace_on_both_sides_of_a_comment_is_one_space() {
+        let out = scoped_stylesheet("a /* x */ b { color: red }", "jc-portal-x").unwrap();
+        assert_eq!(out, "body.jc-portal-x a b {\n  color: red;\n}\n");
+    }
+
+    #[test]
+    fn a_control_character_in_a_string_is_refused_as_an_escape() {
+        let err = scoped_stylesheet("a { font-family: \"x\u{1}y\" }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("free of characters a name can only hold escaped"),
+            "{err}"
+        );
+        let err =
+            scoped_stylesheet("[title=\"a\u{7f}b\"] { color: red }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("free of characters a name can only hold escaped"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_pseudo_class_function_off_the_list() {
+        let err = scoped_stylesheet("a:matches(b) { color: red }", "jc-portal-x").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a selector without `matches()`, which a portal stylesheet may not use"),
+            "{err}"
+        );
+        let err = scoped_stylesheet("a:has(b) { color: red }", "jc-portal-x").unwrap_err();
+        assert!(err.to_string().contains("without `:has()`"), "{err}");
+    }
+
+    #[test]
+    fn media_percentages_are_checked_like_numbers() {
+        let ok = scoped_stylesheet(
+            "@media (min-aspect: 50%) { a { color: red } }",
+            "jc-portal-x",
+        )
+        .unwrap();
+        assert!(ok.starts_with("@media (min-aspect: 50%) {\n"), "{ok}");
+        let err = scoped_stylesheet(
+            "@media (min-aspect: 0.000001%) { a { color: red } }",
+            "jc-portal-x",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("numbers from 0.0001 up to 1000000"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn shadows_in_em_stay_within_half_an_em() {
+        let ok = scoped_stylesheet("a { box-shadow: 0 0 0.25em #000000 }", "jc-portal-x").unwrap();
+        assert!(ok.contains("box-shadow: 0 0 0.25em #000000;"), "{ok}");
+        let err =
+            scoped_stylesheet("a { box-shadow: 0 0 1rem #000000 }", "jc-portal-x").unwrap_err();
+        assert!(err.to_string().contains("a shadow of at most 8px"), "{err}");
+        assert!(small_shadow(&Token::Dimension {
+            has_sign: false,
+            value: 0.5,
+            int_value: None,
+            unit: "EM".into()
+        }));
+    }
+
+    #[test]
+    fn number_helpers_pass_tokens_that_are_not_numbers() {
+        let ident = Token::Ident("auto".into());
+        assert!(plain_number(&ident));
+        assert!(small_spacing("margin", &ident));
+        assert!(!small_shadow(&ident));
+    }
+
+    #[test]
+    fn media_queries_keep_plain_numbers_and_lengths() {
+        let ratio = scoped_stylesheet(
+            "@media (min-aspect-ratio: 16/9) { a { color: red } }",
+            "jc-portal-x",
+        )
+        .expect("a ratio of plain numbers is a media query");
+        assert!(ratio.starts_with("@media (min-aspect-ratio: 16"), "{ratio}");
+        let width = scoped_stylesheet(
+            "@media screen and (min-width: 600px) { a { color: red } }",
+            "jc-portal-x",
+        )
+        .expect("a plain length is a media query");
+        assert!(width.contains("600px"), "{width}");
+    }
 }

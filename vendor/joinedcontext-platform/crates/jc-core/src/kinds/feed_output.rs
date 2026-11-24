@@ -663,4 +663,10 @@ mod edge_tests {
         let res = feed_gaps(&[output], Some("invalid: [yaml"));
         assert!(res.is_err());
     }
+    #[test]
+    fn feed_paths_many_lists_every_path_in_order() {
+        let many = FeedPaths::Many(vec!["headline".into(), "name".into()]);
+        assert_eq!(many.list(), vec!["headline", "name"]);
+        assert!(FeedPaths::Many(Vec::new()).list().is_empty());
+    }
 }

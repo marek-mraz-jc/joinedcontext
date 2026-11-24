@@ -1551,4 +1551,41 @@ mod edge_tests {
             .expect_err("zero blob quota");
         assert!(err.to_string().contains("storage.blob.quotaMiB"), "{err}");
     }
+
+    fn need_in(context_space_ref: Ref) -> DataNeed {
+        DataNeed {
+            context_space_ref,
+            types: vec!["AirQualityObserved".into()],
+            attrs: vec![],
+            operations: vec![OperationRef::Single(Operation::RetrieveEntity)],
+            q: None,
+            scope_q: None,
+            geo_q: None,
+            temporal_q: None,
+            representations: vec![],
+            roles: vec![],
+        }
+    }
+
+    #[test]
+    fn a_data_need_naming_its_space_with_or_without_a_kind_is_valid() {
+        assert_eq!(need_in(Ref::Name("valid-space".into())).validate(), Ok(()));
+        let typed = need_in(Ref::Typed(TypedRef {
+            kind: "ContextSpace".into(),
+            name: "valid-space".into(),
+            namespace: None,
+        }));
+        assert_eq!(typed.validate(), Ok(()));
+    }
+
+    #[test]
+    fn storage_with_no_blob_or_a_default_blob_is_valid() {
+        assert_eq!(AppStorage::default().validate(), Ok(()));
+        let with_blob = AppStorage {
+            sql: None,
+            blob: Some(BlobStorage::default()),
+        };
+        assert_eq!(with_blob.blob.as_ref().map(|b| b.quota_mib), Some(1024));
+        assert_eq!(with_blob.validate(), Ok(()));
+    }
 }

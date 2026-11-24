@@ -1756,4 +1756,46 @@ mod edge_tests {
             "{err}"
         );
     }
+    #[test]
+    fn sta_without_a_model_reports_its_gap() {
+        let mut spec = valid_endpoint();
+        spec.enabled_representations = Some(vec![Representation::Sta]);
+        let gaps = spec.representation_gaps(None).expect("no model to parse");
+        assert_eq!(
+            gaps,
+            vec!["`sta` needs a type with a numeric attribute that declares its unit".to_owned()]
+        );
+    }
+
+    #[test]
+    fn rate_limits_accept_a_positive_burst() {
+        let rl = RateLimits {
+            requests_per_minute: 10,
+            burst: Some(5),
+        };
+        rl.validate().expect("burst 5 is valid");
+        let zero = RateLimits {
+            requests_per_minute: 0,
+            burst: None,
+        };
+        let err = zero.validate().expect_err("zero rate");
+        assert!(
+            err.to_string().contains("requestsPerMinute must be >= 1"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rate_limits_accept_a_missing_burst_and_a_burst_of_one() {
+        let no_burst = RateLimits {
+            requests_per_minute: 1,
+            burst: None,
+        };
+        no_burst.validate().expect("no burst is valid");
+        let burst_one = RateLimits {
+            requests_per_minute: 1,
+            burst: Some(1),
+        };
+        burst_one.validate().expect("burst 1 is valid");
+    }
 }

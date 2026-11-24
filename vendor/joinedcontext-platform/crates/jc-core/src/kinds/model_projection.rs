@@ -495,4 +495,90 @@ classes:
             linkml_measurements(no_classes_meas).expect("measurements parse with no classes");
         assert!(found.is_empty());
     }
+
+    fn spec(filter: Option<ProjectionFilter>) -> ModelProjectionSpec {
+        ModelProjectionSpec {
+            context_space_ref: "education".into(),
+            data_model_ref: DataModelRef::new("school-model", "1"),
+            classes: vec![ProjectedClass {
+                name: "School".into(),
+                slots: vec!["name".into()],
+            }],
+            filter,
+        }
+    }
+
+    #[test]
+    fn two_different_filters_are_conjoined() {
+        let a = ProjectionFilter {
+            q: Some("a==1".into()),
+            scope_q: Some("/x".into()),
+            ..Default::default()
+        };
+        let b = ProjectionFilter {
+            q: Some("b==2".into()),
+            ..Default::default()
+        };
+        let both = a.intersect(&b);
+        assert_eq!(both.q.as_deref(), Some("(a==1);(b==2)"));
+        assert_eq!(both.scope_q.as_deref(), Some("/x"));
+        assert_eq!(both.geo_q, None);
+    }
+
+    #[test]
+    fn rejects_a_class_listed_twice() {
+        let mut twice = spec(None);
+        twice.classes.push(twice.classes[0].clone());
+        let err = twice.validate().expect_err("listed twice");
+        assert!(
+            err.to_string()
+                .contains("a class is listed once; two entries would mean two slot lists"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_filter_with_a_query_validates() {
+        let filtered = spec(Some(ProjectionFilter {
+            temporal_q: Some("timerel==after;timeAt==2026-01-01T00:00:00Z".into()),
+            ..Default::default()
+        }));
+        assert!(filtered.validate().is_ok());
+    }
+
+    #[test]
+    fn intersect_keeps_the_one_filter_there_is() {
+        let filter = ProjectionFilter {
+            q: Some("a==1".into()),
+            ..Default::default()
+        };
+        assert_eq!(spec(None).intersect(&spec(None)).filter, None);
+        assert_eq!(
+            spec(Some(filter.clone())).intersect(&spec(None)).filter,
+            Some(filter.clone())
+        );
+        assert_eq!(
+            spec(None).intersect(&spec(Some(filter.clone()))).filter,
+            Some(filter)
+        );
+    }
+
+    #[test]
+    fn a_class_without_slots_or_attributes_keeps_identity() {
+        let classes = linkml_classes("classes:\n  Empty: {}\n").expect("parses");
+        let want: BTreeSet<String> = ["id", "type"].map(str::to_owned).into();
+        assert_eq!(classes["Empty"], want);
+    }
+
+    #[test]
+    fn measurements_skip_a_class_whose_name_is_no_string() {
+        let model = "classes:\n  1:\n    slots: [x]\n  Meter:\n    attributes:\n      power:\n        range: float\n        unit:\n          ucum_code: W\n";
+        let found = linkml_measurements(model).expect("parses");
+        assert_eq!(found, vec![("Meter".to_owned(), "power".to_owned())]);
+    }
+
+    #[test]
+    fn a_projection_without_a_filter_validates() {
+        assert_eq!(spec(None).validate(), Ok(()));
+    }
 }

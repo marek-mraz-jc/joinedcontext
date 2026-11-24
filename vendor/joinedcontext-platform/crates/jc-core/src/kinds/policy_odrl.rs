@@ -875,10 +875,7 @@ mod tests {
 
     #[test]
     fn render_then_import_is_the_manifest() -> Out<()> {
-        let policy = Policy::from_yaml(POLICY).map_err(|e| Refusal {
-            member: "fixture".into(),
-            reason: e.to_string(),
-        })?;
+        let policy = Policy::from_yaml(POLICY).expect("the fixture parses");
         let set = render(&policy)?;
         assert_eq!(set["uid"], "urn:joinedcontext:policy:ovzdusie:ovzdusie:air");
         assert_eq!(import(&set, &Names::default())?, policy);
@@ -890,10 +887,7 @@ mod tests {
     #[test]
     fn an_organization_assignee_has_no_odrl_form() -> Out<()> {
         let yaml = POLICY.replace("{ kind: role, id: public }", "{ kind: organization }");
-        let policy = Policy::from_yaml(&yaml).map_err(|e| Refusal {
-            member: "fixture".into(),
-            reason: e.to_string(),
-        })?;
+        let policy = Policy::from_yaml(&yaml).expect("the fixture parses");
         let refusal = render(&policy).err();
         assert_eq!(
             refusal.map(|r| r.member).as_deref(),

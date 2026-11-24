@@ -404,6 +404,16 @@ mod edge_tests {
     }
 
     #[test]
+    fn data_model_ref_without_a_kind_validates() {
+        let bare = DataModelRef {
+            kind: None,
+            name: "model".into(),
+            version: "2".into(),
+        };
+        assert_eq!(bare.validate("spec.source.name"), Ok(()));
+    }
+
+    #[test]
     fn native_block_target_slot_and_language() {
         let block = NativeBlock::new("bad-slot!", NativeLanguage::Bloblang, "root = this");
         let err = block.validate().expect_err("invalid target slot rejected");

@@ -1644,6 +1644,14 @@ mod tests {
     }
 
     #[test]
+    fn an_explicit_valid_window_is_accepted_and_reported() {
+        let mut s = step("sum(parking.occupied) / count(stops)", "C62");
+        s.window = Some("PT15M".into());
+        assert!(s.validate(&inputs()).is_ok());
+        assert_eq!(s.window(), "PT15M");
+    }
+
+    #[test]
     fn a_key_slug_is_a_local_id_the_mapping_writes_the_same_way() {
         assert_eq!(slug("Kallio"), "kallio");
         assert_eq!(slug("Etu-Töölö / 2"), "etu-t-l-2");
@@ -1904,28 +1912,29 @@ mod edge_tests {
         let q = query(&num_expr, &|_| "$rows".into());
         assert!(q.contains("42.5"), "{q}");
 
+        let in_rows = |n: &str| format!("$in_{n}");
         let earlier_count = parse("prev(count(parking.occupied), P1D)").unwrap();
-        let q = query(&earlier_count, &|n| format!("$in_{n}"));
+        let q = query(&earlier_count, &in_rows);
         assert!(q.contains("length()"));
 
         let earlier_sum = parse("prev(sum(parking.occupied), P1D)").unwrap();
-        let q = query(&earlier_sum, &|n| format!("$in_{n}"));
+        let q = query(&earlier_sum, &in_rows);
         assert!(q.contains("sum()"));
 
         let avg_expr = parse("avg(parking.occupied)").unwrap();
-        let q = query(&avg_expr, &|n| format!("$in_{n}"));
+        let q = query(&avg_expr, &in_rows);
         assert!(q.contains("sum() /"));
 
         let min_expr = parse("min(parking.occupied)").unwrap();
-        let q = query(&min_expr, &|n| format!("$in_{n}"));
+        let q = query(&min_expr, &in_rows);
         assert!(q.contains("min()"));
 
         let max_expr = parse("max(parking.occupied)").unwrap();
-        let q = query(&max_expr, &|n| format!("$in_{n}"));
+        let q = query(&max_expr, &in_rows);
         assert!(q.contains("max()"));
 
         let neg_expr = parse("-sum(parking.occupied)").unwrap();
-        let q = query(&neg_expr, &|n| format!("$in_{n}"));
+        let q = query(&neg_expr, &in_rows);
         assert!(q.contains("(0 - "));
     }
 
@@ -1994,5 +2003,48 @@ mod edge_tests {
         ]);
         let err = evaluate(&area_step, &expr, &large_pages).unwrap_err();
         assert!(err.contains("501 keys meet in every source; one run writes at most 500"));
+    }
+
+    #[test]
+    fn a_formula_ending_after_an_operator_is_refused() {
+        let err = parse("sum(parking.occupied) +").unwrap_err();
+        assert!(
+            err.to_string().contains("the formula ends too early"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn earlier_reads_name_an_attribute_read_twice_once() {
+        let expr =
+            parse("prev(sum(parking.occupied), P7D) - prev(avg(parking.occupied), P7D)").unwrap();
+        let reads = earlier_reads(&expr);
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].input, "parking");
+        assert_eq!(reads[0].period, "P7D");
+        assert_eq!(reads[0].attrs, vec!["occupied".to_owned()]);
+    }
+
+    #[test]
+    fn a_key_is_a_non_empty_string_or_a_number() {
+        assert_eq!(key(&json!({ "d": 7 }), "d"), Some("7".to_owned()));
+        assert_eq!(
+            key(&json!({ "d": { "value": 2.5 } }), "d"),
+            Some("2.5".to_owned())
+        );
+        assert_eq!(key(&json!({ "d": true }), "d"), None);
+        assert_eq!(key(&json!({ "d": "" }), "d"), None);
+        assert_eq!(key(&json!({}), "d"), None);
+    }
+
+    #[test]
+    fn count_of_an_attribute_counts_numbers_and_avg_is_their_mean() {
+        let row1 = json!({ "x": 10.0 });
+        let row2 = json!({ "x": 20.0 });
+        let row3 = json!({ "x": "not a number" });
+        let rows = BTreeMap::from([("parking", vec![&row1, &row2, &row3])]);
+        assert_eq!(eval(&parse("count(parking.x)").unwrap(), &rows), Ok(2.0));
+        assert_eq!(eval(&parse("avg(parking.x)").unwrap(), &rows), Ok(15.0));
+        assert_eq!(eval(&parse("count(parking)").unwrap(), &rows), Ok(3.0));
     }
 }

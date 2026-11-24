@@ -439,6 +439,10 @@ mod edge_tests {
         let mut spec_ok = spec;
         spec_ok.throttling = Some(10);
         assert!(spec_ok.validate().is_ok());
+
+        let mut unthrottled = spec_ok;
+        unthrottled.throttling = None;
+        assert_eq!(unthrottled.validate(), Ok(()));
     }
 
     #[test]

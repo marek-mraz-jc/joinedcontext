@@ -861,4 +861,55 @@ mod edge_tests {
             "{err}"
         );
     }
+    #[test]
+    fn a_portal_with_a_hidden_dataset_validates() {
+        let portal = PortalSpec {
+            organization_ref: "org".into(),
+            path: "mobility".into(),
+            title: BTreeMap::new(),
+            languages: Vec::new(),
+            host: None,
+            slug: SlugAddress::Redirect,
+            appearance: None,
+            profiles: None,
+            sources: Vec::new(),
+            hidden: vec!["old-buses".into()],
+            pages: Vec::new(),
+        };
+        portal
+            .validate()
+            .expect("a hidden name of 1 to 100 characters");
+    }
+
+    #[test]
+    fn a_harvested_source_with_an_https_gateway_validates() {
+        let source = PortalSource {
+            name: "harvested".into(),
+            kind: PortalSourceType::DcatAp,
+            projects: Vec::new(),
+            spaces: Vec::new(),
+            tags: Vec::new(),
+            names: Vec::new(),
+            url: Some("https://data.kosice.sk/catalog.ttl".into()),
+            schedule: None,
+            allowed_hosts: vec!["data.kosice.sk".into()],
+            budget: None,
+            publisher: None,
+            publisher_title: None,
+            publisher_uri: None,
+            publisher_description: None,
+            spatial_uri: None,
+            name_prefix: None,
+            rewrite_hosts: BTreeMap::new(),
+            skip: BTreeMap::new(),
+            titles: BTreeMap::new(),
+            spelling: BTreeMap::new(),
+            require_column: BTreeMap::new(),
+            gateway: Some("https://gateway.kosice.sk/".into()),
+            converted_file: None,
+            datasets_base: None,
+            enabled: true,
+        };
+        source.validate(0).expect("an https gateway");
+    }
 }

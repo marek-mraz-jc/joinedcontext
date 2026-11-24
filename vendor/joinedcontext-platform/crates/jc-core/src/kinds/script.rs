@@ -323,7 +323,7 @@ mod tests {
     fn refused_field(versions: serde_json::Value) -> String {
         match validate(versions).expect_err("refused") {
             Error::Invalid { field, .. } => field,
-            other => panic!("unexpected {other}"),
+            other => other.to_string(),
         }
     }
 
@@ -334,6 +334,12 @@ mod tests {
             version("1.1.0", "draft")
         ]))
         .expect("valid");
+    }
+
+    #[test]
+    fn a_manifest_that_does_not_parse_is_reported_by_its_message() {
+        let said = refused_field(serde_json::json!("not-a-list"));
+        assert!(said.starts_with("manifest does not parse"), "{said}");
     }
 
     #[test]

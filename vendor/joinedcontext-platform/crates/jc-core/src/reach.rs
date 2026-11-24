@@ -427,4 +427,34 @@ mod tests {
         assert!(!select.matches(&unknown));
         assert!(Select::default().matches(&unknown));
     }
+    #[test]
+    fn a_selector_picks_by_space_and_by_domain() {
+        let mut d = deployment(json!({"select": {"spaces": ["bb/mesto"], "domains": ["Parking"]}}));
+        d.channel = crate::kinds::assistant::Channel::Internal;
+        assert_eq!(
+            slugs(&resolve_connectors("bb", &d, &catalog(), None)),
+            ["bb-air", "bb-parking", "bb-staff"]
+        );
+        let other_domain = deployment(json!({"select": {"domains": ["Environment"]}}));
+        assert!(resolve_connectors("bb", &other_domain, &catalog(), None)
+            .endpoints
+            .is_empty());
+    }
+
+    #[test]
+    fn a_server_selector_narrows_by_access_level() {
+        let mut d = deployment(json!({"mcpServer": "bb/team"}));
+        d.channel = crate::kinds::assistant::Channel::Internal;
+        let server: McpServerSpec = serde_json::from_value(json!({
+            "audience": "project-list",
+            "select": {"accessLevel": ["project"]}
+        }))
+        .unwrap();
+        let mut list = catalog();
+        list.push(endpoint("bb", "team", Audience::ProjectList, &[]));
+        let r = resolve_connectors("bb", &d, &list, Some(("bb", &server)));
+        assert_eq!(slugs(&r), ["bb-team"]);
+        assert!(r.endpoints[0].tools.is_empty());
+        assert_eq!(r.endpoints[0].timeout_seconds, SELECTED_TIMEOUT_SECONDS);
+    }
 }

@@ -409,10 +409,18 @@ mod tests {
     }
 
     fn refused_at(result: Result<()>) -> String {
-        match result {
-            Err(Error::Invalid { field, reason }) => format!("{field}: {reason}"),
-            other => panic!("refused, got {other:?}"),
+        match result.expect_err("refused") {
+            Error::Invalid { field, reason } => format!("{field}: {reason}"),
+            other => other.to_string(),
         }
+    }
+
+    #[test]
+    fn refused_at_reports_another_error_by_its_message() {
+        assert_eq!(
+            refused_at(Err(Error::Parse("bad".into()))),
+            "manifest does not parse: bad"
+        );
     }
 
     const GOOD: &str = r#"

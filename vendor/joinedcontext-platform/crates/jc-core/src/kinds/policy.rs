@@ -1753,4 +1753,33 @@ mod edge_tests {
 
         assert_eq!(spec.context_space(), Some("air"));
     }
+    #[test]
+    fn rejects_a_scope_segment_with_invalid_characters() {
+        let spec = ScopeDefinitionSpec {
+            scope_string: "/geo/Banska Bystrica".to_string(),
+            is_root: false,
+            is_child_of: Some("/geo".to_string()),
+        };
+        let err = spec.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("each segment must match ^[A-Za-z0-9._-]+$ and not be empty"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_is_root_on_a_child_scope() {
+        let spec = ScopeDefinitionSpec {
+            scope_string: "/geo/SK".to_string(),
+            is_root: true,
+            is_child_of: None,
+        };
+        let err = spec.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("isRoot can only be true for taxonomy roots"),
+            "{err}"
+        );
+    }
 }

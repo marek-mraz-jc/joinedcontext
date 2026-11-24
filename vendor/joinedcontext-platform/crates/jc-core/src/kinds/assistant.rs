@@ -2818,4 +2818,92 @@ mod edge_tests {
             "{err}"
         );
     }
+    #[test]
+    fn negative_question_folds_d_n_t_and_z_carons() {
+        assert!(negative_question("smrť na ceste"));
+        assert!(negative_question("ďalšie zločiny v meste"));
+        assert!(negative_question("poškodená cesta pri ňom"));
+        assert!(!negative_question("ďakujem, kde je ňou žltá budova"));
+    }
+
+    fn internal_deployment() -> AssistantDeploymentSpec {
+        serde_json::from_value(serde_json::json!({
+            "publicId": "test-assistant",
+            "channel": "internal",
+            "sources": ["my-source"]
+        }))
+        .expect("parses")
+    }
+
+    #[test]
+    fn a_plain_theme_passes_its_field_checks() {
+        let mut deployment = internal_deployment();
+        deployment.theme = Some(Theme {
+            title: Some(Localised::Text("City helper".into())),
+            primary_color: Some("#0a7cff".into()),
+            greeting: Some(Localised::Text("Hello".into())),
+            subtitle: Some(Localised::Text("Open data answers".into())),
+            font: Some("Inter, sans-serif".into()),
+        });
+        assert!(deployment.theme_fields().is_ok());
+    }
+
+    #[test]
+    fn privacy_takes_an_https_documents_page() {
+        let mut deployment = internal_deployment();
+        deployment.privacy = Some(Privacy {
+            contact: Some("privacy@city.example".into()),
+            documents_url: Some("https://city.example/privacy".into()),
+        });
+        assert!(deployment.privacy_fields().is_ok());
+        deployment.privacy = Some(Privacy {
+            contact: None,
+            documents_url: Some("http://city.example/privacy".into()),
+        });
+        let refused = deployment.privacy_fields();
+        assert!(
+            matches!(refused, Err(Error::Name { field, .. }) if field == "privacy.documentsUrl"),
+            "not refused: {refused:?}"
+        );
+    }
+
+    #[test]
+    fn privacy_with_a_contact_and_no_documents_page_passes() {
+        let mut deployment = internal_deployment();
+        deployment.privacy = Some(Privacy {
+            contact: Some("privacy@city.example".into()),
+            documents_url: None,
+        });
+        assert_eq!(deployment.privacy_fields(), Ok(()));
+        deployment.privacy = Some(Privacy {
+            contact: None,
+            documents_url: Some("https://city.example/privacy".into()),
+        });
+        assert_eq!(deployment.privacy_fields(), Ok(()));
+    }
+
+    #[test]
+    fn no_theme_and_an_empty_theme_pass_the_theme_checks() {
+        let mut deployment = internal_deployment();
+        deployment.theme = None;
+        assert_eq!(deployment.theme_fields(), Ok(()));
+        deployment.theme = Some(Theme::default());
+        assert_eq!(deployment.theme_fields(), Ok(()));
+    }
+
+    #[test]
+    fn a_theme_keyed_by_a_listed_language_passes() {
+        let mut deployment = internal_deployment();
+        deployment.languages = vec!["sk".into()];
+        let mut title = BTreeMap::new();
+        title.insert("sk".to_owned(), "Mestský pomocník".to_owned());
+        deployment.theme = Some(Theme {
+            title: Some(Localised::ByLanguage(title)),
+            primary_color: Some("#0A7CFF".into()),
+            greeting: Some(Localised::Text(String::new())),
+            subtitle: None,
+            font: None,
+        });
+        assert_eq!(deployment.theme_fields(), Ok(()));
+    }
 }

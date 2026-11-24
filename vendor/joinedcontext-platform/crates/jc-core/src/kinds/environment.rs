@@ -206,4 +206,14 @@ mod edge_tests {
         };
         assert!(spec_valid.validate().is_ok());
     }
+
+    #[test]
+    fn an_environment_without_a_secret_backend_validates() {
+        let spec = EnvironmentSpec {
+            org_domain: Some("staging.banskabystrica.sk".to_owned()),
+            secrets: None,
+            ..Default::default()
+        };
+        assert_eq!(spec.validate(), Ok(()));
+    }
 }

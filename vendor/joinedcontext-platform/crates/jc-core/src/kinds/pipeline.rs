@@ -2360,15 +2360,18 @@ mod tests {
         let yaml = format!(
             "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: p\n  namespace: bb-energie\nspec:\n{spec}"
         );
-        let pipeline = Pipeline::from_yaml(&yaml).unwrap_or_else(|e| panic!("{yaml}\n{e}"));
+        let pipeline = Pipeline::from_yaml(&yaml).expect(&yaml);
         pipeline.validate().err().map(|e| e.to_string())
     }
 
     const TARGET: &str = "  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:energie:ep\n";
 
     fn refused(spec: &str, said: &str) {
-        let refusal = refusal(spec).unwrap_or_else(|| panic!("{spec} is refused"));
-        assert!(refusal.contains(said), "{said}: {refusal}");
+        let refusal = refusal(spec);
+        assert!(
+            refusal.as_deref().is_some_and(|r| r.contains(said)),
+            "{spec}: {said}: {refusal:?}"
+        );
     }
 
     fn mint(mint: Mint, from: Option<&str>, template: Option<&str>) -> IdMint {
@@ -2532,6 +2535,16 @@ mod tests {
         assert_eq!(
             refusal(&format!(
                 "  class: resident\n{TARGET}  output: {{ type: Stop, mode: upsert, id: {{ mint: keep, from: code }} }}\n"
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn a_memory_quota_without_a_cpu_quota_passes() {
+        assert_eq!(
+            refusal(&format!(
+                "  class: resident\n{TARGET}  quotas: {{ maxMemoryMb: 512 }}\n"
             )),
             None
         );
@@ -3103,6 +3116,144 @@ mod edge_tests {
             .validate()
             .expect_err("bad entity type in route output");
         assert!(err.to_string().contains("bad_entity_type"), "{err}");
+    }
+
+    #[test]
+    fn period_seconds_of_an_unknown_unit_is_none() {
+        let p = PipelineSpec {
+            class: PipelineClass::Auto,
+            period: Some("5d".into()),
+            schedule: None,
+            target_endpoint: Some("urn:ngsi-ld:Endpoint:hel.fi:space:ep".parse().unwrap()),
+            enabled: true,
+            allow_feedback: false,
+            source: None,
+            compute: None,
+            output: None,
+            sources: vec![],
+            steps: vec![],
+            outputs: vec![],
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+        assert_eq!(p.period_seconds(), None);
+    }
+
+    #[test]
+    fn author_texts_read_the_steps_of_every_route() {
+        let p = PipelineSpec {
+            class: PipelineClass::Resident,
+            period: None,
+            schedule: None,
+            target_endpoint: Some("urn:ngsi-ld:Endpoint:hel.fi:space:ep".parse().unwrap()),
+            enabled: true,
+            allow_feedback: false,
+            source: None,
+            compute: None,
+            output: None,
+            sources: vec![],
+            steps: vec![],
+            outputs: vec![],
+            routes: vec![PipelineRoute {
+                name: "route-1".into(),
+                when: "this.val > 10".into(),
+                steps: vec![Step::Compute(compute(
+                    ComputeKind::Bloblang,
+                    None,
+                    Some("root = this.route"),
+                ))],
+                outputs: vec![],
+            }],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+        assert_eq!(p.author_texts(), vec!["root = this.route".to_owned()]);
+    }
+
+    fn compute(kind: ComputeKind, mapping_ref: Option<Ref>, bloblang: Option<&str>) -> Compute {
+        Compute {
+            kind,
+            module: None,
+            function: None,
+            mapping_ref,
+            bloblang: bloblang.map(str::to_owned),
+            kpi: None,
+            datacube: None,
+            script_ref: None,
+        }
+    }
+
+    #[test]
+    fn a_wasm_step_without_a_module_is_refused() {
+        let err = validate_compute(&compute(ComputeKind::Wasm, None, None), &[])
+            .expect_err("wasm needs a module");
+        assert_eq!(
+            err,
+            Error::Name {
+                field: "spec.compute.module",
+                value: String::new(),
+                reason: "module is required when compute.kind is `wasm`",
+            }
+        );
+    }
+
+    #[test]
+    fn a_mapping_step_names_its_mapping_bare_or_typed() {
+        let typed = Ref::Typed(crate::envelope::TypedRef {
+            kind: "Mapping".into(),
+            name: "air-to-sosa".into(),
+            namespace: None,
+        });
+        assert_eq!(
+            validate_compute(&compute(ComputeKind::Mapping, Some(typed), None), &[]),
+            Ok(())
+        );
+        let bare = Ref::Name("air-to-sosa".into());
+        assert_eq!(
+            validate_compute(&compute(ComputeKind::Mapping, Some(bare), None), &[]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_data_source_named_without_a_kind_passes() {
+        let src = PipelineSource {
+            data_source_ref: Some(Ref::Name("ds-1".into())),
+            ..Default::default()
+        };
+        assert_eq!(src.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_template_that_starts_with_a_field_has_no_literal_head() {
+        let starts_with_field = IdMint {
+            mint: Mint::Template,
+            from: None,
+            template: Some("{code}".into()),
+        };
+        assert_eq!(literal_head(&starts_with_field), None);
+        let starts_with_text = IdMint {
+            mint: Mint::Template,
+            from: None,
+            template: Some("urn:ngsi-ld:Sensor:{code}".into()),
+        };
+        assert_eq!(
+            literal_head(&starts_with_text).as_deref(),
+            Some("urn:ngsi-ld:Sensor:")
+        );
     }
 
     #[test]

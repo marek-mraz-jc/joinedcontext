@@ -1017,10 +1017,11 @@ mod tests {
                 "spec.appearance.colours.link",
             ),
         ] {
-            match checked(look.clone()) {
-                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field, "{look}"),
-                other => panic!("{look}: {other:?}"),
-            }
+            let result = checked(look.clone());
+            assert!(
+                matches!(&result, Err(Error::Invalid { field: got, .. }) if got == field),
+                "{look}: {field}: {result:?}"
+            );
         }
         for look in [
             json!({ "width": "huge" }),
@@ -1107,10 +1108,11 @@ mod tests {
                 "spec.appearance.display.datasetList.fields[0]",
             ),
         ] {
-            match checked(json!({ "display": display })) {
-                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field),
-                other => panic!("{display}: {other:?}"),
-            }
+            let result = checked(json!({ "display": display }));
+            assert!(
+                matches!(&result, Err(Error::Invalid { field: got, .. }) if got == field),
+                "{display}: {field}: {result:?}"
+            );
         }
         assert!(
             serde_json::from_value::<OrganizationAppearance>(
@@ -1182,10 +1184,11 @@ mod tests {
                 "spec.appearance.pages[1]",
             ),
         ] {
-            match checked(json!({ "pages": pages })) {
-                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field),
-                other => panic!("{field}: {other:?}"),
-            }
+            let result = checked(json!({ "pages": pages }));
+            assert!(
+                matches!(&result, Err(Error::Invalid { field: got, .. }) if got == field),
+                "{field}: {result:?}"
+            );
         }
         assert!(serde_json::from_value::<OrganizationAppearance>(
             json!({ "pages": [{ "page": "terms", "lang": "sk", "markdown": "x", "html": "<b>" }] })
@@ -1253,10 +1256,11 @@ mod tests {
                 "spec.appearance.footerLinks[8]",
             ),
         ] {
-            match checked(appearance.clone()) {
-                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field, "{appearance}"),
-                other => panic!("{field}: {other:?}"),
-            }
+            let result = checked(appearance.clone());
+            assert!(
+                matches!(&result, Err(Error::Invalid { field: got, .. }) if got == field),
+                "{appearance}: {field}: {result:?}"
+            );
         }
         for unknown in [
             json!({ "font": "Comic Sans" }),

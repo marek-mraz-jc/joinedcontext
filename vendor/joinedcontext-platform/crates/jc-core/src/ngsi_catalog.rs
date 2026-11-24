@@ -1479,4 +1479,156 @@ mod edge_tests {
         catalog.insert("non-object-entity".into(), json!("raw-string-entity"));
         link(&mut catalog);
     }
+
+    fn bare_record() -> Value {
+        json!({
+            "@id": "https://city.example/api/endpoint/bare",
+            "@type": "dcat:Dataset",
+            "dct:identifier": "bare",
+        })
+    }
+
+    #[test]
+    fn a_bare_record_is_a_dataset_and_a_service_with_nothing_more() {
+        // A dataset record with neither an `@id` nor an identifier belongs to no Endpoint.
+        let orphan = json!({ "@type": "dcat:Dataset", "dct:title": "Nobody's" });
+        let places = BTreeMap::from([("bare".to_owned(), Place::public("plain", None))]);
+        let built = entities(&[bare_record(), orphan], &places, None);
+        assert_eq!(
+            built.keys().collect::<Vec<_>>(),
+            ["urn:ngsi-ld:DataService:bare", "urn:ngsi-ld:Dataset:bare"]
+        );
+        let dataset = &built["urn:ngsi-ld:Dataset:bare"];
+        for absent in [
+            "title",
+            "description",
+            "temporal",
+            "frequency",
+            "publisher",
+            "location",
+        ] {
+            assert!(dataset.get(absent).is_none(), "{absent}: {dataset}");
+        }
+        assert_eq!(dataset["searchText"]["value"], "plain");
+        let service = &built["urn:ngsi-ld:DataService:bare"];
+        for absent in [
+            "title",
+            "endpointURL",
+            "accessURL",
+            "accessRights",
+            "license",
+        ] {
+            assert!(service.get(absent).is_none(), "{absent}: {service}");
+        }
+        assert_eq!(service["accessLevel"]["value"], "public");
+    }
+
+    #[test]
+    fn a_named_dataset_without_a_service_keeps_its_own_title() {
+        let named = json!({
+            "@id": "https://city.example/api/endpoint/air/datasets/pm10",
+            "@type": "dcat:Dataset",
+            "dct:title": "PM10",
+            "dct:description": "Particulate matter",
+        });
+        let places = BTreeMap::from([("air".to_owned(), Place::public("air", None))]);
+        let built = entities(&[named], &places, None);
+        let service = &built["urn:ngsi-ld:DataService:air"];
+        assert_eq!(service["title"]["languageMap"]["en"], "PM10");
+        assert!(service.get("description").is_none(), "{service}");
+        assert!(built.contains_key("urn:ngsi-ld:Dataset:pm10"));
+    }
+
+    #[test]
+    fn a_ckan_dataset_without_an_organization_publishes_no_organization() {
+        let package = Package {
+            name: "bare-data".into(),
+            title: "Bare".into(),
+            notes: String::new(),
+            organization: None,
+            tags: vec![],
+            extras: BTreeMap::from([("identifier".to_owned(), "bare".to_owned())]),
+            license_url: None,
+            created: None,
+            modified: None,
+            slug: "bare".into(),
+            rows: None,
+        };
+        let places = BTreeMap::from([("bare".to_owned(), Place::public("plain", None))]);
+        let packages = [package];
+        let ckan = Ckan {
+            site: "https://opendata.city.example",
+            packages: &packages,
+        };
+        let built = entities(&[bare_record()], &places, Some(ckan));
+        assert_eq!(
+            built.keys().collect::<Vec<_>>(),
+            [
+                "urn:ngsi-ld:DataService:bare",
+                "urn:ngsi-ld:Dataset:bare-data"
+            ]
+        );
+        let dataset = &built["urn:ngsi-ld:Dataset:bare-data"];
+        assert!(dataset.get("title").is_none(), "{dataset}");
+        assert!(dataset.get("refPublisher").is_none(), "{dataset}");
+        assert_eq!(
+            dataset["refDataService"]["object"],
+            "urn:ngsi-ld:DataService:bare"
+        );
+    }
+
+    #[test]
+    fn a_publisher_keeps_what_it_names_and_an_empty_period_is_left_out() {
+        let place = Place::public("plain", None);
+        let with_id = own_dataset(
+            "bare",
+            "bare",
+            &json!({ "dct:temporal": {}, "dct:publisher": { "@id": "https://org.example" } }),
+            &place,
+        );
+        assert!(with_id.get("temporal").is_none(), "{with_id}");
+        assert_eq!(
+            with_id["publisher"]["value"],
+            json!({ "id": "https://org.example" })
+        );
+        let with_name = own_dataset(
+            "bare",
+            "bare",
+            &json!({ "dct:publisher": { "foaf:name": "Mesto" } }),
+            &place,
+        );
+        assert_eq!(
+            with_name["publisher"]["value"],
+            json!({ "name": { "en": "Mesto" } })
+        );
+        let empty = own_dataset("bare", "bare", &json!({ "dct:publisher": {} }), &place);
+        assert!(empty.get("publisher").is_none(), "{empty}");
+    }
+
+    #[test]
+    fn a_distribution_without_a_profile_or_media_type_is_its_url_alone() {
+        let record = json!({
+            "dcat:distribution": [{ "dcat:accessURL": "https://city.example/ngsi-ld/v1/" }]
+        });
+        let (id, service) = data_service("bare", &record, None, &Place::public("plain", None));
+        assert_eq!(id, "urn:ngsi-ld:DataService:bare");
+        assert_eq!(
+            service["accessURL"]["value"],
+            json!([{ "accessURL": "https://city.example/ngsi-ld/v1/" }])
+        );
+    }
+
+    #[test]
+    fn a_language_map_skips_untagged_objects_and_non_text_values() {
+        let map = language_map(Some(&json!([{ "@language": "sk" }, 5, "Data"])))
+            .expect("the plain string");
+        assert_eq!(Value::Object(map), json!({ "en": "Data" }));
+        assert_eq!(language_map(Some(&json!([5, { "@value": "x" }]))), None);
+    }
+
+    #[test]
+    fn union_keeps_each_value_once() {
+        let terms = json!(["a", "a", "b"]);
+        assert_eq!(union(std::iter::once(Some(&terms)), text), ["a", "b"]);
+    }
 }

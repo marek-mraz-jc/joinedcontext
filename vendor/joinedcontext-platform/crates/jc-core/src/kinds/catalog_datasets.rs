@@ -368,4 +368,13 @@ mod edge_tests {
             );
         }
     }
+    #[test]
+    fn plain_keywords_in_a_known_language_validate() {
+        let mut d = sample_dataset("bbsk-skoly");
+        d.keywords = BTreeMap::from([(
+            "sk".to_owned(),
+            vec!["školy".to_owned(), "vzdelávanie".to_owned()],
+        )]);
+        validate(&[d]).expect("plain keywords are valid");
+    }
 }

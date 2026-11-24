@@ -1032,6 +1032,95 @@ mod edge_tests {
     }
 
     #[test]
+    fn project_spec_refuses_an_organization_ref_of_another_kind() {
+        let spec = ProjectSpec {
+            organization_ref: Ref::Typed(crate::envelope::TypedRef {
+                kind: "Project".to_string(),
+                name: "bbsk".to_string(),
+                namespace: None,
+            }),
+            domain: None,
+            urn_owner: None,
+            catalog: None,
+            quotas: None,
+            repository: None,
+            git_ref: None,
+            version: None,
+            parameters: BTreeMap::new(),
+            apps: None,
+            visibility: None,
+        };
+        assert_eq!(
+            spec.validate(),
+            Err(Error::Kind {
+                expected: "Organization",
+                got: "Project".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn quotas_capped_keeps_a_dimension_the_ceiling_leaves_open() {
+        let q = Quotas {
+            context_spaces: Some(10),
+            apps: Some(10),
+            ..Default::default()
+        };
+        let ceiling = Quotas {
+            apps: Some(2),
+            ..Default::default()
+        };
+        let capped = q.capped(&ceiling);
+        assert_eq!(capped.context_spaces, Some(10));
+        assert_eq!(capped.apps, Some(2));
+        assert_eq!(capped.resident_pipelines, None);
+    }
+
+    #[test]
+    fn quality_rule_accepts_min_at_most_max() {
+        let rule = QualityRule {
+            name: "range-check".to_string(),
+            entity_type: "Vehicle".to_string(),
+            kind: QualityKind::Range,
+            attribute: "speed".to_string(),
+            min: Some(serde_json::Number::from(10)),
+            max: Some(serde_json::Number::from(50)),
+            bbox: None,
+            max_ahead: None,
+            max_age: None,
+            outcome: None,
+        };
+        assert_eq!(rule.validate(), Ok(()));
+    }
+
+    #[test]
+    fn context_space_spec_accepts_a_bare_data_model_name() {
+        let spec = ContextSpaceSpec {
+            data_model_ref: Some(Ref::Name("dm".to_string())),
+            ..Default::default()
+        };
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
+    #[test]
+    fn context_space_accepts_a_data_model_of_its_own_project() {
+        let spec = ContextSpaceSpec {
+            data_model_ref: Some(Ref::Typed(crate::envelope::TypedRef {
+                kind: "DataModel".to_string(),
+                name: "dm".to_string(),
+                namespace: Some("this-project".to_string()),
+            })),
+            ..Default::default()
+        };
+        let meta = ObjectMeta {
+            name: "space1".to_string(),
+            namespace: Some("this-project".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(spec.validate_with_meta(&meta), Ok(()));
+    }
+
+    #[test]
     fn quotas_capped_caps_all_dimensions() {
         let q = Quotas {
             context_spaces: Some(10),

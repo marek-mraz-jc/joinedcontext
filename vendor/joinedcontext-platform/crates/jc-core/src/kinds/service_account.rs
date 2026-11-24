@@ -716,10 +716,9 @@ spec:
         let yaml = VALID.replacen(from, to, 1);
         assert_ne!(yaml, VALID, "{from}");
         ServiceAccount::from_yaml(&yaml)
-            .unwrap_or_else(|e| panic!("{yaml}\n{e}"))
+            .expect(&yaml)
             .validate()
-            .err()
-            .unwrap_or_else(|| panic!("{to} is refused"))
+            .expect_err(to)
             .to_string()
     }
 
@@ -752,6 +751,51 @@ spec:
             let refused = refusal(from, to);
             assert!(refused.contains(said), "{said}: {refused}");
         }
+    }
+
+    #[test]
+    fn an_account_without_a_namespace_skips_the_project_checks() {
+        let account = ServiceAccount::from_yaml(VALID).expect("parses");
+        let meta = ObjectMeta {
+            name: account.metadata.name.clone(),
+            namespace: None,
+            ..Default::default()
+        };
+        assert_eq!(account.spec.validate_spec(&meta), Ok(()));
+    }
+
+    #[test]
+    fn a_binding_valid_for_a_window_and_a_workload_binding_pass() {
+        let mut spec = ServiceAccount::from_yaml(VALID).expect("parses").spec;
+        let from = jc_time::parse_rfc3339("2026-01-01T00:00:00Z").unwrap();
+        let to = jc_time::parse_rfc3339("2026-01-02T00:00:00Z").unwrap();
+        spec.roles[0].validity = Some(BindingValidity {
+            not_before: Some(from.into()),
+            not_after: Some(to.into()),
+        });
+        spec.workload = Some(Workload {
+            kubernetes: KubernetesBinding {
+                namespace: "bb-doprava".into(),
+                service_account: "vendorx".into(),
+            },
+        });
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_workload_service_account_that_is_no_label_is_refused() {
+        let mut spec = ServiceAccount::from_yaml(VALID).expect("parses").spec;
+        spec.workload = Some(Workload {
+            kubernetes: KubernetesBinding {
+                namespace: "bb-doprava".into(),
+                service_account: "Bad_SA".into(),
+            },
+        });
+        let err = spec.validate().expect_err("not a DNS label");
+        assert!(
+            matches!(&err, Error::Name { value, .. } if value == "Bad_SA"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -907,7 +951,39 @@ mod edge_tests {
     }
 
     #[test]
+    fn jwks_refuses_an_rsa_key_for_another_algorithm() {
+        let jwks = Jwks {
+            keys: vec![PublicJwk {
+                kty: "RSA".into(),
+                kid: "k3".into(),
+                crv: None,
+                x: None,
+                y: None,
+                n: Some("A".repeat(345)),
+                e: Some("AQAB".into()),
+                alg: Some("RS512".into()),
+                use_: None,
+            }],
+        };
+        assert_eq!(
+            jwks.validate(),
+            Err(Error::Name {
+                field: "spec.credentials.jwks",
+                value: "k3".into(),
+                reason: "an RSA key is for RS256",
+            })
+        );
+    }
+
+    #[test]
     fn client_registry_operations_and_binding_validity_coverage() {
+        // A writer that panics poisons the registry; every reader and writer still answers.
+        let poisoner = std::thread::spawn(|| {
+            let _guard = CLIENTS.write();
+            panic!("a writer panics while it holds the client registry");
+        });
+        assert!(poisoner.join().is_err());
+        assert!(CLIENTS.is_poisoned());
         set_client_registry(std::collections::BTreeMap::from([(
             "custom-reg-id".into(),
             ("proj1".into(), "account1".into()),

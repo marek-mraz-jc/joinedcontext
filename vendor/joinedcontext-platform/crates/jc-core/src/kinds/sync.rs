@@ -1044,4 +1044,49 @@ mod edge_tests {
             "{err}"
         );
     }
+
+    #[test]
+    fn a_model_with_an_invalid_origin_name_is_refused_naming_the_field() {
+        let bundle = BundleSpec {
+            exported_at: "2026-01-01T00:00:00Z".parse::<TimestampTz>().unwrap(),
+            exported_by: "admin".into(),
+            source_instance: None,
+            source_revision: "abcdef01234567".into(),
+            items: vec![BundleItem {
+                kind: "Endpoint".into(),
+                namespace: Some("proj".into()),
+                name: "ep".into(),
+                path: "endpoints/ep.yaml".into(),
+            }],
+            native_files: Vec::new(),
+            files: Vec::new(),
+            omitted: 0,
+            readme: None,
+            schemas: None,
+            repositories: Vec::new(),
+            models: vec![BundleModel {
+                name: "air-quality".into(),
+                version: crate::kinds::SemVer::new("1.0.0").unwrap(),
+                manifest: "models/air-quality.yaml".into(),
+                file: "models/air-quality.linkml.yaml".into(),
+                sha256: "0".repeat(64),
+                origin: BundleModelOrigin {
+                    organization: "city".into(),
+                    name: "Bad_Name".into(),
+                },
+            }],
+        };
+        let err = bundle.validate().unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                Error::Name {
+                    field: "models.origin.name",
+                    value,
+                    ..
+                } if value == "Bad_Name"
+            ),
+            "{err:?}"
+        );
+    }
 }
