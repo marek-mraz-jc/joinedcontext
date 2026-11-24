@@ -30,6 +30,20 @@ pub(crate) static PORTAL_INTERNAL: std::sync::LazyLock<Arc<std::sync::OnceLock<S
 pub(crate) static PORTAL_STATE: std::sync::OnceLock<joinedcontext_portal::state::AppState> =
     std::sync::OnceLock::new();
 
+/// This thread's log lines, every level, while the guard lives: a `tracing` macro evaluates its
+/// fields only for a subscriber that takes the event, so a test asserting a log line needs one.
+#[cfg(test)]
+pub(crate) fn capture_log() -> (tempfile::NamedTempFile, tracing::subscriber::DefaultGuard) {
+    let file = tempfile::NamedTempFile::new().expect("a log file");
+    let writer = Arc::new(file.reopen().expect("the log file reopened"));
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_writer(writer)
+        .finish();
+    (file, tracing::subscriber::set_default(subscriber))
+}
+
 #[cfg(feature = "antares")]
 pub mod antares;
 #[cfg(all(feature = "portal", any(feature = "kaisatsu", feature = "dataroom")))]

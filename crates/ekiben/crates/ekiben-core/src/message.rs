@@ -141,13 +141,10 @@ impl Part {
                 return b.clone();
             }
         }
-        if let Some(ref s) = self.structured {
-            let encoded = encode_structured_to_bytes(s);
-            let b = Bytes::from(encoded);
-            self.raw_bytes = Some(b.clone());
-            return b;
-        }
-        Bytes::new()
+        // A part always holds bytes or a structured value, so this encodes the structured one.
+        let b = Bytes::from(self.encoded_structured());
+        self.raw_bytes = Some(b.clone());
+        b
     }
 
     /// Read-only byte access without mutating `&self` (computes JSON bytes on the fly if only structured is set).
@@ -157,10 +154,13 @@ impl Part {
                 return b.clone();
             }
         }
-        if let Some(ref s) = self.structured {
-            return Bytes::from(encode_structured_to_bytes(s));
-        }
-        Bytes::new()
+        Bytes::from(self.encoded_structured())
+    }
+
+    fn encoded_structured(&self) -> Vec<u8> {
+        self.structured
+            .as_deref()
+            .map_or_else(Vec::new, encode_structured_to_bytes)
     }
 
     /// About how many bytes the part holds, without serializing a structured value: its raw
@@ -244,9 +244,8 @@ impl Part {
         if let Some(ref s) = self.structured {
             return Ok((**s).clone());
         }
-        let Some(ref raw) = self.raw_bytes else {
-            return Err("target message part does not exist".to_string());
-        };
+        // Without a structured value the part holds bytes.
+        let raw = self.raw_bytes.as_deref().unwrap_or_default();
         if raw.is_empty() {
             return Err("target message part does not exist".to_string());
         }
@@ -378,8 +377,7 @@ impl<'a> MessageBatch for PartsView<'a> {
         };
         match (&part.raw_bytes, &part.structured) {
             (Some(b), s) if !b.is_empty() || s.is_none() => Cow::Borrowed(b.as_ref()),
-            (_, Some(s)) => Cow::Owned(encode_structured_to_bytes(s)),
-            _ => Cow::Borrowed(&[]),
+            _ => Cow::Owned(part.encoded_structured()),
         }
     }
 

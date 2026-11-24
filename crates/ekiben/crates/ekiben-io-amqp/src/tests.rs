@@ -218,6 +218,37 @@ async fn a_private_broker_is_refused_before_any_connection() {
     assert!(!i.is_connected());
 }
 
+/// dial_one re-parses the URL parse() already checked; one that does not parse is a config
+/// error that keeps the URL, password included, out of the message.
+#[tokio::test]
+async fn a_url_that_no_longer_parses_is_refused_without_naming_it() {
+    let i = AmqpInput::from_config(&conf(json!({
+        "urls": ["amqp://u:hunter2@a.example.org:5672/"],
+        "queue": "q",
+    })))
+    .expect("builds");
+    for bad in [
+        "",
+        "not a url",
+        "http://u:hunter2@a.example.org/",
+        "amqp://u:hunter2@[::1/",
+    ] {
+        let e = match i
+            .dial_one(&SecretString::new(bad), &ctx(OrgQuotas::default()))
+            .await
+        {
+            Ok(_) => panic!("dialled {bad:?}"),
+            Err(e) => e,
+        };
+        assert!(matches!(e, CoreError::Config(_)), "{bad:?}: {e}");
+        assert_eq!(
+            e.to_string(),
+            CoreError::config("amqp_0_9 input: a URL does not parse").to_string()
+        );
+        assert!(!e.to_string().contains("hunter2"), "{e}");
+    }
+}
+
 #[test]
 fn properties_and_headers_become_bentos_metadata() {
     let mut headers = BTreeMap::new();

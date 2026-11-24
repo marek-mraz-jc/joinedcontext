@@ -1,0 +1,4 @@
+POST
+city.example
+/bratislava/aaaaaaaaaaaaaaaaaaaaaaaaaa/api/v1/spaces
+application/json

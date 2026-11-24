@@ -845,6 +845,30 @@ async fn an_app_without_data_needs_is_served_as_built() {
     assert_eq!(body, INDEX);
 }
 
+/// An index that is no UTF-8 cannot take `#jc-config`: it is served byte for byte as signed,
+/// never rewritten lossily, even when the App reads data.
+#[tokio::test]
+async fn an_index_that_is_no_utf8_is_served_as_built_even_with_data_needs() {
+    let index: &[u8] = b"<!doctype html><title>\xff\xfe kpi</title>";
+    let dir = app_root("latin", &[("index.html", index)]);
+    let mut spec = app_spec("published");
+    spec["dataNeeds"] = serde_json::json!([{
+        "contextSpaceRef": { "kind": "ContextSpace", "name": "bbsk-kpi" },
+        "types": ["KeyPerformanceIndicator"],
+        "operations": ["queryEntity"]
+    }]);
+    let mirror = mirror_with_app(spec);
+    mirror.upsert(envelope(
+        "Endpoint",
+        "ovzdusie",
+        "bbsk-kpi",
+        serde_json::json!({ "contextSpaceRef": "bbsk-kpi", "slug": "regionslug" }),
+    ));
+    let (status, body) = get_with(dir.path(), mirror, "/apps/air-quality/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, index);
+}
+
 /// One request for an app with the `Host` a browser sends, on a Portal whose apps live under
 /// `https://example.org`, each on `{name}.apps.example.org`, and whose own UI lives on
 /// `https://portal.example.org`.

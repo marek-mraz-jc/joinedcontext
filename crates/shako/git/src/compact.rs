@@ -476,7 +476,9 @@ mod tests {
             Duration::from_secs(3600),
         );
         let gone = orphan(&repo, b"pushed away 15 days ago\n", 15 * DAY);
-        let compact = |grace| compact_repository(&repo, grace, &mut |_| Ok(())).expect("compact");
+        let compact = |grace| {
+            compact_repository(&repo, grace, &mut crate::testutil::admit_all).expect("compact")
+        };
 
         compact(14 * DAY);
         assert!(
@@ -530,7 +532,8 @@ mod tests {
         write_objects_as_pack(&repo, &[blob, tree, inner, outer]).expect("pack");
         crate::repo::set_ref_direct(&repo, "refs/tags/outer", &ids[3].to_string()).expect("ref");
         // A zero grace prunes every object the walk misses.
-        compact_repository(&repo, Duration::ZERO, &mut |_| Ok(())).expect("compact");
+        compact_repository(&repo, Duration::ZERO, &mut crate::testutil::admit_all)
+            .expect("compact");
         for id in ids {
             assert!(held(&repo, id), "{id} lost");
         }
@@ -558,7 +561,7 @@ mod tests {
         std::fs::write(repo.join("refs/heads/broken"), "not an object id\n").expect("bad ref");
         let packs = list_pack_files(&repo.join("objects/pack"));
 
-        let err = compact_repository(&repo, Duration::ZERO, &mut |_| Ok(()))
+        let err = compact_repository(&repo, Duration::ZERO, &mut crate::testutil::admit_all)
             .expect_err("an unreadable ref must stop compaction");
         assert!(err.to_string().contains("compact refs"), "{err}");
         assert_eq!(list_pack_files(&repo.join("objects/pack")), packs);
@@ -582,7 +585,7 @@ mod tests {
         orphan(&repo, b"one\n", Duration::ZERO);
         orphan(&repo, b"two\n", Duration::ZERO);
         let before = list_pack_files(&pack_dir);
-        compact_repository(&repo, DAY, &mut |_| Ok(())).expect("compact");
+        compact_repository(&repo, DAY, &mut crate::testutil::admit_all).expect("compact");
         let superseded: Vec<_> = before
             .iter()
             .filter(|p| !list_pack_files(&pack_dir).contains(p))
@@ -595,7 +598,7 @@ mod tests {
         // A crash left an index without its pack.
         let orphan_idx = pack_dir.join("pack-crashed.idx");
         std::fs::write(&orphan_idx, b"x").expect("orphan idx");
-        compact_repository(&repo, DAY, &mut |_| Ok(())).expect("compact");
+        compact_repository(&repo, DAY, &mut crate::testutil::admit_all).expect("compact");
         assert!(
             superseded.iter().all(|p| p.exists()),
             "removed within the hour"
@@ -608,7 +611,7 @@ mod tests {
                 .and_then(|f| f.set_modified(SystemTime::now() - SUPERSEDED_KEPT))
                 .expect("age");
         }
-        compact_repository(&repo, DAY, &mut |_| Ok(())).expect("compact");
+        compact_repository(&repo, DAY, &mut crate::testutil::admit_all).expect("compact");
         assert!(superseded.iter().all(|p| !p.exists()));
         assert!(fsck_repository(&repo).is_ok());
     }
@@ -630,7 +633,7 @@ mod tests {
             orphan(&repo, format!("blob {n}\n").as_bytes(), Duration::ZERO);
         }
         assert!(compaction_due(&repo));
-        compact_repository(&repo, DAY, &mut |_| Ok(())).expect("compact");
+        compact_repository(&repo, DAY, &mut crate::testutil::admit_all).expect("compact");
         assert!(!compaction_due(&repo));
     }
 
@@ -647,5 +650,136 @@ mod tests {
         let seen = read_seen(&pack);
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[&id], UNIX_EPOCH + Duration::from_secs(1000));
+    }
+
+    #[test]
+    fn a_directory_without_objects_compacts_to_nothing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        assert!(!has_active_quarantine(tmp.path()));
+        assert!(!compaction_due(tmp.path()));
+        let out = compact_repository(
+            tmp.path(),
+            DEFAULT_PRUNE_GRACE,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("compact");
+        assert_eq!(
+            out,
+            CompactOutcome {
+                packs_before: 0,
+                packs_after: 0,
+                objects_packed: 0,
+                skipped_due_to_quarantine: false,
+            }
+        );
+        // A repository whose packs hold only objects past the grace keeps its packs as they are.
+        let repo = init_bare_repo(
+            tmp.path(),
+            InstanceId::from_u128(1),
+            RepoId::from_u128(1),
+            "main",
+            false,
+            "t",
+        )
+        .expect("init");
+        orphan(&repo, b"long gone\n", 30 * DAY);
+        let out = compact_repository(&repo, DEFAULT_PRUNE_GRACE, &mut crate::testutil::admit_all)
+            .expect("compact");
+        assert_eq!(
+            (out.packs_before, out.packs_after, out.objects_packed),
+            (1, 1, 0)
+        );
+        // A file named like a quarantine is a push in flight too.
+        std::fs::write(repo.join("objects/incoming-file"), b"x").expect("file");
+        assert!(
+            compact_repository(&repo, DEFAULT_PRUNE_GRACE, &mut crate::testutil::admit_all)
+                .expect("compact")
+                .skipped_due_to_quarantine
+        );
+    }
+
+    #[test]
+    fn a_tag_naming_a_blob_keeps_it_and_stray_index_files_go() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = init_bare_repo(
+            tmp.path(),
+            InstanceId::from_u128(1),
+            RepoId::from_u128(1),
+            "main",
+            true,
+            "t",
+        )
+        .expect("init");
+        let blob = orphan(&repo, b"tagged blob\n", Duration::ZERO);
+        crate::repo::set_ref_direct(&repo, "refs/tags/blob", &blob.to_string()).expect("tag");
+        let pack_dir = repo.join("objects/pack");
+        std::fs::write(pack_dir.join("pack-stray.idx"), b"x").expect("stray idx");
+        std::fs::write(pack_dir.join("pack-stray.seen"), b"x").expect("stray seen");
+        std::fs::write(pack_dir.join("notes.txt"), b"x").expect("other file");
+        let out = compact_repository(&repo, DEFAULT_PRUNE_GRACE, &mut crate::testutil::admit_all)
+            .expect("compact");
+        assert_eq!(out.packs_after, 1);
+        assert_eq!(
+            out.objects_packed, 4,
+            "the commit, its tree, README.md and the tagged blob"
+        );
+        assert!(!pack_dir.join("pack-stray.idx").exists());
+        assert!(!pack_dir.join("pack-stray.seen").exists());
+        assert!(pack_dir.join("notes.txt").exists());
+        let handle = open_isolated(&repo).expect("open");
+        assert!(handle.has_object(blob));
+        // A refused admission stops it before an old pack goes.
+        orphan(&repo, b"another\n", Duration::ZERO);
+        let before = list_pack_files(&pack_dir);
+        let err = compact_repository(&repo, DEFAULT_PRUNE_GRACE, &mut |_| {
+            Err(ShakoError::Overloaded("busy".into()))
+        })
+        .expect_err("refused");
+        assert!(matches!(err, ShakoError::Overloaded(_)), "{err}");
+        assert_eq!(list_pack_files(&pack_dir), before);
+    }
+
+    #[test]
+    fn fsck_names_a_ref_to_a_missing_object_and_a_damaged_pack_or_index() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = init_bare_repo(
+            tmp.path(),
+            InstanceId::from_u128(1),
+            RepoId::from_u128(1),
+            "main",
+            true,
+            "t",
+        )
+        .expect("init");
+        let ok = fsck_repository(&repo).expect("fsck");
+        assert_eq!(
+            (ok.verified_packs, ok.verified_refs),
+            (1, 2),
+            "HEAD and main"
+        );
+        crate::repo::set_ref_direct(
+            &repo,
+            "refs/heads/lost",
+            "1111111111111111111111111111111111111111",
+        )
+        .expect("dangling ref");
+        let err = fsck_repository(&repo).expect_err("dangling");
+        assert!(
+            err.to_string()
+                .contains("refs/heads/lost points to missing object"),
+            "{err}"
+        );
+        crate::repo::delete_branch(&repo, "lost").expect("drop");
+
+        let pack = list_pack_files(&repo.join("objects/pack")).remove(0);
+        let mut bytes = std::fs::read(&pack).expect("pack");
+        let at = bytes.len() - 25;
+        bytes[at] ^= 0xff;
+        std::fs::write(&pack, &bytes).expect("damage pack");
+        let err = fsck_repository(&repo).expect_err("damaged pack");
+        assert!(err.to_string().contains("fsck integrity failed"), "{err}");
+        std::fs::write(pack.with_extension("idx"), b"not an index").expect("damage idx");
+        let err = fsck_repository(&repo).expect_err("damaged index");
+        assert!(err.to_string().contains("fsck open bundle"), "{err}");
     }
 }

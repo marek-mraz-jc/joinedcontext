@@ -15,8 +15,9 @@ enum IdMatcher {
     /// An `id` selector, or an `idPattern` that is one escaped literal between `^` and `$`:
     /// matched by string equality, so an id holding `.` or `+` never widens.
     Exact(String),
-    /// An `idPattern`.
-    Pattern(regex::Regex),
+    /// An `idPattern`, anchored at both ends as the broker reads it: `^a.*|b$` passes the
+    /// `^`/`$` check of `EntitySelector::validate` yet its raw program matches every id (T-7799).
+    Pattern(Arc<regex::Regex>),
     /// A pattern that does not compile: it matches nothing, so a grant the gateway cannot
     /// evaluate never lets everything through. `jcctl validate` and the Portal reject one
     /// before it is committed; this is the second line.
@@ -29,7 +30,7 @@ impl IdMatcher {
         if let Some(literal) = exact(pattern) {
             return Self::Exact(literal);
         }
-        regex::Regex::new(pattern).map_or(Self::Nothing, Self::Pattern)
+        antares_ql::regex::compile_anchored(pattern).map_or(Self::Nothing, Self::Pattern)
     }
 
     fn matches(&self, id: &str) -> bool {
@@ -160,6 +161,24 @@ mod tests {
         let prefix = patterns(&["^urn:ngsi-ld:Device:bb\\.sk:.*$"]);
         assert!(prefix.permits("urn:ngsi-ld:Device:bb.sk:lamp-1"));
         assert!(!prefix.permits("urn:ngsi-ld:Device:bbXsk:lamp-1"));
+    }
+
+    /// T-7799: a grant's pattern is read anchored at both ends, as the broker reads it, and one
+    /// that compiles only inside that wrapper matches nothing.
+    #[test]
+    fn a_top_level_alternation_stays_anchored_and_a_wrapper_escape_matches_nothing() {
+        let wide = patterns(&["^urn:x:a.*|b$"]);
+        assert!(wide.permits("urn:x:a1") && wide.permits("b"));
+        assert!(
+            !wide.permits("urn:y:b"),
+            "the second branch is anchored at the start too"
+        );
+        let both = patterns(&["^urn:x:a$|^urn:x:b$"]);
+        assert!(both.permits("urn:x:b") && !both.permits("urn:x:c"));
+        let escape = patterns(&["^urn:x:a$)|(^.*$"]);
+        for id in ["urn:x:a", "urn:y:b", ""] {
+            assert!(!escape.permits(id), "{id}");
+        }
     }
 
     #[test]

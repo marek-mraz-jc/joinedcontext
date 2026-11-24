@@ -1,0 +1,4 @@
+GET
+opendata.example.com
+/bratislava/data/dataset/x?q=1
+text/html

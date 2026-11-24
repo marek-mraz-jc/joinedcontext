@@ -236,7 +236,7 @@ pub(crate) fn eval_string_family(
             let s = target_val.get_string()?;
             serde_json::to_string(&s)
                 .map(Value::String)
-                .map_err(|e| e.to_string())
+                .map_err(crate::error::text)
         })()),
         "unquote" => Some((|| {
             let s = target_val.get_string()?;
@@ -299,14 +299,10 @@ pub(crate) fn eval_string_family(
             let mut obj = BTreeMap::new();
             if let Some(caps) = re.captures(&s) {
                 for (i, name_opt) in re.capture_names().enumerate() {
-                    if let Some(m) = caps.get(i) {
-                        let key = name_opt.map(String::from).unwrap_or_else(|| i.to_string());
-                        obj.insert(key, Value::String(m.as_str().to_string()));
-                    } else {
-                        // In Go's FindStringSubmatch, an unmatched optional group in a matching regex is ""
-                        let key = name_opt.map(String::from).unwrap_or_else(|| i.to_string());
-                        obj.insert(key, Value::String(String::new()));
-                    }
+                    let key = name_opt.map_or_else(|| i.to_string(), String::from);
+                    // In Go's FindStringSubmatch, an unmatched optional group in a matching regex is ""
+                    let text = caps.get(i).map_or("", |m| m.as_str());
+                    obj.insert(key, Value::String(text.to_string()));
                 }
             }
             Ok(Value::Object(obj.into()))
@@ -371,14 +367,14 @@ pub(crate) fn eval_string_family(
             let decoded = match scheme.as_str() {
                 "base64" => base64::engine::general_purpose::STANDARD
                     .decode(s.trim())
-                    .map_err(|e| e.to_string())?,
+                    .map_err(crate::error::text)?,
                 "base64url" => base64::engine::general_purpose::URL_SAFE
                     .decode(s.trim())
-                    .map_err(|e| e.to_string())?,
+                    .map_err(crate::error::text)?,
                 "base64rawurl" => base64::engine::general_purpose::URL_SAFE_NO_PAD
                     .decode(s.trim())
-                    .map_err(|e| e.to_string())?,
-                "hex" => hex::decode(s.trim()).map_err(|e| e.to_string())?,
+                    .map_err(crate::error::text)?,
+                "hex" => hex::decode(s.trim()).map_err(crate::error::text)?,
                 "ascii85" => decode_ascii85(&s)?,
                 other => return Err(format!("unrecognized encoding type: {other}")),
             };
@@ -411,7 +407,7 @@ pub(crate) fn eval_string_family(
                         .filter(|k| !k.is_empty())
                         .ok_or_else(|| format!("hash algorithm {algo} requires a key argument"))?;
                     let mut mac =
-                        Hmac::<Sha1>::new_from_slice(key.as_bytes()).map_err(|e| e.to_string())?;
+                        Hmac::<Sha1>::new_from_slice(key.as_bytes()).map_err(crate::error::text)?;
                     mac.update(&bytes);
                     mac.finalize().into_bytes().to_vec()
                 }
@@ -420,7 +416,7 @@ pub(crate) fn eval_string_family(
                         .filter(|k| !k.is_empty())
                         .ok_or_else(|| format!("hash algorithm {algo} requires a key argument"))?;
                     let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes())
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::error::text)?;
                     mac.update(&bytes);
                     mac.finalize().into_bytes().to_vec()
                 }
@@ -429,7 +425,7 @@ pub(crate) fn eval_string_family(
                         .filter(|k| !k.is_empty())
                         .ok_or_else(|| format!("hash algorithm {algo} requires a key argument"))?;
                     let mut mac = Hmac::<Sha512>::new_from_slice(key.as_bytes())
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::error::text)?;
                     mac.update(&bytes);
                     mac.finalize().into_bytes().to_vec()
                 }
@@ -468,18 +464,18 @@ pub(crate) fn eval_string_family(
             let compressed = match algo.as_str() {
                 "gzip" | "pgzip" => {
                     let mut enc = GzEncoder::new(Vec::new(), Compression::default());
-                    enc.write_all(&bytes).map_err(|e| e.to_string())?;
-                    enc.finish().map_err(|e| e.to_string())?
+                    enc.write_all(&bytes).map_err(crate::error::text)?;
+                    enc.finish().map_err(crate::error::text)?
                 }
                 "zlib" => {
                     let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
-                    enc.write_all(&bytes).map_err(|e| e.to_string())?;
-                    enc.finish().map_err(|e| e.to_string())?
+                    enc.write_all(&bytes).map_err(crate::error::text)?;
+                    enc.finish().map_err(crate::error::text)?
                 }
                 "flate" => {
                     let mut enc = DeflateEncoder::new(Vec::new(), Compression::default());
-                    enc.write_all(&bytes).map_err(|e| e.to_string())?;
-                    enc.finish().map_err(|e| e.to_string())?
+                    enc.write_all(&bytes).map_err(crate::error::text)?;
+                    enc.finish().map_err(crate::error::text)?
                 }
                 "lz4" => {
                     // pierrec/lz4 v4 writer defaults: 4 MB independent blocks, content checksum.
@@ -487,8 +483,8 @@ pub(crate) fn eval_string_family(
                     info.block_size = lz4_flex::frame::BlockSize::Max4MB;
                     info.content_checksum = true;
                     let mut enc = lz4_flex::frame::FrameEncoder::with_frame_info(info, Vec::new());
-                    enc.write_all(&bytes).map_err(|e| e.to_string())?;
-                    enc.finish().map_err(|e| e.to_string())?
+                    enc.write_all(&bytes).map_err(crate::error::text)?;
+                    enc.finish().map_err(crate::error::text)?
                 }
                 other => return Err(format!("unrecognized compression algorithm: {other}")),
             };
@@ -506,25 +502,25 @@ pub(crate) fn eval_string_family(
                     let dec = GzDecoder::new(&bytes[..]);
                     dec.take(max_unpacked + 1)
                         .read_to_end(&mut out)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::error::text)?;
                 }
                 "zlib" => {
                     let dec = ZlibDecoder::new(&bytes[..]);
                     dec.take(max_unpacked + 1)
                         .read_to_end(&mut out)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::error::text)?;
                 }
                 "flate" => {
                     let dec = DeflateDecoder::new(&bytes[..]);
                     dec.take(max_unpacked + 1)
                         .read_to_end(&mut out)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::error::text)?;
                 }
                 "lz4" => {
                     let dec = lz4_flex::frame::FrameDecoder::new(&bytes[..]);
                     dec.take(max_unpacked + 1)
                         .read_to_end(&mut out)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::error::text)?;
                 }
                 other => return Err(format!("unrecognized decompression algorithm: {other}")),
             }
@@ -566,7 +562,7 @@ pub(crate) fn eval_string_family(
         })()),
         "format_yaml" => Some((|| {
             let jv = target_val.to_json_value();
-            let s = serde_norway::to_string(&jv).map_err(|e| e.to_string())?;
+            let s = serde_norway::to_string(&jv).map_err(crate::error::text)?;
             Ok(Value::Bytes(s.into_bytes()))
         })()),
         "parse_csv" => Some((|| {
@@ -597,17 +593,15 @@ pub(crate) fn eval_string_family(
                 .from_reader(s.as_bytes());
             let mut all_rows: Vec<Vec<String>> = Vec::new();
             for rec in rdr.records() {
-                let rec = rec.map_err(|e| e.to_string())?;
+                let rec = rec.map_err(crate::error::text)?;
                 all_rows.push(rec.iter().map(String::from).collect());
             }
             if all_rows.is_empty() {
                 return Err("zero records were parsed".to_string());
             }
             if parse_header_row {
+                // The csv reader skips empty lines, so the first row holds at least one field.
                 let headers = &all_rows[0];
-                if headers.is_empty() {
-                    return Err("no headers found on first row".to_string());
-                }
                 let mut out = Vec::with_capacity(all_rows.len() - 1);
                 for (row_idx, row) in all_rows[1..].iter().enumerate() {
                     if row.len() != headers.len() {
@@ -662,7 +656,7 @@ pub(crate) fn eval_string_family(
         "parse_url" => Some((|| {
             let s = target_val.get_string()?;
             go_url_escapes_valid(&s)?;
-            let parsed = Url::parse(&s).map_err(|e| e.to_string())?;
+            let parsed = Url::parse(&s).map_err(crate::error::text)?;
             let mut obj = BTreeMap::new();
             obj.insert(
                 "scheme".to_string(),
@@ -1063,6 +1057,11 @@ fn strip_html_tags(input: &str, preserve: &[String]) -> String {
     out
 }
 
+/// Compiled Go patterns shared by every thread (see go_regex).
+static GO_REGEX_CACHE: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Regex>>>,
+> = std::sync::LazyLock::new(Default::default);
+
 /// A pattern compiled as Go's RE2 reads it, from a small per-thread cache: Bento compiles a literal
 /// pattern once at parse, so a `re_match` inside a `filter` must not compile per element.
 /// A shared handle: cloning a `Regex` starts a fresh match cache, which a pattern with counted
@@ -1071,20 +1070,18 @@ fn go_regex(pattern: &str) -> Result<std::sync::Arc<Regex>, String> {
     // One cache for the process, not one per thread: a `Regex` is shared across threads (it pools
     // its own scratch space), and per-thread copies of every pattern held 109 MiB of compiled
     // programs in jc's runner on the prod rehearsal (jc-memory-peak).
-    static CACHE: std::sync::LazyLock<
-        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Regex>>>,
-    > = std::sync::LazyLock::new(Default::default);
     // ponytail: the cache empties when full; an LRU only pays off for mappings with > 256 patterns.
     const MAX_CACHED: usize = 256;
     let cache = || {
-        CACHE
+        GO_REGEX_CACHE
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     };
     if let Some(re) = cache().get(pattern).cloned() {
         return Ok(re);
     }
-    let re = std::sync::Arc::new(Regex::new(&go_regex_syntax(pattern)).map_err(|e| e.to_string())?);
+    let re =
+        std::sync::Arc::new(Regex::new(&go_regex_syntax(pattern)).map_err(crate::error::text)?);
     let mut c = cache();
     if c.len() >= MAX_CACHED {
         c.clear();
@@ -1195,7 +1192,7 @@ fn unescape_url_query(s: &str) -> Result<String, String> {
             }
         }
     }
-    String::from_utf8(out).map_err(|e| e.to_string())
+    String::from_utf8(out).map_err(crate::error::text)
 }
 
 /// Converts Go `regexp.ReplaceAllString` replacement syntax (`$1`, `${1}`, `$$`)
@@ -1256,7 +1253,7 @@ pub fn parse_xml_to_value(xml_bytes: &[u8], cast: bool) -> Result<Value, String>
         );
     }
     // Pre-quote unquoted attribute values like `<number id=99>` which Go's mxj accepts:
-    let normalized = quote_unquoted_xml_attrs(raw_str);
+    let normalized = quote_unquoted_xml_attrs(raw_str)?;
     let mut reader = quick_xml::Reader::from_str(&normalized);
     reader.config_mut().trim_text(false);
 
@@ -1425,11 +1422,9 @@ fn cast_xml_scalar(s: &str, cast: bool) -> Value {
     Value::String(s.to_string())
 }
 
-fn quote_unquoted_xml_attrs(xml: &str) -> String {
-    match go_regex(r#"(\s[a-zA-Z_:][a-zA-Z0-9_.:-]*)=([^"'\s><]+)"#) {
-        Ok(re) => re.replace_all(xml, r#"$1="$2""#).into_owned(),
-        Err(_) => xml.to_string(),
-    }
+fn quote_unquoted_xml_attrs(xml: &str) -> Result<String, String> {
+    let re = go_regex(r#"(\s[a-zA-Z_:][a-zA-Z0-9_.:-]*)=([^"'\s><]+)"#)?;
+    Ok(re.replace_all(xml, r#"$1="$2""#).into_owned())
 }
 
 /// mxj `Xml()` (indent `None`) or `XmlIndent("", indent)`; an empty indent still breaks lines.
@@ -1671,5 +1666,28 @@ mod go_regex_tests {
             .expect("the thread ends");
         assert!(std::sync::Arc::ptr_eq(&here, &there));
         assert!(there.is_match("go-regex-shared-42"));
+    }
+
+    #[test]
+    fn xml_bytes_that_are_not_utf8_are_refused() {
+        let e = super::parse_xml_to_value(&[b'<', 0xff, b'>'], false).unwrap_err();
+        assert!(
+            e.starts_with("failed to parse value as XML: invalid utf-8"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn a_poisoned_or_full_cache_still_compiles_patterns() {
+        let poison = std::thread::spawn(|| {
+            let _held = super::GO_REGEX_CACHE.lock();
+            panic!("poison the regex cache");
+        });
+        assert!(poison.join().is_err());
+        for i in 0..300 {
+            let re = super::go_regex(&format!("cache-fill-{i}")).expect("compiles");
+            assert!(re.is_match(&format!("cache-fill-{i}")));
+        }
+        assert!(super::go_regex("(").is_err());
     }
 }

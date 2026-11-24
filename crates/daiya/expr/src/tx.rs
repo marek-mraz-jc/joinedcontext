@@ -897,9 +897,11 @@ pub fn tx_rename_by_regex(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
 }
 
 /// Grafana's `stringToJsRegex`: `/body/flags` keeps its flags (`g` = replace every match),
-/// any other text matches the whole name (`^text$`). `None` when it does not compile.
+/// any other text matches the whole name (`^text$`). `None` when it does not compile, also on
+/// its own: `a)|(b` compiles only inside the wrapper, as Grafana's `^a)|(b$` is a syntax error.
 fn js_regex(pattern: &str) -> Option<(Regex, bool)> {
     let Some(rest) = pattern.strip_prefix('/') else {
+        Regex::new(pattern).ok()?;
         return Regex::new(&format!("^(?:{pattern})$"))
             .ok()
             .map(|re| (re, false));
@@ -1446,6 +1448,11 @@ mod tests {
             &json!({"regex": "^v(.*)", "renamePattern": "metric_$1"}),
         );
         assert_eq!(renamed[0].fields[1].name, "metric_al");
+        // T-7799: a pattern that compiles only inside the `^(?:...)$` wrapper renames nothing
+        assert!(js_regex("v)|(.*").is_none());
+        assert!(
+            js_regex("val|x").is_some_and(|(re, _)| re.is_match("val") && !re.is_match("vals"))
+        );
 
         // labelsToFields
         let l2f = tx_labels_to_fields(vec![f1.clone()], &json!({"mode": "columns"}));

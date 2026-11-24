@@ -838,9 +838,12 @@ impl JcRouter {
             Some(q) => format!("{stripped_path}?{q}"),
             None => stripped_path,
         };
-        if let Ok(new_uri) = Uri::try_from(new_pq) {
-            *req.uri_mut() = new_uri;
-        }
+        // A registry name that is no path segment makes no URI: refused like any id address the
+        // router cannot place, never forwarded under the old one (RTE-05).
+        let Ok(new_uri) = Uri::try_from(new_pq) else {
+            return projects::not_found();
+        };
+        *req.uri_mut() = new_uri;
 
         // Without a host table an entry with no host answers any Host, and a module builds its
         // issuer and links from the Mount (I-7): a Host the edge did not vouch for names the base
@@ -2382,5 +2385,119 @@ mod tests {
             assert_eq!(on(host, "/").await.0, StatusCode::NOT_FOUND, "{host}");
         }
         assert_eq!(on("api.city.example", "/cs").await.1, "gateway /cs");
+    }
+
+    async fn answer(jc: &JcRouter, path: &str) -> (StatusCode, String) {
+        let req = Request::builder()
+            .uri(path)
+            .header("host", "city.example")
+            .header("authorization", "Bearer ok")
+            .body(Body::empty())
+            .unwrap();
+        let resp = jc.dispatch(req, None).await;
+        let status = resp.status();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        (status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    fn id_router(module_prefix: &str) -> JcRouter {
+        let table = HostTable::new()
+            .shared("city.example")
+            .and_then(|t| t.organization("bratislava"))
+            .unwrap();
+        JcRouterBuilder::new("https", "city.example")
+            .hosts(table)
+            .mount(
+                MountSpec {
+                    module: "portal".into(),
+                    host: None,
+                    path_prefix: Some(module_prefix.into()),
+                },
+                Router::new().fallback(|uri: Uri| async move { format!("module {uri}") }),
+            )
+            .build()
+            .unwrap()
+    }
+
+    /// RTE-05: an id address that places a project where no module is mounted, and one whose
+    /// project name cannot stand in a path, answer the same 404 as an unknown id; the module
+    /// never sees the request under its old address.
+    #[tokio::test]
+    async fn an_id_address_no_module_or_path_can_take_is_the_same_404() {
+        const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const SPACED: &str = "baaaaaaaaaaaaaaaaaaaaaaaaa";
+        const UNKNOWN: &str = "caaaaaaaaaaaaaaaaaaaaaaaaa";
+        let rows = [
+            RegistryProject {
+                organization: "bratislava",
+                id: ID,
+                name: "traffic",
+                expires_at: None,
+            },
+            RegistryProject {
+                organization: "bratislava",
+                id: SPACED,
+                name: "has space",
+                expires_at: None,
+            },
+        ];
+        // Only `/data` is mounted: the project's management address has no module.
+        let jc = id_router("/data");
+        jc.host_swap()
+            .expect("a host table")
+            .replace_projects(&rows);
+        let unknown = answer(&jc, &format!("/bratislava/{UNKNOWN}/api/v1/spaces")).await;
+        assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+        assert!(unknown.1.contains("No project answers"), "{}", unknown.1);
+        assert_eq!(
+            answer(&jc, &format!("/bratislava/{ID}/api/v1/spaces")).await,
+            unknown
+        );
+        // A name the registry holds that is no path segment: refused, never forwarded.
+        let jc = id_router("/api");
+        jc.host_swap()
+            .expect("a host table")
+            .replace_projects(&rows);
+        assert_eq!(
+            answer(&jc, &format!("/bratislava/{SPACED}/api/v1/spaces")).await,
+            unknown
+        );
+        assert_eq!(
+            answer(&jc, &format!("/bratislava/{ID}/api/v1/spaces?x=1")).await,
+            (
+                StatusCode::OK,
+                "module /v1/projects/traffic/spaces?x=1".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn two_mounts_on_one_host_and_prefix_are_refused_naming_the_prefix() {
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .hosts(HostTable::new().shared("city.example").unwrap())
+            .module_router("portal", Router::new())
+            .module_router("gateway", Router::new())
+            .build()
+            .unwrap();
+        let swap = jc.host_swap().expect("a host table");
+        let spec = |module: &str, prefix: &str| MountSpec {
+            module: module.into(),
+            host: Some("smartcity.zilina.sk".into()),
+            path_prefix: Some(prefix.into()),
+        };
+        assert_eq!(
+            swap.mount_hosts(&[spec("portal", "/api/"), spec("gateway", "/api")]),
+            Err(RouterError::OverlappingMounts {
+                first: "portal".into(),
+                second: "gateway".into(),
+                host: "smartcity.zilina.sk".into(),
+                prefix: "/api".into(),
+            })
+        );
+        assert!(matches!(
+            swap.mount_hosts(&[spec("portal", "/a?b")]),
+            Err(RouterError::InvalidPrefix(_))
+        ));
+        assert_eq!(swap.mount_hosts(&[]).unwrap(), 0);
     }
 }
