@@ -478,6 +478,32 @@ mod tests {
     }
 
     #[test]
+    fn coordinates_and_amounts_are_uniform_fractions_scaled_into_range() {
+        let num = |name: &str| match fake(name) {
+            Ok(Value::Float(f)) => f,
+            other => panic!("{name}: {other:?}"),
+        };
+        let lat: Vec<f64> = (0..40).map(|_| num("latitude")).collect();
+        let lon: Vec<f64> = (0..40).map(|_| num("longitude")).collect();
+        assert!(lat.iter().all(|v| (-90.0..90.0).contains(v)), "{lat:?}");
+        assert!(lon.iter().all(|v| (-180.0..180.0).contains(v)), "{lon:?}");
+        assert!(lat.iter().any(|v| *v != lat[0]) && lon.iter().any(|v| *v != lon[0]));
+        // float64() * 10^0..7, cut to one or two decimals: below 10^7 and seldom a whole number.
+        let amounts: Vec<f64> = (0..60)
+            .map(|_| {
+                let text = s("amount_with_currency");
+                let (_, amount) = text.split_once(' ').expect("currency then amount");
+                amount.parse::<f64>().expect("a number")
+            })
+            .collect();
+        assert!(
+            amounts.iter().all(|a| (0.0..1e7).contains(a)),
+            "{amounts:?}"
+        );
+        assert!(amounts.iter().any(|a| a.fract() != 0.0), "{amounts:?}");
+    }
+
+    #[test]
     fn values_vary_and_the_card_type_sticks_as_go_fakers_cache_does() {
         let a: std::collections::HashSet<String> = (0..20).map(|_| s("email")).collect();
         assert!(a.len() > 15);

@@ -22,7 +22,7 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
     let bytes = format.as_bytes();
     let mut i = 0;
     let mut arg = 0;
-    while i < bytes.len() {
+    loop {
         let start = i;
         while i < bytes.len() && bytes[i] != b'%' {
             i += 1;

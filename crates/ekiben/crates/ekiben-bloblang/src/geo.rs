@@ -621,6 +621,88 @@ mod tests {
     }
 
     #[test]
+    fn crs84_names_end_in_a_colon_or_a_slash() {
+        assert_eq!(epsg_code("urn:ogc:def:crs:OGC:2:CRS84"), Some(4326));
+        assert_eq!(
+            epsg_code("http://www.opengis.net/def/crs/OGC/0/CRS84"),
+            Some(4326)
+        );
+        assert_eq!(epsg_code("CRS84"), None);
+    }
+
+    fn arr(items: Vec<Value>) -> Value {
+        Value::Array(items.into())
+    }
+
+    fn obj(pairs: Vec<(&str, Value)>) -> Value {
+        Value::Object(
+            pairs
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect::<std::collections::BTreeMap<_, _>>()
+                .into(),
+        )
+    }
+
+    #[test]
+    fn nesting_is_counted_through_arrays_and_collections_to_the_limit() {
+        let point = || arr(vec![Value::Float(24.9), Value::Float(60.1)]);
+        let wrap = |levels: usize| (0..levels).fold(point(), |v, _| arr(vec![v]));
+        let limit = MAX_GEO_DEPTH + 4;
+        assert!(geo_transform(&wrap(limit), "EPSG:4326", "EPSG:3857").is_ok());
+        let deep = geo_transform(&wrap(limit + 1), "EPSG:4326", "EPSG:3857");
+        assert_eq!(
+            deep,
+            Err(format!("the geometry nests deeper than {MAX_GEO_DEPTH}"))
+        );
+        // Each collection is two levels (the object and its geometries array), its Point's
+        // position one more: five collections fit, six do not.
+        let collections = |n: usize| {
+            (0..n).fold(
+                obj(vec![
+                    ("type", Value::String("Point".into())),
+                    ("coordinates", point()),
+                ]),
+                |g, _| {
+                    obj(vec![
+                        ("type", Value::String("GeometryCollection".into())),
+                        ("geometries", arr(vec![g])),
+                    ])
+                },
+            )
+        };
+        assert!(geo_transform(&collections(5), "EPSG:4326", "EPSG:3857").is_ok());
+        assert!(geo_transform(&collections(6), "EPSG:4326", "EPSG:3857").is_err());
+    }
+
+    #[test]
+    fn an_object_without_coordinates_or_geometries_is_named() {
+        let point = obj(vec![("type", Value::String("Point".into()))]);
+        assert_eq!(
+            geo_transform(&point, "EPSG:4326", "EPSG:3857"),
+            Err("geo_transform wants a GeoJSON geometry or a position, got an object without coordinates".to_string())
+        );
+        let collection = obj(vec![("type", Value::String("GeometryCollection".into()))]);
+        assert_eq!(
+            geo_transform(&collection, "EPSG:4326", "EPSG:3857"),
+            Err("a GeometryCollection needs geometries".to_string())
+        );
+    }
+
+    #[test]
+    fn one_coordinate_past_the_projection_is_refused() {
+        // LV95 maps this position to a finite x and an infinite y: one is enough to refuse it.
+        let far_south = arr(vec![Value::Float(2.6e6), Value::Float(-1e200)]);
+        assert_eq!(
+            geo_transform(&far_south, "EPSG:2056", "EPSG:2056"),
+            Err(
+                "geo_transform from EPSG:2056 to EPSG:2056: the position is outside the projection"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
     fn a_crs_definition_proj_refuses_names_the_parameter_and_crs() {
         let table = [(4326, "+proj=no_such_projection")];
         let err = crs_in(&table, "from", "EPSG:4326").map(|_| ()).unwrap_err();
