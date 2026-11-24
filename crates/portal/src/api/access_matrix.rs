@@ -555,9 +555,125 @@ mod tests {
     #[test]
     fn constraints_read_as_one_line() {
         assert_eq!(constraint(&json!({})), None);
+        assert_eq!(constraint(&json!("q==1")), None);
+        assert_eq!(constraint(&json!({ "q": null })), None);
+        assert_eq!(
+            constraint(&json!({ "geoQ": { "georel": "near" }, "q": null })),
+            Some(r#"geoQ: {"georel":"near"}"#.to_owned())
+        );
         assert_eq!(
             constraint(&json!({ "q": "status==\"open\"", "scopeQ": "/city/#" })),
             Some("q: status==\"open\"; scopeQ: /city/#".to_owned())
         );
+    }
+
+    /// A refused audience has no cells; `*` fills every column; a second grant of the same
+    /// type, column and effect adds nothing; attributes and constraints are carried as given.
+    #[test]
+    fn a_grant_document_becomes_one_cell_per_type_column_and_effect() {
+        assert!(cells("public:public", &json!({ "admitted": false }), &[], &[]).is_empty());
+        let answer = json!({
+            "admitted": true,
+            "permissions": [
+                { "resource": { "type": "AirQualityObserved" }, "actions": ["*"] },
+                { "resource": { "type": "AirQualityObserved" }, "actions": ["queryEntity"] },
+                { "actions": ["createSubscription"] },
+            ],
+            "prohibitions": [
+                { "resource": { "type": "AirQualityObserved" }, "actions": ["deleteEntity"],
+                  "attributes": ["no2"], "constraints": { "q": "no2>40" } },
+            ],
+        });
+        let policies = vec![(
+            "lab-only".to_owned(),
+            json!({ "effect": "prohibition",
+                    "information": [{ "entities": [{ "type": "AirQualityObserved" }] }] }),
+        )];
+        let got = cells("role:viewer", &answer, &["lab-only"], &policies);
+        let summary: Vec<(String, String, String)> = got
+            .iter()
+            .map(|c| (c.entity_type.clone(), c.action.clone(), c.effect.clone()))
+            .collect();
+        let want: Vec<(String, String, String)> = [
+            ("AirQualityObserved", "read", "permit"),
+            ("AirQualityObserved", "write", "permit"),
+            ("AirQualityObserved", "delete", "permit"),
+            ("AirQualityObserved", "history", "permit"),
+            ("AirQualityObserved", "delete", "prohibit"),
+        ]
+        .iter()
+        .map(|(t, a, e)| ((*t).to_owned(), (*a).to_owned(), (*e).to_owned()))
+        .collect();
+        assert_eq!(summary, want);
+        assert_eq!(got[0].attributes, json!("*"));
+        assert_eq!(got[0].constraint, None);
+        assert_eq!(got[4].attributes, json!(["no2"]));
+        assert_eq!(got[4].constraint.as_deref(), Some("q: no2>40"));
+        assert!(got.iter().all(|c| c.principal == "role:viewer"));
+        assert_eq!(got[4].decided_by.as_deref(), Some("lab-only"));
+        assert_eq!(got[0].decided_by, None);
+    }
+
+    #[test]
+    fn each_principal_kind_is_asked_about_as_its_token_carries_it() {
+        let person = subject(&("person".into(), "kc-1".into()));
+        assert_eq!(person.user.as_deref(), Some("kc-1"));
+        assert_eq!(subject(&("group".into(), "stewards".into())).groups, ["stewards"]);
+        assert_eq!(subject(&("role".into(), "viewer".into())).roles, ["viewer"]);
+        assert_eq!(
+            subject(&("serviceAccount".into(), "p-feed".into()))
+                .service_account
+                .as_deref(),
+            Some("p-feed")
+        );
+        let public = subject(&("public".into(), "public".into()));
+        assert!(public.user.is_none() && public.groups.is_empty() && public.roles.is_empty());
+        assert!(public.service_account.is_none());
+    }
+
+    /// Policy assignees and rule assignees each become a principal; the public role is the
+    /// public; a `did` or a half-written assignee is no token the gateway can be asked about.
+    #[test]
+    fn the_principals_are_the_policies_assignees_the_accounts_and_the_public() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(
+            serde_json::from_value(json!({
+                "apiVersion": crate::resource::API_VERSION, "kind": "ServiceAccount",
+                "metadata": { "name": "feed", "namespace": "air" }, "spec": {}
+            }))
+            .expect("an account"),
+        );
+        let policies = vec![(
+            "air-read".to_owned(),
+            json!({
+                "assignee": { "kind": "user", "id": "kc-1" },
+                "rules": [
+                    { "assignee": { "kind": "group", "id": "stewards" } },
+                    { "assignee": { "kind": "role", "id": "public" } },
+                    { "assignee": { "kind": "did", "id": "did:web:x" } },
+                    { "assignee": { "kind": "role" } },
+                    {},
+                ],
+            }),
+        )];
+        let found = principals(&state, "air", &policies, None);
+        let keys: Vec<(&str, &str)> = found
+            .keys()
+            .map(|(kind, name)| (kind.as_str(), name.as_str()))
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                ("group", "stewards"),
+                ("person", "kc-1"),
+                ("public", "public"),
+                ("serviceAccount", "air-feed"),
+            ]
+        );
+        let via: Vec<&str> = found[&("public".to_owned(), "public".to_owned())]
+            .iter()
+            .map(|via| via.name.as_str())
+            .collect();
+        assert_eq!(via, ["air-read"]);
     }
 }
