@@ -674,6 +674,40 @@ mod tests {
         }
     }
 
+    /// A Propose rule on a publisher makes its holder that publisher's editor: they approve and
+    /// delete its datasets too. A Propose rule alone suffices on a profile, as Admin does.
+    #[test]
+    fn a_publisher_propose_rule_makes_an_editor_and_a_profile_needs_its_own_or_admin() {
+        let (org, cat) = ids(8);
+        let mut scoped = rule(org, cat, vec![Action::Propose]);
+        scoped.publisher_id = Some("city".into());
+        let policy = PolicyAuthorizer::new(vec![scoped]);
+        let ctx = member(org, cat);
+        let dataset = ObjectTarget::Dataset {
+            org_id: org,
+            catalogue_id: cat,
+            dataset_id: "d-1".into(),
+            publisher_id: "city".into(),
+            visibility: Visibility::Public,
+            restricted_grants: Vec::new(),
+            publisher_editor_grants: Vec::new(),
+        };
+        for action in [Action::Propose, Action::Approve, Action::Delete] {
+            assert!(policy.check(&ctx, action, &dataset).allowed, "{action:?}");
+        }
+        assert!(!policy.check(&ctx, Action::Admin, &dataset).allowed);
+        let profile = ObjectTarget::Profile {
+            org_id: org,
+            catalogue_id: cat,
+            profile_id: "p".into(),
+        };
+        let proposer = PolicyAuthorizer::new(vec![rule(org, cat, vec![Action::Propose])]);
+        assert!(proposer.check(&ctx, Action::Propose, &profile).allowed);
+        assert!(!proposer.check(&ctx, Action::Approve, &profile).allowed);
+        let admin = PolicyAuthorizer::new(vec![rule(org, cat, vec![Action::Admin])]);
+        assert!(admin.check(&ctx, Action::Approve, &profile).allowed);
+    }
+
     #[test]
     fn a_read_only_connector_reads_but_never_writes() {
         let (org, cat) = ids(3);
@@ -710,11 +744,10 @@ mod tests {
     fn the_live_authorizer_swaps_one_catalogue_and_survives_a_poisoned_lock() {
         let (org, cat) = ids(4);
         let (_, other_cat) = ids(5);
-        let live = std::sync::Arc::new(LiveAuthorizer::new(vec![rule(
-            org,
-            other_cat,
-            vec![Action::Propose],
-        )]));
+        let live = std::sync::Arc::new(LiveAuthorizer::new(vec![
+            rule(org, other_cat, vec![Action::Propose]),
+            rule(org, cat, vec![Action::Admin]),
+        ]));
         let held = std::sync::Arc::clone(&live);
         let _ = std::thread::spawn(move || {
             let _g = held.policy.write().unwrap();
@@ -727,8 +760,8 @@ mod tests {
             org_id: org,
             catalogue_id: cat,
         };
-        assert!(!live.check(&ctx, Action::Propose, &target).allowed);
-        // a rule naming another catalogue is dropped, never widened to this one
+        assert!(live.check(&ctx, Action::Admin, &target).allowed);
+        // the old Admin rule goes; a rule naming another catalogue is dropped, never widened to this one
         live.replace_catalogue(
             org,
             cat,

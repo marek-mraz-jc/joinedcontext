@@ -461,6 +461,47 @@ fn a_declaration_reports_whether_it_changed_the_catalogue() {
 }
 
 #[test]
+fn an_abandoned_run_fails_with_its_reason_and_a_source_harvests_nightly_by_default() {
+    use dataroom_core::{abandon_run, HarvestRun, HarvestSource};
+    let mut run: HarvestRun = serde_json::from_value(json!({
+        "orgId": "0190f3a2-7c4e-7000-8000-0000000000a1",
+        "catalogueId": "0190f3a2-7c4e-7000-8000-0000000000c1", "id": "run-1",
+        "sourceId": "hs-feed", "state": "running", "startedAt": "2026-11-01T10:00:00Z",
+        "createdCount": 0, "updatedCount": 0, "unchangedCount": 0, "withdrawnCount": 0
+    }))
+    .unwrap();
+    abandon_run(&mut run);
+    assert_eq!(run.state, HarvestRunState::Failed);
+    assert!(run.finished_at.is_some());
+    assert!(
+        run.error.as_deref().unwrap().contains("abandoned"),
+        "{:?}",
+        run.error
+    );
+    assert_eq!(
+        run.logs.last().map(|l| l.fingerprint.as_str()),
+        Some("harvest.abandoned")
+    );
+    let source: HarvestSource = serde_json::from_value(json!({
+        "orgId": "0190f3a2-7c4e-7000-8000-0000000000a1",
+        "catalogueId": "0190f3a2-7c4e-7000-8000-0000000000c1", "name": "feed",
+        "kind": "dcat-ap", "url": "https://h.example/f.ttl", "publisherId": "city",
+        "allowedHosts": [], "modified": "2026-11-01T10:00:00Z"
+    }))
+    .unwrap();
+    assert_eq!(source.schedule, "23 3 * * *");
+    assert_eq!(
+        [
+            ShaclSeverity::Info,
+            ShaclSeverity::Warning,
+            ShaclSeverity::Violation
+        ]
+        .map(ShaclSeverity::as_str),
+        ["Info", "Warning", "Violation"]
+    );
+}
+
+#[test]
 fn language_tags_take_digits_only_after_the_first_subtag() {
     use dataroom_core::is_language_tag;
     for ok in ["sk", "en-GB", "es-419", "zh-Hant-TW"] {

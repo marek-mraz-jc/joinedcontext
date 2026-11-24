@@ -334,7 +334,8 @@ fn a_publisher_image_prefers_its_logo_then_the_fallback_logo_then_a_badge() {
 
 #[test]
 fn svg_checks_skip_comments_and_declarations_but_never_an_attribute() {
-    use dataroom_core::branding::is_safe_logo_svg;
+    let is_safe_logo_svg =
+        |svg: &str| validate_and_sanitise_logo(svg.as_bytes(), "image/svg+xml").is_ok();
     let err = logo_error(b"<svg-ish>no root</svg-ish>", "image/svg+xml");
     assert!(err.contains("root <svg>"), "{err}");
     let ok = [
@@ -387,4 +388,116 @@ fn yaml_colours_fonts_and_a_logo_svg_reach_the_block() {
     assert!(!dataroom_core::branding::is_safe_logo_svg(
         "<svg width=10 onload=x></svg>"
     ));
+}
+
+fn png(width: u32, height: u32, ihdr: &[u8; 4]) -> Vec<u8> {
+    let mut b = b"\x89PNG\r\n\x1a\n\0\0\0\r".to_vec();
+    b.extend_from_slice(ihdr);
+    b.extend_from_slice(&width.to_be_bytes());
+    b.extend_from_slice(&height.to_be_bytes());
+    b
+}
+
+fn webp_vp8x(width: u32, height: u32, form: &[u8; 4]) -> Vec<u8> {
+    let mut b = b"RIFF\x16\0\0\0".to_vec();
+    b.extend_from_slice(form);
+    b.extend_from_slice(b"VP8X\x0a\0\0\0\0\0\0\0");
+    b.extend_from_slice(&(width - 1).to_le_bytes()[..3]);
+    b.extend_from_slice(&(height - 1).to_le_bytes()[..3]);
+    b
+}
+
+#[test]
+fn raster_logos_are_held_to_their_header_and_the_dimension_cap() {
+    // the smallest header that names its size is enough, at the cap and one pixel over it
+    assert_eq!(png(4096, 1, b"IHDR").len(), 24);
+    assert!(validate_and_sanitise_logo(&png(4096, 4096, b"IHDR"), "image/png").is_ok());
+    for (bytes, why) in [
+        (png(4097, 10, b"IHDR"), "exceed limit of 4096px"),
+        (png(10, 4097, b"IHDR"), "exceed limit of 4096px"),
+        (png(0, 10, b"IHDR"), "exceed limit"),
+        (png(10, 0, b"IHDR"), "exceed limit"),
+        (png(10, 10, b"IDAT"), "invalid PNG header"),
+        (png(10, 10, b"IHDR")[..23].to_vec(), "invalid PNG header"),
+    ] {
+        let err = logo_error(&bytes, "image/png");
+        assert!(err.contains(why), "{err}");
+    }
+    assert_eq!(webp_vp8x(1, 1, b"WEBP").len(), 30);
+    assert!(validate_and_sanitise_logo(&webp_vp8x(4096, 4096, b"WEBP"), "image/webp").is_ok());
+    for (bytes, why) in [
+        (webp_vp8x(4097, 1, b"WEBP"), "exceed limit of 4096px"),
+        (webp_vp8x(1, 4097, b"WEBP"), "exceed limit of 4096px"),
+        (webp_vp8x(10, 10, b"WAVE"), "invalid WebP header"),
+        (
+            webp_vp8x(10, 10, b"WEBP")[..29].to_vec(),
+            "invalid WebP header",
+        ),
+    ] {
+        let err = logo_error(&bytes, "image/webp");
+        assert!(err.contains(why), "{err}");
+    }
+    let mut not_riff = webp_vp8x(10, 10, b"WEBP");
+    not_riff[..4].copy_from_slice(b"RIFX");
+    assert!(logo_error(&not_riff, "image/webp").contains("invalid WebP header"));
+}
+
+#[test]
+fn svg_attributes_named_on_alone_and_animation_targets() {
+    let is_safe_logo_svg =
+        |svg: &str| validate_and_sanitise_logo(svg.as_bytes(), "image/svg+xml").is_ok();
+    assert!(
+        is_safe_logo_svg(r#"<svg on="x"></svg>"#),
+        "`on` alone is no handler"
+    );
+    assert!(!is_safe_logo_svg(r#"<svg onx="x"></svg>"#));
+    for (target, safe) in [
+        ("fill", true),
+        ("href", false),
+        ("xlink:href", false),
+        ("onclick", false),
+    ] {
+        let svg = format!(r##"<svg><animate attributeName="{target}" to="#a"/></svg>"##);
+        assert_eq!(is_safe_logo_svg(&svg), safe, "{target}");
+    }
+}
+
+#[test]
+fn own_dataset_fields_show_only_checked_values_under_their_property() {
+    use dataroom_core::branding::BrandingDatasetFields;
+    let field = |name: &str, kind: &str| -> jc_core::kinds::DatasetField {
+        serde_json::from_value(json!({"name": name, "label": {}, "type": kind})).unwrap()
+    };
+    let fields = BrandingDatasetFields {
+        organization: "city".into(),
+        namespace: "https://data.example/ns/dataset-fields/city/".into(),
+        fields: vec![
+            field("funding", "text"),
+            field("budget", "number"),
+            field("web", "url"),
+        ],
+    };
+    let extras: BTreeMap<String, String> = [
+        ("x_funding", " EU "),
+        ("x_budget", "not a number"),
+        ("x_web", "  "),
+        ("other", "x"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+    .collect();
+    let shown: Vec<_> = fields
+        .filled(&extras)
+        .map(|(f, v)| (f.name.as_str(), v))
+        .collect();
+    assert_eq!(shown, [("funding", "EU")]);
+    assert_eq!(
+        fields.property(&fields.fields[0]).as_deref(),
+        Some("https://data.example/ns/dataset-fields/city/funding")
+    );
+    let bare = BrandingDatasetFields {
+        namespace: String::new(),
+        ..fields.clone()
+    };
+    assert_eq!(bare.property(&fields.fields[0]), None);
 }
