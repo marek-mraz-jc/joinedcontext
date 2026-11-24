@@ -354,6 +354,17 @@ impl Cache for RedisCache {
     }
 }
 
+/// Every whole reply at the front of `buf`; the first refusal ends the read.
+#[cfg(feature = "fuzzing")]
+pub(crate) fn fuzz_replies(buf: &[u8]) -> usize {
+    let mut r = BufReader::new(buf);
+    let mut whole = 0;
+    while futures::executor::block_on(read_reply(&mut r)).is_ok() {
+        whole += 1;
+    }
+    whole
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,5 +416,236 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("over the"));
+    }
+
+    use crate::test_io::{Broken, Unreadable};
+    use ekiben_core::{OrgId, OrgQuotas, ResourceManager, StreamMetrics};
+    use serde_json::json;
+
+    fn ctx() -> StreamContext {
+        let resources = ResourceManager::new();
+        let org = resources.set_org_quotas(
+            &OrgId::new("org-redis-unit"),
+            OrgQuotas {
+                allow_private_ips: true,
+                ..Default::default()
+            },
+        );
+        StreamContext {
+            stream_id: "s".into(),
+            org,
+            resources,
+            registry: Arc::new(Registry::new()),
+            blobl_env: ekiben_bloblang::Environment::new(),
+            metrics: StreamMetrics::new("s", "org-redis-unit"),
+            label: String::new(),
+            path: "cache_resources".into(),
+            file_root: None,
+            env_vars: Arc::new(std::collections::HashMap::new()),
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+        }
+    }
+
+    fn conf(v: JsonValue) -> ComponentConfig {
+        ComponentConfig {
+            component_type: "redis".into(),
+            config: v,
+            ..Default::default()
+        }
+    }
+
+    /// A RESP server answering the n-th command of each connection with `script[conn][n]`; a
+    /// connection past its script closes. The commands it read, by connection.
+    async fn fake(script: Vec<Vec<&'static str>>) -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let rec = seen.clone();
+        tokio::spawn(async move {
+            for replies in script {
+                let (mut s, _) = l.accept().await.expect("a connection");
+                let rec = rec.clone();
+                tokio::spawn(async move {
+                    for reply in replies {
+                        let mut buf = [0u8; 4096];
+                        let got = s.read(&mut buf).await.unwrap_or(0);
+                        rec.lock()
+                            .unwrap()
+                            .push(String::from_utf8_lossy(&buf[..got]).into_owned());
+                        s.write_all(reply.as_bytes()).await.unwrap();
+                    }
+                });
+            }
+        });
+        (port, seen)
+    }
+
+    #[tokio::test]
+    async fn auth_and_select_run_before_the_first_command() {
+        let (port, seen) = fake(vec![vec!["+OK\r\n", "+OK\r\n", "$2\r\nhi\r\n"]]).await;
+        let reg = Registry::new();
+        register(&reg);
+        let url = format!("redis://us%20er:p%40ss@127.0.0.1:{port}/3");
+        let cache = reg
+            .build_cache(&conf(json!({ "url": url })), &ctx())
+            .expect("registered");
+        assert_eq!(cache.get("k").await.unwrap().as_ref(), b"hi");
+        let seen = seen.lock().unwrap();
+        assert!(
+            seen[0].contains("AUTH\r\n$5\r\nus er\r\n$4\r\np@ss"),
+            "{}",
+            seen[0]
+        );
+        assert!(seen[1].contains("SELECT\r\n$1\r\n3"), "{}", seen[1]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_database_names_the_server_error_and_the_lint_reads_fields() {
+        let (port, _) = fake(vec![vec!["-ERR DB index is out of range\r\n"]]).await;
+        let url = format!("redis://127.0.0.1:{port}/99");
+        let cache = RedisCache::from_config(&conf(json!({ "url": url })), &ctx()).unwrap();
+        let err = cache.get("k").await.unwrap_err().to_string();
+        assert!(
+            err.contains("server error: ERR DB index is out of range"),
+            "{err}"
+        );
+        let reg = Registry::new();
+        register(&reg);
+        let lints = reg.lint_component("cache", &conf(json!({ "nope": 1 })));
+        assert!(lints.iter().any(|l| l.contains("url")), "{lints:?}");
+        assert!(lints.iter().any(|l| l.contains("nope")), "{lints:?}");
+    }
+
+    #[tokio::test]
+    async fn a_refused_password_names_the_server_error() {
+        let (port, _) = fake(vec![vec!["-WRONGPASS invalid\r\n"]]).await;
+        let cache = RedisCache::from_config(
+            &conf(json!({ "url": format!("redis://:pw@127.0.0.1:{port}") })),
+            &ctx(),
+        )
+        .unwrap();
+        let err = cache.get("k").await.unwrap_err().to_string();
+        assert!(
+            err.contains("redis cache: server error: WRONGPASS invalid"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_kept_connection_that_broke_is_dialled_once_more() {
+        // The first connection answers once and closes; the second answers; the third reads the
+        // command and closes unanswered.
+        let (port, _) = fake(vec![vec!["+OK\r\n"], vec!["+OK\r\n"], vec![""]]).await;
+        let cache = RedisCache::from_config(
+            &conf(json!({ "url": format!("redis://127.0.0.1:{port}") })),
+            &ctx(),
+        )
+        .unwrap();
+        cache.delete("a").await.expect("first connection");
+        cache
+            .delete("b")
+            .await
+            .expect("the broken connection is replaced");
+        let err = cache.delete("c").await.unwrap_err().to_string();
+        assert!(err.contains("the server closed the connection"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_tls_url_needs_a_tls_server() {
+        let (port, _) = fake(vec![vec!["+OK\r\n"]]).await;
+        let cache = RedisCache::from_config(
+            &conf(json!({ "url": format!("rediss://localhost:{port}") })),
+            &ctx(),
+        )
+        .unwrap();
+        assert!(cache.get("k").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_failed_read_is_named() {
+        let mut r = tokio::io::BufReader::new(Unreadable);
+        let e = read_reply(&mut r).await.expect_err("read error");
+        assert!(e.to_string().starts_with("redis cache: "), "{e}");
+    }
+
+    #[tokio::test]
+    async fn odd_replies_are_named() {
+        for (raw, want) in [
+            (&b""[..], "the server closed the connection"),
+            (b":x\r\n", "bad integer reply"),
+            (b"$x\r\n", "bad bulk length"),
+            (b"?what\r\n", "unexpected reply '?what'"),
+        ] {
+            let err = read_reply(&mut BufReader::new(raw))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(want), "{want}: {err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_command_that_cannot_be_written_or_is_never_answered_fails() {
+        let mut broken: BufReader<Box<dyn Io>> = BufReader::new(Box::new(Broken));
+        let err = RedisCache::exchange(&mut broken, &[b"PING"])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("redis cache: pipe broke"), "{err}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_server_times_out() {
+        let (a, _b) = tokio::io::duplex(64);
+        let mut silent: BufReader<Box<dyn Io>> = BufReader::new(Box::new(a));
+        let err = RedisCache::exchange(&mut silent, &[b"PING"])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("did not answer in 10 s"), "{err}");
+    }
+
+    #[test]
+    fn a_config_or_url_ekiben_cannot_use_is_refused_by_name() {
+        let ctx = ctx();
+        for (v, want) in [
+            (json!("redis://h"), "redis cache config must be an object"),
+            (
+                json!({ "url": "redis://h", "kind": "ring" }),
+                "kind 'ring' is not supported",
+            ),
+            (
+                json!({ "url": "redis://h", "tls": { "skip_cert_verify": true } }),
+                "tls.skip_cert_verify is refused",
+            ),
+            (json!({}), "field url is required"),
+            (json!({ "url": "not a url" }), "url must look like redis://"),
+            (json!({ "url": "redis:///0" }), "url has no host"),
+            (
+                json!({ "url": "redis://%zz:pw@h" }),
+                "not valid percent-encoding",
+            ),
+            (json!({ "url": "redis://h", "default_ttl": "soon" }), "soon"),
+        ] {
+            let err = RedisCache::from_config(&conf(v.clone()), &ctx)
+                .err()
+                .expect("refused")
+                .to_string();
+            assert!(err.contains(want), "{v}: {err}");
+        }
+        let c = RedisCache::from_config(
+            &conf(json!({ "url": "redis://h", "tls": { "enabled": true }, "default_ttl": "1m" })),
+            &ctx,
+        )
+        .unwrap();
+        assert!(c.target.tls);
+        assert_eq!(c.default_ttl, Some(Duration::from_secs(60)));
+        let zero = RedisCache::from_config(
+            &conf(json!({ "url": "redis://h", "default_ttl": "0s" })),
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(zero.default_ttl, None);
     }
 }
