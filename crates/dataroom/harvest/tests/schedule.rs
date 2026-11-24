@@ -10,7 +10,9 @@ use dataroom_core::ops::HarvestRunner;
 use dataroom_core::ops::{execute_operation, OpContext};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
-    DataroomError, HarvestRun, HarvestRunState, PolicyAuthorizer, RequestCtx, Result, Store,
+    ActivityRow, Catalogue, CatalogueId, CataloguePlugin, DataroomError, Dataset, Distribution,
+    HarvestRun, HarvestRunState, HarvestSource, OrgId, PolicyAuthorizer, ProfileRecord, Publisher,
+    RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage, Store,
 };
 use dataroom_harvest::{
     cron_matches, harvest_principal, FetchResponse, HarvestEngine, HarvestScheduler, MapFetcher,
@@ -497,6 +499,114 @@ impl OutboundFetcher for Panicky {
     }
 }
 
+/// The memory store with named methods failing on demand, as Postgres fails when its
+/// connection drops.
+struct FailingStore {
+    inner: MemoryStore,
+    failing: std::sync::Mutex<std::collections::BTreeSet<&'static str>>,
+}
+
+impl FailingStore {
+    fn new(inner: MemoryStore) -> Self {
+        Self {
+            inner,
+            failing: std::sync::Mutex::default(),
+        }
+    }
+
+    fn fail(&self, method: &'static str) {
+        self.failing.lock().unwrap().insert(method);
+    }
+
+    fn refusal(&self, method: &str) -> Option<DataroomError> {
+        self.failing
+            .lock()
+            .unwrap()
+            .contains(method)
+            .then(|| DataroomError::Storage(format!("{method} failed")))
+    }
+}
+
+macro_rules! forward {
+    ($( $name:ident<$lt:lifetime>($($arg:ident : $ty:ty),*) -> $ret:ty; )*) => {
+        $(
+            fn $name<$lt>(&$lt self, $($arg: $ty),*) -> BoxFuture<$lt, Result<$ret>> {
+                if let Some(e) = self.refusal(stringify!($name)) {
+                    return Box::pin(async move { Err(e) });
+                }
+                self.inner.$name($($arg),*)
+            }
+        )*
+    };
+}
+
+impl Store for FailingStore {
+    forward! {
+        resolve_host<'a>(host: &'a str) -> Option<Catalogue>;
+        get_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> Option<Catalogue>;
+        list_catalogues<'a>(org_id: OrgId) -> Vec<Catalogue>;
+        upsert_catalogue<'a>(catalogue: Catalogue) -> Catalogue;
+        save_catalogue<'a>(catalogue: Catalogue, expected: Option<TimestampTz>, activity: ActivityRow) -> Catalogue;
+        delete_catalogue<'a>(org_id: OrgId, catalogue_id: CatalogueId) -> bool;
+        list_publishers<'a>(ctx: &'a RequestCtx) -> Vec<Publisher>;
+        get_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Publisher>;
+        upsert_publisher<'a>(ctx: &'a RequestCtx, publisher: Publisher) -> Publisher;
+        save_publisher<'a>(ctx: &'a RequestCtx, publisher: Publisher, expected: Option<TimestampTz>, activity: ActivityRow) -> Publisher;
+        merge_publishers<'a>(ctx: &'a RequestCtx, source: &'a str, target: &'a str, activity: ActivityRow) -> Publisher;
+        withdraw_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str, activity: ActivityRow) -> Publisher;
+        list_datasets<'a>(ctx: &'a RequestCtx) -> Vec<Dataset>;
+        get_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Dataset>;
+        upsert_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset) -> Dataset;
+        save_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset, expected: Option<TimestampTz>, activity: ActivityRow) -> Dataset;
+        withdraw_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Dataset;
+        purge_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str, activity: ActivityRow) -> ();
+        get_distribution<'a>(ctx: &'a RequestCtx, id: &'a str) -> Option<(Dataset, Distribution)>;
+        list_resource_views<'a>(ctx: &'a RequestCtx, resource_id: &'a str) -> Vec<ResourceView>;
+        get_resource_view<'a>(ctx: &'a RequestCtx, view_id: &'a str) -> Option<ResourceView>;
+        upsert_resource_view<'a>(ctx: &'a RequestCtx, view: ResourceView) -> ResourceView;
+        save_resource_view<'a>(ctx: &'a RequestCtx, view: ResourceView, activity: ActivityRow) -> ResourceView;
+        delete_resource_view<'a>(ctx: &'a RequestCtx, view_id: &'a str, activity: ActivityRow) -> ();
+        list_harvest_sources<'a>(ctx: &'a RequestCtx) -> Vec<HarvestSource>;
+        get_harvest_source<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<HarvestSource>;
+        upsert_harvest_source<'a>(ctx: &'a RequestCtx, source: HarvestSource) -> HarvestSource;
+        save_harvest_source<'a>(ctx: &'a RequestCtx, source: HarvestSource, activity: ActivityRow) -> HarvestSource;
+        delete_harvest_source<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> bool;
+        list_harvest_runs<'a>(ctx: &'a RequestCtx, source_id: Option<&'a str>) -> Vec<HarvestRun>;
+        get_harvest_run<'a>(ctx: &'a RequestCtx, run_id: &'a str) -> Option<HarvestRun>;
+        upsert_harvest_run<'a>(ctx: &'a RequestCtx, run: HarvestRun) -> HarvestRun;
+        claim_harvest_run<'a>(ctx: &'a RequestCtx, run: HarvestRun, stale_before: TimestampTz) -> bool;
+        record_activity<'a>(ctx: &'a RequestCtx, row: ActivityRow) -> ();
+        list_activity<'a>(ctx: &'a RequestCtx, object_id: Option<&'a str>, limit: usize) -> Vec<ActivityRow>;
+        upsert_shacl_report<'a>(ctx: &'a RequestCtx, report: ShaclValidationReport) -> ShaclValidationReport;
+        list_shacl_reports<'a>(ctx: &'a RequestCtx, dataset_id: Option<&'a str>, profile_id: Option<&'a str>) -> Vec<ShaclValidationReport>;
+        list_profiles<'a>(ctx: &'a RequestCtx) -> Vec<ProfileRecord>;
+        upsert_profile<'a>(ctx: &'a RequestCtx, profile: ProfileRecord) -> ProfileRecord;
+        save_profile<'a>(ctx: &'a RequestCtx, profile: ProfileRecord, activity: ActivityRow) -> ProfileRecord;
+        list_pages<'a>(ctx: &'a RequestCtx) -> Vec<StaticPage>;
+        upsert_page<'a>(ctx: &'a RequestCtx, page: StaticPage) -> StaticPage;
+        list_plugins<'a>(ctx: &'a RequestCtx) -> Vec<CataloguePlugin>;
+        upsert_plugin<'a>(ctx: &'a RequestCtx, plugin: CataloguePlugin) -> CataloguePlugin;
+        save_plugin<'a>(ctx: &'a RequestCtx, plugin: CataloguePlugin, activity: ActivityRow) -> CataloguePlugin;
+        odata_table<'a>(ctx: &'a RequestCtx, set_name: &'a str) -> Arc<dyn odata_table::Table>;
+    }
+}
+
+/// A read that breaks the store's run writes, then panics: the lost run cannot be released.
+struct BreaksThenPanics(Arc<FailingStore>);
+
+impl OutboundFetcher for BreaksThenPanics {
+    fn fetch_hop<'a>(
+        &'a self,
+        _target: &'a ValidatedTarget,
+        _accept: &'a str,
+        _max_bytes: usize,
+        _timeout: Duration,
+    ) -> BoxFuture<'a, Result<FetchResponse>> {
+        self.0.fail("upsert_harvest_run");
+        Box::pin(async { panic!("the read broke") })
+    }
+}
+
 /// A started run whose task panics is recorded failed at once and frees its source, without
 /// waiting for the deadline.
 #[tokio::test]
@@ -680,6 +790,63 @@ async fn a_scheduled_run_that_panics_is_left_out_of_the_outcome_and_frees_its_so
         Some("the run stopped unexpectedly")
     );
     assert_eq!(runs[0].logs.last().unwrap().fingerprint, "harvest.lost");
+}
+
+/// A catalogue whose sources cannot be listed is skipped; its sources are not run and no run
+/// row is written.
+#[tokio::test]
+async fn a_catalogue_whose_sources_cannot_be_listed_runs_nothing() {
+    let w = world(&["hub.city.example"]).await;
+    w.store
+        .upsert_harvest_source(
+            &w.ctx,
+            source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+        )
+        .await
+        .unwrap();
+    let store = Arc::new(FailingStore::new(w.store.clone()));
+    store.fail("list_harvest_sources");
+    let (_, grant) = harvest_principal(w.org, w.cat);
+    let s = HarvestScheduler::new(
+        Arc::new(engine_on(Arc::new(Panicky))),
+        store,
+        Arc::new(PolicyAuthorizer::new(vec![grant])),
+        vec![(w.org, w.cat)],
+    );
+    assert!(s.run_all().await.is_empty());
+    assert!(w
+        .store
+        .list_harvest_runs(&w.ctx, None)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+/// A panicked run whose release cannot be written stays Running (the deadline frees it
+/// later); the scheduler still returns.
+#[tokio::test]
+async fn a_panicked_run_whose_release_cannot_be_written_stays_running() {
+    let w = world(&["hub.city.example"]).await;
+    w.store
+        .upsert_harvest_source(
+            &w.ctx,
+            source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+        )
+        .await
+        .unwrap();
+    let store = Arc::new(FailingStore::new(w.store.clone()));
+    let (_, grant) = harvest_principal(w.org, w.cat);
+    let s = HarvestScheduler::new(
+        Arc::new(engine_on(Arc::new(BreaksThenPanics(store.clone())))),
+        store,
+        Arc::new(PolicyAuthorizer::new(vec![grant])),
+        vec![(w.org, w.cat)],
+    )
+    .with_retry_delay(Duration::ZERO);
+    assert!(s.run_all().await.is_empty());
+    let runs = w.store.list_harvest_runs(&w.ctx, None).await.unwrap();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(runs[0].state, HarvestRunState::Running);
 }
 
 /// S11-14: `harvest_run.start` answers once the source is held, and the run goes on when the

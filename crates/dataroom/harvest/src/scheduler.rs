@@ -204,15 +204,14 @@ impl HarvestScheduler {
             match done {
                 Ok((_, pair)) => out.push(pair),
                 Err(e) => {
-                    let Some((ctx, source_id)) = running.remove(&e.id()) else {
-                        continue;
-                    };
-                    tracing::error!(source = %source_id, error = %e, "dataroom harvest: scheduled run stopped");
-                    let held = self.store.list_harvest_runs(&ctx, Some(&source_id)).await;
-                    for run in held.unwrap_or_default() {
-                        if run.state == HarvestRunState::Running {
-                            HarvestEngine::release_lost_run(self.store.as_ref(), &ctx, &run.id)
-                                .await;
+                    if let Some((ctx, source_id)) = running.remove(&e.id()) {
+                        tracing::error!(source = %source_id, error = %e, "dataroom harvest: scheduled run stopped");
+                        let held = self.store.list_harvest_runs(&ctx, Some(&source_id)).await;
+                        for run in held.unwrap_or_default() {
+                            if run.state == HarvestRunState::Running {
+                                HarvestEngine::release_lost_run(self.store.as_ref(), &ctx, &run.id)
+                                    .await;
+                            }
                         }
                     }
                 }
