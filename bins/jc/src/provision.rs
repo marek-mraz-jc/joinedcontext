@@ -167,3 +167,167 @@ mod tests {
         assert!(organization_manifest("city.example").contains("domain: city.example\n"));
     }
 }
+
+#[cfg(test)]
+mod forge_tests {
+    use super::*;
+    use axum::extract::Request;
+    use axum::response::IntoResponse;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    type Script = &'static [(&'static str, u16)];
+
+    /// A fake shako: answers a call with the status of the first `script` entry whose words all
+    /// occur in `METHOD uri` (404 when none does), and records each call with whether it
+    /// carried the `token` credential and, for a write, the branch `main`.
+    async fn shako(script: Script) -> (std::net::SocketAddr, Arc<Mutex<Vec<String>>>) {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&calls);
+        let router = axum::Router::new().fallback(move |req: Request| {
+            let seen = Arc::clone(&seen);
+            async move {
+                let call = format!("{} {}", req.method(), req.uri());
+                let authed = req
+                    .headers()
+                    .get("authorization")
+                    .is_some_and(|v| v.as_bytes().starts_with(b"token "));
+                let body = axum::body::to_bytes(req.into_body(), 1 << 20)
+                    .await
+                    .unwrap();
+                let status = script
+                    .iter()
+                    .find(|(words, _)| words.split(' ').all(|w| call.contains(w)))
+                    .map_or(404, |(_, s)| *s);
+                let main = String::from_utf8_lossy(&body).contains("\"branch\":\"main\"")
+                    || String::from_utf8_lossy(&body).contains("\"default_branch\":\"main\"");
+                seen.lock().unwrap().push(format!("{call} {authed} {main}"));
+                axum::http::StatusCode::from_u16(status)
+                    .unwrap()
+                    .into_response()
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (addr, calls)
+    }
+
+    fn fixture(
+        shako: Option<std::net::SocketAddr>,
+        roles: &[Module],
+    ) -> (Siblings, Setup, tempfile::TempDir) {
+        let plans = crate::siblings::tests::host_mode_plans();
+        let mut siblings = Siblings::new(&plans, "127.0.0.1:8080".parse().unwrap());
+        match shako {
+            Some(addr) => siblings.insert_loopback(Module::Shako, addr),
+            None => siblings.remove(Module::Shako),
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), roles, &BTreeMap::new()).unwrap();
+        (siblings, setup, dir)
+    }
+
+    fn repo() -> (String, String) {
+        let r = forge_repo(crate::config::portal_env).unwrap();
+        (r.owner, r.repo)
+    }
+
+    #[tokio::test]
+    async fn a_missing_repository_is_created_and_seeded_with_the_token() {
+        let (addr, calls) = shako(&[("POST /orgs/", 201), ("PUT", 201)]).await;
+        let (siblings, setup, _dir) = fixture(Some(addr), &Module::ALL);
+        forge(&siblings, &setup).await.unwrap();
+        let (owner, name) = repo();
+        let repo = format!("/api/v1/repos/{owner}/{name}");
+        assert_eq!(
+            *calls.lock().unwrap(),
+            [
+                format!("GET {repo} true false"),
+                format!("POST /api/v1/orgs/{owner}/repos true true"),
+                format!("GET {repo}/contents/org.yaml?ref=main true false"),
+                format!("PUT {repo}/contents/org.yaml true true"),
+                format!("GET {repo}/contents/users/roles/steward.yaml?ref=main true false"),
+                format!("PUT {repo}/contents/users/roles/steward.yaml true true"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_existing_repository_is_left_alone() {
+        let (addr, calls) = shako(&[("GET /repos/", 200)]).await;
+        let (siblings, setup, _dir) = fixture(Some(addr), &Module::ALL);
+        forge(&siblings, &setup).await.unwrap();
+        assert_eq!(calls.lock().unwrap().len(), 1, "only the repository GET");
+    }
+
+    #[tokio::test]
+    async fn existing_files_are_not_written_again() {
+        let (addr, calls) = shako(&[("GET contents", 200), ("POST", 201)]).await;
+        let (siblings, setup, _dir) = fixture(Some(addr), &Module::ALL);
+        forge(&siblings, &setup).await.unwrap();
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 4);
+        assert!(!calls.iter().any(|c| c.starts_with("PUT")));
+    }
+
+    #[tokio::test]
+    async fn a_repository_or_file_made_in_parallel_counts_as_made() {
+        let (addr, calls) = shako(&[("POST", 409), ("PUT", 409)]).await;
+        let (siblings, setup, _dir) = fixture(Some(addr), &Module::ALL);
+        forge(&siblings, &setup).await.unwrap();
+        let puts = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.starts_with("PUT"))
+            .count();
+        assert_eq!(puts, 2);
+    }
+
+    #[tokio::test]
+    async fn each_refusal_names_the_call_and_status_and_never_the_token() {
+        let cases: [(Script, &str, &str); 4] = [
+            (&[("GET /repos/", 403)], "GET ", "403 Forbidden"),
+            (&[("POST", 500)], "POST ", "500 Internal Server Error"),
+            (
+                &[("POST", 201), ("GET contents", 401)],
+                "GET ",
+                "401 Unauthorized",
+            ),
+            (
+                &[("POST", 201), ("PUT", 422)],
+                "PUT ",
+                "422 Unprocessable Entity",
+            ),
+        ];
+        for (script, call, status) in cases {
+            let (addr, _calls) = shako(script).await;
+            let (siblings, setup, _dir) = fixture(Some(addr), &Module::ALL);
+            let e = forge(&siblings, &setup).await.unwrap_err().to_string();
+            assert!(e.contains(call) && e.contains(status), "{e}");
+            let token = setup.value(Secret::ShakoToken).unwrap();
+            assert!(!e.contains(token), "{e}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_shako_names_the_call() {
+        // Bound and never listening: every connection is refused.
+        let gone = tokio::net::TcpSocket::new_v4().unwrap();
+        gone.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let (siblings, setup, _dir) = fixture(Some(gone.local_addr().unwrap()), &Module::ALL);
+        let e = forge(&siblings, &setup).await.unwrap_err().to_string();
+        assert!(e.contains("GET http://127.0.0.1:"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn without_shako_or_its_token_nothing_is_called() {
+        let (siblings, setup, _dir) = fixture(None, &Module::ALL);
+        forge(&siblings, &setup).await.unwrap();
+        let (addr, calls) = shako(&[]).await;
+        let (siblings, setup, _dir) = fixture(Some(addr), &[Module::Portal]);
+        forge(&siblings, &setup).await.unwrap();
+        assert!(calls.lock().unwrap().is_empty());
+    }
+}

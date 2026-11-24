@@ -404,9 +404,6 @@ async fn main(args: Args) -> Result<Report, SplitError> {
             "[kaisatsu] names no database: an in-memory store holds nobody to move".to_owned(),
         );
     }
-    let store: Arc<dyn Store> = crate::modules::kaisatsu::open_kaisatsu_store(&cfg.kaisatsu, kek)
-        .await
-        .map_err(|e| e.to_string())?;
     let organizations: Vec<String> = cfg
         .organizations
         .iter()
@@ -419,6 +416,9 @@ async fn main(args: Args) -> Result<Report, SplitError> {
                 .to_owned(),
         );
     }
+    let store: Arc<dyn Store> = crate::modules::kaisatsu::open_kaisatsu_store(&cfg.kaisatsu, kek)
+        .await
+        .map_err(|e| e.to_string())?;
     let from = args.from.unwrap_or_else(|| cfg.realm.as_str().to_owned());
     let mode = match (args.apply, args.retire, args.restore) {
         (true, _, _) => Mode::Apply,
@@ -742,6 +742,126 @@ mod tests {
         assert!(source(1).await.enabled && source(2).await.enabled);
         assert!(!source(1).await.attributes.contains_key(RETIRED_ATTRIBUTE));
         assert_eq!(run_mode(&store, Mode::Restore).await.restored, 0);
+    }
+
+    /// A jc.toml in its own directory: `extra` appended, the state directory beside it.
+    fn config(extra: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        let path = dir.path().join("jc.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "profile = \"development\"\nstate_dir = {:?}\n{extra}",
+                state.display().to_string()
+            ),
+        )
+        .unwrap();
+        (dir, path)
+    }
+
+    fn args(config: std::path::PathBuf) -> Args {
+        Args {
+            config,
+            from: None,
+            apply: false,
+            retire: false,
+            restore: false,
+        }
+    }
+
+    const IDM_ORG: &str = "[[organizations]]\nname = \"alpha\"\n\
+        catalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+        hosts = { portal = \"portal.alpha.test\", idm = \"idm.alpha.test\" }\n";
+
+    #[tokio::test]
+    async fn each_missing_piece_is_named_before_a_store_opens() {
+        let (dir, path) = config("");
+        let e = main(args(dir.path().join("gone.toml"))).await.unwrap_err();
+        assert!(e.contains("gone.toml"), "{e}");
+
+        // No key yet: jc never started with this state directory.
+        let e = main(args(path.clone())).await.unwrap_err();
+        assert!(
+            e.contains("kaisatsu-kek") && e.contains("start jc once"),
+            "{e}"
+        );
+
+        // A key of the wrong length.
+        std::fs::write(dir.path().join("state/kaisatsu-kek"), "short").unwrap();
+        let e = main(args(path.clone())).await.unwrap_err();
+        assert!(!e.contains("short"), "the key never shows: {e}");
+
+        // A good key, but no database: the memory store holds nobody.
+        std::fs::write(dir.path().join("state/kaisatsu-kek"), [7u8; 32]).unwrap();
+        let e = main(args(path)).await.unwrap_err();
+        assert!(e.contains("names no database"), "{e}");
+
+        // A database, but no Organization with a realm of its own.
+        let url = dir.path().join("db-url");
+        std::fs::write(&url, "").unwrap();
+        let (dir, path) = config(&format!(
+            "[kaisatsu]\ndatabase_url_file = {:?}\n",
+            url.display().to_string()
+        ));
+        std::fs::write(dir.path().join("state/kaisatsu-kek"), [7u8; 32]).unwrap();
+        let e = main(args(path)).await.unwrap_err();
+        assert!(e.contains("hosts.idm"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_store_that_does_not_open_is_named() {
+        let (dir, _) = config("");
+        let url = dir.path().join("db-url");
+        std::fs::write(&url, " \n").unwrap();
+        let (dir, path) = config(&format!(
+            "[kaisatsu]\ndatabase_url_file = {:?}\n{IDM_ORG}",
+            url.display().to_string()
+        ));
+        std::fs::write(dir.path().join("state/kaisatsu-kek"), [7u8; 32]).unwrap();
+        let e = main(args(path)).await.unwrap_err();
+        assert!(e.contains("is empty"), "{e}");
+    }
+
+    #[test]
+    fn the_command_answers_2_on_bad_usage_0_on_help_and_1_on_an_error() {
+        let s = |v: &[&str]| v.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            command(&s(&["--config", "x.toml", "--apply", "--retire"])),
+            2
+        );
+        assert_eq!(command(&s(&["--unknown"])), 2);
+        assert_eq!(command(&s(&["--help"])), 0);
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone.toml").display().to_string();
+        assert_eq!(command(&s(&["--config", &gone])), 1);
+        assert_eq!(
+            command(&s(&["--config", &gone, "--restore", "--from", "x"])),
+            1
+        );
+    }
+
+    #[test]
+    fn the_report_prints_each_realm_and_the_installation_realm() {
+        let mut report = Report::default();
+        report.realms.insert(
+            "alpha".to_owned(),
+            RealmCounts {
+                placed: 3,
+                copied: 2,
+                conflicts: 1,
+                ..RealmCounts::default()
+            },
+        );
+        report.retired = 2;
+        let text = report.to_string();
+        assert!(
+            text.contains("realm alpha: 3 placed, 0 already there, 2 copied"),
+            "{text}"
+        );
+        assert!(text.contains("1 refused by a duplicate"), "{text}");
+        assert!(text.ends_with("0 staying, 2 retired, 0 restored, 0 placed but kept enabled\n"));
     }
 
     #[tokio::test]
