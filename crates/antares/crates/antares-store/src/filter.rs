@@ -1007,6 +1007,11 @@ mod id_literal_tests {
             sql("^urn:x:(1|2|both)-[0-9]{1,4}(-[a-z]+)?$").as_deref(),
             Some("^^urn\\:x\\:(?:(?:1|2|both))\\-(?:[0-9]){1,4}(?:(?:\\-(?:[a-z])+))?$$")
         );
+        // every bounded repetition form a rule writes
+        assert_eq!(
+            sql("^urn:x:a?b{2,}c{2,5}d*$").as_deref(),
+            Some("^^urn\\:x\\:(?:a)?(?:b){2,}(?:c){2,5}(?:d)*$$")
+        );
         for refused in [
             "urn:x:.*",
             "urn:x:\\d+",
@@ -1014,6 +1019,7 @@ mod id_literal_tests {
             "urn:x:[^a]",
             "urn:x:a+?",
             "urn:x:a{256}",
+            "urn:x:a{2,300}",
             "urn:x:\\bz",
             "urn:é",
             "urn:x |",
@@ -1028,6 +1034,11 @@ mod id_literal_tests {
     #[test]
     fn required_literal_is_the_longest_the_rule_pattern_forces() {
         let req = id_pattern_required;
+        // a later, shorter inner literal never displaces a longer one
+        assert_eq!(
+            req("[a-z]+abcdef[0-9]x"),
+            Some(("abcdef".to_owned(), false))
+        );
         let kpi = "^urn:ngsi-ld:KeyPerformanceIndicator:[a-z0-9.-]+:helsinki:stat-environment-[A-Za-z0-9._-]+$";
         assert_eq!(
             req(kpi),
@@ -1146,6 +1157,12 @@ mod id_literal_tests {
         assert_eq!(id_pattern_segments("urn:(a|b):t"), None);
         assert_eq!(id_pattern_segments("(?i)urn:[a-z]+:t"), None);
         assert_eq!(id_pattern_segments("(unclosed"), None);
+        // an ASCII class written byte-wise splits like its Unicode form
+        assert_eq!(
+            id_pattern_segments("(?-u:urn:x:[a-z]+:t)").map(|s| (s.lead, s.tail)),
+            Some(("urn:x:".to_owned(), ":t".to_owned()))
+        );
+        assert_eq!(id_pattern_segments("(?-u:urn:x:[a-z:]+:t)"), None);
 
         assert_eq!(prefix_end("ab:").as_deref(), Some("ab;"));
         assert_eq!(prefix_end("a\u{10FFFF}").as_deref(), Some("b"));
