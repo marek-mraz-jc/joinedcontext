@@ -3143,6 +3143,7 @@ mod tests {
                 "allowed.example.org".into(),
                 "rebind.example.org".into(),
                 "169.254.169.254".into(),
+                "gone.example.org".into(),
             ],
             rewrite_hosts: BTreeMap::new(),
             skip_items: BTreeMap::new(),
@@ -3193,6 +3194,12 @@ mod tests {
             "https://allowed.example.org/huge.ttl",
             Some("text/turtle"),
             "x".repeat(1024),
+        );
+        // 7. Redirect to a listed host whose name does not resolve -> refused!
+        fetcher.insert_redirect(
+            "https://allowed.example.org/to-gone",
+            302,
+            "https://gone.example.org/catalog.ttl",
         );
         // 6. Valid redirect hop pins DNS answer for the connection
         fetcher.insert_redirect(
@@ -3289,6 +3296,23 @@ mod tests {
         assert!(
             err_cap.to_string().contains("exceeded cap of 512 bytes"),
             "expected byte cap refusal, got {err_cap}"
+        );
+
+        // Test 7: a listed host the resolver does not know is refused before any fetch
+        let err_gone = engine
+            .checked_fetch(
+                "https://allowed.example.org/to-gone",
+                &source,
+                &[],
+                "text/turtle",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err_gone
+                .to_string()
+                .contains("unknown host gone.example.org"),
+            "expected DNS refusal, got {err_gone}"
         );
 
         // Test 6: Valid redirect hop succeeds and pins the resolved public IP for each hop

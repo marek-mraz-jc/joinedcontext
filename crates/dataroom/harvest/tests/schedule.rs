@@ -331,6 +331,24 @@ fn sunday_reads_as_seven_and_a_range_end_that_is_no_number_is_refused() {
     assert!(cron_matches("23 3 * * 1-x", sunday).is_err());
 }
 
+#[test]
+fn a_day_of_month_alone_fires_on_that_day_whatever_its_weekday() {
+    let first = TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::date(2026, 11, 1).at(0, 0, 0, 0))
+            .expect("in range"),
+    );
+    assert!(cron_matches("0 0 1 * *", first).unwrap());
+    assert!(!cron_matches("0 0 1 * *", at(0, 0)).unwrap(), "the 9th");
+    // both restricted: either matches (the 9th is a Monday)
+    assert!(cron_matches("0 0 1 * 1", at(0, 0)).unwrap());
+    assert!(!cron_matches("0 0 2 * 2", at(0, 0)).unwrap());
+    // a field out of its range, too few fields, or an empty expression is refused
+    assert!(cron_matches("0 0 32 * *", first).is_err());
+    assert!(cron_matches("0 0 1 *", first).is_err());
+    assert!(cron_matches("", first).is_err());
+}
+
 /// The spawned loop runs every enabled source in its first minute (paused time: the sleeps pass
 /// at once while the wall clock stays in one minute, so later checks run nothing).
 #[tokio::test(start_paused = true)]
@@ -342,6 +360,10 @@ async fn the_spawned_scheduler_runs_every_source_in_its_first_minute() {
         if !active_names(&w).await.is_empty() {
             break;
         }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    // Later checks in the same wall-clock minute run nothing.
+    for _ in 0..180 {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     handle.abort();
@@ -519,6 +541,135 @@ async fn a_run_whose_task_panics_is_recorded_failed_and_frees_the_source() {
         Some("harvest.lost")
     );
     assert!(done.finished_at.is_some());
+}
+
+/// A fetcher that changes the store under the run, then panics: `Finish` records the run
+/// succeeded first (as a run that ended just before its task broke), `Delete` removes the
+/// source and with it the run row.
+#[derive(Clone, Copy)]
+enum Before {
+    Finish,
+    Delete,
+}
+
+struct PanicsAfter {
+    store: MemoryStore,
+    ctx: RequestCtx,
+    before: Before,
+}
+
+impl OutboundFetcher for PanicsAfter {
+    fn fetch_hop<'a>(
+        &'a self,
+        _target: &'a ValidatedTarget,
+        _accept: &'a str,
+        _max_bytes: usize,
+        _timeout: Duration,
+    ) -> BoxFuture<'a, Result<FetchResponse>> {
+        Box::pin(async move {
+            match self.before {
+                Before::Finish => {
+                    let runs = self.store.list_harvest_runs(&self.ctx, None).await.unwrap();
+                    for mut run in runs {
+                        run.state = HarvestRunState::Succeeded;
+                        run.finished_at = Some(TimestampTz::now());
+                        self.store.upsert_harvest_run(&self.ctx, run).await.unwrap();
+                    }
+                }
+                Before::Delete => {
+                    assert!(self
+                        .store
+                        .delete_harvest_source(&self.ctx, "hub")
+                        .await
+                        .unwrap());
+                }
+            }
+            panic!("the read broke after the store moved")
+        })
+    }
+}
+
+/// A run whose task panics after its row was finished, or after its row is gone, is left as
+/// it is: the lost-run release writes nothing over a finished run and invents no row.
+#[tokio::test]
+async fn a_panicked_run_that_already_finished_or_vanished_is_left_alone() {
+    for before in [Before::Finish, Before::Delete] {
+        let w = world(&["hub.city.example"]).await;
+        w.store
+            .upsert_harvest_source(
+                &w.ctx,
+                source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+            )
+            .await
+            .unwrap();
+        let (subject, _) = harvest_principal(w.org, w.cat);
+        let ctx = RequestCtx::new(w.org, w.cat, subject);
+        let fetcher = PanicsAfter {
+            store: w.store.clone(),
+            ctx: ctx.clone(),
+            before,
+        };
+        let engine = Arc::new(engine_on(Arc::new(fetcher)));
+        let run = engine
+            .clone()
+            .start_source(ctx.clone(), Arc::new(w.store.clone()), {
+                w.store
+                    .get_harvest_source(&ctx, "hub")
+                    .await
+                    .unwrap()
+                    .unwrap()
+            })
+            .await
+            .expect("started");
+        // the task panics at once; give the release its turn
+        let settled = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let row = w.store.get_harvest_run(&ctx, &run.id).await.unwrap();
+                match (before, &row) {
+                    (Before::Finish, Some(r)) if r.state != HarvestRunState::Running => break row,
+                    (Before::Delete, None) => break row,
+                    _ => tokio::time::sleep(Duration::from_millis(5)).await,
+                }
+            }
+        })
+        .await
+        .expect("the store moved");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let after = w.store.get_harvest_run(&ctx, &run.id).await.unwrap();
+        match before {
+            Before::Finish => {
+                let r = after.expect("the finished row stays");
+                assert_eq!(r.state, HarvestRunState::Succeeded);
+                assert!(r.error.is_none());
+                assert!(r.logs.iter().all(|l| l.fingerprint != "harvest.lost"));
+                assert_eq!(settled.map(|s| s.state), Some(HarvestRunState::Succeeded));
+            }
+            Before::Delete => assert!(after.is_none(), "no row is invented: {after:?}"),
+        }
+    }
+}
+
+/// A scheduled run whose task panics is dropped from the outcome; the scheduler itself goes on.
+#[tokio::test]
+async fn a_scheduled_run_that_panics_is_left_out_of_the_outcome() {
+    let w = world(&["hub.city.example"]).await;
+    let store = Arc::new(w.store.clone());
+    store
+        .upsert_harvest_source(
+            &w.ctx,
+            source("arc-gis-hub", "hub", HUB, &["hub.city.example"]),
+        )
+        .await
+        .unwrap();
+    let (_, grant) = harvest_principal(w.org, w.cat);
+    let s = HarvestScheduler::new(
+        Arc::new(engine_on(Arc::new(Panicky))),
+        store,
+        Arc::new(PolicyAuthorizer::new(vec![grant])),
+        vec![(w.org, w.cat)],
+    )
+    .with_retry_delay(Duration::ZERO);
+    assert!(s.run_all().await.is_empty());
 }
 
 /// S11-14: `harvest_run.start` answers once the source is held, and the run goes on when the

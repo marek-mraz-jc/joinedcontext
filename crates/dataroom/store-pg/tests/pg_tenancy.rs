@@ -826,3 +826,109 @@ async fn an_activity_row_that_fails_rolls_the_change_back() {
     assert_eq!(store.get_catalogue(org, cat).await.unwrap(), Some(c0));
     assert_eq!(store.list_activity(&ctx, None, 10).await.unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn a_harvest_source_saved_without_an_id_is_named_and_audited_by_that_name() {
+    let Some(pg) =
+        pg("a_harvest_source_saved_without_an_id_is_named_and_audited_by_that_name").await
+    else {
+        return;
+    };
+    let store = pg.app_store().await;
+    let (org, cat) = tenant();
+    store
+        .upsert_catalogue(catalogue(org, cat, "hsn", &unique_host("hsn")))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+    let saved = store
+        .save_harvest_source(&ctx, harvest_source("feed"), audit("harvest_source.create"))
+        .await
+        .unwrap();
+    assert_eq!(saved.id, "hs-feed");
+    assert_eq!((saved.org_id, saved.catalogue_id), (org, cat));
+    let rows = store.list_activity(&ctx, None, 10).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].object_id, "hs-feed",
+        "the row names the record written"
+    );
+    assert_eq!(
+        store
+            .list_activity(&ctx, Some("hs-feed"), 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // Another Organization naming the same catalogue sees neither the source nor its row.
+    let (other, _) = tenant();
+    let stray = member_ctx(other, cat);
+    assert!(store
+        .get_harvest_source(&stray, "hs-feed")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(store
+        .list_activity(&stray, None, 10)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn a_distribution_whose_dataset_row_is_gone_reads_as_none() {
+    let Some(pg) = pg("a_distribution_whose_dataset_row_is_gone_reads_as_none").await else {
+        return;
+    };
+    let store = pg.app_store().await;
+    let (org, cat) = tenant();
+    store
+        .upsert_catalogue(catalogue(org, cat, "orph", &unique_host("orph")))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+    store
+        .upsert_publisher(&ctx, publisher("city"))
+        .await
+        .unwrap();
+    let air = store
+        .upsert_dataset(&ctx, dataset("air", "city", "public"))
+        .await
+        .unwrap();
+    let dist_id = air.distributions[0].id.clone();
+    let (ds, dist) = store
+        .get_distribution(&ctx, &dist_id)
+        .await
+        .unwrap()
+        .expect("the distribution and its dataset");
+    assert_eq!(
+        (ds.id.as_str(), dist.id.as_str()),
+        (air.id.as_str(), dist_id.as_str())
+    );
+    assert!(store
+        .get_distribution(&ctx, "res-unknown")
+        .await
+        .unwrap()
+        .is_none());
+    let (other, _) = tenant();
+    assert!(store
+        .get_distribution(&member_ctx(other, cat), &dist_id)
+        .await
+        .unwrap()
+        .is_none());
+
+    // The dataset row removed behind the store's back: the orphan distribution reads as none.
+    sqlx::query("DELETE FROM dataroom.cat_dataset WHERE org_id = $1 AND catalogue_id = $2")
+        .bind(org.as_uuid())
+        .bind(cat.as_uuid())
+        .execute(&pg.admin)
+        .await
+        .unwrap();
+    assert!(store
+        .get_distribution(&ctx, &dist_id)
+        .await
+        .unwrap()
+        .is_none());
+}

@@ -727,7 +727,7 @@ async fn dataset_propose_authorizes_validates_and_records() {
         .run(
             &w.dept_editor(),
             "dataset.propose",
-            json!({"dataset": native}),
+            json!({"dataset": native.clone()}),
         )
         .await
         .unwrap();
@@ -742,6 +742,44 @@ async fn dataset_propose_authorizes_validates_and_records() {
         (stored.org_id, stored.publisher_id.as_str()),
         (w.org, "dept")
     );
+    // The native shape without an id updates the record its name names, under that record's id.
+    let mut again = native.clone();
+    again["id"] = json!("");
+    again["title"] = json!({"sk": "Iný názov"});
+    w.run(
+        &w.dept_editor(),
+        "dataset.propose",
+        json!({"dataset": again}),
+    )
+    .await
+    .unwrap();
+    let updated = w
+        .store
+        .get_dataset(&w.admin(), "native")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.id, stored.id);
+    assert_eq!(updated.title["sk"], "Iný názov");
+    assert_eq!(
+        w.store
+            .list_datasets(&w.admin())
+            .await
+            .unwrap()
+            .iter()
+            .filter(|d| d.name == "native")
+            .count(),
+        1,
+        "no second record"
+    );
+    // A member who may not edit the dept publisher cannot overwrite it under the same name.
+    let mut foreign = native.clone();
+    foreign["id"] = json!("");
+    foreign["publisherId"] = json!("city");
+    assert!(w
+        .run(&w.member(), "dataset.propose", json!({"dataset": foreign}))
+        .await
+        .is_err());
 
     let r = w
         .run(
@@ -1735,6 +1773,28 @@ async fn allowed_reads_runs_and_publishers_like_their_calls() {
         .await
         .unwrap();
     assert_eq!(runs["runs"], json!([]), "{runs}");
+    // a stored run is decided like the call: the admin may read it
+    w.store
+        .upsert_harvest_run(
+            &w.admin(),
+            stored_run(&w, w.cat, "run-7", "2026-11-01T10:00:00Z", None),
+        )
+        .await
+        .unwrap();
+    for op in ["harvest_run.get", "harvest_run.logs"] {
+        let held = ask(op, Some("run-7")).await;
+        assert_eq!(held["allowed"], true, "{op}: {held}");
+    }
+    // an outsider is told not found, never that the run exists
+    let outsider = w
+        .run(
+            &w.outsider(),
+            "allowed",
+            json!({"operation": "harvest_run.get", "object": "run-7"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(outsider["allowed"], false, "{outsider}");
 }
 
 #[tokio::test]
@@ -1795,6 +1855,18 @@ async fn odata_scopes_follow_dataset_visibility() {
         dist.contains(&("dataset_id".into(), Vec::new())),
         "{dist:?}"
     );
+    // a member without a list reads every distribution and SHACL report of the catalogue
+    for set in ["Distributions", "ShaclResults"] {
+        let all = paths(&scope_for_context(&w.member(), w.authz.as_ref(), set, None));
+        assert!(
+            !all.iter().any(|(p, _)| p == "dataset_id"),
+            "{set}: {all:?}"
+        );
+        assert!(
+            all.contains(&("catalogue_id".into(), vec![json!(w.cat.to_string())])),
+            "{set}: {all:?}"
+        );
+    }
     let listed = paths(&scope_for_context(
         &w.member(),
         w.authz.as_ref(),
