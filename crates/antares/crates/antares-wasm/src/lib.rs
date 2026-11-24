@@ -167,14 +167,46 @@ fn wire_now(wiring: impl std::future::Future<Output = ()>) -> bool {
 mod tests {
     use super::wire_now;
 
-    #[test]
-    fn a_wiring_that_completes_on_its_first_poll_is_kept() {
-        assert!(wire_now(async {}));
+    #[derive(Clone, Default)]
+    struct Buf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Buf {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("lock").extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// `wire_now` on `wiring` with the log captured: (finished, what it logged).
+    fn wired(wiring: impl std::future::Future<Output = ()>) -> (bool, String) {
+        let buf = Buf::default();
+        let writer = buf.clone();
+        let log = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let done = tracing::subscriber::with_default(log, || wire_now(wiring));
+        let logged = String::from_utf8(buf.0.lock().expect("lock").clone()).expect("utf-8");
+        (done, logged)
     }
 
     #[test]
-    fn a_wiring_that_suspends_is_reported_and_dropped() {
-        assert!(!wire_now(std::future::pending()));
+    fn a_wiring_that_completes_on_its_first_poll_is_kept_silently() {
+        let (done, logged) = wired(async {});
+        assert!(done);
+        assert_eq!(logged, "");
+    }
+
+    #[test]
+    fn a_wiring_that_suspends_is_dropped_with_an_error_naming_the_fallback() {
+        let (done, logged) = wired(std::future::pending());
+        assert!(!done);
+        assert!(
+            logged.contains("ERROR") && logged.contains("falls back to a store scan"),
+            "{logged}"
+        );
     }
 }
 
