@@ -1016,7 +1016,11 @@ mod edge_tests {
     fn a_value_starting_with_an_indicator_stays_quoted_and_formats_again() {
         for src in ["'?+'\n", "a: '?x'\n", "- '?'\n", "a: ['?b']\n"] {
             let out = format(src).unwrap_or_else(|e| panic!("{src:?}: {e}"));
-            assert_eq!(format(&out).as_deref().ok(), Some(out.as_str()), "{src:?} -> {out:?}");
+            assert_eq!(
+                format(&out).as_deref().ok(),
+                Some(out.as_str()),
+                "{src:?} -> {out:?}"
+            );
         }
     }
 
