@@ -438,14 +438,15 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
         .flat_map(|s| s.protocol_mappers.iter())
         .chain(ctx.client.protocol_mappers.iter());
 
+    let unknown =
+        |kind: &str| KaisatsuError::BadRequest(format!("unknown protocol mapper kind: {kind}"));
     for mapper in all_mappers {
-        if !is_known_mapper_kind(&mapper.protocol_mapper) {
-            return Err(KaisatsuError::BadRequest(format!(
-                "unknown protocol mapper kind: {}",
-                mapper.protocol_mapper
-            )));
-        }
+        // An unknown kind is refused whether or not it applies to this token kind: here when it
+        // does not, by the match's last arm when it does.
         if !mapper_applies_to(mapper, kind) {
+            if !is_known_mapper_kind(&mapper.protocol_mapper) {
+                return Err(unknown(&mapper.protocol_mapper));
+            }
             continue;
         }
         match mapper.protocol_mapper.as_str() {
@@ -711,7 +712,7 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     }
                 }
             }
-            _ => {}
+            other => return Err(unknown(other)),
         }
     }
 

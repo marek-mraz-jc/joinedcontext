@@ -692,6 +692,26 @@ fn unknown_mapper_kinds_are_refused() {
     let mut f = Fixture::new(vec![]);
     f.scopes[0].protocol_mappers = vec![mapper("nope", &[])];
     assert!(evaluate_mappers(&f.ctx(), TokenKind::IdToken).is_err());
+    // Refused also when it would not apply to the token kind asked for.
+    let off = Fixture::new(vec![mapper(
+        "script-mapper",
+        &[("access.token.claim", "false")],
+    )]);
+    let err = evaluate_mappers(&off.ctx(), TokenKind::AccessToken).unwrap_err();
+    assert!(err.to_string().contains("script-mapper"), "{err}");
+    // Every known kind is evaluated, none refused.
+    for kind in known_mapper_kinds() {
+        let cfg: &[(&str, &str)] = if *kind == "oidc-sha256-pairwise-sub-mapper" {
+            &[("sectorIdentifierUri", "https://sector-a.example.org/cb")]
+        } else {
+            &[]
+        };
+        let f = Fixture::new(vec![mapper(kind, cfg)]);
+        assert!(
+            evaluate_mappers(&f.ctx(), TokenKind::AccessToken).is_ok(),
+            "{kind}"
+        );
+    }
 }
 
 /// K4: Proved red against pre-K4 where `oidc-sha256-pairwise-sub-mapper` returned the plain
