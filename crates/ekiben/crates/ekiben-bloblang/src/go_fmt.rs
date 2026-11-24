@@ -23,7 +23,8 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
     let mut i = 0;
     let mut arg = 0;
     let mut reordered = false;
-    while i < bytes.len() {
+    // Ends at the `i >= bytes.len()` break below, after the last literal run.
+    loop {
         let start = i;
         while i < bytes.len() && bytes[i] != b'%' {
             i += 1;
