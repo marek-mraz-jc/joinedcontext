@@ -3669,13 +3669,10 @@ dependencies = [
  "lz4_flex",
  "quick-xml 0.42.0",
  "regex",
- "serde",
  "serde_json",
  "snap",
  "tar",
- "thiserror 2.0.21",
  "tokio",
- "tracing",
  "zstd",
 ]
 
