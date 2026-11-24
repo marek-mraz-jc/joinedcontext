@@ -140,7 +140,8 @@ fn relationship_examples() {
 
 #[test]
 fn relationship_null_empty_and_types() {
-    assert!(err("root = this.o.ngsild_relationship()", json!({"o": ""})).contains("empty"));
+    assert!(err("root = this.o.ngsild_relationship()", json!({"o": ""}))
+        .contains("got an empty string"));
     assert!(err(
         "root = this.o.ngsild_relationship()",
         json!({"o": "not a uri"})
@@ -272,6 +273,24 @@ fn language_property_null_empty_and_types() {
         json!({"s": 3}),
     );
     assert!(e.contains("expected string value, got number"), "{e}");
+}
+
+#[test]
+fn a_language_map_takes_string_lists_and_none_but_no_malformed_tag() {
+    let m = "root = this.s.ngsild_language_property()";
+    let map = json!({"en": ["a", "b"], "@none": "c", "sr-Latn-RS": "d"});
+    assert_eq!(
+        ok(m, json!({ "s": map.clone() })),
+        json!({"type": "LanguageProperty", "languageMap": map})
+    );
+    assert!(err(m, json!({"s": {"en": ["a", 1]}})).contains("holding a string"));
+    // An empty subtag, a subtag past 8 characters and one holding a symbol are not BCP 47.
+    for tag in ["en-", "en--US", "en-abcdefghi", "en-U_S"] {
+        assert!(
+            err(m, json!({"s": {tag: "x"}})).contains("holding a string"),
+            "{tag}"
+        );
+    }
 }
 
 // --- ngsild_key_values / ngsild_normalized ---

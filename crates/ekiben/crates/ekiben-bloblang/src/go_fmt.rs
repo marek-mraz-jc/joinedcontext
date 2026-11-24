@@ -972,6 +972,12 @@ mod tests {
                 ],
                 "\"\\a\\b\\f\\n\\r\\t\\v\\\\\"|\"\\x01\"|\"\\u200b\"|\"\\U0001f600\"|\"😀\"",
             ),
+            // An even code point prints; a plane's last two (noncharacters) do not.
+            (
+                "%q|%q",
+                vec![st("è"), st("\u{1fffe}")],
+                "\"è\"|\"\\U0001fffe\"",
+            ),
             (
                 "%v|%s|%d",
                 vec![
