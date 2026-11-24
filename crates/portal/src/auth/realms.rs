@@ -675,6 +675,50 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &again));
     }
 
+    /// T-7180: a realm the registry serves after start is dialed at jc's listener: its key
+    /// host is reached at the address given, so its keys load though no DNS names the host.
+    #[tokio::test]
+    async fn a_realm_served_at_run_time_is_dialed_at_the_listener() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let listener = MockServer::start().await;
+        let (_, set) = crate::auth::bearer::tests::keypair("reached");
+        Mock::given(method("GET"))
+            .and(path("/realms/hel/protocol/openid-connect/certs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&set))
+            .expect(1)
+            .mount(&listener)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.oidc = Some(installation());
+        config.organization_hosts = hosts();
+        let state = AppState::new(config, None);
+        let port = listener.address().port();
+        let raw = format!(
+            "[{}]",
+            row(
+                "hel",
+                "https://idm-reach-7605.hel.test/realms/hel",
+                &format!("http://idm-reach-7605.hel.test:{port}/realms/hel/protocol/openid-connect/certs"),
+            )
+        );
+        assert_eq!(
+            state.replace_organization_realms(&raw, Some(*listener.address())),
+            Ok(1)
+        );
+        let hel = state.organization_realms.get("hel").expect("served");
+        assert_eq!(hel.bearer.refresh().await.map_err(|e| e.to_string()), Ok(1));
+        assert!(
+            state.replace_organization_realms("[{", None).is_err(),
+            "a garbled list"
+        );
+        assert_eq!(
+            state.organization_realms.keys(),
+            ["hel"],
+            "a refused list changes nothing"
+        );
+    }
+
     /// T-7165: an App signs its people in at its project's Organization's realm, read off the
     /// mirror; an App of a project with no Organization realm, or no App at all, uses the
     /// installation's. Each realm's token is refused on the other's App (T-7133).
@@ -694,7 +738,9 @@ mod tests {
                 spec,
                 status: None,
             };
-        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut config = crate::config::Config::for_tests();
+        config.oidc = Some(installation());
+        let mut state = AppState::new(config, None);
         let org = crate::permissions::ORG_NAMESPACE;
         state.mirror.upsert(envelope(
             "Project",
@@ -740,9 +786,16 @@ mod tests {
             Some("https://idm.hel.test/realms/hel")
         );
         assert_eq!(
-            app_oidc(&state, "plain").map(|c| c.issuer),
-            state.config.oidc.as_ref().map(|c| c.issuer.clone())
+            app_oidc(&state, "plain")
+                .map(|c| c.issuer.to_string())
+                .as_deref(),
+            Some("https://idm.example.test/realms/jc"),
+            "the installation's realm"
         );
+        let mut orphan = envelope("App", "orphan", "free", serde_json::json!({}));
+        orphan.metadata.namespace = None;
+        state.mirror.upsert(orphan);
+        assert!(of_app(&state, "orphan").is_none(), "an App of no project");
 
         let token = |key: &jsonwebtoken::EncodingKey, kid: &str, iss: &str, app: &str| {
             let client = crate::reconciler::app_clients::client_id(app);

@@ -363,6 +363,18 @@ mod tests {
     /// audience are refused.
     #[tokio::test]
     async fn a_pipeline_sink_takes_only_its_own_projects_pipeline_clients() {
+        // The refusal's log line names the client it saw, never the token.
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+        let writer = {
+            let log = std::sync::Arc::clone(&log);
+            move || Captured(std::sync::Arc::clone(&log))
+        };
+        let _logging = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_writer(writer)
+                .with_ansi(false)
+                .finish(),
+        );
         let (state, signer) = portal();
         for client in ["praha-pipelines", "praha-pl-odpad"] {
             let headers = bearer(&signer, INTERNAL_AUDIENCE, Some(client));
@@ -394,6 +406,10 @@ mod tests {
             ),
             (HeaderMap::new(), "no token"),
         ] {
+            let token = headers
+                .get(header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.trim_start_matches("Bearer ").to_owned());
             assert_eq!(
                 authenticate_pipeline_of(&state, &headers, "praha", "odpad")
                     .await
@@ -401,6 +417,33 @@ mod tests {
                 Err(UNAUTHORIZED),
                 "{why}"
             );
+            let logged = String::from_utf8(log.lock().expect("log").clone()).expect("utf-8");
+            assert!(
+                token.is_none_or(|token| !logged.contains(&token)),
+                "{why}: the token is logged"
+            );
+        }
+        let logged = String::from_utf8(log.lock().expect("log").clone()).expect("utf-8");
+        assert!(logged.contains("a pipeline sink was refused"), "{logged}");
+        for client in ["zilina-pipelines", "praha-pl-other", "pipeline-runner"] {
+            assert!(
+                logged.contains(&format!("client={client}")),
+                "{client}: {logged}"
+            );
+        }
+    }
+
+    /// A log sink the test reads back.
+    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log").extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
         }
     }
 
