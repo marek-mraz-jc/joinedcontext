@@ -277,12 +277,7 @@ async fn run_with_retries(
             Err(e @ DataroomError::Conflict(_)) => return Err(e),
             Err(e) if attempt >= RETRIES => return Err(e),
             Err(e) => {
-                tracing::warn!(
-                    source = %source.name,
-                    attempt = attempt + 1,
-                    error = %e,
-                    "dataroom harvest: attempt failed, trying again"
-                );
+                tracing::warn!(source = %source.name, attempt = attempt + 1, error = %e, "dataroom harvest: attempt failed, trying again");
                 attempt += 1;
                 tokio::time::sleep(delay).await;
                 delay *= 2;
