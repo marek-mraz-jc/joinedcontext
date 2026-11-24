@@ -135,6 +135,7 @@ fn equal_names_after_their_digits_keep_their_given_order() {
 
 #[test]
 fn bom_false_switches_the_mark_off_even_for_human_headers() {
+    assert!(Dialect::of(None, Some("true"), false).unwrap().bom);
     let dialect = Dialect::of(None, Some("false"), true).unwrap();
     assert!(!dialect.bom);
     let mut table = Table::default();
