@@ -16,7 +16,10 @@ fuzz_target!(|data: &[u8]| {
     let catalogue = ["catalogue.example".to_owned()];
     if let Ok(parsed) = validate_outbound_url(url, &allowed, &catalogue, false) {
         assert_eq!(parsed.scheme(), "https", "{url}");
-        assert!(parsed.username().is_empty() && parsed.password().is_none(), "{url}");
+        assert!(
+            parsed.username().is_empty() && parsed.password().is_none(),
+            "{url}"
+        );
         assert!(parsed.host_str().is_some(), "{url}");
     }
     let at = serde_json::from_str("\"2026-11-08T03:23:00Z\"").expect("timestamp");

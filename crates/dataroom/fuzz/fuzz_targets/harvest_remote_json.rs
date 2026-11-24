@@ -6,8 +6,8 @@
 
 use dataroom_core::{CatalogueId, HarvestSource, OrgId};
 use dataroom_harvest::sources::{
-    parse_arcgis_directory, parse_arcgis_hub_items, parse_arcgis_service,
-    parse_ckan_search_page, parse_nkod_sparql_bindings, parse_ogc_records_page,
+    parse_arcgis_directory, parse_arcgis_hub_items, parse_arcgis_service, parse_ckan_search_page,
+    parse_nkod_sparql_bindings, parse_ogc_records_page,
 };
 use libfuzzer_sys::fuzz_target;
 use serde_json::{json, Value};
