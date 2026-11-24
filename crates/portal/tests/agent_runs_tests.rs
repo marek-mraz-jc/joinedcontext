@@ -5128,7 +5128,7 @@ mod durable_store {
             .into_iter()
             .map(|r| r.id)
             .collect();
-        assert_eq!(only, [b.clone()]);
+        assert_eq!(only, std::slice::from_ref(&b));
         let live = store
             .live_run_for_app(&project, "bikes")
             .await
