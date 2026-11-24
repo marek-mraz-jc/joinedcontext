@@ -170,6 +170,16 @@ mod tests {
     }
 
     #[test]
+    fn a_host_with_a_colon_that_is_not_ipv6_is_refused() {
+        assert_eq!(
+            check_remote_host("not:an-address"),
+            Err("the host is not a valid IPv6 address")
+        );
+        assert!(check_remote_host("::1").is_err());
+        assert_eq!(check_remote_host("2606:4700::1111"), Ok(()));
+    }
+
+    #[test]
     fn a_public_address_is_public() {
         for ip in [
             "1.1.1.1",

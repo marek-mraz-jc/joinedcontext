@@ -1,0 +1,1 @@
+{"files":{"script.js":"export default async (request) => ({ body: request.body.length });"},"entry":"script.js","request":{"method":"POST","query":{},"body":[1,2,3],"user":null},"config":{},"via":"none"}

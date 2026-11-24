@@ -131,3 +131,46 @@ impl BlueprintSpec {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn blueprint(category: Option<&str>, template: &str) -> BlueprintSpec {
+        BlueprintSpec {
+            version: SemVer::new("1.0.0").expect("semver"),
+            category: category.map(str::to_owned),
+            risk_class: RiskClass::Green,
+            allowed_roles: vec!["editor".into()],
+            parameter_schema: json!({ "type": "object" }),
+            templates: vec![BlueprintTemplate {
+                name: "alert".into(),
+                template: template.into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn a_blueprint_with_a_valid_category_is_valid() {
+        assert_eq!(
+            blueprint(Some("alerting"), "kind: Alert").validate(),
+            Ok(())
+        );
+        let meta = ObjectMeta::default();
+        assert_eq!(blueprint(None, "kind: Alert").validate_spec(&meta), Ok(()));
+    }
+
+    #[test]
+    fn a_blank_template_body_is_refused() {
+        let err = blueprint(Some("alerting"), "  \n").validate().unwrap_err();
+        assert_eq!(
+            err,
+            Error::Name {
+                field: "spec.templates[].template",
+                value: "alert".into(),
+                reason: "template body must not be empty",
+            }
+        );
+    }
+}

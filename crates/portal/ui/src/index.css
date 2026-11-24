@@ -445,9 +445,17 @@
     --jc-font-size-md: 14px;
     --jc-font-size-sm: 12px;
   }
+  /* The grid's hints, its search field and its header menus, in a marked page's dialogs too (T-7790). */
+  :root:has([data-phone-floors]) .jc-grid-arrange-hint {
+    font-size: 12px;
+  }
 }
 @media (pointer: coarse) {
-  [data-phone-floors] .jc-data-grid--stack .jc-grid-arrange-toggle {
+  [data-phone-floors] .jc-data-grid--stack .jc-grid-arrange-toggle,
+  :root:has([data-phone-floors]) .jc-data-grid-search input {
     min-height: 44px;
+  }
+  :root:has([data-phone-floors]) .jc-grid-th .jc-grid-meta-btn {
+    min-width: 44px;
   }
 }

@@ -440,4 +440,19 @@ mod tests {
             shown.html
         );
     }
+    #[test]
+    fn an_attribute_escapes_markup_characters_and_drops_controls() {
+        assert_eq!(
+            attribute(" a&b\"c'd<e>f\u{1}g "),
+            "a&amp;b&quot;c&#39;d&lt;e&gt;fg"
+        );
+    }
+
+    #[test]
+    fn emphasis_inside_the_title_heading_keeps_only_its_text() {
+        let shown = render("# One *two*\n\nbody", &[]);
+        assert_eq!(shown.title.as_deref(), Some("One two"));
+        assert!(!shown.html.contains("<em>"), "{}", shown.html);
+        assert!(shown.html.contains("<p>body</p>"), "{}", shown.html);
+    }
 }

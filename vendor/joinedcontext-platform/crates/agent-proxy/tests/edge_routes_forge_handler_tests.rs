@@ -375,6 +375,58 @@ async fn reading_a_pull_request_or_a_commit_is_allowed() {
     }
 }
 
+/// A read forwards the body it came with, untouched: only a write is pinned to the run (T-7795).
+#[tokio::test]
+async fn a_read_forwards_its_body_untouched() {
+    let forge = forge_answering(200, "{}").await;
+    let response = proxy(&forge.uri())
+        .oneshot(
+            authed("GET", "/v1/forge/pulls/7")
+                .body(Body::from("as-sent"))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+    let seen = forge.received_requests().await.expect("the mock recorded");
+    assert_eq!(seen.last().expect("a request").body, b"as-sent");
+}
+
+/// A directory with a character the URL encodes (a space) cannot be matched once the forge's
+/// parser has had its say, so a write into it is refused rather than guessed (T-0817, T-7795).
+#[tokio::test]
+async fn a_directory_the_url_would_encode_is_refused_rather_than_guessed() {
+    let forge = forge_answering(200, "{}").await;
+    let mut run = sample_run(true);
+    run.path_prefix = "projects/helsinki/apps/my bikes/".to_owned();
+    let response = app(
+        run,
+        Bases {
+            forge: forge.uri(),
+            ..Bases::default()
+        },
+    )
+    .oneshot(
+        authed(
+            "PUT",
+            "/v1/forge/contents/projects/helsinki/apps/my%20bikes/a.rs",
+        )
+        .body(Body::from(r#"{"content":"eA==","message":"add"}"#))
+        .expect("a request"),
+    )
+    .await
+    .expect("an answer");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(body_of(response)
+        .await
+        .contains("outside assigned application directory"));
+    assert!(forge
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .is_empty());
+}
+
 /// AG-86, T-3021: a read of a pull request or a commit stays inside the run's repository. The
 /// target is parsed with its dot segments resolved, so without a check `pulls/../../other/repo`
 /// would reach another repository, or any forge GET, with the platform's token.

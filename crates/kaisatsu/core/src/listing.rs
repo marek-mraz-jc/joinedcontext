@@ -126,3 +126,66 @@ pub async fn all_group_members(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn m<F>(field: F, op: MatchOp, value: &str) -> FieldMatch<F> {
+        FieldMatch {
+            field,
+            op,
+            value: value.into(),
+        }
+    }
+
+    #[test]
+    fn a_person_matches_by_each_field_ignoring_case() {
+        let ada = UserRepresentation {
+            id: "U-1".into(),
+            username: "Ada".into(),
+            email: Some("Ada@Example.org".into()),
+            first_name: Some("Augusta".into()),
+            last_name: None,
+            ..UserRepresentation::default()
+        };
+        assert!(m(PersonField::Id, MatchOp::Equals, "u-1").matches(&ada));
+        assert!(!m(PersonField::Id, MatchOp::Equals, "u-").matches(&ada));
+        assert!(m(PersonField::Username, MatchOp::StartsWith, "AD").matches(&ada));
+        assert!(!m(PersonField::Username, MatchOp::StartsWith, "da").matches(&ada));
+        assert!(m(PersonField::Email, MatchOp::Contains, "EXAMPLE").matches(&ada));
+        assert!(!m(PersonField::Email, MatchOp::Contains, "test").matches(&ada));
+        assert!(m(PersonField::FirstName, MatchOp::Equals, "augusta").matches(&ada));
+        assert!(!m(PersonField::FirstName, MatchOp::Equals, "ada").matches(&ada));
+        assert!(
+            m(PersonField::LastName, MatchOp::Equals, "").matches(&ada),
+            "absent is empty"
+        );
+        assert!(!m(PersonField::LastName, MatchOp::Contains, "x").matches(&ada));
+        let no_mail = UserRepresentation {
+            email: None,
+            ..ada.clone()
+        };
+        assert!(!m(PersonField::Email, MatchOp::StartsWith, "a").matches(&no_mail));
+    }
+
+    #[test]
+    fn a_group_matches_by_id_or_name_ignoring_case() {
+        let g = GroupRepresentation {
+            id: "g-7".into(),
+            name: "Traffic Team".into(),
+            ..GroupRepresentation::default()
+        };
+        assert!(m(GroupField::Id, MatchOp::Equals, "G-7").matches(&g));
+        assert!(m(GroupField::Name, MatchOp::Contains, "fic t").matches(&g));
+        assert!(!m(GroupField::Name, MatchOp::StartsWith, "team").matches(&g));
+        assert!(!m(GroupField::Id, MatchOp::Contains, "8").matches(&g));
+    }
+
+    #[test]
+    fn an_empty_page_holds_nothing() {
+        let page: ListPage<u8> = ListPage::default();
+        assert!(page.items.is_empty());
+        assert_eq!(page.total, 0);
+    }
+}

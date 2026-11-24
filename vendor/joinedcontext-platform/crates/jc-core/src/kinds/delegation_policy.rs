@@ -570,10 +570,13 @@ mod tests {
             kind: "App".into(),
             verbs: vec![ConnectorVerb::Edit, ConnectorVerb::Edit],
         }];
-        match validate_kind_verbs("kinds", &twice) {
-            Err(Error::Name { field, .. }) => assert_eq!(field, "kinds[].verbs"),
-            other => panic!("expected a field refusal, got {other:?}"),
-        }
+        assert!(matches!(
+            validate_kind_verbs("kinds", &twice),
+            Err(Error::Name {
+                field: "kinds[].verbs",
+                ..
+            })
+        ));
         let unknown = [KindVerbs {
             kind: "Nope".into(),
             verbs: vec![ConnectorVerb::Read],
@@ -585,6 +588,28 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    #[should_panic(expected = "expected a field refusal")]
+    fn field_of_an_accepted_policy_is_no_field_refusal() {
+        field_of(&policy());
+    }
+
+    #[test]
+    fn every_verb_has_the_word_it_is_written_with() {
+        use ConnectorVerb::*;
+        for (verb, word) in [
+            (Read, "read"),
+            (Propose, "propose"),
+            (Create, "create"),
+            (Edit, "edit"),
+            (Delete, "delete"),
+            (Run, "run"),
+        ] {
+            assert_eq!(verb.word(), word);
+            assert_eq!(serde_json::to_value(verb).unwrap(), serde_json::json!(word));
+        }
     }
 
     #[test]

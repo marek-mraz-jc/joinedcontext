@@ -265,6 +265,12 @@ async fn apply_portal_realm(
         let added = add_organization_hosts(store, realm, &ctx.siblings.organization_portals)
             .await
             .map_err(|e| err(&e))?;
+        if add_functions_audience(store, realm)
+            .await
+            .map_err(|e| err(&e))?
+        {
+            tracing::info!(%realm, "kaisatsu: jc-assistant's tokens name jc-functions (T-7774)");
+        }
         tracing::info!(
             %realm,
             added,
@@ -371,6 +377,40 @@ async fn add_organization_hosts(
             .map_err(|e| e.to_string())?;
     }
     Ok(added)
+}
+
+/// Gives `jc-assistant` of an imported realm the `jc-functions` audience its scripts need
+/// (T-7774), as [`setup::assistant_realm_file`] gives it in a realm jc writes: a targeted client
+/// update like [`add_organization_hosts`]. A realm without the assistant's client, or whose client
+/// names the audience already, is left alone. Returns whether it wrote.
+async fn add_functions_audience(
+    store: &Arc<dyn Store>,
+    realm: &setup::Realm,
+) -> Result<bool, String> {
+    let Some(mut client) = store
+        .get_client_by_client_id(realm.as_str(), setup::ASSISTANT_CLIENT)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(false);
+    };
+    let named = client.protocol_mappers.iter().any(|m| {
+        m.protocol_mapper == "oidc-audience-mapper"
+            && m.config.get("included.custom.audience").map(String::as_str)
+                == Some(setup::FUNCTIONS_AUDIENCE)
+    });
+    if named {
+        return Ok(false);
+    }
+    let mapper = setup::audience_mapper(setup::FUNCTIONS_AUDIENCE);
+    client
+        .protocol_mappers
+        .push(serde_json::from_value(mapper).map_err(|e| format!("the audience mapper: {e}"))?);
+    store
+        .upsert_client(client)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 /// What an Organization's own realm is written from (T-7001): named like the Organization,
@@ -1629,6 +1669,44 @@ mod tests {
     /// The realm `apply_portal_realm` writes when the assistant runs: kaisatsu takes it, the
     /// assistant's client asks scope `embedder` and introspects for the proxy, and portal-api's
     /// tokens name `jc-assistant`.
+    /// T-7774: an imported realm whose `jc-assistant` predates the sandbox gets the `jc-functions`
+    /// audience once, beside the mappers it had; a second start writes nothing.
+    #[tokio::test]
+    async fn an_imported_assistant_client_gains_the_functions_audience_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let roles = crate::module::Module::ALL;
+        let setup = setup::Setup::prepare(dir.path(), &roles, &Default::default()).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(
+            Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap(),
+        ));
+        assert!(!add_functions_audience(&store, &setup.realm).await.unwrap());
+        // The export's client: the proxy audience alone.
+        let (_, mut file) = setup::assistant_realm_file(&setup.realm);
+        file["clients"][0]["protocolMappers"] =
+            serde_json::json!([setup::audience_mapper(setup::PROXY_CLIENT)]);
+        let mut files =
+            setup::portal_realm_files("https://portal.city.example/", &[], &setup.realm).unwrap();
+        files.push(("40-jc-assistant.json".to_owned(), file));
+        let options = ApplyOptions {
+            env_vars: setup::realm_env(&setup),
+            ..ApplyOptions::default()
+        };
+        apply_realm_files(&store, &files, &options).await.unwrap();
+        assert!(add_functions_audience(&store, &setup.realm).await.unwrap());
+        assert!(!add_functions_audience(&store, &setup.realm).await.unwrap());
+        let client = store
+            .get_client_by_client_id(setup.realm.as_str(), setup::ASSISTANT_CLIENT)
+            .await
+            .unwrap()
+            .unwrap();
+        let audiences: Vec<&str> = client
+            .protocol_mappers
+            .iter()
+            .filter_map(|m| m.config.get("included.custom.audience").map(String::as_str))
+            .collect();
+        assert_eq!(audiences, [setup::PROXY_CLIENT, setup::FUNCTIONS_AUDIENCE]);
+    }
+
     #[tokio::test]
     async fn the_assistants_clients_and_the_portals_audience_apply() {
         let dir = tempfile::tempdir().unwrap();
@@ -1674,7 +1752,14 @@ mod tests {
                 .filter_map(|m| m.config.get("included.custom.audience").cloned())
                 .collect()
         };
-        assert_eq!(audience(&assistant), vec![setup::PROXY_CLIENT.to_owned()]);
+        // The proxy and the script sandbox (T-7774: without `jc-functions` every script was 401).
+        assert_eq!(
+            audience(&assistant),
+            vec![
+                setup::PROXY_CLIENT.to_owned(),
+                setup::FUNCTIONS_AUDIENCE.to_owned()
+            ]
+        );
         let proxy = client(setup::PROXY_CLIENT).await;
         assert!(proxy.service_accounts_enabled);
         // The proxy reads a run's context on the Portal's internal listener, which admits only a

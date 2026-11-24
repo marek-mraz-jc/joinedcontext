@@ -1223,6 +1223,77 @@ async fn a_browser_authorize_error_is_a_page_naming_the_parameter_and_the_way_ba
 }
 
 #[tokio::test]
+async fn introspection_revocation_and_logout_read_tokens_with_claims_missing() {
+    let (app, store, kek) = app().await;
+    let member = user_id(&store, "demo.orgmember@hel.fi").await;
+    let now = jc_time::TimestampTz::now().as_second();
+    let introspect = "/realms/dev/protocol/openid-connect/token/introspect";
+    let revoke = "/realms/dev/protocol/openid-connect/revoke";
+    let creds = [
+        ("client_id", "apisix-gateway"),
+        ("client_secret", APISIX_CLIENT_WORD),
+    ];
+    // A token that names its own username and no azp: the username is kept as signed and no
+    // client_id is made up.
+    let token = realm_token(
+        &store,
+        &kek,
+        json!({ "iss": ISSUER, "sub": member, "typ": "Bearer", "username": "signed-name",
+            "jti": "introspect-named", "iat": now, "exp": now + 300 }),
+    )
+    .await;
+    let mut form = creds.to_vec();
+    form.push(("token", token.as_str()));
+    let (st, _, body) = post_form(&app, introspect, &form, None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let v = json_of(&body);
+    assert_eq!(v["active"], true, "{body}");
+    assert_eq!(v["username"], "signed-name", "{body}");
+    assert!(v.get("client_id").is_none(), "{body}");
+
+    // Revocation without a token, or with an empty one, is the RFC 7009 200 and revokes nothing.
+    for extra in [None, Some("")] {
+        let mut form = creds.to_vec();
+        if let Some(t) = extra {
+            form.push(("token", t));
+        }
+        let (st, _, body) = post_form(&app, revoke, &form, None).await;
+        assert_eq!(st, StatusCode::OK, "{extra:?}: {body}");
+    }
+    // An access token of this client without a jti: 200, and nothing is marked revoked.
+    let no_jti = realm_token(
+        &store,
+        &kek,
+        json!({ "iss": ISSUER, "sub": member, "typ": "Bearer", "azp": "apisix-gateway",
+            "iat": now, "exp": now + 300 }),
+    )
+    .await;
+    let mut form = creds.to_vec();
+    form.push(("token", no_jti.as_str()));
+    let (st, _, body) = post_form(&app, revoke, &form, None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let mut form = creds.to_vec();
+    form.push(("token", no_jti.as_str()));
+    let (_, _, body) = post_form(&app, introspect, &form, None).await;
+    assert_eq!(json_of(&body)["active"], true, "{body}");
+
+    // An id_token_hint naming neither session nor subject is still a hint: the sign-out page,
+    // ending no session.
+    let hint = realm_token(
+        &store,
+        &kek,
+        json!({ "iss": ISSUER, "typ": "ID", "azp": "apisix-gateway", "iat": now, "exp": now + 300 }),
+    )
+    .await;
+    let (st, _, html) = get(&app, &format!("{LOGOUT}?id_token_hint={hint}"), None).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(
+        !html.contains("logout_csrf_token"),
+        "no confirmation needed: {html}"
+    );
+}
+
+#[tokio::test]
 async fn logout_reads_accept_language_and_refuses_a_token_that_is_not_base64url() {
     let (app, _, _) = app().await;
     let req = Request::builder()

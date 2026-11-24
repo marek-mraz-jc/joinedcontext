@@ -1,0 +1,1 @@
+{"files":{"@app/functions/f.ts":"export default async () => ({ body: 1 });","@joinedcontext/sdk/server":"export const createClient = (c) => ({ c });"},"entry":"@app/functions/f.ts","request":{"method":"GET","query":{"a":"b"},"body":null,"user":{"sub":"x"}},"config":{"slug":"k7m2qz4tv6xh3n5jb2ryd3wcfa"},"token":"t","via":"proxy"}

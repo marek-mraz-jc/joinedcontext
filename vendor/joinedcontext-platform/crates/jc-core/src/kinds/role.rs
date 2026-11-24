@@ -513,3 +513,56 @@ mod tests {
         assert!(journey.holds(Some("t1234-x")) && !journey.holds(Some("xt1234-x")));
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    fn binding(validity: serde_json::Value) -> RoleBindingSpec {
+        serde_json::from_value(serde_json::json!({
+            "subjects": [{"user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14"}],
+            "role": "viewer",
+            "scope": {"project": "demo"},
+            "validity": validity,
+        }))
+        .expect("a RoleBinding spec")
+    }
+
+    #[test]
+    fn a_person_bound_for_an_ordered_window_validates() {
+        let spec = binding(serde_json::json!({
+            "notBefore": "2026-01-01T00:00:00Z",
+            "notAfter": "2026-12-31T00:00:00Z",
+        }));
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_window_open_at_one_end_validates() {
+        let spec = binding(serde_json::json!({"notBefore": "2026-01-01T00:00:00Z"}));
+        assert!(spec
+            .validity
+            .as_ref()
+            .is_some_and(|v| v.not_after.is_none()));
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_service_account_user_without_validity_validates() {
+        let spec: RoleBindingSpec = serde_json::from_value(serde_json::json!({
+            "subjects": [{"user": "service-account-build-lane"}],
+            "role": "viewer",
+            "scope": {"project": "demo"},
+        }))
+        .expect("a RoleBinding spec");
+        assert!(spec.validity.is_none());
+        assert_eq!(spec.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_person_bound_with_no_validity_validates() {
+        let spec = binding(serde_json::Value::Null);
+        assert!(spec.validity.is_none());
+        assert_eq!(spec.validate(), Ok(()));
+    }
+}

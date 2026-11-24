@@ -2,6 +2,8 @@
 //! Shared fixtures for the server integration tests: the RI `dev` realm applied from
 //! `import/tests/fixtures/ri_dev.json`, a form POST helper and JWT payload decoding.
 
+pub mod fault_store;
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};

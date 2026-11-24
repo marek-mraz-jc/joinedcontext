@@ -1,0 +1,2 @@
+apps/a/.	./x
+[{"method":"tools/call","params":{"name":"query_entities"}},{"method":"initialize"}]

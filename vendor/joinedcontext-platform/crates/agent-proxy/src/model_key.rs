@@ -184,7 +184,9 @@ pub fn refused(state: &ProxyState, status: u16) {
     };
     static LAST: Mutex<Option<(KeyState, Instant)>> = Mutex::new(None);
     {
-        let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut last = LAST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if matches!(*last, Some((said, at)) if said == key && at.elapsed() < REFUSAL_EVERY) {
             return;
         }

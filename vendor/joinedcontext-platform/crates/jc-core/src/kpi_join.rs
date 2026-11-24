@@ -1644,6 +1644,14 @@ mod tests {
     }
 
     #[test]
+    fn an_explicit_valid_window_is_accepted_and_reported() {
+        let mut s = step("sum(parking.occupied) / count(stops)", "C62");
+        s.window = Some("PT15M".into());
+        assert!(s.validate(&inputs()).is_ok());
+        assert_eq!(s.window(), "PT15M");
+    }
+
+    #[test]
     fn a_key_slug_is_a_local_id_the_mapping_writes_the_same_way() {
         assert_eq!(slug("Kallio"), "kallio");
         assert_eq!(slug("Etu-Töölö / 2"), "etu-t-l-2");
@@ -1684,5 +1692,359 @@ mod tests {
         assert!(mapping.contains("division by zero: count(stops) is 0"));
         assert!(mapping.contains("did not answer in this run"));
         assert!(wrap_mapping("parking").contains("\"input\": \"parking\""));
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sample_inputs() -> Vec<Input> {
+        vec![
+            Input {
+                name: "parking".into(),
+                entity_type: "ParkingSite".into(),
+                attrs: vec!["occupied".into(), "capacity".into(), "district".into()],
+                units: BTreeMap::from([("occupied".into(), "C62".into())]),
+                endpoint: "helsinki-parking".into(),
+                q: None,
+            },
+            Input {
+                name: "stops".into(),
+                entity_type: "TransitStop".into(),
+                attrs: vec!["district".into(), "wait".into()],
+                units: BTreeMap::from([("wait".into(), "MIN".into())]),
+                endpoint: "helsinki-transit".into(),
+                q: None,
+            },
+        ]
+    }
+
+    #[test]
+    fn agg_parse_and_word_handle_all_variants() {
+        assert_eq!(Agg::parse("min"), Some(Agg::Min));
+        assert_eq!(Agg::parse("max"), Some(Agg::Max));
+        assert_eq!(Agg::parse("count"), Some(Agg::Count));
+        assert_eq!(Agg::parse("unknown"), None);
+        assert_eq!(Agg::Min.word(), "min");
+        assert_eq!(Agg::Max.word(), "max");
+        assert_eq!(Agg::Count.word(), "count");
+    }
+
+    #[test]
+    fn parse_handles_nested_parentheses_and_bad_syntax() {
+        let nested = parse("((sum(parking.occupied) + 1) * 2)").unwrap();
+        assert_eq!(nested.to_string(), "((sum(parking.occupied) + 1) * 2)");
+
+        let err = parse("sum(parking.occupied) + 1.2.3").unwrap_err();
+        assert!(err.to_string().contains("is not a number"), "{err}");
+
+        let err = parse("sum(parking.occupied) + @").unwrap_err();
+        assert!(
+            err.to_string().contains("is not part of a formula"),
+            "{err}"
+        );
+
+        let err = parse("sum(parking.)").unwrap_err();
+        assert!(
+            err.to_string().contains("names a source and an attribute"),
+            "{err}"
+        );
+
+        let err = parse("sum()").unwrap_err();
+        assert!(
+            err.to_string().contains("names a source and an attribute"),
+            "{err}"
+        );
+
+        let err = parse("prev()").unwrap_err();
+        assert!(
+            err.to_string().contains("prev() reads one attribute"),
+            "{err}"
+        );
+
+        let err = parse("").unwrap_err();
+        assert!(err.to_string().contains("write a formula"), "{err}");
+
+        let err = parse("   ").unwrap_err();
+        assert!(err.to_string().contains("write a formula"), "{err}");
+
+        let err = parse("sum(parking.occupied) trailing").unwrap_err();
+        assert!(err.to_string().contains("unexpected `t`"), "{err}");
+
+        // 65 terms of at least 8 characters each pass the 512-character cap first
+        let too_many = (0..65).map(|_| "count(a)").collect::<Vec<_>>().join("+");
+        let err = parse(&too_many).unwrap_err();
+        assert!(err.to_string().contains("at most 512 characters"), "{err}");
+    }
+
+    #[test]
+    fn unit_and_dimension_helpers_report_terms() {
+        let ins = sample_inputs();
+        let expr = parse("-sum(parking.occupied)").unwrap();
+        assert_eq!(unit_of(&expr, &ins).unwrap(), Some(BTreeMap::new()));
+
+        assert_eq!(show(&BTreeMap::new()), "no unit");
+        assert_eq!(show(&BTreeMap::from([("KGM".into(), 2)])), "KGM^2");
+
+        let mut term_list = Vec::new();
+        terms(&expr, &mut term_list);
+        assert_eq!(term_list.len(), 1);
+
+        let multi =
+            parse("prev(sum(parking.occupied), P1D) + prev(max(parking.capacity), P1D)").unwrap();
+        let reads = earlier_reads(&multi);
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].attrs, ["occupied", "capacity"]);
+    }
+
+    #[test]
+    fn kpi_step_validates_name_window_and_unit_code() {
+        let ins = sample_inputs();
+        let mut step = KpiStep {
+            name: "a".repeat(49),
+            title: None,
+            formula: "count(parking) + count(stops)".into(),
+            unit_code: "C62".into(),
+            join: Join::default(),
+            window: None,
+        };
+        let err = step.validate(&ins).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("an indicator name has at most 48 characters"),
+            "{err}"
+        );
+
+        step.name = "valid-kpi".into();
+        step.window = Some("P1Y".into());
+        let err = step.validate(&ins).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("is not a window such as PT15M, PT1H or P1D"),
+            "{err}"
+        );
+
+        step.window = None;
+        step.unit_code = "c62_invalid".into();
+        let err = step.validate(&ins).unwrap_err();
+        assert!(
+            err.to_string().contains("is not a UN/CEFACT common code"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_join_checks_keys_and_sources() {
+        let ins = sample_inputs();
+        let mut step = KpiStep {
+            name: "test-join".into(),
+            title: None,
+            formula: "count(parking) + count(stops)".into(),
+            unit_code: "C62".into(),
+            join: Join {
+                by: JoinBy::Time,
+                keys: BTreeMap::from([("parking".into(), "district".into())]),
+            },
+            window: None,
+        };
+        let err = step.validate(&ins).unwrap_err();
+        assert!(
+            err.to_string().contains("a join by time takes no keys"),
+            "{err}"
+        );
+
+        step.join.by = JoinBy::Area;
+        step.join.keys = BTreeMap::from([
+            ("parking".into(), "district".into()),
+            ("stops".into(), "district".into()),
+            ("unmatched".into(), "district".into()),
+        ]);
+        let err = step.validate(&ins).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("`unmatched` is not one of the sources"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn source_names_verifies_labels_and_uniqueness() {
+        let empty_name = vec![
+            Input {
+                name: "".into(),
+                ..Default::default()
+            },
+            Input {
+                name: "stops".into(),
+                ..Default::default()
+            },
+        ];
+        let err = source_names(&empty_name).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("each source of a kpi step has a name"),
+            "{err}"
+        );
+
+        let duplicate_name = vec![
+            Input {
+                name: "shared".into(),
+                ..Default::default()
+            },
+            Input {
+                name: "shared".into(),
+                ..Default::default()
+            },
+        ];
+        let err = source_names(&duplicate_name).unwrap_err();
+        assert!(
+            err.to_string().contains("two sources are named `shared`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn query_generation_handles_literals_and_aggregates() {
+        assert_eq!(lit("sample"), "\"sample\"");
+        let num_expr = parse("sum(parking.occupied) + 42.5").unwrap();
+        let q = query(&num_expr, &|_| "$rows".into());
+        assert!(q.contains("42.5"), "{q}");
+
+        let in_rows = |n: &str| format!("$in_{n}");
+        let earlier_count = parse("prev(count(parking.occupied), P1D)").unwrap();
+        let q = query(&earlier_count, &in_rows);
+        assert!(q.contains("length()"));
+
+        let earlier_sum = parse("prev(sum(parking.occupied), P1D)").unwrap();
+        let q = query(&earlier_sum, &in_rows);
+        assert!(q.contains("sum()"));
+
+        let avg_expr = parse("avg(parking.occupied)").unwrap();
+        let q = query(&avg_expr, &in_rows);
+        assert!(q.contains("sum() /"));
+
+        let min_expr = parse("min(parking.occupied)").unwrap();
+        let q = query(&min_expr, &in_rows);
+        assert!(q.contains("min()"));
+
+        let max_expr = parse("max(parking.occupied)").unwrap();
+        let q = query(&max_expr, &in_rows);
+        assert!(q.contains("max()"));
+
+        let neg_expr = parse("-sum(parking.occupied)").unwrap();
+        let q = query(&neg_expr, &in_rows);
+        assert!(q.contains("(0 - "));
+    }
+
+    #[test]
+    fn eval_and_evaluate_handle_aggregates_arithmetic_and_large_keysets() {
+        let row1 = json!({ "x": 10.0 });
+        let row2 = json!({ "x": 20.0 });
+        let row_set = BTreeMap::from([("parking", vec![&row1, &row2])]);
+
+        assert_eq!(
+            eval(&parse("min(parking.x)").unwrap(), &row_set).unwrap(),
+            10.0
+        );
+        assert_eq!(
+            eval(&parse("max(parking.x)").unwrap(), &row_set).unwrap(),
+            20.0
+        );
+        assert_eq!(
+            eval(&parse("-sum(parking.x)").unwrap(), &row_set).unwrap(),
+            -30.0
+        );
+        assert_eq!(
+            eval(&parse("sum(parking.x) + 5").unwrap(), &row_set).unwrap(),
+            35.0
+        );
+        assert_eq!(
+            eval(&parse("sum(parking.x) - 5").unwrap(), &row_set).unwrap(),
+            25.0
+        );
+        assert_eq!(
+            eval(&parse("sum(parking.x) * 2").unwrap(), &row_set).unwrap(),
+            60.0
+        );
+
+        let area_step = KpiStep {
+            name: "kpi-area".into(),
+            title: None,
+            formula: "sum(parking.x) + sum(stops.x)".into(),
+            unit_code: "C62".into(),
+            join: Join {
+                by: JoinBy::Area,
+                keys: BTreeMap::from([
+                    ("parking".into(), "district".into()),
+                    ("stops".into(), "district".into()),
+                ]),
+            },
+            window: None,
+        };
+        let expr = parse(&area_step.formula).unwrap();
+        let missing_pages = BTreeMap::from([(
+            "parking".to_string(),
+            vec![json!({ "district": "A", "x": 10 })],
+        )]);
+        let err = evaluate(&area_step, &expr, &missing_pages).unwrap_err();
+        assert!(err.contains("input stops did not answer in this run"));
+
+        let rows_p: Vec<Value> = (0..501)
+            .map(|i| json!({ "district": i.to_string(), "x": 10.0 }))
+            .collect();
+        let rows_s: Vec<Value> = (0..501)
+            .map(|i| json!({ "district": i.to_string(), "x": 20.0 }))
+            .collect();
+        let large_pages = BTreeMap::from([
+            ("parking".to_string(), rows_p),
+            ("stops".to_string(), rows_s),
+        ]);
+        let err = evaluate(&area_step, &expr, &large_pages).unwrap_err();
+        assert!(err.contains("501 keys meet in every source; one run writes at most 500"));
+    }
+
+    #[test]
+    fn a_formula_ending_after_an_operator_is_refused() {
+        let err = parse("sum(parking.occupied) +").unwrap_err();
+        assert!(
+            err.to_string().contains("the formula ends too early"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn earlier_reads_name_an_attribute_read_twice_once() {
+        let expr =
+            parse("prev(sum(parking.occupied), P7D) - prev(avg(parking.occupied), P7D)").unwrap();
+        let reads = earlier_reads(&expr);
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].input, "parking");
+        assert_eq!(reads[0].period, "P7D");
+        assert_eq!(reads[0].attrs, vec!["occupied".to_owned()]);
+    }
+
+    #[test]
+    fn a_key_is_a_non_empty_string_or_a_number() {
+        assert_eq!(key(&json!({ "d": 7 }), "d"), Some("7".to_owned()));
+        assert_eq!(
+            key(&json!({ "d": { "value": 2.5 } }), "d"),
+            Some("2.5".to_owned())
+        );
+        assert_eq!(key(&json!({ "d": true }), "d"), None);
+        assert_eq!(key(&json!({ "d": "" }), "d"), None);
+        assert_eq!(key(&json!({}), "d"), None);
+    }
+
+    #[test]
+    fn count_of_an_attribute_counts_numbers_and_avg_is_their_mean() {
+        let row1 = json!({ "x": 10.0 });
+        let row2 = json!({ "x": 20.0 });
+        let row3 = json!({ "x": "not a number" });
+        let rows = BTreeMap::from([("parking", vec![&row1, &row2, &row3])]);
+        assert_eq!(eval(&parse("count(parking.x)").unwrap(), &rows), Ok(2.0));
+        assert_eq!(eval(&parse("avg(parking.x)").unwrap(), &rows), Ok(15.0));
+        assert_eq!(eval(&parse("count(parking)").unwrap(), &rows), Ok(3.0));
     }
 }

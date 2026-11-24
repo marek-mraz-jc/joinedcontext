@@ -203,3 +203,66 @@ fn validate_license(value: &str) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    fn instance(organization: Option<&str>, token: &str) -> CkanInstanceSpec {
+        CkanInstanceSpec {
+            url: "https://data.example.org/".into(),
+            organization_default: organization.map(str::to_owned),
+            api_token_ref: SecretRef {
+                name: token.into(),
+                key: None,
+                env_var: None,
+            },
+        }
+    }
+
+    #[test]
+    fn an_instance_with_a_default_organization_validates() {
+        let spec = instance(Some("city-office"), "ckan-token");
+        assert_eq!(spec.validate(), Ok(()));
+        assert_eq!(spec.base_url(), "https://data.example.org");
+    }
+
+    #[test]
+    fn rejects_an_empty_token_reference() {
+        let err = instance(None, "  ")
+            .validate()
+            .expect_err("no secret named");
+        assert_eq!(
+            err,
+            Error::Name {
+                field: "apiTokenRef.name",
+                value: String::new(),
+                reason: "the API token reference must name a secret (EP-67)",
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_an_instance_ref_that_is_no_dns_label() {
+        let publication = Publication {
+            ckan: Some(CkanPublication {
+                instance_ref: Ref::Name("Not A Label".into()),
+                organization: None,
+                name: None,
+                datastore: None,
+                license: None,
+            }),
+        };
+        let err = publication.validate().expect_err("bad name");
+        assert!(
+            err.to_string()
+                .starts_with("invalid publish.ckan.instanceRef `Not A Label`: must match DNS-1123"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_publication_without_targets_validates() {
+        assert_eq!(Publication::default().validate(), Ok(()));
+    }
+}

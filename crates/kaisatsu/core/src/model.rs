@@ -1440,6 +1440,336 @@ mod tests {
         }
     }
 
+    fn scope(name: &str, attrs: &[(&str, &str)]) -> ClientScopeRepresentation {
+        ClientScopeRepresentation {
+            name: name.into(),
+            attributes: attrs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            ..ClientScopeRepresentation::default()
+        }
+    }
+
+    #[test]
+    fn scope_attributes_read_parameterized_regexp_and_token_scope() {
+        let plain = scope("profile", &[]);
+        assert_eq!(plain.protocol, "openid-connect");
+        assert!(!plain.is_parameterized());
+        assert_eq!(plain.parameterized_regexp(), None);
+        assert!(plain.include_in_token_scope(), "absent means included");
+        let param = scope(
+            "endpoint",
+            &[
+                ("is.parameterized.scope", "true"),
+                ("parameterized.scope.regexp", "^endpoint:[a-z]+$"),
+                ("include.in.token.scope", "false"),
+            ],
+        );
+        assert!(param.is_parameterized());
+        assert_eq!(param.parameterized_regexp(), Some("^endpoint:[a-z]+$"));
+        assert!(!param.include_in_token_scope());
+        let odd = scope(
+            "odd",
+            &[
+                ("is.parameterized.scope", "TRUE"),
+                ("include.in.token.scope", "no"),
+            ],
+        );
+        assert!(!odd.is_parameterized(), "only the literal true turns it on");
+        assert!(
+            odd.include_in_token_scope(),
+            "only the literal false turns it off"
+        );
+    }
+
+    #[test]
+    fn signature_alg_takes_the_realms_algorithms_or_empty_and_refuses_others() {
+        for ok in ["", "ES256", "RS256", "EdDSA"] {
+            assert!(check_signature_alg("app", "id.token.signed.response.alg", ok).is_ok());
+        }
+        for bad in ["HS256", "none", "es256", "PS256"] {
+            let err = check_signature_alg("app", "id.token.signed.response.alg", bad)
+                .expect_err("refused");
+            assert!(
+                matches!(err, crate::KaisatsuError::BadRequest(_)),
+                "BadRequest for {bad}"
+            );
+            let msg = err.to_string();
+            assert!(msg.contains("client app") && msg.contains(bad), "{msg}");
+            assert!(msg.contains("id.token.signed.response.alg"), "{msg}");
+        }
+    }
+
+    #[test]
+    fn client_checks_both_algorithm_attributes() {
+        let mut c = ClientRepresentation {
+            client_id: "app".into(),
+            ..ClientRepresentation::default()
+        };
+        assert!(c.check_signature_algorithms().is_ok(), "no attribute");
+        c.attributes
+            .insert("id.token.signed.response.alg".into(), "RS256".into());
+        assert!(c.check_signature_algorithms().is_ok());
+        c.attributes
+            .insert("access.token.signed.response.alg".into(), "HS512".into());
+        let err = c
+            .check_signature_algorithms()
+            .expect_err("access alg refused");
+        assert!(
+            err.to_string().contains("access.token.signed.response.alg"),
+            "{err}"
+        );
+        c.attributes
+            .insert("access.token.signed.response.alg".into(), "EdDSA".into());
+        c.attributes
+            .insert("id.token.signed.response.alg".into(), "none".into());
+        let err = c.check_signature_algorithms().expect_err("id alg refused");
+        assert!(
+            err.to_string().contains("id.token.signed.response.alg"),
+            "{err}"
+        );
+    }
+
+    fn endpoint_scope(name: &str) -> ClientScopeRepresentation {
+        scope(
+            name,
+            &[
+                ("managed-by", "joinedcontext"),
+                ("joinedcontext.endpoint", "ep-1"),
+            ],
+        )
+    }
+
+    fn prefixed_client(prefix: &str) -> ClientRepresentation {
+        let mut c = ClientRepresentation {
+            client_id: "portal".into(),
+            ..ClientRepresentation::default()
+        };
+        c.attributes
+            .insert(LINKED_SCOPE_PREFIX.into(), prefix.into());
+        c
+    }
+
+    #[test]
+    fn optional_scope_by_name_or_by_linked_prefix() {
+        let mut named = ClientRepresentation::default();
+        named.optional_client_scopes.push("email".into());
+        assert!(named.has_optional_scope(&scope("email", &[])));
+        assert!(!named.has_optional_scope(&scope("no-such-scope", &[])));
+        assert!(
+            !named.links_by_prefix(&endpoint_scope("epabcdefgh")),
+            "no prefix"
+        );
+
+        let c = prefixed_client("ep");
+        assert!(c.has_optional_scope(&endpoint_scope("epabcdefgh")));
+        assert!(
+            c.links_by_prefix(&endpoint_scope(&format!("ep{}", "a1".repeat(32)))),
+            "64"
+        );
+        assert!(
+            !c.links_by_prefix(&endpoint_scope("epabcdefg")),
+            "7 is too short"
+        );
+        assert!(
+            !c.links_by_prefix(&endpoint_scope(&format!("ep{}a", "a1".repeat(32)))),
+            "65"
+        );
+        assert!(
+            !c.links_by_prefix(&endpoint_scope("epABCDEFGH")),
+            "upper case"
+        );
+        assert!(!c.links_by_prefix(&endpoint_scope("epabcd-fgh")), "dash");
+        assert!(
+            !c.links_by_prefix(&endpoint_scope("xxabcdefgh")),
+            "other prefix"
+        );
+        let mut mapped = endpoint_scope("epabcdefgh");
+        mapped
+            .protocol_mappers
+            .push(ProtocolMapperRepresentation::default());
+        assert!(!c.links_by_prefix(&mapped), "a scope with a mapper");
+        let mut foreign = endpoint_scope("epabcdefgh");
+        foreign
+            .attributes
+            .insert("managed-by".into(), "someone".into());
+        assert!(!c.links_by_prefix(&foreign), "not the Portal's");
+        let mut bare = endpoint_scope("epabcdefgh");
+        bare.attributes.remove("joinedcontext.endpoint");
+        assert!(!c.links_by_prefix(&bare), "no endpoint attribute");
+        bare.attributes.remove("managed-by");
+        bare.attributes
+            .insert("joinedcontext.endpoint".into(), "ep-1".into());
+        assert!(!c.links_by_prefix(&bare), "no managed-by");
+
+        let mut portal_owned = prefixed_client("ep");
+        portal_owned
+            .attributes
+            .insert("managed-by".into(), "joinedcontext".into());
+        assert!(!portal_owned.links_by_prefix(&endpoint_scope("epabcdefgh")));
+        let empty = prefixed_client("");
+        assert!(
+            !empty.links_by_prefix(&endpoint_scope("abcdefghij")),
+            "empty prefix"
+        );
+    }
+
+    #[test]
+    fn defaults_of_identity_provider_and_required_action() {
+        let idp = IdentityProviderRepresentation::default();
+        assert_eq!(idp.provider_id, "oidc");
+        assert!(idp.enabled && !idp.trust_email);
+        assert_eq!(idp.first_broker_login_flow_alias, "first broker login");
+        assert!(idp.config.is_empty() && idp.org_id.is_none());
+        let ra = RequiredActionConfig::default();
+        assert_eq!(
+            (ra.alias.as_str(), ra.name.as_str(), ra.provider_id.as_str()),
+            ("CONFIGURE_TOTP", "Configure OTP", "CONFIGURE_TOTP")
+        );
+        assert!(ra.enabled && !ra.default_action);
+        assert_eq!(ra.priority, 10);
+    }
+
+    #[test]
+    fn metadata_copies_everything_but_the_secret() {
+        let cred = CredentialRecord {
+            id: "c1".into(),
+            realm_id: "r".into(),
+            user_id: "u".into(),
+            credential_type: "otp".into(),
+            user_label: Some("phone".into()),
+            created_date: 42,
+            secret_data: "seed".into(),
+            ..CredentialRecord::default()
+        };
+        let meta = CredentialMetadata::from(&cred);
+        assert_eq!(
+            (
+                meta.id.as_str(),
+                meta.realm_id.as_str(),
+                meta.user_id.as_str()
+            ),
+            ("c1", "r", "u")
+        );
+        assert_eq!(meta.credential_type, "otp");
+        assert_eq!(meta.user_label.as_deref(), Some("phone"));
+        assert_eq!(meta.created_date, 42);
+        assert!(!serde_json::to_string(&meta).expect("json").contains("seed"));
+
+        let now = TimestampTz::now();
+        let key = SigningKeyRecord {
+            id: "k1".into(),
+            realm_id: "r".into(),
+            kid: "kid-1".into(),
+            algorithm: "ES256".into(),
+            status: "active".into(),
+            priority: 7,
+            public_jwk_json: "{}".into(),
+            encrypted_private_key: b"private".to_vec(),
+            created_at: now,
+            activate_at: Some(now),
+            expires_at: None,
+        };
+        let meta = SigningKeyMetadata::from(&key);
+        assert_eq!(
+            (meta.id.as_str(), meta.realm_id.as_str(), meta.kid.as_str()),
+            ("k1", "r", "kid-1")
+        );
+        assert_eq!(
+            (meta.algorithm.as_str(), meta.status.as_str()),
+            ("ES256", "active")
+        );
+        assert_eq!(meta.priority, 7);
+        assert_eq!(
+            (meta.created_at, meta.activate_at, meta.expires_at),
+            (now, Some(now), None)
+        );
+    }
+
+    fn device(status: DeviceStatus, now: TimestampTz) -> DeviceCodeRecord {
+        DeviceCodeRecord {
+            device_code_hash: "dh".into(),
+            user_code_hash: "uh".into(),
+            realm_id: "r".into(),
+            client_id: "tv".into(),
+            scope: "openid".into(),
+            mapper_scopes: Vec::new(),
+            status,
+            user_id: None,
+            sso_session_id: None,
+            acr: "1".into(),
+            amr: Vec::new(),
+            auth_time: 0,
+            interval_secs: 5,
+            last_poll_at: None,
+            consumed: false,
+            created_at: now,
+            expires_at: now + jiff::SignedDuration::from_mins(10),
+        }
+    }
+
+    #[test]
+    fn device_poll_answers_by_status_interval_expiry_and_use() {
+        let now = TimestampTz::now();
+        let secs = |n: i64| jiff::SignedDuration::from_secs(n);
+        for (status, want) in [
+            (DeviceStatus::Pending, DevicePoll::Pending),
+            (DeviceStatus::Denied, DevicePoll::Denied),
+        ] {
+            let (next, got) = device(status, now).polled(now);
+            assert_eq!(got, want);
+            assert_eq!(next.last_poll_at, Some(now));
+            assert!(!next.consumed);
+            assert_eq!(next.interval_secs, 5);
+        }
+        let (next, got) = device(DeviceStatus::Approved, now).polled(now);
+        assert_eq!(got, DevicePoll::Approved);
+        assert!(next.consumed, "the poll taking the tokens uses the code up");
+        assert_eq!(next.polled(now + secs(10)).1, DevicePoll::Used);
+
+        let mut early = device(DeviceStatus::Approved, now);
+        early.last_poll_at = Some(now - secs(4));
+        let (next, got) = early.polled(now);
+        assert_eq!(got, DevicePoll::SlowDown);
+        assert_eq!(next.interval_secs, 10, "the interval grows by 5 s");
+        assert!(!next.consumed && next.last_poll_at == Some(now));
+        let mut on_time = device(DeviceStatus::Pending, now);
+        on_time.last_poll_at = Some(now - secs(5));
+        assert_eq!(
+            on_time.polled(now).1,
+            DevicePoll::Pending,
+            "exactly the interval"
+        );
+
+        let d = device(DeviceStatus::Approved, now);
+        let at_expiry = d.expires_at;
+        let (next, got) = d.polled(at_expiry);
+        assert_eq!(got, DevicePoll::Expired);
+        assert!(next.last_poll_at.is_none() && !next.consumed);
+        assert_eq!(d.polled(at_expiry - secs(1)).1, DevicePoll::Approved);
+    }
+
+    #[test]
+    fn consent_covers_every_named_scope_of_its_client_but_openid() {
+        let c = ConsentRecord {
+            id: "c".into(),
+            realm_id: "r".into(),
+            org_id: None,
+            user_id: "u".into(),
+            client_id: "app".into(),
+            granted_client_scopes: vec!["profile".into(), "email".into()],
+            created_date: 0,
+            last_updated_date: 0,
+        };
+        assert!(c.covers("app", "openid profile email"));
+        assert!(c.covers("app", "  profile   openid "));
+        assert!(c.covers("app", ""), "nothing asked");
+        assert!(c.covers("app", "openid"), "openid needs no grant");
+        assert!(!c.covers("app", "openid profile phone"));
+        assert!(!c.covers("other", "profile"), "another client");
+    }
+
     #[test]
     fn smtp_debug_output_redacts_password() {
         let cfg = SmtpServerConfig {

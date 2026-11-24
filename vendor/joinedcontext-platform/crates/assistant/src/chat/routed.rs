@@ -3208,6 +3208,25 @@ impl Limit {
         }
     }
 
+    /// Seconds until the limit resets: the next UTC midnight for the day, the first of the next
+    /// month (UTC) for the month; none when today's spend could not be read (T-7790).
+    pub fn retry_after(&self, now: time::OffsetDateTime) -> Option<u64> {
+        let utc = now.to_offset(time::UtcOffset::UTC);
+        let reset = match self {
+            Limit::Day => utc.date().next_day()?,
+            Limit::Month { .. } => {
+                let (year, month) = match utc.month() {
+                    time::Month::December => (utc.year() + 1, time::Month::January),
+                    month => (utc.year(), month.next()),
+                };
+                time::Date::from_calendar_date(year, month, 1).ok()?
+            }
+            Limit::Unknown => return None,
+        };
+        let seconds = (reset.midnight().assume_utc() - utc).whole_seconds();
+        u64::try_from(seconds).ok().map(|s| s.max(1))
+    }
+
     /// The `cap` a refusal is logged under.
     pub fn name(&self) -> &'static str {
         match self {
@@ -4913,6 +4932,31 @@ mod tests {
             Limit::Unknown.event(summer, None),
             Event::Error { status: 503, .. }
         ));
+    }
+
+    #[test]
+    fn a_limit_says_in_seconds_when_it_resets() {
+        use time::macros::datetime;
+        let month = Limit::Month {
+            resets: String::new(),
+        };
+        assert_eq!(
+            Limit::Day.retry_after(datetime!(2026-12-31 23:59 UTC)),
+            Some(60)
+        );
+        assert_eq!(
+            month.retry_after(datetime!(2026-12-31 23:00 UTC)),
+            Some(3_600),
+            "December rolls into the next year"
+        );
+        assert_eq!(
+            month.retry_after(datetime!(2026-11-30 00:00 UTC)),
+            Some(86_400)
+        );
+        assert_eq!(
+            Limit::Unknown.retry_after(datetime!(2026-11-30 00:00 UTC)),
+            None
+        );
     }
 
     #[test]

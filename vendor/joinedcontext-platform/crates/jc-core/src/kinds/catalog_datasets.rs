@@ -304,3 +304,77 @@ mod tests {
         assert!(refused(&many).contains("at most 50"));
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn sample_dataset(name: &str) -> CatalogDataset {
+        CatalogDataset {
+            name: name.to_owned(),
+            title: BTreeMap::from([("sk".to_owned(), "Školy".to_owned())]),
+            description: BTreeMap::from([("sk".to_owned(), "Popis škôl".to_owned())]),
+            types: vec!["School".to_owned()],
+            q: None,
+            keywords: BTreeMap::new(),
+            license: None,
+        }
+    }
+
+    #[test]
+    fn invalid_locale_in_title_is_refused() {
+        let mut d = sample_dataset("bbsk-skoly");
+        d.title = BTreeMap::from([("invalid_lang".to_owned(), "Školy".to_owned())]);
+        let err = validate(&[d]).unwrap_err();
+        assert!(
+            err.to_string().contains("is no ISO 639-1 language code"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn blank_text_in_multilingual_title_is_refused() {
+        let mut d = sample_dataset("bbsk-skoly");
+        d.title = BTreeMap::from([
+            ("sk".to_owned(), "Školy".to_owned()),
+            ("en".to_owned(), "   ".to_owned()),
+        ]);
+        let err = validate(&[d]).unwrap_err();
+        assert!(err.to_string().contains("is listed with no text"), "{err}");
+    }
+
+    #[test]
+    fn invalid_locale_in_keywords_is_refused() {
+        let mut d = sample_dataset("bbsk-skoly");
+        d.keywords = BTreeMap::from([("invalid_locale".to_owned(), vec!["skoly".to_owned()])]);
+        let err = validate(&[d]).unwrap_err();
+        assert!(
+            err.to_string().contains("is no ISO 639-1 language code"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn invalid_keyword_word_is_refused() {
+        for bad_word in ["  ", &"a".repeat(101), "bad\nkeyword"] {
+            let mut d = sample_dataset("bbsk-skoly");
+            d.keywords = BTreeMap::from([("sk".to_owned(), vec![bad_word.to_owned()])]);
+            let err = validate(&[d]).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("a keyword is one line of at most 100 bytes"),
+                "{err}"
+            );
+        }
+    }
+    #[test]
+    fn plain_keywords_in_a_known_language_validate() {
+        let mut d = sample_dataset("bbsk-skoly");
+        d.keywords = BTreeMap::from([(
+            "sk".to_owned(),
+            vec!["školy".to_owned(), "vzdelávanie".to_owned()],
+        )]);
+        validate(&[d]).expect("plain keywords are valid");
+    }
+}

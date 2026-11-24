@@ -596,3 +596,246 @@ impl OperationRegistry {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every registry operation's OData face (W5): kind, name, binding (collection or one
+    /// entity), parameters with their types and nullability, and the return type.
+    #[test]
+    fn each_operation_has_its_odata_action_or_function() {
+        use ODataKind::{Action as A, Function as F};
+        type Row = (
+            &'static str,
+            ODataKind,
+            &'static str,
+            Option<&'static str>,
+            bool,
+            &'static [(&'static str, &'static str, bool)],
+            Option<&'static str>,
+        );
+        const U: Option<&str> = Some("Edm.Untyped");
+        let want: &[Row] = &[
+            (
+                "realm_apply",
+                A,
+                "Apply",
+                Some("Realm"),
+                false,
+                &[
+                    ("configuration", "Edm.Untyped", false),
+                    ("dryRun", "Edm.Boolean", true),
+                    ("prune", "Edm.Boolean", true),
+                ],
+                U,
+            ),
+            (
+                "realm_export",
+                F,
+                "Export",
+                Some("Realm"),
+                false,
+                &[("withUsers", "Edm.Boolean", true)],
+                U,
+            ),
+            (
+                "member_add",
+                A,
+                "AddToGroup",
+                Some("Person"),
+                false,
+                &[("groupId", "Edm.String", false)],
+                None,
+            ),
+            (
+                "role_map",
+                A,
+                "MapClientRoles",
+                Some("Person"),
+                false,
+                &[
+                    ("clientUuid", "Edm.String", false),
+                    ("roles", "Collection(Edm.String)", false),
+                ],
+                None,
+            ),
+            (
+                "credential_reset",
+                A,
+                "ResetCredentials",
+                Some("Person"),
+                false,
+                &[
+                    ("value", "Edm.String", false),
+                    ("temporary", "Edm.Boolean", true),
+                ],
+                None,
+            ),
+            (
+                "send_required_actions",
+                A,
+                "SendRequiredActions",
+                Some("Person"),
+                false,
+                &[("actions", "Collection(Edm.String)", false)],
+                None,
+            ),
+            (
+                "session_revoke",
+                A,
+                "RevokeSessions",
+                Some("Person"),
+                false,
+                &[],
+                None,
+            ),
+            (
+                "keys_rotate",
+                A,
+                "Rotate",
+                Some("SigningKey"),
+                true,
+                &[
+                    ("algorithm", "Edm.String", true),
+                    ("immediate", "Edm.Boolean", true),
+                ],
+                U,
+            ),
+            (
+                "domain_request_verification",
+                A,
+                "RequestVerification",
+                Some("OrganizationDomain"),
+                false,
+                &[],
+                U,
+            ),
+            (
+                "domain_verify",
+                A,
+                "Verify",
+                Some("OrganizationDomain"),
+                false,
+                &[],
+                U,
+            ),
+            (
+                "totp_enrol",
+                A,
+                "EnrolTotp",
+                Some("Person"),
+                false,
+                &[("secret", "Edm.String", true), ("code", "Edm.String", true)],
+                U,
+            ),
+            (
+                "passkey_register",
+                A,
+                "RegisterPasskey",
+                Some("Person"),
+                false,
+                &[
+                    ("credential", "Edm.Untyped", true),
+                    ("challenge", "Edm.String", true),
+                    ("label", "Edm.String", true),
+                ],
+                U,
+            ),
+            (
+                "passkey_delete",
+                A,
+                "DeletePasskey",
+                Some("WebAuthnCredential"),
+                false,
+                &[],
+                None,
+            ),
+            (
+                "outbox_retry",
+                A,
+                "Retry",
+                Some("EmailOutboxItem"),
+                false,
+                &[],
+                U,
+            ),
+            (
+                "recovery_codes_generate",
+                A,
+                "GenerateRecoveryCodes",
+                Some("Person"),
+                false,
+                &[],
+                Some("Collection(Edm.String)"),
+            ),
+            (
+                "consent_revoke",
+                A,
+                "Revoke",
+                Some("Consent"),
+                false,
+                &[],
+                None,
+            ),
+            (
+                "allowed",
+                F,
+                "Allowed",
+                None,
+                false,
+                &[
+                    ("operation", "Edm.String", false),
+                    ("object", "Edm.String", true),
+                ],
+                U,
+            ),
+        ];
+        let reg = OperationRegistry::new();
+        assert!(reg.operations().len() >= want.len());
+        for (name, kind, odata, binding, collection, params, ret) in want {
+            let op = reg.find(name);
+            assert!(op.is_some(), "{name} registered");
+            let op = op.expect("registered");
+            assert_eq!(op.odata.kind, *kind, "{name}");
+            assert_eq!(op.odata.name, *odata, "{name}");
+            assert_eq!(op.odata.binding, *binding, "{name}");
+            assert_eq!(op.odata.binding_collection, *collection, "{name}");
+            let got: Vec<_> = op
+                .odata
+                .params
+                .iter()
+                .map(|p| (p.name, p.edm_type, p.nullable))
+                .collect();
+            assert_eq!(got, params.to_vec(), "{name}");
+            assert_eq!(op.odata.return_type, *ret, "{name}");
+            let found = reg
+                .find_odata(&format!("JoinedContext.Kaisatsu.{odata}"), *binding)
+                .map(|o| o.name);
+            assert_eq!(found, Some(*name), "{odata} resolves");
+            assert_eq!(reg.find_odata(odata, *binding).map(|o| o.name), Some(*name));
+        }
+        for name in ["person_create", "person_update", "person_delete"] {
+            let op = reg.find(name).expect(name);
+            assert_eq!(
+                (op.odata.kind, op.odata.name),
+                (ODataKind::EntitySetWrite, "People")
+            );
+            assert!(
+                reg.find_odata("People", None).is_none(),
+                "a set write is no action"
+            );
+        }
+        assert!(
+            reg.find_odata("Apply", Some("Person")).is_none(),
+            "wrong binding"
+        );
+        assert!(
+            reg.find_odata("Apply", None).is_none(),
+            "bound, not unbound"
+        );
+        assert!(reg.find_odata("Allowed", Some("Realm")).is_none());
+        assert!(reg.find_odata("NoSuchAction", Some("Realm")).is_none());
+        assert!(reg.find("no_such_op").is_none());
+    }
+}

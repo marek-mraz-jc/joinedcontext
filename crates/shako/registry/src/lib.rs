@@ -1024,8 +1024,8 @@ async fn store_cosign_signature_tag(
             "org_id": org_id.to_string()
         }
     });
-    let payload_bytes = serde_json::to_vec(&simple_signing_payload)
-        .map_err(|e| ShakoError::Internal(e.to_string()))?;
+    // A `Value` prints infallibly, as the compact bytes `to_vec` would write.
+    let payload_bytes = simple_signing_payload.to_string().into_bytes();
     let sig_b64 = state.signing_key().sign_cosign_payload(&payload_bytes);
     let payload_digest = format!("sha256:{}", sha256_hex(&payload_bytes));
 
@@ -1054,8 +1054,7 @@ async fn store_cosign_signature_tag(
             }
         }]
     });
-    let sig_manifest_bytes =
-        serde_json::to_vec(&sig_manifest).map_err(|e| ShakoError::Internal(e.to_string()))?;
+    let sig_manifest_bytes = sig_manifest.to_string().into_bytes();
     let sig_manifest_size = sig_manifest_bytes.len() as u64;
     let sig_manifest_digest =
         service::store_image_blob(state, instance_id, org_id, owner, image, sig_manifest_bytes)
@@ -1248,9 +1247,12 @@ async fn oci_list_tags(
             encode(image.as_str()),
             encode(last.as_str())
         );
-        if let Ok(next) = header::HeaderValue::from_str(&next) {
-            link.insert(header::LINK, next);
-        }
+        // Percent-encoded names and a number: always a valid header value.
+        link.extend(
+            header::HeaderValue::from_str(&next)
+                .ok()
+                .map(|next| (header::LINK, next)),
+        );
     }
     (
         StatusCode::OK,

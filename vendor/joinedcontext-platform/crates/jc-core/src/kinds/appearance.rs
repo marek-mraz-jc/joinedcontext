@@ -1017,10 +1017,11 @@ mod tests {
                 "spec.appearance.colours.link",
             ),
         ] {
-            match checked(look.clone()) {
-                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field, "{look}"),
-                other => panic!("{look}: {other:?}"),
-            }
+            let result = checked(look.clone());
+            assert!(
+                matches!(&result, Err(Error::Invalid { field: got, .. }) if got == field),
+                "{look}: {field}: {result:?}"
+            );
         }
         for look in [
             json!({ "width": "huge" }),
@@ -1107,10 +1108,11 @@ mod tests {
                 "spec.appearance.display.datasetList.fields[0]",
             ),
         ] {
-            match checked(json!({ "display": display })) {
-                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field),
-                other => panic!("{display}: {other:?}"),
-            }
+            let result = checked(json!({ "display": display }));
+            assert!(
+                matches!(&result, Err(Error::Invalid { field: got, .. }) if got == field),
+                "{display}: {field}: {result:?}"
+            );
         }
         assert!(
             serde_json::from_value::<OrganizationAppearance>(
@@ -1182,10 +1184,11 @@ mod tests {
                 "spec.appearance.pages[1]",
             ),
         ] {
-            match checked(json!({ "pages": pages })) {
-                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field),
-                other => panic!("{field}: {other:?}"),
-            }
+            let result = checked(json!({ "pages": pages }));
+            assert!(
+                matches!(&result, Err(Error::Invalid { field: got, .. }) if got == field),
+                "{field}: {result:?}"
+            );
         }
         assert!(serde_json::from_value::<OrganizationAppearance>(
             json!({ "pages": [{ "page": "terms", "lang": "sk", "markdown": "x", "html": "<b>" }] })
@@ -1253,10 +1256,11 @@ mod tests {
                 "spec.appearance.footerLinks[8]",
             ),
         ] {
-            match checked(appearance.clone()) {
-                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field, "{appearance}"),
-                other => panic!("{field}: {other:?}"),
-            }
+            let result = checked(appearance.clone());
+            assert!(
+                matches!(&result, Err(Error::Invalid { field: got, .. }) if got == field),
+                "{appearance}: {field}: {result:?}"
+            );
         }
         for unknown in [
             json!({ "font": "Comic Sans" }),
@@ -1412,5 +1416,73 @@ mod tests {
     fn an_svg_naming_on_or_href_in_text_is_not_refused() {
         let svg = "<svg><title>Montonero, the long one</title><g id=\"done\"><text>hrefs</text></g></svg>";
         assert!(checked(json!({ "logoSvg": svg })).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn dataset_list_fields_refuses_duplicate_entry() {
+        let mut display = AppearanceDisplay::default();
+        display.dataset_list.fields = vec!["notes".into(), "notes".into()];
+        let err = display
+            .validate("spec.appearance.display", &[])
+            .unwrap_err();
+        assert!(err.to_string().contains("listed once"), "{err}");
+    }
+
+    #[test]
+    fn appearance_font_stack_covers_all_variants() {
+        assert_eq!(
+            AppearanceFont::System.stack(),
+            "system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif"
+        );
+        assert_eq!(
+            AppearanceFont::Humanist.stack(),
+            "Seravek, \"Gill Sans Nova\", Ubuntu, Calibri, \"DejaVu Sans\", sans-serif"
+        );
+        assert_eq!(
+            AppearanceFont::Serif.stack(),
+            "Charter, \"Bitstream Charter\", \"Sitka Text\", Cambria, Georgia, serif"
+        );
+        assert_eq!(
+            AppearanceFont::Mono.stack(),
+            "ui-monospace, \"Cascadia Code\", Menlo, Consolas, monospace"
+        );
+    }
+
+    #[test]
+    fn content_width_css_covers_all_variants() {
+        assert_eq!(ContentWidth::Narrow.css(), "60rem");
+        assert_eq!(ContentWidth::Normal.css(), "76rem");
+        assert_eq!(ContentWidth::Wide.css(), "90rem");
+    }
+
+    #[test]
+    fn contrast_ratio_returns_none_on_invalid_hex() {
+        assert_eq!(contrast_ratio("not_hex", "#ffffff"), None);
+        assert_eq!(contrast_ratio("#ffffff", "not_hex"), None);
+    }
+
+    #[test]
+    fn appearance_refuses_more_than_max_pages() {
+        // 41 distinct languages, so only the count is refused
+        let app = OrganizationAppearance {
+            pages: (0..41u8)
+                .map(|n| AppearancePage {
+                    page: "privacy".into(),
+                    lang: format!("{}{}", char::from(b'a' + n / 26), char::from(b'a' + n % 26)),
+                    markdown: "Text".into(),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let err = app.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("one of at most 40 page texts"),
+            "{err}"
+        );
     }
 }
