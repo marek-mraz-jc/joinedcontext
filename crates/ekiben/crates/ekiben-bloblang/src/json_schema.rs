@@ -254,6 +254,27 @@ impl<'s> Validator<'s> {
                 }
             }
         }
+        // Draft 4 `dependencies`: a present key demands other keys, or a schema of the object.
+        for (key, dep) in s
+            .get("dependencies")
+            .and_then(Json::as_object)
+            .into_iter()
+            .flatten()
+        {
+            if !obj.contains_key(key) {
+                continue;
+            }
+            match dep {
+                Json::Array(names) => {
+                    for name in names.iter().filter_map(Json::as_str) {
+                        if !obj.contains_key(name) {
+                            self.err(field, format!("has a dependency on {name}"));
+                        }
+                    }
+                }
+                sub => self.validate(sub, &Json::Object(obj.clone()), field, depth + 1)?,
+            }
+        }
         let props = s.get("properties").and_then(Json::as_object);
         let patterns = s
             .get("patternProperties")

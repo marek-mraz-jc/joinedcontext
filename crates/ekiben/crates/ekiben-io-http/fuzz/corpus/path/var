@@ -1,0 +1,2 @@
+/sensors/{id}/readings
+/sensors/a%20b/readings

@@ -22,7 +22,8 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
     let bytes = format.as_bytes();
     let mut i = 0;
     let mut arg = 0;
-    loop {
+    let mut reordered = false;
+    while i < bytes.len() {
         let start = i;
         while i < bytes.len() && bytes[i] != b'%' {
             i += 1;
@@ -44,6 +45,7 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
             }
             i += 1;
         }
+        let mut good = arg_number(bytes, &mut i, &mut arg, args.len(), &mut reordered);
         if i < bytes.len() && bytes[i] == b'*' {
             i += 1;
             match args.get(arg).and_then(star) {
@@ -58,11 +60,12 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
             }
             arg += 1;
         } else {
-            f.wid = Some(number(bytes, &mut i));
+            f.wid = number(bytes, &mut i);
         }
         if i < bytes.len() && bytes[i] == b'.' {
             i += 1;
-            if bytes.get(i) == Some(&b'*') {
+            good &= arg_number(bytes, &mut i, &mut arg, args.len(), &mut reordered);
+            if i < bytes.len() && bytes[i] == b'*' {
                 i += 1;
                 match args.get(arg).and_then(star) {
                     Some(p) if p >= 0 => f.prec = Some(p as usize),
@@ -71,12 +74,13 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
                 }
                 arg += 1;
             } else {
-                f.prec = Some(number(bytes, &mut i));
+                f.prec = Some(number(bytes, &mut i).unwrap_or(0));
             }
         }
         if f.minus {
             f.zero = false;
         }
+        good &= arg_number(bytes, &mut i, &mut arg, args.len(), &mut reordered);
         let Some(verb) = format[i..].chars().next() else {
             out.push_str("%!(NOVERB)");
             break;
@@ -86,6 +90,10 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
             out.push('%');
             continue;
         }
+        if !good {
+            out.push_str(&format!("%!{verb}(BADINDEX)"));
+            continue;
+        }
         let Some(v) = args.get(arg) else {
             out.push_str(&format!("%!{verb}(MISSING)"));
             continue;
@@ -93,7 +101,7 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
         arg += 1;
         print_arg(&mut out, v, verb, f);
     }
-    if arg < args.len() {
+    if !reordered && arg < args.len() {
         out.push_str("%!(EXTRA ");
         for (n, v) in args[arg..].iter().enumerate() {
             if n > 0 {
@@ -112,8 +120,38 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
     out
 }
 
-/// The decimal at `i`, 0 when there is none: a missing width or precision acts as 0.
-fn number(b: &[u8], i: &mut usize) -> usize {
+/// Go's argNumber: an explicit `[n]` moves to argument n (1-based); false on a bad index.
+fn arg_number(
+    b: &[u8],
+    i: &mut usize,
+    arg: &mut usize,
+    nargs: usize,
+    reordered: &mut bool,
+) -> bool {
+    if b.get(*i) != Some(&b'[') {
+        return true;
+    }
+    *reordered = true;
+    let Some(close) = b[*i..].iter().position(|c| *c == b']') else {
+        *i += 1;
+        return false;
+    };
+    let digits = &b[*i + 1..*i + close];
+    *i += close + 1;
+    match std::str::from_utf8(digits)
+        .ok()
+        .and_then(|d| d.parse::<usize>().ok())
+    {
+        Some(n) if (1..=nargs).contains(&n) && digits.iter().all(u8::is_ascii_digit) => {
+            *arg = n - 1;
+            true
+        }
+        _ => false,
+    }
+}
+
+fn number(b: &[u8], i: &mut usize) -> Option<usize> {
+    let start = *i;
     let mut n: usize = 0;
     while *i < b.len() && b[*i].is_ascii_digit() {
         n = n
@@ -121,7 +159,7 @@ fn number(b: &[u8], i: &mut usize) -> usize {
             .saturating_add(usize::from(b[*i] - b'0'));
         *i += 1;
     }
-    n.min(1_000_000)
+    (*i > start).then_some(n.min(1_000_000))
 }
 
 fn star(v: &Value) -> Option<i64> {
@@ -356,7 +394,8 @@ fn quote(s: &str, q: char, ascii: bool) -> String {
 fn is_go_print(c: char) -> bool {
     !(c.is_control()
         || c.is_whitespace()
-        || matches!(c as u32, 0xAD | 0x600..=0x605 | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB | 0xE000..=0xF8FF | 0xFFFE | 0xFFFF))
+        || (c as u32 & 0xFFFE) == 0xFFFE
+        || matches!(c as u32, 0xF0000..=0x10FFFF | 0xAD | 0x600..=0x605 | 0x200B..=0x200F | 0x2028..=0x202E | 0x2060..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB | 0xE000..=0xF8FF | 0xFFFE | 0xFFFF))
 }
 
 fn fmt_integer(out: &mut String, v: &Value, u: u64, negative: bool, verb: char, f: Flags) {
@@ -391,6 +430,8 @@ fn fmt_integer(out: &mut String, v: &Value, u: u64, negative: bool, verb: char, 
             return;
         }
         'U' => {
+            // Go prints a negative rune as its uint64 bit pattern.
+            let u = if negative { u.wrapping_neg() } else { u };
             let mut s = format!("U+{:0width$X}", u, width = f.prec.map_or(4, |p| p.max(4)));
             if f.sharp {
                 if let Some(c) = u32::try_from(u)

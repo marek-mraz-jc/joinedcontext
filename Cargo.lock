@@ -3956,7 +3956,6 @@ name = "ekiben-server"
 version = "0.1.0"
 dependencies = [
  "axum",
- "bytes",
  "clap",
  "ekiben-bloblang",
  "ekiben-core",
@@ -3987,7 +3986,6 @@ dependencies = [
  "serde_norway",
  "sha2 0.11.1",
  "subtle",
- "thiserror 2.0.21",
  "tokio",
  "tracing",
  "tracing-subscriber",

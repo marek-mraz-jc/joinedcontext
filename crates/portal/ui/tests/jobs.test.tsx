@@ -12,7 +12,8 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { progressOf, resetJobs, startJob } from "../src/jobs";
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
 const { JobsMenu } = await import("../src/components/JobsMenu");
 
 const BUILD = "/api/v1/projects/helsinki/apps/bikes/build";
@@ -131,6 +132,24 @@ describe("the person's jobs (T-3245)", () => {
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The crawl of city-web failed."));
     const reads = fetched.mock.calls.filter(([input]) => String(input instanceof Request ? input.url : input).includes("/knowledge/sources"));
     expect(reads).toHaveLength(1);
+  });
+
+  it("opening a finished job leads to its page and drops it from the list; a running one stays", async () => {
+    startJob({ kind: "knowledgeCrawl", project: "helsinki", name: "city-web" });
+    startJob({ kind: "appBuild", project: "helsinki", name: "bikes", after: 7 });
+    serve({ run: { status: "in_progress", number: 8 }, typicalSeconds: 185, rebuild: { allowed: true } });
+    renderMenu();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The crawl of city-web failed."));
+    await userEvent.click(screen.getByRole("button", { name: /What you started/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /city-web/ }));
+    expect(navigate).toHaveBeenLastCalledWith({ href: expect.stringContaining("/projects/helsinki/") });
+    const kept = (JSON.parse(localStorage.getItem("jc.jobs") ?? "[]") as { id: string }[]).map((job) => job.id);
+    expect(kept).toEqual(["appBuild:helsinki:bikes"]);
+
+    await userEvent.click(screen.getByRole("button", { name: /What you started/ }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /bikes/ }));
+    expect(navigate).toHaveBeenLastCalledWith({ href: expect.stringContaining("/apps/bikes") });
+    expect((JSON.parse(localStorage.getItem("jc.jobs") ?? "[]") as { id: string }[]).map((job) => job.id)).toEqual(kept);
   });
 
   it("another tab's job appears here", async () => {

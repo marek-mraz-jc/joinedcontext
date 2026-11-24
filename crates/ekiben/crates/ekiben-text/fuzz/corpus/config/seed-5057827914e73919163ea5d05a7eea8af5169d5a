@@ -1,0 +1,1 @@
+{"query": "{s: sum(a), l: length(a), m: max(a), f: a[0]}"}

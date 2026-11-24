@@ -72,3 +72,44 @@ async fn handle_ingest(req: Request) -> Response {
         None => text_response(StatusCode::NOT_FOUND, "404 page not found"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_ingest_path_names_org_stream_and_rest() {
+        assert_eq!(
+            route_of("/org-a/air%20quality/sensors/1"),
+            Some(("org-a".into(), "air quality".into(), "/sensors/1".into()))
+        );
+        assert_eq!(
+            split_ingest_path("/org-a/s"),
+            Some(("org-a".into(), "s".into(), "/".into()))
+        );
+        for bad in ["", "/", "/org-a", "/org-a/", "//s", "org-a/s"] {
+            assert_eq!(split_ingest_path(bad), None, "{bad:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_listener_answers_a_path_no_stream_serves_with_a_refusal() {
+        activate();
+        assert!(crate::http_server::is_ingest_active());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(serve(listener));
+        let resp = reqwest::get(format!("http://{addr}/no-org/no-stream/x"))
+            .await
+            .expect("the listener answers");
+        assert!(resp.status().is_client_error(), "{}", resp.status());
+        let direct = handle(
+            axum::http::Request::builder()
+                .uri("/no-org")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert!(direct.status().is_client_error(), "{}", direct.status());
+    }
+}

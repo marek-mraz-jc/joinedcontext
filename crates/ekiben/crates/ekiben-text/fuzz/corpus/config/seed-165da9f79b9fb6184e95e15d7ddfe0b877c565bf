@@ -1,0 +1,1 @@
+{"expressions": ["%{X:x}"], "use_default_patterns": false, "pattern_definitions": {"X": "[a-z]+"}}

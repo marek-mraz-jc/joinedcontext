@@ -949,6 +949,18 @@ impl Output for MqttOutput {
     }
 }
 
+#[cfg(feature = "fuzzing")]
+pub(crate) fn fuzz_wire(buf: &mut Vec<u8>) -> usize {
+    let mut whole = 0;
+    while let Ok(Some((first, body))) = take_packet(buf) {
+        whole += 1;
+        if first >> 4 == 3 {
+            let _ = parse_publish(first, &body);
+        }
+    }
+    whole
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

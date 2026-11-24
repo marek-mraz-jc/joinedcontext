@@ -334,8 +334,11 @@ pub fn parse_mapping(env: &Environment, input: &str) -> Result<Executor, ParseEr
             ))
         }
         (Err(e1), Err(e2)) => {
-            // Return the error that advanced further through the input
-            if (e2.line, e2.col) > (e1.line, e1.col) {
+            // Return the error that advanced further through the input. A failed import is
+            // reported at its keyword although the statement parser read past the path, so it
+            // wins as in Bento.
+            let import_failed = e1.message.contains(" import: ");
+            if !import_failed && (e2.line, e2.col) > (e1.line, e1.col) {
                 Err(e2)
             } else {
                 Err(e1)
@@ -1285,7 +1288,16 @@ fn parse_number_literal(state: &mut ParserState<'_>) -> Result<Expr, ParseError>
     if is_float {
         let f = raw
             .parse::<f64>()
-            .map_err(|e| state.err_at(start, format!("failed to parse '{raw}' as float: {e}")))?;
+            // Bento has no exponent literals; ekiben reads them but refuses one past f64 range,
+            // which would otherwise map to an infinity that serialises as null.
+            .ok()
+            .filter(|f| f.is_finite())
+            .ok_or_else(|| {
+                state.err_at(
+                    start,
+                    format!("failed to parse '{raw}' as float: value out of range"),
+                )
+            })?;
         Ok(Expr::Literal(Value::Float(f)))
     } else {
         let digits = if neg { &raw[1..] } else { raw };

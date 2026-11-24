@@ -241,8 +241,61 @@ const NUMBER_METHODS: &[&str] = &[
     "parse_big_decimal",
 ];
 
-/// Dispatches method evaluation across small per-family functions so stack frames remain small.
 pub(crate) fn eval_method(
+    target_expr: &Expr,
+    name: &str,
+    args: &ArgList,
+    ctx: &mut EvalContext<'_, '_>,
+) -> Result<Value, String> {
+    let res = eval_method_inner(target_expr, name, args, ctx);
+    // Bento quotes a failing value in its error (`parsing "<value>"`, `extra text "<tail>"`); a
+    // value read straight from env() or file() is often a credential, and errors reach logs and DLQ
+    // metadata, so its raw text and every quoted piece of the error (escaped or a fragment) are
+    // replaced. ponytail: a value passed through a variable first is not traced.
+    match (res, target_expr) {
+        (Err(e), Expr::FunctionCall { name: f, .. }) if SECRET_SOURCES.contains(&f.as_str()) => {
+            let e = match ctx.eval_expr(target_expr) {
+                Ok(Value::String(v)) if !v.is_empty() => e.replace(&v, "[redacted]"),
+                Ok(Value::Bytes(b)) if !b.is_empty() => {
+                    e.replace(&*String::from_utf8_lossy(&b), "[redacted]")
+                }
+                _ => e,
+            };
+            Err(redact_quoted(&e))
+        }
+        (res, _) => res,
+    }
+}
+
+/// Replaces each `"..."` (with backslash escapes) and `'...'` segment of an error by `"[redacted]"`.
+fn redact_quoted(e: &str) -> String {
+    let mut out = String::with_capacity(e.len());
+    let mut chars = e.chars();
+    while let Some(c) = chars.next() {
+        if c != '"' && c != '\'' {
+            out.push(c);
+            continue;
+        }
+        // An unterminated quote runs to the end, so the rest is dropped too.
+        let mut escaped = false;
+        for d in chars.by_ref() {
+            match d {
+                _ if escaped => escaped = false,
+                '\\' if c == '"' => escaped = true,
+                _ if d == c => break,
+                _ => {}
+            }
+        }
+        out.push_str("\"[redacted]\"");
+    }
+    out
+}
+
+/// Functions whose answer can hold a secret (an environment variable, a mounted file).
+const SECRET_SOURCES: &[&str] = &["env", "file", "file_rel"];
+
+/// Dispatches method evaluation across small per-family functions so stack frames remain small.
+fn eval_method_inner(
     target_expr: &Expr,
     name: &str,
     args: &ArgList,

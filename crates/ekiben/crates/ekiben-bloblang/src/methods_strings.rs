@@ -449,9 +449,10 @@ pub(crate) fn eval_string_family(
                 }
                 "fnv32" => {
                     let mut h: u32 = 2166136261;
+                    // Go's fnv.New32 is FNV-1: multiply, then xor.
                     for &b in &bytes {
-                        h ^= b as u32;
                         h = h.wrapping_mul(16777619);
+                        h ^= b as u32;
                     }
                     h.to_string().into_bytes()
                 }
@@ -1582,7 +1583,7 @@ fn slug_words(lang: &str) -> (&'static str, Option<&'static str>) {
 
 /// gosimple/slug `MakeLang`: language substitutions, ASCII folding, lowercase, every run of
 /// characters outside `[a-z0-9_-]` to one dash, trimmed of `-` and `_`.
-/// ponytail: folds Latin diacritics only (no full unidecode table); other scripts drop out.
+/// ponytail: folds Latin-1 and Latin Extended-A only (no full unidecode table); other scripts drop out.
 fn make_slug(s: &str, lang: &str) -> String {
     let (and, at) = slug_words(lang);
     let german = matches!(lang.to_ascii_lowercase().as_str(), "de" | "deu");
@@ -1621,23 +1622,40 @@ fn make_slug(s: &str, lang: &str) -> String {
     out.trim_matches(|c| c == '-' || c == '_').to_string()
 }
 
+/// Latin-1 Supplement and Latin Extended-A as gosimple/slug's unidecode folds them, recorded
+/// from Bento 1.22 (`"<char>".slug()` per character).
 fn fold_diacritic(c: char) -> &'static str {
     match c {
-        'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' | 'Á' | 'À' | 'Â' | 'Ä' => "a",
-        'é' | 'è' | 'ê' | 'ë' | 'ě' | 'É' | 'È' | 'Ê' | 'Ë' | 'Ě' => "e",
-        'í' | 'ì' | 'î' | 'ï' | 'Í' | 'Ì' | 'Î' | 'Ï' => "i",
-        'ó' | 'ò' | 'ô' | 'ö' | 'õ' | 'Ó' | 'Ò' | 'Ô' | 'Ö' => "o",
-        'ú' | 'ù' | 'û' | 'ü' | 'ů' | 'Ú' | 'Ù' | 'Û' | 'Ü' | 'Ů' => "u",
-        'ý' | 'ÿ' | 'Ý' => "y",
-        'č' | 'ć' | 'ç' | 'Č' | 'Ć' | 'Ç' => "c",
-        'ď' | 'Ď' => "d",
-        'ľ' | 'ĺ' | 'ł' | 'Ľ' | 'Ĺ' | 'Ł' => "l",
-        'ň' | 'ń' | 'ñ' | 'Ň' | 'Ń' | 'Ñ' => "n",
-        'ř' | 'ŕ' | 'Ř' | 'Ŕ' => "r",
-        'š' | 'ś' | 'Š' | 'Ś' => "s",
-        'ť' | 'Ť' => "t",
-        'ž' | 'ź' | 'ż' | 'Ž' | 'Ź' | 'Ż' => "z",
+        'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' | 'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'Ā' | 'ā' | 'Ă'
+        | 'ă' | 'Ą' | 'ą' => "a",
+        'Æ' | 'æ' => "ae",
+        'Ç' | 'ç' | 'Ć' | 'ć' | 'Ĉ' | 'ĉ' | 'Ċ' | 'ċ' | 'Č' | 'č' => "c",
+        'Ð' | 'ð' | 'Ď' | 'ď' | 'Đ' | 'đ' => "d",
+        'È' | 'É' | 'Ê' | 'Ë' | 'è' | 'é' | 'ê' | 'ë' | 'Ē' | 'ē' | 'Ĕ' | 'ĕ' | 'Ė' | 'ė' | 'Ę'
+        | 'ę' | 'Ě' | 'ě' => "e",
+        'Ĝ' | 'ĝ' | 'Ğ' | 'ğ' | 'Ġ' | 'ġ' | 'Ģ' | 'ģ' => "g",
+        'Ĥ' | 'ĥ' | 'Ħ' | 'ħ' => "h",
+        'Ì' | 'Í' | 'Î' | 'Ï' | 'ì' | 'í' | 'î' | 'ï' | 'Ĩ' | 'ĩ' | 'Ī' | 'ī' | 'Ĭ' | 'ĭ' | 'Į'
+        | 'į' | 'İ' | 'ı' => "i",
+        'Ĳ' | 'ĳ' => "ij",
+        'Ĵ' | 'ĵ' => "j",
+        'Ķ' | 'ķ' | 'ĸ' => "k",
+        'Ĺ' | 'ĺ' | 'Ļ' | 'ļ' | 'Ľ' | 'ľ' | 'Ŀ' | 'ŀ' | 'Ł' | 'ł' => "l",
+        'Ñ' | 'ñ' | 'Ń' | 'ń' | 'Ņ' | 'ņ' | 'Ň' | 'ň' | 'ŉ' => "n",
+        'Ŋ' | 'ŋ' => "ng",
+        'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'Ø' | 'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'Ō' | 'ō' | 'Ŏ'
+        | 'ŏ' | 'Ő' | 'ő' => "o",
+        'Œ' | 'œ' => "oe",
+        'Ŕ' | 'ŕ' | 'Ŗ' | 'ŗ' | 'Ř' | 'ř' => "r",
+        'Ś' | 'ś' | 'Ŝ' | 'ŝ' | 'Ş' | 'ş' | 'Š' | 'š' | 'ſ' | 'Ș' | 'ș' => "s",
         'ß' => "ss",
+        'Ţ' | 'ţ' | 'Ť' | 'ť' | 'Ŧ' | 'ŧ' | 'Ț' | 'ț' => "t",
+        'Þ' | 'þ' => "th",
+        'Ù' | 'Ú' | 'Û' | 'Ü' | 'ù' | 'ú' | 'û' | 'ü' | 'Ũ' | 'ũ' | 'Ū' | 'ū' | 'Ŭ' | 'ŭ' | 'Ů'
+        | 'ů' | 'Ű' | 'ű' | 'Ų' | 'ų' => "u",
+        'Ŵ' | 'ŵ' => "w",
+        'Ý' | 'ý' | 'ÿ' | 'Ŷ' | 'ŷ' | 'Ÿ' => "y",
+        'Ź' | 'ź' | 'Ż' | 'ż' | 'Ž' | 'ž' => "z",
         _ => "",
     }
 }

@@ -3,7 +3,7 @@
  * stored conversations with their filter, opens one as its turns and steps, copies a turn as an
  * eval case and erases a conversation only with `delete`; a member reads none of it.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { narrowsAndOrders } from "./grid_checks";
 import { pageFindings } from "./pageChecks";
@@ -123,6 +123,8 @@ let deployments: string[] = ["obcan"];
 let secondPage: typeof LIST | null = null;
 /** The list a Portal without a knowledge assistant answers (T-7123); false asks the assistant. */
 let noAssistant = false;
+/** The recorded list answers 503 this many times before it answers. */
+let listAway = 0;
 
 function renderAs(verbs: string[], link: { open?: string; against?: string } = {}) {
   const calls: { method: string; url: URL }[] = [];
@@ -136,6 +138,13 @@ function renderAs(verbs: string[], link: { open?: string; against?: string } = {
     calls.push({ method: request.method, url });
     if (url.pathname.endsWith("/conversations/export")) {
       return Promise.resolve(new Response(CSV, { status: 200, headers: { "Content-Type": "text/csv; charset=utf-8" } }));
+    }
+    if (listAway > 0 && url.pathname.endsWith("/conversations") && request.method === "GET") {
+      listAway -= 1;
+      return Promise.resolve(new Response(JSON.stringify({ title: "Service Unavailable", status: 503, detail: "the assistant is away" }), {
+        status: 503,
+        headers: { "Content-Type": "application/problem+json" },
+      }));
     }
     const body = request.method === "DELETE" ? null
       : url.pathname.endsWith("/permissions/me") ? permissions
@@ -169,6 +178,7 @@ function renderAs(verbs: string[], link: { open?: string; against?: string } = {
 
 afterEach(() => {
   noAssistant = false;
+  listAway = 0;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -355,6 +365,49 @@ describe("Asistent → Konverzácie", () => {
     await user.click(screen.getByRole("button", { name: i18n.t("conversations.copyAsTest") }));
     expect(writeText).toHaveBeenCalledOnce();
     expect(JSON.parse((writeText.mock.calls[0] as unknown as [string])[0]).q).toBe("Aké je PM10?");
+  });
+
+  it("asks the list again with each filter the person sets: feedback, order, days, slow and expensive", async () => {
+    const user = userEvent.setup();
+    const calls = renderAs(["read", "approve"]);
+    await screen.findByRole("table");
+    const asked = (key: string, value: string) => calls.some((c) => c.url.pathname.endsWith("/conversations") && c.url.searchParams.get(key) === value);
+    await user.selectOptions(screen.getByRole("combobox", { name: i18n.t("conversations.filter.feedback") }), "down");
+    await waitFor(() => expect(asked("feedback", "down")).toBe(true));
+    await user.selectOptions(screen.getByRole("combobox", { name: i18n.t("conversations.filter.sort") }), "tokens");
+    await waitFor(() => expect(asked("sort", "tokens")).toBe(true));
+    fireEvent.change(screen.getByLabelText(i18n.t("conversations.filter.from")), { target: { value: "2026-10-01" } });
+    fireEvent.change(screen.getByLabelText(i18n.t("conversations.filter.to")), { target: { value: "2026-10-31" } });
+    await waitFor(() => expect(asked("to", "2026-11-01T00:00:00Z")).toBe(true));
+    expect(asked("from", "2026-10-01T00:00:00Z")).toBe(true);
+    await user.click(screen.getByRole("switch", { name: i18n.t("conversations.filter.slow") }));
+    await waitFor(() => expect(asked("slow", "true")).toBe(true));
+    await user.click(screen.getByRole("switch", { name: i18n.t("conversations.filter.expensive") }));
+    await waitFor(() => expect(asked("minCostUsd", "0.02")).toBe(true));
+    // Back to every feedback: the parameter leaves the address.
+    await user.selectOptions(screen.getByRole("combobox", { name: i18n.t("conversations.filter.feedback") }), "");
+    await waitFor(() => {
+      const last = calls.filter((c) => c.url.pathname.endsWith("/conversations")).at(-1);
+      expect(last?.url.searchParams.has("feedback")).toBe(false);
+    });
+  });
+
+  it("says the list could not be read, and the retry reads it", async () => {
+    listAway = 1;
+    renderAs(["read", "approve"]);
+    await userEvent.click(await screen.findByRole("button", { name: i18n.t("app.error.retry") }));
+    expect(await screen.findByRole("table")).toBeInTheDocument();
+  });
+
+  it("says nothing was copied when the browser refuses the clipboard", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn(() => Promise.reject(new DOMException("denied", "NotAllowedError")));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    renderAs(["read", "approve"]);
+    await user.click(within(await screen.findByRole("table")).getByRole("link", { name: "Aké je PM10?" }));
+    await user.click(await screen.findByRole("button", { name: i18n.t("conversations.copyAsTest") }));
+    expect(writeText).toHaveBeenCalledOnce();
+    expect(screen.queryByText(i18n.t("conversations.copied"))).toBeNull();
   });
 
   // T-6206: the page's rows are on the shared grid: search, sort by tokens, filter by status.

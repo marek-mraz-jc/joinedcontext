@@ -1,0 +1,70 @@
+# Fuzzes ekiben-text's inputs (T-7577): syslog lines, Go regular expressions, jq and JMESPath queries over
+# JSON, grok expressions over text, MessagePack documents and each processor's config. Every input ends
+# in a value or an error, never a panic, a hang past the processor's own limits or memory past them. Run
+# by hand or by the on-demand ekiben-fuzz workflow: cargo +nightly fuzz run <target> -- -max_total_time=300.
+# Not a member of the ekiben workspace.
+[package]
+name = "ekiben-text-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+bytes = "1"
+serde_json = "1"
+ekiben-core = { path = "../../ekiben-core" }
+ekiben-text = { path = ".." }
+
+[[bin]]
+name = "parse_log"
+path = "fuzz_targets/parse_log.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "go_regex"
+path = "fuzz_targets/go_regex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jq"
+path = "fuzz_targets/jq.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "grok"
+path = "fuzz_targets/grok.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "documents"
+path = "fuzz_targets/documents.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config"
+path = "fuzz_targets/config.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+
+# The same jaq the ekiben workspace builds (its step, time, stack and size budget).
+[patch.crates-io]
+jaq-core = { path = "../../../../../vendor/jaq-core" }
+jaq-json = { path = "../../../../../vendor/jaq-json" }

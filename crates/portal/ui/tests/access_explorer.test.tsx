@@ -3,7 +3,7 @@
  * principal and sees each Endpoint it reaches, what it may do there, the hub connector and a
  * person's connected clients, with Revoke behind a confirmation. Nobody else sees the tab.
  */
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
@@ -317,6 +317,63 @@ describe("Access explorer (T-3792)", () => {
         ),
       ).toBe(true),
     );
+  });
+
+  it("says a geoQ without coordinates in words instead of drawing it (T-7588)", () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <GeoPreview geoQ={{ georel: "near;maxDistance==500", geometry: "Point" }} />
+      </I18nextProvider>,
+    );
+    expect(screen.queryByTestId("geoq-preview")).toBeNull();
+    expect(screen.getByText("geoQ=near;maxDistance==500 Point []")).toBeInTheDocument();
+    expect(screen.getByText(/Only where/)).toBeInTheDocument();
+  });
+
+  it("keeps the consent when the revoke question is dismissed (T-7588)", async () => {
+    const sent = stub(true, {
+      subject: { user: "jana@hel.fi", groups: [], roles: [] },
+      endpoints: [row("a")],
+      mcpServers: [],
+      consents: [{ clientId: "mcp-hub", grantedClientScopes: ["endpoint:a-slug"], lastUpdatedDate: 1_758_800_000_000 }],
+    });
+    renderAt("/projects/helsinki/settings/explorer?kind=person&name=jana-id");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Show access" }));
+    await user.click(await screen.findByRole("button", { name: "Revoke" }));
+    await screen.findByRole("alertdialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(sent.some((s) => s.method === "DELETE")).toBe(false);
+  });
+
+  it("searches people, picks one and then a service account, and asks nothing while no one is picked (T-7588)", async () => {
+    const sent = stub(true, FIVE);
+    renderAt("/projects/helsinki/settings/explorer?kind=person");
+    const user = userEvent.setup();
+    const search = await screen.findByLabelText("Search people");
+    await user.type(search, "jana");
+    await waitFor(() => expect(sent.some((s) => s.path === "/api/v1/organization/people")).toBe(true));
+    const person = await screen.findByLabelText(/A person/);
+    await waitFor(() => expect(within(person).getAllByRole("option").length).toBeGreaterThan(0));
+    await user.selectOptions(person, within(person).getAllByRole("option")[0]);
+    await user.selectOptions(screen.getByLabelText(/^Who/), "serviceAccount");
+    const account = await screen.findByLabelText(/A service account/);
+    await waitFor(() => expect(within(account).getByRole("option", { name: "etl" })).toBeInTheDocument());
+    await user.selectOptions(account, "etl");
+    expect(account).toHaveValue("etl");
+    expect(sent.some((s) => s.path === "jc_access_explore")).toBe(false);
+  });
+
+  it("asks nothing when Enter is pressed before anyone is picked (T-7588)", async () => {
+    const sent = stub(true, FIVE);
+    renderAt("/projects/helsinki/settings/explorer?kind=group");
+    const show = await screen.findByRole("button", { name: "Show access" });
+    await act(async () => {
+      fireEvent.submit(show.closest("form") as HTMLFormElement);
+    });
+    expect(sent.some((s) => s.path === "jc_access_explore")).toBe(false);
+    expect(window.location.search).toBe("?kind=group");
   });
 
   it("walks by keyboard alone: pick, show, reach the first row", async () => {

@@ -41,3 +41,149 @@ pub fn register_all(registry: &Registry) {
     processor_sql::register(registry);
     cache_sql::register(registry);
 }
+
+/// What the fuzz targets in `fuzz/` drive (cargo fuzz).
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing {
+    pub use crate::util::fuzz_values as values;
+
+    /// Lints `conf` as every sql component does.
+    pub fn lint_all(conf: &serde_json::Value) {
+        for lint in [
+            crate::cache_sql::lint,
+            crate::input_sql_raw::lint,
+            crate::input_sql_select::lint,
+            crate::output_sql_insert::lint,
+            crate::output_sql_raw::lint,
+            crate::output_sql_deprecated::lint,
+            crate::processor_sql::lint_raw,
+            crate::processor_sql::lint_select,
+            crate::processor_sql::lint_insert,
+        ] {
+            let _ = lint(conf);
+        }
+    }
+}
+
+/// What the tests of every module share: a stream context and a component config.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use ekiben_core::{
+        ComponentConfig, OrgId, OrgQuotas, Registry, ResourceManager, StreamContext, StreamMetrics,
+    };
+
+    /// A stream whose organization may reach private addresses (the CI databases), with every
+    /// sql component registered; `quotas` adjusts the rest of the organization's limits.
+    pub fn stream_ctx_with(root: Option<&std::path::Path>, quotas: OrgQuotas) -> StreamContext {
+        let resources = ResourceManager::new();
+        let org = resources.set_org_quotas(
+            &OrgId::new("o"),
+            OrgQuotas {
+                allow_private_ips: true,
+                ..quotas
+            },
+        );
+        let registry = Registry::new();
+        super::register_all(&registry);
+        StreamContext {
+            stream_id: "s".into(),
+            org,
+            resources,
+            registry: Arc::new(registry),
+            blobl_env: ekiben_bloblang::Environment::new(),
+            metrics: StreamMetrics::new("s", "o"),
+            label: String::new(),
+            path: "root".into(),
+            file_root: root.map(Into::into),
+            env_vars: Arc::new(HashMap::new()),
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+        }
+    }
+
+    pub fn stream_ctx(root: Option<&std::path::Path>) -> StreamContext {
+        stream_ctx_with(root, OrgQuotas::default())
+    }
+
+    /// The CI database `key` names (PG_DSN, MY_DSN); a test of one runs only where it is given.
+    pub fn env_dsn(key: &str) -> Option<String> {
+        std::env::var(key).ok().filter(|s| !s.is_empty())
+    }
+
+    pub fn conf(kind: &str, config: serde_json::Value) -> ComponentConfig {
+        ComponentConfig {
+            label: String::new(),
+            component_type: kind.into(),
+            config,
+            processors: Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::{conf, stream_ctx};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn every_component_builds_and_lints_by_its_registered_name() {
+        let ctx = stream_ctx(None);
+        let r = &ctx.registry;
+        let lite = |extra: serde_json::Value| {
+            let mut v = json!({"driver": "sqlite", "dsn": ":memory:"});
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            v
+        };
+        let query = lite(json!({"query": "SELECT 1"}));
+        let select = lite(json!({"table": "t", "columns": ["a"]}));
+        let insert = lite(json!({"table": "t", "columns": ["a"], "args_mapping": "root = [1]"}));
+        let input = |k: &str, v: &serde_json::Value| r.build_input(&conf(k, v.clone()), &ctx);
+        assert_eq!(input("sql_raw", &query).unwrap().input_type(), "sql_raw");
+        assert_eq!(
+            input("sql_select", &select).unwrap().input_type(),
+            "sql_select"
+        );
+        let output = |k: &str, v: &serde_json::Value| r.build_output(&conf(k, v.clone()), &ctx);
+        assert_eq!(output("sql_raw", &query).unwrap().output_type(), "sql_raw");
+        assert_eq!(
+            output("sql_insert", &insert).unwrap().output_type(),
+            "sql_insert"
+        );
+        let deprecated =
+            json!({"driver": "sqlite", "data_source_name": ":memory:", "query": "SELECT 1"});
+        assert_eq!(output("sql", &deprecated).unwrap().output_type(), "sql");
+        let pctx = ctx.to_proc_context("sql", "", "pipeline.processors");
+        for (k, v) in [
+            ("sql_raw", &query),
+            ("sql_select", &select),
+            ("sql_insert", &insert),
+        ] {
+            let p = r.build_processor(&conf(k, v.clone()), &pctx, "0").unwrap();
+            assert_eq!(p.processor_type(), k);
+        }
+        let kv = lite(json!({"table": "kv", "key_column": "k", "value_column": "v"}));
+        assert!(r.build_cache(&conf("sql", kv), &ctx).is_ok());
+        for (kind, name) in [
+            ("input", "sql_raw"),
+            ("input", "sql_select"),
+            ("output", "sql_raw"),
+            ("output", "sql_insert"),
+            ("output", "sql"),
+            ("processor", "sql_raw"),
+            ("processor", "sql_select"),
+            ("processor", "sql_insert"),
+            ("cache", "sql"),
+        ] {
+            let errs = r.lint_component(kind, &conf(name, json!({"bogus": 1})));
+            assert!(
+                errs.iter()
+                    .any(|e| e.contains("field bogus not recognised")),
+                "{kind} {name}: {errs:?}"
+            );
+        }
+    }
+}

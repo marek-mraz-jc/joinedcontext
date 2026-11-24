@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   isPublicFormPath,
   ApiError,
+  asProblem,
   createSessionMiddleware,
   csrfMiddleware,
   loginRedirectUrl,
@@ -45,6 +46,24 @@ describe("readCsrfToken", () => {
     document.cookie = `__Host-jc_csrf=${encodeURIComponent("token/with+special=chars")}; Secure; path=/`;
 
     expect(readCsrfToken()).toBe("token/with+special=chars");
+  });
+
+  it("keeps a value that is not valid percent-encoding as sent, and skips a cookie with no '='", () => {
+    document.cookie = "flag; path=/";
+    document.cookie = "__Host-jc_csrf=abc%E0%A4%A; Secure; path=/";
+
+    expect(readCsrfToken()).toBe("abc%E0%A4%A");
+  });
+});
+
+describe("asProblem", () => {
+  it("reads errors[] into lines, and takes nothing from a value that is no document", () => {
+    expect(asProblem(undefined)).toEqual({});
+    expect(asProblem("refused")).toEqual({});
+    expect(asProblem({ detail: "bad", errors: "not a list" })).toEqual({ detail: "bad", errors: undefined });
+    expect(asProblem({ detail: "bad", errors: [{ path: "spec.name", message: "too long" }] }).errors).toEqual([
+      "spec.name: too long",
+    ]);
   });
 });
 
