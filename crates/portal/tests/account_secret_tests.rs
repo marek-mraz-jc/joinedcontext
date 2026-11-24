@@ -491,6 +491,15 @@ async fn keycloak_without_the_client_or_the_secret_says_so_and_a_lost_record_kee
         json!({ "type": "secret", "value": "quiet-secret" }),
     )
     .await;
+    // The realm names no user for the account's client: the secret is still issued, and no
+    // token is revoked by a guess.
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REALM}/clients/uuid-quiet/service-account-user"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(&keycloak)
+        .await;
     let ana = || Some(person("ana@hel.fi"));
 
     let (status, _, body) = call(&state, &config, ana(), "POST", &secret_of("fresh")).await;
