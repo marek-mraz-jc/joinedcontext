@@ -364,6 +364,10 @@ mod tests {
         assert!(e.contains("readonly"), "{e}");
     }
 
+    fn nothing(_: &Connection) -> Result<(), String> {
+        Ok(())
+    }
+
     #[tokio::test]
     async fn with_runs_on_the_connection_until_it_is_closed() {
         let db = SqliteDb::open(&parse_dsn(":memory:", None).unwrap()).unwrap();
@@ -389,10 +393,11 @@ mod tests {
                 .unwrap_err(),
             "the closure's error"
         );
+        db.with(nothing).await.unwrap();
         let other = db.clone();
         db.close();
         assert_eq!(
-            other.with(|_| Ok(())).await.unwrap_err(),
+            other.with(nothing).await.unwrap_err(),
             "sql: database is closed"
         );
         // Closing twice is harmless.
@@ -440,7 +445,10 @@ mod tests {
             ("2024-01-02 03:04", "2024-01-02 03:04:00+00:00"),
             ("2024-01-02T03:04", "2024-01-02 03:04:00+00:00"),
             ("2024-01-02", "2024-01-02 00:00:00+00:00"),
-            ("2024-01-02T03:04:05.25-01:00", "2024-01-02 03:04:05.25-01:00"),
+            (
+                "2024-01-02T03:04:05.25-01:00",
+                "2024-01-02 03:04:05.25-01:00",
+            ),
         ] {
             assert_eq!(time_text(&parse_time(s).expect(s)), want, "{s}");
         }
@@ -485,7 +493,12 @@ mod tests {
         let db = SqliteDb::open(&parse_dsn(":memory:", None).unwrap()).unwrap();
         let guard = db.0.lock().unwrap();
         let c = guard.as_ref().unwrap();
-        exec(c, "CREATE TABLE t (a int); INSERT INTO t VALUES (1), (2), (3)", &[]).unwrap();
+        exec(
+            c,
+            "CREATE TABLE t (a int); INSERT INTO t VALUES (1), (2), (3)",
+            &[],
+        )
+        .unwrap();
         let mut seen = 0;
         query(c, "SELECT a FROM t", &[], |_| {
             seen += 1;
@@ -497,7 +510,12 @@ mod tests {
         assert!(e.contains("no such column"), "{e}");
         let e = query(c, "SELECT a FROM t WHERE a = ?", &[], |_| true).unwrap_err();
         assert!(!e.is_empty());
-        let e = exec(c, "INSERT INTO t VALUES (?)", &[Value::Int(1), Value::Int(2)]).unwrap_err();
+        let e = exec(
+            c,
+            "INSERT INTO t VALUES (?)",
+            &[Value::Int(1), Value::Int(2)],
+        )
+        .unwrap_err();
         assert!(!e.is_empty());
         assert!(exec(c, "NOT SQL", &[]).is_err());
         // A runtime error while stepping rows is the query's error too.

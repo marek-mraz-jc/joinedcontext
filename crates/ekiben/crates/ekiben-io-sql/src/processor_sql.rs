@@ -538,6 +538,24 @@ mod tests {
         assert_eq!(p.processor_type(), "sql_raw");
         p.close().await.unwrap();
 
+        // exec_only keeps the message; a failing statement flags it with the driver's words.
+        let exec = build_raw(
+            &conf(
+                "sql_raw",
+                json!({"driver": "sqlite", "dsn": ":memory:", "exec_only": true,
+                    "query": "INSERT INTO nope VALUES (1)"}),
+            ),
+            &ctx,
+        )
+        .unwrap();
+        exec.close().await.unwrap();
+        let out = exec
+            .process_batch(&ctx, vec![Part::from_str("{}")])
+            .await
+            .unwrap();
+        assert!(out[0][0].is_errored());
+        assert_eq!(bodies(&out), ["{}"]);
+
         let throws = build_raw(
             &conf(
                 "sql_raw",
@@ -568,7 +586,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(insert.processor_type(), "sql_insert");
-        assert!(insert.process_batch(&ctx, Vec::new()).await.unwrap().is_empty());
+        assert!(insert
+            .process_batch(&ctx, Vec::new())
+            .await
+            .unwrap()
+            .is_empty());
         let out = insert
             .process_batch(
                 &ctx,
@@ -592,7 +614,9 @@ mod tests {
         )
         .err()
         .expect("refused");
-        assert!(e.to_string().contains("field args_mapping: expected a mapping string"));
+        assert!(e
+            .to_string()
+            .contains("field args_mapping: expected a mapping string"));
     }
 
     #[test]

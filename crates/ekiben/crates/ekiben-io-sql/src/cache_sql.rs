@@ -109,19 +109,16 @@ pub struct SqlCache {
 
 /// A unique-key refusal, in the words each engine uses (sqlite's driver keeps only the text).
 fn is_duplicate(e: &crate::sqlx::Error) -> bool {
-    if let crate::sqlx::Error::Database(d) = e {
-        if d.is_unique_violation() {
-            return true;
-        }
-    }
+    let unique = matches!(e, crate::sqlx::Error::Database(d) if d.is_unique_violation());
     let text = util::db_error_text(e);
-    [
-        "duplicate key",
-        "UNIQUE constraint failed",
-        "Duplicate entry",
-    ]
-    .iter()
-    .any(|m| text.contains(m))
+    unique
+        || [
+            "duplicate key",
+            "UNIQUE constraint failed",
+            "Duplicate entry",
+        ]
+        .iter()
+        .any(|m| text.contains(m))
 }
 
 impl SqlCache {
@@ -316,7 +313,12 @@ mod tests {
         assert!(e(c.delete("k").await).contains("sql cache: no such table: kv"));
         assert!(e(c.set("k", Bytes::from_static(b"v"), None).await).contains("no such table"));
         assert!(e(c.add("k", Bytes::from_static(b"v"), None).await).contains("no such table"));
-        assert!(c.get("k").await.unwrap_err().to_string().contains("no such table"));
+        assert!(c
+            .get("k")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no such table"));
     }
 
     #[tokio::test]
@@ -338,25 +340,38 @@ mod tests {
     async fn build_refuses_what_lint_refuses_and_needs_every_column() {
         let ctx = crate::testing::stream_ctx(None);
         let conf = |v| crate::testing::conf("sql", v);
-        let e = build(&conf(json!({"driver": "sqlite", "dsn": ":memory:", "table": "a;b",
-            "key_column": "k", "value_column": "v"})), &ctx)
+        let e = build(
+            &conf(
+                json!({"driver": "sqlite", "dsn": ":memory:", "table": "a;b",
+            "key_column": "k", "value_column": "v"}),
+            ),
+            &ctx,
+        )
         .err()
         .expect("refused");
         assert!(e.to_string().contains("cache sql: field table"), "{e}");
-        let e = build(&conf(json!({"driver": "sqlite", "dsn": ":memory:", "table": "kv",
-            "key_column": "k"})), &ctx)
+        let e = build(
+            &conf(json!({"driver": "sqlite", "dsn": ":memory:", "table": "kv",
+            "key_column": "k"})),
+            &ctx,
+        )
         .err()
         .expect("refused");
-        assert!(e.to_string().contains("field value_column is required"), "{e}");
+        assert!(
+            e.to_string().contains("field value_column is required"),
+            "{e}"
+        );
     }
 
     /// postgres refuses a duplicate key by SQLSTATE (23505), not by a text sqlite would print.
     #[tokio::test]
     async fn a_postgres_duplicate_key_is_key_already_exists() {
-        let Some(dsn) = std::env::var("PG_DSN").ok().filter(|s| !s.is_empty()) else {
-            eprintln!("PG_DSN not set: this test runs in CI's ekiben job");
-            return;
-        };
+        if let Some(dsn) = crate::testing::env_dsn("PG_DSN") {
+            postgres_duplicate_key(dsn).await;
+        }
+    }
+
+    async fn postgres_duplicate_key(dsn: String) {
         let ctx = crate::testing::stream_ctx(None);
         let c = build(
             &crate::testing::conf("sql", json!({"driver": "postgres", "dsn": dsn,
@@ -385,5 +400,6 @@ mod tests {
         assert!(errs.iter().any(|e| e.contains("table")), "{errs:?}");
         assert!(errs.iter().any(|e| e.contains("value_column")), "{errs:?}");
         assert!(errs.iter().any(|e| e.contains("default_ttl")), "{errs:?}");
+        assert_eq!(lint(&json!("x")), ["expected object value"]);
     }
 }

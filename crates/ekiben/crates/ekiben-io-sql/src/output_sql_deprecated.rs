@@ -58,29 +58,45 @@ mod tests {
             .unwrap();
         let ctx = stream_ctx(None);
         let out = build(
-            &conf("sql", json!({"driver": "sqlite", "data_source_name": dsn,
-                "query": "INSERT INTO t VALUES (?)", "args_mapping": "root = [ 7 ]"})),
+            &conf(
+                "sql",
+                json!({"driver": "sqlite", "data_source_name": dsn,
+                "query": "INSERT INTO t VALUES (?)", "args_mapping": "root = [ 7 ]"}),
+            ),
             &ctx,
         )
         .unwrap();
         out.connect(&ctx).await.unwrap();
-        out.write_batch(&ctx, vec![Part::from_str("{}")]).await.unwrap();
+        out.write_batch(&ctx, vec![Part::from_str("{}")])
+            .await
+            .unwrap();
         let a: i64 = rusqlite::Connection::open(&dsn)
             .unwrap()
             .query_row("SELECT a FROM t", [], |r| r.get(0))
             .unwrap();
         assert_eq!(a, 7);
         // init_statement and the other connection fields came after this spec.
-        let errs = lint(&json!({"driver": "sqlite", "data_source_name": "x", "query": "q",
-            "init_statement": "x"}));
+        let errs = lint(
+            &json!({"driver": "sqlite", "data_source_name": "x", "query": "q",
+            "init_statement": "x"}),
+        );
         assert_eq!(errs, ["field init_statement not recognised"]);
-        let e = build(&conf("sql", json!({"driver": "sqlite", "dsn": "x", "query": "q"})), &ctx)
-            .err()
-            .expect("refused");
+        let e = build(
+            &conf("sql", json!({"driver": "sqlite", "dsn": "x", "query": "q"})),
+            &ctx,
+        )
+        .err()
+        .expect("refused");
         assert!(e.to_string().contains("dsn not recognised"), "{e}");
-        let e = build(&conf("sql", json!({"driver": "sqlite", "query": "q"})), &ctx)
-            .err()
-            .expect("refused");
-        assert!(e.to_string().contains("field data_source_name is required"), "{e}");
+        let e = build(
+            &conf("sql", json!({"driver": "sqlite", "query": "q"})),
+            &ctx,
+        )
+        .err()
+        .expect("refused");
+        assert!(
+            e.to_string().contains("field data_source_name is required"),
+            "{e}"
+        );
     }
 }

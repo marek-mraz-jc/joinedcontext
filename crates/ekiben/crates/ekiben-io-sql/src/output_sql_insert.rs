@@ -177,10 +177,13 @@ mod tests {
         let dsn = dir.path().join("i.db").display().to_string();
         let ctx = stream_ctx(None);
         let out = build(
-            &conf("sql_insert", json!({"driver": "sqlite", "dsn": dsn,
+            &conf(
+                "sql_insert",
+                json!({"driver": "sqlite", "dsn": dsn,
                 "init_statement": "CREATE TABLE t (a int, b text)",
                 "table": "t", "columns": ["a", "b"], "args_mapping": "root = [ this.a, this.b ]",
-                "prefix": "WITH x AS (SELECT 1)", "suffix": "ON CONFLICT DO NOTHING"})),
+                "prefix": "WITH x AS (SELECT 1)", "suffix": "ON CONFLICT DO NOTHING"}),
+            ),
             &ctx,
         )
         .unwrap();
@@ -193,7 +196,10 @@ mod tests {
         assert!(out.is_connected());
         out.write_batch(
             &ctx,
-            vec![Part::from_str(r#"{"a":1,"b":"x"}"#), Part::from_str(r#"{"a":2,"b":"y"}"#)],
+            vec![
+                Part::from_str(r#"{"a":1,"b":"x"}"#),
+                Part::from_str(r#"{"a":2,"b":"y"}"#),
+            ],
         )
         .await
         .unwrap();
@@ -208,7 +214,10 @@ mod tests {
             .write_batch(&ctx, vec![Part::from_str(r#"{"a":[1]}"#)])
             .await
             .unwrap_err();
-        assert!(e.to_string().contains("unsupported type []interface {}"), "{e}");
+        assert!(
+            e.to_string().contains("unsupported type []interface {}"),
+            "{e}"
+        );
         let e = out
             .write_batch(&ctx, vec![Part::from_str("not json")])
             .await
@@ -226,11 +235,17 @@ mod tests {
         let with = |k: &str, v: serde_json::Value| {
             let mut c = base.clone();
             c[k] = v;
-            build(&conf("sql_insert", c), &ctx).err().expect(k).to_string()
+            build(&conf("sql_insert", c), &ctx)
+                .err()
+                .expect(k)
+                .to_string()
         };
-        assert!(with("args_mapping", json!(5)).contains("field args_mapping: expected a mapping string"));
+        assert!(with("args_mapping", json!(5))
+            .contains("field args_mapping: expected a mapping string"));
         assert!(with("columns", json!("a")).contains("field columns: expected a list of strings"));
-        assert!(with("columns", json!(["a", 1])).contains("field columns: expected a list of strings"));
+        assert!(
+            with("columns", json!(["a", 1])).contains("field columns: expected a list of strings")
+        );
         assert!(with("max_in_flight", json!(1.5)).contains("max_in_flight: expected an integer"));
         assert_eq!(
             insert_sql("t", &[], &[1], Some("P"), None, Placeholder::Question).unwrap(),

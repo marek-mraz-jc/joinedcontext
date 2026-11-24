@@ -107,6 +107,11 @@ pub(crate) mod testing {
         stream_ctx_with(root, OrgQuotas::default())
     }
 
+    /// The CI database `key` names (PG_DSN, MY_DSN); a test of one runs only where it is given.
+    pub fn env_dsn(key: &str) -> Option<String> {
+        std::env::var(key).ok().filter(|s| !s.is_empty())
+    }
+
     pub fn conf(kind: &str, config: serde_json::Value) -> ComponentConfig {
         ComponentConfig {
             label: String::new(),
@@ -138,15 +143,25 @@ mod tests {
         let insert = lite(json!({"table": "t", "columns": ["a"], "args_mapping": "root = [1]"}));
         let input = |k: &str, v: &serde_json::Value| r.build_input(&conf(k, v.clone()), &ctx);
         assert_eq!(input("sql_raw", &query).unwrap().input_type(), "sql_raw");
-        assert_eq!(input("sql_select", &select).unwrap().input_type(), "sql_select");
+        assert_eq!(
+            input("sql_select", &select).unwrap().input_type(),
+            "sql_select"
+        );
         let output = |k: &str, v: &serde_json::Value| r.build_output(&conf(k, v.clone()), &ctx);
         assert_eq!(output("sql_raw", &query).unwrap().output_type(), "sql_raw");
-        assert_eq!(output("sql_insert", &insert).unwrap().output_type(), "sql_insert");
+        assert_eq!(
+            output("sql_insert", &insert).unwrap().output_type(),
+            "sql_insert"
+        );
         let deprecated =
             json!({"driver": "sqlite", "data_source_name": ":memory:", "query": "SELECT 1"});
         assert_eq!(output("sql", &deprecated).unwrap().output_type(), "sql");
         let pctx = ctx.to_proc_context("sql", "", "pipeline.processors");
-        for (k, v) in [("sql_raw", &query), ("sql_select", &select), ("sql_insert", &insert)] {
+        for (k, v) in [
+            ("sql_raw", &query),
+            ("sql_select", &select),
+            ("sql_insert", &insert),
+        ] {
             let p = r.build_processor(&conf(k, v.clone()), &pctx, "0").unwrap();
             assert_eq!(p.processor_type(), k);
         }
@@ -165,7 +180,8 @@ mod tests {
         ] {
             let errs = r.lint_component(kind, &conf(name, json!({"bogus": 1})));
             assert!(
-                errs.iter().any(|e| e.contains("field bogus not recognised")),
+                errs.iter()
+                    .any(|e| e.contains("field bogus not recognised")),
                 "{kind} {name}: {errs:?}"
             );
         }

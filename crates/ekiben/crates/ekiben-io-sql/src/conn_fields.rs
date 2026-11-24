@@ -973,7 +973,11 @@ mod tests {
         assert_eq!(o.get_application_name(), Some("f"));
         assert!(matches!(o.get_ssl_mode(), PgSslMode::VerifyFull));
         assert_eq!(o.get_host(), "localhost");
-        assert!(parse_postgres_dsn("").unwrap().opts.get_database().is_none());
+        assert!(parse_postgres_dsn("")
+            .unwrap()
+            .opts
+            .get_database()
+            .is_none());
         for (dsn, why) in [
             ("host", "expected key=value pairs"),
             ("=x", "expected key=value pairs"),
@@ -982,9 +986,15 @@ mod tests {
             (r"host=h\", "expected key=value pairs"),
             ("port=dbport", "port is not a number"),
             ("sslmode=sometimes", "unknown sslmode"),
-            ("sslrootcert=/etc/ca.pem", "parameter sslrootcert is not supported"),
+            (
+                "sslrootcert=/etc/ca.pem",
+                "parameter sslrootcert is not supported",
+            ),
             ("sslkey=k", "parameter sslkey is not supported"),
-            ("postgres://h/db?sslinline=x", "parameter sslinline is not supported"),
+            (
+                "postgres://h/db?sslinline=x",
+                "parameter sslinline is not supported",
+            ),
         ] {
             let e = parse_postgres_dsn(dsn).err().expect(dsn).to_string();
             assert!(e.contains(why), "{dsn}: {e}");
@@ -1023,9 +1033,15 @@ mod tests {
             ("u@tcp(h:port)/db", "invalid address"),
             ("u@tcp([::1)/db", "invalid address"),
             ("u@tcp([::1]:x)/db", "invalid address"),
-            ("u@tcp(h:1)/db?tls=custom", "tls config custom is not supported"),
+            (
+                "u@tcp(h:1)/db?tls=custom",
+                "tls config custom is not supported",
+            ),
             ("u@tcp(h:1)/db?loc=Local", "parameter loc is not supported"),
-            ("u@tcp(h:1)/db?allowNativePasswords=false", "parameter allowNativePasswords is not supported"),
+            (
+                "u@tcp(h:1)/db?allowNativePasswords=false",
+                "parameter allowNativePasswords is not supported",
+            ),
             ("u@tcp(h:1)/db?timeout=soon", "timeout: invalid duration"),
         ] {
             let e = parse_mysql_dsn(dsn).err().expect(dsn).to_string();
@@ -1061,16 +1077,31 @@ mod tests {
             "conn_max_life_time": "1m"});
         let settings = ConnSettings::from_config(verify.as_object().unwrap(), None).unwrap();
         for (driver, dsn) in [
-            (Driver::Postgres, format!("host=127.0.0.1 port={port} sslmode=disable connect_timeout=2")),
+            (
+                Driver::Postgres,
+                format!("host=127.0.0.1 port={port} sslmode=disable connect_timeout=2"),
+            ),
             (Driver::MySql, format!("u@tcp(127.0.0.1:{port})/db")),
         ] {
             let (target, _) = parse_dsn(driver, &dsn, None).unwrap();
-            let e = open(&target, &settings, &org).await.err().expect(&dsn).to_string();
-            assert!(e.contains("could not establish connection to database"), "{dsn}: {e}");
+            let e = open(&target, &settings, &org)
+                .await
+                .err()
+                .expect(&dsn)
+                .to_string();
+            assert!(
+                e.contains("could not establish connection to database"),
+                "{dsn}: {e}"
+            );
         }
         // Without the ping a pool opens lazily and fails only when used.
         let lazy = ConnSettings::from_config(&serde_json::Map::new(), None).unwrap();
-        let (target, _) = parse_dsn(Driver::Postgres, &format!("host=127.0.0.1 port={port}"), None).unwrap();
+        let (target, _) = parse_dsn(
+            Driver::Postgres,
+            &format!("host=127.0.0.1 port={port}"),
+            None,
+        )
+        .unwrap();
         let db = open(&target, &lazy, &org).await.unwrap();
         assert_eq!(db.driver(), Driver::Postgres);
         assert!(db.exec_raw("SELECT 1").await.is_err());
@@ -1083,9 +1114,17 @@ mod tests {
         let (ok, _) = parse_dsn(Driver::Sqlite, "file:ok.db", Some(dir.path())).unwrap();
         let db = open(&ok, &settings, &org).await.unwrap();
         assert_eq!(db.driver(), Driver::Sqlite);
-        let (missing, _) = parse_dsn(Driver::Sqlite, "file:none.db?mode=rw", Some(dir.path())).unwrap();
-        let e = open(&missing, &settings, &org).await.err().expect("no file").to_string();
-        assert!(e.contains("could not establish connection to database"), "{e}");
+        let (missing, _) =
+            parse_dsn(Driver::Sqlite, "file:none.db?mode=rw", Some(dir.path())).unwrap();
+        let e = open(&missing, &settings, &org)
+            .await
+            .err()
+            .expect("no file")
+            .to_string();
+        assert!(
+            e.contains("could not establish connection to database"),
+            "{e}"
+        );
     }
 
     #[tokio::test]
@@ -1096,23 +1135,14 @@ mod tests {
         let conf = serde_json::json!({"init_files": ["*.sql"],
             "init_statement": "INSERT INTO a VALUES (1)"});
         let s = ConnSettings::from_config(conf.as_object().unwrap(), Some(dir.path())).unwrap();
-        let (t, _) = parse_dsn(Driver::Sqlite, ":memory:", None).unwrap();
+        let file = dir.path().join("i.db").display().to_string();
+        let (t, _) = parse_dsn(Driver::Sqlite, &file, None).unwrap();
         let db = open(&t, &s, &private_org()).await.unwrap();
         s.apply(&db).await;
         s.apply(&db).await;
-        let Db::Sqlite(lite) = &db else {
-            unreachable!("a sqlite target opens a sqlite database")
-        };
-        let n = lite
-            .with(|c| {
-                let mut n = 0;
-                crate::sqlite::query(c, "SELECT x FROM a", &[], |_| {
-                    n += 1;
-                    true
-                })?;
-                Ok(n)
-            })
-            .await
+        let n: i64 = rusqlite::Connection::open(&file)
+            .unwrap()
+            .query_row("SELECT count(*) FROM a", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1, "the init statement ran once");
         let bad = serde_json::json!({"init_statement": "ALSO NOT SQL"});
@@ -1132,20 +1162,24 @@ mod tests {
         ));
         assert!(is_bad_conn(&io) && is_bad_conn(&crate::sqlx::Error::PoolClosed));
         assert!(!is_bad_conn(&crate::sqlx::Error::RowNotFound));
-        // A role the CI postgres does not know is SQLSTATE class 28 (28000), under trust and
-        // scram alike.
-        let Some(dsn) = std::env::var("PG_DSN").ok().filter(|s| !s.is_empty()) else {
-            eprintln!("PG_DSN not set: the postgres half runs in CI's ekiben job");
-            return;
-        };
-        let mut u = url::Url::parse(&dsn).unwrap();
+        if let Some(dsn) = crate::testing::env_dsn("PG_DSN") {
+            postgres_auth_error(&dsn).await;
+        }
+    }
+
+    /// A role the CI postgres does not know is SQLSTATE class 28 (28000), under trust and scram
+    /// alike.
+    async fn postgres_auth_error(dsn: &str) {
+        let mut u = url::Url::parse(dsn).unwrap();
         u.set_username("no_such_role").unwrap();
         let (t, _) = parse_dsn(Driver::Postgres, u.as_str(), None).unwrap();
         let s = ConnSettings::from_config(&serde_json::Map::new(), None).unwrap();
-        let Db::Postgres(p) = open(&t, &s, &private_org()).await.unwrap() else {
-            unreachable!("a postgres target opens a postgres pool")
-        };
-        let e = p.acquire().await.err().expect("an unknown role");
+        let db = open(&t, &s, &private_org()).await.unwrap();
+        let e = db
+            .exec_raw("SELECT 1")
+            .await
+            .err()
+            .expect("an unknown role");
         assert!(is_auth_error(Driver::Postgres, &e), "{e}");
     }
 

@@ -229,13 +229,16 @@ fn pg_text_to_binary(
                 .chars()
                 .filter(|c| *c != '-')
                 .collect();
-            if hex.len() != 32 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-                return Err(pg_invalid("uuid", &t));
-            }
-            (0..16)
-                .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16))
-                .collect::<Result<Vec<u8>, _>>()
-                .map_err(|_| pg_invalid("uuid", &t))?
+            // Nibbles of bytes, not slices of the text: a multibyte character is no digit.
+            let nibble = |b: u8| char::from(b).to_digit(16);
+            let bytes: Option<Vec<u8>> = hex
+                .as_bytes()
+                .chunks(2)
+                .map(|p| Some((nibble(p[0])? << 4 | nibble(*p.get(1)?)?) as u8))
+                .collect();
+            bytes
+                .filter(|b| b.len() == 16)
+                .ok_or_else(|| pg_invalid("uuid", &t))?
         }
         1700 => encode_numeric(&s()).ok_or_else(|| pg_invalid("numeric", &s()))?,
         1114 | 1184 => {
@@ -668,9 +671,7 @@ fn mysql_value(
                 // Go marshals a float32 with 32-bit precision: 1.1, not 1.100000023841858.
                 Value::Float(f32_as_go(f))
             }
-            "DOUBLE" => {
-                Value::Float(<f64 as Decode<MySql>>::decode(raw).map_err(err_text)?)
-            }
+            "DOUBLE" => Value::Float(<f64 as Decode<MySql>>::decode(raw).map_err(err_text)?),
             "DATETIME" | "TIMESTAMP" | "DATE" => {
                 let t = mysql_binary_datetime(bytes)?;
                 if parse_time {
@@ -828,11 +829,9 @@ fn mysql_args(args: &[Value]) -> Result<MySqlArguments, String> {
         check_arg(i, v)?;
         let r = match v {
             // check_arg refused arrays and objects above.
-            Value::Null
-            | Value::Nothing
-            | Value::Delete
-            | Value::Array(_)
-            | Value::Object(_) => a.add(None::<String>),
+            Value::Null | Value::Nothing | Value::Delete | Value::Array(_) | Value::Object(_) => {
+                a.add(None::<String>)
+            }
             Value::Bool(b) => a.add(*b),
             Value::Int(n) => a.add(*n),
             Value::Uint(n) => a.add(*n as i64),
@@ -1116,7 +1115,7 @@ mod tests {
             ("-0", Some("0")),
             ("+.5", Some("0.5")),
         ] {
-            let b = encode_numeric(t).unwrap_or_else(|| panic!("{t}"));
+            let b = encode_numeric(t).expect(t);
             if let Some(back) = back {
                 assert_eq!(decode_numeric(&b).unwrap(), back, "{t}");
             }
@@ -1124,7 +1123,10 @@ mod tests {
         for bad in ["", ".", "-", "1e", "1ex", "1.2.3", "١"] {
             assert!(encode_numeric(bad).is_none(), "{bad:?}");
         }
-        assert!(decode_numeric(&[0, 1, 0, 0, 0, 0, 0, 0]).is_none(), "a digit short");
+        assert!(
+            decode_numeric(&[0, 1, 0, 0, 0, 0, 0, 0]).is_none(),
+            "a digit short"
+        );
         assert!(decode_numeric(&[0, 0]).is_none());
     }
 
@@ -1183,14 +1185,23 @@ mod tests {
             (1083, "time"),
             (1266, "timetz"),
         ] {
-            assert_eq!(short(oid, name), format!("unexpected {name} value of 1 bytes"));
+            assert_eq!(
+                short(oid, name),
+                format!("unexpected {name} value of 1 bytes")
+            );
         }
         assert!(pg_decode(16, "bool", Vec::new(), false).is_err());
         // timetz: eight bytes of time but no zone.
         assert!(pg_decode(1266, "timetz", vec![0; 8], false).is_err());
         let infinity = |b: Vec<u8>| pg_decode(1082, "date", b, false).unwrap();
-        assert_eq!(infinity(i32::MAX.to_be_bytes().to_vec()), Value::String("infinity".into()));
-        assert_eq!(infinity(i32::MIN.to_be_bytes().to_vec()), Value::String("-infinity".into()));
+        assert_eq!(
+            infinity(i32::MAX.to_be_bytes().to_vec()),
+            Value::String("infinity".into())
+        );
+        assert_eq!(
+            infinity(i32::MIN.to_be_bytes().to_vec()),
+            Value::String("-infinity".into())
+        );
         assert_eq!(
             pg_decode(1186, "interval", vec![0; 16], false).unwrap_err(),
             "ekiben does not decode postgres columns of type interval"
@@ -1215,9 +1226,18 @@ mod tests {
         let e = |b: &[u8]| mysql_binary_datetime(b).unwrap_err();
         assert_eq!(e(&[]), "empty buffer");
         assert_eq!(e(&[0]), "unexpected null");
-        assert_eq!(e(&[4, 0xe8, 0x07, 1]), "expected at least 4 bytes for date, got 3");
-        assert_eq!(e(&[4, 0xe8, 0x07, 13, 1]), "server returned invalid date: 2024/13/1");
-        assert_eq!(e(&[4, 0xff, 0xff, 1, 1]), "server returned invalid date: 65535/1/1");
+        assert_eq!(
+            e(&[4, 0xe8, 0x07, 1]),
+            "expected at least 4 bytes for date, got 3"
+        );
+        assert_eq!(
+            e(&[4, 0xe8, 0x07, 13, 1]),
+            "server returned invalid date: 2024/13/1"
+        );
+        assert_eq!(
+            e(&[4, 0xff, 0xff, 1, 1]),
+            "server returned invalid date: 65535/1/1"
+        );
         assert_eq!(e(&[7, 0xe8, 0x07, 1, 2, 3, 4]), "expected 3 bytes for time");
         assert_eq!(
             e(&[11, 0xe8, 0x07, 1, 2, 25, 0, 0, 0, 0, 0, 0]),
@@ -1237,20 +1257,47 @@ mod tests {
     fn mysql_text_times_name_why_a_date_is_refused() {
         let e = |s: &str| mysql_text_time(s).unwrap_err();
         assert_eq!(e("2024"), "parsing time \"2024\": premature end of input");
-        assert_eq!(e("2024/01/02"), "parsing time \"2024/01/02\": input contains invalid characters");
+        assert_eq!(
+            e("2024/01/02"),
+            "parsing time \"2024/01/02\": input contains invalid characters"
+        );
         assert_eq!(e(""), "parsing time \"\": premature end of input");
-        assert_eq!(e("x"), "parsing time \"x\": input contains invalid characters");
-        assert_eq!(e("2024-01-"), "parsing time \"2024-01-\": premature end of input");
-        assert_eq!(e("2024-1x-02"), "parsing time \"2024-1x-02\": input contains invalid characters");
-        assert_eq!(e("2024-01-02x"), "parsing time \"2024-01-02x\": trailing input");
-        assert_eq!(e("2024-13-02"), "parsing time \"2024-13-02\": input is out of range");
-        assert_eq!(e("2023-02-29"), "parsing time \"2023-02-29\": no possible date and time matching input");
+        assert_eq!(
+            e("x"),
+            "parsing time \"x\": input contains invalid characters"
+        );
+        assert_eq!(
+            e("2024-01-"),
+            "parsing time \"2024-01-\": premature end of input"
+        );
+        assert_eq!(
+            e("2024-1x-02"),
+            "parsing time \"2024-1x-02\": input contains invalid characters"
+        );
+        assert_eq!(
+            e("2024-01-02x"),
+            "parsing time \"2024-01-02x\": trailing input"
+        );
+        assert_eq!(
+            e("2024-13-02"),
+            "parsing time \"2024-13-02\": input is out of range"
+        );
+        assert_eq!(
+            e("2023-02-29"),
+            "parsing time \"2023-02-29\": no possible date and time matching input"
+        );
         assert_eq!(
             e("9999-12-31 23:00:00"),
             "parsing time \"9999-12-31 23:00:00\": input is out of range"
         );
-        assert!(matches!(mysql_text_time("0000-00-00 00:00:00"), Ok(Value::Timestamp(_))));
-        assert!(matches!(mysql_text_time("2024-01-02"), Ok(Value::Timestamp(_))));
+        assert!(matches!(
+            mysql_text_time("0000-00-00 00:00:00"),
+            Ok(Value::Timestamp(_))
+        ));
+        assert!(matches!(
+            mysql_text_time("2024-01-02"),
+            Ok(Value::Timestamp(_))
+        ));
     }
 
     #[test]
@@ -1262,13 +1309,19 @@ mod tests {
             "2024-01-02T03:04:05+0a",
             "2024-01-02T03:04:05+123",
         ] {
-            assert!(parse_with_offset(t, "%Y-%m-%dT%H:%M:%S%.f").is_none(), "{t}");
+            assert!(
+                parse_with_offset(t, "%Y-%m-%dT%H:%M:%S%.f").is_none(),
+                "{t}"
+            );
         }
         assert_eq!(
             db_error_text(&crate::sqlx::Error::RowNotFound),
             crate::sqlx::Error::RowNotFound.to_string()
         );
-        assert_eq!(db_error_text(&crate::sqlx::Error::Protocol("p".into())), "p");
+        assert_eq!(
+            db_error_text(&crate::sqlx::Error::Protocol("p".into())),
+            "p"
+        );
         // lib/pq's parameters carry no type: the server infers it from the statement.
         assert_eq!(
             <PgRaw as crate::sqlx::Type<Postgres>>::type_info().oid(),
@@ -1276,23 +1329,25 @@ mod tests {
         );
     }
 
-    /// The pool of the CI database `key` names, or `None` where it is not given.
-    async fn env_db(key: &str, driver: Driver) -> Option<Db> {
-        let Some(dsn) = std::env::var(key).ok().filter(|s| !s.is_empty()) else {
-            eprintln!("{key} not set: this half runs in CI's ekiben job");
-            return None;
-        };
-        let (t, _) = crate::conn_fields::parse_dsn(driver, &dsn, None).unwrap();
+    /// The pool of the CI database `dsn` names.
+    async fn env_db(dsn: &str, driver: Driver) -> Db {
+        let (t, _) = crate::conn_fields::parse_dsn(driver, dsn, None).unwrap();
         let quotas = ekiben_core::OrgQuotas {
             allow_private_ips: true,
             ..Default::default()
         };
         let org = ekiben_core::OrgContext::new(ekiben_core::OrgId::new("o"), quotas);
-        let s = crate::conn_fields::ConnSettings::from_config(&serde_json::Map::new(), None).unwrap();
-        Some(crate::conn_fields::open(&t, &s, &org).await.unwrap())
+        let s =
+            crate::conn_fields::ConnSettings::from_config(&serde_json::Map::new(), None).unwrap();
+        crate::conn_fields::open(&t, &s, &org).await.unwrap()
     }
 
-    async fn rows(db: &Db, sql: &str, args: Vec<Value>, parse_time: bool) -> Vec<Result<Value, String>> {
+    async fn rows(
+        db: &Db,
+        sql: &str,
+        args: Vec<Value>,
+        parse_time: bool,
+    ) -> Vec<Result<Value, String>> {
         let (tx, mut rx) = tokio::sync::mpsc::channel(4);
         tokio::spawn(stream_rows(db.clone(), sql.into(), args, parse_time, tx));
         let mut out = Vec::new();
@@ -1304,26 +1359,52 @@ mod tests {
 
     #[tokio::test]
     async fn postgres_arguments_nulls_counts_and_rows() {
-        let Some(db) = env_db("PG_DSN", Driver::Postgres).await else {
-            return;
-        };
-        let got = rows(&db, "SELECT $1::int4 IS NULL AS n", vec![Value::Null], false).await;
+        if let Some(dsn) = crate::testing::env_dsn("PG_DSN") {
+            postgres_arguments(&dsn).await;
+        }
+    }
+
+    async fn postgres_arguments(dsn: &str) {
+        let db = env_db(dsn, Driver::Postgres).await;
+        let got = rows(
+            &db,
+            "SELECT $1::int4 IS NULL AS n",
+            vec![Value::Null],
+            false,
+        )
+        .await;
         assert_eq!(got[0].as_ref().unwrap().to_go_json(), r#"{"n":true}"#);
         let got = rows(&db, "SELECT $1::int4 AS a", vec![], false).await;
         assert_eq!(
             got,
-            vec![Err("pq: got 0 parameters but the statement requires 1".to_string())]
+            vec![Err(
+                "pq: got 0 parameters but the statement requires 1".to_string()
+            )]
         );
-        let e = exec(&db, "SELECT $1::int4, $2::int4", &[Value::Int(1)]).await.unwrap_err();
-        assert_eq!(db_error_text(&e), "pq: got 1 parameters but the statement requires 2");
-        let got = rows(&db, "SELECT $1::text AS a", vec![Value::Array(vec![].into())], false).await;
-        assert!(got[0].as_ref().unwrap_err().contains("unsupported type []interface {}"));
-        let Db::Postgres(p) = &db else {
-            unreachable!("a postgres DSN opens a postgres pool")
-        };
+        let e = exec(&db, "SELECT $1::int4, $2::int4", &[Value::Int(1)])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            db_error_text(&e),
+            "pq: got 1 parameters but the statement requires 2"
+        );
+        let got = rows(
+            &db,
+            "SELECT $1::text AS a",
+            vec![Value::Array(vec![].into())],
+            false,
+        )
+        .await;
+        assert!(got[0]
+            .as_ref()
+            .unwrap_err()
+            .contains("unsupported type []interface {}"));
+        let p = crate::sqlx::postgres::PgPool::connect_lazy_with(
+            crate::conn_fields::parse_postgres_dsn(dsn).unwrap().opts,
+        );
         // A simple query's row comes back as text; a column past the row's end is an error.
         let row = crate::sqlx::raw_sql(crate::sqlx::AssertSqlSafe("SELECT 7 AS a".to_string()))
-            .fetch_one(p)
+            .fetch_one(&p)
             .await
             .unwrap();
         assert_eq!(pg_value(&row, 0).unwrap(), Value::String("7".into()));
@@ -1333,9 +1414,13 @@ mod tests {
 
     #[tokio::test]
     async fn mysql_arguments_of_every_type_and_time_edges() {
-        let Some(db) = env_db("MY_DSN", Driver::MySql).await else {
-            return;
-        };
+        if let Some(dsn) = crate::testing::env_dsn("MY_DSN") {
+            mysql_arguments(&dsn).await;
+        }
+    }
+
+    async fn mysql_arguments(dsn: &str) {
+        let db = env_db(dsn, Driver::MySql).await;
         let t = crate::sqlite::parse_time("2024-01-02T03:04:05.25+01:00").unwrap();
         let args = vec![
             Value::Null,
@@ -1349,20 +1434,41 @@ mod tests {
         ];
         let got = rows(
             &db,
-            "SELECT ? AS a, ? AS b, ? AS c, ? AS d, ? AS e, ? AS f, ? AS g, CAST(? AS DATETIME(6)) AS h",
+            "SELECT ? AS a, ? AS b, ? AS c, ? AS d, ? AS e, ? AS f, ? AS g, CAST(? AS DATETIME(6)) AS h, CAST(18446744073709551615 AS UNSIGNED) AS u, CAST(5 AS UNSIGNED) AS v",
             args,
             false,
         )
         .await;
         assert_eq!(
             got[0].as_ref().unwrap().to_go_json(),
-            r#"{"a":null,"b":1,"c":-2,"d":7,"e":1.5,"f":"s","g":"b","h":"2024-01-02 02:04:05.250000"}"#
+            r#"{"a":null,"b":1,"c":-2,"d":7,"e":1.5,"f":"s","g":"b","h":"2024-01-02 02:04:05.250000","u":"18446744073709551615","v":5}"#
         );
-        let got = rows(&db, "SELECT ? AS a", vec![Value::Object(Default::default())], false).await;
-        assert!(got[0].as_ref().unwrap_err().contains("map[string]interface {}"));
+        let got = rows(
+            &db,
+            "SELECT ? AS a",
+            vec![Value::Object(Default::default())],
+            false,
+        )
+        .await;
+        assert!(got[0]
+            .as_ref()
+            .unwrap_err()
+            .contains("map[string]interface {}"));
         // A TIME past a day, and a DATETIME past what a time.Time in UTC holds.
-        let got = rows(&db, "SELECT CAST('25:00:00' AS TIME) AS t, ? AS x", vec![Value::Int(1)], false).await;
-        assert!(got[0].as_ref().unwrap_err().contains("is not a time of day"), "{got:?}");
+        let got = rows(
+            &db,
+            "SELECT CAST('25:00:00' AS TIME) AS t, ? AS x",
+            vec![Value::Int(1)],
+            false,
+        )
+        .await;
+        assert!(
+            got[0]
+                .as_ref()
+                .unwrap_err()
+                .contains("is not a time of day"),
+            "{got:?}"
+        );
         let got = rows(
             &db,
             "SELECT CAST(? AS DATETIME) AS t",
@@ -1370,15 +1476,21 @@ mod tests {
             true,
         )
         .await;
-        assert!(got[0].as_ref().unwrap_err().contains("is out of range"), "{got:?}");
-        let Db::MySql(p) = &db else {
-            unreachable!("a mysql DSN opens a mysql pool")
-        };
+        assert!(
+            got[0].as_ref().unwrap_err().contains("is out of range"),
+            "{got:?}"
+        );
+        let p = crate::sqlx::mysql::MySqlPool::connect_lazy_with(
+            crate::conn_fields::parse_mysql_dsn(dsn).unwrap().0,
+        );
         let row = crate::sqlx::raw_sql(crate::sqlx::AssertSqlSafe("SELECT 7 AS a".to_string()))
-            .fetch_one(p)
+            .fetch_one(&p)
             .await
             .unwrap();
-        assert_eq!(mysql_value(&row, 0, false, true).unwrap(), Value::String("7".into()));
+        assert_eq!(
+            mysql_value(&row, 0, false, true).unwrap(),
+            Value::String("7".into())
+        );
         assert!(mysql_value(&row, 9, false, true).is_err());
         db.close().await;
     }
@@ -1633,7 +1745,7 @@ mod tests {
             Ok(Value::Timestamp(t)) => ekiben_bloblang::value::format_rfc3339_nano(&t),
             other => format!("{other:?}"),
         };
-        let some = |v: Option<Value>| v.ok_or_else(|| "none".to_string());
+        let some = |v: Option<Value>| v.ok_or("none").map_err(String::from);
         let pg_ts = |m: i64| some(pg_timestamp(m));
         let pg_date = |d: i32| some(pg_date(d));
         let pg_time = |m: i64, zone: Option<i32>| some(pg_time(m, zone));
