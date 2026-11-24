@@ -3604,7 +3604,12 @@ async fn a_router_that_fails_searches_the_question_and_a_refusal_is_not_cached()
 /// `ROUTING_DEADLINE`, and the reader is told "understanding" before anything is listed.
 #[tokio::test]
 async fn a_silent_gateway_holds_the_question_one_routing_deadline_at_most() {
-    let w = world("chatsilent", deployment(Channel::Public, 50_000, 10)).await;
+    let mut d = deployment(Channel::Public, 50_000, 10);
+    // The connector's own timeout is for real reads: far past the routing deadline.
+    for connector in &mut d.spec.connectors {
+        connector.timeout_seconds = 20;
+    }
+    let w = world("chatsilent", d).await;
     Mock::given(method("POST"))
         .and(path(format!("/api/endpoint/{SLUG}/mcp")))
         .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(30)))
