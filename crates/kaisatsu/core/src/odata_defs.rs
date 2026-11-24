@@ -1052,3 +1052,386 @@ pub fn idp_link_to_row(l: &IdentityProviderLinkRecord) -> Value {
         "created_at": l.created_at.to_rfc3339(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jc_time::TimestampTz;
+    use std::collections::{BTreeMap, HashMap, HashSet};
+
+    fn s(v: &str) -> String {
+        v.to_owned()
+    }
+
+    /// One row per entity set, each built from a record whose optional fields are empty.
+    fn rows() -> Vec<(&'static str, Value)> {
+        let now = TimestampTz::now();
+        vec![
+            ("Realms", realm_to_row(&RealmConfig::default())),
+            (
+                "Organizations",
+                org_to_row(&Organization {
+                    id: s("o"),
+                    realm_id: s("r"),
+                    name: s("n"),
+                    alias: s("a"),
+                    enabled: true,
+                    description: String::new(),
+                    domains: Vec::new(),
+                    attributes: HashMap::new(),
+                    managed_by: None,
+                }),
+            ),
+            (
+                "OrganizationDomains",
+                org_domain_to_row(&OrganizationDomain {
+                    id: s("d"),
+                    realm_id: s("r"),
+                    org_id: s("o"),
+                    name: s("example.org"),
+                    verified: false,
+                    verification_token: None,
+                    challenge_hash: None,
+                    challenge_expires_at: None,
+                }),
+            ),
+            ("People", person_to_row(&UserRepresentation::default())),
+            (
+                "Memberships",
+                membership_to_row(&Membership {
+                    id: s("m"),
+                    realm_id: s("r"),
+                    org_id: s("o"),
+                    person_id: s("p"),
+                    org_roles: vec![s("org-admin")],
+                    created_at: now,
+                }),
+            ),
+            ("Groups", group_to_row(&GroupRepresentation::default())),
+            (
+                "GroupMembers",
+                group_member_to_row(&GroupMemberRecord {
+                    id: s("gm"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    group_id: s("g"),
+                    user_id: s("u"),
+                }),
+            ),
+            ("Roles", role_to_row(&RoleRepresentation::default())),
+            (
+                "RoleMappings",
+                role_mapping_to_row(&RoleMappingRecord {
+                    id: s("rm"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    principal_kind: s("user"),
+                    principal_id: s("u"),
+                    role_id: s("role"),
+                    role_name: s("viewer"),
+                    client_uuid: None,
+                }),
+            ),
+            (
+                "Applications",
+                client_to_row(&ClientRepresentation::default()),
+            ),
+            (
+                "ClientScopes",
+                scope_to_row(&ClientScopeRepresentation::default()),
+            ),
+            (
+                "ProtocolMappers",
+                mapper_to_row(&ProtocolMapperRepresentation::default()),
+            ),
+            (
+                "IdentityProviders",
+                idp_to_row(&IdentityProviderRepresentation::default()),
+            ),
+            (
+                "Credentials",
+                credential_to_row(&CredentialRecord::default(), None),
+            ),
+            (
+                "Sessions",
+                session_to_row(&SsoSession {
+                    id: s("ss"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    handle_hash: s("h"),
+                    user_id: s("u"),
+                    username: s("ada"),
+                    ip_address: s("127.0.0.1"),
+                    user_agent: s("ua"),
+                    start: 1,
+                    last_access: 2,
+                    auth_time: 1,
+                    acr: s("1"),
+                    amr: vec![s("pwd")],
+                    clients: HashMap::new(),
+                    idle_expires_at: now,
+                    max_expires_at: now,
+                }),
+            ),
+            (
+                "ClientSessions",
+                client_session_to_row(&ClientSession {
+                    id: s("cs"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    sso_session_id: s("ss"),
+                    client_id: s("c"),
+                    user_id: s("u"),
+                    scopes: vec![s("openid")],
+                    created_at: now,
+                    last_access: now,
+                }),
+            ),
+            (
+                "OfflineSessions",
+                offline_session_to_row(&OfflineSession {
+                    id: s("os"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    user_id: s("u"),
+                    client_id: s("c"),
+                    scopes: Vec::new(),
+                    created_at: now,
+                    last_access: now,
+                    idle_expires_at: now,
+                    max_expires_at: now,
+                }),
+            ),
+            (
+                "Consents",
+                consent_to_row(&ConsentRecord {
+                    id: s("co"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    user_id: s("u"),
+                    client_id: s("c"),
+                    granted_client_scopes: Vec::new(),
+                    created_date: 1,
+                    last_updated_date: 2,
+                }),
+            ),
+            (
+                "Events",
+                event_to_row(&AuditEvent {
+                    id: s("e"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    time: 1,
+                    event_type: s("LOGIN"),
+                    client_id: None,
+                    user_id: None,
+                    session_id: None,
+                    ip_address: s("127.0.0.1"),
+                    error: None,
+                    details: BTreeMap::new(),
+                }),
+            ),
+            (
+                "AdminEvents",
+                admin_event_to_row(&AdminEvent {
+                    id: s("ae"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    time: 1,
+                    operation_type: s("CREATE"),
+                    resource_type: s("USER"),
+                    resource_path: s("users/u"),
+                    actor_id: s("admin"),
+                    actor_client_id: None,
+                    representation: None,
+                }),
+            ),
+            (
+                "SigningKeys",
+                signing_key_to_row(&SigningKeyRecord {
+                    id: s("k"),
+                    realm_id: s("r"),
+                    kid: s("kid"),
+                    algorithm: s("ES256"),
+                    status: s("active"),
+                    priority: 1,
+                    public_jwk_json: s("{}"),
+                    encrypted_private_key: vec![1, 2, 3],
+                    created_at: now,
+                    activate_at: None,
+                    expires_at: None,
+                }),
+            ),
+            (
+                "RequiredActions",
+                required_action_to_row(&RequiredActionConfig::default()),
+            ),
+            ("BrandingBlocks", branding_to_row(&BrandingBlock::default())),
+            (
+                "WebAuthnCredentials",
+                webauthn_credential_to_row(&WebAuthnCredentialRecord {
+                    id: s("w"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    user_id: s("u"),
+                    user_handle: s("uh"),
+                    credential_id: s("cid"),
+                    public_key_cose_json: s("{}"),
+                    cose_alg: -7,
+                    sign_count: 0,
+                    uv_initialized: true,
+                    backup_eligible: false,
+                    backup_state: false,
+                    transports: vec![s("usb")],
+                    attestation_type: s("none"),
+                    rp_id: s("example.org"),
+                    user_label: None,
+                    created_at: now,
+                    last_used_at: None,
+                }),
+            ),
+            (
+                "EmailOutbox",
+                email_outbox_to_row(&EmailOutboxRecord {
+                    id: s("eo"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    user_id: s("u"),
+                    to_address: s("ada@example.org"),
+                    locale: s("en"),
+                    template_kind: s("verify-email"),
+                    action_jti: s("jti"),
+                    actions: Vec::new(),
+                    client_id: None,
+                    redirect_uri: None,
+                    lifespan_secs: 60,
+                    issuer: s("https://id.example.org"),
+                    status: s("queued"),
+                    attempts: 0,
+                    last_error: None,
+                    next_attempt_at: now,
+                    created_at: now,
+                    sent_at: None,
+                }),
+            ),
+            (
+                "IdentityProviderLinks",
+                idp_link_to_row(&IdentityProviderLinkRecord {
+                    id: s("l"),
+                    realm_id: s("r"),
+                    org_id: None,
+                    user_id: s("u"),
+                    idp_alias: s("google"),
+                    external_user_id: s("x"),
+                    external_username: None,
+                    created_at: now,
+                }),
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_row_holds_exactly_the_fields_its_entity_set_declares_with_their_kinds() {
+        let service = kaisatsu_odata_service();
+        assert_eq!(service.namespace, "JoinedContext.Kaisatsu");
+        let rows = rows();
+        let declared: HashSet<&str> = service.sets.iter().map(|d| d.set.as_str()).collect();
+        let built: HashSet<&str> = rows.iter().map(|(set, _)| *set).collect();
+        assert_eq!(declared, built, "one row builder per entity set");
+        assert_eq!(service.sets.len(), 26);
+        for (set, row) in rows {
+            let def = service.sets.iter().find(|d| d.set == set).expect("set");
+            let obj = row
+                .as_object()
+                .unwrap_or_else(|| panic!("{set}: row is an object"));
+            let fields: HashSet<&str> = def.fields.iter().map(|f| f.name.as_str()).collect();
+            let keys: HashSet<&str> = obj.keys().map(String::as_str).collect();
+            assert_eq!(fields, keys, "{set}: row keys are the declared fields");
+            assert!(fields.contains(def.key.as_str()), "{set}: key is a field");
+            for f in &def.fields {
+                let v = &obj[&f.name];
+                if f.name == def.key {
+                    assert!(!f.nullable, "{set}.{}: a key is never nullable", f.name);
+                }
+                let ok = match (&f.kind, v) {
+                    (_, Value::Null) => f.nullable,
+                    (FieldKind::String, Value::String(_)) => true,
+                    (FieldKind::DateTime, Value::String(t)) => t.parse::<TimestampTz>().is_ok(),
+                    (FieldKind::Integer, Value::Number(n)) => n.is_i64() || n.is_u64(),
+                    (FieldKind::Boolean, Value::Bool(_)) => true,
+                    _ => false,
+                };
+                assert!(ok, "{set}.{}: {v} does not fit {:?}", f.name, f.kind);
+            }
+        }
+    }
+
+    #[test]
+    fn no_entity_set_declares_a_secret_field() {
+        for def in kaisatsu_odata_service().sets {
+            for f in &def.fields {
+                assert!(
+                    !matches!(
+                        f.name.as_str(),
+                        "passwordHash" | "secret" | "secretData" | "encryptedPrivateKey"
+                    ) && !f.name.to_ascii_lowercase().contains("secret"),
+                    "{}.{} is a secret",
+                    def.set,
+                    f.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn read_needs_read_and_writes_need_the_sets_write_permission() {
+        let expected: &[(&str, Option<&str>)] = &[
+            ("Realms", Some("write:Realm")),
+            ("Organizations", Some("write:Organization")),
+            ("OrganizationDomains", Some("write:Organization")),
+            ("People", Some("write:Person")),
+            ("Memberships", Some("write:Person")),
+            ("Groups", Some("write:Group")),
+            ("GroupMembers", Some("write:Group")),
+            ("Roles", Some("write:Role")),
+            ("RoleMappings", Some("write:Role")),
+            ("Applications", Some("write:Application")),
+            ("ClientScopes", Some("write:ClientScope")),
+            ("ProtocolMappers", Some("write:Application")),
+            ("IdentityProviders", Some("write:Realm")),
+            ("Credentials", Some("write:Person")),
+            ("Sessions", Some("write:Session")),
+            ("ClientSessions", None),
+            ("OfflineSessions", Some("write:Session")),
+            ("Consents", Some("write:Person")),
+            ("Events", None),
+            ("AdminEvents", None),
+            ("SigningKeys", None),
+            ("RequiredActions", Some("write:Realm")),
+            ("BrandingBlocks", Some("write:Organization")),
+            ("WebAuthnCredentials", Some("write:Person")),
+            ("EmailOutbox", Some("write:Person")),
+            ("IdentityProviderLinks", Some("write:Person")),
+        ];
+        let service = kaisatsu_odata_service();
+        assert_eq!(service.sets.len(), expected.len());
+        for (set, write) in expected {
+            let def = service.sets.iter().find(|d| d.set == *set).expect("set");
+            let mut want = vec![
+                (Operation::Read, Some(s("read"))),
+                (Operation::Export, Some(s("read"))),
+            ];
+            if let Some(w) = write {
+                for op in [Operation::Create, Operation::Update, Operation::Delete] {
+                    want.push((op, Some(s(w))));
+                }
+            }
+            let got: Vec<_> = def
+                .rules
+                .iter()
+                .map(|r| (r.operation, r.permission.clone()))
+                .collect();
+            assert_eq!(got, want, "{set}");
+        }
+    }
+}
