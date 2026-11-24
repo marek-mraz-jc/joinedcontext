@@ -564,9 +564,9 @@ fn follow_organizations_of(
     shutdown: &tokio_util::sync::CancellationToken,
     tasks: &tokio_util::task::TaskTracker,
 ) {
-    let (tx, mut rx) = tokio::sync::watch::channel(None);
+    let (tx, mut rx) = tokio::sync::watch::channel(super::follow::Organizations::default());
     published.follow("dataroom", move |set| {
-        tx.send_replace(Some(set.clone()));
+        tx.send_replace(set.clone());
     });
     let shutdown = shutdown.clone();
     tasks.spawn(async move {
@@ -576,9 +576,7 @@ fn follow_organizations_of(
                 changed = rx.changed() => if changed.is_err() { return },
             }
             let set = rx.borrow_and_update().clone();
-            if let Some(set) = set {
-                run.apply(&set).await;
-            }
+            run.apply(&set).await;
         }
     });
 }
@@ -710,14 +708,12 @@ fn follow_appearances(
     tasks.spawn(async move {
         let mut seen: BTreeMap<CatalogueId, BrandingBlock> = BTreeMap::new();
         loop {
-            if let Some(portal) = super::PORTAL_STATE.get() {
-                apply_looks(
-                    &portal.mirror,
-                    (&catalogue, &portals, &configured),
-                    &shared,
-                    &mut seen,
-                );
-            }
+            apply_looks(
+                super::PORTAL_STATE.get(),
+                (&catalogue, &portals, &configured),
+                &shared,
+                &mut seen,
+            );
             tokio::select! {
                 () = shutdown.cancelled() => return,
                 () = tokio::time::sleep(super::appearance::FOLLOW_LOOK_EVERY) => {}
@@ -726,13 +722,13 @@ fn follow_appearances(
     });
 }
 
-/// One round of [`follow_appearances`]: each catalogue's branding as `mirror` has it now
-/// ([`catalogue_looks`] of `wanted`'s catalogues, portals and configured blocks) written over
-/// `shared` where it changed since `seen`; a catalogue `seen` holds that no longer has a look
-/// leaves `shared`.
+/// One round of [`follow_appearances`]: each catalogue's branding as `portal`'s mirror has it
+/// now ([`catalogue_looks`] of `wanted`'s catalogues, portals and configured blocks) written
+/// over `shared` where it changed since `seen`; a catalogue `seen` holds that no longer has a
+/// look leaves `shared`. Nothing while no Portal runs in this process.
 #[cfg(feature = "portal")]
 fn apply_looks(
-    mirror: &joinedcontext_portal::store::Mirror,
+    portal: Option<&joinedcontext_portal::state::AppState>,
     wanted: (
         &BTreeMap<String, CatalogueId>,
         &[super::portals::OrganizationPortals],
@@ -741,8 +737,11 @@ fn apply_looks(
     shared: &std::sync::RwLock<BTreeMap<CatalogueId, BrandingBlock>>,
     seen: &mut BTreeMap<CatalogueId, BrandingBlock>,
 ) {
+    let Some(portal) = portal else {
+        return;
+    };
     let (catalogue, portals, configured) = wanted;
-    let wanted = catalogue_looks(mirror, catalogue, portals, configured);
+    let wanted = catalogue_looks(&portal.mirror, catalogue, portals, configured);
     let mut branding = shared
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1578,6 +1577,9 @@ mod tests {
         .await
         .expect("the module starts and moves both catalogues");
         shutdown.cancel();
+        open_store(&cfg, &moves)
+            .await
+            .expect("a second start with the owner finds nothing to move");
         let logged = std::fs::read_to_string(log.path()).unwrap();
         assert!(
             logged.contains("moved to its Organization's OrgId") && logged.contains("moved="),
@@ -1725,6 +1727,62 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(10), tasks.wait())
             .await
             .expect("the follower ends with the shutdown");
+    }
+
+    /// A `[dataroom]` org_id or catalogue_id that is no UUID, or a publisher badge that cannot
+    /// draw, refuses the start and names the field.
+    #[tokio::test]
+    async fn a_bad_id_or_badge_refuses_the_start() {
+        let (setup, secrets) = (
+            crate::setup::Setup::default(),
+            crate::config::Secrets::default(),
+        );
+        let siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let mut badge = DataroomSection::default();
+        badge.publishers.insert(
+            "praha".into(),
+            crate::config::PublisherSeed {
+                initials: String::new(),
+                colour: "#b4232a".into(),
+                description: BTreeMap::new(),
+            },
+        );
+        let cases = [
+            (
+                DataroomSection {
+                    org_id: "not-a-uuid".into(),
+                    ..DataroomSection::default()
+                },
+                "",
+            ),
+            (
+                DataroomSection {
+                    catalogue_id: "not-a-uuid".into(),
+                    ..DataroomSection::default()
+                },
+                "",
+            ),
+            (badge, "[dataroom.publishers.praha] initials"),
+        ];
+        for (cfg, names) in cases {
+            let ctx = crate::modules::BuildCtx {
+                setup: &setup,
+                siblings: &siblings,
+                secrets: &secrets,
+                door: None,
+                portal_internal: None,
+            };
+            let (shutdown, tasks) = (
+                tokio_util::sync::CancellationToken::new(),
+                tokio_util::task::TaskTracker::new(),
+            );
+            let e = build_with_writer(&cfg, &[], ctx, Mount::default(), None, &shutdown, &tasks)
+                .await
+                .err()
+                .expect("refused")
+                .to_string();
+            assert!(e.contains("dataroom") && e.contains(names), "{e}");
+        }
     }
 
     /// `[dataroom.hidden]` is written over the default catalogue's list at the start.
@@ -2153,6 +2211,14 @@ mod tests {
         assert!(
             run.applied.contains_key("rt7186"),
             "its own id stays its own"
+        );
+        let mut squatter = organization("squat7186", "00000000-0000-7000-8000-000000007188");
+        squatter.hosts.opendata = Some("data.other7186.sk".into());
+        run.apply(&set(vec![org.clone(), squatter], Vec::new()))
+            .await;
+        assert!(
+            !run.applied.contains_key("squat7186"),
+            "a host another catalogue holds"
         );
         run.apply(&set(Vec::new(), vec!["rt7186".into()])).await;
         assert_eq!(
@@ -3252,6 +3318,15 @@ mod tests {
         assert_eq!(shown.layout.tokens.font_size_px, Some(15));
         let logged = std::fs::read_to_string(log.path()).unwrap();
         assert!(logged.contains("colour pair below WCAG AA"), "{logged}");
+        // A theme whose own header pair is unreadable and a look setting no colour of it: the
+        // theme's shows and nothing is logged, the look is not at fault.
+        let mut glaring = BrandingBlock::default();
+        glaring.colours.text = "#ffffff".into();
+        let before = std::fs::read_to_string(log.path()).unwrap();
+        let shown = with_appearance(glaring, Some(&look(serde_json::json!({ "fontSize": 16 }))));
+        assert_eq!(shown.layout.tokens.header_text, None);
+        assert_eq!(shown.layout.tokens.font_size_px, Some(16));
+        assert_eq!(std::fs::read_to_string(log.path()).unwrap(), before);
         // Reset: no tokens on the portal or its Organization shows the theme's.
         let reset = with_appearance(
             BrandingBlock::default(),
@@ -3676,7 +3751,11 @@ mod tests {
         }];
         let catalogue = BTreeMap::from([("city".to_owned(), city)]);
         let configured = BTreeMap::from([(city, BrandingBlock::default())]);
-        let mirror = joinedcontext_portal::store::Mirror::new();
+        let state = joinedcontext_portal::state::AppState::new(
+            joinedcontext_portal::config::Config::for_tests(),
+            None,
+        );
+        let mirror = &state.mirror;
         mirror.upsert(envelope(
             "Organization",
             "city",
@@ -3692,8 +3771,24 @@ mod tests {
         mirror.upsert(portal(true));
         let shared = std::sync::RwLock::new(BTreeMap::new());
         let mut seen = BTreeMap::new();
+        let mut seen_alone = BTreeMap::new();
+        apply_looks(
+            None,
+            (&catalogue, &portals, &configured),
+            &shared,
+            &mut seen_alone,
+        );
+        assert!(
+            shared.read().unwrap().is_empty() && seen_alone.is_empty(),
+            "no Portal, no look"
+        );
         let round = |seen: &mut BTreeMap<CatalogueId, BrandingBlock>| {
-            apply_looks(&mirror, (&catalogue, &portals, &configured), &shared, seen);
+            apply_looks(
+                Some(&state),
+                (&catalogue, &portals, &configured),
+                &shared,
+                seen,
+            );
         };
         let mobility = CatalogueId::of_portal(portals[0].org_id, "mobility");
         round(&mut seen);
@@ -3963,7 +4058,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(host_of(&store, org, cat).await, "opendata.city.example");
+        hold_default_host(&store, org, cat, "opendata.city.example")
+            .await
+            .unwrap();
         let logged = std::fs::read_to_string(log.path()).unwrap();
+        assert_eq!(
+            logged.matches("default catalogue moved").count(),
+            1,
+            "the same host again moves nothing: {logged}"
+        );
         assert!(
             logged.contains("default catalogue moved")
                 && logged.contains("from=proposed.example")

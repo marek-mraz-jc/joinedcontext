@@ -515,11 +515,14 @@ mod tests {
             .collect();
         assert_eq!(blobs.len(), 1, "the manifest is a blob: {blobs:?}");
         tokio::time::timeout(Duration::from_secs(10), async {
-            while !std::fs::read_to_string(log.path())
-                .unwrap()
-                .contains("store log trimmed")
-            {
+            loop {
                 tokio::time::sleep(Duration::from_millis(20)).await;
+                if std::fs::read_to_string(log.path())
+                    .unwrap()
+                    .contains("store log trimmed")
+                {
+                    break;
+                }
             }
         })
         .await
