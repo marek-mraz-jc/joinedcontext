@@ -344,4 +344,199 @@ mod tests {
                 .is_err()
         );
     }
+
+    /// Serves one HTTP request on a loopback port: answers `status` with `body`, then hands the
+    /// request it read (head and body) back.
+    fn serve_once(status: u16, body: &'static [u8]) -> (String, std::thread::JoinHandle<Vec<u8>>) {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!(
+            "http://127.0.0.1:{}/hook",
+            listener.local_addr().expect("addr").port()
+        );
+        let served = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("timeout");
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut buf).unwrap_or(0);
+                seen.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&seen).to_ascii_lowercase();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let length = text
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    let chunked = text.contains("transfer-encoding: chunked");
+                    if (chunked && text.ends_with("0\r\n\r\n"))
+                        || (!chunked && seen.len() >= end + 4 + length)
+                    {
+                        break;
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+            }
+            let head = format!(
+                "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(head.as_bytes()).expect("answer");
+            stream.write_all(body).expect("answer body");
+            seen
+        });
+        (url, served)
+    }
+
+    /// An unnamed read-write file, as a mirror push spools its pack.
+    fn spool() -> std::fs::File {
+        let path = std::env::temp_dir().join(format!("shako-spool-{}", uuid::Uuid::now_v7()));
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("spool");
+        std::fs::remove_file(&path).expect("unlink");
+        file
+    }
+
+    fn loopback() -> OutboundGuard {
+        OutboundGuard::new(OutboundPolicy {
+            allowed_hosts: Some(vec!["127.0.0.1".into()]),
+            allow_loopback_for_tests: true,
+            ..OutboundPolicy::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn a_request_reaches_an_allowed_loopback_server_with_its_body_and_headers() {
+        let (url, served) = serve_once(201, b"made");
+        let headers = [("X-Test".to_owned(), "yes".to_owned())];
+        let (status, body) = loopback()
+            .request(Method::POST, &url, &headers, b"payload".to_vec(), None)
+            .await
+            .expect("sent");
+        assert_eq!((status, body.as_slice()), (201, &b"made"[..]));
+        let seen = String::from_utf8_lossy(&served.join().expect("server")).into_owned();
+        assert!(seen.starts_with("POST /hook HTTP/1.1"), "{seen}");
+        assert!(seen.to_ascii_lowercase().contains("x-test: yes"), "{seen}");
+        assert!(seen.ends_with("payload"), "{seen}");
+
+        // A spooled file goes from its start, whatever was read of it before.
+        let (url, served) = serve_once(200, b"");
+        let mut file = spool();
+        std::io::Write::write_all(&mut file, b"spooled body").expect("write");
+        let (status, _) = loopback()
+            .send(Method::PUT, &url, &[], OutboundBody::File(file), None)
+            .await
+            .expect("sent");
+        assert_eq!(status, 200);
+        assert!(String::from_utf8_lossy(&served.join().expect("server")).contains("spooled body"));
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_is_reported_as_blocked() {
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+            listener.local_addr().expect("addr").port()
+        };
+        let err = loopback()
+            .request(
+                Method::GET,
+                &format!("http://127.0.0.1:{port}/x"),
+                &[],
+                Vec::new(),
+                None,
+            )
+            .await
+            .expect_err("nothing listens");
+        assert!(matches!(err, ShakoError::SsrfBlocked(_)), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_mock_handler_reads_a_spooled_body_and_falls_back_to_canned_answers() {
+        let handler: MockOutboundHandler = Arc::new(
+            |method: &str, url: &str, _: &[(String, String)], body: &[u8]| {
+                url.ends_with("/echo")
+                    .then(|| (200, [method.as_bytes(), b" ", body].concat()))
+            },
+        );
+        let guard = OutboundGuard::new(OutboundPolicy {
+            mock_handler: Some(handler),
+            ..OutboundPolicy::default()
+        });
+        let mut file = spool();
+        std::io::Write::write_all(&mut file, b"from disk").expect("write");
+        let (_, echoed) = guard
+            .send(
+                Method::POST,
+                "https://github.com/echo",
+                &[],
+                OutboundBody::File(file),
+                None,
+            )
+            .await
+            .expect("echo");
+        assert_eq!(echoed, b"POST from disk");
+        guard.insert_mock("https://github.com/canned", 204, b"".to_vec());
+        let (status, _) = guard
+            .request(
+                Method::GET,
+                "https://github.com/canned",
+                &[],
+                Vec::new(),
+                None,
+            )
+            .await
+            .expect("canned");
+        assert_eq!(status, 204);
+    }
+
+    #[test]
+    fn a_url_is_refused_when_unparseable_hostless_or_outside_a_given_list() {
+        let guard = OutboundGuard::default();
+        let says = |url: &str, extra: Option<&[String]>| {
+            guard
+                .validate_url(url, extra)
+                .expect_err(url)
+                .public_detail()
+        };
+        assert_eq!(says("not a url", None), "invalid outbound URL");
+        assert_eq!(says("data:text/plain,hi", None), "outbound URL has no host");
+        let extra = ["mirror.example".to_owned()];
+        assert!(
+            guard
+                .validate_url("https://mirror.example/r", Some(&extra))
+                .is_ok()
+        );
+        assert!(
+            says("https://github.com/r", Some(&extra)).contains("not in the outbound allow-list")
+        );
+        // A dotted in-cluster entry names every host under it.
+        let cluster = OutboundGuard::new(OutboundPolicy {
+            in_cluster_hosts: vec![".jc.svc.cluster.local".into()],
+            ..OutboundPolicy::default()
+        });
+        assert!(
+            cluster
+                .validate_url("http://Portal.JC.svc.cluster.local/x", None)
+                .is_ok()
+        );
+        assert!(
+            cluster
+                .validate_url("http://portal.other.svc.cluster.local/x", None)
+                .is_err()
+        );
+        assert!(
+            cluster
+                .validate_url("http://169.254.169.254.jc.svc.cluster.local/x", None)
+                .is_ok()
+        );
+    }
 }

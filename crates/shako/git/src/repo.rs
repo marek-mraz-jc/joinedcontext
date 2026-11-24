@@ -1471,4 +1471,633 @@ mod tests {
         collect_changed_blobs(&repo, &tree, &[], &mut changed).expect("walk changed");
         assert_eq!(changed.keys().collect::<Vec<_>>(), ["f"]);
     }
+
+    use crate::testutil::{annotated_tag, author, oid, put, remove, repo};
+
+    fn op(operation: FileOpKind, path: &str, content: &[u8], sha: Option<&str>) -> FileChangeOp {
+        FileChangeOp {
+            operation,
+            path: path.into(),
+            content: Some(content.to_vec()),
+            sha: sha.map(str::to_owned),
+        }
+    }
+
+    fn commit(path: &Path, branch: &str, ops: &[FileChangeOp]) -> ShakoResult<String> {
+        commit_file_changes(path, branch, "m", &author(), &author(), ops)
+    }
+
+    fn blob_sha(path: &Path, branch: &str, file: &str) -> String {
+        read_file_at_ref(path, branch, file, &mut crate::testutil::admit_all)
+            .expect("read")
+            .expect("present")
+            .0
+    }
+
+    #[tokio::test]
+    async fn one_repository_takes_one_writer_and_others_stay_free() {
+        let locks = RepoLocks::new();
+        let a = RepoId::from_u128(1);
+        let b = RepoId::from_u128(2);
+        let held = locks.lock(a).await;
+        assert!(locks.try_lock(a).is_none(), "a second writer waits");
+        let other = locks.try_lock(b).expect("another repository is free");
+        drop(held);
+        let again = locks.try_lock(a).expect("free once released");
+        drop(again);
+        drop(other);
+        // A clone shares the registry.
+        let shared = locks.clone();
+        let _held = locks.lock(b).await;
+        assert!(shared.try_lock(b).is_none());
+    }
+
+    #[test]
+    fn a_directory_that_is_no_repository_does_not_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let err = open_isolated(tmp.path()).expect_err("not a repository");
+        assert!(
+            matches!(&err, ShakoError::Git(m) if m.contains("failed to open")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn init_writes_the_safe_config_and_head_and_refuses_a_bad_branch_or_a_taken_place() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let inst = InstanceId::from_u128(1);
+        let bare =
+            init_bare_repo(tmp.path(), inst, RepoId::from_u128(9), "dev", false, "").expect("init");
+        assert_eq!(
+            std::fs::read_to_string(bare.join("config")).expect("config"),
+            SAFE_BARE_REPO_CONFIG
+        );
+        assert_eq!(
+            std::fs::read_to_string(bare.join("description")).expect("d"),
+            ""
+        );
+        let handle = open_isolated(&bare).expect("open");
+        assert_eq!(
+            handle
+                .head_name()
+                .expect("head")
+                .expect("symbolic")
+                .as_bstr(),
+            "refs/heads/dev"
+        );
+        assert!(list_branches(&bare).expect("branches").is_empty(), "unborn");
+
+        // An empty description still gives the README a line.
+        let readme = init_bare_repo(tmp.path(), inst, RepoId::from_u128(10), "main", true, "")
+            .expect("init");
+        let (_, text) = read_file_at_ref(
+            &readme,
+            "main",
+            "README.md",
+            &mut crate::testutil::admit_all,
+        )
+        .expect("read")
+        .expect("README");
+        assert_eq!(text, b"# Repository\n\nInitialized by shako.\n");
+
+        // The same repository twice, a bad branch name, an instance directory that is a file.
+        let err = init_bare_repo(tmp.path(), inst, RepoId::from_u128(9), "dev", false, "")
+            .expect_err("taken");
+        assert!(matches!(err, ShakoError::Git(_)), "{err}");
+        assert!(
+            init_bare_repo(tmp.path(), inst, RepoId::from_u128(11), "a..b", false, "").is_err()
+        );
+        let file_root = tmp.path().join("plain-file");
+        std::fs::write(&file_root, b"x").expect("file");
+        let err = init_bare_repo(&file_root, inst, RepoId::from_u128(12), "main", false, "")
+            .expect_err("instance dir under a file");
+        assert!(matches!(err, ShakoError::Storage(_)), "{err}");
+    }
+
+    #[test]
+    fn a_copy_takes_branches_tags_and_served_packs_and_leaves_the_rest() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let origin = repo(tmp.path(), 1, true);
+        let tip = put(&origin, "main", "a.txt", b"a\n");
+        create_branch(&origin, "feature", "main").expect("branch");
+        set_ref_direct(&origin, "refs/tags/v1", &tip.to_string()).expect("tag");
+        set_ref_direct(&origin, "refs/pull/1/head", &tip.to_string()).expect("pull ref");
+        let pack_dir = origin.join("objects/pack");
+        // A superseded pack (no index), its cruft times and an unrelated file.
+        std::fs::write(pack_dir.join("pack-old.pack"), b"PACK").expect("superseded");
+        std::fs::write(pack_dir.join("pack-old.seen"), b"").expect("seen");
+        std::fs::write(pack_dir.join("notes.txt"), b"x").expect("other");
+
+        let dest = repo(tmp.path(), 2, false);
+        copy_bare_repo(&origin, &dest, "feature").expect("copy");
+        let copied = dest.join("objects/pack");
+        assert!(!copied.join("pack-old.pack").exists());
+        assert!(copied.join("pack-old.seen").exists());
+        assert!(!copied.join("notes.txt").exists());
+        let branches = list_branches(&dest).expect("branches");
+        assert_eq!(
+            branches.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            ["feature", "main"]
+        );
+        assert_eq!(list_tags(&dest).expect("tags")[0].0, "v1");
+        let handle = open_isolated(&dest).expect("open");
+        assert!(handle.find_reference("refs/pull/1/head").is_err());
+        assert_eq!(
+            handle.head_name().expect("head").expect("sym").as_bstr(),
+            "refs/heads/feature"
+        );
+        assert_eq!(resolve_commit_oid(&handle, "HEAD").expect("head"), tip);
+
+        // No origin, or a default branch no ref name takes.
+        let missing = tmp.path().join("missing.git");
+        assert!(copy_bare_repo(&missing, &dest, "main").is_err());
+        let fresh = repo(tmp.path(), 3, false);
+        assert!(copy_bare_repo(&origin, &fresh, "bad..name").is_err());
+        // An origin without a pack directory copies its refs alone.
+        let empty = repo(tmp.path(), 4, false);
+        std::fs::remove_dir_all(empty.join("objects/pack")).expect("drop pack dir");
+        let into = repo(tmp.path(), 5, false);
+        copy_bare_repo(&empty, &into, "main").expect("empty copy");
+        assert!(list_branches(&into).expect("branches").is_empty());
+    }
+
+    #[test]
+    fn the_size_counts_every_object_file_and_is_zero_without_objects() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        assert_eq!(compute_repo_size_bytes(&tmp.path().join("none")), 0);
+        let path = repo(tmp.path(), 1, false);
+        let empty = compute_repo_size_bytes(&path);
+        put(&path, "main", "a.txt", &[7u8; 4096]);
+        let grown = compute_repo_size_bytes(&path);
+        assert!(grown > empty, "{empty} -> {grown}");
+        std::fs::create_dir_all(path.join("objects/ab")).expect("dir");
+        std::fs::write(path.join("objects/ab/cd"), [0u8; 100]).expect("loose");
+        assert_eq!(compute_repo_size_bytes(&path), grown + 100);
+    }
+
+    #[test]
+    fn writing_no_objects_writes_no_pack() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, false);
+        let before = std::fs::read_dir(path.join("objects/pack"))
+            .expect("dir")
+            .count();
+        write_objects_as_pack(&path, &[]).expect("nothing to write");
+        let after = std::fs::read_dir(path.join("objects/pack"))
+            .expect("dir")
+            .count();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn a_ref_resolves_by_sha_branch_tag_pull_ref_or_revision_and_nothing_else() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        let first = put(&path, "main", "a.txt", b"1\n");
+        let second = put(&path, "main", "a.txt", b"2\n");
+        set_ref_direct(&path, "refs/tags/light", &first.to_string()).expect("tag");
+        annotated_tag(&path, "heavy", first, gix_object::Kind::Commit);
+        set_ref_direct(&path, "refs/pull/7/head", &first.to_string()).expect("pull");
+        let handle = open_isolated(&path).expect("open");
+        let resolve = |r: &str| resolve_commit_oid(&handle, r);
+        assert_eq!(resolve(&second.to_string()).expect("sha"), second);
+        assert_eq!(resolve(&format!(" {second} ")).expect("trimmed"), second);
+        assert_eq!(resolve("main").expect("branch"), second);
+        assert_eq!(resolve("refs/heads/main").expect("full"), second);
+        assert_eq!(resolve("light").expect("tag"), first);
+        assert_eq!(resolve("heavy").expect("annotated"), first);
+        assert_eq!(resolve("7/head").expect("pull"), first);
+        assert_eq!(resolve("main~1").expect("revision"), first);
+        for unknown in [
+            "nope",
+            "1111111111111111111111111111111111111111",
+            "",
+            "main~9",
+        ] {
+            let err = resolve(unknown).expect_err("unknown");
+            assert!(matches!(err, ShakoError::NotFound(_)), "{unknown}: {err}");
+        }
+        // A blob's id is no commit.
+        let blob = blob_sha(&path, "main", "a.txt");
+        assert!(matches!(resolve(&blob), Err(ShakoError::NotFound(_))));
+    }
+
+    #[test]
+    fn file_changes_check_every_precondition_before_anything_is_written() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        let tip = || resolve_commit_oid(&open_isolated(&path).expect("open"), "main").expect("tip");
+        let start = tip();
+        let readme = blob_sha(&path, "main", "README.md");
+        let wrong = "1111111111111111111111111111111111111111";
+        let cases: Vec<(Vec<FileChangeOp>, u16, &str)> = vec![
+            (vec![], 422, "no file changes"),
+            (
+                vec![op(FileOpKind::Create, "README.md", b"x", None)],
+                422,
+                "already exists",
+            ),
+            (
+                vec![op(FileOpKind::Update, "none.txt", b"x", Some(wrong))],
+                404,
+                "does not exist",
+            ),
+            (
+                vec![op(FileOpKind::Update, "README.md", b"x", None)],
+                422,
+                "requires blob sha",
+            ),
+            (
+                vec![op(FileOpKind::Update, "README.md", b"x", Some(""))],
+                422,
+                "requires blob sha",
+            ),
+            (
+                vec![op(FileOpKind::Update, "README.md", b"x", Some(wrong))],
+                409,
+                "sha mismatch",
+            ),
+            (
+                vec![op(FileOpKind::Upload, "none.txt", b"x", Some(wrong))],
+                409,
+                "does not exist",
+            ),
+            (
+                vec![op(FileOpKind::Upload, "README.md", b"x", Some(wrong))],
+                409,
+                "sha mismatch",
+            ),
+            (
+                vec![op(FileOpKind::Delete, "none.txt", b"", Some(wrong))],
+                404,
+                "does not exist",
+            ),
+            (
+                vec![op(FileOpKind::Delete, "README.md", b"", None)],
+                422,
+                "requires blob sha",
+            ),
+            (
+                vec![op(FileOpKind::Delete, "README.md", b"", Some(wrong))],
+                409,
+                "sha mismatch",
+            ),
+            // The first change is fine; the second fails, so neither lands.
+            (
+                vec![
+                    op(FileOpKind::Create, "new.txt", b"x", None),
+                    op(FileOpKind::Create, "../escape", b"x", None),
+                ],
+                0,
+                "",
+            ),
+        ];
+        for (ops, status, says) in cases {
+            let err = commit(&path, "main", &ops).expect_err("refused");
+            if status != 0 {
+                assert_eq!(err.status_code(), status, "{err}");
+                assert!(err.to_string().contains(says), "{says}: {err}");
+            }
+            assert_eq!(tip(), start, "nothing written for {err}");
+        }
+        assert!(
+            commit(
+                &path,
+                "bad..branch",
+                &[op(FileOpKind::Create, "x", b"", None)]
+            )
+            .is_err()
+        );
+
+        // Each kind that holds: update, upload over and beside, delete, in nested directories.
+        commit(
+            &path,
+            "main",
+            &[op(FileOpKind::Update, "README.md", b"new\n", Some(&readme))],
+        )
+        .expect("update");
+        let readme = blob_sha(&path, "main", "README.md");
+        commit(
+            &path,
+            "main",
+            &[
+                op(FileOpKind::Upload, "README.md", b"up\n", Some(&readme)),
+                op(FileOpKind::Upload, "a/b/c.txt", b"deep\n", Some("")),
+                FileChangeOp {
+                    operation: FileOpKind::Create,
+                    path: "a/empty.txt".into(),
+                    content: None,
+                    sha: None,
+                },
+            ],
+        )
+        .expect("upload");
+        let (_, entries) = list_tree_entries(&path, "main", true).expect("tree");
+        let paths: Vec<_> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, ["README.md", "a", "a/b", "a/b/c.txt", "a/empty.txt"]);
+        remove(&path, "main", "a/b/c.txt");
+        let (_, entries) = list_tree_entries(&path, "main", true).expect("tree");
+        assert!(
+            entries.iter().all(|e| !e.path.starts_with("a/b")),
+            "{entries:?}"
+        );
+
+        // A branch that does not exist yet starts with a root commit.
+        let root = commit(
+            &path,
+            "orphan",
+            &[op(FileOpKind::Create, "o.txt", b"o", None)],
+        )
+        .expect("root commit");
+        assert!(
+            read_commit_info(&path, &root)
+                .expect("info")
+                .parent_shas
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_actor_field_loses_what_would_break_the_header_and_falls_back_when_empty() {
+        assert_eq!(sanitize_actor_field(" Al<i>ce\n ", "x"), "Alice");
+        assert_eq!(sanitize_actor_field("<>\r\0", "fallback"), "fallback");
+        assert_eq!(sanitize_actor_field("", "fallback"), "fallback");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, false);
+        let nobody = CommitAuthor {
+            name: "<>".into(),
+            email: "\n".into(),
+        };
+        let sha = commit_file_changes(
+            &path,
+            "main",
+            "m",
+            &nobody,
+            &nobody,
+            &[op(FileOpKind::Create, "a", b"", None)],
+        )
+        .expect("commit");
+        let info = read_commit_info(&path, &sha).expect("info");
+        assert_eq!(
+            (info.author_name.as_str(), info.author_email.as_str()),
+            ("shako", "shako@local")
+        );
+        assert_eq!(info.committer_name, "shako");
+    }
+
+    #[test]
+    fn tree_order_compares_a_directory_as_if_it_ended_in_a_slash() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        assert_eq!(tree_entry_cmp(b"a", true, b"a.b", false), Greater);
+        assert_eq!(tree_entry_cmp(b"a", false, b"a.b", false), Less);
+        assert_eq!(tree_entry_cmp(b"a", true, b"a0", false), Less);
+        assert_eq!(tree_entry_cmp(b"b", false, b"a", false), Greater);
+        assert_eq!(tree_entry_cmp(b"a", false, b"a", false), Equal);
+        assert_eq!(tree_entry_cmp(b"a", true, b"a", false), Greater);
+    }
+
+    #[test]
+    fn a_tree_lists_by_ref_or_tree_sha_with_each_mode_and_size() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        let handle = open_isolated(&path).expect("open");
+        let blob = handle.write_blob(b"12345").expect("blob").detach();
+        let sub = tree_of(&handle, &[("f", EntryKind::Blob, blob)]);
+        let tree = tree_of(
+            &handle,
+            &[
+                ("d", EntryKind::Tree, sub),
+                ("link", EntryKind::Link, blob),
+                ("run.sh", EntryKind::BlobExecutable, blob),
+            ],
+        );
+        let (sha, top) = list_tree_entries(&path, &tree.to_string(), false).expect("by tree sha");
+        assert_eq!(sha, tree.to_string());
+        let modes: Vec<_> = top
+            .iter()
+            .map(|e| {
+                (
+                    e.path.as_str(),
+                    e.mode.as_str(),
+                    e.entry_type.as_str(),
+                    e.size,
+                )
+            })
+            .collect();
+        assert_eq!(
+            modes,
+            [
+                ("d", "040000", "tree", 0),
+                ("link", "120000", "blob", 5),
+                ("run.sh", "100755", "blob", 5)
+            ]
+        );
+        let (_, all) = list_tree_entries(&path, &tree.to_string(), true).expect("recursive");
+        assert_eq!(all[1].path, "d/f");
+        assert_eq!(all[1].mode, "100644");
+        // A commit's sha lists its tree; an unknown ref is not found.
+        let (_, readme) = list_tree_entries(&path, "main", false).expect("by branch");
+        assert_eq!(readme[0].path, "README.md");
+        assert!(matches!(
+            list_tree_entries(&path, "nope", false),
+            Err(ShakoError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn a_file_reads_with_its_sha_and_a_directory_or_absent_path_reads_as_none() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        put(&path, "main", "dir/f.txt", b"body\n");
+        let mut admitted = 0;
+        let (sha, bytes) = read_file_at_ref(&path, "main", "dir/f.txt", &mut |n| {
+            admitted = n;
+            Ok(())
+        })
+        .expect("read")
+        .expect("present");
+        assert_eq!(bytes, b"body\n");
+        assert_eq!(sha.len(), 40);
+        assert_eq!(admitted, 15, "three times the blob");
+        let none = |file: &str| {
+            read_file_at_ref(&path, "main", file, &mut crate::testutil::admit_all).expect("read")
+        };
+        assert_eq!(none("dir"), None);
+        assert_eq!(none("missing.txt"), None);
+        assert_eq!(none("dir/missing/deeper"), None);
+        let refused = read_file_at_ref(&path, "main", "dir/f.txt", &mut |_| {
+            Err(ShakoError::Overloaded("busy".into()))
+        });
+        assert!(matches!(refused, Err(ShakoError::Overloaded(_))));
+        assert!(
+            read_file_at_ref(
+                &path,
+                "main",
+                "../etc/passwd",
+                &mut crate::testutil::admit_all
+            )
+            .is_err()
+        );
+        assert!(matches!(
+            read_file_at_ref(&path, "nope", "dir/f.txt", &mut crate::testutil::admit_all),
+            Err(ShakoError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn history_walks_newest_first_within_limits_and_by_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        put(&path, "main", "a.txt", b"1\n");
+        put(&path, "main", "b.txt", b"1\n");
+        put(&path, "main", "a.txt", b"2\n");
+        let all = list_commits(&path, "main", None, 50, 10_000).expect("all");
+        // The commits share one second, so the order among them is the walk's own.
+        let mut messages: Vec<_> = all.iter().map(|c| c.message.as_str()).collect();
+        messages.sort_unstable();
+        assert_eq!(messages, ["Initial commit", "a.txt", "a.txt", "b.txt"]);
+        assert_eq!(
+            list_commits(&path, "main", None, 2, 10_000)
+                .expect("limit")
+                .len(),
+            2
+        );
+        assert_eq!(
+            list_commits(&path, "main", None, 50, 1)
+                .expect("walk cap")
+                .len(),
+            1
+        );
+        let touching = list_commits(&path, "main", Some("/a.txt/"), 50, 10_000).expect("by path");
+        assert_eq!(touching.len(), 2);
+        let readme = list_commits(&path, "main", Some("README.md"), 50, 10_000).expect("root");
+        assert_eq!(readme.len(), 1, "the root commit adds it");
+        assert_eq!(
+            list_commits(&path, "main", Some("/"), 50, 10_000)
+                .expect("no filter")
+                .len(),
+            4
+        );
+        assert!(list_commits(&path, "main", Some("../x"), 50, 10_000).is_err());
+        assert!(matches!(
+            list_commits(&path, "nope", None, 50, 10_000),
+            Err(ShakoError::NotFound(_))
+        ));
+
+        // A merge commit touches a path when it differs from either parent.
+        create_branch(&path, "side", "main~1").expect("side");
+        put(&path, "side", "c.txt", b"side\n");
+        crate::merge::execute_pr_merge(
+            &path,
+            "main",
+            "side",
+            &crate::merge::MergeOptions {
+                expected_head_sha: None,
+                style: crate::merge::MergeStyle::Merge,
+                message: "merge side",
+                author: &author(),
+                committer: &author(),
+            },
+        )
+        .expect("merge");
+        let by_c = list_commits(&path, "main", Some("c.txt"), 50, 10_000).expect("c");
+        let mut messages: Vec<_> = by_c.iter().map(|c| c.message.as_str()).collect();
+        messages.sort_unstable();
+        assert_eq!(messages, ["c.txt", "merge side"]);
+        let by_b = list_commits(&path, "main", Some("b.txt"), 50, 10_000).expect("b");
+        assert_eq!(by_b.len(), 1, "the merge holds b.txt as main did");
+    }
+
+    #[test]
+    fn branches_and_tags_list_sorted_with_each_tag_kind() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        let tip = put(&path, "main", "a.txt", b"1\n");
+        create_branch(&path, "b-two", "main").expect("branch");
+        create_branch(&path, "a-one", "main").expect("branch");
+        let names: Vec<_> = list_branches(&path)
+            .expect("branches")
+            .into_iter()
+            .map(|b| b.0)
+            .collect();
+        assert_eq!(names, ["a-one", "b-two", "main"]);
+        set_ref_direct(&path, "refs/tags/z-light", &tip.to_string()).expect("tag");
+        let heavy = annotated_tag(&path, "a-heavy", tip, gix_object::Kind::Commit);
+        let tags = list_tags(&path).expect("tags");
+        assert_eq!(
+            tags,
+            [
+                (
+                    String::from("a-heavy"),
+                    heavy.to_string(),
+                    tip.to_string(),
+                    true
+                ),
+                (
+                    String::from("z-light"),
+                    tip.to_string(),
+                    tip.to_string(),
+                    false
+                ),
+            ]
+        );
+        assert!(
+            list_tags(&repo(tmp.path(), 2, false))
+                .expect("none")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_branch_is_created_once_from_a_known_ref_and_deleted_once() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        let tip = resolve_commit_oid(&open_isolated(&path).expect("open"), "main").expect("tip");
+        assert_eq!(
+            create_branch(&path, "f", "main").expect("create"),
+            tip.to_string()
+        );
+        let err = create_branch(&path, "f", "main").expect_err("exists");
+        assert_eq!(err.status_code(), 409);
+        assert!(create_branch(&path, "bad..name", "main").is_err());
+        assert!(matches!(
+            create_branch(&path, "g", "nope"),
+            Err(ShakoError::NotFound(_))
+        ));
+        assert!(delete_branch(&path, "f").expect("delete"));
+        assert!(!delete_branch(&path, "f").expect("gone"));
+        assert!(delete_branch(&path, "bad..name").is_err());
+        assert_eq!(list_branches(&path).expect("branches").len(), 1);
+    }
+
+    #[test]
+    fn a_ref_is_set_only_to_a_valid_id_under_a_valid_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        let tip = resolve_commit_oid(&open_isolated(&path).expect("open"), "main").expect("tip");
+        set_ref_direct(&path, "refs/pull/1/head", &tip.to_string()).expect("set");
+        set_ref_direct(&path, "refs/pull/1/head", &tip.to_string()).expect("again, unchanged");
+        let err = set_ref_direct(&path, "refs/pull/1/head", "xyz").expect_err("bad id");
+        assert_eq!(err.status_code(), 400);
+        assert!(set_ref_direct(&path, "refs/heads/a..b", &tip.to_string()).is_err());
+    }
+
+    #[test]
+    fn ancestry_holds_for_the_same_commit_and_its_parents_only() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, true);
+        let first = resolve_commit_oid(&open_isolated(&path).expect("open"), "main").expect("tip");
+        let second = put(&path, "main", "a.txt", b"1\n");
+        let orphan = put(&path, "orphan", "o.txt", b"o\n");
+        let handle = open_isolated(&path).expect("open");
+        assert!(is_ancestor(&handle, second, second));
+        assert!(is_ancestor(&handle, first, second));
+        assert!(!is_ancestor(&handle, second, first));
+        assert!(!is_ancestor(&handle, orphan, second), "no common history");
+        assert!(!is_ancestor(
+            &handle,
+            oid("1111111111111111111111111111111111111111"),
+            second
+        ));
+    }
 }

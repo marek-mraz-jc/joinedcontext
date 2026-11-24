@@ -108,8 +108,8 @@
 "odata-url" = { lines = 99.97, functions = 100.00 }
 "ogc-cql2" = { lines = 100.00, functions = 100.00 }
 "shako-api" = { lines = 99.32, functions = 96.05 }
-"shako-core" = { lines = 95.67, functions = 87.14 }
-"shako-git" = { lines = 69.51, functions = 48.63 }
+"shako-core" = { lines = 99.53, functions = 96.45 }
+"shako-git" = { lines = 97.12, functions = 77.31 }
 "shako-mcp" = { lines = 100.00, functions = 100.00 }
 "shako-registry" = { lines = 100.00, functions = 100.00 }
 "shako-server" = { lines = 99.54, functions = 100.00 }

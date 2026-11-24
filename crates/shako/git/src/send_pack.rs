@@ -452,7 +452,13 @@ mod tests {
         branch: Option<&str>,
     ) -> ShakoResult<(Vec<SendPackCommand>, Vec<u8>, Vec<String>)> {
         let mut out = Vec::new();
-        let plan = write_send_pack(repo, remote, branch, &mut out, &mut |_| Ok(()))?;
+        let plan = write_send_pack(
+            repo,
+            remote,
+            branch,
+            &mut out,
+            &mut crate::testutil::admit_all,
+        )?;
         Ok((plan.commands, out, plan.diverged))
     }
 
@@ -513,5 +519,304 @@ mod tests {
         assert_eq!(diverged, ["refs/tags/v1"]);
         let err = diverged_error(&diverged).expect_err("reported");
         assert!(err.to_string().contains("not overwritten"), "{err}");
+    }
+
+    use crate::testutil::{annotated_tag, pack_count, put, receive, repo};
+    use shako_core::{OutboundPolicy, RefPolicy};
+    use std::sync::{Arc, Mutex};
+
+    const PASSWORD: &str = "s3cr3t-pw";
+
+    /// A guard that lets `mirror.example` through and answers every request with `answer`.
+    fn guard(
+        answer: impl Fn(&str, &str, &[(String, String)], &[u8]) -> (u16, Vec<u8>)
+        + Send
+        + Sync
+        + 'static,
+    ) -> OutboundGuard {
+        OutboundGuard::new(OutboundPolicy {
+            allowed_hosts: Some(vec!["mirror.example".into()]),
+            mock_handler: Some(Arc::new(
+                move |method: &str, url: &str, headers: &[(String, String)], body: &[u8]| {
+                    Some(answer(method, url, headers, body))
+                },
+            )),
+            ..OutboundPolicy::default()
+        })
+    }
+
+    fn plan(repo: &Path, remote: &BTreeMap<String, ObjectId>) -> (SendPack, std::fs::File) {
+        let mut spool = tempfile::tempfile().expect("spool");
+        let plan = write_send_pack(
+            repo,
+            remote,
+            Some("main"),
+            &mut spool,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("plan");
+        (plan, spool)
+    }
+
+    #[tokio::test]
+    async fn a_mirror_push_lands_in_a_real_receive_pack_with_basic_auth() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (source, _, second, _) = repository(tmp.path());
+        let dest = repo(tmp.path(), 99, false);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let (into, log) = (dest.clone(), seen.clone());
+        let guard = guard(move |method, url, headers, body| {
+            log.lock()
+                .expect("log")
+                .push((method.to_owned(), url.to_owned(), headers.to_vec()));
+            if method == "GET" {
+                (
+                    200,
+                    crate::receive_pack::advertise_receive_pack(&into).expect("adv"),
+                )
+            } else {
+                let out = receive(&into, &RefPolicy::default(), body).expect("receive");
+                (200, out.response_bytes)
+            }
+        });
+        let remote = MirrorRemote::new("https://mirror.example/o/r.git/", "bot", PASSWORD, &guard);
+        let refs = remote.refs().await.expect("refs of an empty remote");
+        assert!(refs.is_empty());
+        let (sent, spool) = plan(&source, &refs);
+        remote.push(&sent, spool).await.expect("push");
+        assert_eq!(
+            crate::repo::list_branches(&dest).expect("branches"),
+            [("main".to_owned(), second.clone())]
+        );
+        let refs = remote.refs().await.expect("refs");
+        assert_eq!(refs.get("refs/heads/main"), Some(&oid(&second)));
+        assert_eq!(refs.get("refs/tags/v1"), Some(&oid(&second)));
+        // Nothing new: no request goes out.
+        let before = seen.lock().expect("log").len();
+        let (idle, spool) = plan(&source, &refs);
+        remote.push(&idle, spool).await.expect("nothing to push");
+        assert_eq!(seen.lock().expect("log").len(), before);
+
+        let log = seen.lock().expect("log");
+        let (method, url, headers) = &log[1];
+        assert_eq!(
+            (method.as_str(), url.as_str()),
+            ("POST", "https://mirror.example/o/r.git/git-receive-pack")
+        );
+        let basic = format!("Basic {}", STANDARD.encode(format!("bot:{PASSWORD}")));
+        assert!(
+            headers.contains(&("Authorization".to_owned(), basic)),
+            "{headers:?}"
+        );
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "Content-Type" && v.ends_with("receive-pack-request"))
+        );
+        assert_eq!(
+            log[0].1,
+            "https://mirror.example/o/r.git/info/refs?service=git-receive-pack"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mirror_without_a_password_sends_no_authorization() {
+        let headers = Arc::new(Mutex::new(Vec::new()));
+        let log = headers.clone();
+        let guard = guard(move |_, _, sent, _| {
+            log.lock().expect("log").extend_from_slice(sent);
+            (200, Vec::new())
+        });
+        let refs = MirrorRemote::new("https://mirror.example/r", "", "", &guard)
+            .refs()
+            .await
+            .expect("an empty listing");
+        assert!(refs.is_empty());
+        assert!(headers.lock().expect("log").is_empty());
+    }
+
+    #[tokio::test]
+    async fn every_remote_refusal_is_a_conflict_that_never_shows_the_password() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (source, ..) = repository(tmp.path());
+        for (status, hint) in [(401, true), (403, true), (500, false)] {
+            let guard = guard(move |_, _, _, _| (status, Vec::new()));
+            let err = MirrorRemote::new("https://mirror.example/r", "u", PASSWORD, &guard)
+                .refs()
+                .await
+                .expect_err("refused listing");
+            assert!(matches!(err, ShakoError::Conflict(_)), "{err}");
+            assert_eq!(
+                err.to_string().contains("check the mirror's credential"),
+                hint,
+                "{err}"
+            );
+        }
+        let answers: [(u16, &str, &str); 5] = [
+            (500, "", "HTTP 500 to the push"),
+            (
+                200,
+                "unpack error index-pack died s3cr3t-pw",
+                "could not unpack the push: error index-pack died [REDACTED]",
+            ),
+            (
+                200,
+                "unpack ok\nng refs/heads/main s3cr3t-pw declined",
+                "refused the ref: refs/heads/main [REDACTED] declined",
+            ),
+            (200, "unpack ok", "did not confirm every ref"),
+            (
+                200,
+                "ok refs/heads/main\nok refs/tags/v1",
+                "did not confirm every ref",
+            ),
+        ];
+        for (status, report, says) in answers {
+            let mut body = Vec::new();
+            for line in report.lines() {
+                write_text_line(&mut body, line).expect("pkt");
+            }
+            write_flush(&mut body).expect("flush");
+            let guard = guard(move |_, _, _, _| (status, body.clone()));
+            let remote = MirrorRemote::new("https://mirror.example/r", "u", PASSWORD, &guard);
+            let (sent, spool) = plan(&source, &BTreeMap::new());
+            let err = remote.push(&sent, spool).await.expect_err(says);
+            assert!(matches!(err, ShakoError::Conflict(_)), "{err}");
+            assert!(err.to_string().contains(says), "{says}: {err}");
+            assert!(!err.to_string().contains(PASSWORD), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_blocked_remote_names_the_guard_without_the_password() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (source, ..) = repository(tmp.path());
+        let guard = guard(|_, _, _, _| (200, Vec::new()));
+        let remote = MirrorRemote::new("https://s3cr3t-pw.evil.example/r", "u", PASSWORD, &guard);
+        let err = remote.refs().await.expect_err("not allowed");
+        assert!(matches!(err, ShakoError::SsrfBlocked(_)), "{err}");
+        assert!(
+            err.to_string().contains("[REDACTED]") && !err.to_string().contains(PASSWORD),
+            "{err}"
+        );
+        let (sent, spool) = plan(&source, &BTreeMap::new());
+        let err = remote.push(&sent, spool).await.expect_err("not allowed");
+        assert!(matches!(err, ShakoError::SsrfBlocked(_)), "{err}");
+        assert!(!err.to_string().contains(PASSWORD), "{err}");
+        // Without a password the guard's words stay as they are.
+        let open = MirrorRemote::new("http://mirror.example/r", "u", "", &guard);
+        let err = open.refs().await.expect_err("plain http");
+        assert!(err.to_string().contains("https required"), "{err}");
+        // The same guard answers a remote it lets through.
+        let allowed = MirrorRemote::new("https://mirror.example/r", "u", PASSWORD, &guard);
+        assert!(allowed.refs().await.expect("listed").is_empty());
+        // Any other failure becomes a Git error with the secret scrubbed.
+        let scrubbed = scrub_secret(&ShakoError::Storage(format!("spool {PASSWORD}")), PASSWORD);
+        assert!(
+            matches!(&scrubbed, ShakoError::Git(m) if m.contains("[REDACTED]") && !m.contains(PASSWORD))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_push_reports_a_diverged_ref_after_the_refs_that_went() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let (source, first, _, change) = repository(tmp.path());
+        let guard = guard(|_, _, _, body| {
+            let text = String::from_utf8_lossy(body).into_owned();
+            let mut report = Vec::new();
+            write_text_line(&mut report, "unpack ok").expect("pkt");
+            for name in ["refs/heads/main", "refs/tags/v1"] {
+                if text.contains(name) {
+                    write_text_line(&mut report, &format!("ok {name}")).expect("pkt");
+                }
+            }
+            write_flush(&mut report).expect("flush");
+            (200, report)
+        });
+        let remote = MirrorRemote::new("https://mirror.example/r", "u", PASSWORD, &guard);
+        // main sits on a sibling commit: v1 goes, main is reported.
+        let held = BTreeMap::from([("refs/heads/main".to_owned(), oid(&change))]);
+        let (sent, spool) = plan(&source, &held);
+        let err = remote.push(&sent, spool).await.expect_err("diverged");
+        assert!(err.to_string().contains("refs/heads/main moved"), "{err}");
+        // Nothing to send but the diverged ref: no request, the same report.
+        let held = BTreeMap::from([
+            ("refs/heads/main".to_owned(), oid(&change)),
+            ("refs/tags/v1".to_owned(), oid(&first)),
+        ]);
+        let (sent, spool) = plan(&source, &held);
+        let err = remote.push(&sent, spool).await.expect_err("diverged");
+        assert!(
+            err.to_string().contains("refs/heads/main, refs/tags/v1"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn the_remote_listing_reads_refs_and_skips_everything_else() {
+        let mut adv = Vec::new();
+        let tip = "2222222222222222222222222222222222222222";
+        for line in [
+            "# service=git-receive-pack".to_owned(),
+            format!("{tip} refs/heads/main\0report-status delete-refs"),
+            format!("{tip} refs/tags/v1^{{}}"),
+            "0000000000000000000000000000000000000000 capabilities^{}".to_owned(),
+            "lonely".to_owned(),
+            "zz refs/heads/bad".to_owned(),
+        ] {
+            write_text_line(&mut adv, &line).expect("pkt");
+        }
+        write_flush(&mut adv).expect("flush");
+        let refs = parse_remote_receive_pack_advertisement(&adv).expect("parse");
+        assert_eq!(
+            refs,
+            BTreeMap::from([("refs/heads/main".to_owned(), oid(tip))])
+        );
+        assert!(parse_remote_receive_pack_advertisement(b"zz").is_err());
+    }
+
+    #[test]
+    fn tags_naming_trees_and_blobs_go_with_what_they_name_and_held_objects_stay_home() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, true);
+        let root = crate::repo::resolve_commit_oid(&open_isolated(&path).expect("open"), "main")
+            .expect("root");
+        let tip = put(&path, "main", "a.txt", b"a\n");
+        let handle = open_isolated(&path).expect("open");
+        let tree = handle
+            .find_commit(tip)
+            .expect("tip")
+            .tree_id()
+            .expect("tree")
+            .detach();
+        let blob = gix_object::compute_hash(gix_hash::Kind::Sha1, gix_object::Kind::Blob, b"a\n")
+            .expect("hash");
+        let tag = annotated_tag(&path, "ann-tree", tree, gix_object::Kind::Tree);
+        set_ref_direct(&path, "refs/tags/blob", &blob.to_string()).expect("blob tag");
+        let send = |remote: &BTreeMap<String, ObjectId>| {
+            let mut out = Vec::new();
+            let plan = write_send_pack(
+                &path,
+                remote,
+                None,
+                &mut out,
+                &mut crate::testutil::admit_all,
+            )
+            .expect("plan");
+            (names(&plan.commands).len(), pack_count(&out))
+        };
+        // Everything to an empty remote: the tag, both commits, both trees, both blobs.
+        assert_eq!(send(&BTreeMap::new()), (3, Some(7)));
+        // The remote holds the tag (so its tree) and the root commit: a.txt and the tip go.
+        let held = BTreeMap::from([
+            ("refs/tags/ann-tree".to_owned(), tag),
+            ("refs/heads/main".to_owned(), root),
+            (
+                "refs/heads/gone".to_owned(),
+                oid("1111111111111111111111111111111111111111"),
+            ),
+            ("refs/tags/blob-elsewhere".to_owned(), blob),
+        ]);
+        assert_eq!(send(&held), (2, Some(2)));
     }
 }

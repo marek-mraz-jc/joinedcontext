@@ -221,4 +221,146 @@ mod tests {
         assert_eq!(internal.status_code(), 500);
         assert!(!internal.public_detail().contains("secret"));
     }
+
+    #[test]
+    fn every_variant_maps_to_its_slug_status_title_and_safe_detail() {
+        let quota = ShakoError::QuotaExceeded {
+            resource: "repositories".into(),
+            limit: 3,
+        };
+        let table: Vec<(ShakoError, &str, u16, &str, &str)> = vec![
+            (
+                ShakoError::NotFound("no repo".into()),
+                "shako.not_found",
+                404,
+                "Not Found",
+                "no repo",
+            ),
+            (
+                ShakoError::Unauthorized("login".into()),
+                "shako.unauthorized",
+                401,
+                "Unauthorized",
+                "login",
+            ),
+            (
+                ShakoError::Forbidden("no".into()),
+                "shako.forbidden",
+                403,
+                "Forbidden",
+                "no",
+            ),
+            (
+                ShakoError::BadRequest("bad".into()),
+                "shako.bad_request",
+                400,
+                "Bad Request",
+                "bad",
+            ),
+            (
+                ShakoError::Unprocessable("u".into()),
+                "shako.unprocessable_entity",
+                422,
+                "Unprocessable Entity",
+                "u",
+            ),
+            (
+                ShakoError::Conflict("c".into()),
+                "shako.conflict",
+                409,
+                "Conflict",
+                "c",
+            ),
+            (
+                ShakoError::BehindBaseBranch("b".into()),
+                "shako.behind_base_branch",
+                405,
+                "Method Not Allowed",
+                "b",
+            ),
+            (
+                ShakoError::MethodNotAllowed("m".into()),
+                "shako.method_not_allowed",
+                405,
+                "Method Not Allowed",
+                "m",
+            ),
+            (
+                quota,
+                "shako.quota_exceeded",
+                403,
+                "Quota Exceeded",
+                "quota exceeded for repositories: limit is 3",
+            ),
+            (
+                ShakoError::SsrfBlocked("10.0.0.1".into()),
+                "shako.ssrf_blocked",
+                403,
+                "Outbound Request Refused",
+                "10.0.0.1",
+            ),
+            (
+                ShakoError::NotImplemented("lfs".into()),
+                "shako.not_implemented",
+                501,
+                "Not Implemented",
+                "lfs",
+            ),
+            (
+                ShakoError::Overloaded("mem".into()),
+                "shako.overloaded",
+                503,
+                "Service Unavailable",
+                "mem",
+            ),
+            (
+                ShakoError::RlsNotEnforced("/srv/pg".into()),
+                "shako.rls_not_enforced",
+                500,
+                "Tenant Isolation Check Failed",
+                "an internal server error occurred",
+            ),
+            (
+                ShakoError::Git("/srv/git".into()),
+                "shako.git_error",
+                500,
+                "Internal Server Error",
+                "an internal server error occurred",
+            ),
+            (
+                ShakoError::Storage("/srv/db".into()),
+                "shako.storage_error",
+                500,
+                "Internal Server Error",
+                "an internal server error occurred",
+            ),
+            (
+                ShakoError::Internal("/srv/x".into()),
+                "shako.internal_error",
+                500,
+                "Internal Server Error",
+                "an internal server error occurred",
+            ),
+        ];
+        for (err, slug, status, title, detail) in table {
+            assert_eq!(err.slug(), slug);
+            assert_eq!(err.status_code(), status, "{slug}");
+            assert_eq!(err.title(), title, "{slug}");
+            assert_eq!(err.public_detail(), detail, "{slug}");
+            let problem = err.to_problem(Some("/api/x".into()));
+            assert_eq!(
+                problem.type_uri,
+                format!("urn:joinedcontext:problem:{slug}")
+            );
+            assert_eq!(problem.slug, slug);
+            assert_eq!(problem.status, status);
+            assert_eq!(problem.instance.as_deref(), Some("/api/x"));
+            assert!(problem.errors.is_empty());
+            let odata = err.to_odata_error();
+            assert_eq!(odata["error"]["code"], slug);
+            assert_eq!(odata["error"]["message"], detail);
+            assert_eq!(odata["error"]["innererror"]["status"], status);
+            assert!(!odata.to_string().contains("/srv/"), "{slug} leaks a path");
+        }
+    }
 }
