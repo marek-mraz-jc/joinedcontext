@@ -2007,8 +2007,8 @@ mod tests {
         let routed = sync.routed(&repo, target("bratislava"));
         let err = sync
             .client(&routed, &dir, source)
-            .err()
-            .expect("bratislava published without its token file");
+            .map(drop)
+            .expect_err("bratislava published without its token file");
         assert!(err.contains("ba's catalogue"), "{err}");
         assert!(!err.contains("hel-token"), "{err}");
         // A Portal without Organization catalogues keeps the instance's catalogue, and each

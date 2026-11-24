@@ -2159,7 +2159,7 @@ impl jcctl::publish::ckan::CkanApi for Echo {
 fn a_pace_without_memory_or_a_passed_turn_answers_at_once() {
     use jcctl::publish::ckan::CkanApi;
     let last = Arc::new(Mutex::new(None));
-    let mut paced = Paced::new(Echo, last.clone(), Duration::from_millis(1));
+    let paced = Paced::new(Echo, last.clone(), Duration::from_millis(1));
     assert_eq!(
         paced.show("organization_show", "hel"),
         Ok(Some(json!({ "name": "hel" })))

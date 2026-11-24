@@ -2843,6 +2843,7 @@ dependencies = [
  "axum",
  "cookie",
  "jc-core",
+ "jcctl",
  "joinedcontext-portal",
  "libfuzzer-sys",
  "serde_json",
