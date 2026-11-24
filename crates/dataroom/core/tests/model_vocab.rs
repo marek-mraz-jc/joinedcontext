@@ -417,6 +417,74 @@ fn a_publisher_iri_on_a_left_host_is_not_its_own() {
 }
 
 #[test]
+fn a_declaration_reports_whether_it_changed_the_catalogue() {
+    use dataroom_core::{CatalogueDeclaration, ProfilePin};
+    let mut cat =
+        catalogue(json!({"publisherUri": "https://data.gov.sk/id/legal-subject/00313271"}));
+    assert_eq!(
+        cat.declared_publisher_uri(),
+        Some("https://data.gov.sk/id/legal-subject/00313271")
+    );
+    let pins = vec![ProfilePin {
+        profile_id: "dcat-ap-sk".into(),
+        version: "1".into(),
+    }];
+    let declared = CatalogueDeclaration {
+        active_profiles: Some(pins.clone()),
+        main_profile: Some("dcat-ap-sk".into()),
+        ..CatalogueDeclaration::default()
+    };
+    assert!(declared.apply(&mut cat), "new pins and a new main profile");
+    assert_eq!(
+        (cat.active_profiles.clone(), cat.main_profile.as_str()),
+        (pins, "dcat-ap-sk")
+    );
+    assert!(
+        !declared.apply(&mut cat),
+        "the same declaration again changes nothing"
+    );
+    let only_main = CatalogueDeclaration {
+        main_profile: Some("dcat-ap-3.0.1".into()),
+        ..CatalogueDeclaration::default()
+    };
+    assert!(only_main.apply(&mut cat));
+    let only_pins = CatalogueDeclaration {
+        active_profiles: Some(Vec::new()),
+        ..CatalogueDeclaration::default()
+    };
+    assert!(only_pins.apply(&mut cat));
+    assert!(!CatalogueDeclaration::default().apply(&mut cat));
+    // a registry placeholder declares no publisher
+    let placeholder = catalogue(json!({"publisherUri": "urn:placeholder"}));
+    assert_eq!(placeholder.declared_publisher_uri(), None);
+    assert_eq!(catalogue(json!({})).declared_publisher_uri(), None);
+}
+
+#[test]
+fn language_tags_take_digits_only_after_the_first_subtag() {
+    use dataroom_core::is_language_tag;
+    for ok in ["sk", "en-GB", "es-419", "zh-Hant-TW"] {
+        assert!(is_language_tag(ok), "{ok}");
+    }
+    for bad in [
+        "",
+        "1en",
+        "e1",
+        "en-",
+        "toolonglang",
+        "en-123456789",
+        "en_GB",
+    ] {
+        assert!(!is_language_tag(bad), "{bad}");
+    }
+    assert_eq!(
+        dataset(json!({})).dataset_type,
+        "dataset",
+        "a record without a type is a dataset"
+    );
+}
+
+#[test]
 fn a_dataset_iri_falls_back_to_its_extras_then_the_catalogue() {
     let mut d = dataset(json!({"uri": "  ", "extras": {"uri": " https://data.gov.sk/set/1 "}}));
     assert_eq!(

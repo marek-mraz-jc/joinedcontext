@@ -613,6 +613,68 @@ mod tests {
     }
 
     #[test]
+    fn subjects_name_themselves_and_their_principals() {
+        let (org, cat) = ids(6);
+        let anon = RequestCtx::anonymous(org, cat);
+        assert!(anon.subject.is_anonymous());
+        assert_eq!(anon.actor_name(), "anonymous");
+        assert!(anon.subject.principals().is_empty());
+        let ana = member(org, cat);
+        assert!(!ana.subject.is_anonymous());
+        assert_eq!(ana.actor_name(), "ana");
+        assert_eq!(ana.subject.principals(), ["ana", "editors"]);
+        let names: Vec<_> = [
+            Action::Read,
+            Action::Propose,
+            Action::Approve,
+            Action::Delete,
+            Action::Harvest,
+            Action::Admin,
+        ]
+        .map(Action::as_str)
+        .into();
+        assert_eq!(
+            names,
+            ["read", "propose", "approve", "delete", "harvest", "admin"]
+        );
+    }
+
+    /// An internal dataset is read by a member holding Read on its publisher alone, or on the
+    /// whole catalogue; a member with neither does not see it.
+    #[test]
+    fn an_internal_dataset_is_read_with_a_publisher_or_catalogue_read_rule() {
+        let (org, cat) = ids(7);
+        let target = ObjectTarget::Dataset {
+            org_id: org,
+            catalogue_id: cat,
+            dataset_id: "d-1".into(),
+            publisher_id: "city".into(),
+            visibility: Visibility::Internal,
+            restricted_grants: Vec::new(),
+            publisher_editor_grants: Vec::new(),
+        };
+        let mut scoped = rule(org, cat, vec![Action::Read]);
+        scoped.publisher_id = Some("city".into());
+        let other = GrantRule {
+            publisher_id: Some("dept".into()),
+            ..scoped.clone()
+        };
+        for (rules, readable) in [
+            (vec![scoped], true),
+            (vec![rule(org, cat, vec![Action::Read])], true),
+            (vec![other], false),
+            (Vec::new(), false),
+        ] {
+            let d = PolicyAuthorizer::new(rules.clone()).check(
+                &member(org, cat),
+                Action::Read,
+                &target,
+            );
+            assert_eq!(d.allowed, readable, "{rules:?}: {d:?}");
+        }
+    }
+
+    #[test]
     fn a_read_only_connector_reads_but_never_writes() {
         let (org, cat) = ids(3);
         let policy = PolicyAuthorizer::new(vec![rule(org, cat, vec![Action::Admin])]);
