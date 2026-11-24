@@ -1903,9 +1903,9 @@ mod tests {
             tx.commit().expect("commit");
         }
         let db = Database::create(&path).expect("reopen");
-        let Err(err) = Store::from_database(db, &path.display().to_string()) else {
-            panic!("a table that cannot be opened must refuse the boot, not start without it");
-        };
+        let err = Store::from_database(db, &path.display().to_string())
+            .err()
+            .expect("a table that cannot be opened must refuse the boot, not start without it");
         assert!(!err.is_empty(), "the refusal says what failed");
     }
 
@@ -1930,15 +1930,18 @@ mod tests {
             tx.commit().expect("commit");
         }
         let db = Database::create(&path).expect("reopen");
-        let Err(_) = Store::from_database(db, &path.display().to_string()) else {
-            panic!("an unreadable table with no marker must refuse the boot");
-        };
+        assert!(
+            Store::from_database(db, &path.display().to_string()).is_err(),
+            "an unreadable table with no marker must refuse the boot"
+        );
         let db = Database::create(&path).expect("reopen after the refusal");
         let rt = db.begin_read().expect("read tx");
         let stamped = match rt.open_table(T_META) {
             Ok(m) => m.get("format").expect("get").is_some(),
-            Err(::redb::TableError::TableDoesNotExist(_)) => false,
-            Err(e) => panic!("{e}"),
+            Err(e) => {
+                assert!(matches!(e, ::redb::TableError::TableDoesNotExist(_)), "{e}");
+                false
+            }
         };
         assert!(
             !stamped,
@@ -1955,10 +1958,9 @@ mod tests {
             seed(&tx);
             tx.commit().expect("commit");
         }
-        let err = match Store::open_file(&dir) {
-            Err(e) => e,
-            Ok(_) => panic!("{name}: the boot must refuse, not serve partial data"),
-        };
+        let err = Store::open_file(&dir)
+            .err()
+            .expect("the boot must refuse, not serve partial data");
         let _ = std::fs::remove_dir_all(&dir);
         err
     }
@@ -2122,10 +2124,9 @@ mod tests {
                 .expect("insert");
             tx.commit().expect("commit");
         }
-        let err = match Store::open_file(&dir) {
-            Err(e) => e,
-            Ok(_) => panic!("must refuse a format-999 file"),
-        };
+        let err = Store::open_file(&dir)
+            .err()
+            .expect("must refuse a format-999 file");
         assert!(err.contains("format 999"), "err: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2153,10 +2154,9 @@ mod tests {
             // deliberately NO meta table
             tx.commit().expect("commit");
         }
-        let err = match Store::open_file(&dir) {
-            Err(e) => e,
-            Ok(_) => panic!("must refuse data with no format marker"),
-        };
+        let err = Store::open_file(&dir)
+            .err()
+            .expect("must refuse data with no format marker");
         assert!(err.contains("no format marker"), "err: {err}");
         assert!(err.contains("antares.redb"), "the file is named: {err}");
         let _ = std::fs::remove_dir_all(&dir);

@@ -562,15 +562,12 @@ mod tests {
     fn without_a_key_a_value_carrying_the_seal_prefix_is_refused() {
         for kind in [DocKind::Subscription, DocKind::CSourceSubscription] {
             let err = sealed(None, row(kind), &sub("enc:v1:abc")).expect_err("prefix stored");
-            let sqlx::Error::Configuration(b) = err else {
-                panic!("not an NGSI-LD error: {err:?}")
-            };
             assert!(
                 matches!(
-                    b.downcast_ref::<antares_model::NgsiError>(),
+                    crate::store::pg::entity::ngsi_error(&err),
                     Some(antares_model::NgsiError::BadRequestData(_))
                 ),
-                "{b:?}"
+                "{err:?}"
             );
         }
         // an ordinary value and a key-holding store are unaffected

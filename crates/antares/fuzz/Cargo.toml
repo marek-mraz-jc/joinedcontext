@@ -245,6 +245,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "sql_prefilter"
+path = "fuzz_targets/sql_prefilter.rs"
+test = false
+doc = false
+bench = false
+
 [patch.crates-io]
 # rstar 0.12.2 on heapless 0.9.4 and geo-types 0.7.20 without its unused rstar 0.8-0.11/0.13
 # options until geo releases rstar 0.14 (RUSTSEC-2026-0574..0582; crates/antares/vendor/rstar/README.md, T-7429).

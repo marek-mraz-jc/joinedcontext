@@ -1,0 +1,5 @@
+!a.b[c]~="^x"|!d
+2026-01-01T00:00:00.123Z
+
+/A/+/B,/C
+{"https://uri.etsi.org/ngsi-ld/location":[{"value":{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]}}]}
