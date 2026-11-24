@@ -674,10 +674,22 @@ impl Realm {
         who: &str,
         roles: &[&str],
     ) -> String {
+        self.person_token_with(audience, client, who, roles, json!({}))
+    }
+
+    /// [`Self::person_token_of`] with `extra` claims set over the usual ones (a `name`).
+    pub fn person_token_with(
+        &self,
+        audience: &str,
+        client: &str,
+        who: &str,
+        roles: &[&str],
+        extra: Value,
+    ) -> String {
         let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
         header.kid = Some("key-workload-test".to_owned());
         let now = joinedcontext_portal::auth::session::now_unix();
-        let claims = json!({
+        let mut claims = json!({
             "iss": self.issuer,
             "typ": "Bearer",
             "aud": audience,
@@ -691,6 +703,9 @@ impl Realm {
             "exp": now + 300,
             "iat": now,
         });
+        if let (Some(claims), Some(extra)) = (claims.as_object_mut(), extra.as_object()) {
+            claims.extend(extra.clone());
+        }
         jsonwebtoken::encode(&header, &claims, &self.signer).expect("sign")
     }
 

@@ -584,8 +584,6 @@ pub struct Spent {
     pub calls: u64,
     /// Milliseconds until the first character of the answer was ready.
     pub first_token_ms: Option<u64>,
-    /// Whether the answer came from the cache.
-    pub cached: bool,
     /// What its model calls cost, in millionths of a US dollar (T-4149).
     pub cost_micros: u64,
     /// Model calls whose provider reported no cost, so `cost_micros` is a floor (T-4178).

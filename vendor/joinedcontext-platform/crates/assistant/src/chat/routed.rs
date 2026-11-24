@@ -6,8 +6,8 @@
 //! question as asked and is judged while the router call runs, T-4293), and one streamed answer call
 //! that sees the top [`ANSWER_PASSAGES`] passages as quoted data. A data question reads its rows from the deployment's connectors
 //! with `query_entities` (T-4140, Architecture/23 §5), the router naming an Endpoint and a type
-//! from the ones `list_types` lists. A repeated question is answered from [`AnswerCache`]. The
-//! model never calls a tool here, so the tool allowlist is this code.
+//! from the ones `list_types` lists. Every question is answered afresh: no answer is kept for the
+//! next visitor (T-7789). The model never calls a tool here, so the tool allowlist is this code.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
@@ -15,7 +15,6 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::Sender;
 
 use super::agent::{
@@ -1368,7 +1367,7 @@ pub fn best(found: &[Hit], websites: &[String]) -> Vec<Hit> {
         .collect()
 }
 
-/// A question as the cache compares it: lowercase, one space between words, no closing marks.
+/// A question as the follow-ups compare it: lowercase, one space between words, no closing marks.
 pub fn normalized(question: &str) -> String {
     question
         .split_whitespace()
@@ -1379,39 +1378,15 @@ pub fn normalized(question: &str) -> String {
         .to_owned()
 }
 
-/// How long an answer from pages alone is served.
-const CACHE_LIFE: Duration = Duration::from_secs(3_600);
-
-/// How long an answer that read live data is served (T-4731): the same question again within it
-/// is answered at once and costs nothing, and a value is at most this old.
-// ponytail: a fixed life, not the Endpoints' data version; read their newest modifiedAt when a
-// feed changes faster than this.
-const LIVE_LIFE: Duration = Duration::from_secs(600);
-
-/// How long a deployment's index digest is reused: its `count(*)` over every passage ran before
-/// each first question, a kept answer's included (T-4731). A crawl reaches the key this much later.
-const DIGEST_LIFE: Duration = Duration::from_secs(60);
-
-/// How long a first question waits for its index digest when none younger than [`DIGEST_LIFE`]
-/// is kept; past it the question is neither looked up nor kept, and the read goes on in the
-/// background. The count took 9.1 s of turn 36 on jc-prod before the router started (T-7772).
-const DIGEST_WAIT: Duration = Duration::from_millis(300);
-
-/// The most table cells one kept answer holds, so the cache stays a few megabytes.
-const KEPT_CELLS: usize = 20_000;
-
-/// The most answers the cache holds; the oldest goes first.
+/// The most page lookups the cache holds before the expired ones go.
 const CACHE_ENTRIES: usize = 1_000;
 
-/// Answers to first questions, keyed by the deployment, the normalized question and the digest of
-/// the deployment's index, so a re-index serves no stale answer (Architecture/23 §4). What is kept
-/// is what the visitor was sent: the tables, the chart, the answer, its citations and the
-/// follow-ups (T-4731).
+/// What routing reuses across questions: the connectors' lists, the sources' languages, the
+/// page lookups and the models. No answer is kept: every question is answered afresh (T-7789).
 // ponytail: in memory, one replica; each replica keeps its own. Move to the database when the
 // assistant runs on more than one.
 #[derive(Default)]
 pub struct AnswerCache {
-    entries: Mutex<HashMap<[u8; 32], Cached>>,
     /// Each Endpoint's type list, by slug, for [`TYPES_LIFE`].
     types: Mutex<HashMap<String, (Instant, Vec<String>)>>,
     /// Each deployment's source languages, by `{name}#{channel}`, read in the background and
@@ -1433,27 +1408,12 @@ pub struct AnswerCache {
     /// Each Endpoint's model as a deployment is served it, by `{deployment}/{slug}`, for
     /// [`TYPES_LIFE`]; `None` when it could not be read (T-4672).
     models: Mutex<HashMap<String, KeptModel>>,
-    /// Each deployment's index digest, by name, for [`DIGEST_LIFE`] (T-4731), read in the
-    /// background (T-7772).
-    digests: std::sync::Arc<Mutex<HashMap<String, KeptDigest>>>,
-    /// The deployments whose digest is being read now.
-    reading_digests: std::sync::Arc<Mutex<HashSet<String>>>,
-    /// Bumped by [`AnswerCache::forget`]: a digest read that began before it keeps nothing.
-    forgotten: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// Each catalogue Endpoint's organizations, by slug, read while warming (T-4746).
     publishers: Mutex<HashMap<String, (Instant, Vec<Publisher>)>>,
 }
 
 /// When a deployment's languages were read, and what they are.
 type KeptLanguages = (Instant, Vec<String>);
-
-/// A deployment's index digest: when it was read, the digest (none before the first read) and
-/// when a question last asked for it, so warming keeps only asked deployments fresh.
-#[derive(Debug, Clone)]
-struct KeptDigest {
-    read: Option<(Instant, String)>,
-    asked: Instant,
-}
 
 /// A page lookup as [`kept_lookup`] keeps it.
 #[derive(Debug, Clone)]
@@ -1467,35 +1427,7 @@ enum PageKept {
 /// When a model was read, and the model.
 type KeptModel = (Instant, Option<std::sync::Arc<str>>);
 
-/// When an answer was stored, how long it is served, the deployment (`{project}/{name}`) it was
-/// given in, and the events it is replayed as.
-type Cached = (Instant, Duration, String, Vec<Event>);
-
 impl AnswerCache {
-    pub fn key(deployment: &str, question: &str, digest: &str) -> [u8; 32] {
-        let mut hash = Sha256::new();
-        for part in [deployment, &normalized(question), digest] {
-            hash.update(part.as_bytes());
-            hash.update([0]);
-        }
-        hash.finalize().into()
-    }
-
-    /// The kept answer's events and how long ago it was kept.
-    pub fn get(&self, key: &[u8; 32]) -> Option<(Vec<Event>, Duration)> {
-        let mut entries = self.entries.lock().ok()?;
-        match entries.get(key) {
-            Some((at, life, _, replay)) if at.elapsed() < *life => {
-                Some((replay.clone(), at.elapsed()))
-            }
-            Some(_) => {
-                entries.remove(key);
-                None
-            }
-            None => None,
-        }
-    }
-
     fn types_of(&self, slug: &str) -> Option<Vec<String>> {
         self.types_within(slug, TYPES_LIFE)
     }
@@ -1664,184 +1596,6 @@ impl AnswerCache {
             Some((at, listed)) => (Some(listed.clone()), at.elapsed() < LANGUAGES_LIFE),
             None => (None, false),
         }
-    }
-
-    pub fn put(&self, key: [u8; 32], deployment: &str, replay: Vec<Event>, life: Duration) {
-        let Ok(mut entries) = self.entries.lock() else {
-            return;
-        };
-        entries.retain(|_, (at, life, _, _)| at.elapsed() < *life);
-        if entries.len() >= CACHE_ENTRIES {
-            if let Some(oldest) = entries
-                .iter()
-                .min_by_key(|(_, (at, _, _, _))| *at)
-                .map(|(k, _)| *k)
-            {
-                entries.remove(&oldest);
-            }
-        }
-        entries.insert(key, (Instant::now(), life, deployment.to_owned(), replay));
-    }
-
-    /// Forgets every answer kept for `deployment` (`{project}/{name}`) and its index digest, so
-    /// the next question is answered afresh (T-4731); how many answers were dropped.
-    pub fn forget(&self, deployment: &str) -> usize {
-        self.forgotten
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        if let Ok(mut digests) = self.digests.lock() {
-            digests.remove(deployment);
-        }
-        let Ok(mut entries) = self.entries.lock() else {
-            return 0;
-        };
-        let before = entries.len();
-        entries.retain(|_, (_, _, owner, _)| owner != deployment);
-        before - entries.len()
-    }
-}
-
-/// The digest of the deployment's index: how many passages its sources hold and the newest one's
-/// id. A crawl that adds, drops or replaces a passage changes it.
-async fn digest(
-    pool: &sqlx::PgPool,
-    sources: &[(String, Vec<String>)],
-    public_only: bool,
-) -> Result<String, crate::Error> {
-    let mut digest = String::new();
-    for (project, names) in sources {
-        let mut tx = crate::project_scope(pool, project).await?;
-        let (count, newest): (i64, i64) = sqlx::query_as(
-            "SELECT count(*)::int8, COALESCE(max(c.id), 0)::int8 FROM chunks c JOIN sites s ON s.id = c.site_id \
-             WHERE s.source = ANY($1) AND (NOT $2 OR c.visibility = 'public')",
-        )
-        .bind(names)
-        .bind(public_only)
-        .fetch_one(&mut *tx)
-        .await?;
-        tx.rollback().await?;
-        let _ = write!(digest, "{project}:{count}:{newest};");
-    }
-    Ok(digest)
-}
-
-/// The deployment's digest when one younger than [`DIGEST_LIFE`] is kept, and otherwise the read
-/// that refreshes it, unless one runs (T-7772). `asked` marks a question's need of it.
-fn digest_read(
-    cache: &AnswerCache,
-    pool: &sqlx::PgPool,
-    deployment: &str,
-    sources: &[(String, Vec<String>)],
-    public_only: bool,
-    asked: bool,
-    life: Duration,
-) -> (
-    Option<String>,
-    Option<impl std::future::Future<Output = Result<String, crate::Error>> + Send + 'static>,
-) {
-    let fresh = {
-        let Ok(mut digests) = cache.digests.lock() else {
-            return (None, None);
-        };
-        let now = Instant::now();
-        // One entry per deployment, so it is bounded by the manifests.
-        let kept = digests.entry(deployment.to_owned()).or_insert(KeptDigest {
-            read: None,
-            asked: now,
-        });
-        if asked {
-            kept.asked = now;
-        }
-        kept.read
-            .as_ref()
-            .filter(|(at, _)| at.elapsed() < life)
-            .map(|(_, digest)| digest.clone())
-    };
-    if fresh.is_some() {
-        return (fresh, None);
-    }
-    let read = Reading::start(&cache.reading_digests, deployment).map(|reading| {
-        let (pool, sources, kept) = (pool.clone(), sources.to_vec(), cache.digests.clone());
-        let (forgotten, before) = (
-            cache.forgotten.clone(),
-            cache.forgotten.load(std::sync::atomic::Ordering::Acquire),
-        );
-        let deployment = deployment.to_owned();
-        async move {
-            let at = Instant::now();
-            let read = digest(&pool, &sources, public_only).await;
-            // A digest read before a forget may predate the re-index it was forgotten for.
-            let current = forgotten.load(std::sync::atomic::Ordering::Acquire) == before;
-            if let (Ok(digest), true) = (&read, current) {
-                if let Ok(mut kept) = kept.lock() {
-                    if let Some(entry) = kept.get_mut(&deployment) {
-                        entry.read = Some((at, digest.clone()));
-                    }
-                }
-            }
-            drop(reading);
-            read
-        }
-    });
-    (None, read)
-}
-
-/// A first question's digest: the kept one, or a read waited for up to [`DIGEST_WAIT`] that goes
-/// on in the background past it (T-7772); with what happened, for the turn's `digest` step.
-async fn question_digest(
-    cache: &AnswerCache,
-    pool: &sqlx::PgPool,
-    deployment: &str,
-    sources: &[(String, Vec<String>)],
-    public_only: bool,
-) -> (Result<String, String>, &'static str) {
-    let read = digest_read(
-        cache,
-        pool,
-        deployment,
-        sources,
-        public_only,
-        true,
-        DIGEST_LIFE,
-    );
-    match read {
-        (Some(digest), _) => (Ok(digest), "kept"),
-        // Another question's read runs: this one is not kept, as past the wait.
-        (None, None) => (Err("read by another question".to_owned()), "reading"),
-        (None, Some(read)) => match bounded(DIGEST_WAIT, tokio::spawn(read)).await {
-            Some(Ok(Ok(digest))) => (Ok(digest), "read"),
-            Some(Ok(Err(why))) => (Err(why.to_string()), "failed"),
-            Some(Err(why)) => (Err(why.to_string()), "failed"),
-            None => (Err("past its wait".to_owned()), "deadline"),
-        },
-    }
-}
-
-/// Starts a digest read in the background for a deployment a question asked within
-/// [`CACHE_LIFE`] whose digest is older than half of [`DIGEST_LIFE`], so the next question finds
-/// it kept: warming runs each minute (T-7772).
-pub(crate) fn warm_digest(
-    cache: &AnswerCache,
-    pool: &sqlx::PgPool,
-    deployment: &str,
-    sources: &[(String, Vec<String>)],
-    public_only: bool,
-) {
-    let asked = cache.digests.lock().ok().is_some_and(|digests| {
-        digests
-            .get(deployment)
-            .is_some_and(|kept| kept.asked.elapsed() < CACHE_LIFE)
-    });
-    if !asked {
-        return;
-    }
-    let half = DIGEST_LIFE / 2;
-    if let (_, Some(read)) = digest_read(cache, pool, deployment, sources, public_only, false, half)
-    {
-        tokio::spawn(async move {
-            if let Err(why) = read.await {
-                tracing::warn!(%why, "the index digest could not be read while warming");
-            }
-        });
     }
 }
 
@@ -3385,11 +3139,6 @@ fn in_english(question: &str) -> &'static str {
     }
 }
 
-/// The deployment's local date of the question; the UTC date without a zone.
-fn local_day(ask: &Ask<'_>) -> time::Date {
-    super::clock::local(ask.now, ask.zone).date()
-}
-
 fn tokens_of(messages: &[Value]) -> u64 {
     (messages
         .iter()
@@ -3510,10 +3259,6 @@ fn day_reached(now: time::OffsetDateTime, zone: Option<super::clock::Zone>) -> S
         at.hour(),
         at.minute()
     )
-}
-
-fn stage(stage: &'static str, topic: Option<String>) -> Event {
-    staged(stage, topic, Detail::default())
 }
 
 /// A stage with what it does in the catalogue's words (T-7753).
@@ -3682,12 +3427,7 @@ fn direct_messages(
 }
 
 /// Answers a `direct` message without a search, a read or a judgement (T-4655).
-async fn answer_direct(
-    q: Question<'_, '_>,
-    spent: Spent,
-    key: Option<[u8; 32]>,
-    started: Instant,
-) -> Spent {
+async fn answer_direct(q: Question<'_, '_>, spent: Spent, started: Instant) -> Spent {
     let messages = direct_messages(q.ask.system_prompt, q.history, q.question, q.now);
     if !within(q.ask, &spent, &messages, q.ask.output_tokens) {
         send(q.events, conversation_spent()).await;
@@ -3696,9 +3436,6 @@ async fn answer_direct(
     let answering = Answering {
         messages,
         citations: Vec::new(),
-        key,
-        keep: true,
-        live: false,
         log: Log {
             direct: true,
             rag: false,
@@ -3723,70 +3460,13 @@ pub fn new_queries<'a>(asked: &[String], next: impl Iterator<Item = &'a String>)
         .collect()
 }
 
-/// How long the answer being written may be kept, once it is whole: `0` while it may not.
-#[derive(Default)]
-struct Keep(std::sync::atomic::AtomicU64);
-
-impl Keep {
-    fn after(&self, life: Duration) {
-        self.0
-            .store(life.as_secs(), std::sync::atomic::Ordering::Relaxed);
-    }
-
-    fn life(&self) -> Option<Duration> {
-        let secs = self.0.load(std::sync::atomic::Ordering::Relaxed);
-        (secs > 0).then(|| Duration::from_secs(secs))
-    }
-}
-
-/// The events a kept answer is replayed as: what the visitor reads, never a stage or a delta.
-fn replayed(event: &Event) -> bool {
-    matches!(
-        event,
-        Event::Data(_)
-            | Event::Visualization(_)
-            | Event::Script { .. }
-            | Event::Answer(_)
-            | Event::Citations(_)
-            | Event::Followups(_)
-            | Event::Step(_)
-    )
-}
-
-/// Whether a replay may be kept: every event reached the visitor (`whole`), it holds the answer,
-/// and it is [`small_enough`]. A visitor who left mid-answer leaves a replay with no answer, which
-/// would replay as an empty reply for its whole life.
-fn keepable(replay: &[Event], whole: bool) -> bool {
-    whole && replay.iter().any(|e| matches!(e, Event::Answer(_))) && small_enough(replay)
-}
-
-/// Whether the events are small enough to keep: [`KEPT_CELLS`] table cells at most.
-fn small_enough(replay: &[Event]) -> bool {
-    let cells: usize = replay
-        .iter()
-        .map(|event| match event {
-            Event::Data(table) => table.rows.len() * table.columns.len().max(1),
-            _ => 0,
-        })
-        .sum();
-    cells <= KEPT_CELLS
-}
-
-/// Whether a connector reads as the person who asks: what it answers is theirs and never kept for
-/// another visitor (T-4731).
-fn personal(ask: &Ask<'_>) -> bool {
-    ask.connectors.iter().any(|c| c.surface.token.is_some())
-}
-
-/// The data loop's answer, sent with its citations and the router's follow-ups; a whole one of a
-/// `first` question is kept for [`LIVE_LIFE`] when [`keeps_live`] allows (T-4294, T-4731).
+/// The data loop's answer, sent with its citations and the router's follow-ups (T-4294).
 async fn answer_data(
     q: Question<'_, '_>,
     spent: &mut Spent,
     start: super::data::Start,
     followups: Vec<String>,
     missing: &[String],
-    first: bool,
 ) {
     let Question {
         ask,
@@ -3798,7 +3478,6 @@ async fn answer_data(
     let Some(super::data::Answered {
         text,
         citations,
-        whole,
         tables,
     }) = super::data::answer(ask, start, spent, events).await
     else {
@@ -3806,9 +3485,6 @@ async fn answer_data(
     };
     let text = without_invented_absence(&text, missing);
     let text = super::scope::checked_scripts(ask, question, &text, &citations);
-    if first && whole && keeps_live(ask, missing, &text) {
-        q.keep.after(LIVE_LIFE);
-    }
     send(events, Event::Answer(text)).await;
     send(events, Event::Citations(citations)).await;
     // An answer that cites no rows found nothing, and what the router offered next asks for the
@@ -3823,102 +3499,16 @@ async fn answer_data(
     }
 }
 
-/// Whether an answer of live data may be kept (T-4731): every source answered, it read as anyone,
-/// it is at least a sentence and it names no moment.
-fn keeps_live(ask: &Ask<'_>, missing: &[String], text: &str) -> bool {
-    missing.is_empty() && !personal(ask) && worth_text(text) && !tells_time(ask, text)
-}
-
-/// Whether the answer names the moment it was written, which a later visitor must not read.
-fn tells_time(ask: &Ask<'_>, text: &str) -> bool {
-    super::clock::quotes_reading(ask.now, ask.zone, text)
-}
-
 /// Answers one question by the routed loop; returns what it spent. Every outcome reaches
-/// `events`: an answer with its citations, or an error a person can act on. A first question
-/// asked before is answered from the cache at once, with no model call (T-4731).
+/// `events`: an answer with its citations, or an error a person can act on.
 pub async fn answer(
     ask: &Ask<'_>,
     history: &[Turn],
     question: &str,
     events: &Sender<Event>,
 ) -> Spent {
-    let started = Instant::now();
-    // The cache key and the connectors' lists are read at once (T-4731): one after another they
-    // took about 2.4 s before the router started on dev. A cache hit does not wait for the lists.
-    let listing = listed(ask, history);
-    let keying = cache_key(ask, history, question);
-    tokio::pin!(listing, keying);
-    let mut early = None;
-    let key = tokio::select! {
-        key = &mut keying => key,
-        out = &mut listing => {
-            early = Some(out);
-            // the key read so far goes on, never from the start
-            (&mut keying).await
-        }
-    };
-    if let Some((replay, age)) = key.and_then(|key| ask.cache.get(&key)) {
-        let mut spent = Spent {
-            cached: true,
-            first_token_ms: Some(started.elapsed().as_millis() as u64),
-            ..Spent::default()
-        };
-        spent.stages.route = Some(millis(started.elapsed()));
-        let kept = format!("an answer kept {} s ago", age.as_secs());
-        ask.trace
-            .note("route", "cached", started, None, Some(&kept));
-        for event in replay {
-            send(events, event).await;
-        }
-        return spent;
-    }
-    let listed = match early {
-        Some(listed) => listed,
-        None => listing.await,
-    };
-    let Some(key) = key else {
-        return answer_routed(
-            ask,
-            history,
-            question,
-            events,
-            None,
-            &Keep::default(),
-            listed,
-        )
-        .await;
-    };
-    // What the visitor is sent passes through here, so a whole answer is kept as it was sent.
-    let keep = Keep::default();
-    let keeping = &keep;
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(32);
-    let answering = async move {
-        let spent = answer_routed(ask, history, question, &tx, Some(key), keeping, listed).await;
-        drop(tx);
-        spent
-    };
-    let forwarding = async {
-        let (mut replay, mut whole) = (Vec::new(), true);
-        while let Some(event) = rx.recv().await {
-            if replayed(&event) {
-                replay.push(event.clone());
-            }
-            // A reader who left closes this channel too, so the answer stops as it did.
-            if events.send(event).await.is_err() {
-                whole = false;
-                rx.close();
-            }
-        }
-        (replay, whole)
-    };
-    let (spent, (replay, whole)) = tokio::join!(answering, forwarding);
-    if let Some(life) = keep.life() {
-        if keepable(&replay, whole) {
-            ask.cache.put(key, ask.deployment, replay, life);
-        }
-    }
-    spent
+    let listed = listed(ask, history).await;
+    answer_routed(ask, history, question, events, listed).await
 }
 
 /// What the router is told besides the question: the connectors that answered with their types,
@@ -3954,15 +3544,12 @@ async fn listed(ask: &Ask<'_>, history: &[Turn]) -> Listed {
     }
 }
 
-/// [`answer`] past the cache: `key` is the question's cache key when it has one, `keep` is told
-/// how long a whole answer may be kept, and `listed` is what [`listed`] read.
+/// [`answer`] once [`listed`] read the connectors' lists and the sources' languages.
 async fn answer_routed(
     ask: &Ask<'_>,
     history: &[Turn],
     question: &str,
     events: &Sender<Event>,
-    key: Option<[u8; 32]>,
-    keep: &Keep,
     Listed {
         live,
         missing,
@@ -3992,7 +3579,6 @@ async fn answer_routed(
         events,
         languages: &languages,
         now: &now,
-        keep,
         judging: &judging,
     };
     let messages = router_messages(history, question, &live, &languages, &now);
@@ -4000,7 +3586,7 @@ async fn answer_routed(
         send(events, conversation_spent()).await;
         return spent;
     }
-    send(events, stage("understanding", None)).await;
+    // `understanding` went out when the question arrived (T-7789).
     // The question is searched as asked and its passages judged while the router call runs
     // (T-4293): the first round costs no wait of its own, and when it covers the question the
     // router's queries only add to it. The judgement keeps room for the router's own call.
@@ -4046,7 +3632,7 @@ async fn answer_routed(
         }
     };
     if routing.direct {
-        return answer_direct(q, spent, key, started).await;
+        return answer_direct(q, spent, started).await;
     }
     let missing = missing_for(&routing, missing);
 
@@ -4110,8 +3696,7 @@ async fn answer_routed(
             steps: routing.reads.len(),
             started,
         };
-        let first = key.is_some();
-        let answering = answer_data(q, &mut spent, start, routing.followups, &missing, first);
+        let answering = answer_data(q, &mut spent, start, routing.followups, &missing);
         if !beside {
             answering.await;
             return spent;
@@ -4130,11 +3715,6 @@ async fn answer_routed(
     let answering = Answering {
         messages,
         citations,
-        key,
-        // an answer written while a source did not answer is never replayed, nor live values
-        // read as the person who asks (T-4731)
-        keep: missing.is_empty() && (tables.is_empty() || !personal(ask)),
-        live: !tables.is_empty(),
         log: Log {
             direct: false,
             rag: routing.rag,
@@ -4313,8 +3893,6 @@ struct Question<'a, 'b> {
     events: &'a Sender<Event>,
     languages: &'a [String],
     now: &'a str,
-    /// Told how long the answer may be kept, once it is whole.
-    keep: &'a Keep,
     /// Whether the first round may still start its judgement: a data question whose rows came
     /// back leaves the round out of its answer, so a judge not yet started never starts (T-7772).
     judging: &'a std::sync::atomic::AtomicBool,
@@ -4324,44 +3902,6 @@ struct Question<'a, 'b> {
 /// budget.
 fn within(ask: &Ask<'_>, spent: &Spent, messages: &[Value], out: u64) -> bool {
     ask.spent_before + spent.total + tokens_of(messages) + out <= ask.tokens_per_conversation
-}
-
-/// A first question's cache key; a follow-up depends on its turns and has none.
-async fn cache_key(ask: &Ask<'_>, history: &[Turn], question: &str) -> Option<[u8; 32]> {
-    if !history.is_empty() {
-        return None;
-    }
-    let began = Instant::now();
-    let (read, output) = question_digest(
-        ask.cache,
-        ask.pool,
-        ask.deployment,
-        ask.sources,
-        ask.public_only,
-    )
-    .await;
-    ask.trace.note("tool", "digest", began, None, Some(output));
-    match read {
-        // The local day is part of the key, so an answer about "today" is not kept past it; so
-        // are the connectors the answer reads, so a question that switched some off never
-        // answers one that did not.
-        Ok(digest) => Some(AnswerCache::key(
-            ask.deployment,
-            question,
-            &kept_index(&digest, &local_day(ask).to_string(), ask.connectors),
-        )),
-        Err(why) => {
-            tracing::info!(deployment = %ask.deployment, %why, "no index digest; the answer is not looked up or kept");
-            None
-        }
-    }
-}
-
-/// What a kept answer was made from: the index digest, the local day and the connectors read.
-fn kept_index(digest: &str, day: &str, connectors: &[Connected]) -> String {
-    let mut slugs: Vec<&str> = connectors.iter().map(|c| c.surface.slug.as_str()).collect();
-    slugs.sort_unstable();
-    format!("{digest}@{day}#{}", slugs.join(","))
 }
 
 /// A judge call's reply and how long it took.
@@ -4737,6 +4277,43 @@ fn first_round(
     (found, pending)
 }
 
+/// How long a round's searches are waited for once one of them came back (T-7789).
+const SEARCH_WAVE: Duration = Duration::from_secs(4);
+
+/// The outputs of `futures` run at once, in their order, and how many were dropped: each is waited
+/// for until `deadline`, and past it only until the first one comes back.
+async fn wave<T>(
+    futures: impl IntoIterator<Item = impl std::future::Future<Output = T>>,
+    deadline: tokio::time::Instant,
+) -> (Vec<T>, usize) {
+    use futures_util::StreamExt as _;
+    let mut running: futures_util::stream::FuturesUnordered<_> = futures
+        .into_iter()
+        .enumerate()
+        .map(|(i, f)| async move { (i, f.await) })
+        .collect();
+    let mut came = Vec::new();
+    loop {
+        let next = if came.is_empty() {
+            running.next().await
+        } else {
+            match tokio::time::timeout_at(deadline, running.next()).await {
+                Ok(next) => next,
+                Err(_) => break,
+            }
+        };
+        match next {
+            Some(out) => came.push(out),
+            None => break,
+        }
+    }
+    came.sort_by_key(|(i, _)| *i);
+    (
+        came.into_iter().map(|(_, out)| out).collect(),
+        running.len(),
+    )
+}
+
 /// Searches the pending queries for up to [`MAX_ROUNDS`] rounds. After each round but the last
 /// it asks the judge whether the passages answer, unless the first round already covered the
 /// question. Returns false once the client is gone.
@@ -4754,14 +4331,27 @@ async fn search_rounds(
             return false;
         }
         // A round's queries are searched at once, their passages merged in the queries' order
-        // (T-4729): one after another, they were most of a 15.9 s search phase.
+        // (T-4729): one after another, they were most of a 15.9 s search phase. Past
+        // [`SEARCH_WAVE`] the round answers from the searches that came back and drops the slow
+        // ones (T-7789: one of four took 11.5 s on prod while three were back by 6 s).
         let at = Instant::now();
         let searches = pending.iter().map(|query| searched(q.ask, q.events, query));
-        for hits in futures_util::future::join_all(searches)
-            .await
-            .into_iter()
-            .flatten()
-        {
+        let (came, cut) = wave(searches, tokio::time::Instant::now() + SEARCH_WAVE).await;
+        for _ in 0..cut {
+            let failed = Event::Tool {
+                name: "search".into(),
+                endpoint: None,
+                status: "failed",
+            };
+            send(q.events, failed).await;
+        }
+        if cut > 0 {
+            let output = format!("{cut} of {} searches cut", pending.len());
+            q.ask
+                .trace
+                .note("search", "search_wave", at, None, Some(&output));
+        }
+        for hits in came.into_iter().flatten() {
             merge(&mut found.hits, hits);
         }
         Stages::add(&mut spent.stages.search, at);
@@ -4979,11 +4569,6 @@ struct Log {
 struct Answering {
     messages: Vec<Value>,
     citations: Vec<Citation>,
-    key: Option<[u8; 32]>,
-    /// It may be kept in the cache: every source answered, and no live value is the person's.
-    keep: bool,
-    /// A table went into it: it is kept for [`LIVE_LIFE`] rather than [`CACHE_LIFE`].
-    live: bool,
     log: Log,
     followups: Vec<String>,
     started: Instant,
@@ -4991,8 +4576,8 @@ struct Answering {
     missing: Vec<String>,
 }
 
-/// Streams the answer, keeps only the citations it cites, caches an answer from pages alone,
-/// and sends the citations and the follow-up questions.
+/// Streams the answer, keeps only the citations it cites, and sends the citations and the
+/// follow-up questions.
 async fn stream_answer(q: Question<'_, '_>, mut spent: Spent, answering: Answering) -> Spent {
     let Question {
         ask,
@@ -5003,9 +4588,6 @@ async fn stream_answer(q: Question<'_, '_>, mut spent: Spent, answering: Answeri
     let Answering {
         messages,
         mut citations,
-        key,
-        keep,
-        live,
         log,
         followups,
         started,
@@ -5072,11 +4654,6 @@ async fn stream_answer(q: Question<'_, '_>, mut spent: Spent, answering: Answeri
         cited = citations.len(),
         "routed answer"
     );
-    // Live values change: an answer that read them is kept for a short while, and never one
-    // that told the time.
-    if key.is_some() && keep && !tells_time(ask, &text) && worth_keeping(&completion, &text) {
-        q.keep.after(if live { LIVE_LIFE } else { CACHE_LIFE });
-    }
     send(events, Event::Answer(text)).await;
     send(events, Event::Citations(citations)).await;
     let followups = unasked(followups, q.history);
@@ -5086,22 +4663,41 @@ async fn stream_answer(q: Question<'_, '_>, mut spent: Spent, answering: Answeri
     spent
 }
 
-/// Whether an answer may be kept for the next visitor (T-4370): only when its call ended on its
-/// own and it is at least a sentence, so a cut stream, a length stop or a bare "I cannot" is
-/// never replayed.
-pub fn worth_keeping(completion: &Completion, text: &str) -> bool {
-    completion.whole() && worth_text(text)
-}
-
-/// Whether an answer's text is at least a sentence: three words, ending as one or twelve long.
-fn worth_text(text: &str) -> bool {
-    let words = text.split_whitespace().count();
-    words >= 3 && (words >= 12 || text.trim_end().ends_with(['.', '!', '?', '…', ']', ')']))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7789: a round answers from the searches that came back by its deadline, in their order,
+    /// and drops the slow one; before the deadline, or with none back yet, it waits.
+    #[tokio::test(start_paused = true)]
+    async fn a_search_wave_drops_what_is_slower_than_its_deadline() {
+        let after = |ms: u64, out: u32| async move {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            out
+        };
+        let now = tokio::time::Instant::now();
+        let deadline = now + Duration::from_secs(4);
+        let (came, cut) = wave(
+            [after(3_000, 1), after(11_000, 2), after(1_000, 3)],
+            deadline,
+        )
+        .await;
+        assert_eq!((came, cut), (vec![1, 3], 1));
+        assert_eq!(tokio::time::Instant::now() - now, Duration::from_secs(4));
+
+        let now = tokio::time::Instant::now();
+        let deadline = now + Duration::from_secs(4);
+        let (came, cut) = wave([after(6_000, 1), after(9_000, 2)], deadline).await;
+        assert_eq!((came, cut), (vec![1], 1), "the first one is waited for");
+        assert_eq!(tokio::time::Instant::now() - now, Duration::from_secs(6));
+
+        let (came, cut) = wave(
+            [after(10, 1), after(20, 2)],
+            tokio::time::Instant::now() + Duration::from_secs(4),
+        )
+        .await;
+        assert_eq!((came, cut), (vec![1, 2], 0));
+    }
 
     /// T-7765: a page lookup that waits out its deadline is not asked again while its backoff
     /// runs, also when a caller's own deadline cut it; once the backoff passed it is asked, and
@@ -5208,76 +4804,6 @@ mod tests {
             Looked::Page(Some("https://p/bridges".into()))
         );
         assert!(began.elapsed() < short);
-    }
-
-    /// T-7772: a first question waits at most DIGEST_WAIT for its index digest, whose count took
-    /// 9.1 s of jc-prod's turn 36 before the router started. The pool's server accepts and stays
-    /// silent; the read goes on in the background, a second question starts no second one, a
-    /// kept digest answers at once, and warming refreshes only a deployment a question asked.
-    #[tokio::test]
-    async fn a_first_question_never_waits_on_a_slow_index_digest() {
-        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = silent.local_addr().unwrap().port();
-        let held = tokio::spawn(async move {
-            let mut open = Vec::new();
-            while let Ok((socket, _)) = silent.accept().await {
-                open.push(socket);
-            }
-        });
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .acquire_timeout(Duration::from_secs(5))
-            .connect_lazy(&format!("postgres://jc@127.0.0.1:{port}/jc"))
-            .unwrap();
-        let cache = AnswerCache::default();
-        let sources = vec![("bbsk".to_owned(), vec!["web".to_owned()])];
-        let began = Instant::now();
-        let (digest, step) = question_digest(&cache, &pool, "bbsk/chat", &sources, true).await;
-        assert!(digest.is_err());
-        assert_eq!(step, "deadline");
-        let waited = began.elapsed();
-        assert!(
-            waited >= DIGEST_WAIT && waited < DIGEST_WAIT * 3,
-            "{waited:?}"
-        );
-        assert!(cache.reading_digests.lock().unwrap().contains("bbsk/chat"));
-        let began = Instant::now();
-        let (_, step) = question_digest(&cache, &pool, "bbsk/chat", &sources, true).await;
-        assert_eq!(step, "reading");
-        assert!(began.elapsed() < Duration::from_millis(50));
-        assert_eq!(cache.reading_digests.lock().unwrap().len(), 1);
-        // A digest read within DIGEST_LIFE answers with no read.
-        cache.digests.lock().unwrap().insert(
-            "bbsk/other".into(),
-            KeptDigest {
-                read: Some((Instant::now(), "bbsk:3:9;".into())),
-                asked: Instant::now(),
-            },
-        );
-        let (digest, step) = question_digest(&cache, &pool, "bbsk/other", &sources, true).await;
-        assert_eq!((digest, step), (Ok("bbsk:3:9;".to_owned()), "kept"));
-        // Warming reads no digest for a deployment no question asked, and reads one past half
-        // its life for one a question did.
-        warm_digest(&cache, &pool, "bbsk/unasked", &sources, true);
-        assert!(!cache
-            .reading_digests
-            .lock()
-            .unwrap()
-            .contains("bbsk/unasked"));
-        warm_digest(&cache, &pool, "bbsk/other", &sources, true);
-        assert!(!cache.reading_digests.lock().unwrap().contains("bbsk/other"));
-        cache.digests.lock().unwrap().insert(
-            "bbsk/other".into(),
-            KeptDigest {
-                read: Some((Instant::now() - DIGEST_LIFE / 2, "bbsk:3:9;".into())),
-                asked: Instant::now(),
-            },
-        );
-        warm_digest(&cache, &pool, "bbsk/other", &sources, true);
-        assert!(cache.reading_digests.lock().unwrap().contains("bbsk/other"));
-        // A question meanwhile still reads the digest kept within DIGEST_LIFE.
-        let (_, step) = question_digest(&cache, &pool, "bbsk/other", &sources, true).await;
-        assert_eq!(step, "kept");
-        held.abort();
     }
 
     /// T-7765: a database that does not answer never holds the question. The pool's server
@@ -6655,47 +6181,6 @@ mod tests {
         assert!(best(&[], &websites).is_empty());
     }
 
-    /// T-4360: a passage both rankings put in their first three skips the judgement; one only a
-    /// single ranking found, or none at all, is still judged.
-    /// T-4370: a content-filter stop, a length stop and a one-word or cut refusal are never
-    /// cached; a whole answer of a sentence is.
-    #[test]
-    fn only_a_whole_answer_of_a_sentence_is_kept() {
-        let ended = |finish: Option<&str>| Completion {
-            text: String::new(),
-            calls: Vec::new(),
-            tokens: 0,
-            input: 0,
-            output: 0,
-            cost_micros: None,
-            provider: None,
-            reasoning: None,
-            finish: finish.map(str::to_owned),
-            ..Default::default()
-        };
-        let answer = "Knižnica je otvorená od 9:00 do 17:00 [1].";
-        assert!(worth_keeping(&ended(Some("stop")), answer));
-        assert!(worth_keeping(&ended(None), answer));
-        assert!(!worth_keeping(&ended(Some("content_filter")), answer));
-        assert!(!worth_keeping(&ended(Some("length")), answer));
-        assert!(!worth_keeping(&ended(Some("stop")), "I cannot"));
-        assert!(!worth_keeping(&ended(Some("stop")), "Nie."));
-        assert!(
-            !worth_keeping(&ended(Some("stop")), "I cannot help"),
-            "no sentence end"
-        );
-        assert!(worth_keeping(
-            &ended(Some("stop")),
-            "I cannot help with that."
-        ));
-        let list =
-            "Otvorené: pondelok 9 až 17, utorok 9 až 17, streda 9 až 17, štvrtok 9 až 17 [1]";
-        assert!(
-            worth_keeping(&ended(Some("stop")), list),
-            "a long answer needs no full stop"
-        );
-    }
-
     #[test]
     fn passages_both_rankings_put_on_top_cover_the_question() {
         assert!(covers(&[hit(1, 1.0 / 70.0), hit(2, 2.0 / 61.0)]));
@@ -7267,133 +6752,6 @@ mod tests {
     }
 
     #[test]
-    fn the_cache_key_ignores_case_spacing_and_closing_marks_but_not_the_index() {
-        let key = AnswerCache::key("bb/public", "Kedy je otvorená  knižnica?", "10:99");
-        assert_eq!(
-            key,
-            AnswerCache::key("bb/public", " kedy je OTVORENÁ knižnica ", "10:99")
-        );
-        assert_ne!(
-            key,
-            AnswerCache::key("bb/public", "Kedy je otvorená knižnica?", "11:100")
-        );
-        assert_ne!(
-            key,
-            AnswerCache::key("other/public", "Kedy je otvorená knižnica?", "10:99")
-        );
-        let cache = AnswerCache::default();
-        assert_eq!(cache.get(&key), None);
-        let answer = vec![Event::Answer("Od 9:00 [1].".into())];
-        cache.put(key, "bb/public", answer.clone(), CACHE_LIFE);
-        assert_eq!(cache.get(&key).map(|(a, _)| a), Some(answer));
-    }
-
-    /// A question that switches connectors off is kept apart from one that reads them all, so a
-    /// visitor's narrowed answer never answers the next visitor.
-    #[test]
-    fn a_kept_answer_is_keyed_by_the_connectors_it_read() {
-        let connector = |slug: &str| Connected {
-            titles: Default::default(),
-            endpoint: slug.into(),
-            title: None,
-            surface: super::super::mcp::Surface {
-                gateway: "http://gateway".into(),
-                slug: slug.into(),
-                timeout: Duration::from_secs(1),
-                token: None,
-            },
-            tools: Vec::new(),
-            label: None,
-            siblings: Vec::new(),
-            dataset: None,
-        };
-        let both = [connector("parking"), connector("roads")];
-        let index = kept_index("10:99", "2026-11-14", &both);
-        assert_ne!(index, kept_index("10:99", "2026-11-14", &[]));
-        assert_ne!(index, kept_index("10:99", "2026-11-14", &both[..1]));
-        let swapped = [connector("roads"), connector("parking")];
-        assert_eq!(index, kept_index("10:99", "2026-11-14", &swapped));
-    }
-
-    /// T-4731: a kept answer is the events the visitor was sent, tables and follow-ups included,
-    /// for its own life; a stage, a delta or an error is never replayed, and a page of more than
-    /// [`KEPT_CELLS`] cells is never kept.
-    #[test]
-    fn a_kept_answer_replays_what_was_sent_for_its_own_life() {
-        let table = Table {
-            endpoint: "ovzdusie".into(),
-            entity_type: "AirQualityObserved".into(),
-            columns: vec!["name".into(), "no2".into()],
-            rows: vec![vec![json!("Námestie SNP"), json!(21)]],
-            ..Table::default()
-        };
-        let sent = [
-            stage("understanding", None),
-            Event::Data(Box::new(table.clone())),
-            Event::Delta("NO2 ".into()),
-            Event::Answer("NO2 je 21 [1].".into()),
-            Event::Citations(Vec::new()),
-            Event::Followups(vec!["A PM10?".into()]),
-        ];
-        let replay: Vec<Event> = sent.iter().filter(|e| replayed(e)).cloned().collect();
-        assert_eq!(replay.len(), 4);
-        assert!(matches!(replay[0], Event::Data(_)) && matches!(replay[3], Event::Followups(_)));
-        assert!(!replayed(&conversation_spent()));
-        assert!(keepable(&replay, true));
-        assert!(!keepable(&replay, false), "the visitor left mid-answer");
-        assert!(!keepable(&replay[..1], true), "no answer was sent");
-
-        let cache = AnswerCache::default();
-        let live = AnswerCache::key("bb/public", "Aké je NO2?", "1:1@2026-10-19");
-        let gone = AnswerCache::key("bb/public", "Aké je PM10?", "1:1@2026-10-19");
-        cache.put(live, "bb/public", replay.clone(), LIVE_LIFE);
-        cache.put(gone, "bb/public", replay.clone(), Duration::ZERO);
-        let (again, age) = cache.get(&live).expect("kept");
-        assert_eq!(again, replay);
-        assert!(age < LIVE_LIFE);
-        assert_eq!(cache.get(&gone), None, "past its life");
-        // Another deployment, language-free key or day never reads it.
-        assert_eq!(
-            cache.get(&AnswerCache::key(
-                "zilina/public",
-                "Aké je NO2?",
-                "1:1@2026-10-19"
-            )),
-            None
-        );
-        assert_eq!(
-            cache.get(&AnswerCache::key(
-                "bb/public",
-                "Aké je NO2?",
-                "1:1@2026-10-20"
-            )),
-            None
-        );
-        // A purge drops only its own deployment's answers, and a second purge finds none.
-        let other = AnswerCache::key("zilina/public", "Aké je NO2?", "1:1@2026-10-19");
-        cache.put(other, "zilina/public", replay.clone(), LIVE_LIFE);
-        assert_eq!(cache.forget("bb/public"), 1);
-        assert_eq!(cache.get(&live), None, "forgotten");
-        assert!(
-            cache.get(&other).is_some(),
-            "another deployment keeps its answers"
-        );
-        assert_eq!(cache.forget("bb/public"), 0);
-
-        assert!(small_enough(&replay));
-        let big = Table {
-            rows: vec![vec![json!(1), json!(2)]; KEPT_CELLS / 2 + 1],
-            ..table
-        };
-        assert!(!small_enough(&[Event::Data(Box::new(big))]));
-        // A whole answer is kept for the life it is told; nothing told keeps nothing.
-        let keep = Keep::default();
-        assert_eq!(keep.life(), None);
-        keep.after(LIVE_LIFE);
-        assert_eq!(keep.life(), Some(LIVE_LIFE));
-    }
-
-    #[test]
     fn an_english_question_over_slovak_sources_is_told_to_answer_in_english() {
         let passages = [
             json!({"n": 1, "title": "Kvalita ovzdušia v Banskej Bystrici", "text": "Mesto zverejňuje merania PM10."}),
@@ -7418,30 +6776,6 @@ mod tests {
         ] {
             assert!(!last(question).contains("in English"), "{question}");
         }
-    }
-
-    #[test]
-    fn the_cache_stays_bounded() {
-        let cache = AnswerCache::default();
-        for n in 0..CACHE_ENTRIES + 5 {
-            cache.put(
-                AnswerCache::key("d", &n.to_string(), "1:1"),
-                "p/d",
-                vec![Event::Answer(n.to_string())],
-                CACHE_LIFE,
-            );
-        }
-        assert_eq!(
-            cache.entries.lock().map(|e| e.len()).unwrap_or(0),
-            CACHE_ENTRIES
-        );
-        assert!(cache
-            .get(&AnswerCache::key(
-                "d",
-                &(CACHE_ENTRIES + 4).to_string(),
-                "1:1"
-            ))
-            .is_some());
     }
 
     #[test]

@@ -86,6 +86,7 @@ dependencies = [
  "antares-mcp",
  "antares-ops",
  "antares-sql",
+ "antares-store",
  "antares-wasm",
  "antares-ws",
  "http",
