@@ -171,10 +171,11 @@ pub(crate) async fn upstream_body(
 /// as a `..` segment and a backslash as a slash in an http(s) URL, so nothing still encoded, no
 /// backslash, no dot segment and no empty segment gets through (T-0817, T-1300, T-1301). The
 /// parser also drops every tab and line break before it reads a segment, so `.%09.` would be `..`
-/// once sent: no control character gets through either (T-7795). A trailing slash, a directory
-/// listing, stays allowed.
+/// once sent: no control character gets through either (T-7795). A decoded `?` or `#` ends the
+/// path there, so `..?x` would be `..` once sent: neither gets through (T-7795). A trailing slash,
+/// a directory listing, stays allowed.
 pub(crate) fn escapes(path: &str) -> bool {
-    path.contains('%')
+    path.contains(['%', '?', '#'])
         || path.contains(|c: char| c.is_ascii_control())
         || path.contains('\\')
         || path.starts_with('/')
@@ -245,6 +246,10 @@ mod tests {
             ".\n./admin",
             "a/.\r./.\r./b",
             "a\u{0}b",
+            // A decoded `?` or `#` ends the path; the `..` before it is a dot segment (T-7795).
+            "..?x",
+            "..#",
+            "a/..?/../../b",
         ] {
             assert!(escapes(path), "{path:?}");
         }

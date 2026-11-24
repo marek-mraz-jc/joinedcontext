@@ -163,6 +163,11 @@ async fn a_path_that_would_leave_the_endpoint_is_refused_however_it_is_spelled()
         "%09../admin",
         ".%0A./admin",
         "ngsi-ld/.%0D./.%0D./admin",
+        // The path arrives decoded: a `?` or `#` ends the path, and the `..` before it is a dot
+        // segment once sent (T-7795).
+        "..%3Fid=x",
+        "..%23",
+        "ngsi-ld/v1/..%3F/../../admin",
     ] {
         let proxy = with_gateway(false, &gateway.uri());
         let response = proxy
