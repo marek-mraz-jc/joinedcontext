@@ -392,9 +392,7 @@ fn publisher_verifier(
     if siblings.get(Module::Portal).is_some() {
         return crate::door::local_verifier().map(|v| Some(Arc::new(v)));
     }
-    tracing::warn!(
-        "dataroom: no issuer of service tokens ([door], or the Portal beside it): nothing publishes into its catalogues"
-    );
+    tracing::warn!("dataroom: no issuer of service tokens ([door] or a Portal): nothing publishes");
     Ok(None)
 }
 
@@ -504,11 +502,7 @@ async fn hold_default_host(
     let name = stored.as_ref().map_or("default", |c| c.name.as_str());
     let held = dataroom_server::ensure_catalogue(store, org_id, catalogue_id, name, host).await?;
     if let Some(old) = stored.filter(|c| c.host != held.host) {
-        tracing::info!(
-            from = %old.host,
-            to = %held.host,
-            "dataroom: default catalogue moved to the configured host (the deployment's host wins over one catalogue.propose set)"
-        );
+        tracing::info!(from = %old.host, to = %held.host, "dataroom: default catalogue moved to the configured host (the deployment's host wins over one catalogue.propose set)");
     }
     Ok(())
 }
@@ -1005,9 +999,7 @@ fn with_appearance(
         })
     };
     if readable(&block) && !readable(&shown) {
-        tracing::warn!(
-            "dataroom: an appearance colour below WCAG AA on the background; jc's colours show"
-        );
+        tracing::warn!("dataroom: a colour below WCAG AA on the background; jc's colours show");
         over["colours"] = serde_json::Value::Null;
         shown = block;
         shown.apply_override_json(&over);
@@ -1078,9 +1070,7 @@ fn readable_tokens(
                 (fore.clone(), back.clone())
             } else {
                 if fore.is_some() || back.is_some() {
-                    tracing::warn!(
-                        "dataroom: an appearance colour pair below WCAG AA; the theme's shows"
-                    );
+                    tracing::warn!("dataroom: a colour pair below WCAG AA; the theme's shows");
                 }
                 (None, None)
             }

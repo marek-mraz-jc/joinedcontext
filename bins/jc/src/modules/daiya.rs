@@ -138,11 +138,8 @@ pub async fn build(
         let report = provision(&state, dir, &vars)
             .await
             .map_err(|e| e.to_string())?;
-        tracing::info!(
-            datasources = report.datasources_upserted,
-            dashboards = report.dashboards,
-            "daiya: provisioning loaded"
-        );
+        let (datasources, dashboards) = (report.datasources_upserted, report.dashboards);
+        tracing::info!(datasources, dashboards, "daiya: provisioning loaded");
     }
     Ok(router(state, mount))
 }
