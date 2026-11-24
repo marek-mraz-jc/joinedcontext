@@ -226,6 +226,17 @@ mod tests {
         assert_eq!(wait(&[]), 5);
         assert_eq!(wait(&[("retry-after", "Wed, 21 Oct 2026 07:28:00 GMT")]), 5);
         assert_eq!(wait(&[("retry-after", "3600")]), 60);
+        assert_eq!(wait(&[("retry-after", " 9 ")]), 9);
+        assert_eq!(wait(&[("retry-after", "-3")]), 5);
+        // A value that is no text falls through to the next header, then to the default.
+        let mut opaque = reqwest::header::HeaderMap::new();
+        opaque.insert(
+            "retry-after",
+            reqwest::header::HeaderValue::from_bytes(b"\xff7").expect("bytes"),
+        );
+        assert_eq!(paced_wait(&opaque).as_secs(), 5);
+        opaque.insert("x-ratelimit-reset", reqwest::header::HeaderValue::from_static("11"));
+        assert_eq!(paced_wait(&opaque).as_secs(), 11);
     }
 
     /// T-4424: a call answered 429 is made again, built anew each time, and after five retries
@@ -487,11 +498,24 @@ mod tests {
         )
         .expect_err("not a name");
         assert_eq!(err, "Not/AName is not a ServiceAccount name");
+        // A token without its namespace file, and an API address that is no URL, are start-up
+        // errors naming what is wrong and never the token.
+        let lone = scratch("no-namespace");
+        std::fs::write(lone.join("token"), "own-pod-token").expect("token");
+        let err = ClientAuth::minted(&lone, "https://kubernetes.default.svc", "portal-reconciler", "aud")
+            .expect_err("no namespace");
+        assert_eq!(err, format!("no namespace at {}", lone.display()));
+        let err = ClientAuth::minted(&mount("bad-api"), "not a url", "portal-reconciler", "aud")
+            .expect_err("no API server");
+        assert!(!err.is_empty() && !err.contains("own-pod-token"), "{err}");
     }
 
     #[test]
     fn its_debug_output_never_carries_the_secret() {
         let shown = format!("{:?}", ClientAuth::Secret("s3cr3t-do-not-leak".into()));
         assert!(!shown.contains("s3cr3t"), "{shown}");
+        assert_eq!(shown, "Secret([redacted])");
+        let path = format!("{:?}", ClientAuth::Assertion(PathBuf::from("/var/run/token")));
+        assert_eq!(path, "Assertion(\"/var/run/token\")");
     }
 }

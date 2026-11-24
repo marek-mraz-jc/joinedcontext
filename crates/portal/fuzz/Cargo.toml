@@ -1,0 +1,50 @@
+# Fuzzing the Portal's request-facing parsers (T-7605): the unverified `iss` of a bearer token,
+# the double-submit CSRF check over arbitrary headers, the login redirect target and an
+# Organization realm list from jc's host registry. Not a workspace member; run with
+# `cargo +nightly fuzz run <target>` from crates/portal.
+[package]
+name = "joinedcontext-portal-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+axum = "0.8"
+url = "2"
+joinedcontext-portal = { path = ".." }
+
+# Its own workspace: the Portal's `apps/*` workspace does not build it.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "auth_issuer_of"
+path = "fuzz_targets/auth_issuer_of.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_csrf_double_submit"
+path = "fuzz_targets/auth_csrf_double_submit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_login_redirect"
+path = "fuzz_targets/auth_login_redirect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_realms_parse"
+path = "fuzz_targets/auth_realms_parse.rs"
+test = false
+doc = false
+bench = false

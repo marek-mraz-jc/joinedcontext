@@ -167,6 +167,218 @@ pub async fn authenticate_pipeline_runner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::bearer::tests::{keypair, now, sign, ISSUER};
+    use crate::auth::bearer::BearerVerifier;
+    use crate::config::Config;
+    use std::sync::Arc;
+
+    /// A Portal whose realm signs with one key, the internal clients named as a deployment
+    /// names them, and the signer for that realm's tokens.
+    fn portal() -> (AppState, jsonwebtoken::EncodingKey) {
+        let mut config = Config::for_tests();
+        config.gateway_client_id = Some("context-gateway".into());
+        config.agent_proxy_client_id = Some("agent-proxy".into());
+        config.pipeline_runner_client_id = Some("pipeline-runner".into());
+        let mut state = AppState::new(config, None);
+        let (signer, set) = keypair("k1");
+        // Port 9 refuses at once: an unknown kid fails fast instead of reaching a realm.
+        let verifier = BearerVerifier::with_jwks_url(
+            &url::Url::parse(ISSUER).expect("issuer"),
+            "portal-api",
+            url::Url::parse("http://127.0.0.1:9/certs").expect("jwks"),
+        );
+        assert_eq!(verifier.install(&set), 1);
+        state.bearer = Some(Arc::new(verifier));
+        (state, signer)
+    }
+
+    /// `Authorization: Bearer` with a token for `audience` obtained by `azp` (none when `None`).
+    fn bearer(signer: &jsonwebtoken::EncodingKey, audience: &str, azp: Option<&str>) -> HeaderMap {
+        let mut claims = serde_json::json!({
+            "iss": ISSUER, "typ": "Bearer", "aud": audience, "sub": "service-account",
+            "exp": now() + 60, "iat": now(),
+        });
+        if let Some(azp) = azp {
+            claims["azp"] = serde_json::json!(azp);
+        }
+        authorization(&format!("Bearer {}", sign(signer, "k1", &claims)))
+    }
+
+    fn authorization(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, value.parse().expect("header"));
+        headers
+    }
+
+    /// Only `Bearer <token>` with a non-blank token is a presented token; any other shape is 401.
+    #[test]
+    fn only_a_non_blank_bearer_is_presented() {
+        assert_eq!(presented(&authorization("Bearer abc")), Ok("abc"));
+        for refused in ["Bearer ", "Bearer    ", "Basic abc", "bearer abc", "abc", "Bearer"] {
+            assert_eq!(
+                presented(&authorization(refused)),
+                Err(ApiError::Unauthorized),
+                "{refused:?}"
+            );
+        }
+        assert_eq!(presented(&HeaderMap::new()), Err(ApiError::Unauthorized));
+        let mut opaque = HeaderMap::new();
+        opaque.insert(
+            header::AUTHORIZATION,
+            axum::http::HeaderValue::from_bytes(b"Bearer \xff").expect("bytes"),
+        );
+        assert_eq!(presented(&opaque), Err(ApiError::Unauthorized));
+    }
+
+    /// PF-46: a route's own client with a token for this listener passes; the same realm's
+    /// other workload, a token for the API audience, one with no client and none at all do not.
+    #[tokio::test]
+    async fn a_route_opens_for_its_own_client_and_this_listener_alone() {
+        let (state, signer) = portal();
+        let own = bearer(&signer, INTERNAL_AUDIENCE, Some("context-gateway"));
+        assert_eq!(authenticate_workload(&state, &own, Some("context-gateway")).await, Ok(()));
+        assert_eq!(authenticate_workload(&state, &own, Some(" context-gateway ")).await, Ok(()));
+        for (headers, why) in [
+            (bearer(&signer, INTERNAL_AUDIENCE, Some("agent-proxy")), "another client"),
+            (bearer(&signer, "portal-api", Some("context-gateway")), "the API audience"),
+            (bearer(&signer, INTERNAL_AUDIENCE, None), "no client"),
+            (HeaderMap::new(), "no token"),
+            (authorization("Bearer not-a-jwt"), "garbled token"),
+        ] {
+            assert_eq!(
+                authenticate_workload(&state, &headers, Some("context-gateway")).await,
+                Err(ApiError::Unauthorized),
+                "{why}"
+            );
+        }
+    }
+
+    /// Fail closed: a route nobody configured, a blank client and a Portal with no realm refuse
+    /// even a valid token.
+    #[tokio::test]
+    async fn an_unconfigured_route_or_realm_refuses_a_valid_token() {
+        let (mut state, signer) = portal();
+        let token = bearer(&signer, INTERNAL_AUDIENCE, Some("context-gateway"));
+        for expected in [None, Some(""), Some("   ")] {
+            assert_eq!(
+                authenticate_workload(&state, &token, expected).await,
+                Err(ApiError::Unauthorized),
+                "{expected:?}"
+            );
+        }
+        state.bearer = None;
+        assert_eq!(
+            authenticate_workload(&state, &token, Some("context-gateway")).await,
+            Err(ApiError::Unauthorized)
+        );
+        assert_eq!(
+            authenticate_pipeline_runner(
+                &state,
+                &bearer(&signer, INTERNAL_AUDIENCE, Some("pipeline-runner")),
+                None
+            )
+            .await,
+            Err(ApiError::Unauthorized)
+        );
+    }
+
+    /// T-2271: the gateway's door and the credential proxy's door each take their own client
+    /// and refuse the other's token.
+    #[tokio::test]
+    async fn the_gateway_and_the_agent_proxy_do_not_open_each_others_door() {
+        let (mut state, signer) = portal();
+        let gateway = bearer(&signer, INTERNAL_AUDIENCE, Some("context-gateway"));
+        let proxy = bearer(&signer, INTERNAL_AUDIENCE, Some("agent-proxy"));
+        assert_eq!(authenticate_gateway(&state, &gateway).await, Ok(()));
+        assert_eq!(authenticate_agent_proxy(&state, &proxy).await, Ok(()));
+        assert_eq!(
+            authenticate_gateway(&state, &proxy).await,
+            Err(ApiError::Unauthorized)
+        );
+        assert_eq!(
+            authenticate_agent_proxy(&state, &gateway).await,
+            Err(ApiError::Unauthorized)
+        );
+        state.config.gateway_client_id = None;
+        assert_eq!(
+            authenticate_gateway(&state, &gateway).await,
+            Err(ApiError::Unauthorized)
+        );
+    }
+
+    /// T-3193: a pipeline's sink takes its project's `pipelines` account and the pipeline's own
+    /// client; another project's or pipeline's client, a token with no client and the API
+    /// audience are refused.
+    #[tokio::test]
+    async fn a_pipeline_sink_takes_only_its_own_projects_pipeline_clients() {
+        let (state, signer) = portal();
+        for client in ["praha-pipelines", "praha-pl-odpad"] {
+            let headers = bearer(&signer, INTERNAL_AUDIENCE, Some(client));
+            assert_eq!(
+                authenticate_pipeline_of(&state, &headers, "praha", "odpad").await,
+                Ok(()),
+                "{client}"
+            );
+        }
+        for (headers, why) in [
+            (bearer(&signer, INTERNAL_AUDIENCE, Some("zilina-pipelines")), "another project"),
+            (bearer(&signer, INTERNAL_AUDIENCE, Some("praha-pl-other")), "another pipeline"),
+            (bearer(&signer, INTERNAL_AUDIENCE, Some("pipeline-runner")), "the runner"),
+            (bearer(&signer, INTERNAL_AUDIENCE, None), "no client"),
+            (bearer(&signer, "portal-api", Some("praha-pipelines")), "the API audience"),
+            (HeaderMap::new(), "no token"),
+        ] {
+            assert_eq!(
+                authenticate_pipeline_of(&state, &headers, "praha", "odpad").await,
+                Err(ApiError::Unauthorized),
+                "{why}"
+            );
+        }
+    }
+
+    /// T-3163, T-4050: the runner's capture route takes the configured runner client and the
+    /// running test's project harness clients; another project's, a blank configuration and a
+    /// test of no project do not widen it.
+    #[tokio::test]
+    async fn the_runner_route_takes_the_configured_client_and_its_projects_harness() {
+        let (mut state, signer) = portal();
+        let runner = bearer(&signer, INTERNAL_AUDIENCE, Some("pipeline-runner"));
+        let harness = bearer(&signer, INTERNAL_AUDIENCE, Some("praha-pl-pipeline-test"));
+        let account = bearer(&signer, INTERNAL_AUDIENCE, Some("praha-pipelines"));
+        assert_eq!(authenticate_pipeline_runner(&state, &runner, None).await, Ok(()));
+        assert_eq!(authenticate_pipeline_runner(&state, &runner, Some("praha")).await, Ok(()));
+        assert_eq!(authenticate_pipeline_runner(&state, &harness, Some("praha")).await, Ok(()));
+        assert_eq!(authenticate_pipeline_runner(&state, &account, Some("praha")).await, Ok(()));
+        for (headers, project, why) in [
+            (&harness, None, "a harness with no running test's project"),
+            (&harness, Some("zilina"), "another project's test"),
+            (&account, Some("zilina"), "another project's account"),
+        ] {
+            assert_eq!(
+                authenticate_pipeline_runner(&state, headers, project).await,
+                Err(ApiError::Unauthorized),
+                "{why}"
+            );
+        }
+        for blank in [None, Some("  ".to_owned())] {
+            state.config.pipeline_runner_client_id = blank;
+            assert_eq!(
+                authenticate_pipeline_runner(&state, &runner, Some("praha")).await,
+                Err(ApiError::Unauthorized)
+            );
+        }
+        // A token with no client never equals a blank configuration.
+        state.config.pipeline_runner_client_id = Some(String::new());
+        assert_eq!(
+            authenticate_pipeline_runner(
+                &state,
+                &bearer(&signer, INTERNAL_AUDIENCE, None),
+                None
+            )
+            .await,
+            Err(ApiError::Unauthorized)
+        );
+    }
 
     /// T-4050: a pipeline test's capture route admits its project's `pipelines` account and its
     /// harness principal, and no pipeline's own client and nothing of another project.

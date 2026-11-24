@@ -94,20 +94,22 @@ impl Token {
 /// instant the session began (`Session::started_at`, the same across refreshes), base64url.
 fn session_mac(key: &Key, organization: Option<&str>, session: &Session) -> String {
     use base64::Engine as _;
-    let Ok(mut mac) = <Hmac<sha2::Sha256> as Mac>::new_from_slice(key.signing()) else {
-        // HMAC takes a key of any length; this arm is never taken.
-        return String::new();
-    };
-    for part in [
-        "jc-csrf",
-        organization.unwrap_or(""),
-        session.identity.subject.as_str(),
-        &session.started_at().to_string(),
-    ] {
-        mac.update(part.as_bytes());
-        mac.update(&[0]);
-    }
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+    // HMAC takes a key of any length, so `new_from_slice` never fails and the default (an empty
+    // mac) is never produced.
+    <Hmac<sha2::Sha256> as Mac>::new_from_slice(key.signing())
+        .map(|mut mac| {
+            for part in [
+                "jc-csrf",
+                organization.unwrap_or(""),
+                session.identity.subject.as_str(),
+                &session.started_at().to_string(),
+            ] {
+                mac.update(part.as_bytes());
+                mac.update(&[0]);
+            }
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+        })
+        .unwrap_or_default()
 }
 
 /// The session a request's token must be bound to, with the keys that may have minted it.
@@ -434,6 +436,133 @@ mod tests {
         assert!(bound.accepts(retired.as_str()));
         assert!(!bound.accepts(Token::bound(&config.cookie_key, &a).as_str()));
         assert!(needs_token(&CookieJar::new(), Some(bound)));
+    }
+
+    /// The session's token on an Organization's host carries that host's prefix and is taken
+    /// there alone; the jar `issue` writes holds the token it returns, so it needs no new one.
+    #[tokio::test]
+    async fn an_issued_token_is_the_sessions_own_and_its_hosts() {
+        use crate::organization_host::{scope, OrganizationHost};
+        let config = crate::config::Config::for_tests();
+        let alice = person("f:1:alice");
+        let host = OrganizationHost {
+            organization: "a".to_owned(),
+            base: "https://portal.a.example".parse().expect("url"),
+        };
+        let (config_a, alice_a) = (config.clone(), alice.clone());
+        let (on_a, taken_on_a) = scope(host, async move {
+            let bound = Bound { session: &alice_a, config: &config_a };
+            let token = bound.token();
+            let taken = bound.accepts(token.as_str());
+            (token, taken)
+        })
+        .await;
+        assert!(on_a.as_str().starts_with("a."), "prefixed by its host");
+        assert!(taken_on_a);
+        let bound = Bound { session: &alice, config: &config };
+        assert!(!bound.accepts(on_a.as_str()), "refused off its host");
+        assert!(!bound.accepts(""));
+
+        let (jar, issued) = issue(CookieJar::new(), Some(bound));
+        assert_eq!(issued, bound.token().as_str());
+        assert_eq!(jar.get(CSRF_COOKIE).map(Cookie::value), Some(issued.as_str()));
+        assert!(!needs_token(&jar, Some(bound)));
+        // Another session's cookie is no token of this one.
+        let bob = person("f:1:bob");
+        let (bobs, _) = issue(CookieJar::new(), Some(Bound { session: &bob, config: &config }));
+        assert!(needs_token(&bobs, Some(bound)));
+        // Without a session any cookie will do, and no cookie needs one.
+        let (anonymous, minted) = issue(CookieJar::new(), None);
+        assert_eq!(anonymous.get(CSRF_COOKIE).map(Cookie::value), Some(minted.as_str()));
+        assert_ne!(minted, issued);
+        assert!(!needs_token(&anonymous, None));
+        assert!(needs_token(&CookieJar::new(), None));
+    }
+
+    /// The removal drops the `__Host-` cookie at once (a browser ignores one without `Secure`),
+    /// and an old App's copy has the attributes of the real one under its old name.
+    #[test]
+    fn the_removal_and_the_legacy_copy_keep_the_cookies_attributes() {
+        let removal = removal();
+        assert_eq!((removal.name(), removal.value()), (CSRF_COOKIE, ""));
+        assert_eq!(removal.path(), Some("/"));
+        assert_eq!(removal.secure(), Some(true));
+        assert_eq!(removal.max_age(), Some(time::Duration::ZERO));
+        let token = Token::mint();
+        let legacy = legacy_app_cookie(&token);
+        let current = cookie(&token);
+        assert_eq!(legacy.name(), LEGACY_APP_CSRF_COOKIE);
+        assert_eq!(legacy.value(), token.as_str());
+        assert_eq!(
+            (legacy.path(), legacy.http_only(), legacy.secure(), legacy.same_site(), legacy.max_age()),
+            (current.path(), current.http_only(), current.secure(), current.same_site(), current.max_age())
+        );
+        assert_eq!(current.max_age(), Some(time::Duration::hours(12)));
+    }
+
+    /// A header that is not text, a header with no cookie beside it and a session's bound check
+    /// with no header at all are each refused.
+    #[test]
+    fn a_header_alone_or_unreadable_is_no_double_submit() {
+        let token = new_token();
+        assert!(!double_submitted(&headers_with(None, Some(&token)), None));
+        let mut opaque = headers_with(Some(&token), None);
+        opaque.insert(
+            CSRF_HEADER,
+            axum::http::HeaderValue::from_bytes(b"\xfftoken").expect("bytes"),
+        );
+        assert!(!double_submitted(&opaque, None));
+        let config = crate::config::Config::for_tests();
+        let alice = person("f:1:alice");
+        let bound = Bound { session: &alice, config: &config };
+        let own = bound.token();
+        assert!(!double_submitted(&headers_with(Some(own.as_str()), None), Some(bound)));
+        assert!(double_submitted(&headers_with(None, Some(own.as_str())), Some(bound)));
+        assert!(!is_allowed(&Method::PUT, &headers_with(None, Some(&token)), Some(bound)));
+        assert!(is_allowed(&Method::OPTIONS, &HeaderMap::new(), Some(bound)));
+    }
+
+    /// The `/api/v1` middleware: safe methods and a bearer pass untouched, a mutation without
+    /// its token is the problem+json 403, with the anonymous pair it runs.
+    #[tokio::test]
+    async fn the_middleware_refuses_a_mutation_without_its_token() {
+        use tower::ServiceExt;
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let app = axum::Router::new()
+            .route(
+                "/x",
+                axum::routing::get(|| async { "read" }).post(|| async { "written" }),
+            )
+            .layer(axum::middleware::from_fn_with_state(state, require_csrf));
+        let call = |method: &str, headers: HeaderMap| {
+            let mut request = axum::http::Request::builder()
+                .method(method)
+                .uri("/x")
+                .body(axum::body::Body::empty())
+                .expect("request");
+            *request.headers_mut() = headers;
+            app.clone().oneshot(request)
+        };
+        let token = new_token();
+        let mut bearer = HeaderMap::new();
+        bearer.insert(axum::http::header::AUTHORIZATION, "Bearer eyJ.x.y".parse().expect("h"));
+        for (method, headers, status) in [
+            ("GET", HeaderMap::new(), 200),
+            ("HEAD", HeaderMap::new(), 200),
+            ("POST", bearer, 200),
+            ("POST", headers_with(Some(&token), Some(&token)), 200),
+            ("POST", HeaderMap::new(), 403),
+            ("POST", headers_with(Some(&token), Some("forged")), 403),
+        ] {
+            let answer = call(method, headers).await.expect("answer");
+            assert_eq!(answer.status().as_u16(), status, "{method}");
+            if status == 403 {
+                assert_eq!(
+                    answer.headers().get(axum::http::header::CONTENT_TYPE).map(|v| v.as_bytes()),
+                    Some(&b"application/problem+json"[..])
+                );
+            }
+        }
     }
 
     #[test]
