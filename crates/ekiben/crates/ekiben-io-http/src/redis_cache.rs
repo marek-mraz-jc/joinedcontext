@@ -150,8 +150,9 @@ async fn read_reply<R: tokio::io::AsyncBufRead + Unpin>(r: &mut R) -> Result<Rep
         ));
     }
     let line = line.trim_end_matches(['\r', '\n']);
-    let (kind, rest) = line.split_at(line.len().min(1));
-    match kind {
+    // The type byte is ASCII; a reply opening with a wide character has no `rest` and is refused.
+    let (kind, rest) = (line.get(..1), line.get(1..).unwrap_or_default());
+    match kind.unwrap_or_default() {
         "+" => Ok(Reply::Simple(rest.to_string())),
         "-" => Ok(Reply::Error(rest.to_string())),
         ":" => rest
@@ -560,6 +561,15 @@ mod tests {
         )
         .unwrap();
         assert!(cache.get("k").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_reply_starting_with_a_wide_character_is_refused_not_a_panic() {
+        // Found by the redis_reply fuzz target: "\u{3ea}" is two bytes, so a split after the
+        // first byte cut it in half.
+        let mut r = tokio::io::BufReader::new("\u{3ea}!\r\n".as_bytes());
+        let e = read_reply(&mut r).await.expect_err("refused");
+        assert!(e.to_string().contains("unexpected reply"), "{e}");
     }
 
     #[tokio::test]
