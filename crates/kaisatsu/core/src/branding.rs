@@ -205,12 +205,11 @@ fn font_or(value: &str, fallback: &str) -> String {
     }
 }
 
+/// A bare file name: letters, digits, `.`, `_` and `-` (so no scheme, no `/`), never `..`;
+/// anything else is empty.
 fn asset_name(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.is_empty()
-        || trimmed.contains("://")
-        || trimmed.starts_with('/')
-        || trimmed.contains("..")
+    if trimmed.contains("..")
         || !trimmed
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
@@ -406,5 +405,53 @@ mod tests {
         );
         assert!(css.contains(&format!("  --jc-font-body: {};\n}}", Fonts::default().body)));
         assert!(!css.contains("script"), "{css}");
+    }
+
+    #[test]
+    fn an_asset_is_a_bare_file_name() {
+        let logo = |v: &str| {
+            BrandingBlock {
+                logo: v.into(),
+                ..BrandingBlock::default()
+            }
+            .sanitised()
+            .logo
+        };
+        assert_eq!(logo(" city-logo_2.svg "), "city-logo_2.svg");
+        for bad in [
+            "",
+            "https://evil.example/x.svg",
+            "/etc/passwd",
+            "..",
+            "a..svg",
+            "../x.svg",
+            "logo svg",
+            "logo.svg?x=1",
+            "c:\\x.svg",
+        ] {
+            assert_eq!(logo(bad), "", "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_event_handler_is_an_on_word_starting_an_attribute_and_followed_by_equals() {
+        for unsafe_svg in [
+            "onload=\"x\"",
+            "<svg onload=\"x\"/>",
+            "<svg\nonclick = 'x'/>",
+            "<svg/onbegin=x>",
+            "<svg a=\"\"onfocusin=x>",
+        ] {
+            assert!(!is_safe_svg(unsafe_svg), "{unsafe_svg}");
+        }
+        for safe in [
+            "<svg dataonx=\"1\"/>",
+            "<svg on=\"1\"/>",
+            "<svg><text> online </text></svg>",
+            "<svg><text>on</text></svg>",
+            "<svg id=\"button\"/>",
+        ] {
+            assert!(is_safe_svg(safe), "{safe}");
+        }
     }
 }

@@ -4113,6 +4113,192 @@ mod tests {
         );
     }
 
+    /// A rename may take a client id another realm uses; it renames this client's service
+    /// account and no other person.
+    #[tokio::test]
+    async fn a_client_rename_is_checked_and_applied_in_its_own_realm() {
+        let store = MemoryStore::default();
+        let mut app = store.upsert_client(client("app")).await.expect("client");
+        store
+            .upsert_client(ClientRepresentation {
+                realm_id: "q".into(),
+                ..client("fresh")
+            })
+            .await
+            .expect("q's client");
+        store
+            .create_user(UserRepresentation {
+                username: "service-account-app".into(),
+                service_account_client_id: Some("app".into()),
+                ..user("sa")
+            })
+            .await
+            .expect("service account");
+        store.create_user(user("ada")).await.expect("person");
+        store
+            .create_user(UserRepresentation {
+                realm_id: "q".into(),
+                service_account_client_id: Some("app".into()),
+                ..user("q-sa")
+            })
+            .await
+            .expect("q's account");
+        app.client_id = "fresh".into();
+        let renamed = store.upsert_client(app).await.expect("q's id is free in r");
+        assert_eq!(renamed.client_id, "fresh");
+        let name = |realm: &'static str, id: &'static str| {
+            let store = &store;
+            async move {
+                let u = store
+                    .get_user_by_id(realm, None, id)
+                    .await
+                    .expect("read")
+                    .expect("person");
+                (u.username, u.service_account_client_id)
+            }
+        };
+        assert_eq!(
+            name(R, "sa").await,
+            ("service-account-fresh".to_owned(), Some("fresh".to_owned()))
+        );
+        assert_eq!(name(R, "ada").await, ("ada".to_owned(), None));
+        assert_eq!(
+            name("q", "q-sa").await,
+            ("q-sa".to_owned(), Some("app".to_owned()))
+        );
+    }
+
+    /// A mapping written again replaces only itself, a removal takes only the named one, and a
+    /// role delete takes only that role's mappings: kind, holder, client, name and realm each
+    /// tell mappings apart.
+    #[tokio::test]
+    async fn role_mappings_are_told_apart_by_every_part() {
+        let store = MemoryStore::default();
+        let (app, other) = (
+            store.upsert_client(client("app")).await.expect("client"),
+            store.upsert_client(client("other")).await.expect("client"),
+        );
+        let mut g = group("ada", None, "/ada");
+        g.id = "ada".into();
+        store.upsert_group(g).await.expect("group");
+        for realm in [R, "q"] {
+            for id in ["ada", "bob"] {
+                store
+                    .create_user(UserRepresentation {
+                        realm_id: realm.into(),
+                        ..user(id)
+                    })
+                    .await
+                    .expect("person");
+            }
+        }
+        let m = |realm: &str, kind: &str, who: &str, uuid: Option<&str>, name: &str| {
+            RoleMappingRecord {
+                id: String::new(),
+                realm_id: realm.into(),
+                org_id: None,
+                principal_kind: kind.into(),
+                principal_id: who.into(),
+                role_id: name.into(),
+                role_name: name.into(),
+                client_uuid: uuid.map(str::to_owned),
+            }
+        };
+        let all = [
+            m(R, "user", "ada", None, "reader"),
+            m(R, "user", "ada", None, "writer"),
+            m(R, "user", "ada", Some(&app.id), "reader"),
+            m(R, "user", "ada", Some(&other.id), "reader"),
+            m(R, "user", "bob", None, "reader"),
+            m(R, "group", "ada", None, "reader"),
+            m("q", "user", "ada", None, "reader"),
+        ];
+        for mapping in all.iter().cloned() {
+            store.add_role_mapping(mapping).await.expect("map");
+        }
+        store
+            .add_role_mapping(m(R, "user", "ada", None, "reader"))
+            .await
+            .expect("again");
+        let held =
+            |realm: &'static str, kind: &'static str, who: &'static str, uuid: Option<String>| {
+                let store = &store;
+                async move {
+                    let mut got: Vec<String> = store
+                        .list_role_mappings_for_principal(realm, kind, who, uuid.as_deref())
+                        .await
+                        .expect("mappings")
+                        .into_iter()
+                        .map(|rm| rm.role_name)
+                        .collect();
+                    got.sort();
+                    got
+                }
+            };
+        let (a, o) = (Some(app.id.clone()), Some(other.id.clone()));
+        assert_eq!(
+            held(R, "user", "ada", None).await,
+            ["reader", "writer"],
+            "ada's once"
+        );
+        assert_eq!(held(R, "user", "ada", a.clone()).await, ["reader"]);
+        assert_eq!(held(R, "user", "ada", o.clone()).await, ["reader"]);
+        assert_eq!(held(R, "user", "bob", None).await, ["reader"]);
+        assert_eq!(held(R, "group", "ada", None).await, ["reader"]);
+        assert_eq!(held("q", "user", "ada", None).await, ["reader"]);
+
+        store
+            .remove_role_mapping(R, "user", "ada", Some(&other.id), "reader")
+            .await
+            .expect("remove");
+        assert!(held(R, "user", "ada", o.clone()).await.is_empty());
+        assert_eq!(held(R, "user", "ada", a.clone()).await, ["reader"]);
+        let person = store
+            .get_user_by_id(R, None, "ada")
+            .await
+            .expect("read")
+            .expect("ada");
+        assert_eq!(
+            person.client_roles.get("app"),
+            Some(&vec!["reader".to_owned()])
+        );
+        assert!(person.client_roles.get("other").is_none_or(Vec::is_empty));
+        store
+            .remove_role_mapping(R, "user", "ada", None, "writer")
+            .await
+            .expect("remove");
+        assert_eq!(held(R, "user", "ada", None).await, ["reader"]);
+        assert_eq!(held(R, "user", "ada", a.clone()).await, ["reader"]);
+        assert_eq!(held(R, "group", "ada", None).await, ["reader"]);
+        assert_eq!(held(R, "user", "bob", None).await, ["reader"]);
+        assert_eq!(held("q", "user", "ada", None).await, ["reader"]);
+
+        store
+            .upsert_role(RoleRepresentation {
+                realm_id: R.into(),
+                name: "reader".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("role");
+        assert!(store.delete_role(R, None, "reader").await.expect("delete"));
+        assert!(
+            held(R, "user", "bob", None).await.is_empty(),
+            "the realm role is gone"
+        );
+        assert!(held(R, "group", "ada", None).await.is_empty());
+        assert_eq!(
+            held(R, "user", "ada", a).await,
+            ["reader"],
+            "the client role stays"
+        );
+        assert_eq!(
+            held("q", "user", "ada", None).await,
+            ["reader"],
+            "q keeps its role"
+        );
+    }
+
     /// Deleting the second client's role takes it from that client's holders, not the first's.
     #[tokio::test]
     async fn deleting_a_role_of_another_client_leaves_the_first_clients_holders() {
