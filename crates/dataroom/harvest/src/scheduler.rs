@@ -9,8 +9,8 @@
 use crate::runner::HarvestEngine;
 use dataroom_core::ops::HarvestRunner;
 use dataroom_core::{
-    Action, Authorizer, CatalogueId, DataroomError, GrantRule, HarvestRun, ObjectTarget, OrgId,
-    RequestCtx, Result, Store, Subject,
+    Action, Authorizer, CatalogueId, DataroomError, GrantRule, HarvestRun, HarvestRunState,
+    ObjectTarget, OrgId, RequestCtx, Result, Store, Subject,
 };
 use jc_time::TimestampTz;
 use std::sync::Arc;
@@ -145,6 +145,8 @@ impl HarvestScheduler {
     /// The enabled sources whose schedule fires in the minute of `at`, all of them for `None`.
     async fn run_sources(&self, at: Option<TimestampTz>) -> Vec<(String, Result<HarvestRun>)> {
         let mut runs = tokio::task::JoinSet::new();
+        // Which source each task runs, so a task that panics still frees its source's run.
+        let mut running = std::collections::HashMap::new();
         let catalogues = self
             .catalogues
             .read()
@@ -176,7 +178,8 @@ impl HarvestScheduler {
                     ctx.clone(),
                     self.retry_delay,
                 );
-                runs.spawn(async move {
+                let held = (ctx.clone(), source.id.clone());
+                let task = runs.spawn(async move {
                     let target = ObjectTarget::HarvestSource {
                         org_id: ctx.org_id,
                         catalogue_id: ctx.catalogue_id,
@@ -193,12 +196,26 @@ impl HarvestScheduler {
                     }
                     (source.name, res)
                 });
+                running.insert(task.id(), held);
             }
         }
         let mut out = Vec::new();
-        while let Some(done) = runs.join_next().await {
-            if let Ok(pair) = done {
-                out.push(pair);
+        while let Some(done) = runs.join_next_with_id().await {
+            match done {
+                Ok((_, pair)) => out.push(pair),
+                Err(e) => {
+                    let Some((ctx, source_id)) = running.remove(&e.id()) else {
+                        continue;
+                    };
+                    tracing::error!(source = %source_id, error = %e, "dataroom harvest: scheduled run stopped");
+                    let held = self.store.list_harvest_runs(&ctx, Some(&source_id)).await;
+                    for run in held.unwrap_or_default() {
+                        if run.state == HarvestRunState::Running {
+                            HarvestEngine::release_lost_run(self.store.as_ref(), &ctx, &run.id)
+                                .await;
+                        }
+                    }
+                }
             }
         }
         out

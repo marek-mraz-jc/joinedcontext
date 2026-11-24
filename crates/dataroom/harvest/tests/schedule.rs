@@ -651,7 +651,7 @@ async fn a_panicked_run_that_already_finished_or_vanished_is_left_alone() {
 
 /// A scheduled run whose task panics is dropped from the outcome; the scheduler itself goes on.
 #[tokio::test]
-async fn a_scheduled_run_that_panics_is_left_out_of_the_outcome() {
+async fn a_scheduled_run_that_panics_is_left_out_of_the_outcome_and_frees_its_source() {
     let w = world(&["hub.city.example"]).await;
     let store = Arc::new(w.store.clone());
     store
@@ -670,6 +670,16 @@ async fn a_scheduled_run_that_panics_is_left_out_of_the_outcome() {
     )
     .with_retry_delay(Duration::ZERO);
     assert!(s.run_all().await.is_empty());
+    // The panicked run's row is Failed at once, so the next scheduled check is not refused
+    // with a conflict until the harvest deadline.
+    let runs = w.store.list_harvest_runs(&w.ctx, None).await.unwrap();
+    assert_eq!(runs.len(), 1, "{runs:?}");
+    assert_eq!(runs[0].state, HarvestRunState::Failed);
+    assert_eq!(
+        runs[0].error.as_deref(),
+        Some("the run stopped unexpectedly")
+    );
+    assert_eq!(runs[0].logs.last().unwrap().fingerprint, "harvest.lost");
 }
 
 /// S11-14: `harvest_run.start` answers once the source is held, and the run goes on when the

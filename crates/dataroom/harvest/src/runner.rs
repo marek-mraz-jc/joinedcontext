@@ -1362,7 +1362,7 @@ impl HarvestEngine {
 
     /// Records a claimed run failed when its task ended without a word (a panic), so its
     /// lease is released at once instead of at the deadline.
-    async fn release_lost_run(store: &dyn Store, ctx: &RequestCtx, run_id: &str) {
+    pub(crate) async fn release_lost_run(store: &dyn Store, ctx: &RequestCtx, run_id: &str) {
         let Ok(Some(mut run)) = store.get_harvest_run(ctx, run_id).await else {
             return;
         };
