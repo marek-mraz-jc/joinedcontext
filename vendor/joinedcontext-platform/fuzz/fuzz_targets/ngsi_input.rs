@@ -15,7 +15,10 @@ use serde_json::Value;
 fuzz_target!(|data: &[u8]| {
     // The Link header's bytes, NUL, the body, NUL, the model schema.
     let mut parts = data.splitn(3, |b| *b == 0);
-    let (link, body) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
+    let (link, body) = (
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default(),
+    );
     let schema = parts.next().unwrap_or_default();
     if let Ok(value) = HeaderValue::from_bytes(link) {
         let mut headers = HeaderMap::new();
@@ -36,7 +39,10 @@ fuzz_target!(|data: &[u8]| {
     for missing in [MissingUnitCode::Fill, MissingUnitCode::Refuse] {
         let rules = UnitRules::from_schema(&schema, missing);
         let mut written = payload.clone();
-        let shape = Shape { addressed: None, targeted: None };
+        let shape = Shape {
+            addressed: None,
+            targeted: None,
+        };
         match enforce(&mut written, shape, &rules) {
             Ok(filled) => {
                 if missing == MissingUnitCode::Refuse {
@@ -44,7 +50,10 @@ fuzz_target!(|data: &[u8]| {
                 }
                 for note in &filled {
                     let (attribute, code) = note.split_once('=').expect("attribute=code");
-                    assert!(rules.by_class.values().any(|units| units.get(attribute).map(String::as_str) == Some(code)));
+                    assert!(rules
+                        .by_class
+                        .values()
+                        .any(|units| units.get(attribute).map(String::as_str) == Some(code)));
                 }
                 if filled.is_empty() {
                     assert_eq!(written, payload, "nothing filled, nothing changed");

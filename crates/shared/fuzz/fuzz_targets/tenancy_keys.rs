@@ -3,7 +3,7 @@
 //! documented length (T-7805).
 #![no_main]
 
-use jc_types::{internal_name, InternalName, Label, OrgId, ProjectId, INTERNAL_NAME_MAX};
+use jc_types::{INTERNAL_NAME_MAX, InternalName, Label, OrgId, ProjectId, internal_name};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

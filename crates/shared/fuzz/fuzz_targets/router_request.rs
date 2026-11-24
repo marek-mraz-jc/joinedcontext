@@ -4,9 +4,9 @@
 //! (T-7805).
 #![no_main]
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Method, Request, Uri};
-use axum::Router;
 use jc_router::{HostTable, JcRouter, JcRouterBuilder, MountSpec, RegistryProject};
 use libfuzzer_sys::fuzz_target;
 use std::sync::LazyLock;
@@ -39,12 +39,21 @@ static JC: LazyLock<JcRouter> = LazyLock::new(|| {
         )
     };
     let mut b = JcRouterBuilder::new("https", "city.example").hosts(table);
-    for (spec, router) in [module("site", None), module("data", Some("/data")), module("portal", Some("/api"))] {
+    for (spec, router) in [
+        module("site", None),
+        module("data", Some("/data")),
+        module("portal", Some("/api")),
+    ] {
         b = b.mount(spec, router);
     }
     let jc = b.build().expect("router");
     jc.host_swap().expect("a host table").replace_projects(&[
-        RegistryProject { organization: "bratislava", id: ID, name: "traffic", expires_at: None },
+        RegistryProject {
+            organization: "bratislava",
+            id: ID,
+            name: "traffic",
+            expires_at: None,
+        },
         RegistryProject {
             organization: "bratislava",
             id: BRANCH,
@@ -80,11 +89,16 @@ fuzz_target!(|data: &[u8]| {
     };
     let resp = RT.block_on(JC.dispatch(req, None));
     if let Some(location) = resp.headers().get("location").and_then(|l| l.to_str().ok()) {
-        assert!(!location.starts_with("//") && !location.starts_with("/\\"), "{location}");
+        assert!(
+            !location.starts_with("//") && !location.starts_with("/\\"),
+            "{location}"
+        );
         if let Some(rest) = location.strip_prefix("https://") {
             let to = rest.split('/').next().unwrap_or_default();
             assert!(
-                to == "city.example" || to == "opendata.example.com" || to.ends_with(".apps.city.example"),
+                to == "city.example"
+                    || to == "opendata.example.com"
+                    || to.ends_with(".apps.city.example"),
                 "{location}"
             );
         } else {

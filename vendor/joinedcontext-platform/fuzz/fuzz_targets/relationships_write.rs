@@ -29,7 +29,11 @@ fuzz_target!(|data: &[u8]| {
     let rules = RelationshipRules::from_schema(&schema);
     let _ = objects(&payload);
     for extent in [Extent::Whole, Extent::Partial] {
-        let shape = Shape { addressed, targeted, extent };
+        let shape = Shape {
+            addressed,
+            targeted,
+            extent,
+        };
         match targets_of(&payload, shape, &rules) {
             Ok(targets) => {
                 for (urn, named) in &targets {

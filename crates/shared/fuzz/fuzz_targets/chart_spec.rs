@@ -4,7 +4,7 @@
 #![no_main]
 
 use jc_chart::raster::render;
-use jc_chart::spec::{chart_of, look_of, rows_of, view_of, Door};
+use jc_chart::spec::{Door, chart_of, look_of, rows_of, view_of};
 use libfuzzer_sys::fuzz_target;
 use serde_json::Value;
 use std::time::{Duration, Instant};
@@ -49,7 +49,9 @@ fuzz_target!(|data: &[u8]| {
     assert!(charted.chart.points.len() <= DOOR.max_points);
     assert!(charted.view_points.len() <= DOOR.max_view_points + 1);
     let view = view_of(&spec, &charted, &DOOR);
-    let shown = view["joinedcontext.com/chartPoints"].as_array().map_or(0, Vec::len);
+    let shown = view["joinedcontext.com/chartPoints"]
+        .as_array()
+        .map_or(0, Vec::len);
     assert!(shown <= DOOR.max_view_points);
     // A fuzz input never waits: a render past its deadline is a refusal, not a hang.
     if let Ok(png) = render(&charted.chart, Instant::now() + Duration::from_secs(2)) {
