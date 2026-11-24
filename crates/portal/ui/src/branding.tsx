@@ -206,8 +206,12 @@ export function BrandingProvider({ children }: { children: ReactNode }): React.J
   useEffect(() => {
     // The installation's default locale is a starting point, not a preference: a visitor who
     // has already chosen a language keeps it.
-    const chosen =
-      typeof window !== "undefined" ? window.localStorage.getItem("jc-lang") : null;
+    let chosen: string | null = null;
+    try {
+      chosen = window.localStorage.getItem("jc-lang");
+    } catch {
+      // A browser that keeps nothing has no choice stored: the installation's default applies.
+    }
     if (!chosen && configured && i18n.language !== configured) {
       void i18n.changeLanguage(configured);
     }
