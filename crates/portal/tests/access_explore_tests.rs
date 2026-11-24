@@ -356,7 +356,12 @@ async fn an_unslugged_endpoint_and_an_empty_grant_add_no_row_and_a_lost_record_k
         .connect_lazy("postgres://nobody@127.0.0.1:1/none")
         .expect("a lazy pool");
     let state = r.state.clone().with_db(pool);
-    let answer = explore(&state, admin(), json!({ "kind": "group", "name": "stewards" })).await;
+    let answer = explore(
+        &state,
+        admin(),
+        json!({ "kind": "group", "name": "stewards" }),
+    )
+    .await;
     assert_eq!(answer.status, 200, "{}", answer.text);
     assert_eq!(body(&answer)["endpoints"], json!([]), "{}", answer.text);
     let paths: Vec<String> = r

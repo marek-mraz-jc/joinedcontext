@@ -224,9 +224,18 @@ async fn a_reader_of_a_space_watches_it_and_its_types_and_mutes_for_each_length(
         json!({ "title": { "en": "Air" } }),
     ));
     let new = |scope: &str, target: &str| {
-        Some(json!({ "project": "helsinki", "scope": scope, "target": target, "events": ["stale"], "delivery": "digest" }))
+        Some(
+            json!({ "project": "helsinki", "scope": scope, "target": target, "events": ["stale"], "delivery": "digest" }),
+        )
     };
-    let space = send(&state, person("jana"), "PUT", ALERTS, new("space", "ovzdusie")).await;
+    let space = send(
+        &state,
+        person("jana"),
+        "PUT",
+        ALERTS,
+        new("space", "ovzdusie"),
+    )
+    .await;
     assert_eq!(space.status, StatusCode::OK, "{}", space.text);
     assert_eq!(body(&space)["scope"], "space");
     assert_eq!(body(&space)["delivery"], "digest");
@@ -241,16 +250,32 @@ async fn a_reader_of_a_space_watches_it_and_its_types_and_mutes_for_each_length(
     assert_eq!(kind.status, StatusCode::OK, "{}", kind.text);
     assert_eq!(body(&kind)["target"], "ovzdusie/AirQualityObserved");
 
-    for (scope, target) in [
-        ("space", "nowhere"),
-        ("type", "nowhere/AirQualityObserved"),
-    ] {
+    for (scope, target) in [("space", "nowhere"), ("type", "nowhere/AirQualityObserved")] {
         let missing = send(&state, person("jana"), "PUT", ALERTS, new(scope, target)).await;
-        assert_eq!(missing.status, StatusCode::NOT_FOUND, "{target}: {}", missing.text);
+        assert_eq!(
+            missing.status,
+            StatusCode::NOT_FOUND,
+            "{target}: {}",
+            missing.text
+        );
     }
-    let outsider = send(&state, person("mikko"), "PUT", ALERTS, new("space", "ovzdusie")).await;
+    let outsider = send(
+        &state,
+        person("mikko"),
+        "PUT",
+        ALERTS,
+        new("space", "ovzdusie"),
+    )
+    .await;
     assert_eq!(outsider.status, StatusCode::NOT_FOUND, "{}", outsider.text);
-    let bare = send(&state, person("jana"), "PUT", ALERTS, new("type", "AirQualityObserved")).await;
+    let bare = send(
+        &state,
+        person("jana"),
+        "PUT",
+        ALERTS,
+        new("type", "AirQualityObserved"),
+    )
+    .await;
     assert_eq!(bare.status, StatusCode::BAD_REQUEST, "{}", bare.text);
     assert!(bare.text.contains("{space}/{Type}"), "{}", bare.text);
 
@@ -296,14 +321,27 @@ async fn an_alert_store_that_does_not_answer_is_503_on_every_door() {
     for (http, uri, body) in [
         ("GET", ALERTS.to_owned(), None),
         ("PUT", ALERTS.to_owned(), Some(new)),
-        ("POST", format!("{ALERTS}/1/mute"), Some(json!({ "for": "1h" }))),
+        (
+            "POST",
+            format!("{ALERTS}/1/mute"),
+            Some(json!({ "for": "1h" })),
+        ),
         ("DELETE", format!("{ALERTS}/1"), None),
         ("GET", NOTICES.to_owned(), None),
         ("POST", format!("{NOTICES}/1/read"), None),
     ] {
         let answer = send(&state, person("jana"), http, &uri, body).await;
-        assert_eq!(answer.status, StatusCode::SERVICE_UNAVAILABLE, "{http} {uri}: {}", answer.text);
-        assert!(answer.text.contains("could not be read or written"), "{http} {uri}: {}", answer.text);
+        assert_eq!(
+            answer.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{http} {uri}: {}",
+            answer.text
+        );
+        assert!(
+            answer.text.contains("could not be read or written"),
+            "{http} {uri}: {}",
+            answer.text
+        );
     }
 }
 
@@ -315,7 +353,11 @@ async fn a_project_outside_the_registry_keeps_no_alert_and_says_who_adds_it() {
     let new = json!({ "project": "helsinki", "scope": "pipeline", "target": "stations", "events": ["failure"], "delivery": "portal" });
     let refused = send(&state, person("jana"), "PUT", ALERTS, Some(new)).await;
     assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
-    assert!(refused.text.contains("Organizations page"), "{}", refused.text);
+    assert!(
+        refused.text.contains("Organizations page"),
+        "{}",
+        refused.text
+    );
     let mine = send(&state, person("jana"), "GET", ALERTS, None).await;
     assert_eq!(body(&mine)["items"], json!([]), "{}", mine.text);
 }

@@ -618,7 +618,10 @@ mod tests {
     fn each_principal_kind_is_asked_about_as_its_token_carries_it() {
         let person = subject(&("person".into(), "kc-1".into()));
         assert_eq!(person.user.as_deref(), Some("kc-1"));
-        assert_eq!(subject(&("group".into(), "stewards".into())).groups, ["stewards"]);
+        assert_eq!(
+            subject(&("group".into(), "stewards".into())).groups,
+            ["stewards"]
+        );
         assert_eq!(subject(&("role".into(), "viewer".into())).roles, ["viewer"]);
         assert_eq!(
             subject(&("serviceAccount".into(), "p-feed".into()))

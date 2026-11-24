@@ -361,7 +361,12 @@ async fn each_gateway_answer_and_each_missing_piece_has_its_own_status() {
     let r = rig().await;
     let public = json!({ "subject": { "kind": "public" }, "action": "retrieveEntity" });
     for (status, gateway_body, want, says) in [
-        (400, json!({ "detail": "type is not in the model" }), 400, "type is not in the model"),
+        (
+            400,
+            json!({ "detail": "type is not in the model" }),
+            400,
+            "type is not in the model",
+        ),
         (400, json!({}), 400, "no reason given"),
         (404, json!({}), 404, "does not serve this Endpoint"),
     ] {
@@ -378,16 +383,25 @@ async fn each_gateway_answer_and_each_missing_piece_has_its_own_status() {
 
     let mut no_people = r.state.clone();
     no_people.people = None;
-    let person = json!({ "subject": { "kind": "person", "id": "jana-id" }, "action": "retrieveEntity" });
+    let person =
+        json!({ "subject": { "kind": "person", "id": "jana-id" }, "action": "retrieveEntity" });
     let answer = common::send(&no_people, admin(), "POST", ROUTE, Some(person)).await;
     assert_eq!(answer.status, 503, "{}", answer.text);
-    assert!(answer.text.contains("no realm admin client"), "{}", answer.text);
+    assert!(
+        answer.text.contains("no realm admin client"),
+        "{}",
+        answer.text
+    );
 
     let mut no_client = r.state.clone();
     no_client.oidc = None;
     let answer = common::send(&no_client, admin(), "POST", ROUTE, Some(public.clone())).await;
     assert_eq!(answer.status, 503, "{}", answer.text);
-    assert!(answer.text.contains("no Keycloak client"), "{}", answer.text);
+    assert!(
+        answer.text.contains("no Keycloak client"),
+        "{}",
+        answer.text
+    );
 
     let mut silent = r.state.clone();
     let mut config = (*silent.config).clone();

@@ -471,7 +471,11 @@ async fn keycloak_without_the_client_or_the_secret_says_so_and_a_lost_record_kee
     let keycloak = realm().await;
     let (config, state) = state(&keycloak);
     for name in ["fresh", "gone", "mute", "quiet"] {
-        state.mirror.upsert(account(name, json!([{ "kind": "oauth-client", "name": "main" }]), None));
+        state.mirror.upsert(account(
+            name,
+            json!([{ "kind": "oauth-client", "name": "main" }]),
+            None,
+        ));
     }
     Mock::given(method("GET"))
         .and(path(format!("{REALM}/clients")))
@@ -480,7 +484,13 @@ async fn keycloak_without_the_client_or_the_secret_says_so_and_a_lost_record_kee
         .mount(&keycloak)
         .await;
     managed_client(&keycloak, "mute", "uuid-mute", json!({ "type": "secret" })).await;
-    managed_client(&keycloak, "quiet", "uuid-quiet", json!({ "type": "secret", "value": "quiet-secret" })).await;
+    managed_client(
+        &keycloak,
+        "quiet",
+        "uuid-quiet",
+        json!({ "type": "secret", "value": "quiet-secret" }),
+    )
+    .await;
     let ana = || Some(person("ana@hel.fi"));
 
     let (status, _, body) = call(&state, &config, ana(), "POST", &secret_of("fresh")).await;
@@ -489,7 +499,10 @@ async fn keycloak_without_the_client_or_the_secret_says_so_and_a_lost_record_kee
     for account in ["gone", "mute"] {
         let (status, _, body) = call(&state, &config, ana(), "POST", &secret_of(account)).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{account}: {body}");
-        assert!(body.contains("Keycloak did not answer"), "{account}: {body}");
+        assert!(
+            body.contains("Keycloak did not answer"),
+            "{account}: {body}"
+        );
         assert!(!body.contains("uuid-"), "{account}: {body}");
     }
 
@@ -498,7 +511,8 @@ async fn keycloak_without_the_client_or_the_secret_says_so_and_a_lost_record_kee
         .connect_lazy("postgres://nobody@127.0.0.1:1/none")
         .expect("a lazy pool");
     let unrecorded = state.clone().with_db(pool);
-    let (status, cache, body) = call(&unrecorded, &config, ana(), "POST", &secret_of("quiet")).await;
+    let (status, cache, body) =
+        call(&unrecorded, &config, ana(), "POST", &secret_of("quiet")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(cache.as_deref(), Some("no-store"));
     let issued: Value = serde_json::from_str(&body).expect("json");

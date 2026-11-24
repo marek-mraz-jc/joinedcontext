@@ -386,8 +386,17 @@ async fn no_project_and_no_forge_are_refused_before_anything_lands() {
         json!({ "name": "bike-finder", "endpointName": "bikes" }),
     )
     .await;
-    assert_eq!(answer.status, StatusCode::SERVICE_UNAVAILABLE, "{}", answer.text);
-    assert!(answer.text.contains("forge is not configured"), "{}", answer.text);
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("forge is not configured"),
+        "{}",
+        answer.text
+    );
     nothing_created(&server).await;
 }
 

@@ -154,21 +154,27 @@ async fn a_space_without_a_load_says_so_and_an_unaddressed_broker_is_unknown() {
     assert_eq!(main["health"], "up", "{main}");
     assert_eq!(main["entities"], 42, "{main}");
     assert!(
-        main["reason"].as_str().is_some_and(|r| r.starts_with("ovzdusie/water: ")),
+        main["reason"]
+            .as_str()
+            .is_some_and(|r| r.starts_with("ovzdusie/water: ")),
         "{main}"
     );
 
     let mut unaddressed = state.clone();
-    unaddressed.space_usage = std::sync::Arc::new(
-        joinedcontext_portal::space_usage::Counter::new(None, Some(token.clone())),
-    );
+    unaddressed.space_usage = std::sync::Arc::new(joinedcontext_portal::space_usage::Counter::new(
+        None,
+        Some(token.clone()),
+    ));
     let (status, body) = brokers(&unaddressed, "jana").await;
     let _ = std::fs::remove_file(&token);
     assert_eq!(status, StatusCode::OK, "{body}");
     let main = &body["items"][0];
     assert_eq!(main["health"], "unknown", "{main}");
     assert_eq!(main["entities"], 0, "{main}");
-    assert!(main["reason"].as_str().is_some_and(|r| !r.is_empty()), "{main}");
+    assert!(
+        main["reason"].as_str().is_some_and(|r| !r.is_empty()),
+        "{main}"
+    );
 }
 
 #[tokio::test]

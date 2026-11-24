@@ -256,7 +256,14 @@ async fn the_mode_is_read_by_project_and_a_wrong_question_says_which_name_to_giv
     let ask = |query: String| {
         let state = state.clone();
         async move {
-            send(&state, owner(), "GET", &format!("/api/v1/organization/approval-mode?{query}"), None).await
+            send(
+                &state,
+                owner(),
+                "GET",
+                &format!("/api/v1/organization/approval-mode?{query}"),
+                None,
+            )
+            .await
         }
     };
     let read = ask(format!("project={project}")).await;
@@ -267,7 +274,9 @@ async fn the_mode_is_read_by_project_and_a_wrong_question_says_which_name_to_giv
     // The Organization above is the installation's, whose projects every signed-in person
     // reads; one of another Organization is not read by someone it binds nowhere.
     let closed = run("closed");
-    state.mirror.upsert(envelope("Organization", &closed, ORG_NAMESPACE, json!({})));
+    state
+        .mirror
+        .upsert(envelope("Organization", &closed, ORG_NAMESPACE, json!({})));
     state.mirror.upsert(envelope(
         "Project",
         &format!("{closed}-air"),
@@ -278,10 +287,22 @@ async fn the_mode_is_read_by_project_and_a_wrong_question_says_which_name_to_giv
     assert_eq!(stranger.status, StatusCode::NOT_FOUND, "{}", stranger.text);
     let outsider = ask(format!("organization={closed}")).await;
     assert_eq!(outsider.status, StatusCode::NOT_FOUND, "{}", outsider.text);
-    for query in [String::new(), format!("organization={org}&project={project}")] {
+    for query in [
+        String::new(),
+        format!("organization={org}&project={project}"),
+    ] {
         let refused = ask(query.clone()).await;
-        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{query}: {}", refused.text);
-        assert!(refused.text.contains("exactly one of organization"), "{}", refused.text);
+        assert_eq!(
+            refused.status,
+            StatusCode::BAD_REQUEST,
+            "{query}: {}",
+            refused.text
+        );
+        assert!(
+            refused.text.contains("exactly one of organization"),
+            "{}",
+            refused.text
+        );
     }
 }
 

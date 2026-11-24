@@ -204,8 +204,17 @@ async fn asset(app: axum::Router, which: &str) -> (StatusCode, Vec<(String, Stri
             Some((name.to_string(), value.to_owned()))
         })
         .collect();
-    let bytes = response.into_body().collect().await.expect("body").to_bytes();
-    (status, headers, String::from_utf8_lossy(&bytes).into_owned())
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (
+        status,
+        headers,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
 }
 
 /// Only `logo` and `favicon` are assets; a configured file that is gone is a 404 that says so,
@@ -229,8 +238,10 @@ async fn an_unknown_asset_or_a_missing_file_is_not_found_and_the_installation_fa
     assert!(text.contains("the logo file is not readable"), "{text}");
 
     state.set_installation_look(
-        serde_json::from_value(json!({ "faviconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>" }))
-            .expect("a look"),
+        serde_json::from_value(
+            json!({ "faviconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>" }),
+        )
+        .expect("a look"),
     );
     let (status, headers, text) = asset(app, "favicon").await;
     assert_eq!(status, StatusCode::OK, "{text}");

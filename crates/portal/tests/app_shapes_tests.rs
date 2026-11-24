@@ -300,7 +300,8 @@ async fn a_person_who_may_not_propose_an_app_is_refused_before_anything_is_read(
 #[tokio::test]
 async fn an_app_the_door_refuses_after_the_rename_is_named_and_nothing_is_written() {
     let server = forge().await;
-    let broken = app("broken-map", "fullstack").replace("contextSpaceRef: ovzdusie", "contextSpaceRef: Not_A_Space");
+    let broken = app("broken-map", "fullstack")
+        .replace("contextSpaceRef: ovzdusie", "contextSpaceRef: Not_A_Space");
     let (state, cookie) = state(
         &server,
         &[app("air-map", "static"), broken],
@@ -309,11 +310,17 @@ async fn an_app_the_door_refuses_after_the_rename_is_named_and_nothing_is_writte
     );
     let (status, body) = rename(state, &cookie, PROJECT).await;
     assert!(
-        matches!(status, StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY),
+        matches!(
+            status,
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY
+        ),
         "{status}: {body}"
     );
     assert!(
-        body["detail"].as_str().unwrap_or_default().contains("App 'broken-map'"),
+        body["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("App 'broken-map'"),
         "{body}"
     );
     assert!(written(&server).await.is_empty());
