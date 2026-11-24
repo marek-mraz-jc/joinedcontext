@@ -24,7 +24,18 @@ enum Then {
     Hold,
     /// Closes the connection inside a chunk.
     BreakOff,
+    /// Reports ten tokens of usage, then closes the connection inside a chunk.
+    BreakOffAfterUsage,
+    /// Reports ten tokens of usage and ends the stream cleanly.
+    EndAfterUsage,
 }
+
+/// One chunk of a chunked body.
+fn chunked(text: &str) -> String {
+    format!("{:x}\r\n{text}\r\n", text.len())
+}
+
+const USAGE: &str = "data: {\"usage\":{\"total_tokens\":10}}\n\n";
 
 async fn provider(then: Then) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -54,6 +65,14 @@ async fn provider(then: Then) -> String {
                     Then::Hold => std::future::pending::<()>().await,
                     Then::BreakOff => {
                         let _ = socket.write_all(b"40\r\ndata: {\"cho").await;
+                    }
+                    Then::BreakOffAfterUsage => {
+                        let _ = socket.write_all(chunked(USAGE).as_bytes()).await;
+                        let _ = socket.write_all(b"40\r\ndata: {\"cho").await;
+                    }
+                    Then::EndAfterUsage => {
+                        let end = format!("{}0\r\n\r\n", chunked(USAGE));
+                        let _ = socket.write_all(end.as_bytes()).await;
                     }
                 }
             });
@@ -141,6 +160,37 @@ async fn a_stream_the_provider_breaks_off_ends_in_an_error_and_is_counted_whole(
     let read = answer.into_body().collect().await;
     assert!(read.is_err(), "a broken stream read as a whole one");
     assert!(spent(&proxy_state).await >= ASKED);
+}
+
+/// A whole stream is counted by the usage it reported, even below what the call asked for; a
+/// stream broken off after reporting usage is counted as the most it was allowed (T-7795).
+#[tokio::test]
+async fn a_whole_stream_counts_its_usage_and_a_broken_one_its_most() {
+    let model = provider(Then::EndAfterUsage).await;
+    let whole = proxy_state(&model);
+    let answer = agent_proxy::router(Arc::clone(&whole))
+        .oneshot(
+            authed("POST", "/v1/llm/v1/chat/completions")
+                .body(streamed())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert!(answer.into_body().collect().await.is_ok());
+    assert_eq!(spent(&whole).await, 10);
+
+    let model = provider(Then::BreakOffAfterUsage).await;
+    let broken = proxy_state(&model);
+    let answer = agent_proxy::router(Arc::clone(&broken))
+        .oneshot(
+            authed("POST", "/v1/llm/v1/chat/completions")
+                .body(streamed())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert!(answer.into_body().collect().await.is_err());
+    assert!(spent(&broken).await >= ASKED);
 }
 
 /// A provider silent for two minutes is a hung provider: the caller gets an error naming the

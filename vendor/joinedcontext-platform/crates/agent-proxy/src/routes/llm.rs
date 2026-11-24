@@ -1024,10 +1024,15 @@ pub mod fuzzing {
             assert!(now.0 >= last.0 && now.1 >= last.1 && now.2 >= last.2);
             last = now;
         }
-        let _ = usage.tokens();
         let _ = CallUsage {
+            tokens: usage.tokens().unwrap_or(0),
+            input: usage.input,
+            output: usage.output,
+            cached: usage.cached,
+            latency_ms: 0,
+            model: None,
+            effort: None,
             cost: usage.cost,
-            ..CallUsage::default()
         }
         .payload();
     }
@@ -1067,6 +1072,12 @@ mod tests {
         ))
         .expect("JSON");
         assert_eq!(past["max_tokens"], 7);
+        // A cap equal to what is left is inside it; a body naming none at exactly the unsaid
+        // output is sent as it came (T-7795).
+        let equal = Bytes::from_static(br#"{ "model": "m", "max_tokens": 10 }"#);
+        assert_eq!(within_budget(equal.clone(), 10), equal);
+        let unsaid = Bytes::from_static(br#"{ "model": "m" }"#);
+        assert_eq!(within_budget(unsaid.clone(), STREAM_OUTPUT_UNSAID), unsaid);
     }
 
     fn sent(body: &str, rest: &str, effort: &str) -> Value {
@@ -1159,6 +1170,28 @@ mod tests {
         let mut none = StreamUsage::default();
         none.feed(b"data: {\"choices\":[]}\n\n: keep-alive\n");
         assert_eq!(none.tokens(), None);
+        // Output alone, before any input is told, still counts (T-7795).
+        let mut output = StreamUsage::default();
+        output.feed(b"data: {\"usage\":{\"output_tokens\":5}}\n");
+        assert_eq!(output.tokens(), Some(5));
+    }
+
+    /// A line exactly at the cap is read whole; one byte past it is cut and counts nothing
+    /// (T-7795).
+    #[test]
+    fn a_line_at_the_cap_is_read_and_one_byte_past_it_is_not() {
+        let line = |length: usize| {
+            let mut line = b"data: {\"usage\":{\"total_tokens\":9},\"pad\":\"".to_vec();
+            line.resize(length - 3, b'x');
+            line.extend_from_slice(b"\"}\n");
+            line
+        };
+        let mut at = StreamUsage::default();
+        at.feed(&line(STREAM_LINE_MAX + 1));
+        assert_eq!(at.tokens(), Some(9));
+        let mut past = StreamUsage::default();
+        past.feed(&line(STREAM_LINE_MAX + 2));
+        assert_eq!(past.tokens(), None);
     }
 
     /// T-2771: the counts are read in both shapes, the cached input included, and the frame the

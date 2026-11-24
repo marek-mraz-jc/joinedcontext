@@ -192,3 +192,79 @@ async fn the_model_keys_state_reaches_the_facade() {
     assert!(seen.contains("state=Valid"), "{seen}");
     assert!(seen.contains("remaining=Some(45.8)"), "{seen}");
 }
+
+/// The audit line of a model call names whose call it was: an App's, sent by the Portal, by the
+/// App and `jc-portal-app`; a run's streamed call by the run, its person and the bytes relayed.
+#[tokio::test]
+async fn a_model_calls_audit_line_names_its_caller_and_its_bytes() {
+    lines();
+    let realm = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("token=the-portals-service-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "active": true, "azp": "portal-api", "username": "service-account-portal-api",
+            "aud": [PROXY_CLIENT]
+        })))
+        .mount(&realm)
+        .await;
+    let provider = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(body_string_contains("\"stream\":true"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string("data: {\"usage\":{\"total_tokens\":4}}\n\n"),
+        )
+        .mount(&provider)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .mount(&provider)
+        .await;
+    let answer = app(
+        sample_run(false),
+        Bases {
+            model: provider.uri(),
+            realm: Some(format!("{}/realms/jc", realm.uri())),
+            ..Bases::default()
+        },
+    )
+    .oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/v1/llm/v1/chat/completions")
+            .header("authorization", "Bearer the-portals-service-token")
+            .header("x-jc-app", "roads/road-defects")
+            .body(Body::from(r#"{"model":"m","messages":[]}"#))
+            .expect("a request"),
+    )
+    .await
+    .expect("an answer");
+    assert_eq!(answer.status(), StatusCode::OK);
+    let seen = eventually("run_id=roads/road-defects").await;
+    assert!(seen.contains("run_id=roads/road-defects"), "{seen}");
+    assert!(seen.contains("user=jc-portal-app"), "{seen}");
+    assert!(!seen.contains("the-portals-service-token"), "{seen}");
+
+    let streamed = app(
+        sample_run(false),
+        Bases {
+            model: provider.uri(),
+            ..Bases::default()
+        },
+    )
+    .oneshot(
+        authed("POST", "/v1/llm/v1/chat/completions")
+            .body(Body::from(r#"{"model":"m","stream":true,"messages":[]}"#))
+            .expect("a request"),
+    )
+    .await
+    .expect("an answer");
+    assert_eq!(body_of(streamed).await.len(), 36);
+    let seen = eventually("bytes=36").await;
+    let line = seen
+        .lines()
+        .find(|line| line.contains("bytes=36"))
+        .unwrap_or_else(|| panic!("no audit line of the stream: {seen}"));
+    assert!(line.contains(&format!("run_id={RUN_ID}")), "{line}");
+}
