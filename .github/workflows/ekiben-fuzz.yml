@@ -1,6 +1,6 @@
 # The javascript processor's sandbox (crates/ekiben/crates/ekiben-js/fuzz, T-7082) and ekiben-text's
 # inputs (crates/ekiben/crates/ekiben-text/fuzz: syslog lines, Go regexps, jq, grok, JMESPath,
-# MessagePack, processor configs) under libFuzzer: on demand only, an hour per target by default.
+# MessagePack, processor configs) and ekiben-processors' outside inputs (T-7686) under libFuzzer: on demand only, an hour per target by default.
 # A crash uploads its input as an artifact; add it as a named regression test with the fix, and to
 # fuzz/corpus/<target> as a seed-* file so the next run replays it.
 name: ekiben-fuzz
@@ -52,7 +52,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "ekiben-text-fuzz-${{ matrix.target }}", path: crates/ekiben/crates/ekiben-text/fuzz/artifacts }
   # The parsers of ekiben-io-file, ekiben-io-http, ekiben-io-remote and ekiben-core (with ekiben-io-nats) that read bytes from outside (T-7579, T-7581, T-7685):
-  # io-file scanners, cron, sftp/s3 configs and S3 listings (T-7581), MQTT wire, multipart bodies, route patterns and paths, ftp/imap config fields, raw mails.
+  # io-file scanners, cron, sftp/s3/amqp configs and S3 listings (T-7581, T-7800), io-sql DSNs, configs and value wire forms, MQTT wire, multipart bodies, route patterns and paths, ftp/imap config fields, raw mails, ekiben-core interpolation, wire, redaction, stream and NATS configs.
   io:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -65,6 +65,9 @@ jobs:
           - { crate: ekiben-io-file, target: cron }
           - { crate: ekiben-io-file, target: connector_config }
           - { crate: ekiben-io-file, target: s3_listing }
+          - { crate: ekiben-io-sql, target: dsn }
+          - { crate: ekiben-io-sql, target: lint }
+          - { crate: ekiben-io-sql, target: values }
           - { crate: ekiben-io-http, target: mqtt_wire }
           - { crate: ekiben-io-http, target: multipart }
           - { crate: ekiben-io-http, target: path }
@@ -112,3 +115,25 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "ekiben-bloblang-fuzz-${{ matrix.target }}", path: crates/ekiben/crates/ekiben-bloblang/fuzz/artifacts }
+  # ekiben-processors' outside inputs (crates/ekiben/crates/ekiben-processors/fuzz, T-7686): every unarchive format,
+  # json_schema, and processor configs. A crash input goes to fuzz/corpus/<target> with its fix.
+  processors:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: { target: [unarchive, json_schema, config] }
+    defaults: { run: { working-directory: crates/ekiben/crates/ekiben-processors } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust
+        with: { workspace: crates/ekiben/crates/ekiben-processors/fuzz, key: ekiben-processors-fuzz, toolchain: nightly }
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: cargo-fuzz }
+      - env: { SECONDS_TO_FUZZ: "${{ inputs.seconds }}", TARGET: "${{ matrix.target }}" }
+        run: |
+          case "$SECONDS_TO_FUZZ" in ''|*[!0-9]*) echo "seconds: a whole number" >&2; exit 1 ;; esac
+          cargo +nightly fuzz run "$TARGET" --release --target x86_64-unknown-linux-gnu -- -max_total_time="$SECONDS_TO_FUZZ" -timeout=10 -rss_limit_mb=2048
+      - if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: "ekiben-processors-fuzz-${{ matrix.target }}", path: crates/ekiben/crates/ekiben-processors/fuzz/artifacts }

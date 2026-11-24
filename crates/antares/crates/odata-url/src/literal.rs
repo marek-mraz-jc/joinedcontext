@@ -601,6 +601,19 @@ fn double_value(c: &mut Cursor<'_>) -> Result<String, UrlError> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_date_without_three_numeric_parts_has_no_day_in_its_month() {
+        assert!(in_month("2024-02-29"));
+        assert!(in_month("-0004-02-29"));
+        assert!(!in_month("2026-02-29"));
+        assert!(!in_month("2026-02-31"));
+        // `in_month` runs after the date grammar; on its own it still refuses what is no date
+        assert!(!in_month(""));
+        assert!(!in_month("2024-02"));
+        assert!(!in_month("2024-xx-01"));
+        assert!(!in_month("2024-02-300"));
+    }
+
     fn read(input: &str) -> Result<Option<Literal>, UrlError> {
         let mut c = Cursor::new(input);
         let found = literal(&mut c, &Limits::strict())?;

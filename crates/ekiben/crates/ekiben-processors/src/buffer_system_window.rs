@@ -940,6 +940,36 @@ mod tests {
         assert_eq!(calls.lock().expect("calls").len(), 1);
     }
 
+    #[tokio::test]
+    async fn an_input_nacked_for_a_later_message_is_answered_once() {
+        let f = Fixture::new(unix(10, 1), [HOUR, 0, 0, 0]);
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        f.w.write_batch(
+            vec![
+                Part::from_str(r#"{"ts":10.5}"#),
+                Part::from_str(r#"{"ts":"yesterday"}"#),
+            ],
+            counting_ack(&calls),
+        )
+        .expect_err("the second timestamp is refused");
+        assert_eq!(f.pending(), [r#"{"ts":10.5}"#]);
+        // The held first message is nacked at end of input; the input was answered already.
+        f.w.end_of_input();
+        let (_tx, rx) = watch::channel(false);
+        assert!(matches!(
+            f.w.read_batch(rx).await,
+            Err(CoreError::EndOfInput)
+        ));
+        let calls = calls.lock().expect("calls");
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(
+            calls[0]
+                .as_deref()
+                .is_some_and(|e| e.contains("unable to parse result of timestamp mapping")),
+            "{calls:?}"
+        );
+    }
+
     #[test]
     fn a_write_past_the_byte_cap_is_nacked() {
         let f = Fixture::new(unix(10, 1), [SECOND, 0, 0, 0]);

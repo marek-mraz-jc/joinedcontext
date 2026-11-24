@@ -369,8 +369,8 @@ mod tests {
                 "enums": {"E": {"permissible_values": {"x": {}}}}}"#;
 
     #[test]
-    fn every_kind_and_range_has_its_schema() {
-        let m = schema(KINDS);
+    fn every_kind_and_range_has_its_schema() -> Result<(), String> {
+        let m = schema(KINDS)?;
         let shown = |name: &str| name == "B";
         let props: BTreeMap<&str, Prop> = m
             .class_slots("A")
@@ -461,6 +461,7 @@ mod tests {
             );
         }
         assert!(!shown("A"));
+        Ok(())
     }
 
     use linkml_model::{Limits, Model};
@@ -471,11 +472,10 @@ mod tests {
         max_elements: 1024,
     };
 
-    fn schema(json: &str) -> Model {
-        match Model::read(json.as_bytes(), &LIMITS) {
-            Ok(model) => model,
-            Err(e) => unreachable!("{e:?}"),
-        }
+    fn schema(json: &str) -> Result<Model, String> {
+        Model::read(json.as_bytes(), &LIMITS)
+            .ok()
+            .ok_or_else(String::new)
     }
 
     const CITY: &str = r#"{
@@ -511,8 +511,8 @@ mod tests {
     }
 
     #[test]
-    fn collections_are_the_shown_classes_with_their_roles() {
-        let m = schema(CITY);
+    fn collections_are_the_shown_classes_with_their_roles() -> Result<(), String> {
+        let m = schema(CITY)?;
         let c = build(
             &m,
             &shown(&[
@@ -539,9 +539,7 @@ mod tests {
             ["Car", "Stop"],
             "Hidden is not shown"
         );
-        let Some(car) = c.get("Car") else {
-            unreachable!()
-        };
+        let car = c.get("Car").ok_or("no Car")?;
         assert_eq!(car.description.as_deref(), Some("A car"));
         assert_eq!(
             car.geometry.as_deref(),
@@ -564,9 +562,7 @@ mod tests {
                 ("seen".into(), "https://example.org/city/seen".into())
             ]
         );
-        let Some(stop) = c.get("Stop") else {
-            unreachable!()
-        };
+        let stop = c.get("Stop").ok_or("no Stop")?;
         assert_eq!(
             stop.geometry.as_deref(),
             Some(LOCATION),
@@ -585,11 +581,12 @@ mod tests {
             2,
             "name and from; location is the geometry"
         );
+        Ok(())
     }
 
     #[test]
-    fn a_hidden_geometry_or_time_is_none() {
-        let m = schema(CITY);
+    fn a_hidden_geometry_or_time_is_none() -> Result<(), String> {
+        let m = schema(CITY)?;
         let c = build(
             &m,
             &shown(&[(
@@ -597,10 +594,9 @@ mod tests {
                 &["https://example.org/city/speed"],
             )]),
         );
-        let Some(car) = c.get("Car") else {
-            unreachable!()
-        };
+        let car = c.get("Car").ok_or("no Car")?;
         assert_eq!((car.geometry.as_ref(), car.time.as_ref()), (None, None));
+        Ok(())
     }
 
     #[test]
@@ -615,7 +611,7 @@ mod tests {
     /// alone, and a role on a slot of the wrong kind is dropped. (A kind NGSI-LD does not define
     /// is refused when the schema loads; [`KINDS`] keeps one out should that ever loosen.)
     #[test]
-    fn roles_come_from_the_model_and_are_checked() {
+    fn roles_come_from_the_model_and_are_checked() -> Result<(), String> {
         let ann = |kind: &str, role: &str| {
             format!(
                 r#"{{"ngsi_ld_kind": {{"tag": "ngsi_ld_kind", "value": "{kind}"}}, "ogc_role": {{"tag": "ogc_role", "value": "{role}"}}}}"#
@@ -637,7 +633,7 @@ mod tests {
             ann("Property", "primary-geometry"),
             ann("Property", "primary-instant"),
             ann("GeoProperty", "primary-instant"),
-        ));
+        ))?;
         let all = |t: &str, slots: &[&str]| {
             (
                 format!("https://e.org/s/{t}"),
@@ -654,9 +650,7 @@ mod tests {
                 all("Booth", &["size", "count", "area"]),
             ]),
         );
-        let Some(kiosk) = c.get("Kiosk") else {
-            unreachable!()
-        };
+        let kiosk = c.get("Kiosk").ok_or("no Kiosk")?;
         assert_eq!(kiosk.geometry.as_deref(), Some("https://e.org/s/spot"));
         assert_eq!(
             kiosk.time,
@@ -670,10 +664,9 @@ mod tests {
             Some("label"),
             "a role of no place or time is kept"
         );
-        let Some(booth) = c.get("Booth") else {
-            unreachable!()
-        };
+        let booth = c.get("Booth").ok_or("no Booth")?;
         assert_eq!(booth.geometry, None, "a float is no geometry");
         assert_eq!(booth.time, None, "an integer and a GeoProperty are no time");
+        Ok(())
     }
 }

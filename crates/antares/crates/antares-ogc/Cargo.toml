@@ -14,6 +14,8 @@ feature = "ogc"
 protocols = ["linkml-model", "ogc-cql2", "antares-export"]
 
 [features]
+# `antares_ogc::fuzzing`: the query readers a request reaches, for the fuzz targets (T-7803).
+fuzzing = []
 # T-4465: items as Apache Parquet and GeoParquet 1.1.
 parquet = ["dep:antares-export", "antares-export/parquet", "dep:jc-time"]
 # T-4477: items as CSV, /collections as a ZIP of a CSV per collection (no Excel: owner 2026-10-18, T-4597).
