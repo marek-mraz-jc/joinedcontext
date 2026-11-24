@@ -1037,19 +1037,23 @@ async fn endpoints_by_datasource(state: &AppState, project: &str) -> BTreeMap<St
         .iter()
         .map(|e| (e.metadata.name.clone(), e.metadata.name.clone()))
         .collect();
-    if let Ok(client) = client(state) {
-        if let Ok(org) = organization_held(&client, project).await {
-            if let Ok(held) = client.all_datasources(org).await {
-                for source in held {
-                    let Some(slug) = source.slug else { continue };
-                    if let Some(endpoint) = endpoints.iter().find(|e| slug_of(e) == slug) {
-                        out.insert(source.uid, endpoint.metadata.name.clone());
-                    }
-                }
-            }
-        }
-    }
+    // A service that cannot list them leaves the names as they are: the file still reads back.
+    let held = held_datasources(state, project).await.unwrap_or_default();
+    out.extend(held.into_iter().filter_map(|source| {
+        let slug = source.slug?;
+        let endpoint = endpoints.iter().find(|e| slug_of(e) == slug)?;
+        Some((source.uid, endpoint.metadata.name.clone()))
+    }));
     out
+}
+
+async fn held_datasources(
+    state: &AppState,
+    project: &str,
+) -> Result<Vec<crate::grafana::HeldDatasource>, ApiError> {
+    let client = client(state)?;
+    let org = organization_held(&client, project).await?;
+    client.all_datasources(org).await
 }
 
 #[utoipa::path(
