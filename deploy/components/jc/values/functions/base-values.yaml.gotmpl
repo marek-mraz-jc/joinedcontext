@@ -1,7 +1,14 @@
 {{- $global := .Values.global }}
 {{- $jc := .Values.jc.server }}
-{{- if ne (dig "mode" "slug" $jc) "host" }}
-{{- fail "jc.functions: needs jc.server.mode host (its issuer and gateway are jc's public idm. and api. hosts)" }}
+{{- /* Its realm and gateway are jc's public addresses: idm. and api. in host mode, the instance's
+       one host in slug mode (kaisatsu under /login, the gateway's /api/endpoint at the root). */}}
+{{- $host := eq (dig "mode" "slug" $jc) "host" }}
+{{- $issuerBase := printf "https://idm.%s" $global.domain }}
+{{- $gateway := printf "https://api.%s" $global.domain }}
+{{- if not $host }}
+{{- $one := printf "https://%s.%s" (required "jc.functions: slug mode needs jc.server.subDomain" $jc.subDomain) $global.domain }}
+{{- $issuerBase = printf "%s/login" $one }}
+{{- $gateway = $one }}
 {{- end }}
 {{- $realm := dig "realmImport" "realm" "" $jc }}
 {{- if not $realm }}
@@ -16,14 +23,20 @@
 fullnameOverride: jc-functions
 nameOverride: jc-functions
 
+{{- /* The runtime ships in jc's own image (T-7774, bins/jc/Dockerfile): jc-dev runs jc-dev's jc pin.
+       Elsewhere `functions` stays the platform image until that environment's jc pin carries
+       /usr/local/bin/jc-functions; then @prod-deployer points `functions` at jc's pin too. */}}
 {{- $images := .Values.images.jc.functions }}
+{{- if eq .Environment.Name "jc-dev" }}
+{{- $images = index .Values.images "jc" "serverJcDev" | default dict }}
+{{- end }}
 image:
   repository: {{ $images.repository }}
   tag: {{ $images.tag | quote }}
   digest: {{ $images.digest }}
   pullPolicy: IfNotPresent
 
-# The image's entrypoint is the gateway; the runtime is the binary beside it.
+# The image's entrypoint is jc (the platform image's: the gateway); the runtime is the binary beside it.
 command:
   - /usr/local/bin/jc-functions
 
@@ -62,12 +75,12 @@ hostAliases:
 # realm's jc-functions-audience mapper) and passes each caller's own token to jc's gateway (SDK-23).
 env:
   JC_FUNCTIONS_BIND: "0.0.0.0:8080"
-  JC_OIDC_ISSUER: "https://idm.{{ $global.domain }}/realms/{{ $realm }}"
-  JC_OIDC_JWKS_URL: "https://idm.{{ $global.domain }}/realms/{{ $realm }}/protocol/openid-connect/certs"
+  JC_OIDC_ISSUER: "{{ $issuerBase }}/realms/{{ $realm }}"
+  JC_OIDC_JWKS_URL: "{{ $issuerBase }}/realms/{{ $realm }}/protocol/openid-connect/certs"
   JC_FUNCTIONS_CALLER: portal-api
   JC_FUNCTIONS_ASSISTANT_CALLER: jc-assistant
   JC_FUNCTIONS_AUDIENCE: jc-functions
-  JC_GATEWAY_URL: "https://api.{{ $global.domain }}"
+  JC_GATEWAY_URL: "{{ $gateway }}"
 
 podSecurityContext:
   {{ .Values.securityDefaults.podSecurityContext | toYaml | nindent 2 }}

@@ -266,7 +266,7 @@ RUN --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
     --mount=type=secret,id=ACTIONS_RESULTS_URL,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=SCCACHE_GHA_RW_MODE,env=SCCACHE_GHA_RW_MODE \
     . /usr/local/bin/sccache-env \
- && cargo build --release --locked -p jc -p kaisatsu-server \
+ && cargo build --release --locked -p jc -p kaisatsu-server -p functions \
  && if [ -n "${RUSTC_WRAPPER:-}" ]; then sccache --stop-server; fi
 COPY . .
 COPY --from=ui /work/ui/dist ./crates/portal/ui/dist
@@ -280,10 +280,11 @@ RUN --mount=type=secret,id=ACTIONS_RUNTIME_TOKEN,env=ACTIONS_RUNTIME_TOKEN \
     --mount=type=secret,id=SCCACHE_GHA_RW_MODE,env=SCCACHE_GHA_RW_MODE \
     . /usr/local/bin/sccache-env \
  && find bins crates vendor -name '*.rs' -not -path '*/node_modules/*' -exec touch {} + \
- && cargo build --release --locked -p jc -p kaisatsu-server \
+ && cargo build --release --locked -p jc -p kaisatsu-server -p functions \
  && if [ -n "${RUSTC_WRAPPER:-}" ]; then sccache --stop-server; fi \
  && strip -o /jc target/release/jc \
  && strip -o /kaisatsu target/release/kaisatsu \
+ && strip -o /jc-functions target/release/jc-functions \
  && rm -rf target \
  && mkdir -p /state && chmod 0700 /state
 
@@ -325,6 +326,9 @@ COPY --from=build /jc /usr/local/bin/jc
 # kaisatsu's own CLI, for the one step jc has no equivalent of: `kaisatsu migrate` as the
 # kaisatsu_migrate role, before jc connects as kaisatsu_app (an init container in components/jc).
 COPY --from=build /kaisatsu /usr/local/bin/kaisatsu
+# The script sandbox (T-7774, vendor/joinedcontext-platform/crates/functions), run as a pod of its
+# own (components/jc values/functions): a QuickJS fault lands where no credential is.
+COPY --from=build /jc-functions /usr/local/bin/jc-functions
 COPY --from=apps /srv/apps /srv/apps
 # The Smart Data Models mirror the Portal image carries (T-6353, crates/portal/Dockerfile): every
 # catalogue model converted to LinkML ahead of time, so jc_model_sdm_search and jc_model_sdm_import
