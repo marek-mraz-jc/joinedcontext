@@ -45,7 +45,9 @@ jobs:
           # root and antares under nextest, as ci.yml runs them (a process per test)
           - { ws: root, dir: ".", args: "nextest --profile ci --workspace" }
           - { ws: antares, dir: crates/antares, args: "nextest --profile ci --workspace" }
-          - { ws: portal, dir: crates/portal, args: "--workspace -j 2" }
+          # watched.sh (as ci.yml portal-test): the build and tests in a memory cgroup with a sampler
+          # in the log, so an overrun kills rustc and names it instead of losing the runner (T-7787)
+          - { ws: portal, dir: crates/portal, args: "--workspace -j 2", watch: "sh ../../.github/scripts/watched.sh" }
           - { ws: platform, dir: vendor/joinedcontext-platform, args: "--workspace --lib --bins" }
     defaults: { run: { working-directory: "${{ matrix.dir }}" } }
     services:
@@ -107,7 +109,7 @@ jobs:
         run: |
           start=$(date +%s); out=coverage
           # shellcheck disable=SC2086
-          cargo llvm-cov ${{ matrix.args }} --locked --no-report --no-fail-fast || {
+          ${{ matrix.watch }} cargo llvm-cov ${{ matrix.args }} --locked --no-report --no-fail-fast || {
             out=tests-failed
             echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
           }
