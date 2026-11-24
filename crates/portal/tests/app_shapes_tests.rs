@@ -295,6 +295,30 @@ async fn a_person_who_may_not_propose_an_app_is_refused_before_anything_is_read(
     assert!(written(&server).await.is_empty());
 }
 
+/// An App the rename would leave failing the App door is named in the refusal, and no file of
+/// any App reaches the forge: the Change is all of them or none.
+#[tokio::test]
+async fn an_app_the_door_refuses_after_the_rename_is_named_and_nothing_is_written() {
+    let server = forge().await;
+    let broken = app("broken-map", "fullstack").replace("contextSpaceRef: ovzdusie", "contextSpaceRef: Not_A_Space");
+    let (state, cookie) = state(
+        &server,
+        &[app("air-map", "static"), broken],
+        &["portal-approver"],
+        vec![],
+    );
+    let (status, body) = rename(state, &cookie, PROJECT).await;
+    assert!(
+        matches!(status, StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY),
+        "{status}: {body}"
+    );
+    assert!(
+        body["detail"].as_str().unwrap_or_default().contains("App 'broken-map'"),
+        "{body}"
+    );
+    assert!(written(&server).await.is_empty());
+}
+
 #[tokio::test]
 async fn a_project_the_caller_may_not_read_answers_not_found() {
     let server = forge().await;

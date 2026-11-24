@@ -186,6 +186,69 @@ async fn the_logo_is_served_from_beside_the_branding_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+async fn asset(app: axum::Router, which: &str) -> (StatusCode, Vec<(String, String)>, String) {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/branding/{which}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let headers = [header::CONTENT_TYPE, header::CONTENT_DISPOSITION]
+        .iter()
+        .filter_map(|name| {
+            let value = response.headers().get(name)?.to_str().ok()?;
+            Some((name.to_string(), value.to_owned()))
+        })
+        .collect();
+    let bytes = response.into_body().collect().await.expect("body").to_bytes();
+    (status, headers, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Only `logo` and `favicon` are assets; a configured file that is gone is a 404 that says so,
+/// never a 500; an installation look's favicon is served as an SVG download (T-7188, RTE-14).
+#[tokio::test]
+async fn an_unknown_asset_or_a_missing_file_is_not_found_and_the_installation_favicon_downloads() {
+    let dir = std::env::temp_dir().join(format!("jc-branding-gone-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("the asset directory");
+    let file = dir.join("branding.yaml");
+    std::fs::write(&file, "logo: \"logo.png\"\n").expect("branding");
+    let mut config = Config::for_tests();
+    config.branding_file = Some(file.display().to_string());
+    let state = AppState::new(config, None);
+    let app = server::app(state.clone());
+
+    let (status, _, text) = asset(app.clone(), "banner").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(text.contains("no branding asset 'banner'"), "{text}");
+    let (status, _, text) = asset(app.clone(), "logo").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(text.contains("the logo file is not readable"), "{text}");
+
+    state.set_installation_look(
+        serde_json::from_value(json!({ "faviconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\"/>" }))
+            .expect("a look"),
+    );
+    let (status, headers, text) = asset(app, "favicon").await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert!(text.starts_with("<svg"), "{text}");
+    assert!(
+        headers.contains(&("content-type".into(), "image/svg+xml".into())),
+        "{headers:?}"
+    );
+    assert!(
+        headers.contains(&(
+            "content-disposition".into(),
+            "attachment; filename=\"favicon.svg\"".into()
+        )),
+        "{headers:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A file name that would leave the ConfigMap was already dropped, so nothing can be reached
 /// through this route but the two assets the branding block names.
 #[tokio::test]
