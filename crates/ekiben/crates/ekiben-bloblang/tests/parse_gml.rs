@@ -387,6 +387,26 @@ fn a_pos_list_cut_short_of_its_dimension_is_refused() {
 }
 
 #[test]
+fn curves_join_shared_ends_keep_disjoint_ones_and_refuse_even_arcs() {
+    let curve = r#"<gml:Curve><gml:segments><gml:LineStringSegment><gml:posList>0 0 1 1</gml:posList></gml:LineStringSegment><gml:LineStringSegment><gml:posList>1 1 2 2</gml:posList></gml:LineStringSegment><gml:LineStringSegment><gml:posList>5 5 6 6</gml:posList></gml:LineStringSegment></gml:segments></gml:Curve>"#;
+    let g = parse_gml(&text(curve), None, None).unwrap();
+    let pts: Vec<(f64, f64)> = items(coords(&g)).iter().map(xy).collect();
+    assert_eq!(
+        pts,
+        vec![(0.0, 0.0), (1.0, 1.0), (2.0, 2.0), (5.0, 5.0), (6.0, 6.0)]
+    );
+    let even = r#"<gml:Curve><gml:segments><gml:ArcString><gml:posList>0 0 1 1 2 0 3 1</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#;
+    assert_eq!(
+        parse_gml(&text(even), None, None),
+        Err("parse_gml: an arc string holds 2n+1 positions, n at least 1".to_string())
+    );
+    // gml:coord names its axes: two of them under a 3-dimensional parent are a 2D position.
+    let coord = r#"<gml:Point srsDimension="3"><gml:coord><gml:X>1</gml:X><gml:Y>2</gml:Y></gml:coord></gml:Point>"#;
+    let p = parse_gml(&text(coord), None, None).unwrap();
+    assert_eq!(xy(coords(&p)), (1.0, 2.0));
+}
+
+#[test]
 fn deep_nesting_is_refused_without_a_stack_overflow() {
     let deep = |n: usize| {
         format!(

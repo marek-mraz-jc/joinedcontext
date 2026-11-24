@@ -537,7 +537,7 @@ fn format_float(x: f64, verb: char, prec: Option<usize>) -> String {
         return "NaN".to_string();
     }
     if x.is_infinite() {
-        return if x > 0.0 { "+Inf" } else { "-Inf" }.to_string();
+        return if x.is_sign_positive() { "+Inf" } else { "-Inf" }.to_string();
     }
     let neg = x.is_sign_negative();
     let (digs, dp) = decimal_digits(x.abs(), verb, prec);
@@ -559,10 +559,9 @@ fn format_float(x: f64, verb: char, prec: Option<usize>) -> String {
         _ => {
             let shortest = prec.is_none();
             let mut p = prec.map_or(nd, |p| if p == 0 { 1 } else { p });
+            // Go also lowers eprec to nd when nd >= dp; exp = dp - 1 is below nd then, so the
+            // %e/%f choice below is the same either way.
             let mut eprec = p as i64;
-            if eprec > nd as i64 && nd as i64 >= dp {
-                eprec = nd as i64;
-            }
             if shortest {
                 eprec = 6;
             }

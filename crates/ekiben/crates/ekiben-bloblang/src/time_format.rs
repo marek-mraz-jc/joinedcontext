@@ -1425,6 +1425,20 @@ mod tests {
     }
 
     #[test]
+    fn a_padded_day_reads_after_other_tokens() -> R {
+        for (input, layout) in [
+            ("Nov 24 2026", "Jan _2 2006"),
+            ("Nov  4 2026", "Jan _2 2006"),
+        ] {
+            let dt = parse_go_layout(input, layout)?;
+            assert_eq!((dt.year(), dt.month()), (2026, 11), "{input}");
+        }
+        assert_eq!(parse_go_layout("Nov 24 2026", "Jan _2 2006")?.day(), 24);
+        assert_eq!(parse_go_layout("Nov  4 2026", "Jan _2 2006")?.day(), 4);
+        Ok(())
+    }
+
+    #[test]
     fn strptime_twelve_hour_clock_maps_midnight_and_noon() -> R {
         for (input, hour) in [("12 AM", 0), ("03 AM", 3), ("12 PM", 12), ("03 pm", 15)] {
             let dt = parse_strptime(&format!("2026-11-24 {input}"), "%Y-%m-%d %I %p")?;

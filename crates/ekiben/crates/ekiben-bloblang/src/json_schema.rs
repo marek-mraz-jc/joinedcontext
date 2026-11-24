@@ -479,13 +479,19 @@ mod tests {
             let d = match key {
                 "$ref" => r,
                 "properties" => serde_json::json!({ "properties": { "a": r } }),
+                "patternProperties" => serde_json::json!({ "patternProperties": { "^a$": r } }),
+                "additionalProperties" => serde_json::json!({ "additionalProperties": r }),
                 other => serde_json::json!({ other: [r] }),
             };
             defs.insert(format!("d{i}"), d);
         }
         defs.insert(format!("d{levels}"), serde_json::json!({}));
         let schema = serde_json::json!({ "definitions": defs, "$ref": "#/definitions/d0" });
-        let doc = (0..levels).fold(serde_json::json!(1), |d, _| serde_json::json!({ "a": d }));
+        let doc = (0..levels).fold(serde_json::json!(1), |d, _| match key {
+            // `items` as a list validates a tuple: the document nests arrays.
+            "items" => serde_json::json!([d]),
+            _ => serde_json::json!({ "a": d }),
+        });
         (schema.to_string(), doc)
     }
 
@@ -498,7 +504,14 @@ mod tests {
         let (deep, doc) = chain("$ref", MAX_DEPTH);
         assert_eq!(run(&deep, doc), over);
         // A wrapper and its `$ref` are two levels each.
-        for key in ["properties", "allOf", "anyOf"] {
+        for key in [
+            "properties",
+            "allOf",
+            "anyOf",
+            "patternProperties",
+            "additionalProperties",
+            "items",
+        ] {
             let (ok, doc) = chain(key, (MAX_DEPTH - 1) / 2);
             assert_eq!(run(&ok, doc), Ok(()), "{key}");
             let (deep, doc) = chain(key, MAX_DEPTH / 2);
