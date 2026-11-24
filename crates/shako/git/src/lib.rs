@@ -78,7 +78,8 @@ mod tests {
         let inst = InstanceId::from_u128(1);
         let org = OrgId::from_u128(1);
         let mut bundle = Vec::new();
-        create_single_ref_bundle(source, "main", &mut bundle, &mut |_| Ok(())).expect("bundle");
+        create_single_ref_bundle(source, "main", &mut bundle, &mut crate::testutil::admit_all)
+            .expect("bundle");
         let pack = bundle
             .windows(2)
             .position(|w| w == b"\n\n")
@@ -115,8 +116,14 @@ mod tests {
             policy: &RefPolicy::default(),
         };
         let body = spooled(&body);
-        let out = handle_receive_pack(dest, &guard, 10 * 1024 * 1024, &body, &mut |_| Ok(()))
-            .expect("receive-pack");
+        let out = handle_receive_pack(
+            dest,
+            &guard,
+            10 * 1024 * 1024,
+            &body,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("receive-pack");
         String::from_utf8_lossy(&out.response_bytes).into_owned()
     }
 
@@ -504,14 +511,20 @@ mod tests {
             Some("version=2"),
             &v2_fetch_req,
             &mut v2_fetch_resp,
-            &mut |_| Ok(()),
+            &mut crate::testutil::admit_all,
         )
         .expect("v2 fetch");
         assert!(String::from_utf8_lossy(&v2_fetch_resp).contains("packfile"));
 
         // 4. Test bundle export and push_bundle into an empty repository via receive-pack
         let mut bundle = Vec::new();
-        create_single_ref_bundle(&repo_path, "main", &mut bundle, &mut |_| Ok(())).expect("bundle");
+        create_single_ref_bundle(
+            &repo_path,
+            "main",
+            &mut bundle,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("bundle");
         assert!(bundle.starts_with(b"# v2 git bundle\n"));
 
         let dest_id = RepoId::from_u128(101);
@@ -558,7 +571,7 @@ mod tests {
             },
             10 * 1024 * 1024,
             &spooled(&rp_body),
-            &mut |_| Ok(()),
+            &mut crate::testutil::admit_all,
         )
         .expect("receive-pack");
         assert_eq!(rp_out.updated_refs.len(), 1);
@@ -581,7 +594,7 @@ mod tests {
             },
             10,
             &spooled(&rp_body),
-            &mut |_| Ok(()),
+            &mut testutil::admit_all,
         ) // 10 bytes max_push_bytes -> refused with unpack error quota
         .expect("quota refusal");
         assert!(String::from_utf8_lossy(&over_quota.response_bytes).contains("unpack error quota"));
@@ -596,7 +609,7 @@ mod tests {
                 "main",
                 format,
                 &mut out,
-                &mut |_| Ok(()),
+                &mut crate::testutil::admit_all,
             )
             .map(|()| out.into_inner())
         };
@@ -608,16 +621,25 @@ mod tests {
         // A push that runs holds compaction back; what a crash left a day ago does not.
         let incoming = repo_path.join("objects/incoming-left");
         std::fs::create_dir_all(&incoming).expect("quarantine");
-        let compact = || compact_repository(&repo_path, Duration::from_secs(3600), &mut |_| Ok(()));
+        let compact = || {
+            compact_repository(
+                &repo_path,
+                Duration::from_secs(3600),
+                &mut crate::testutil::admit_all,
+            )
+        };
         assert!(compact().expect("compact").skipped_due_to_quarantine);
         std::fs::File::open(&incoming)
             .and_then(|dir| dir.set_modified(SystemTime::now() - Duration::from_secs(25 * 3600)))
             .expect("age");
         assert!(!compact().expect("compact").skipped_due_to_quarantine);
         assert!(!incoming.exists());
-        let compact_out =
-            compact_repository(&repo_path, Duration::from_secs(3600), &mut |_| Ok(()))
-                .expect("compact");
+        let compact_out = compact_repository(
+            &repo_path,
+            Duration::from_secs(3600),
+            &mut crate::testutil::admit_all,
+        )
+        .expect("compact");
         assert_eq!(compact_out.packs_after, 1);
 
         let fsck_out = fsck_repository(&repo_path).expect("fsck");
@@ -645,9 +667,221 @@ mod tests {
             Some("version=2"),
             &orphan_req,
             std::io::sink(),
-            &mut |_| Ok(()),
+            &mut testutil::admit_all,
         )
         .expect_err("unreachable blob must not be served");
         assert_eq!(refused.status_code(), 400);
+    }
+}
+
+/// Fixtures the in-file test modules share: small repositories, commits, tags and pkt-line
+/// bodies.
+#[cfg(test)]
+pub(crate) mod testutil {
+    use crate::pktline::{write_delim, write_flush, write_text_line};
+    use crate::receive_pack::{PushGuard, ReceivePackOutcome, handle_receive_pack};
+    use crate::repo::{
+        CommitAuthor, FileChangeOp, FileOpKind, commit_file_changes, init_bare_repo, open_isolated,
+        read_file_at_ref, set_ref_direct,
+    };
+    use gix_hash::ObjectId;
+    use shako_core::{
+        Action, InstanceId, LocalAuthorizer, OrgId, Principal, RefPolicy, RepoId, RequestCtx,
+        RoleBinding, ShakoResult, Subject,
+    };
+    use std::path::{Path, PathBuf};
+
+    /// A pkt-line body marker for a flush packet (`0000`).
+    pub(crate) const FLUSH: &str = "<flush>";
+    /// A pkt-line body marker for a delimiter packet (`0001`).
+    pub(crate) const DELIM: &str = "<delim>";
+
+    /// Admits every job: one function, so a test whose job is refused before admission leaves
+    /// no admission closure of its own unrun.
+    pub(crate) fn admit_all(_: u64) -> ShakoResult<()> {
+        Ok(())
+    }
+
+    pub(crate) fn author() -> CommitAuthor {
+        CommitAuthor {
+            name: "Alice".into(),
+            email: "alice@hel.fi".into(),
+        }
+    }
+
+    /// A new bare repository with `main` as its default branch, `{dir}/1/{id}.git`.
+    pub(crate) fn repo(dir: &Path, id: u128, auto_init: bool) -> PathBuf {
+        init_bare_repo(
+            dir,
+            InstanceId::from_u128(1),
+            RepoId::from_u128(id),
+            "main",
+            auto_init,
+            "Fixture",
+        )
+        .expect("init")
+    }
+
+    pub(crate) fn oid(hex: &str) -> ObjectId {
+        ObjectId::from_hex(hex.as_bytes()).expect("an object id")
+    }
+
+    /// Writes `content` at `path` on `branch` (created or overwritten) and answers the commit.
+    pub(crate) fn put(repo: &Path, branch: &str, path: &str, content: &[u8]) -> ObjectId {
+        change(repo, branch, FileOpKind::Upload, path, Some(content), None)
+    }
+
+    /// Deletes `path` from `branch` and answers the commit.
+    pub(crate) fn remove(repo: &Path, branch: &str, path: &str) -> ObjectId {
+        let (sha, _) = read_file_at_ref(repo, branch, path, &mut admit_all)
+            .expect("read")
+            .expect("the file exists");
+        change(repo, branch, FileOpKind::Delete, path, None, Some(sha))
+    }
+
+    fn change(
+        repo: &Path,
+        branch: &str,
+        operation: FileOpKind,
+        path: &str,
+        content: Option<&[u8]>,
+        sha: Option<String>,
+    ) -> ObjectId {
+        let sha = commit_file_changes(
+            repo,
+            branch,
+            path,
+            &author(),
+            &author(),
+            &[FileChangeOp {
+                operation,
+                path: path.into(),
+                content: content.map(<[u8]>::to_vec),
+                sha,
+            }],
+        )
+        .expect("commit");
+        oid(&sha)
+    }
+
+    /// Writes an annotated tag object naming `target` and points `refs/tags/{name}` at it.
+    pub(crate) fn annotated_tag(
+        repo: &Path,
+        name: &str,
+        target: ObjectId,
+        kind: gix_object::Kind,
+    ) -> ObjectId {
+        let handle = open_isolated(repo).expect("open");
+        let tag = gix_object::Tag {
+            target,
+            target_kind: kind,
+            name: name.into(),
+            tagger: Some(gix::actor::Signature {
+                name: "t".into(),
+                email: "t@example.org".into(),
+                time: gix::date::Time::new(1_700_000_000, 0),
+            }),
+            message: "release\n".into(),
+            signature: None,
+        };
+        let id = handle.write_object(&tag).expect("write tag").detach();
+        set_ref_direct(repo, &format!("refs/tags/{name}"), &id.to_string()).expect("tag ref");
+        id
+    }
+
+    /// A pkt-line body: each text as one data line, [`FLUSH`] and [`DELIM`] as their packets.
+    pub(crate) fn pkt(lines: &[&str]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for line in lines {
+            match *line {
+                FLUSH => write_flush(&mut out),
+                DELIM => write_delim(&mut out),
+                text => write_text_line(&mut out, text),
+            }
+            .expect("pkt-line");
+        }
+        out
+    }
+
+    pub(crate) fn text(bytes: &[u8]) -> String {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+
+    /// The object count of the first pack in `bytes`, or `None` when it holds none.
+    pub(crate) fn pack_count(bytes: &[u8]) -> Option<u32> {
+        let at = bytes.windows(4).position(|w| w == b"PACK")?;
+        let count = bytes.get(at + 8..at + 12)?;
+        Some(u32::from_be_bytes(count.try_into().ok()?))
+    }
+
+    /// The raw pack of every object `tip` of `source` reaches.
+    pub(crate) fn pack_of(source: &Path, tip: &str) -> Vec<u8> {
+        let mut bundle = Vec::new();
+        crate::create_single_ref_bundle(source, tip, &mut bundle, &mut admit_all).expect("bundle");
+        let at = bundle
+            .windows(2)
+            .position(|w| w == b"\n\n")
+            .expect("header end");
+        bundle.split_off(at + 2)
+    }
+
+    pub(crate) fn spooled(bytes: &[u8]) -> std::fs::File {
+        let mut file = tempfile::tempfile().expect("spool");
+        std::io::Write::write_all(&mut file, bytes).expect("spool write");
+        file
+    }
+
+    /// One receive-pack of `body` into `dest` by a writer of the organization, under `policy`.
+    pub(crate) fn receive(
+        dest: &Path,
+        policy: &RefPolicy,
+        body: &[u8],
+    ) -> ShakoResult<ReceivePackOutcome> {
+        let org = OrgId::from_u128(1);
+        let authz = LocalAuthorizer::new(vec![RoleBinding {
+            org_id: org,
+            principal: Principal::User("jc-portal".into()),
+            actions: vec![Action::Write],
+            project_id: None,
+            repo: None,
+        }]);
+        let ctx = RequestCtx::new(
+            InstanceId::from_u128(1),
+            org,
+            Subject::authenticated("jc-portal", "jc-portal", vec![org]),
+        );
+        let guard = PushGuard {
+            ctx: &ctx,
+            authorizer: &authz,
+            owner: "helsinki",
+            repo_name: "dest",
+            policy,
+        };
+        handle_receive_pack(
+            dest,
+            &guard,
+            10 * 1024 * 1024,
+            &spooled(body),
+            &mut admit_all,
+        )
+    }
+
+    /// A writer that refuses every byte, for the error arm of each pkt-line and pack write.
+    pub(crate) struct Refusing;
+
+    impl std::io::Write for Refusing {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("disk full"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("disk full"))
+        }
+    }
+
+    impl std::io::Seek for Refusing {
+        fn seek(&mut self, _: std::io::SeekFrom) -> std::io::Result<u64> {
+            Ok(0)
+        }
     }
 }
