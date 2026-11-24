@@ -3365,32 +3365,34 @@ mod tests {
                 "People" => vec!["p".into()],
                 "ProtocolMappers" => vec!["r-client-mapper".into(), "r-scope-mapper".into()],
                 set => {
-                    let kind = match set {
-                        "Organizations" => "org",
-                        "OrganizationDomains" => "dom",
-                        "Memberships" => "ms",
-                        "Groups" => "group",
-                        "GroupMembers" => "gm",
-                        "Roles" => "role",
-                        "RoleMappings" => "rm",
-                        "Applications" => "client",
-                        "ClientScopes" => "scope",
-                        "IdentityProviders" => "idp",
-                        "Credentials" => "cred",
-                        "Sessions" => "sso",
-                        "ClientSessions" => "cs",
-                        "OfflineSessions" => "off",
-                        "Consents" => "consent",
-                        "Events" => "event",
-                        "AdminEvents" => "admin-event",
-                        "SigningKeys" => "key",
-                        "RequiredActions" => "ra",
-                        "BrandingBlocks" => "brand",
-                        "WebAuthnCredentials" => "wa",
-                        "EmailOutbox" => "mail",
-                        "IdentityProviderLinks" => "link",
-                        other => panic!("no expectation for {other}"),
-                    };
+                    let kind = [
+                        ("Organizations", "org"),
+                        ("OrganizationDomains", "dom"),
+                        ("Memberships", "ms"),
+                        ("Groups", "group"),
+                        ("GroupMembers", "gm"),
+                        ("Roles", "role"),
+                        ("RoleMappings", "rm"),
+                        ("Applications", "client"),
+                        ("ClientScopes", "scope"),
+                        ("IdentityProviders", "idp"),
+                        ("Credentials", "cred"),
+                        ("Sessions", "sso"),
+                        ("ClientSessions", "cs"),
+                        ("OfflineSessions", "off"),
+                        ("Consents", "consent"),
+                        ("Events", "event"),
+                        ("AdminEvents", "admin-event"),
+                        ("SigningKeys", "key"),
+                        ("RequiredActions", "ra"),
+                        ("BrandingBlocks", "brand"),
+                        ("WebAuthnCredentials", "wa"),
+                        ("EmailOutbox", "mail"),
+                        ("IdentityProviderLinks", "link"),
+                    ]
+                    .into_iter()
+                    .find_map(|(name, kind)| (name == set).then_some(kind))
+                    .unwrap_or(set);
                     vec![format!("r-{kind}")]
                 }
             };
@@ -5738,6 +5740,176 @@ mod tests {
             .expect("claim");
         let claimed: Vec<&str> = claimed.iter().map(|o| o.id.as_str()).collect();
         assert_eq!(claimed, ["kept-id", "with-user"], "a sent row stays sent");
+        for id in ["late-1", "late-2"] {
+            store
+                .enqueue_outbox(row(id, "pending"))
+                .await
+                .expect("enqueue");
+        }
+        let one = store
+            .claim_outbox_batch(R, 1, std::time::Duration::from_secs(60), 3)
+            .await
+            .expect("claim");
+        assert_eq!(
+            one.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(),
+            ["late-1"],
+            "a claim stops at its limit"
+        );
+    }
+
+    /// A credential, provider, required action and admin event handed over with an id (and a
+    /// credential with its creation time) keep them; the store fills in only what is missing.
+    #[tokio::test]
+    async fn rows_handed_over_with_an_id_keep_it() {
+        let store = MemoryStore::default();
+        store
+            .upsert_credential(CredentialRecord {
+                created_date: 42,
+                ..credential(R, "pw", "p", "password")
+            })
+            .await
+            .expect("credential");
+        let creds = store.list_credentials(R, "p").await.expect("list");
+        assert_eq!(
+            creds
+                .iter()
+                .map(|c| (c.id.as_str(), c.created_date))
+                .collect::<Vec<_>>(),
+            [("pw", 42)]
+        );
+        store
+            .upsert_idp(IdentityProviderRepresentation {
+                internal_id: "idp-1".into(),
+                realm_id: R.into(),
+                alias: "corp".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("idp");
+        let idp = store.get_idp(R, "corp").await.expect("get").expect("idp");
+        assert_eq!(idp.internal_id, "idp-1");
+        store
+            .upsert_required_action(RequiredActionConfig {
+                id: "ra-1".into(),
+                realm_id: R.into(),
+                ..Default::default()
+            })
+            .await
+            .expect("required action");
+        let ids: Vec<String> = store
+            .list_required_actions(R)
+            .await
+            .expect("list")
+            .into_iter()
+            .map(|ra| ra.id)
+            .collect();
+        assert!(ids.contains(&"ra-1".to_owned()), "{ids:?}");
+        assert!(!ids.contains(&format!("{R}:CONFIGURE_TOTP")), "{ids:?}");
+        store
+            .append_admin_event(AdminEvent {
+                id: "ae-1".into(),
+                realm_id: R.into(),
+                org_id: None,
+                time: 1,
+                operation_type: "CREATE".into(),
+                resource_type: "USER".into(),
+                resource_path: "users/p".into(),
+                actor_id: "a".into(),
+                actor_client_id: None,
+                representation: None,
+            })
+            .await
+            .expect("admin event");
+        let events = store.list_admin_events(R, None).await.expect("list");
+        assert_eq!(
+            events.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            ["ae-1"]
+        );
+    }
+
+    /// A person, group or client nobody stored reads as none, and the store hands out the key
+    /// encryption key it was built with.
+    #[tokio::test]
+    async fn unknown_rows_read_as_none_and_the_kek_is_the_one_given() {
+        let kek = Kek::generate_for_tests();
+        let store = MemoryStore::new(kek.clone());
+        assert!(
+            store
+                .get_user_by_id(R, None, "ghost")
+                .await
+                .expect("read")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_group_by_path(R, None, "/nowhere")
+                .await
+                .expect("read")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_client_by_uuid(R, None, "ghost")
+                .await
+                .expect("read")
+                .is_none()
+        );
+        let sealed = kek.encrypt(b"aad", b"secret").expect("encrypt");
+        assert_eq!(
+            store.kek().decrypt(b"aad", &sealed).expect("decrypt"),
+            b"secret"
+        );
+        let other = MemoryStore::default();
+        assert!(
+            other.kek().decrypt(b"aad", &sealed).is_err(),
+            "another store's key"
+        );
+    }
+
+    /// Mapping a client role twice lists it once; removing a mapping of a person nobody stored
+    /// drops the row and touches no one.
+    #[tokio::test]
+    async fn a_client_role_mapped_twice_is_held_once() {
+        let store = MemoryStore::default();
+        let app = store.upsert_client(client("app")).await.expect("client");
+        let role = store
+            .upsert_role(RoleRepresentation {
+                realm_id: R.into(),
+                name: "reader".into(),
+                client_role: true,
+                container_id: Some(app.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .expect("role");
+        store.create_user(user("holder")).await.expect("user");
+        for _ in 0..2 {
+            store
+                .add_role_mapping(mapping("holder", &role, Some(&app.id)))
+                .await
+                .expect("map");
+        }
+        let holder = store
+            .get_user_by_id(R, None, "holder")
+            .await
+            .expect("read")
+            .expect("person");
+        assert_eq!(
+            holder.client_roles.get("app"),
+            Some(&vec!["reader".to_owned()])
+        );
+        store
+            .inner
+            .write()
+            .role_mappings
+            .push(mapping("ghost", &role, Some(&app.id)));
+        store
+            .remove_role_mapping(R, "user", "ghost", Some(&app.id), "reader")
+            .await
+            .expect("remove");
+        let st = store.inner.read();
+        assert!(st.role_mappings.iter().all(|m| m.principal_id != "ghost"));
+        assert!(st.role_mappings.iter().any(|m| m.principal_id == "holder"));
     }
 
     /// A row handed over without an id gets a fresh one, on its own and beside a person's update.

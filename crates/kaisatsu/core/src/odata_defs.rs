@@ -1341,9 +1341,7 @@ mod tests {
         assert_eq!(service.sets.len(), 26);
         for (set, row) in rows {
             let def = service.sets.iter().find(|d| d.set == set).expect("set");
-            let obj = row
-                .as_object()
-                .unwrap_or_else(|| panic!("{set}: row is an object"));
+            let obj = row.as_object().expect("each row is an object");
             let fields: HashSet<&str> = def.fields.iter().map(|f| f.name.as_str()).collect();
             let keys: HashSet<&str> = obj.keys().map(String::as_str).collect();
             assert_eq!(fields, keys, "{set}: row keys are the declared fields");
@@ -1355,11 +1353,13 @@ mod tests {
                 }
                 let ok = match (&f.kind, v) {
                     (_, Value::Null) => f.nullable,
-                    (FieldKind::String, Value::String(_)) => true,
                     (FieldKind::DateTime, Value::String(t)) => t.parse::<TimestampTz>().is_ok(),
                     (FieldKind::Integer, Value::Number(n)) => n.is_i64() || n.is_u64(),
-                    (FieldKind::Boolean, Value::Bool(_)) => true,
-                    _ => false,
+                    (kind, v) => matches!(
+                        (kind, v),
+                        (FieldKind::String, Value::String(_))
+                            | (FieldKind::Boolean, Value::Bool(_))
+                    ),
                 };
                 assert!(ok, "{set}.{}: {v} does not fit {:?}", f.name, f.kind);
             }

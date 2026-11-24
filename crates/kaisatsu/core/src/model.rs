@@ -1491,9 +1491,11 @@ mod tests {
         for bad in ["HS256", "none", "es256", "PS256"] {
             let err = check_signature_alg("app", "id.token.signed.response.alg", bad)
                 .expect_err("refused");
-            let crate::KaisatsuError::BadRequest(msg) = err else {
-                panic!("BadRequest for {bad}");
-            };
+            assert!(
+                matches!(err, crate::KaisatsuError::BadRequest(_)),
+                "BadRequest for {bad}"
+            );
+            let msg = err.to_string();
             assert!(msg.contains("client app") && msg.contains(bad), "{msg}");
             assert!(msg.contains("id.token.signed.response.alg"), "{msg}");
         }

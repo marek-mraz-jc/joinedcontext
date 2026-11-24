@@ -794,9 +794,9 @@ mod tests {
         let reg = OperationRegistry::new();
         assert!(reg.operations().len() >= want.len());
         for (name, kind, odata, binding, collection, params, ret) in want {
-            let op = reg
-                .find(name)
-                .unwrap_or_else(|| panic!("{name} registered"));
+            let op = reg.find(name);
+            assert!(op.is_some(), "{name} registered");
+            let op = op.expect("registered");
             assert_eq!(op.odata.kind, *kind, "{name}");
             assert_eq!(op.odata.name, *odata, "{name}");
             assert_eq!(op.odata.binding, *binding, "{name}");
@@ -811,8 +811,8 @@ mod tests {
             assert_eq!(op.odata.return_type, *ret, "{name}");
             let found = reg
                 .find_odata(&format!("JoinedContext.Kaisatsu.{odata}"), *binding)
-                .unwrap_or_else(|| panic!("{odata} resolves"));
-            assert_eq!(found.name, *name);
+                .map(|o| o.name);
+            assert_eq!(found, Some(*name), "{odata} resolves");
             assert_eq!(reg.find_odata(odata, *binding).map(|o| o.name), Some(*name));
         }
         for name in ["person_create", "person_update", "person_delete"] {
