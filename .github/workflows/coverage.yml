@@ -48,12 +48,13 @@ jobs:
           # watched.sh (as ci.yml portal-test): the build and tests in a memory cgroup with a sampler
           # in the log, so an overrun kills rustc and names it instead of losing the runner (T-7787)
           - { ws: portal, dir: crates/portal, args: "--workspace -j 2", watch: "sh ../../.github/scripts/watched.sh" }
-          # every lib, bin and tests/ binary but one (PLATFORM_TESTS, set below); jc-core in a second
+          # every lib, bin and tests/ binary but two (PLATFORM_TESTS, set below); jc-core in a second
           # pass (`then`), so jcctl's --skip filters below do not reach its `it` binary, which reads
-          # the schemas and examples vendored beside it (T-7766)
+          # the schemas and examples vendored beside it (T-7766). The features: jc-dcat's profiles
+          # and jc-manifest's OpenAPI derive, measured as T-7794 set their floors
           - ws: platform
             dir: vendor/joinedcontext-platform
-            args: "--workspace --exclude jc-core --lib --bins $PLATFORM_TESTS"
+            args: "--workspace --exclude jc-core --lib --bins $PLATFORM_TESTS --features jc-dcat/dcat-ap-sk,jc-dcat/dcat-ap-cz,jc-manifest/utoipa"
             then: "-p jc-core --lib --bins --test it"
             # jcctl's `it` modules that read examples/ingestion and library/blueprints, not vendored
             # either (ci.yml runs only its portal_api_drift_tests::)

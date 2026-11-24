@@ -531,6 +531,49 @@ mod tests {
         assert_ne!(a.namespace, b.namespace);
     }
 
+    /// CC-87: an organization repository's merge request gets a name of its own, which no project
+    /// merge request of the same number can take; a plain name is kept as given.
+    #[test]
+    fn an_organization_merge_request_is_named_apart_from_a_projects() {
+        let org = ChangeMeta::from_organization_merge_request(17, "doprava");
+        assert_eq!(
+            (org.name.as_str(), org.namespace.as_str()),
+            ("chg-org-00000011", "doprava")
+        );
+        assert_ne!(org.name, ChangeMeta::from_merge_request(17, "doprava").name);
+        assert_eq!(
+            ChangeMeta::from_organization_merge_request(u64::MAX, "x").name,
+            "chg-org-ffffffffffffffff"
+        );
+        assert_eq!(
+            ChangeMeta::new("chg-0123abcd", "demo"),
+            ChangeMeta {
+                name: "chg-0123abcd".into(),
+                namespace: "demo".into()
+            }
+        );
+    }
+
+    /// The repository is said when the forge named one and left unsaid for an empty name; the
+    /// channel is read from the merge request body, and a body naming none leaves it unsaid.
+    #[test]
+    fn the_status_names_its_repository_only_when_one_was_given() {
+        assert_eq!(
+            pending_status()
+                .in_repository("org/doprava")
+                .repository
+                .as_deref(),
+            Some("org/doprava")
+        );
+        assert_eq!(pending_status().in_repository("").repository, None);
+        assert_eq!(
+            pending_status()
+                .proposed_through("Proposed update.")
+                .proposed_via,
+            None
+        );
+    }
+
     #[test]
     fn a_merge_request_is_recorded_as_it_came_and_replaces_the_one_before_it() {
         // `with_merge_request` is a builder on the status: the value is what the forge said (a URL or
@@ -823,6 +866,46 @@ mod tests {
         }
     }
 
+    /// MF-53, ADR-N-043: a public MCP server is red and any other audience yellow; an assistant
+    /// deployment on any channel but `internal` reaches people outside and is red.
+    #[test]
+    fn a_public_mcp_server_and_an_outside_assistant_channel_are_red() {
+        let spec = |key: &str, value: &str| serde_json::json!({ key: value });
+        for op in [Operation::Create, Operation::Update] {
+            assert_eq!(
+                classify("McpServer", op, &spec("audience", "public")),
+                Lane::Red
+            );
+            assert_eq!(
+                classify("McpServer", op, &spec("audience", "project")),
+                Lane::Yellow
+            );
+            assert_eq!(
+                classify("McpServer", op, &serde_json::json!({})),
+                Lane::Yellow
+            );
+            for channel in ["web", "slack", "Internal", ""] {
+                assert_eq!(
+                    classify("AssistantDeployment", op, &spec("channel", channel)),
+                    Lane::Red,
+                    "{channel:?}"
+                );
+            }
+            assert_eq!(
+                classify("AssistantDeployment", op, &spec("channel", "internal")),
+                Lane::Yellow
+            );
+            assert_eq!(
+                classify(
+                    "AssistantDeployment",
+                    op,
+                    &serde_json::json!({ "channel": 7 })
+                ),
+                Lane::Yellow
+            );
+        }
+    }
+
     #[test]
     fn everything_else_is_yellow() {
         let spec = json!({});
@@ -999,6 +1082,17 @@ mod tests {
         );
         let body = format!("Proposed update.\n\n{}", via.trailer());
         assert_eq!(ProposedVia::in_body(&body), Some(via.clone()));
+        let signed = PROPOSED_VIA.sync_scope(via.clone(), || {
+            ProposedVia::sign_body("Proposed update.").into_owned()
+        });
+        assert!(
+            signed.starts_with(
+                "Proposed through an AI client over MCP (client `claude-code`) through connector \
+                 `doprava-in-claude`.\n\nProposed update.\n\n"
+            ),
+            "{signed}"
+        );
+        assert_eq!(ProposedVia::in_body(&signed), Some(via.clone()));
         let status = ChangeStatus::new(
             Lane::Yellow,
             ChangePhase::PendingApproval,

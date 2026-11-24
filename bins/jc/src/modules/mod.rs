@@ -44,6 +44,10 @@ pub mod dataroom;
 mod ekiben;
 #[cfg(feature = "ekiben")]
 mod ekiben_pg;
+/// The fault-injecting kaisatsu store of the unit tests (T-7637), kept under `tests/`.
+#[cfg(all(test, feature = "kaisatsu"))]
+#[path = "../../tests/common/faulty_store.rs"]
+pub(crate) mod faulty_store;
 #[cfg(any(feature = "portal", feature = "kaisatsu", feature = "gateway"))]
 pub mod follow;
 #[cfg(feature = "gateway")]

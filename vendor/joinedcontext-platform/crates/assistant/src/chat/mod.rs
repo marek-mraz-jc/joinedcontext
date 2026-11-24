@@ -837,14 +837,12 @@ pub async fn warm_types(state: Arc<ChatState>) {
     for deployment in &snapshot.deployments {
         // The sources' languages too, so no question waits on them (T-7765).
         if deployment.spec.routes() != Routes::Data {
-            routed::warm_languages(
-                &state.answers,
-                &state.pool,
-                &format!("{}/{}", deployment.project, deployment.name),
-                &crate::sources_by_project(&deployment.project, &deployment.spec.sources),
-                deployment.spec.channel.is_anonymous(),
-            )
-            .await;
+            let name = format!("{}/{}", deployment.project, deployment.name);
+            let sources = crate::sources_by_project(&deployment.project, &deployment.spec.sources);
+            let public_only = deployment.spec.channel.is_anonymous();
+            routed::warm_languages(&state.answers, &state.pool, &name, &sources, public_only).await;
+            // And the index digest, so a first question does not wait on its count (T-7772).
+            routed::warm_digest(&state.answers, &state.pool, &name, &sources, public_only);
         }
         // No person: only what a visitor may read is listed, with no token.
         let mut failed = Vec::new();
@@ -2367,9 +2365,6 @@ async fn ask(
             personal: deployment.spec.transcript_redaction
                 == Some(jc_core::kinds::TranscriptRedaction::Personal),
         };
-        if let Err(err) = transcript::store(&state.pool, &kept).await {
-            tracing::error!(%err, "a turn's transcript was not stored");
-        }
         tracing::info!(
             deployment = %name,
             tokens_in = spent.input,
@@ -2396,6 +2391,11 @@ async fn ask(
             turn.finish(Instant::now());
         }
         let _ = tx.send(done).await;
+        // The transcript after done: the visitor waits on nothing it does not read. Its spend and
+        // the stream's limit counted before done, so a fast second question meets them (T-7772).
+        if let Err(err) = transcript::store(&state.pool, &kept).await {
+            tracing::error!(%err, "a turn's transcript was not stored");
+        }
     }.instrument(span));
 
     let first = futures_util::stream::once(async move {
