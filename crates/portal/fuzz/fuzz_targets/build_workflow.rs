@@ -11,8 +11,8 @@ fuzz_target!(|data: &[u8]| {
     };
     if let Some(class) = Class::of_workflow(text) {
         let wanted = format!("app-build-{}", class.name());
-        assert!(text
-            .lines()
-            .any(|line| line.trim().strip_prefix("runs-on:").map(str::trim) == Some(wanted.as_str())));
+        assert!(text.lines().any(
+            |line| line.trim().strip_prefix("runs-on:").map(str::trim) == Some(wanted.as_str())
+        ));
     }
 });

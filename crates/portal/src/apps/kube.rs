@@ -932,7 +932,10 @@ mod tests {
         let namespace = serde_json::json!({
             "apiVersion": "v1", "kind": "Namespace", "metadata": { "name": "city-apps" },
         });
-        client.apply(&namespace).await.expect("a namespace needs no namespace");
+        client
+            .apply(&namespace)
+            .await
+            .expect("a namespace needs no namespace");
     }
 
     #[tokio::test]
@@ -947,7 +950,11 @@ mod tests {
             .await
             .expect_err("refused");
         match err {
-            KubeError::Api { status, path, message } => {
+            KubeError::Api {
+                status,
+                path,
+                message,
+            } => {
                 assert_eq!(status, 403);
                 assert_eq!(path, "/apis/apps/v1/namespaces/city/deployments/web");
                 assert_eq!(message, "deployments is forbidden");
@@ -985,7 +992,12 @@ mod tests {
             .mount(&server)
             .await;
         let cases = [
-            object("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "city", "x"),
+            object(
+                "rbac.authorization.k8s.io/v1",
+                "ClusterRoleBinding",
+                "city",
+                "x",
+            ),
             serde_json::json!({ "apiVersion": "v1", "kind": "Secret", "metadata": { "name": "s" } }),
             serde_json::json!({ "apiVersion": "v1", "kind": "Secret", "metadata": { "namespace": "city" } }),
             object("v1", "Secret", "../kube-system", "s"),
@@ -1003,7 +1015,9 @@ mod tests {
     async fn a_placement_is_applied_and_nothing_else_through_its_door() {
         let (server, client) = api().await;
         Mock::given(method("PATCH"))
-            .and(path("/api/v1/namespaces/wasm/configmaps/jc-wasm-host-3-placements"))
+            .and(path(
+                "/api/v1/namespaces/wasm/configmaps/jc-wasm-host-3-placements",
+            ))
             .and(query_param("force", "true"))
             .respond_with(ResponseTemplate::new(200))
             .expect(1)
@@ -1012,19 +1026,38 @@ mod tests {
         let placement = object("v1", "ConfigMap", "wasm", "jc-wasm-host-3-placements");
         client.apply_placement(&placement).await.expect("applied");
         for (case, wrong_kind) in [
-            (object("v1", "Secret", "wasm", "jc-wasm-host-3-placements"), true),
-            (object("apps/v1", "ConfigMap", "wasm", "jc-wasm-host-3-placements"), true),
+            (
+                object("v1", "Secret", "wasm", "jc-wasm-host-3-placements"),
+                true,
+            ),
+            (
+                object("apps/v1", "ConfigMap", "wasm", "jc-wasm-host-3-placements"),
+                true,
+            ),
             (serde_json::json!({ "metadata": { "name": "x" } }), true),
-            (object("v1", "ConfigMap", "wasm", "jc-wasm-host-x-placements"), false),
-            (object("v1", "ConfigMap", "wasm", "jc-wasm-host--placements"), false),
+            (
+                object("v1", "ConfigMap", "wasm", "jc-wasm-host-x-placements"),
+                false,
+            ),
+            (
+                object("v1", "ConfigMap", "wasm", "jc-wasm-host--placements"),
+                false,
+            ),
             (object("v1", "ConfigMap", "wasm", "edge-base"), false),
         ] {
             let err = client.apply_placement(&case).await.expect_err("refused");
-            match (wrong_kind, &err) {
-                (true, KubeError::UnsupportedKind { .. }) => {}
-                (false, KubeError::NotAName { field: "metadata.name", .. }) => {}
-                _ => panic!("{case}: {err:?}"),
-            }
+            let expected = if wrong_kind {
+                matches!(err, KubeError::UnsupportedKind { .. })
+            } else {
+                matches!(
+                    err,
+                    KubeError::NotAName {
+                        field: "metadata.name",
+                        ..
+                    }
+                )
+            };
+            assert!(expected, "{case}: {err:?}");
         }
         let err = client
             .apply_placement(&serde_json::json!({
@@ -1033,7 +1066,13 @@ mod tests {
             }))
             .await
             .expect_err("no namespace");
-        assert!(matches!(err, KubeError::NotAName { field: "metadata.namespace", .. }));
+        assert!(matches!(
+            err,
+            KubeError::NotAName {
+                field: "metadata.namespace",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -1044,7 +1083,12 @@ mod tests {
             .mount(&server)
             .await;
         let err = client
-            .apply_placement(&object("v1", "ConfigMap", "wasm", "jc-wasm-host-0-placements"))
+            .apply_placement(&object(
+                "v1",
+                "ConfigMap",
+                "wasm",
+                "jc-wasm-host-0-placements",
+            ))
             .await
             .expect_err("refused");
         assert!(matches!(err, KubeError::Api { status: 422, .. }), "{err:?}");
@@ -1097,7 +1141,10 @@ mod tests {
             .mount(&server)
             .await;
         assert_eq!(
-            client.pod_names("sandbox", "job-name=run-1").await.expect("listed"),
+            client
+                .pod_names("sandbox", "job-name=run-1")
+                .await
+                .expect("listed"),
             ["run-1-abc", "run-1-def"]
         );
         Mock::given(method("GET"))
@@ -1105,9 +1152,22 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
             .mount(&server)
             .await;
-        assert!(client.pod_names("empty", "a=b").await.expect("listed").is_empty());
-        let err = client.pod_names("Not_A_Label", "a=b").await.expect_err("refused");
-        assert!(matches!(err, KubeError::NotAName { field: "metadata.namespace", .. }));
+        assert!(client
+            .pod_names("empty", "a=b")
+            .await
+            .expect("listed")
+            .is_empty());
+        let err = client
+            .pod_names("Not_A_Label", "a=b")
+            .await
+            .expect_err("refused");
+        assert!(matches!(
+            err,
+            KubeError::NotAName {
+                field: "metadata.namespace",
+                ..
+            }
+        ));
         Mock::given(method("GET"))
             .and(path("/api/v1/namespaces/locked/pods"))
             .respond_with(refused(403, "pods is forbidden"))
@@ -1142,23 +1202,35 @@ mod tests {
             .mount(&server)
             .await;
         assert_eq!(
-            client.pod_log("sandbox", "run-1-abc", 4096).await.expect("log"),
+            client
+                .pod_log("sandbox", "run-1-abc", 4096)
+                .await
+                .expect("log"),
             "line 1\nline 2\n"
         );
-        let err = client.pod_log("sandbox", "gone", 10).await.expect_err("gone");
+        let err = client
+            .pod_log("sandbox", "gone", 10)
+            .await
+            .expect_err("gone");
         assert!(
             matches!(&err, KubeError::Api { status: 404, path, message }
                 if path == "/api/v1/namespaces/sandbox/pods/gone/log" && message == "pods \"gone\" not found"),
             "{err:?}"
         );
-        let err = client.pod_log("sandbox", "starting", 10).await.expect_err("waiting");
+        let err = client
+            .pod_log("sandbox", "starting", 10)
+            .await
+            .expect_err("waiting");
         assert!(
             matches!(&err, KubeError::Api { status: 400, message, .. } if message == "container is waiting"),
             "{err:?}"
         );
         assert!(matches!(
             client.pod_log("sandbox", "a/b", 10).await,
-            Err(KubeError::NotAName { field: "metadata.name", .. })
+            Err(KubeError::NotAName {
+                field: "metadata.name",
+                ..
+            })
         ));
     }
 
@@ -1168,7 +1240,9 @@ mod tests {
     async fn a_service_account_token_is_minted_for_one_audience_and_an_empty_answer_is_an_error() {
         let (server, client) = api().await;
         Mock::given(method("POST"))
-            .and(path("/api/v1/namespaces/portal/serviceaccounts/portal-rec/token"))
+            .and(path(
+                "/api/v1/namespaces/portal/serviceaccounts/portal-rec/token",
+            ))
             .and(body_json(serde_json::json!({
                 "apiVersion": "authentication.k8s.io/v1",
                 "kind": "TokenRequest",
@@ -1180,14 +1254,18 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/api/v1/namespaces/portal/serviceaccounts/empty/token"))
+            .and(path(
+                "/api/v1/namespaces/portal/serviceaccounts/empty/token",
+            ))
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
                 "status": { "token": "" }
             })))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/api/v1/namespaces/portal/serviceaccounts/denied/token"))
+            .and(path(
+                "/api/v1/namespaces/portal/serviceaccounts/denied/token",
+            ))
             .respond_with(refused(403, "cannot create serviceaccounts/token"))
             .mount(&server)
             .await;
@@ -1207,7 +1285,9 @@ mod tests {
             "{err:?}"
         );
         assert!(matches!(
-            client.service_account_token("portal", "denied", "a", 600).await,
+            client
+                .service_account_token("portal", "denied", "a", 600)
+                .await,
             Err(KubeError::Api { status: 403, .. })
         ));
         assert!(matches!(
@@ -1236,8 +1316,14 @@ mod tests {
             .respond_with(refused(403, "forbidden"))
             .mount(&server)
             .await;
-        client.delete("batch/v1", "Job", "sandbox", "run-1").await.expect("deleted");
-        client.delete("v1", "ConfigMap", "sandbox", "gone").await.expect("gone");
+        client
+            .delete("batch/v1", "Job", "sandbox", "run-1")
+            .await
+            .expect("deleted");
+        client
+            .delete("v1", "ConfigMap", "sandbox", "gone")
+            .await
+            .expect("gone");
         assert!(matches!(
             client.delete("v1", "Secret", "sandbox", "held").await,
             Err(KubeError::Api { status: 403, .. })
@@ -1253,7 +1339,9 @@ mod tests {
         let (server, client) = api().await;
         Mock::given(method("GET"))
             .and(path("/api/v1/namespaces/city/secrets/creds"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "data": {} })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "data": {} })),
+            )
             .mount(&server)
             .await;
         Mock::given(method("GET"))
@@ -1267,10 +1355,19 @@ mod tests {
             .mount(&server)
             .await;
         assert_eq!(
-            client.get("v1", "Secret", "city", "creds").await.expect("read"),
+            client
+                .get("v1", "Secret", "city", "creds")
+                .await
+                .expect("read"),
             Some(serde_json::json!({ "data": {} }))
         );
-        assert_eq!(client.get("v1", "Secret", "city", "gone").await.expect("read"), None);
+        assert_eq!(
+            client
+                .get("v1", "Secret", "city", "gone")
+                .await
+                .expect("read"),
+            None
+        );
         assert!(client.get("v1", "Secret", "city", "locked").await.is_err());
         assert!(matches!(
             client.get("v1", "ConfigMap", "city", "x").await,
@@ -1300,9 +1397,16 @@ mod tests {
             .respond_with(refused(403, "forbidden"))
             .mount(&server)
             .await;
-        let listed = client.list("apps/v1", "Deployment", "city", "app=web").await.expect("listed");
+        let listed = client
+            .list("apps/v1", "Deployment", "city", "app=web")
+            .await
+            .expect("listed");
         assert_eq!(listed.len(), 1);
-        assert!(client.list("v1", "Service", "city", "a=b").await.expect("listed").is_empty());
+        assert!(client
+            .list("v1", "Service", "city", "a=b")
+            .await
+            .expect("listed")
+            .is_empty());
         assert!(client.list("v1", "Secret", "city", "a=b").await.is_err());
         assert!(client.list("v1", "Pod", "city", "a=b").await.is_err());
         assert!(client.list("v1", "Secret", "Bad Ns", "a=b").await.is_err());
@@ -1313,7 +1417,10 @@ mod tests {
         let (server, client) = api().await;
         Mock::given(method("GET"))
             .and(path("/api/v1/namespaces/edge/configmaps/edge-base"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "data": { "a": "b" } })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "data": { "a": "b" } })),
+            )
             .mount(&server)
             .await;
         Mock::given(method("GET"))
@@ -1327,10 +1434,17 @@ mod tests {
             .mount(&server)
             .await;
         assert_eq!(
-            client.get_config_map("edge", "edge-base").await.expect("read").expect("there")["data"]["a"],
+            client
+                .get_config_map("edge", "edge-base")
+                .await
+                .expect("read")
+                .expect("there")["data"]["a"],
             "b"
         );
-        assert_eq!(client.get_config_map("edge", "gone").await.expect("read"), None);
+        assert_eq!(
+            client.get_config_map("edge", "gone").await.expect("read"),
+            None
+        );
         assert!(matches!(
             client.get_config_map("edge", "locked").await,
             Err(KubeError::Api { status: 403, .. })
@@ -1343,7 +1457,9 @@ mod tests {
     async fn a_brokers_object_is_applied_in_its_namespace_alone() {
         let (server, client) = api().await;
         Mock::given(method("PATCH"))
-            .and(path("/apis/cert-manager.io/v1/namespaces/mqtt/certificates/mqtt-city"))
+            .and(path(
+                "/apis/cert-manager.io/v1/namespaces/mqtt/certificates/mqtt-city",
+            ))
             .and(query_param("fieldManager", FIELD_MANAGER))
             .respond_with(ResponseTemplate::new(200))
             .mount(&server)
@@ -1354,11 +1470,16 @@ mod tests {
             .mount(&server)
             .await;
         client
-            .apply_mqtt("mqtt", &object("cert-manager.io/v1", "Certificate", "mqtt", "mqtt-city"))
+            .apply_mqtt(
+                "mqtt",
+                &object("cert-manager.io/v1", "Certificate", "mqtt", "mqtt-city"),
+            )
             .await
             .expect("applied");
         assert!(matches!(
-            client.apply_mqtt("mqtt", &object("v1", "Service", "mqtt", "mqtt-denied")).await,
+            client
+                .apply_mqtt("mqtt", &object("v1", "Service", "mqtt", "mqtt-denied"))
+                .await,
             Err(KubeError::Api { status: 403, .. })
         ));
         let err = client
@@ -1400,7 +1521,9 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("DELETE"))
-            .and(path("/apis/policy.linkerd.io/v1beta3/namespaces/mqtt/servers/mqtt-city"))
+            .and(path(
+                "/apis/policy.linkerd.io/v1beta3/namespaces/mqtt/servers/mqtt-city",
+            ))
             .respond_with(ResponseTemplate::new(200))
             .mount(&server)
             .await;
@@ -1415,12 +1538,24 @@ mod tests {
             .mount(&server)
             .await;
         let listed = client
-            .list_mqtt("traefik.io/v1alpha1", "IngressRouteTCP", "mqtt", "jc/broker=city")
+            .list_mqtt(
+                "traefik.io/v1alpha1",
+                "IngressRouteTCP",
+                "mqtt",
+                "jc/broker=city",
+            )
             .await
             .expect("listed");
         assert_eq!(listed.len(), 2);
-        assert!(client.list_mqtt("v1", "ConfigMap", "mqtt", "a=b").await.expect("listed").is_empty());
-        assert!(client.list_mqtt("v1", "Service", "mqtt", "a=b").await.is_err());
+        assert!(client
+            .list_mqtt("v1", "ConfigMap", "mqtt", "a=b")
+            .await
+            .expect("listed")
+            .is_empty());
+        assert!(client
+            .list_mqtt("v1", "Service", "mqtt", "a=b")
+            .await
+            .is_err());
         assert!(matches!(
             client.list_mqtt("v1", "Secret", "mqtt", "a=b").await,
             Err(KubeError::UnsupportedKind { .. })
@@ -1429,9 +1564,14 @@ mod tests {
             .delete_mqtt("policy.linkerd.io/v1beta3", "Server", "mqtt", "mqtt-city")
             .await
             .expect("deleted");
-        client.delete_mqtt("v1", "Service", "mqtt", "mqtt-gone").await.expect("gone already");
+        client
+            .delete_mqtt("v1", "Service", "mqtt", "mqtt-gone")
+            .await
+            .expect("gone already");
         assert!(matches!(
-            client.delete_mqtt("v1", "Service", "mqtt", "mqtt-held").await,
+            client
+                .delete_mqtt("v1", "Service", "mqtt", "mqtt-held")
+                .await,
             Err(KubeError::Api { status: 500, .. })
         ));
         assert!(matches!(
@@ -1439,7 +1579,9 @@ mod tests {
             Err(KubeError::NotAName { .. })
         ));
         assert!(matches!(
-            client.delete_mqtt("v1", "Secret", "mqtt", "mqtt-city").await,
+            client
+                .delete_mqtt("v1", "Secret", "mqtt", "mqtt-city")
+                .await,
             Err(KubeError::UnsupportedKind { .. })
         ));
     }
@@ -1458,7 +1600,19 @@ mod tests {
             .mount(&server)
             .await;
         client.replace(&secret).await.expect("replaced");
-        assert!(client.replace(&object("v1", "Pod", "city", "p")).await.is_err());
+        assert!(client
+            .replace(&object("v1", "Pod", "city", "p"))
+            .await
+            .is_err());
+        assert!(matches!(
+            client
+                .replace(&object("v1", "Secret", "city", "Not_A_Name"))
+                .await,
+            Err(KubeError::NotAName {
+                field: "metadata.name",
+                ..
+            })
+        ));
         assert!(client
             .replace(&serde_json::json!({ "apiVersion": "v1", "kind": "Secret", "metadata": { "name": "creds" } }))
             .await
@@ -1481,18 +1635,32 @@ mod tests {
             client.create(&secret).await,
             client.pod_names("city", "a=b").await.map(|_| ()),
             client.pod_log("city", "p", 1).await.map(|_| ()),
-            client.service_account_token("city", "sa", "a", 60).await.map(|_| ()),
+            client
+                .service_account_token("city", "sa", "a", 60)
+                .await
+                .map(|_| ()),
             client.delete("v1", "Secret", "city", "creds").await,
-            client.get("v1", "Secret", "city", "creds").await.map(|_| ()),
+            client
+                .get("v1", "Secret", "city", "creds")
+                .await
+                .map(|_| ()),
             client.list("v1", "Secret", "city", "a=b").await.map(|_| ()),
             client.get_config_map("city", "c").await.map(|_| ()),
             client.apply_mqtt("mqtt", &broker).await,
-            client.list_mqtt("v1", "Service", "mqtt", "a=b").await.map(|_| ()),
-            client.delete_mqtt("v1", "Service", "mqtt", "mqtt-city").await,
+            client
+                .list_mqtt("v1", "Service", "mqtt", "a=b")
+                .await
+                .map(|_| ()),
+            client
+                .delete_mqtt("v1", "Service", "mqtt", "mqtt-city")
+                .await,
             client.replace(&secret).await,
         ];
         for (index, result) in results.into_iter().enumerate() {
-            assert!(matches!(result, Err(KubeError::Transport(_))), "call {index}: {result:?}");
+            assert!(
+                matches!(result, Err(KubeError::Transport(_))),
+                "call {index}: {result:?}"
+            );
         }
     }
 
@@ -1500,7 +1668,10 @@ mod tests {
     #[test]
     fn an_empty_fixed_token_is_refused_before_a_request() {
         let client = KubeClient::with_token("https://10.0.0.1:443", "  ").expect("built");
-        assert!(matches!(client.headers("application/json"), Err(KubeError::Client(_))));
+        assert!(matches!(
+            client.headers("application/json"),
+            Err(KubeError::Client(_))
+        ));
         assert!(matches!(
             KubeClient::with_token("not a url", "tok"),
             Err(KubeError::Client(_))
@@ -1513,7 +1684,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kube-bad-ca-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("a mount");
         std::fs::write(dir.join("token"), "tok").expect("a token");
-        std::fs::write(dir.join("ca.crt"), "-----BEGIN CERTIFICATE-----\nnot base64\n-----END CERTIFICATE-----\n").expect("a ca");
+        std::fs::write(
+            dir.join("ca.crt"),
+            "-----BEGIN CERTIFICATE-----\nnot base64\n-----END CERTIFICATE-----\n",
+        )
+        .expect("a ca");
         std::fs::write(dir.join("namespace"), "  portal \n").expect("a namespace");
         let built = KubeClient::from_mount(&dir, "https://10.0.0.1:443");
         assert!(matches!(built, Err(KubeError::Client(_))), "{built:?}");
@@ -1526,10 +1701,55 @@ mod tests {
     /// Outside a cluster there is no mount: no client and no namespace, and neither is an error.
     #[test]
     fn outside_a_cluster_there_is_no_client_and_no_namespace() {
-        if Path::new(SERVICE_ACCOUNT_DIR).exists() {
-            return;
-        }
-        assert!(KubeClient::in_cluster().expect("not an error").is_none());
-        assert_eq!(KubeClient::own_namespace(), None);
+        let mounted = Path::new(SERVICE_ACCOUNT_DIR).join("token").is_file();
+        assert_eq!(
+            KubeClient::in_cluster().expect("not an error").is_some(),
+            mounted
+        );
+        assert_eq!(
+            KubeClient::own_namespace(),
+            KubeClient::namespace_of(Path::new(SERVICE_ACCOUNT_DIR))
+        );
+    }
+
+    /// A CA file that cannot be read is an error naming its path, never a client without it.
+    #[test]
+    fn an_unreadable_ca_is_an_error_naming_its_path() {
+        let dir = std::env::temp_dir().join(format!("kube-unreadable-ca-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a mount");
+        std::fs::write(dir.join("token"), "tok").expect("a token");
+        let _ = std::fs::remove_file(dir.join("ca.crt"));
+        // A regular file to `is_file` whose read fails for any user, root included.
+        std::os::unix::fs::symlink("/proc/self/mem", dir.join("ca.crt")).expect("a link");
+        let built = KubeClient::from_mount(&dir, "https://10.0.0.1:443");
+        assert!(
+            matches!(&built, Err(KubeError::ServiceAccount { path, .. }) if path.ends_with("ca.crt")),
+            "{built:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A body the API server cuts short is a transport error of the log read.
+    #[tokio::test]
+    async fn a_log_cut_short_is_a_transport_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0u8; 4096];
+                let _ = socket.read(&mut request).await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort")
+                    .await;
+            }
+        });
+        let client = KubeClient::with_token(&format!("http://{addr}"), "tok").expect("built");
+        assert!(matches!(
+            client.pod_log("city", "p", 10).await,
+            Err(KubeError::Transport(_))
+        ));
     }
 }

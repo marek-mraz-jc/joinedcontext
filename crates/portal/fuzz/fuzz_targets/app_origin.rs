@@ -10,7 +10,9 @@ fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
-    let (apex, name) = text.split_once('\n').unwrap_or(("https://example.org", text));
+    let (apex, name) = text
+        .split_once('\n')
+        .unwrap_or(("https://example.org", text));
     let Ok(apex) = url::Url::parse(apex) else {
         return;
     };
