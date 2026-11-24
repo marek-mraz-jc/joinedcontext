@@ -58,15 +58,13 @@ impl<K: OrgKeyed, V> Inner<K, V> {
     }
 
     fn expire(&mut self, now: Instant, gone: &mut Vec<Slot<V>>) {
-        while let Some((&(at, _), key)) = self.expiry.first_key_value() {
-            if at > now {
+        // Taken off the expiry map first, so a stale line (its entry gone) cannot hold the rest.
+        while let Some(first) = self.expiry.first_entry() {
+            if first.key().0 > now {
                 break;
             }
-            let key = key.clone();
-            match self.remove(&key) {
-                Some(slot) => gone.push(slot),
-                None => break,
-            }
+            let key = first.remove();
+            gone.extend(self.remove(&key));
         }
     }
 
@@ -417,5 +415,67 @@ mod tests {
                 .all(|(key, _)| key.0 == noisy)
         );
         assert!(cache.bytes() <= 20_000);
+    }
+
+    #[test]
+    fn a_stale_expiry_line_does_not_stop_later_entries_expiring() {
+        let cache = BoundedCache::new(1 << 20);
+        let org = OrgId::mint();
+        cache.insert(Key(org, 1), 1, 16, Duration::from_millis(20));
+        cache.insert(Key(org, 2), 2, 16, Duration::from_millis(20));
+        // Key 1's entry leaves behind the expiry map's back, as a broken invariant would.
+        cache.lock().entries.remove(&Key(org, 1));
+        std::thread::sleep(Duration::from_millis(40));
+        cache.sweep();
+        assert!(cache.is_empty(), "key 2 expired too");
+        assert!(cache.lock().expiry.is_empty());
+        assert!(cache.entries_of(org).is_empty());
+    }
+
+    #[test]
+    fn lost_organization_bookkeeping_still_answers_and_removes_the_entry() {
+        let cache = BoundedCache::new(10_000);
+        let org = OrgId::mint();
+        cache.insert(Key(org, 1), 1, 16, TTL);
+        // The Organization's order lost the entry: a get still answers it.
+        cache
+            .lock()
+            .orgs
+            .values_mut()
+            .for_each(|used| used.order.clear());
+        assert_eq!(cache.get(&Key(org, 1)), Some(1));
+        // The Organization itself is gone: a get answers, a remove still frees the bytes.
+        cache.lock().orgs.clear();
+        assert_eq!(cache.get(&Key(org, 1)), Some(1));
+        assert!(!cache.holds(org));
+        cache.remove(&Key(org, 1));
+        assert!(cache.is_empty());
+        assert_eq!(cache.bytes(), 0);
+    }
+
+    #[test]
+    fn bytes_counted_with_no_holder_to_evict_never_loop_and_the_entry_is_stored() {
+        let cache = BoundedCache::new(10_000);
+        let org = OrgId::mint();
+        cache.lock().bytes = 10_000;
+        cache.insert(Key(org, 1), 1, 16, TTL);
+        assert_eq!(cache.get(&Key(org, 1)), Some(1));
+        assert!(cache.bytes() > 10_000);
+    }
+
+    #[test]
+    fn an_empty_cache_answers_nothing_and_sweeps_nothing() {
+        let cache: BoundedCache<Key, u32> = BoundedCache::new(0);
+        let org = OrgId::mint();
+        cache.sweep();
+        cache.remove(&Key(org, 0));
+        assert_eq!(cache.get(&Key(org, 0)), None);
+        // A zero budget caps every entry at zero bytes: nothing is ever stored.
+        cache.insert(Key(org, 0), 0, 0, TTL);
+        assert!(cache.is_empty());
+        assert_eq!(
+            (cache.len(), cache.bytes(), cache.holds(org)),
+            (0, 0, false)
+        );
     }
 }

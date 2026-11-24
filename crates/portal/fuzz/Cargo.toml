@@ -3,10 +3,12 @@
 # Prometheus page, a pipeline's cron schedule, the masking of a record the runner posts, the list
 # query string and its cursor, a device's JSON Web Key Set, an MQTT test-publish body, (T-7658) a
 # feedback body, a comment's mentions, a git bundle's header, an entity bound for the trash and an
-# Endpoint preview's body, and (T-7605) the unverified `iss` of a bearer token, the double-submit
+# Endpoint preview's body, (T-7605) the unverified `iss` of a bearer token, the double-submit
 # CSRF check over arbitrary headers, the login redirect target and an Organization realm list from
-# jc's host registry, and (T-7711) the assistant's reading of a model answer's tool calls, a JSON
-# merge patch of a manifest, a data tool's answer and an App's written paths and texts. Its own
+# jc's host registry, and (T-7652) a forge's receive-pack answer, an App's host name under the apps
+# apex and an App repository's build workflow, and (T-7711) the assistant's reading of a model
+# answer's tool calls, a JSON merge patch of a manifest, a data tool's answer and an App's written
+# paths and texts. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 [package]
@@ -138,6 +140,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "receive_pack"
+path = "fuzz_targets/receive_pack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "auth_issuer_of"
 path = "fuzz_targets/auth_issuer_of.rs"
 test = false
@@ -145,8 +154,22 @@ doc = false
 bench = false
 
 [[bin]]
+name = "app_origin"
+path = "fuzz_targets/app_origin.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "auth_csrf_double_submit"
 path = "fuzz_targets/auth_csrf_double_submit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "build_workflow"
+path = "fuzz_targets/build_workflow.rs"
 test = false
 doc = false
 bench = false
@@ -161,6 +184,20 @@ bench = false
 [[bin]]
 name = "auth_realms_parse"
 path = "fuzz_targets/auth_realms_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "catalog_answers"
+path = "fuzz_targets/catalog_answers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kube_objects"
+path = "fuzz_targets/kube_objects.rs"
 test = false
 doc = false
 bench = false

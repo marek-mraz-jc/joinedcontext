@@ -1,0 +1,1 @@
+root = [this.a, this.b].filter(x -> x != null).join(",")

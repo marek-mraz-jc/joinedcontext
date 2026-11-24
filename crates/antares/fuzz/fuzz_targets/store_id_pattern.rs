@@ -17,6 +17,11 @@ fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
+    // a pattern a selector admits compiles on its own, so the `^(?:...)$` wrapper
+    // anchors every branch (T-7799)
+    if antares_ql::regex::compile_anchored(text).is_ok() {
+        assert!(antares_ql::regex::compile(text).is_ok(), "{text}");
+    }
     let _ = id_pattern_literal(text);
     let _ = id_pattern_required(text);
     if let Some(sql) = id_pattern_sql(text) {

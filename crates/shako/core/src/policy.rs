@@ -888,4 +888,347 @@ mod tests {
                 .is_ok()
         );
     }
+
+    fn edge_authz(org: OrgId) -> LocalAuthorizer {
+        let bind = |login: &str, action: Action| RoleBinding {
+            org_id: org,
+            principal: Principal::User(login.into()),
+            actions: vec![action],
+            project_id: None,
+            repo: None,
+        };
+        LocalAuthorizer::new(vec![
+            bind("w", Action::Write),
+            bind("w2", Action::Write),
+            bind("p", Action::Propose),
+            bind("a", Action::Admin),
+        ])
+    }
+
+    fn ctx_of(org: OrgId, login: &str) -> RequestCtx {
+        RequestCtx::new(
+            InstanceId::from_u128(1),
+            org,
+            Subject::authenticated(login, login, vec![org]),
+        )
+    }
+
+    fn update(refname: &str, is_delete: bool, is_create: bool, ff: bool) -> RefUpdate<'_> {
+        RefUpdate {
+            refname,
+            is_delete,
+            is_create,
+            is_fast_forward: ff,
+            changed_paths: &[],
+        }
+    }
+
+    #[test]
+    fn rule_validation_refuses_each_unsupported_or_broken_field() {
+        let org = OrgId::from_u128(1);
+        let authz = edge_authz(org);
+        let base = BranchProtectionRule {
+            rule_name: "release/*".into(),
+            enable_push: true,
+            ..BranchProtectionRule::default()
+        };
+        let cases: Vec<(BranchProtectionRule, &str)> = vec![
+            (
+                BranchProtectionRule {
+                    rule_name: "  ".into(),
+                    ..base.clone()
+                },
+                "rule_name must not be empty",
+            ),
+            (
+                BranchProtectionRule {
+                    push_whitelist_deploy_keys: true,
+                    ..base.clone()
+                },
+                "deploy keys",
+            ),
+            (
+                BranchProtectionRule {
+                    enable_bypass_allowlist: true,
+                    ..base.clone()
+                },
+                "deploy keys",
+            ),
+            (
+                BranchProtectionRule {
+                    require_signed_commits: true,
+                    ..base.clone()
+                },
+                "require_signed_commits",
+            ),
+            (
+                BranchProtectionRule {
+                    merge_whitelist_teams: vec!["t".into()],
+                    ..base.clone()
+                },
+                "merge_whitelist_teams",
+            ),
+            (
+                BranchProtectionRule {
+                    rule_name: "rel[".into(),
+                    ..base.clone()
+                },
+                "rule_name: 'rel['",
+            ),
+            (
+                BranchProtectionRule {
+                    protected_file_patterns: "docs/**;a[".into(),
+                    ..base.clone()
+                },
+                "protected_file_patterns: 'a['",
+            ),
+            (
+                BranchProtectionRule {
+                    unprotected_file_patterns: "b[".into(),
+                    ..base.clone()
+                },
+                "unprotected_file_patterns",
+            ),
+            (
+                BranchProtectionRule {
+                    force_push_allowlist_usernames: vec!["p".into()],
+                    ..base.clone()
+                },
+                "'p'",
+            ),
+        ];
+        for (rule, needle) in cases {
+            let err = RefPolicy::validate_rule_for_repo(
+                &rule,
+                &authz,
+                InstanceId::from_u128(1),
+                org,
+                "jc",
+                "cfg",
+            )
+            .expect_err(needle);
+            assert_eq!(err.status_code(), 422, "{needle}");
+            assert!(err.to_string().contains(needle), "{needle}: {err}");
+        }
+        RefPolicy::validate_rule_for_repo(
+            &base,
+            &authz,
+            InstanceId::from_u128(1),
+            org,
+            "jc",
+            "cfg",
+        )
+        .expect("plain rule");
+    }
+
+    #[test]
+    fn glob_lists_skip_blank_and_broken_entries() {
+        assert!(compile_glob_list("  ").is_none());
+        assert!(compile_glob_list(" ; ,\n").is_none());
+        assert!(compile_glob_list("a[").is_none());
+        let set = compile_glob_list("docs/**;; a[ ,*.md").expect("set");
+        assert!(set.is_match("docs/x") && set.is_match("r.md"));
+        assert!(!set.is_match("src/x"));
+        assert!(check_glob_list("f", " ;main, release/*").is_ok());
+        // A pattern saved before rules were checked and broken now protects every ref.
+        assert!(glob_matches("rel[", "anything"));
+    }
+
+    #[test]
+    fn rule_lookup_takes_full_and_short_names() {
+        let policy = RefPolicy {
+            branch_rules: vec![BranchProtectionRule::default()],
+            tag_rules: vec![TagProtectionRule {
+                name_pattern: "v*".into(),
+                whitelist_usernames: vec![],
+            }],
+        };
+        assert!(policy.matching_branch_rule("refs/heads/main").is_some());
+        assert!(policy.matching_branch_rule("main").is_some());
+        assert!(policy.matching_branch_rule("dev").is_none());
+        assert!(policy.matching_tag_rule("refs/tags/v1").is_some());
+        assert!(policy.matching_tag_rule("v2").is_some());
+        assert!(policy.matching_tag_rule("rc1").is_none());
+    }
+
+    #[test]
+    fn protected_tags_are_created_once_by_a_whitelisted_writer() {
+        let org = OrgId::from_u128(1);
+        let authz = edge_authz(org);
+        let policy = RefPolicy {
+            branch_rules: vec![],
+            tag_rules: vec![TagProtectionRule {
+                name_pattern: "v*".into(),
+                whitelist_usernames: vec!["w2".into()],
+            }],
+        };
+        let check = |login: &str, u: RefUpdate<'_>| {
+            policy
+                .check_ref_update(&ctx_of(org, login), &authz, "jc", "cfg", u)
+                .map_err(|e| e.status_code())
+        };
+        assert_eq!(
+            check("w2", update("refs/tags/v1", true, false, false)),
+            Err(403)
+        );
+        assert_eq!(
+            check("w2", update("refs/tags/v1", false, false, true)),
+            Err(403)
+        );
+        assert!(check("p", update("refs/tags/v1", false, true, false)).is_err());
+        assert_eq!(
+            check("w", update("refs/tags/v1", false, true, false)),
+            Err(403)
+        );
+        assert_eq!(
+            check("w2", update("refs/tags/v1", false, true, false)),
+            Ok(())
+        );
+        assert_eq!(
+            check("p", update("refs/tags/nightly", false, true, false)),
+            Ok(())
+        );
+        assert!(check("nobody", update("refs/tags/nightly", false, true, false)).is_err());
+        assert!(check("nobody", update("refs/heads/feature", false, true, false)).is_err());
+    }
+
+    #[test]
+    fn force_push_allowlist_and_file_patterns_guard_a_protected_branch() {
+        let org = OrgId::from_u128(1);
+        let authz = edge_authz(org);
+        let policy = RefPolicy {
+            branch_rules: vec![BranchProtectionRule {
+                rule_name: "main".into(),
+                enable_push: true,
+                enable_force_push: true,
+                force_push_allowlist_usernames: vec!["w2".into()],
+                protected_file_patterns: "docs/**".into(),
+                unprotected_file_patterns: "docs/public/**".into(),
+                ..BranchProtectionRule::default()
+            }],
+            tag_rules: vec![],
+        };
+        let run = |login: &str, ff: bool, paths: &[String]| {
+            policy
+                .check_ref_update(
+                    &ctx_of(org, login),
+                    &authz,
+                    "jc",
+                    "cfg",
+                    RefUpdate {
+                        refname: "refs/heads/main",
+                        is_delete: false,
+                        is_create: false,
+                        is_fast_forward: ff,
+                        changed_paths: paths,
+                    },
+                )
+                .map_err(|e| e.to_string())
+        };
+        let err = run("w", false, &[]).expect_err("w is not on the allowlist");
+        assert!(err.contains("force_push_allowlist_usernames"), "{err}");
+        assert_eq!(run("w2", false, &[]), Ok(()));
+        let err = run("w", true, &["docs/a.md".into()]).expect_err("protected path");
+        assert!(err.contains("docs/a.md"), "{err}");
+        assert_eq!(
+            run("w", true, &["docs/public/a.md".into(), "src/x".into()]),
+            Ok(())
+        );
+        assert!(run("p", true, &[]).is_err());
+    }
+
+    #[test]
+    fn merges_wait_for_reviews_approvers_and_status_checks() {
+        let org = OrgId::from_u128(1);
+        let authz = edge_authz(org);
+        let review = |author: &str, verdict: ReviewVerdict, dismissed: bool| ReviewRecord {
+            id: uuid::Uuid::now_v7(),
+            instance_id: InstanceId::from_u128(1),
+            org_id: org,
+            repo_id: crate::ids::RepoId::from_u128(1),
+            pr_number: 1,
+            verdict,
+            body: String::new(),
+            author_login: author.into(),
+            commit_id: String::new(),
+            dismissed,
+            created_at: TimestampTz::now(),
+        };
+        let status = |context: &str, sha: &str, state: &str| CommitStatusRecord {
+            id: uuid::Uuid::now_v7(),
+            instance_id: InstanceId::from_u128(1),
+            org_id: org,
+            repo_id: crate::ids::RepoId::from_u128(1),
+            sha: sha.into(),
+            context: context.into(),
+            state: state.into(),
+            description: String::new(),
+            target_url: String::new(),
+            updated_at: TimestampTz::now(),
+        };
+        let policy = RefPolicy {
+            branch_rules: vec![BranchProtectionRule {
+                rule_name: "main".into(),
+                enable_push: true,
+                block_on_rejected_reviews: true,
+                required_approvals: 1,
+                enable_approvals_whitelist: true,
+                approvals_whitelist_username: vec!["w2".into()],
+                status_check_contexts: vec!["ci".into()],
+                block_admin_merge_override: false,
+                ..BranchProtectionRule::default()
+            }],
+            tag_rules: vec![],
+        };
+        let merge = |login: &str, reviews: &[ReviewRecord], statuses: &[CommitStatusRecord]| {
+            policy
+                .check_pr_merge(
+                    &ctx_of(org, login),
+                    &authz,
+                    "jc",
+                    "cfg",
+                    "main",
+                    &MergePolicyInput {
+                        pr_author_login: "w",
+                        head_sha: "h2",
+                        is_behind_base: false,
+                        reviews,
+                        statuses,
+                    },
+                )
+                .map_err(|e| e.to_string())
+        };
+        let ok_ci = [status("ci", "h2", "success")];
+        let rejected = [
+            review("w2", ReviewVerdict::RequestChanges, false),
+            review("p", ReviewVerdict::Comment, false),
+        ];
+        assert!(
+            merge("w", &rejected, &ok_ci)
+                .expect_err("rejected")
+                .contains("rejected")
+        );
+        // A dismissed rejection no longer blocks; an approval by a reviewer off the list does not count.
+        let off_list = [
+            review("w2", ReviewVerdict::RequestChanges, true),
+            review("a", ReviewVerdict::Approved, false),
+        ];
+        assert!(
+            merge("w", &off_list, &ok_ci)
+                .expect_err("approvals")
+                .contains("has 0")
+        );
+        let approved = [review("w2", ReviewVerdict::Approved, false)];
+        assert!(
+            merge("w", &approved, &[])
+                .expect_err("no ci")
+                .contains("'ci'")
+        );
+        let wrong = [status("ci", "h1", "success"), status("ci", "h2", "failure")];
+        assert!(merge("w", &approved, &wrong).is_err());
+        assert_eq!(merge("w", &approved, &ok_ci), Ok(()));
+        // The rule leaves admins their override: nothing else is checked for them.
+        assert_eq!(merge("a", &rejected, &[]), Ok(()));
+        assert!(merge("p", &approved, &ok_ci).is_err());
+    }
 }

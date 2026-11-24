@@ -59,7 +59,7 @@ pub fn tenant(mirror: &Mirror, project: &str, name: &str) -> Result<String, Stri
     )
 }
 
-fn tenant_as(
+pub(crate) fn tenant_as(
     mirror: &Mirror,
     project: &str,
     name: &str,

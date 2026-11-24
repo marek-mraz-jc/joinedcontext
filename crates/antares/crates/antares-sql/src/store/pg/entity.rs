@@ -1516,7 +1516,7 @@ impl PgEntityStore {
                     // cannot compile leaves the count to SQL
                     id_regexes = ps
                         .iter()
-                        .map(|p| antares_ql::regex::compile(&format!("^(?:{p})$")).ok())
+                        .map(|p| antares_ql::regex::compile_anchored(p).ok())
                         .collect::<Option<Vec<_>>>()
                         .map(|re| (wheres.len(), re));
                     let any: Vec<String> = res

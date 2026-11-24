@@ -1,0 +1,2 @@
+*.apps.city.example
+{"spec":{"secretName":"w-tls","dnsNames":["*.apps.city.example"],"tls":[{"hosts":["*.apps.city.example"],"secretName":"w-tls"}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}}

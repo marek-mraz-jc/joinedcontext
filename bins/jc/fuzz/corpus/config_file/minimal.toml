@@ -1,0 +1,5 @@
+profile = "development"
+role = "all"
+base_host = "city.test"
+[[mounts.shako]]
+host = "git.city.test"

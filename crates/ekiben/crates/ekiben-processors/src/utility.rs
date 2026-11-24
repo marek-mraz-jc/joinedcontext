@@ -982,6 +982,29 @@ mod metric_tests {
     }
 
     #[tokio::test]
+    async fn each_label_reaches_the_exporter_with_its_own_value() {
+        let reg = MetricsRegistry::new();
+        let metrics = StreamMetrics::new("s", "default");
+        reg.register_stream(metrics.clone());
+        let ctx = proc_ctx(metrics);
+        let p = MetricProcessor::from_config(
+            &conf(serde_json::json!({
+                "type": "counter", "name": "hits", "labels": {"zone": "z1", "app": "${! json(\"a\") }"}
+            })),
+            &ctx,
+        )
+        .unwrap();
+        p.process_batch(&ctx, vec![Part::from_str(r#"{"a":"web"}"#)])
+            .await
+            .unwrap();
+        let text = reg.render_prometheus();
+        assert!(
+            text.contains("hits{app=\"web\",stream=\"s\",zone=\"z1\"} 1"),
+            "{text}"
+        );
+    }
+
+    #[tokio::test]
     async fn an_untyped_metric_counts_by_value_as_before() {
         let metrics = StreamMetrics::new("s", "default");
         let ctx = proc_ctx(metrics.clone());

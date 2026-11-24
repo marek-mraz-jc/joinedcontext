@@ -1,0 +1,1 @@
+SELECT id FROM people WHERE email = 'a''b' AND age > 41 AND x = E'q'
