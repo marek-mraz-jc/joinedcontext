@@ -45,3 +45,34 @@ pub mod workload_clients;
 pub use daemon::{SyncError, SyncStatus, Syncer};
 pub use leader::Leadership;
 pub use streams::{StreamDeployer, StreamOutcome};
+
+/// What `run` logs, for the tests that assert a wave's warnings: a scoped subscriber also makes
+/// tracing evaluate the event's fields, which no subscriber at all skips.
+#[cfg(test)]
+pub(crate) async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {
+    #[derive(Clone, Default)]
+    struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let sink = Sink::default();
+    let writer = sink.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+    let out = run.await;
+    drop(guard);
+    let text = String::from_utf8_lossy(&sink.0.lock().unwrap_or_else(|e| e.into_inner())).into_owned();
+    (out, text)
+}

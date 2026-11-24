@@ -414,6 +414,126 @@ async fn an_object_the_portal_did_not_label_is_untouched_and_the_host_shows_conf
     done(&pool, &[&host]).await;
 }
 
+/// No edge Ingress to copy: every moving host stays where it is and says why.
+#[tokio::test]
+async fn without_the_edge_ingress_each_moving_host_says_why() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    let host = format!("{}.bbsk.sk", run("noedge"));
+    row(&pool, &host, "approved").await;
+    let server = MockServer::start().await;
+    fallback(&server).await;
+
+    wave(&server, &pool, dns(&[(&host, EDGE_IP)]))
+        .converge(false)
+        .await;
+
+    assert_eq!(
+        state(&pool, &host).await,
+        (
+            "approved".to_owned(),
+            Some("the edge Ingress apisix is not in apisix; the apisix chart renders it".to_owned())
+        )
+    );
+    assert!(writes(&server, &[&host]).await.is_empty());
+    done(&pool, &[&host]).await;
+}
+
+/// A lookup that removes the host on the way, as an operator would mid-pass.
+struct RemovedWhileResolving {
+    pool: PgPool,
+    host: String,
+}
+
+impl Addresses for RemovedWhileResolving {
+    fn addresses<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<BTreeSet<IpAddr>, Unanswered>> {
+        Box::pin(async move {
+            if name == self.host {
+                joinedcontext_portal::host_registry::remove(&self.pool, name)
+                    .await
+                    .expect("removed");
+            }
+            Ok([EDGE_IP.parse().expect("an address")].into())
+        })
+    }
+}
+
+/// A host an operator removed while the pass looked it up is not moved on: its state stays
+/// `removed`, nothing is created and no step is audited for it.
+#[tokio::test]
+async fn a_host_removed_mid_pass_is_not_moved_on() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    let host = format!("{}.bbsk.sk", run("gone"));
+    row(&pool, &host, "approved").await;
+    let server = api(&[&host]).await;
+    fallback(&server).await;
+    let dns = Arc::new(RemovedWhileResolving { pool: pool.clone(), host: host.clone() });
+    OrgHosts::new(
+        KubeClient::with_token(&server.uri(), "token").expect("a client"),
+        NS.to_owned(),
+        pool.clone(),
+        dns,
+    )
+    .converge(false)
+    .await;
+
+    assert_eq!(state(&pool, &host).await.0, "removed");
+    assert!(writes(&server, &[&host]).await.is_empty());
+    assert!(audited(&pool, &host).await.is_empty());
+}
+
+/// What `run` logs.
+async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {
+    #[derive(Clone, Default)]
+    struct Sink(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let sink = Sink::default();
+    let writer = sink.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+    let out = run.await;
+    drop(guard);
+    let text = String::from_utf8_lossy(&sink.0.lock().unwrap_or_else(|e| e.into_inner())).into_owned();
+    (out, text)
+}
+
+/// Each reconciler step's audit row is also its log line, naming the actor and the step.
+#[tokio::test]
+async fn an_audited_step_is_logged_with_its_actor() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    clear_ledger(&pool).await;
+    let host = format!("{}.bbsk.sk", run("logged"));
+    row(&pool, &host, "approved").await;
+    let server = api(&[&host]).await;
+    fallback(&server).await;
+    let hosts = wave(&server, &pool, dns(&[(&host, EDGE_IP)]));
+
+    let ((), log) = logged(hosts.converge(false)).await;
+
+    let line = log
+        .lines()
+        .find(|line| line.contains("operator audit") && line.contains("host.dns-ok") && line.contains(&host))
+        .unwrap_or_else(|| panic!("no audit line for {host}: {log}"));
+    assert!(line.contains("actor=\"reconciler\""), "{line}");
+    done(&pool, &[&host]).await;
+}
+
 /// §7 O3 "Pacing": the eleventh new certificate in 24 hours waits, and so does the 21st in 7
 /// days for one registered domain; each host says until when.
 #[tokio::test]

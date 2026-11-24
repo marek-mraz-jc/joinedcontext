@@ -1,0 +1,2 @@
+bikes.apps.city.example
+{"metadata":{"annotations":{"traefik.ingress.kubernetes.io/router.tls":"true"}},"spec":{"ingressClassName":"traefik","rules":[{"host":"city.example","http":{"paths":[{"path":"/","backend":{"service":{"name":"apisix-gateway","port":{"number":80}}}}]}}]}}

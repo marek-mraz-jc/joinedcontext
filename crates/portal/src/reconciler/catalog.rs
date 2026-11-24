@@ -28,7 +28,7 @@ pub use jc_core::ngsi_catalog::{entities, fold, link, Ckan, Package, Place};
 use jcctl::loader::Repository;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 /// The name of the catalogue's Endpoint and of its space.
@@ -146,9 +146,10 @@ impl CatalogSync {
             run.upserted += wrote.upserted;
             run.deleted += wrote.deleted;
         }
-        if let Ok(mut written) = self.written.lock() {
-            written.retain(|slug, _| targets.iter().any(|target| &target.slug == slug));
-        }
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|slug, _| targets.iter().any(|target| &target.slug == slug));
         Ok(Some(run))
     }
 
@@ -162,10 +163,11 @@ impl CatalogSync {
         wanted: BTreeMap<String, Value>,
     ) -> Result<Run, String> {
         let surface = format!("{base}/api/endpoint/{slug}/ngsi-ld/v1");
+        // The memory only says what was written: a poisoned one is read as it stands.
         let remembered = self
             .written
             .lock()
-            .map_err(|_| "the catalogue's memory is poisoned".to_owned())?
+            .unwrap_or_else(PoisonError::into_inner)
             .remove(slug)
             .filter(|(listed, _)| listed.elapsed() < RELIST);
         let (listed, known) = match remembered {
@@ -205,9 +207,10 @@ impl CatalogSync {
             deleted: gone.len(),
         };
         // Remembered only once every write landed: a failed run lists the catalogue again.
-        if let Ok(mut written) = self.written.lock() {
-            written.insert(slug.to_owned(), (listed, wanted));
-        }
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(slug.to_owned(), (listed, wanted));
         Ok(run)
     }
 }
@@ -227,10 +230,7 @@ impl CatalogSync {
             .filter_map(|id| id.strip_prefix("urn:ngsi-ld:DataService:"))
             .map(str::to_owned)
             .collect();
-        let mut held = match self.counts.lock() {
-            Ok(mut counts) => std::mem::take(&mut *counts),
-            Err(_) => HashMap::new(),
-        };
+        let mut held = std::mem::take(&mut *self.counts.lock().unwrap_or_else(PoisonError::into_inner));
         held.retain(|slug, _| slugs.contains(slug));
         let stale: Vec<String> = slugs
             .iter()
@@ -260,9 +260,7 @@ impl CatalogSync {
             .iter()
             .map(|(slug, (_, types))| (slug.clone(), types.clone()))
             .collect();
-        if let Ok(mut counts) = self.counts.lock() {
-            *counts = held;
-        }
+        *self.counts.lock().unwrap_or_else(PoisonError::into_inner) = held;
         out
     }
 }
@@ -492,7 +490,7 @@ async fn packages(http: &reqwest::Client, site: &str) -> Result<Vec<Package>, St
 }
 
 /// The datasets of one `package_search` answer and the count of all of them.
-fn ckan_page(page: &Value) -> Option<(&Vec<Value>, u64)> {
+pub fn ckan_page(page: &Value) -> Option<(&Vec<Value>, u64)> {
     if page.get("success").and_then(Value::as_bool) != Some(true) {
         return None;
     }
@@ -612,7 +610,7 @@ async fn listing(
 
 /// Whether a problem document is CIM 009's `NonexistentTenant` (clause 5.5.2), by the last
 /// segment of its `type`, as the gateway reads it.
-fn names_no_tenant(problem: &Value) -> bool {
+pub fn names_no_tenant(problem: &Value) -> bool {
     problem["type"]
         .as_str()
         .is_some_and(|kind| kind.rsplit('/').next() == Some("NonexistentTenant"))
@@ -620,7 +618,7 @@ fn names_no_tenant(problem: &Value) -> bool {
 
 /// A refusal's problem `type` and `detail`, cut to [`REASON_CHARS`], so the run's error says
 /// which 404 or 403 it was; empty when the answer was no problem document.
-fn explained(problem: &Value) -> String {
+pub fn explained(problem: &Value) -> String {
     let said: Vec<&str> = ["type", "detail"]
         .into_iter()
         .filter_map(|member| problem[member].as_str())
@@ -640,7 +638,7 @@ fn explained(problem: &Value) -> String {
 /// The broker's reasons in a multi-status answer's `errors`, most frequent first, each with how
 /// many members it refused and the first of them: "failed for 100 entities" alone named no cause
 /// an operator could act on (T-6071). At most [`REASONS`], each cut to [`REASON_CHARS`].
-fn refusals(errors: &[Value]) -> String {
+pub fn refusals(errors: &[Value]) -> String {
     let mut reasons: Vec<(String, usize, &str)> = Vec::new();
     for member in errors {
         let error = &member["error"];
@@ -848,6 +846,315 @@ mod tests {
         assert!(
             !slugs.contains_key("other"),
             "a door without a catalogue is none"
+        );
+    }
+
+    use wiremock::matchers::{header, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const SURFACE: &str = "/api/endpoint/door/ngsi-ld/v1";
+
+    /// A port nothing listens on, held bound (never listening) so no parallel test takes it.
+    fn closed_port() -> (tokio::net::TcpSocket, String) {
+        let socket = tokio::net::TcpSocket::new_v4().expect("a socket");
+        socket.bind("127.0.0.1:0".parse().expect("an address")).expect("bound");
+        let port = socket.local_addr().expect("its address").port();
+        (socket, format!("http://127.0.0.1:{port}"))
+    }
+
+    /// CKAN on a name, which the guard does not judge (only an address written into the URL).
+    fn ckan_at(server: &MockServer) -> String {
+        server.uri().replace("127.0.0.1", "localhost")
+    }
+
+    async fn ckan_answers(server: &MockServer, template: ResponseTemplate) {
+        Mock::given(method("GET"))
+            .and(path("/api/3/action/package_search"))
+            .respond_with(template)
+            .mount(server)
+            .await;
+    }
+
+    /// Every way a CKAN fails to list is the run's error naming the site; an address written into
+    /// the URL that is not public is refused before any request.
+    #[tokio::test]
+    async fn a_ckan_that_does_not_list_fails_naming_the_site() {
+        let http = reqwest::Client::new();
+        let refused = packages(&http, "http://10.0.0.7").await.expect_err("internal");
+        assert_eq!(
+            refused,
+            "CKAN at http://10.0.0.7 names the internal address 10.0.0.7; a catalogue is read on the public internet only"
+        );
+        let cases = [
+            (ResponseTemplate::new(503), "did not list its datasets"),
+            (ResponseTemplate::new(200).set_body_string("<html>"), "did not answer JSON"),
+            (ResponseTemplate::new(200).set_body_json(json!({ "success": false })), "answered no package_search result"),
+            (ResponseTemplate::new(200).set_body_json(json!({ "success": true, "result": { "results": [] } })), "answered no package_search result"),
+        ];
+        for (template, said) in cases {
+            let server = MockServer::start().await;
+            ckan_answers(&server, template).await;
+            let site = ckan_at(&server);
+            let err = packages(&http, &site).await.expect_err(said);
+            assert!(err.starts_with(&format!("CKAN at {site} ")) && err.contains(said), "{err}");
+        }
+    }
+
+    /// An empty page ends the listing even when the count says more; a CKAN that never stops
+    /// is read [`CKAN_PAGES`] pages and refused rather than read without end.
+    #[tokio::test]
+    async fn a_ckan_listing_ends_on_an_empty_page_and_is_capped() {
+        let http = reqwest::Client::new();
+        let server = MockServer::start().await;
+        ckan_answers(&server, ResponseTemplate::new(200).set_body_json(json!({
+            "success": true, "result": { "count": 5, "results": [] } }))).await;
+        assert_eq!(packages(&http, &ckan_at(&server)).await, Ok(Vec::new()));
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/3/action/package_search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": true, "result": { "count": 1_000_000, "results": [{ "name": "x" }] } })))
+            .expect(CKAN_PAGES as u64)
+            .mount(&server)
+            .await;
+        let site = ckan_at(&server);
+        assert_eq!(
+            packages(&http, &site).await,
+            Err(format!("CKAN at {site} holds more than 20000 datasets; the catalogue reads no further"))
+        );
+    }
+
+    /// The listing reads page after page until an empty one, and keeps the ids alone; an entity
+    /// without an id is skipped. A refusal names its problem, a body that is none names nothing.
+    #[tokio::test]
+    async fn the_catalogue_listing_pages_and_names_each_refusal() {
+        let http = reqwest::Client::new();
+        let server = MockServer::start().await;
+        let page = |offset: &str, body: Value| {
+            Mock::given(method("GET"))
+                .and(path(format!("{SURFACE}/entities")))
+                .and(query_param("offset", offset))
+                .and(header("authorization", "Bearer t"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        };
+        page("0", json!([{ "id": "urn:ngsi-ld:Dataset:a" }, { "type": "Dataset" }])).mount(&server).await;
+        page("2", json!([])).mount(&server).await;
+        let held = listing(&http, &format!("{}{SURFACE}", server.uri()), "t").await.expect("listed");
+        assert_eq!(held, BTreeMap::from([("urn:ngsi-ld:Dataset:a".to_owned(), Value::Null)]));
+
+        let cases = [
+            (ResponseTemplate::new(403).set_body_json(json!({ "type": "urn:jc:forbidden", "detail": "no grant" })),
+             "the catalogue did not list: 403 Forbidden (urn:jc:forbidden: no grant)".to_owned()),
+            (ResponseTemplate::new(500).set_body_string("oops"),
+             "the catalogue did not list: 500 Internal Server Error".to_owned()),
+        ];
+        for (template, said) in cases {
+            let server = MockServer::start().await;
+            Mock::given(method("GET")).respond_with(template).mount(&server).await;
+            assert_eq!(listing(&http, &format!("{}{SURFACE}", server.uri()), "t").await, Err(said));
+        }
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("[not json"))
+            .mount(&server)
+            .await;
+        let err = listing(&http, &server.uri(), "t").await.expect_err("not JSON");
+        assert!(err.starts_with("the catalogue's listing is not JSON: "), "{err}");
+        let (_held, closed) = closed_port();
+        let err = listing(&http, &closed, "t").await.expect_err("unreachable");
+        assert!(err.starts_with("the catalogue did not list: "), "{err}");
+    }
+
+    /// A long problem detail is cut to [`REASON_CHARS`]; a refusal without `type` or `detail`
+    /// explains nothing.
+    #[test]
+    fn a_problem_is_explained_by_its_type_and_detail_cut_short() {
+        assert_eq!(explained(&json!({})), "");
+        assert_eq!(explained(&json!({ "title": "only a title" })), "");
+        let long = "x".repeat(500);
+        let said = explained(&json!({ "detail": long }));
+        assert_eq!(said.chars().count(), REASON_CHARS + 3, "{said}");
+        assert!(names_no_tenant(&json!({ "type": "NonexistentTenant" })));
+        assert!(!names_no_tenant(&json!({ "type": 7 })));
+    }
+
+    /// The broker's reasons, most frequent first, each with its count and first member, at most
+    /// [`REASONS`]; a member without a detail is named by its title or as giving none.
+    #[test]
+    fn a_multi_status_answer_is_named_by_its_reasons() {
+        let member = |id: &str, error: Value| json!({ "entityId": id, "error": error });
+        let errors = vec![
+            member("a", json!({ "title": "BadRequestData" })),
+            member("b", json!({ "detail": "too large" })),
+            member("c", json!({ "detail": "too large" })),
+            json!({ "error": {} }),
+            member("e", json!({ "detail": "fourth reason" })),
+        ];
+        assert_eq!(
+            refusals(&errors),
+            "2 x too large (b); 1 x BadRequestData (a); 1 x no reason given (?)"
+        );
+        assert_eq!(refusals(&[]), "the answer named no member");
+    }
+
+    /// A batch the gateway cannot be reached for, or refuses, fails with the operation named; a
+    /// delete carries why in `JC-Reason`.
+    #[tokio::test]
+    async fn a_batch_is_refused_or_unreachable_with_its_operation_named() {
+        let http = reqwest::Client::new();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("{SURFACE}/entityOperations/delete")))
+            .and(header("JC-Reason", "gone"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{SURFACE}/entityOperations/upsert")))
+            .respond_with(ResponseTemplate::new(422))
+            .mount(&server)
+            .await;
+        let surface = format!("{}{SURFACE}", server.uri());
+        assert_eq!(post(&http, &surface, "delete", "t", &json!(["urn:a"]), Some("gone")).await, Ok(()));
+        assert_eq!(
+            post(&http, &surface, "upsert", "t", &json!([]), None).await,
+            Err("the catalogue refused the upsert: 422 Unprocessable Entity".to_owned())
+        );
+        let (_held, closed) = closed_port();
+        let err = post(&http, &closed, "upsert", "t", &json!([]), None).await.expect_err("unreachable");
+        assert!(err.starts_with("the catalogue upsert did not reach the gateway: "), "{err}");
+    }
+
+    /// An Endpoint's types are read with their counts, its IRIs named by their term and sorted by
+    /// count; a /types or a count that does not read, or a count without its header, fails it.
+    #[tokio::test]
+    async fn an_endpoints_types_are_counted_or_the_failure_named() {
+        let http = reqwest::Client::new();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{SURFACE}/types")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "typeList": ["https://smartdatamodels.org/dataModel.Parking/ParkingSpot", "Vehicle", 7] })))
+            .mount(&server)
+            .await;
+        for (name, count) in [("https://smartdatamodels.org/dataModel.Parking/ParkingSpot", "3"), ("Vehicle", "40")] {
+            Mock::given(method("GET"))
+                .and(path(format!("{SURFACE}/entities")))
+                .and(query_param("type", name))
+                .respond_with(ResponseTemplate::new(200).insert_header("NGSILD-Results-Count", count))
+                .mount(&server)
+                .await;
+        }
+        assert_eq!(
+            types_of(&http, &server.uri(), "door").await,
+            Ok(vec![("Vehicle".to_owned(), 40), ("ParkingSpot".to_owned(), 3)])
+        );
+
+        let types = |list: ResponseTemplate| {
+            Mock::given(method("GET")).and(path(format!("{SURFACE}/types"))).respond_with(list)
+        };
+        let server = MockServer::start().await;
+        types(ResponseTemplate::new(404)).mount(&server).await;
+        let err = types_of(&http, &server.uri(), "door").await.expect_err("no types");
+        assert!(err.starts_with("/types did not read: "), "{err}");
+        let server = MockServer::start().await;
+        types(ResponseTemplate::new(200).set_body_string("nope")).mount(&server).await;
+        let err = types_of(&http, &server.uri(), "door").await.expect_err("not JSON");
+        assert!(err.starts_with("/types is not JSON: "), "{err}");
+        let server = MockServer::start().await;
+        types(ResponseTemplate::new(200).set_body_json(json!({ "typeList": ["Vehicle", "Bus"] }))).mount(&server).await;
+        Mock::given(method("GET"))
+            .and(path(format!("{SURFACE}/entities")))
+            .and(query_param("type", "Vehicle"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            types_of(&http, &server.uri(), "door").await,
+            Err("the count of Vehicle came without NGSILD-Results-Count".to_owned())
+        );
+        let server = MockServer::start().await;
+        types(ResponseTemplate::new(200).set_body_json(json!({ "typeList": ["Bus"] }))).mount(&server).await;
+        let err = types_of(&http, &server.uri(), "door").await.expect_err("count refused");
+        assert!(err.starts_with("the count of Bus did not read: "), "{err}");
+    }
+
+    /// Counts read once are kept; one that fails is logged and the Endpoint goes without types,
+    /// and a counts memory poisoned by a panicking thread is still read and written.
+    #[tokio::test]
+    async fn counts_are_kept_a_failed_read_is_logged_and_a_poisoned_memory_recovers() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/endpoint/bikes/ngsi-ld/v1/types"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "typeList": [] })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (sync, _) = wave(&server);
+        let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = sync.counts.lock().expect("not poisoned yet");
+            panic!("a thread dies holding the counts");
+        }));
+        assert!(poison.is_err() && sync.counts.is_poisoned());
+        let wanted = BTreeMap::from([
+            ("urn:ngsi-ld:DataService:bikes".to_owned(), json!({})),
+            ("urn:ngsi-ld:DataService:trees".to_owned(), json!({})),
+            ("urn:ngsi-ld:Dataset:air".to_owned(), json!({})),
+        ]);
+        let http = reqwest::Client::new();
+        let (counted, log) = super::super::logged(sync.counted(&http, &server.uri(), &wanted)).await;
+        assert_eq!(counted, HashMap::from([("bikes".to_owned(), Vec::new())]));
+        assert!(log.contains("catalogue counts not read") && log.contains("trees"), "{log}");
+        // Read from memory the second time: the mock answers /types once.
+        let again = sync.counted(&http, &server.uri(), &wanted).await;
+        assert_eq!(again, counted);
+    }
+
+    /// A Dataset a DataService names that the catalogue does not hold gets no words; one it holds
+    /// gets the folded type names after its own text.
+    #[test]
+    fn type_words_go_only_on_a_dataset_the_catalogue_holds() {
+        let mut wanted = BTreeMap::from([
+            ("urn:ngsi-ld:DataService:bikes".to_owned(), json!({ "refDataset": { "objectList": [
+                { "object": "urn:ngsi-ld:Dataset:held" }, { "object": "urn:ngsi-ld:Dataset:missing" } ] } })),
+            ("urn:ngsi-ld:DataService:empty".to_owned(), json!({})),
+            ("urn:ngsi-ld:Dataset:held".to_owned(), json!({ "searchText": { "value": "bikes" } })),
+        ]);
+        let counted = HashMap::from([
+            ("bikes".to_owned(), vec![("BikeHireDockingStation".to_owned(), 9)]),
+            ("empty".to_owned(), Vec::new()),
+        ]);
+        with_types(&mut wanted, &counted);
+        assert_eq!(wanted.len(), 3, "nothing is added");
+        assert_eq!(wanted["urn:ngsi-ld:Dataset:held"]["searchText"]["value"], "bikes bikehiredockingstation");
+        assert_eq!(wanted["urn:ngsi-ld:DataService:bikes"]["nextQuery"]["value"]["arguments"]["type"], "BikeHireDockingStation");
+        assert!(wanted["urn:ngsi-ld:DataService:empty"].get("entityTypes").is_none());
+    }
+
+    /// Two installation catalogues say nowhere to write: none is written and the error says so.
+    #[test]
+    fn two_installation_catalogues_are_refused() {
+        let pinned = |project: &str| {
+            let mut space = endpoint(project, CATALOG, CATALOG, "unused");
+            space.kind = "ContextSpace".to_owned();
+            space.spec = json!({ "urnSegment": CATALOG });
+            space
+        };
+        let repo = Repository::from_manifests(
+            vec![
+                endpoint("city", CATALOG, CATALOG, "one"),
+                pinned("city"),
+                endpoint("town", CATALOG, CATALOG, "two"),
+                pinned("town"),
+            ],
+            None,
+        )
+        .expect("a repository");
+        assert_eq!(
+            catalogues(&repo),
+            Err("2 Endpoints are named `catalog` on a space with the segment `catalog`; the catalogue is written to none".to_owned())
         );
     }
 }
