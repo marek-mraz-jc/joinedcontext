@@ -519,6 +519,50 @@ describe("one MQTT broker's page (T-6103)", () => {
   });
 });
 
+describe("a broker read that fails or lists devices (T-7540)", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+    window.history.replaceState({}, "", `/projects/${PROJECT}/mqttbrokers/cameras`);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("offers Retry when the broker read fails, and draws the broker once a retry answers", async () => {
+    let reads = 0;
+    showBroker({
+      brokerAnswer: () => {
+        reads += 1;
+        return reads === 1 ? json({ title: "Service Unavailable", status: 503, detail: "the gateway is away" }, 503) : json(CAMERAS);
+      },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: en.app.error.retry }));
+    expect(await screen.findByRole("group", { name: "cams" })).toBeInTheDocument();
+    expect(reads).toBe(2);
+  });
+
+  it("sorts the connected devices by each column, both ways", async () => {
+    const accounts = [
+      { serviceAccount: "cam-1", connected: 2, since: "2026-10-12T08:46:51Z" },
+      { serviceAccount: "cam-2", connected: 5, since: "2026-10-12T09:00:00Z" },
+    ];
+    showBroker({ measured: () => json({ ...MEASURED, accounts }), watch: () => json(WATCHED) });
+    const table = await screen.findByRole("table", { name: en.mqttbrokers.page.devices });
+    const order = () => within(table).getAllByRole("row").slice(1).map((row) => row.querySelector("[data-account]")?.getAttribute("data-account"));
+    for (const name of [en.mqttbrokers.page.account, en.mqttbrokers.acl.role, en.mqttbrokers.measured.connected, en.mqttbrokers.page.since]) {
+      const header = within(table).getByRole("columnheader", { name: new RegExp(name) });
+      const sort = header.querySelector("button.jc-grid-sort-btn") as HTMLButtonElement;
+      fireEvent.click(sort);
+      expect(header).toHaveAttribute("aria-sort", "ascending");
+      const once = order();
+      fireEvent.click(sort);
+      expect(order(), name).toEqual([...once].reverse());
+    }
+  });
+});
+
 describe("what a broker measures (T-4043)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
