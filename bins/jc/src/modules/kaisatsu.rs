@@ -2973,7 +2973,7 @@ mod tests {
         let file = branded.setup.dir.join("branding.yaml");
         std::fs::write(&file, "city: Branded City\n").unwrap();
         cfg.branding_file = Some(file);
-        build(&cfg, &[], branded.ctx(), mount(), &shutdown, &tasks)
+        let _router = build(&cfg, &[], branded.ctx(), mount(), &shutdown, &tasks)
             .await
             .unwrap();
         assert!(
@@ -2983,7 +2983,7 @@ mod tests {
         );
         let (faults, store) = faulty();
         faults.fail("get_branding");
-        serve(store, &cfg, &[], started.ctx(), mount(), &shutdown, &tasks)
+        let _router = serve(store, &cfg, &[], started.ctx(), mount(), &shutdown, &tasks)
             .await
             .unwrap();
         assert!(
@@ -2993,7 +2993,7 @@ mod tests {
         );
         let (_, store) = faulty();
         let alone = Started::new(&[Module::Kaisatsu], None, false);
-        serve(
+        let _router = serve(
             store,
             &section(),
             &[],

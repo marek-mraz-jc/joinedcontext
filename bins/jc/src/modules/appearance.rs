@@ -252,12 +252,35 @@ mod tests {
             None,
             "a CSS colour never reaches a page"
         );
+        mirror.upsert(organization(serde_json::json!({ "colours": "#0b5394" })));
+        assert_eq!(
+            in_mirror(&mirror, "bbsk"),
+            None,
+            "an appearance that does not read is jc's config"
+        );
         mirror.upsert(organization(serde_json::json!({})));
         assert_eq!(
             in_mirror(&mirror, "bbsk"),
             None,
             "an empty appearance is jc's config"
         );
+    }
+
+    /// A title is one string, or the page's language of a map, else English, else any; a
+    /// missing title or one of another type is none.
+    #[cfg(feature = "dataroom")]
+    #[test]
+    fn a_title_is_read_in_the_pages_language_then_english_then_any() {
+        let title = |v: serde_json::Value, lang: &str| in_language(Some(&v), lang);
+        assert_eq!(in_language(None, "sk"), None);
+        assert_eq!(title(serde_json::json!("Doprava"), "sk").as_deref(), Some("Doprava"));
+        let by = serde_json::json!({"en": "Transport", "sk": "Doprava"});
+        assert_eq!(title(by.clone(), "sk").as_deref(), Some("Doprava"));
+        assert_eq!(title(by, "de").as_deref(), Some("Transport"));
+        assert_eq!(title(serde_json::json!({"cs": "Doprava"}), "de").as_deref(), Some("Doprava"));
+        assert_eq!(title(serde_json::json!({}), "sk"), None);
+        assert_eq!(title(serde_json::json!(7), "sk"), None);
+        assert_eq!(title(serde_json::json!({"sk": 7}), "sk"), None);
     }
 
     /// T-6780: a catalogue home draws only its own Organization's public Dashboards, with the
