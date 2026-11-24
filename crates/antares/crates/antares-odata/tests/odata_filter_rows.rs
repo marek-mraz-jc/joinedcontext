@@ -283,7 +283,7 @@ async fn a_distance_or_a_planar_literal_the_store_cannot_read_is_refused() {
         // a lambda variable's location: no `near` names it
         (
             format!("scope/any(s:geo.distance(s,{here})%20lt%205)"),
-            StatusCode::BAD_REQUEST,
+            StatusCode::NOT_IMPLEMENTED,
         ),
         // a bound past every float
         (

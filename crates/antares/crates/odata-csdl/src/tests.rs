@@ -567,6 +567,7 @@ fn operations_and_imports_are_written_in_both_representations(
 fn an_action_with_parameters_and_no_return_and_an_annotated_import_are_written(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut model = operations();
+    model.references = vec![core()];
     let schema = &mut model.schemas[0];
     for o in &mut schema.operations {
         if o.name == "Forget" {

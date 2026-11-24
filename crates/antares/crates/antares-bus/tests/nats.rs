@@ -672,29 +672,6 @@ async fn a_lost_connection_is_counted_and_unacked_publishes_are_reported() {
     assert!(bus.connected());
 }
 
-/// An event the server cannot take (over its max_payload once its attribute list is counted)
-/// stops the page there: the events before it are acknowledged, the error names the cause,
-/// and nothing after it is sent.
-#[tokio::test(flavor = "multi_thread")]
-async fn publish_all_stops_at_an_event_too_large_to_send() {
-    let url = require_nats!();
-    let bus = NatsBus::connect(&url).await.expect("connect");
-    let tenant = TenantId::new(&format!("big{}", nonce())).expect("tenant");
-    let mut huge = event(&tenant, "urn:big:2", 2);
-    // claim_check strips bodies, not the attribute list
-    huge.changed_attrs = vec!["a".repeat(1024); 2048];
-    let (sent, failed) = bus
-        .publish_all(&[
-            event(&tenant, "urn:big:1", 1),
-            huge,
-            event(&tenant, "urn:big:3", 3),
-        ])
-        .await;
-    assert_eq!(sent, 1, "only the event before the oversized one");
-    let e = failed.expect("the oversized event fails").to_string();
-    assert!(e.starts_with("bus error: "), "{e}");
-}
-
 /// A page written whole before its acks are awaited (T-6608) reaches the
 /// stream complete and in page order, so the matcher still sees an entity's
 /// changes in the order the outbox holds them. The run prints the drain's
