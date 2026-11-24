@@ -129,7 +129,7 @@ impl Reader<'_> {
         Ok(self
             .take(n)?
             .iter()
-            .fold(0u64, |acc, b| (acc << 8) | u64::from(*b)))
+            .fold(0u64, |acc, b| (acc << 8) + u64::from(*b)))
     }
 
     fn int(&mut self, n: usize) -> Result<i64, String> {

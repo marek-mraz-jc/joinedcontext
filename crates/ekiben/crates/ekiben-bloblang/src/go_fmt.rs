@@ -61,7 +61,7 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
             }
             arg += 1;
         } else {
-            f.wid = number(bytes, &mut i);
+            f.wid = Some(number(bytes, &mut i));
         }
         if i < bytes.len() && bytes[i] == b'.' {
             i += 1;
@@ -75,7 +75,7 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
                 }
                 arg += 1;
             } else {
-                f.prec = Some(number(bytes, &mut i).unwrap_or(0));
+                f.prec = Some(number(bytes, &mut i));
             }
         }
         if f.minus {
@@ -151,8 +151,8 @@ fn arg_number(
     }
 }
 
-fn number(b: &[u8], i: &mut usize) -> Option<usize> {
-    let start = *i;
+/// The decimal at `i`, 0 when there is none: a missing width or precision acts as 0.
+fn number(b: &[u8], i: &mut usize) -> usize {
     let mut n: usize = 0;
     while *i < b.len() && b[*i].is_ascii_digit() {
         n = n
@@ -160,7 +160,7 @@ fn number(b: &[u8], i: &mut usize) -> Option<usize> {
             .saturating_add(usize::from(b[*i] - b'0'));
         *i += 1;
     }
-    (*i > start).then_some(n.min(1_000_000))
+    n.min(1_000_000)
 }
 
 fn star(v: &Value) -> Option<i64> {

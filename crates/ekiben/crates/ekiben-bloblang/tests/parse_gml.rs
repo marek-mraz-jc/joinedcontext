@@ -148,9 +148,25 @@ fn an_arc_through_three_points_stays_on_its_circle() {
     let h = 50f64.sqrt();
     let tilted = format!("<gml:Curve><gml:segments><gml:ArcString><gml:posList>10 0 0 10 {} {h}</gml:posList></gml:ArcString></gml:segments></gml:Curve>", -h);
     let g = parse_gml(&text(&tilted), None, None).unwrap();
-    for p in items(coords(&g)) {
+    // 135 degrees counter-clockwise in 27 chords of 5 degrees, each position on its own angle.
+    let ps = items(coords(&g));
+    assert_eq!(ps.len(), 28);
+    for (i, p) in ps.iter().enumerate() {
         let (x, y) = xy(p);
-        assert!((x.hypot(y) - 10.0).abs() < 1e-9, "{x} {y}");
+        let want = (5.0 * i as f64).to_radians();
+        assert!(
+            (x - 10.0 * want.cos()).abs() < 1e-9 && (y - 10.0 * want.sin()).abs() < 1e-9,
+            "{i}: {x} {y}"
+        );
+    }
+    // A z goes from the start's to the end's in step with the angle.
+    let g = parse_gml(&text(r#"<gml:Curve srsDimension="3"><gml:segments><gml:ArcString><gml:posList>10 0 0 0 10 5 -10 0 10</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#), None, None).unwrap();
+    let ps = items(coords(&g));
+    assert_eq!(ps.len(), 37);
+    for (i, p) in ps.iter().enumerate() {
+        let Value::Array(c) = p else { panic!("{p:?}") };
+        let z = c[2].as_f64().unwrap_or(f64::NAN);
+        assert!((z - 10.0 * i as f64 / 36.0).abs() < 1e-9, "{i}: {z}");
     }
     // A clockwise arc sweeps the other way, below the x axis.
     let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:Arc><gml:posList>10 0 0 -10 -10 0</gml:posList></gml:Arc></gml:segments></gml:Curve>"#), None, None).unwrap();
@@ -385,6 +401,14 @@ fn coordinates_separators_must_be_given_and_distinct() {
             "{attrs}"
         );
     }
+}
+
+#[test]
+fn a_polygon_takes_one_exterior() {
+    let ring = "<gml:exterior><gml:LinearRing><gml:posList>0 0 1 0 1 1 0 0</gml:posList></gml:LinearRing></gml:exterior>";
+    let two = format!("<gml:Polygon>{ring}{ring}</gml:Polygon>");
+    let err = parse_gml(&text(&two), None, None).unwrap_err();
+    assert!(err.contains("exterior"), "{err}");
 }
 
 #[test]

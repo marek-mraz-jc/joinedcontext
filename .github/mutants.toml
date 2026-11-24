@@ -97,6 +97,9 @@ exclude_re = [
   # T-7576 json_schema number: multipleOf 0 gives q = n / 0, an infinity or NaN whose `q - q.round()` is NaN and
   # never > 1e-9, so admitting 0 refuses nothing; and a quotient exactly 1e-9 off a whole number does not occur.
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace > with >= in Validator<.*>::number',
+  # T-7576 msgpack len: an overstated remainder lets a forged length through one step further, where the first element
+  # read fails with the same "unexpected EOF"; the collect never reserves by the length.
+  'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace - with \+ in Reader<.*>::len',
   # T-7748 executor: EmptyBatch::part_bytes answers an empty slice, borrowed or owned alike.
   'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace <impl MessageBatch for EmptyBatch>::part_bytes -> Cow<.*> with Cow::(Borrowed|Owned)\(Vec::leak\(Vec::new\(\)\).*',
   # T-7748 executor: the parser builds every Executor with an empty annotation.
