@@ -439,8 +439,9 @@ mod tests {
         for path in Pages::iter().filter(|path| path.ends_with(".md")) {
             let (chapter, file) = path.split_once('/').expect("chapter/page.md");
             let page = file.strip_suffix(".md").expect("a markdown page");
-            let document =
-                render(chapter, page, &every()).unwrap_or_else(|| panic!("{path} renders"));
+            let document = render(chapter, page, &every());
+            assert!(document.is_some(), "{path} renders");
+            let document = document.unwrap_or_default();
             assert!(!document.contains("<title></title>"), "{path} has a title");
             pages += 1;
         }
@@ -556,6 +557,10 @@ mod tests {
             link(CowStr::from("07-websocket.md#limits")).as_ref(),
             "07-websocket#limits"
         );
+        // A colon after a path, an anchor or a query names no scheme: the link stays relative.
+        assert_eq!(link(CowStr::from("guide/a:b.md")).as_ref(), "guide/a:b");
+        assert_eq!(link(CowStr::from("#step:1")).as_ref(), "#step:1");
+        assert_eq!(link(CowStr::from("page?at=1:2")).as_ref(), "page?at=1:2");
     }
 
     #[test]

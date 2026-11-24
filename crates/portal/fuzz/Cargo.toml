@@ -5,7 +5,9 @@
 # feedback body, a comment's mentions, a git bundle's header, an entity bound for the trash and an
 # Endpoint preview's body, and (T-7605) the unverified `iss` of a bearer token, the double-submit
 # CSRF check over arbitrary headers, the login redirect target and an Organization realm list from
-# jc's host registry. Its own
+# jc's host registry, (T-7724) a robots.txt body, a link found in an entity and the manifests a
+# checkout proposes to the judge, (T-7729) a pipeline test's manifest and records and a public
+# documentation page's path. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 [package]
@@ -27,6 +29,7 @@ cookie = { version = "0.18", features = ["percent-encode"] }
 url = "2"
 joinedcontext-portal = { path = ".." }
 jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
+jc-time = { path = "../../shared/jc-time" }
 
 [[bin]]
 name = "selector"
@@ -160,6 +163,34 @@ bench = false
 [[bin]]
 name = "auth_realms_parse"
 path = "fuzz_targets/auth_realms_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "link_check"
+path = "fuzz_targets/link_check.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "judge_replay"
+path = "fuzz_targets/judge_replay.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "record_check"
+path = "fuzz_targets/record_check.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "public_docs"
+path = "fuzz_targets/public_docs.rs"
 test = false
 doc = false
 bench = false

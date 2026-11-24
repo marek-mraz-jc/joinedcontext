@@ -1003,6 +1003,124 @@ mod tests {
 
     /// An Organization's appearance that is no object, or holds a field of the wrong type, is
     /// refused naming `spec.appearance`; one without an appearance, or another kind, passes.
+    /// The Portal's own ground takes the apex and the Policy domain from its app settings, and
+    /// none without them.
+    #[test]
+    fn the_portals_ground_takes_apex_and_domain_from_its_app_settings() {
+        let mut config = crate::config::Config::for_tests();
+        config.app_settings = None;
+        let bare = crate::state::AppState::new(config.clone(), None);
+        let ground = Ground::of(&bare);
+        assert_eq!(
+            (ground.apex, ground.domain, ground.load),
+            (None, None, false)
+        );
+        config.app_settings = Some(crate::apps::reconciler::Settings {
+            host: "portal.example.org".into(),
+            apex: "example.org".into(),
+            gateway_url: None,
+            service_url: None,
+            namespace: "apps".into(),
+            org_domain: "hel.fi".into(),
+            apisix_namespace: "apisix".into(),
+            image_repository: None,
+            pull_secret: None,
+            basemap_base: None,
+            release: None,
+            service_account: None,
+        });
+        let state = crate::state::AppState::new(config, None);
+        let ground = Ground::of(&state);
+        assert_eq!(
+            (ground.apex, ground.domain),
+            (Some("example.org"), Some("hel.fi"))
+        );
+        assert!(ground.portals.is_some() && !ground.load);
+    }
+
+    /// An agent profile naming only registered operations passes; any other kind is not this
+    /// check's.
+    #[test]
+    fn registered_agent_operations_pass() {
+        let mirror = Mirror::new();
+        let bounds = OrganizationBounds::default();
+        let ground = Ground {
+            mirror: &mirror,
+            bounds: &bounds,
+            mqtt_default: None,
+            apex: None,
+            domain: None,
+            portals: None,
+            load: false,
+        };
+        let profile = |ops: Value| {
+            envelope(
+                "AgentProfile",
+                "helper",
+                "p",
+                json!({ "access": { "operations": ops } }),
+            )
+        };
+        assert!(agent_operations(&ground, "p", &profile(json!(["jc_schema_get"]))).is_ok());
+        assert!(agent_operations(&ground, "p", &profile(json!([]))).is_ok());
+        assert!(
+            agent_operations(&ground, "p", &envelope("AgentProfile", "h", "p", json!({}))).is_ok()
+        );
+        let unknown = agent_operations(&ground, "p", &profile(json!(["jc_schema_get", "nope"])));
+        assert!(
+            matches!(&unknown, Err(ApiError::BadRequest(r)) if r.contains("'nope'") && r.contains("MF-40")),
+            "{unknown:?}"
+        );
+    }
+
+    /// T-7407: a proposed broker past the Organization's total is refused; a load of `main`
+    /// keeps the brokers that run even when the total was lowered below them.
+    #[test]
+    fn a_broker_past_the_organizations_total_is_refused_on_proposal_and_kept_on_load() {
+        let mirror = Mirror::new();
+        for project in ["helsinki", "espoo"] {
+            mirror.upsert(envelope(
+                "Project",
+                project,
+                ORG_NAMESPACE,
+                json!({ "organizationRef": { "name": "hel" } }),
+            ));
+        }
+        let broker = json!({
+            "roles": [{"name": "camera", "serviceAccounts": ["cam"], "publish": ["cams/${clientid}/#"]}],
+            "limits": {"maxConnections": 1, "messagesPerSecond": 1}
+        });
+        mirror.upsert(envelope("MqttBroker", "held", "espoo", broker.clone()));
+        let bounds = OrganizationBounds::default();
+        let allowance = MqttAllowance {
+            enabled: true,
+            brokers: Some(1),
+            ..MqttAllowance::default()
+        };
+        let ground = |load| Ground {
+            mirror: &mirror,
+            bounds: &bounds,
+            mqtt_default: Some(&allowance),
+            apex: None,
+            domain: None,
+            portals: None,
+            load,
+        };
+        let second = envelope("MqttBroker", "second", "helsinki", broker);
+        let proposed = mqtt_allowance(&ground(false), "helsinki", &second);
+        assert!(
+            matches!(&proposed, Err(ApiError::Unprocessable { .. })),
+            "the Organization's one broker is taken: {proposed:?}"
+        );
+        assert!(mqtt_allowance(&ground(true), "helsinki", &second).is_ok());
+        assert!(mqtt_allowance(
+            &ground(false),
+            "helsinki",
+            &envelope("Endpoint", "air", "helsinki", json!({}))
+        )
+        .is_ok());
+    }
+
     #[test]
     fn an_appearance_of_the_wrong_shape_is_refused_naming_the_field() {
         let mirror = Mirror::new();
@@ -1113,14 +1231,12 @@ mod tests {
                 ("propose", manifest(&ground, ORG_NAMESPACE, &named(name))),
                 ("approval", change(&ground, ORG_NAMESPACE, &[named(name)])),
             ] {
-                match refused {
-                    Err(ApiError::Unprocessable { detail, .. }) => assert!(
-                        detail.contains("metadata.name")
-                            && detail.contains("reserved for the platform"),
-                        "{door} {name}: {detail}"
-                    ),
-                    other => panic!("{door} {name}: {other:?}"),
-                }
+                assert!(
+                    matches!(&refused, Err(ApiError::Unprocessable { detail, .. })
+                        if detail.contains("metadata.name")
+                            && detail.contains("reserved for the platform")),
+                    "{door} {name}: {refused:?}"
+                );
             }
             let refused = replay(
                 &Mirror::new(),
@@ -1303,14 +1419,13 @@ mod tests {
             portals: None,
             load: false,
         };
-        match manifest(&ground, "ovzdusie", &open) {
-            Err(ApiError::Unprocessable { detail, .. }) => assert!(
-                detail.contains("an open-data Endpoint is read-only (EP-187)")
-                    && detail.contains("pipelines-write"),
-                "{detail}"
-            ),
-            other => panic!("a fresh proposal is a 422: {other:?}"),
-        }
+        let fresh = manifest(&ground, "ovzdusie", &open);
+        assert!(
+            matches!(&fresh, Err(ApiError::Unprocessable { detail, .. })
+                if detail.contains("an open-data Endpoint is read-only (EP-187)")
+                    && detail.contains("pipelines-write")),
+            "a fresh proposal is a 422: {fresh:?}"
+        );
     }
 
     /// P-15: `validate --as-portal` finds in a checkout what the Portal would refuse at load,
@@ -1360,6 +1475,14 @@ mod tests {
             1,
             "a manifest no kind reads"
         );
+        // The operator's bounds file that does not read is a configuration error. Only this
+        // test reads the variable from the process environment, so it sets it last and alone.
+        let bounds = dir.join("bounds.json");
+        std::fs::write(&bounds, "{ not json").expect("the bounds");
+        std::env::set_var("JC_PORTAL_ORGANIZATION_BOUNDS_FILE", &bounds);
+        let code = run(&["--as-portal", "--repo-dir", &org]);
+        std::env::remove_var("JC_PORTAL_ORGANIZATION_BOUNDS_FILE");
+        assert_eq!(code, 2, "a bounds file that does not read");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1394,6 +1517,25 @@ mod tests {
                     && f.contains("EP-62")
             ),
             "{found:?}"
+        );
+
+        // A manifest that names no namespace is judged in the project its path names.
+        let manifest = json!({
+            "apiVersion": crate::resource::API_VERSION,
+            "kind": "Endpoint",
+            "metadata": { "name": "air" },
+            "spec": {
+                "contextSpaceRef": "air", "slug": "dddddddddddddddddddddddddd",
+                "audience": "organization", "enabledRepresentations": ["ngsi-ld"],
+                "publish": { "ckan": { "instanceRef": "opendata" } }
+            }
+        });
+        std::fs::write(&file, manifest.to_string()).expect("the manifest");
+        let report = validate(&dir, Default::default(), settings);
+        assert!(
+            report.findings.iter().any(|f| f.message.contains("EP-62")),
+            "the path's project judges it: {:?}",
+            report.findings
         );
 
         write("public");

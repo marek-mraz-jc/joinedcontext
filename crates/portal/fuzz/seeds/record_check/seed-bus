@@ -1,0 +1,1 @@
+{"pipeline":{"apiVersion":"joinedcontext.com/v1alpha2","kind":"Pipeline","metadata":{"name":"p"},"spec":{"class":"resident","sources":[{"dataSourceRef":{"kind":"DataSource","name":"hfp"}}],"outputs":[{"targetEndpoint":"urn:ngsi-ld:Endpoint:hel.fi:vehicles:all","type":"Bus"}]}},"records":[{"id":"urn:ngsi-ld:Bus:1","type":"Bus","speed":{"type":"Property","value":4}}]}
