@@ -2154,7 +2154,12 @@ pub(crate) mod tests {
             .parse()
             .expect("jwt");
         let refused = client
-            .verify(|realm| forged.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+            .verify(|realm| {
+                forged.claims(
+                    &realm.id_token_verifier(),
+                    &Nonce::new("never-reached".into()),
+                )
+            })
             .await;
         assert!(refused.is_err());
         assert_eq!(key_set_reads(&server).await, 2, "the cooldown holds");
@@ -2177,7 +2182,12 @@ pub(crate) mod tests {
             .parse()
             .expect("jwt");
         let refused = client
-            .verify(|realm| forged.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+            .verify(|realm| {
+                forged.claims(
+                    &realm.id_token_verifier(),
+                    &Nonce::new("never-reached".into()),
+                )
+            })
             .await;
         assert!(refused.is_err());
         assert_eq!(
@@ -2745,7 +2755,12 @@ QBscU7MjEGan3Dhawtnn2+fD51T2sLSc
             .parse()
             .expect("jwt");
         let refused = client
-            .verify(|realm| forged.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+            .verify(|realm| {
+                forged.claims(
+                    &realm.id_token_verifier(),
+                    &Nonce::new("never-reached".into()),
+                )
+            })
             .await;
         assert!(refused.is_err());
         let held: CoreIdToken = id_token_of(&issuer, &key, "held").parse().expect("jwt");
