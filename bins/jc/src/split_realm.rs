@@ -879,10 +879,11 @@ mod tests {
         assert!(e.contains("names no database"), "{e}");
     }
 
-    /// The whole command against kaisatsu's Postgres store: the source realm named by `--from`
-    /// is looked up there. Runs when `JC_PG_TEST_DATABASE_URL` names a superuser connection.
+    /// The whole command against kaisatsu's Postgres store: it opens (migrating as the owner)
+    /// and a refused read stops the run with the store named. Runs when
+    /// `JC_PG_TEST_DATABASE_URL` names a superuser connection.
     #[tokio::test]
-    async fn a_source_realm_missing_from_the_store_is_named() {
+    async fn a_store_that_refuses_a_read_stops_the_run() {
         let Ok(admin) = std::env::var("JC_PG_TEST_DATABASE_URL") else {
             println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
             return;
@@ -926,11 +927,11 @@ mod tests {
         std::fs::write(dir.path().join("state/kaisatsu-kek"), [b'k'; 32]).unwrap();
         let mut a = args(path);
         a.from = Some("nowhere".to_owned());
+        // The store migrates as the owner; the request login holds no grant until jc itself
+        // starts on this database, so the first read is refused and named as a store error.
         let e = main(a).await.unwrap_err();
-        assert!(
-            e.contains("realm 'nowhere' is not in kaisatsu's store"),
-            "{e}"
-        );
+        assert!(e.starts_with("kaisatsu store: "), "{e}");
+        assert!(e.contains("permission denied"), "{e}");
         assert!(!e.contains("pw-"), "{e}");
     }
 
