@@ -226,6 +226,13 @@ mod tests {
         assert_eq!(wait(&[]), 5);
         assert_eq!(wait(&[("retry-after", "Wed, 21 Oct 2026 07:28:00 GMT")]), 5);
         assert_eq!(wait(&[("retry-after", "3600")]), 60);
+        // A value that is not text is no wait at all and falls back to the default.
+        let mut opaque = reqwest::header::HeaderMap::new();
+        opaque.insert(
+            "retry-after",
+            reqwest::header::HeaderValue::from_bytes(b"\xff7").expect("bytes"),
+        );
+        assert_eq!(paced_wait(&opaque).as_secs(), 5);
     }
 
     /// T-4424: a call answered 429 is made again, built anew each time, and after five retries
@@ -487,6 +494,26 @@ mod tests {
         )
         .expect_err("not a name");
         assert_eq!(err, "Not/AName is not a ServiceAccount name");
+        // A token with no namespace beside it, and an API address that is no URL, say which.
+        let no_namespace = scratch("no-namespace");
+        std::fs::write(no_namespace.join("token"), "own-pod-token").expect("token");
+        let err = ClientAuth::minted(&no_namespace, "https://kubernetes.default.svc", "a", "aud")
+            .expect_err("no namespace");
+        assert!(err.starts_with("no namespace at"), "{err}");
+        let err = ClientAuth::minted(&mount("bad-api"), "not a url", "portal-reconciler", "aud")
+            .expect_err("no API address");
+        assert!(!err.contains("own-pod-token"), "{err}");
+        let shown = format!(
+            "{:?}",
+            ClientAuth::minted(
+                &mount("debug"),
+                "https://kubernetes.default.svc",
+                "a",
+                "aud"
+            )
+            .expect("minted")
+        );
+        assert_eq!(shown, "Minted(portal/a)");
     }
 
     #[test]
