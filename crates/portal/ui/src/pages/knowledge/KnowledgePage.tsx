@@ -105,7 +105,7 @@ export function KnowledgePage({ project }: { project: string }): JSX.Element {
   );
 
   return (
-    <section aria-label={t("knowledge.title")} className="space-y-6">
+    <section aria-label={t("knowledge.title")} className="space-y-6" data-phone-floors>
       <PageHeader
         compact
         title={t("knowledge.title")}

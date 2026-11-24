@@ -1,5 +1,5 @@
 import { reasonOf } from "../../api/client";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { FormEvent, JSX, KeyboardEvent, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CodeBlock, Alert, Button, Checkbox, ExternalLink, Field, Table, Textarea } from "../../components/ui";
@@ -47,16 +47,17 @@ function inlineNodes(nodes: Inline[], ids: string, position: Record<number, numb
       case "cite": {
         const places = [...new Set(node.numbers.map((n) => position[n]).filter(Boolean))];
         return (
-          <sup key={i} className="ml-0.5">
+          // Inline in the sentence at its own size, so a phone reads it and WCAG 2.5.8's inline exception holds.
+          <Fragment key={i}>
             {places.map((place, j) => (
-              <span key={place}>
+              <Fragment key={place}>
                 {j > 0 ? "," : null}
-                <a href={`#${ids}-${place}`} aria-label={t("knowledge.chat.sourceNumber", { n: place })} className="text-primary-soft-fg underline-offset-2 hover:underline">
+                <a href={`#${ids}-${place}`} aria-label={t("knowledge.chat.sourceNumber", { n: place })} className="ml-0.5 align-super text-caption text-primary-soft-fg underline-offset-2 hover:underline">
                   {place}
                 </a>
-              </span>
+              </Fragment>
             ))}
-          </sup>
+          </Fragment>
         );
       }
     }
@@ -134,7 +135,7 @@ function Sources({ citations, ids, label: name }: { citations: Citation[]; ids: 
         const href = JCRender.safeUrl(source.url);
         return (
           <li key={i} id={`${ids}-${i + 1}`}>
-            {href ? <ExternalLink href={href}>{text}</ExternalLink> : text}
+            {href ? <ExternalLink href={href} className="inline-flex touch-size items-center">{text}</ExternalLink> : text}
             {source.domain && !source.live ? <span className="ml-1 text-fg-muted">{source.domain}</span> : null}
           </li>
         );
@@ -448,7 +449,7 @@ export function AssistantChat({
   }
 
   return (
-    <div className="flex h-[min(70vh,48rem)] min-h-80 flex-col gap-3">
+    <div className="flex h-200 min-h-80 flex-col gap-3">
       {connectors.length > 0 ? (
         <fieldset className="flex flex-wrap gap-x-4 gap-y-1">
           <legend className="mb-1 text-caption text-fg-muted">{t("knowledge.chat.connectors")}</legend>
