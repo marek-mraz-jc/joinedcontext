@@ -25,6 +25,7 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 const ADMIN: &str = "admin-token";
+const OUTSIDER: &str = "outsider-token";
 const R: &str = "/api/v1/repos/joinedcontext/site";
 
 /// A [`MemoryStore`] whose calls named in `failing` answer an internal error.
@@ -620,6 +621,9 @@ impl Store for FaultStore {
         if self.fails("mark_outbox_dispatched") {
             return refused("mark_outbox_dispatched");
         }
+        if self.fails("mark_outbox_dispatched=false") {
+            return Box::pin(async { Ok(false) });
+        }
         self.inner
             .mark_outbox_dispatched(instance_id, org_id, event_id)
     }
@@ -716,21 +720,36 @@ struct World {
 fn world() -> World {
     let root = tempfile::tempdir().expect("repo root");
     let org = OrgId::from_u128(10);
-    let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
-        org_id: org,
-        principal: Principal::User("admin".into()),
-        actions: vec![
-            Action::Admin,
-            Action::Write,
-            Action::Approve,
-            Action::Publish,
-        ],
-        project_id: None,
-        repo: None,
-    }]));
-    let verifier =
-        TokenVerifier::new(ShakoSigningKey::generate().expect("key")).with_static_tokens(vec![
+    let authz = Arc::new(LocalAuthorizer::new(vec![
+        RoleBinding {
+            org_id: org,
+            principal: Principal::User("admin".into()),
+            actions: vec![
+                Action::Admin,
+                Action::Write,
+                Action::Approve,
+                Action::Publish,
+            ],
+            project_id: None,
+            repo: None,
+        },
+        // A group that writes to `site` alone: a Team of that repository.
+        RoleBinding {
+            org_id: org,
+            principal: Principal::Group("site-editors".into()),
+            actions: vec![Action::Read, Action::Write],
+            project_id: None,
+            repo: Some("site".into()),
+        },
+    ]));
+    let verifier = TokenVerifier::new(ShakoSigningKey::generate().expect("key"))
+        .with_static_tokens(vec![
             StaticTokenBinding::new(ADMIN, Subject::authenticated("admin", "admin", vec![org])),
+            // A member of the Organization with no binding: sees nothing.
+            StaticTokenBinding::new(
+                OUTSIDER,
+                Subject::authenticated("outsider", "outsider", vec![org]),
+            ),
         ]);
     let deliveries = Arc::new(Mutex::new(Vec::new()));
     let seen = deliveries.clone();
@@ -780,10 +799,30 @@ fn world() -> World {
 }
 
 async fn send(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+    send_as(app, ADMIN, method, uri, body).await
+}
+
+/// The status and bytes of a request as it is.
+async fn raw(app: &Router, req: Request<Body>) -> (StatusCode, Vec<u8>) {
+    let resp = app.clone().oneshot(req).await.expect("answer");
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 24)
+        .await
+        .expect("body");
+    (status, bytes.to_vec())
+}
+
+async fn send_as(
+    app: &Router,
+    token: &str,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let req = Request::builder()
         .method(method)
         .uri(uri)
-        .header("authorization", format!("token {ADMIN}"));
+        .header("authorization", format!("token {token}"));
     let req = match body {
         Some(v) => req
             .header("content-type", "application/json")
@@ -1259,7 +1298,12 @@ async fn a_migration_refuses_a_missing_source_and_the_storage_quota() {
     )
     .await;
     assert_eq!(s, StatusCode::FORBIDDEN, "{answer}");
-    assert!(answer["message"].as_str().is_some_and(|m| m.contains("storage_bytes")), "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("storage_bytes")),
+        "{answer}"
+    );
 }
 
 /// The OData `Allowed` function takes its arguments in either case and reads `Read` of the
@@ -1353,18 +1397,40 @@ async fn a_deep_odata_path_names_only_a_pull_requests_part() {
 async fn an_odata_hook_takes_a_named_secret_reference() {
     let w = seeded().await;
     let hook = |extra: Value| {
-        let mut body = json!({ "repo": "joinedcontext/site", "Url": "https://hooks.city.example/h" });
-        body.as_object_mut().expect("object").extend(extra.as_object().expect("object").clone());
+        let mut body =
+            json!({ "repo": "joinedcontext/site", "Url": "https://hooks.city.example/h" });
+        body.as_object_mut()
+            .expect("object")
+            .extend(extra.as_object().expect("object").clone());
         body
     };
-    let (s, answer) = send(&w.app, "POST", "/odata/AddWebhook", Some(hook(json!({ "SecretRef": "hook-key" })))).await;
+    let (s, answer) = send(
+        &w.app,
+        "POST",
+        "/odata/AddWebhook",
+        Some(hook(json!({ "SecretRef": "hook-key" }))),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK, "{answer}");
     assert_eq!(answer["Url"], "https://hooks.city.example/h", "{answer}");
     let foreign = format!("repo:{}:webhook-x", RepoId::new());
-    let (s, answer) = send(&w.app, "POST", "/odata/AddWebhook", Some(hook(json!({ "SecretRef": foreign })))).await;
+    let (s, answer) = send(
+        &w.app,
+        "POST",
+        "/odata/AddWebhook",
+        Some(hook(json!({ "SecretRef": foreign }))),
+    )
+    .await;
     assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
-    let (s, answer) = send(&w.app, "POST", "/odata/AddWebhook",
-        Some(hook(json!({ "SecretRef": "hook-key", "Secret": "s3cret-value" })))).await;
+    let (s, answer) = send(
+        &w.app,
+        "POST",
+        "/odata/AddWebhook",
+        Some(hook(
+            json!({ "SecretRef": "hook-key", "Secret": "s3cret-value" }),
+        )),
+    )
+    .await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
 }
 
@@ -1518,4 +1584,318 @@ async fn a_mirror_whose_credential_cannot_be_read_records_why() {
             .is_some_and(|e| e.contains("credential could not be read")),
         "{list}"
     );
+}
+
+/// A member with no binding reads no instance row and no repository; a repository's Team is the
+/// group a binding names for it, with its highest verb.
+#[tokio::test]
+async fn sets_answer_only_what_the_caller_may_read() {
+    let w = seeded().await;
+    let (s, rows) = send_as(&w.app, OUTSIDER, "GET", "/odata/Instances", None).await;
+    assert_eq!(s, StatusCode::OK, "{rows}");
+    assert_eq!(rows["value"], json!([]), "{rows}");
+    let (s, teams) = send(&w.app, "GET", "/odata/Teams", None).await;
+    assert_eq!(s, StatusCode::OK, "{teams}");
+    let id = w.repo("site").await.id;
+    assert_eq!(
+        teams["value"][0]["Id"],
+        format!("{id}:site-editors"),
+        "{teams}"
+    );
+    assert_eq!(teams["value"][0]["Verb"], "write", "{teams}");
+}
+
+/// A key written `Id='…'` names the row like a bare key; a key whose repository part is no
+/// repository id names no repository, and the read asks for one.
+#[tokio::test]
+async fn a_named_key_reads_like_a_bare_one() {
+    let w = seeded().await;
+    let id = w.repo("site").await.id;
+    let (s, row) = send(
+        &w.app,
+        "GET",
+        &format!("/odata/Branches(Id='{id}:main')"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{row}");
+    assert_eq!(row["Name"], "main", "{row}");
+    let (s, answer) = send(&w.app, "GET", "/odata/Branches('nowhere:main')", None).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{answer}");
+}
+
+/// A keyed segment of a set with no navigation of its own counts the set, as the plain set does.
+#[tokio::test]
+async fn a_keyed_count_counts_the_set() {
+    let w = seeded().await;
+    let req = Request::builder()
+        .uri("/odata/Webhooks('x')/$count")
+        .header("authorization", format!("token {ADMIN}"))
+        .body(Body::empty())
+        .expect("request");
+    let (s, body) = raw(&w.app, req).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body, b"0");
+}
+
+/// Operations by name: a body that is not an object names no argument, and a set read whose
+/// filter does not parse is a bad request.
+#[tokio::test]
+async fn operations_by_name_refuse_what_they_cannot_serve() {
+    let w = seeded().await;
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "authorization",
+        format!("token {ADMIN}").parse().expect("header"),
+    );
+    let ctx = shako_api::authenticate_request(&w.state, &headers, "shako").expect("ctx");
+    let mount = jc_router::Mount::default();
+    let compared = shako_api::exec_odata_operation(
+        &w.state,
+        &ctx,
+        &mount,
+        "Compare",
+        Some("site"),
+        json!(["main"]),
+    )
+    .await;
+    assert!(
+        matches!(&compared, Err(ShakoError::BadRequest(m)) if m.contains("Base")),
+        "{compared:?}"
+    );
+    let listed = shako_api::exec_odata_operation(
+        &w.state,
+        &ctx,
+        &mount,
+        "jc_forge_repositories_list",
+        None,
+        json!({ "Filter": "Name eq" }),
+    )
+    .await;
+    assert!(
+        matches!(listed, Err(ShakoError::BadRequest(_))),
+        "{listed:?}"
+    );
+}
+
+/// An archived repository refuses a write naming why; reads go on.
+#[tokio::test]
+async fn an_archived_repository_refuses_writes() {
+    let w = seeded().await;
+    let (s, repo) = send(&w.app, "PATCH", R, Some(json!({ "archived": true }))).await;
+    assert_eq!(s, StatusCode::OK, "{repo}");
+    let (s, answer) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/late.md"),
+        Some(put("x", "late", "main")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN, "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("archived")),
+        "{answer}"
+    );
+    let (s, _) = send(&w.app, "GET", &format!("{R}/contents/README.md"), None).await;
+    assert_eq!(s, StatusCode::OK);
+}
+
+/// A file that cannot be read ends its body with the error, not a short success.
+#[tokio::test]
+async fn a_file_that_cannot_be_read_ends_its_body_with_the_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let file = tokio::fs::File::open(dir.path())
+        .await
+        .expect("a directory opens");
+    let body = shako_api::stream_file_in_64k_chunks(file);
+    assert!(axum::body::to_bytes(body, 1 << 20).await.is_err());
+}
+
+/// The outbox: an event no hook takes is not sent to it, a dispatch that cannot claim leaves
+/// the write standing and the event pending, and an event that cannot be marked is an error.
+#[tokio::test]
+async fn the_outbox_sends_only_what_a_hook_takes_and_keeps_what_it_cannot_send() {
+    let w = seeded().await;
+    let (s, hook) = send(&w.app, "POST", &format!("{R}/hooks"), Some(json!({ "type": "gitea",
+        "config": { "url": "https://hooks.city.example/pulls", "content_type": "json", "secret": "s3cret-value" },
+        "events": ["pull_request"], "active": true }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{hook}");
+    let (s, _) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/a.md"),
+        Some(put("a", "a push", "main")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    assert!(
+        w.deliveries.lock().is_empty(),
+        "a push is not a pull_request event"
+    );
+
+    w.store.fail("claim_outbox");
+    let (s, _) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/b.md"),
+        Some(put("b", "kept", "main")),
+    )
+    .await;
+    w.store.heal();
+    assert_eq!(s, StatusCode::CREATED);
+    let pending = w
+        .state
+        .store()
+        .list_undispatched_outbox(INSTANCE, ORG)
+        .await
+        .expect("outbox");
+    assert_eq!(pending.len(), 1, "{pending:?}");
+
+    w.store.fail("mark_outbox_dispatched=false");
+    let marked = shako_api::dispatch_pending_outbox(&w.state, ORG).await;
+    w.store.heal();
+    assert!(matches!(marked, Err(ShakoError::Storage(m)) if m.contains("could not be marked")));
+    assert_eq!(
+        shako_api::dispatch_pending_outbox(&w.state, ORG)
+            .await
+            .expect("dispatch"),
+        1
+    );
+}
+
+/// A push mirror's sync goes on past a store that fails around it: not marked due, a repository
+/// that cannot be read, a finish that cannot be recorded. Each answers and the mirror stays unsynced.
+#[tokio::test]
+async fn a_mirror_sync_answers_past_store_failures() {
+    let w = seeded().await;
+    let (s, mirror) = send(&w.app, "POST", &format!("{R}/push_mirrors"),
+        Some(json!({ "remote_address": "https://github.com/joinedcontext-apps/site.git", "sync_on_commit": true }))).await;
+    assert_eq!(s, StatusCode::OK, "{mirror}");
+    for call in ["mark_mirror_due", "get_repo_by_id", "finish_mirror_sync"] {
+        w.store.fail(call);
+        let (s, answer) = send(&w.app, "POST", &format!("{R}/push_mirrors-sync"), None).await;
+        w.store.heal();
+        assert_eq!(s, StatusCode::OK, "{call}: {answer}");
+    }
+    let (s, list) = send(&w.app, "GET", &format!("{R}/push_mirrors"), None).await;
+    assert_eq!(s, StatusCode::OK, "{list}");
+    // Each sync ran to the remote: the error recorded is the remote's answer, not the store's.
+    assert!(
+        !list[0]["last_error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("internal"),
+        "{list}"
+    );
+    // The drain a write starts stops at a claim it cannot make and leaves the mirror due.
+    w.store.fail("claim_mirror_sync");
+    let (s, _) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/a.md"),
+        Some(put("a", "due", "main")),
+    )
+    .await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    w.store.heal();
+    assert_eq!(s, StatusCode::CREATED);
+}
+
+/// A mirror stored before the API refused non-key secret names still pushes with it.
+#[tokio::test]
+async fn a_mirror_with_a_legacy_secret_name_still_pushes() {
+    let w = seeded().await;
+    let (s, mirror) = send(&w.app, "POST", &format!("{R}/push_mirrors"),
+        Some(json!({ "remote_address": "https://github.com/joinedcontext-apps/site.git", "sync_on_commit": true }))).await;
+    assert_eq!(s, StatusCode::OK, "{mirror}");
+    let mut stored = w
+        .state
+        .store()
+        .list_push_mirrors(INSTANCE, ORG, None)
+        .await
+        .expect("mirrors")
+        .remove(0);
+    stored.credential_secret_ref = "a pasted value".into();
+    w.state
+        .store()
+        .upsert_push_mirror(stored)
+        .await
+        .expect("stored");
+    let (s, sync) = send(&w.app, "POST", &format!("{R}/push_mirrors-sync"), None).await;
+    assert_eq!(s, StatusCode::OK, "{sync}");
+    let (s, list) = send(&w.app, "GET", &format!("{R}/push_mirrors"), None).await;
+    assert_eq!(s, StatusCode::OK, "{list}");
+    // The push ran with the legacy name: what is recorded is the remote's answer, not a credential refusal.
+    let error = list[0]["last_error"].as_str().unwrap_or_default();
+    assert!(!error.contains("credential"), "{list}");
+}
+
+fn pkt(line: &str) -> Vec<u8> {
+    let mut out = format!("{:04x}", line.len() + 4).into_bytes();
+    out.extend_from_slice(line.as_bytes());
+    out
+}
+
+fn receive_pack(body: Vec<u8>, length: Option<u64>) -> Request<Body> {
+    let req = Request::builder()
+        .method("POST")
+        .uri("/joinedcontext/site/git-receive-pack")
+        .header("authorization", format!("token {ADMIN}"))
+        .header("content-type", "application/x-git-receive-pack-request");
+    let req = match length {
+        Some(n) => req.header("content-length", n),
+        None => req,
+    };
+    req.body(Body::from(body)).expect("request")
+}
+
+/// A push that deletes a branch needs no pack: the ref goes and its event is recorded; one whose
+/// event cannot be recorded still moves the ref and answers the error.
+#[tokio::test]
+async fn a_push_deleting_a_branch_records_its_event_or_answers_why_not() {
+    let w = seeded().await;
+    w.branch_with_commit("dev").await;
+    w.branch_with_commit("old").await;
+    for (branch, failing) in [("dev", false), ("old", true)] {
+        let sha = w.git("site", &["rev-parse", branch]).await;
+        let zero = "0".repeat(40);
+        let mut body = pkt(&format!(
+            "{sha} {zero} refs/heads/{branch}\0report-status delete-refs\n"
+        ));
+        body.extend_from_slice(b"0000");
+        if failing {
+            w.store.fail("append_outbox");
+        }
+        let (s, answer) = raw(&w.app, receive_pack(body, None)).await;
+        w.store.heal();
+        let text = String::from_utf8_lossy(&answer);
+        if failing {
+            assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR, "{text}");
+        } else {
+            assert_eq!(s, StatusCode::OK, "{text}");
+            assert!(text.contains(&format!("ok refs/heads/{branch}")), "{text}");
+        }
+        let (s, _) = send(&w.app, "GET", &format!("{R}/branches/{branch}"), None).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{branch} is gone");
+    }
+}
+
+/// A push declared past the instance's push limit is refused in Git's own words before a byte
+/// of it is read.
+#[tokio::test]
+async fn a_push_past_the_push_limit_answers_unpack_error_quota() {
+    let w = seeded().await;
+    let mut instance = w.state.instance_for(INSTANCE, ORG).await.expect("instance");
+    instance.max_push_bytes = 0;
+    w.state
+        .store()
+        .upsert_instance(instance)
+        .await
+        .expect("stored");
+    let declared = 2 * 1024 * 1024;
+    let (s, answer) = raw(&w.app, receive_pack(b"0000".to_vec(), Some(declared))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&answer).contains("unpack error quota"));
 }

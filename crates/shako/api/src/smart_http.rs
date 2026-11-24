@@ -74,6 +74,7 @@ async fn handle_info_refs(
         );
     };
 
+    let upload = service == "git-upload-pack";
     let required_action = match service {
         "git-upload-pack" => Action::Read,
         "git-receive-pack" => Action::Propose,
@@ -96,11 +97,12 @@ async fn handle_info_refs(
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
 
-    let service_owned = service.to_owned();
-    let res = crate::service::blocking(move || match service_owned.as_str() {
-        "git-upload-pack" => advertise_upload_pack(&disk_path, git_protocol.as_deref()),
-        "git-receive-pack" => advertise_receive_pack(&disk_path),
-        _ => Err(ShakoError::Forbidden("unsupported service".into())),
+    let res = crate::service::blocking(move || {
+        if upload {
+            advertise_upload_pack(&disk_path, git_protocol.as_deref())
+        } else {
+            advertise_receive_pack(&disk_path)
+        }
     })
     .await;
 

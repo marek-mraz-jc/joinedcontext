@@ -404,4 +404,61 @@ mod tests {
             Some("spool_bytes")
         );
     }
+
+    /// A spool budget another spool holds answers `Busy` once the wait is over: an overload
+    /// naming the budget, not a quota.
+    #[tokio::test]
+    async fn a_spool_budget_in_use_answers_busy_after_the_wait() -> ShakoResult<()> {
+        let dir = tempfile::tempdir().map_err(spool_io)?;
+        let work = work(dir.path(), 2 * MIB);
+        let _held = work.spool(OrgId::from_u128(4), 2 * MIB).await?;
+        let busy = work.spool(OrgId::from_u128(4), MIB).await;
+        assert!(busy.as_ref().err().and_then(quota).is_none());
+        assert!(
+            matches!(&busy, Err(ShakoError::Overloaded(m)) if m.contains("spool_bytes")),
+            "{:?}",
+            busy.err()
+        );
+        Ok(())
+    }
+
+    /// A job that asks for more memory than is free gives back what it holds and waits; when the
+    /// wait runs out it answers `Busy`, and a later ask in the same job is refused at once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_job_that_cannot_grow_its_memory_answers_busy()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let work = std::sync::Arc::new(GitWork::new(dir.path().to_path_buf(), 64 * MIB, 12 * MIB));
+        let (held_tx, held_rx) = tokio::sync::oneshot::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let holder = tokio::spawn({
+            let work = work.clone();
+            async move {
+                work.run(OrgId::from_u128(5), move |admit| {
+                    admit(8 * MIB)?;
+                    let _ = held_tx.send(());
+                    let _ = done_rx.recv();
+                    Ok(())
+                })
+                .await
+            }
+        });
+        held_rx.await?;
+        let answers = work
+            .run(OrgId::from_u128(6), |admit| {
+                let first = admit(8 * MIB).err();
+                let again = admit(MIB).err();
+                Ok((first, again))
+            })
+            .await?;
+        let _ = done_tx.send(());
+        holder.await??;
+        for answer in [answers.0, answers.1] {
+            assert!(
+                matches!(&answer, Some(ShakoError::Overloaded(m)) if m.contains("git_memory_bytes")),
+                "{answer:?}"
+            );
+        }
+        Ok(())
+    }
 }
