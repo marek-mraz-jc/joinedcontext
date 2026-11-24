@@ -466,6 +466,133 @@ mod tests {
     }
 
     #[test]
+    fn a_project_or_an_app_that_leaves_a_service_out_switches_it_off() {
+        let on = layers(json!(["identity", "data", "email"]));
+        let mut spec = app(json!({}));
+        spec.services.clear();
+        assert_eq!(
+            off_at(&on, "roads", &spec, AppService::Email),
+            Some(Layer::App)
+        );
+        assert_eq!(
+            off_at(&on, "roads", &spec, AppService::Data),
+            None,
+            "every App's"
+        );
+        let on = layers(json!(["identity", "data", "email", "files"]));
+        let spec = app(json!({}));
+        assert_eq!(
+            off_at(&on, "roads", &spec, AppService::Files),
+            Some(Layer::Project),
+            "the project lists email only"
+        );
+    }
+
+    async fn problem_of(response: Response) -> (StatusCode, String, Value) {
+        let status = response.status();
+        let kind = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap_or_default();
+        (
+            status,
+            kind,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_service_off_names_the_layer_and_the_field_that_switched_it_off() {
+        for (layer, field, wire) in [
+            (
+                Layer::Organization,
+                "the organization's spec.policies.apps.services",
+                "organization",
+            ),
+            (
+                Layer::Project,
+                "the project's spec.apps.services",
+                "project",
+            ),
+            (Layer::App, "the App's spec.services", "app"),
+        ] {
+            let (status, kind, body) = problem_of(service_off(AppService::Email, layer)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+            assert_eq!(kind, "application/problem+json");
+            assert_eq!(body["type"], "https://joinedcontext.com/errors/service-off");
+            assert_eq!(body["status"], 403);
+            assert_eq!(body["detail"], format!("email is not in {field}"));
+            assert_eq!(body["service"], "email");
+            assert_eq!(body["layer"], wire, "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_held_quota_names_no_reset_and_a_daily_one_its_midnight() {
+        let response = quota_used(AppService::Files, "filesMiB", None);
+        assert!(response.headers().get(header::RETRY_AFTER).is_none());
+        let (status, _, body) = problem_of(response).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(body["detail"], "filesMiB is used up");
+        assert!(body.get("resetAt").is_none(), "{body}");
+
+        // A second before midnight still waits a whole second.
+        let now = time::macros::datetime!(2026-12-31 23:59:59.5 UTC);
+        assert_eq!(reset_at(now), time::macros::datetime!(2027-01-01 0:00 UTC));
+        let response = quota_used(AppService::Email, "emailsPerDay", Some(now));
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+        let (_, _, body) = problem_of(response).await;
+        assert_eq!(body["resetAt"], "2027-01-01T00:00:00Z");
+        assert_eq!(
+            body["detail"],
+            "emailsPerDay is used up until 2027-01-01T00:00:00Z"
+        );
+        assert_eq!(body["quota"], "emailsPerDay");
+    }
+
+    #[tokio::test]
+    async fn an_oversized_file_and_a_refused_recipient_say_what_and_why() {
+        let (status, _, body) = problem_of(file_too_large(1024)).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body["detail"], "an object is at most 1024 bytes");
+        assert_eq!(body["limit"], 1024);
+        let (status, _, body) = problem_of(recipient_refused("x@evil.example")).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            body["type"],
+            "https://joinedcontext.com/errors/recipient-refused"
+        );
+        assert_eq!(body["to"], "x@evil.example");
+        assert_eq!(
+            body["detail"],
+            "'x@evil.example' is no person of the organization with a verified address"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_problem_keeps_its_four_members_when_extra_is_no_object() {
+        let (status, _, body) = problem_of(problem(
+            StatusCode::CONFLICT,
+            "quota",
+            "Conflict",
+            "taken".to_owned(),
+            json!(["ignored"]),
+        ))
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(
+            body,
+            json!({"type": "https://joinedcontext.com/errors/quota", "title": "Conflict", "status": 409, "detail": "taken",
+                "hint": crate::error::hint_of("quota").expect("quota has a hint")})
+        );
+    }
+
+    #[test]
     fn the_quota_resets_at_the_next_midnight_utc() {
         let now = time::macros::datetime!(2026-10-10 21:30 UTC);
         assert_eq!(reset_at(now), time::macros::datetime!(2026-10-11 0:00 UTC));
