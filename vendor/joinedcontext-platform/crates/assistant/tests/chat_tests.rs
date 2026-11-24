@@ -1455,6 +1455,121 @@ async fn an_answer_whose_visitor_left_runs_to_its_end_and_resumes_on_the_next_pa
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+fn cancel_of(turn: &str, token: Option<&str>, client: &str) -> Request<Body> {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/d/hronov-obcania/turns/{turn}/cancel"))
+        .header("x-forwarded-for", format!("{client}, 10.0.0.1"));
+    if let Some(token) = token {
+        request = request.header(VISITOR_HEADER, token);
+    }
+    request.body(Body::empty()).expect("a request")
+}
+
+/// T-7790: the visitor's Stop cancels a held turn. The model loop ends before its answer call,
+/// the stream closes with `done`, the calls made so far are recorded and the visitor's stream
+/// slot is free for the next question. Only the visitor's own turn can be stopped.
+#[tokio::test]
+async fn a_stopped_answer_ends_its_model_loop_records_its_spend_and_frees_its_slot() {
+    let mut held = deployment(Channel::Public, 50_000, 10);
+    if let Some(rate) = held.spec.rate_limit.as_mut() {
+        rate.streams_per_client = 1;
+    }
+    let w = world("chatstop", held).await;
+    let slow = std::time::Duration::from_millis(1_500);
+    script_routed(
+        &w.proxy,
+        vec![completion(json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"knižnica\"]}"}), 100)],
+        vec![completion(json!({"role": "assistant", "content": "{\"answers\": true}"}), 100).set_delay(slow)],
+        vec![streamed(&["Do 18:00 ", "[1]."], 90, 10).set_delay(slow)],
+    )
+    .await;
+    let token = visitor_token(&w.state, "hronov-obcania", "0").await;
+    let mut request = ask(json!({"message": "Dokedy je otvorená knižnica?"}), None);
+    request
+        .headers_mut()
+        .insert(VISITOR_HEADER, token.parse().expect("a header value"));
+    let response = w.app.clone().oneshot(request).await.expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let first = futures_util::StreamExt::next(&mut body)
+        .await
+        .expect("an event")
+        .expect("bytes");
+    let first = String::from_utf8_lossy(&first).to_string();
+    let data = first
+        .lines()
+        .find_map(|l| l.strip_prefix("data: "))
+        .expect("the conversation event");
+    let turn = serde_json::from_str::<Value>(data).expect("json")["turn"]
+        .as_str()
+        .expect("a visitor's stream names its turn")
+        .to_owned();
+    // Another address and no token cannot stop it; an unknown turn is missing.
+    let other = visitor_token(&w.state, "hronov-obcania", "1").await;
+    let app = &w.app;
+    let status = |request: Request<Body>| async move {
+        app.clone()
+            .oneshot(request)
+            .await
+            .expect("an answer")
+            .status()
+    };
+    assert_eq!(
+        status(cancel_of(&turn, Some(&other), "198.51.100.9")).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        status(cancel_of(&turn, None, "203.0.113.7")).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let unknown = "6f1c0e9e-3b1a-4d7e-9b51-2c4f8f2a7c11";
+    assert_eq!(
+        status(cancel_of(unknown, Some(&token), "203.0.113.7")).await,
+        StatusCode::NOT_FOUND
+    );
+    // A slow call is with the model: the visitor stops the answer.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(
+        status(cancel_of(&turn, Some(&token), "203.0.113.7")).await,
+        StatusCode::NO_CONTENT
+    );
+    let rest = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        futures_util::StreamExt::collect::<Vec<_>>(body),
+    )
+    .await
+    .expect("the stream ends at the stop");
+    let text: String = rest
+        .into_iter()
+        .map(|chunk| String::from_utf8_lossy(&chunk.expect("bytes")).to_string())
+        .collect();
+    let names: Vec<String> = events_in(&text).into_iter().map(|(n, _)| n).collect();
+    assert!(!names.iter().any(|n| n == "answer"), "{names:?}");
+    assert_eq!(names.last().map(String::as_str), Some("done"), "{names:?}");
+    // No model call starts after the stop: the loop ended with the call it was cut in.
+    let at_stop = model_calls(&w.proxy).await.len();
+    tokio::time::sleep(std::time::Duration::from_millis(2_000)).await;
+    assert_eq!(model_calls(&w.proxy).await.len(), at_stop, "the loop ended");
+    // The router call that finished is recorded for the stopped turn.
+    let mut tx = assistant::project_scope(&w.pool, "hronov")
+        .await
+        .expect("scope");
+    let (tokens,): (i64,) = sqlx::query_as("SELECT tokens FROM conversations")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("one");
+    assert_eq!(tokens, 100, "the finished router call is spent, the cut one is not");
+    drop(tx);
+    // The slot is free: the same visitor asks again at once and is answered.
+    let mut again = ask(json!({"message": "A v sobotu?"}), None);
+    again
+        .headers_mut()
+        .insert(VISITOR_HEADER, token.parse().expect("a header value"));
+    assert_eq!(status(again).await, StatusCode::OK);
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 fn map_page_of(id: &str, cursor: Option<&str>, token: Option<&str>, client: &str) -> Request<Body> {
     let query = cursor.map(|c| format!("?cursor={c}")).unwrap_or_default();
     let mut request = Request::builder()
@@ -3853,7 +3968,7 @@ async fn past_the_day_s_cost_cap_the_chat_says_the_limit_and_nothing_else() {
     assert_eq!(cost, 12_000);
     let before = model_calls(&w.proxy).await.len();
 
-    let (status, events, _) = answer_of(
+    let (status, events, headers) = answer_of(
         &w.app,
         ask_from(
             json!({"message": "Dokedy je otvorená knižnica?"}),
@@ -3863,6 +3978,14 @@ async fn past_the_day_s_cost_cap_the_chat_says_the_limit_and_nothing_else() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    // When it resets, in seconds the widget reads across origins (T-7790).
+    let retry: u64 = headers["retry-after"]
+        .to_str()
+        .expect("ascii")
+        .parse()
+        .expect("seconds");
+    assert!((1..=86_400).contains(&retry), "{retry}");
+    assert_eq!(headers["access-control-expose-headers"], "Retry-After");
     let detail = only_the_limit(&events, "Daily Limit Reached");
     assert!(
         detail.starts_with("Asistent dnes dosiahol denný limit. Skúste to znova "),
