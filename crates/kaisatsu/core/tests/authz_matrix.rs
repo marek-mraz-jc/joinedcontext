@@ -482,6 +482,25 @@ fn anonymous_callers_and_other_realms_are_hidden() {
     );
 }
 
+/// A realm-management right is held as a `realm-management` client role or as a realm role of
+/// the same name; a realm admin holds every one.
+#[test]
+fn a_realm_management_right_is_a_client_role_or_a_realm_role() {
+    let mut by_realm_role = Principal::anonymous();
+    by_realm_role.realm_roles = vec!["manage-users".into()];
+    assert!(by_realm_role.has_realm_mgmt_role("manage-users"));
+    assert!(!by_realm_role.has_realm_mgmt_role("view-clients"));
+    let by_client_role = mgmt(&["view-clients"]);
+    assert!(by_client_role.has_realm_mgmt_role("view-clients"));
+    assert!(!by_client_role.has_realm_mgmt_role("manage-users"));
+    let mut other_client = Principal::anonymous();
+    other_client
+        .client_roles
+        .insert("account".into(), vec!["manage-users".into()]);
+    assert!(!other_client.has_realm_mgmt_role("manage-users"));
+    assert!(Principal::realm_admin("a").has_realm_mgmt_role("anything"));
+}
+
 /// SMTP is set by a realm admin or `realm-management` `manage-smtp` alone (T-7152).
 #[test]
 fn smtp_is_set_by_a_realm_admin_or_manage_smtp_only() {

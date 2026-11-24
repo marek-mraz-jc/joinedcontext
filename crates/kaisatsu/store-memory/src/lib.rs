@@ -3414,6 +3414,304 @@ mod tests {
         );
     }
 
+    fn org(realm: &str, id: &str, alias: &str) -> Organization {
+        Organization {
+            id: id.into(),
+            realm_id: realm.into(),
+            name: alias.into(),
+            alias: alias.into(),
+            enabled: true,
+            description: String::new(),
+            domains: Vec::new(),
+            attributes: HashMap::new(),
+            managed_by: None,
+        }
+    }
+
+    /// An organization is replaced by its id or its alias within its realm, found by either,
+    /// and listed when either is allowed; the same names in another realm are another one.
+    #[tokio::test]
+    async fn organizations_are_kept_per_realm_by_id_or_alias() {
+        let store = MemoryStore::default();
+        for realm in [R, "q"] {
+            store
+                .upsert_organization(org(realm, "o1", "hel"))
+                .await
+                .expect("org");
+        }
+        store
+            .upsert_organization(org(R, "o2", "hel"))
+            .await
+            .expect("same alias");
+        store
+            .upsert_organization(org(R, "o2", "helsinki"))
+            .await
+            .expect("same id");
+        let ids = |realm: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .list_organizations(realm, None)
+                    .await
+                    .expect("list")
+                    .into_iter()
+                    .map(|o| (o.id, o.alias))
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(ids(R).await, [("o2".to_owned(), "helsinki".to_owned())]);
+        assert_eq!(ids("q").await, [("o1".to_owned(), "hel".to_owned())]);
+        for key in ["o2", "helsinki"] {
+            let found = store.get_organization(R, key).await.expect("get");
+            assert_eq!(found.map(|o| o.id).as_deref(), Some("o2"), "{key}");
+        }
+        assert!(
+            store
+                .get_organization(R, "o1")
+                .await
+                .expect("get")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_organization(R, "hel")
+                .await
+                .expect("get")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_organization("q", "hel")
+                .await
+                .expect("get")
+                .is_some()
+        );
+        for allowed in ["o2", "helsinki"] {
+            let only: &[String] = &[allowed.to_owned()];
+            assert_eq!(
+                store
+                    .list_organizations(R, Some(only))
+                    .await
+                    .expect("list")
+                    .len(),
+                1,
+                "allowed by {allowed}"
+            );
+        }
+        let other: &[String] = &["o1".to_owned()];
+        assert!(
+            store
+                .list_organizations(R, Some(other))
+                .await
+                .expect("list")
+                .is_empty()
+        );
+    }
+
+    fn membership(realm: &str, org_id: &str, person: &str, role: &str) -> Membership {
+        Membership {
+            id: format!("{realm}-{org_id}-{person}"),
+            realm_id: realm.into(),
+            org_id: org_id.into(),
+            person_id: person.into(),
+            org_roles: vec![role.into()],
+            created_at: TimestampTz::now(),
+        }
+    }
+
+    /// A membership is one per realm, organization and person: writing it again replaces that
+    /// one only, and a person's list holds their own realm's memberships.
+    #[tokio::test]
+    async fn memberships_are_one_per_realm_organization_and_person() {
+        let store = MemoryStore::default();
+        for (realm, o, p) in [
+            (R, "a", "p"),
+            (R, "b", "p"),
+            ("q", "a", "p"),
+            (R, "a", "p2"),
+        ] {
+            store
+                .upsert_membership(membership(realm, o, p, "member"))
+                .await
+                .expect("membership");
+        }
+        store
+            .upsert_membership(membership(R, "a", "p", "org-admin"))
+            .await
+            .expect("again");
+        let roles = |realm: &'static str, person: &'static str| {
+            let store = &store;
+            async move {
+                let mut got: Vec<(String, Vec<String>)> = store
+                    .list_memberships_for_person(realm, person)
+                    .await
+                    .expect("list")
+                    .into_iter()
+                    .map(|m| (m.org_id, m.org_roles))
+                    .collect();
+                got.sort();
+                got
+            }
+        };
+        assert_eq!(
+            roles(R, "p").await,
+            [
+                ("a".to_owned(), vec!["org-admin".to_owned()]),
+                ("b".to_owned(), vec!["member".to_owned()])
+            ]
+        );
+        assert_eq!(
+            roles("q", "p").await,
+            [("a".to_owned(), vec!["member".to_owned()])]
+        );
+        assert_eq!(
+            roles(R, "p2").await,
+            [("a".to_owned(), vec!["member".to_owned()])]
+        );
+        assert!(roles("q", "p2").await.is_empty());
+    }
+
+    fn credential(realm: &str, id: &str, user: &str, kind: &str) -> CredentialRecord {
+        CredentialRecord {
+            id: id.into(),
+            realm_id: realm.into(),
+            user_id: user.into(),
+            credential_type: kind.into(),
+            secret_data: format!("{realm}-{id}"),
+            ..CredentialRecord::default()
+        }
+    }
+
+    /// A new password moves the person's old one to history, in their realm only; credentials
+    /// are replaced by id within a realm, listed per person and deleted by person and id.
+    #[tokio::test]
+    async fn credentials_are_kept_per_realm_and_person_with_password_history() {
+        let store = MemoryStore::default();
+        for c in [
+            credential(R, "pw1", "p", "password"),
+            credential("q", "pw1", "p", "password"),
+            credential(R, "otp", "p", "otp"),
+            credential(R, "pw-b", "p2", "password"),
+        ] {
+            store.upsert_credential(c).await.expect("credential");
+        }
+        store
+            .upsert_credential(credential(R, "pw2", "p", "password"))
+            .await
+            .expect("new password");
+        let kinds = |realm: &'static str, user: &'static str| {
+            let store = &store;
+            async move {
+                let mut got: Vec<(String, String)> = store
+                    .list_credentials(realm, user)
+                    .await
+                    .expect("list")
+                    .into_iter()
+                    .map(|c| (c.credential_type, c.secret_data))
+                    .collect();
+                got.sort();
+                got
+            }
+        };
+        let pair = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+        assert_eq!(
+            kinds(R, "p").await,
+            [
+                pair("otp", "r-otp"),
+                pair("password", "r-pw2"),
+                pair("password-history", "r-pw1")
+            ]
+        );
+        assert_eq!(kinds("q", "p").await, [pair("password", "q-pw1")]);
+        assert_eq!(kinds(R, "p2").await, [pair("password", "r-pw-b")]);
+
+        store
+            .upsert_credential(credential("q", "otp", "p", "otp"))
+            .await
+            .expect("same id elsewhere");
+        assert_eq!(kinds(R, "p").await.len(), 3, "q's otp leaves r's alone");
+        assert!(
+            !store
+                .delete_credential(R, "p2", "otp")
+                .await
+                .expect("delete"),
+            "not p2's"
+        );
+        assert!(
+            !store
+                .delete_credential("x", "p", "otp")
+                .await
+                .expect("delete")
+        );
+        assert!(
+            store
+                .delete_credential(R, "p", "otp")
+                .await
+                .expect("delete")
+        );
+        assert_eq!(
+            kinds(R, "p").await,
+            [pair("password", "r-pw2"), pair("password-history", "r-pw1")]
+        );
+        assert_eq!(
+            kinds("q", "p").await,
+            [pair("otp", "q-otp"), pair("password", "q-pw1")]
+        );
+    }
+
+    /// A group under an organization's id or alias belongs to it, in that organization's
+    /// realm only; an edit keeping its own path is no conflict, taking another's in the realm is.
+    #[tokio::test]
+    async fn groups_take_their_realms_organization_and_paths_are_unique_per_realm() {
+        let store = MemoryStore::default();
+        store
+            .upsert_organization(org(R, "o9", "esp"))
+            .await
+            .expect("org");
+        let put = |realm: &'static str, name: &'static str, path: &'static str| {
+            let store = &store;
+            async move {
+                let mut g = group(name, None, path);
+                g.realm_id = realm.into();
+                store.upsert_group(g).await.expect("group")
+            }
+        };
+        assert_eq!(put(R, "a", "/esp/a").await.org_id.as_deref(), Some("esp"));
+        assert_eq!(put(R, "b", "/o9/b").await.org_id.as_deref(), Some("o9"));
+        assert_eq!(put("q", "a", "/esp/a").await.org_id, None, "esp is r's");
+        assert_eq!(put(R, "c", "/other/c").await.org_id, None);
+
+        let x = put(R, "x", "/x").await;
+        put(R, "y", "/y").await;
+        put("q", "z", "/z").await;
+        let edited = store
+            .update_group(GroupRepresentation {
+                attributes: HashMap::from([("k".to_owned(), vec!["edited".to_owned()])]),
+                ..x.clone()
+            })
+            .await
+            .expect("own path");
+        assert_eq!(edited.path, "/x");
+        let taken = store
+            .update_group(GroupRepresentation {
+                path: "/y".into(),
+                ..x.clone()
+            })
+            .await;
+        assert!(
+            matches!(taken, Err(KaisatsuError::Conflict(_))),
+            "{taken:?}"
+        );
+        let elsewhere = store
+            .update_group(GroupRepresentation {
+                path: "/z".into(),
+                ..x
+            })
+            .await
+            .expect("q's path is free in r");
+        assert_eq!(elsewhere.path, "/z");
+    }
+
     /// Deleting a person drops their credentials, memberships, sessions, passkeys, links and
     /// user role mappings, and nothing of another person or of the same id in another realm.
     #[tokio::test]
