@@ -1,5 +1,7 @@
 # Fuzzing the platform's parsers of outside input under libFuzzer (T-7794): broker pages into CSV
-# (jc-tabular), manifest YAML (jc-manifest), DCAT records (jc-dcat) and model JSON Schemas.
+# (jc-tabular), manifest YAML (jc-manifest), DCAT records (jc-dcat) and model JSON Schemas; write
+# payloads against a model's relationships (jc-relationships) and units, `Link` headers and bodies
+# (jc-ngsi-input) (T-7805).
 # `cargo +nightly fuzz run <target> fuzz/corpus/<target> fuzz/seeds/<target>`. Not a workspace member.
 [package]
 name = "jc-platform-fuzz"
@@ -19,6 +21,10 @@ serde_norway = "0.9"
 jc-tabular = { path = "../crates/jc-tabular" }
 jc-manifest = { path = "../crates/jc-manifest" }
 jc-dcat = { path = "../crates/jc-dcat", features = ["dcat-ap-sk", "dcat-ap-cz"] }
+jc-core = { path = "../crates/jc-core" }
+jc-relationships = { path = "../crates/jc-relationships" }
+jc-ngsi-input = { path = "../crates/jc-ngsi-input" }
+http = "1"
 
 [[bin]]
 name = "tabular_csv"
@@ -44,6 +50,20 @@ bench = false
 [[bin]]
 name = "model_schema"
 path = "fuzz_targets/model_schema.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "relationships_write"
+path = "fuzz_targets/relationships_write.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ngsi_input"
+path = "fuzz_targets/ngsi_input.rs"
 test = false
 doc = false
 bench = false
