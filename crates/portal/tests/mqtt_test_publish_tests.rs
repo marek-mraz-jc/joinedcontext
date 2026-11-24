@@ -16,7 +16,11 @@ use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 
 fn state() -> AppState {
-    let state = AppState::new(Config::for_tests(), None);
+    state_with(Config::for_tests())
+}
+
+fn state_with(config: Config) -> AppState {
+    let state = AppState::new(config, None);
     state.mirror.upsert(envelope(
         "Role",
         "broker-reader",
@@ -217,6 +221,99 @@ async fn a_bound_topic_names_its_source_and_pipeline() {
 }
 
 #[tokio::test]
+async fn a_broker_whose_manifest_does_not_read_tests_as_no_broker() {
+    let state = state();
+    state.mirror.upsert(envelope(
+        "MqttBroker",
+        "cameras",
+        "helsinki",
+        json!({ "roles": "camera" }),
+    ));
+    let (status, body) = test(
+        &state,
+        "jana",
+        json!({"account": "cam-west", "topic": "cameras/x", "payload": ""}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn a_source_no_pipeline_takes_is_refused_and_a_second_pipeline_is_counted() {
+    let state = state();
+    state.mirror.upsert(envelope(
+        "DataSource",
+        "frames",
+        "helsinki",
+        json!({"type": "mqtt", "mqtt": {"brokerRef": {"kind": "MqttBroker", "name": "cameras"}, "topics": ["cameras/+/frame"]}}),
+    ));
+    may_read_flow(&state, true);
+    let body = frame(&state).await;
+    assert_eq!(body["steps"][3]["outcome"], "refused", "{body}");
+    assert!(body["steps"][3]["reason"]
+        .as_str()
+        .is_some_and(|r| r.contains("'frames'") && r.contains("no Pipeline takes it")));
+
+    bind_frames(&state);
+    state.mirror.upsert(envelope(
+        "Pipeline",
+        "frames-copy",
+        "helsinki",
+        json!({
+            "class": "resident",
+            "source": {"dataSourceRef": {"kind": "DataSource", "name": "frames"}},
+            "compute": {"kind": "bloblang", "bloblang": "root = this"},
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:cams:copies"
+        }),
+    ));
+    let body = frame(&state).await;
+    assert_eq!(body["steps"][3]["outcome"], "ok", "{body}");
+    assert!(
+        body["steps"][3]["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("1 more Pipeline(s) also take it, tested here")),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn a_proposer_on_an_instance_without_a_runner_hears_why_the_mapping_did_not_run() {
+    let state = state();
+    bind_frames(&state);
+    state.mirror.upsert(envelope(
+        "Role",
+        "flow-author",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["DataSource", "Pipeline"], "verbs": ["read", "propose"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "jana-author",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "jana@hel.fi" }], "role": "flow-author", "scope": { "project": "helsinki" } }),
+    ));
+    let (status, body) = test(
+        &state,
+        "jana",
+        json!({"account": "cam-west", "topic": "cameras/helsinki-cam-west/frame", "payload": "pm10=4"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        outcomes(&body)[4..],
+        [
+            ("mapping".to_owned(), "unchecked".to_owned()),
+            ("endpoint".to_owned(), "unchecked".to_owned())
+        ],
+        "{body}"
+    );
+    assert_eq!(
+        body["steps"][4]["reason"], "no pipeline runner is configured",
+        "{body}"
+    );
+}
+
+#[tokio::test]
 async fn each_member_at_fault_is_named_in_a_422() {
     let state = state();
     for (body, member) in [
@@ -296,4 +393,57 @@ async fn the_gateways_record_reads_as_refusals_and_a_refusal_to_read_says_so() {
         .await
         .expect_err("404");
     assert!(refused.contains("404"), "{refused}");
+
+    Mock::given(method("GET"))
+        .and(path("/internal/mqtt/refusals/mqtt-helsinki-garbled"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html>"))
+        .mount(&server)
+        .await;
+    let garbled = refusals(&server.uri(), "mqtt-helsinki-garbled")
+        .await
+        .expect_err("not a record");
+    assert!(
+        garbled.contains("something other than its refusal record"),
+        "{garbled}"
+    );
+
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind")
+        .local_addr()
+        .expect("address");
+    let silent = refusals(&format!("http://{closed}"), "mqtt-helsinki-cameras")
+        .await
+        .expect_err("nobody listens");
+    assert!(silent.contains("did not answer"), "{silent}");
+}
+
+#[tokio::test]
+async fn a_gateway_url_that_does_not_parse_is_the_reason_nothing_was_read() {
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind")
+        .local_addr()
+        .expect("address");
+    // A parseable gateway is read on its internal port, where nothing listens in this test.
+    let parseable = format!("http://{closed}");
+    for (gateway, reason) in [
+        ("not a url", "does not parse"),
+        ("mailto:gateway@example.org", "does not parse"),
+        (
+            parseable.as_str(),
+            "the gateway did not answer the refusal read",
+        ),
+    ] {
+        let mut config = Config::for_tests();
+        config.gateway_url = Some(gateway.to_owned());
+        let state = state_with(config);
+        let uri = "/api/v1/projects/helsinki/mqttbrokers/cameras/watch?account=cam-west";
+        let answer = send(&state, person("jana"), "GET", uri, None).await;
+        assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+        let seen: Value = serde_json::from_str(&answer.text).expect("json");
+        assert_eq!(seen["refusalsRead"], false, "{gateway}");
+        assert!(
+            seen["reason"].as_str().is_some_and(|r| r.contains(reason)),
+            "{gateway}: {seen}"
+        );
+    }
 }

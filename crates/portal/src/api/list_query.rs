@@ -214,10 +214,7 @@ fn order_by_of(text: &str) -> Result<Option<Sort>, ApiError> {
             ))
         }
     };
-    let Some(Sort { field, .. }) = sort_of(words[0], "orderBy")? else {
-        return Ok(None);
-    };
-    Ok(Some(Sort { field, descending }))
+    Ok(sort_of(words[0], "orderBy")?.map(|sort| Sort { descending, ..sort }))
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for ListQuery {
@@ -346,6 +343,44 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_order_is_no_order_and_ascending_reads_as_the_bare_field() {
+        for raw in ["sort=", "orderBy=", "orderBy=%20%20"] {
+            assert_eq!(ListQuery::parse(Some(raw)).expect(raw).sort, None, "{raw}");
+        }
+        for raw in [
+            "sort=spec.port",
+            "orderBy=spec.port",
+            "orderBy=spec.port%20asc",
+        ] {
+            let sort = ListQuery::parse(Some(raw)).expect(raw).sort.expect(raw);
+            assert_eq!(sort.order_by(), "spec.port", "{raw}");
+        }
+        let desc = ListQuery::parse(Some("orderBy=spec.port%20desc")).expect("desc");
+        assert_eq!(desc.sort.expect("sort").order_by(), "spec.port desc");
+        assert!(
+            field_of(ListQuery::parse(Some("orderBy=a..b%20desc")).expect_err("bad field"))
+                .starts_with("orderBy:")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_extractor_reads_the_request_query_and_refuses_a_bad_one() {
+        let parts = |uri: &str| {
+            axum::http::Request::builder()
+                .uri(uri)
+                .body(())
+                .expect("request")
+                .into_parts()
+                .0
+        };
+        let read = ListQuery::from_request_parts(&mut parts("/x?limit=5&count=true"), &()).await;
+        let read = read.expect("valid");
+        assert_eq!((read.limit, read.count), (Some(5), true));
+        let refused = ListQuery::from_request_parts(&mut parts("/x?limit=0"), &()).await;
+        assert!(field_of(refused.expect_err("limit 0")).starts_with("limit:"));
+    }
+
+    #[test]
     fn q_finds_name_title_labels_and_spec_text_alone() {
         let query = ListQuery::parse(Some("q=OZON")).expect("valid");
         assert!(query.finds(&json!({ "metadata": { "name": "ozone-sk" } })));
@@ -359,6 +394,10 @@ mod tests {
             "status is not searched"
         );
         assert!(ListQuery::default().finds(&json!({})));
+        assert!(
+            !query.finds(&json!({ "metadata": { "name": "a" }, "spec": { "port": 1883, "tls": true, "ozon": null } })),
+            "numbers, booleans, nulls and member names are not text"
+        );
     }
 
     #[test]

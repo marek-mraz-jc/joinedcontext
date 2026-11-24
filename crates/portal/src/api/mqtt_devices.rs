@@ -254,6 +254,11 @@ async fn checked(
         manifest,
     )
     .await?;
+    lane_of(plural, name, outcome)
+}
+
+/// The lane of a dry run's plan; a plan that does not pass its door is refused with its findings.
+fn lane_of(plural: &str, name: &str, outcome: ProposeOutcome) -> Result<Lane, ApiError> {
     match outcome {
         ProposeOutcome::DryRun(result) if result.valid => Ok(result.lane),
         ProposeOutcome::DryRun(result) => Err(ApiError::Invalid {
@@ -375,13 +380,7 @@ fn valid_request(
         )));
     }
     let Some(role) = spec.roles.iter().find(|role| role.name == request.role) else {
-        return Err(unprocessable(
-            "the role is not one of the broker's",
-            format!(
-                "role: broker '{broker_name}' has no role '{}'",
-                request.role
-            ),
-        ));
+        return Err(no_role(broker_name, &request.role));
     };
     match (&request.topic, role.publish.is_empty()) {
         (Some(topic), _) if !role.publish.contains(topic) => {
@@ -409,6 +408,37 @@ fn valid_request(
     public_jwks(&request.jwks)
 }
 
+/// Names `account` in each of the spec's roles called `role`, once: a stale manifest that
+/// lists it already keeps one entry. False when the spec holds no such role.
+fn add_to_role(spec: &mut Value, role: &str, account: &str) -> bool {
+    let mut matched = false;
+    let roles = spec.get_mut("roles").and_then(Value::as_array_mut);
+    for entry in roles
+        .into_iter()
+        .flatten()
+        .filter(|r| r["name"] == role)
+        .filter_map(Value::as_object_mut)
+    {
+        matched = true;
+        let accounts = entry
+            .entry("serviceAccounts")
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Some(accounts) = accounts.as_array_mut() {
+            if !accounts.iter().any(|a| a == account) {
+                accounts.push(Value::String(account.to_owned()));
+            }
+        }
+    }
+    matched
+}
+
+fn no_role(broker_name: &str, role: &str) -> ApiError {
+    unprocessable(
+        "the role is not one of the broker's",
+        format!("role: broker '{broker_name}' has no role '{role}'"),
+    )
+}
+
 /// The one Change that writes the device's account and adds it to its role of the broker.
 async fn propose_device(
     state: &AppState,
@@ -422,34 +452,8 @@ async fn propose_device(
     let account = device_account(project, request, jwks, &identity.username, broker_name);
     // A role written without `serviceAccounts` gets the list; a role the broker does not hold is
     // a refusal, never a Change that adds nobody (F-POR2-013).
-    let mut matched = false;
-    if let Some(roles) = env.spec.get_mut("roles").and_then(Value::as_array_mut) {
-        for entry in roles
-            .iter_mut()
-            .filter(|r| r["name"] == request.role.as_str())
-        {
-            let Some(entry) = entry.as_object_mut() else {
-                continue;
-            };
-            matched = true;
-            let accounts = entry
-                .entry("serviceAccounts")
-                .or_insert_with(|| Value::Array(Vec::new()));
-            if let Some(accounts) = accounts.as_array_mut() {
-                if !accounts.iter().any(|a| a == request.name.as_str()) {
-                    accounts.push(Value::String(request.name.clone()));
-                }
-            }
-        }
-    }
-    if !matched {
-        return Err(ApiError::Unprocessable {
-            detail: format!("broker '{broker_name}' has no role '{}'", request.role),
-            errors: vec![format!(
-                "role: '{}' is not a role of broker '{broker_name}'; pick one of the broker's roles",
-                request.role
-            )],
-        });
+    if !add_to_role(&mut env.spec, &request.role, &request.name) {
+        return Err(no_role(broker_name, &request.role));
     }
     let broker_manifest = as_value(&env)?;
 
@@ -528,10 +532,106 @@ mod tests {
     }
 
     fn refusal(value: Value) -> String {
-        match public_jwks(&value) {
-            Err(ApiError::Unprocessable { errors, .. }) => errors.join("; "),
-            other => panic!("not a 422: {other:?}"),
-        }
+        let err = public_jwks(&value).expect_err("a refusal");
+        assert!(
+            matches!(err, ApiError::Unprocessable { .. }),
+            "not a 422: {err:?}"
+        );
+        format!("{err:?}")
+    }
+
+    fn dry_run(valid: bool, findings: Vec<String>) -> ProposeOutcome {
+        ProposeOutcome::DryRun(crate::api::dry_run::DryRunResult {
+            valid,
+            lane: Lane::Yellow,
+            plan: crate::plan::PlanDiff::empty(),
+            restarts_stream: false,
+            probe: None,
+            verdict: None,
+            findings,
+            awaited: Vec::new(),
+            goes_with: Vec::new(),
+            binds_endpoints: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn a_dry_run_that_does_not_pass_its_door_is_refused_with_its_findings() {
+        assert_eq!(
+            lane_of("mqttbrokers", "edge", dry_run(true, Vec::new())).expect("a lane"),
+            Lane::Yellow
+        );
+        let refused = lane_of(
+            "mqttbrokers",
+            "edge",
+            dry_run(false, vec!["spec.roles[0]: names no ServiceAccount".into()]),
+        );
+        assert!(
+            matches!(&refused, Err(ApiError::Invalid { detail, errors })
+                if detail == "mqttbrokers/edge does not pass its door"
+                    && errors == &["spec.roles[0]: names no ServiceAccount".to_string()]),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_role_names_the_device_once_and_an_unknown_role_adds_nobody() {
+        let mut spec = json!({ "roles": [
+            { "name": "publisher", "serviceAccounts": ["meter-1"] },
+            { "name": "reader" },
+            "not a role",
+        ] });
+        assert!(
+            add_to_role(&mut spec, "publisher", "meter-1"),
+            "a stale manifest"
+        );
+        assert_eq!(spec["roles"][0]["serviceAccounts"], json!(["meter-1"]));
+        assert!(add_to_role(&mut spec, "publisher", "meter-2"));
+        assert_eq!(
+            spec["roles"][0]["serviceAccounts"],
+            json!(["meter-1", "meter-2"])
+        );
+        assert!(
+            add_to_role(&mut spec, "reader", "meter-3"),
+            "a role with no list"
+        );
+        assert_eq!(spec["roles"][1]["serviceAccounts"], json!(["meter-3"]));
+        let before = spec.clone();
+        assert!(!add_to_role(&mut spec, "admin", "meter-4"));
+        assert!(
+            !add_to_role(&mut json!({}), "publisher", "meter-4"),
+            "no roles at all"
+        );
+        let mut odd = json!({ "roles": [{ "name": "publisher", "serviceAccounts": "meter-1" }] });
+        assert!(
+            add_to_role(&mut odd, "publisher", "meter-5"),
+            "the role is there"
+        );
+        assert_eq!(
+            odd["roles"][0]["serviceAccounts"],
+            json!("meter-1"),
+            "a list that is no list is left for the door to refuse"
+        );
+        assert_eq!(spec, before);
+    }
+
+    #[test]
+    fn an_agents_token_may_not_add_a_device_whatever_its_rights() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let agent = crate::api::mcp_elicitations::tests::client_session()
+            .0
+            .identity;
+        let effective = crate::permissions::for_request(&state, &agent, "helsinki");
+        let env: ResourceEnvelope = serde_json::from_value(json!({
+            "apiVersion": API_VERSION, "kind": "MqttBroker",
+            "metadata": { "name": "edge", "namespace": "helsinki" }, "spec": { "roles": [] }
+        }))
+        .expect("an envelope");
+        let refused = may_add_here(&agent, &effective, &env);
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(why)) if why.contains("jc_resource_propose")),
+            "{refused:?}"
+        );
     }
 
     #[test]
@@ -540,7 +640,29 @@ mod tests {
         assert_eq!(jwks.keys.len(), 1);
         let mut private = key();
         private["d"] = json!("ZGVtbw");
-        assert!(refusal(json!({ "keys": [private] })).starts_with("jwks.keys[0].d:"));
-        assert!(refusal(json!([key()])).starts_with("jwks:"));
+        assert!(refusal(json!({ "keys": [private] }))
+            .contains("\"jwks.keys[0].d: a private key member"));
+        assert!(refusal(json!([key()])).contains("\"jwks: a JSON Web Key Set is an object"));
+        assert!(
+            refusal(json!({ "keys": [] })).contains("\"jwks: "),
+            "an empty key set"
+        );
+        let mut unknown = key();
+        unknown["x5u"] = json!("https://keys.example.org/k1");
+        assert!(
+            refusal(json!({ "keys": [unknown] })).contains("\"jwks: unknown field"),
+            "a member no public JWK has"
+        );
+        let six: Vec<Value> = (0..6)
+            .map(|n| {
+                let mut each = key();
+                each["kid"] = json!(format!("k{n}"));
+                each
+            })
+            .collect();
+        assert!(
+            refusal(json!({ "keys": six })).contains("one to five keys"),
+            "six keys"
+        );
     }
 }

@@ -1,6 +1,7 @@
 # The Portal's parsers of outside input under libFuzzer (crates/portal/fuzz, T-7656, T-7727,
 # T-7729): label and field selectors, the list filter and orderBy, the gateway's metrics page, a
-# pipeline's cron schedule and the masking of a record the runner posts. On demand only, an hour
+# pipeline's cron schedule, the masking of a record the runner posts, the list query string and cursor
+# (T-7698), a device JWKS and an MQTT test-publish body (T-7699). On demand only, an hour
 # per target by default. A crash uploads its input as an artifact; add it as a named regression
 # test with the fix, and to fuzz/seeds/<target> so the next run starts from it.
 name: portal-fuzz
@@ -19,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [selector, filter, prometheus, schedule, mask, auth_issuer_of, auth_csrf_double_submit, auth_login_redirect, auth_realms_parse]
+        target: [selector, filter, prometheus, schedule, mask, list_query, device_jwks, test_publish, auth_issuer_of, auth_csrf_double_submit, auth_login_redirect, auth_realms_parse]
     defaults: { run: { working-directory: crates/portal } }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
