@@ -2209,3 +2209,287 @@ async fn a_pull_request_branch_updates_with_the_merge_style() {
         .await;
     assert_eq!(merged, "");
 }
+
+/// A table filter the OData engine does not serve (`tolower`) is a 501 naming it, in the plain
+/// read, `$count`, `$export` and a set read by name.
+#[tokio::test]
+async fn an_unserved_filter_function_is_not_implemented_everywhere() {
+    let w = seeded().await;
+    let f = "$filter=tolower(Name)%20eq%20'site'";
+    for uri in [
+        format!("/odata/Repositories/$count?{f}"),
+        format!("/odata/Repositories/$export?{f}"),
+    ] {
+        let req = Request::builder()
+            .uri(&uri)
+            .header("authorization", format!("token {ADMIN}"))
+            .body(Body::empty())
+            .expect("request");
+        let (s, body) = raw(&w.app, req).await;
+        assert_eq!(
+            s,
+            StatusCode::NOT_IMPLEMENTED,
+            "{uri}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "authorization",
+        format!("token {ADMIN}").parse().expect("header"),
+    );
+    let ctx = shako_api::authenticate_request(&w.state, &headers, "shako").expect("ctx");
+    let listed = shako_api::exec_odata_operation(
+        &w.state,
+        &ctx,
+        &jc_router::Mount::default(),
+        "jc_forge_repositories_list",
+        None,
+        json!({ "Filter": "tolower(Name) eq 'site'" }),
+    )
+    .await;
+    assert!(
+        matches!(listed, Err(ShakoError::NotImplemented(_))),
+        "{listed:?}"
+    );
+}
+
+/// A key that names nothing is a 404 for a single read; a Compare without its head, an unknown
+/// hook's redelivery and an expansion that does not decode are refused naming why.
+#[tokio::test]
+async fn odata_reads_refuse_keys_and_arguments_that_name_nothing() {
+    let w = seeded().await;
+    let (s, answer) = send(
+        &w.app,
+        "GET",
+        &format!("/odata/Webhooks('{}')", WebhookId::new()),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
+    let (s, answer) = send(
+        &w.app,
+        "GET",
+        "/odata/Repositories('site')/Shako.Compare(Base='main')",
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{answer}");
+    assert!(answer.to_string().contains("Head"), "{answer}");
+    let (s, answer) = send(
+        &w.app,
+        "POST",
+        "/odata/RedeliverWebhook",
+        Some(json!({ "Id": WebhookId::new().to_string() })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
+    let (s, answer) = send(&w.app, "GET", "/odata/PullRequests?$expand=%FF", None).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{answer}");
+    let (s, answer) = send(
+        &w.app,
+        "POST",
+        "/odata/Repositories('site')/Branches('main')/Files",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
+}
+
+/// Operations by name take their defaults: `Allowed` reads `Read`, `Merge` merges, a mirror
+/// takes a named secret reference, a commit status without a context is `default`.
+#[tokio::test]
+async fn operations_by_name_take_their_defaults() {
+    let w = seeded().await;
+    let (s, dec) = send(&w.app, "POST", "/odata/Allowed", Some(json!({}))).await;
+    assert_eq!(s, StatusCode::OK, "{dec}");
+    assert_eq!(dec["allowed"], true, "{dec}");
+    let number = w.open_pull("dev").await;
+    let (s, merged) = send(
+        &w.app,
+        "POST",
+        "/odata/Merge",
+        Some(json!({ "repo": "joinedcontext/site", "Number": number })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{merged}");
+    let on_main = w
+        .git("site", &["merge-base", "--is-ancestor", "dev", "main"])
+        .await;
+    assert_eq!(on_main, "");
+    let (s, mirror) = send(&w.app, "POST", "/odata/AddPushMirror", Some(json!({ "repo": "joinedcontext/site",
+        "RemoteAddress": "https://github.com/joinedcontext-apps/site.git", "SecretRef": "mirror-key" }))).await;
+    assert_eq!(s, StatusCode::OK, "{mirror}");
+    let stored = w
+        .state
+        .store()
+        .list_push_mirrors(INSTANCE, ORG, None)
+        .await
+        .expect("mirrors");
+    assert_eq!(stored[0].credential_secret_ref, "mirror-key");
+    let sha = w.git("site", &["rev-parse", "main"]).await;
+    let (s, status) = send(
+        &w.app,
+        "POST",
+        &format!("{R}/statuses/{sha}"),
+        Some(json!({ "state": "success" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{status}");
+    assert_eq!(status["context"], "default", "{status}");
+}
+
+/// A commit read by its repository and full id; a page past 500 commits links the next one.
+#[tokio::test]
+async fn commits_read_by_id_and_page_past_the_limit() {
+    let w = seeded().await;
+    let id = w.repo("site").await.id;
+    let sha = w.git("site", &["rev-parse", "main"]).await;
+    let (s, row) = send(
+        &w.app,
+        "GET",
+        &format!("/odata/Commits('{id}:{sha}')"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{row}");
+    assert_eq!(row["Sha"], sha.as_str(), "{row}");
+    let mut stream = String::new();
+    for n in 0..510 {
+        stream.push_str(&format!(
+            "commit refs/heads/main\ncommitter Ada <ada@city.example> {} +0000\ndata 2\nc{}\n{}\n",
+            1_700_000_000 + n,
+            n % 10,
+            if n == 0 {
+                format!("from {sha}\n")
+            } else {
+                String::new()
+            }
+        ));
+    }
+    let mut child = std::process::Command::new("git")
+        .arg("-C")
+        .arg(w.disk("site").await)
+        .args(["fast-import", "--quiet"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("fast-import");
+    std::io::Write::write_all(child.stdin.as_mut().expect("stdin"), stream.as_bytes())
+        .expect("stream");
+    assert!(child.wait().expect("fast-import ends").success());
+    let (s, page) = send(
+        &w.app,
+        "GET",
+        &format!("/odata/Commits?$filter=RepoId%20eq%20'{id}'"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(page["value"].as_array().map(Vec::len), Some(500));
+    assert!(
+        page["@odata.nextLink"]
+            .as_str()
+            .is_some_and(|l| l.starts_with("Commits?$skiptoken=")),
+        "{}",
+        page["@odata.nextLink"]
+    );
+}
+
+/// A body that fails while it is read is a bad request naming the read.
+#[tokio::test]
+async fn a_body_that_fails_mid_read_is_a_bad_request() {
+    let chunks: Vec<Result<bytes::Bytes, std::io::Error>> = vec![
+        Ok(bytes::Bytes::from_static(b"{")),
+        Err(std::io::Error::other("client left")),
+    ];
+    let body = Body::from_stream(futures_util::stream::iter(chunks));
+    let read = shako_api::read_body_bounded(body, 1024).await;
+    assert!(
+        matches!(&read, Err(ShakoError::BadRequest(m)) if m.contains("body read error")),
+        "{read:?}"
+    );
+}
+
+/// A repository whose directory is gone answers an error for Git reads, never an empty success.
+#[tokio::test]
+async fn a_repository_without_its_directory_answers_errors() {
+    let w = seeded().await;
+    let disk = w.disk("site").await;
+    std::fs::remove_dir_all(&disk).expect("removed");
+    let (s, answer) = send(&w.app, "GET", &format!("{R}/tags"), None).await;
+    assert!(
+        s.is_server_error() || s == StatusCode::NOT_FOUND,
+        "{s} {answer}"
+    );
+    let (s, answer) = send(
+        &w.app,
+        "GET",
+        "/joinedcontext/site/info/refs?service=git-upload-pack",
+        None,
+    )
+    .await;
+    assert!(
+        s.is_server_error() || s == StatusCode::NOT_FOUND,
+        "{s} {answer}"
+    );
+}
+
+/// Git over HTTP: a negotiation that is not one is refused, one declared past its limit too,
+/// and a push whose instance cannot be read answers 500.
+#[tokio::test]
+async fn git_http_refuses_bad_negotiations_and_answers_store_failures() {
+    let w = seeded().await;
+    let upload = |body: &'static [u8], length: Option<u64>| {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/joinedcontext/site/git-upload-pack")
+            .header("authorization", format!("token {ADMIN}"));
+        let req = match length {
+            Some(n) => req.header("content-length", n),
+            None => req,
+        };
+        req.body(Body::from(body)).expect("request")
+    };
+    let (s, _) = raw(&w.app, upload(b"zzzz not a pkt-line", None)).await;
+    assert!(s.is_client_error(), "{s}");
+    let (s, _) = raw(&w.app, upload(b"0000", Some(1 << 30))).await;
+    assert!(s.is_client_error(), "{s}");
+    w.store.fail("get_instance");
+    let (s, _) = raw(&w.app, receive_pack(b"0000".to_vec(), None)).await;
+    w.store.heal();
+    assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+/// A pull request whose head branch is gone still reads, with its last known state.
+#[tokio::test]
+async fn a_pull_request_reads_after_its_head_is_gone() {
+    let w = seeded().await;
+    let number = w.open_pull("dev").await;
+    w.git("site", &["update-ref", "-d", "refs/heads/dev"]).await;
+    let (s, pr) = send(&w.app, "GET", &format!("{R}/pulls/{number}"), None).await;
+    assert_eq!(s, StatusCode::OK, "{pr}");
+    assert_eq!(pr["number"], number, "{pr}");
+}
+
+/// An owner or repository name that is not one is not found, not a bad request.
+#[tokio::test]
+async fn a_malformed_owner_is_not_found() {
+    let w = seeded().await;
+    let (s, answer) = send(&w.app, "GET", "/api/v1/repos/bad..owner/site", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
+}
+
+/// A commit to a branch that does not exist is refused naming the branch.
+#[tokio::test]
+async fn a_commit_to_a_missing_branch_names_it() {
+    let w = seeded().await;
+    let (s, answer) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/x.md"),
+        Some(put("x", "nowhere", "nowhere")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
+    assert!(answer.to_string().contains("nowhere"), "{answer}");
+}

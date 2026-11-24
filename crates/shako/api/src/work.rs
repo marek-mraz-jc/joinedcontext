@@ -414,11 +414,7 @@ mod tests {
         let _held = work.spool(OrgId::from_u128(4), 2 * MIB).await?;
         let busy = work.spool(OrgId::from_u128(4), MIB).await;
         assert!(busy.as_ref().err().and_then(quota).is_none());
-        assert!(
-            matches!(&busy, Err(ShakoError::Overloaded(m)) if m.contains("spool_bytes")),
-            "{:?}",
-            busy.err()
-        );
+        assert!(matches!(&busy, Err(ShakoError::Overloaded(m)) if m.contains("spool_bytes")));
         Ok(())
     }
 
@@ -459,6 +455,48 @@ mod tests {
                 "{answer:?}"
             );
         }
+        Ok(())
+    }
+
+    /// A spool directory that cannot be made is a storage error naming the spool.
+    #[tokio::test]
+    async fn a_spool_directory_that_cannot_be_made_is_a_storage_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let file = dir.path().join("file");
+        std::fs::write(&file, b"x")?;
+        let spool = work(&file.join("spool"), 2 * MIB)
+            .spool(OrgId::from_u128(7), 0)
+            .await;
+        assert!(matches!(&spool, Err(ShakoError::Storage(m)) if m.starts_with("spool: ")));
+        Ok(())
+    }
+
+    /// A job that cannot get even its first memory waits and answers `Busy`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_job_without_its_first_memory_answers_busy() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let work =
+            std::sync::Arc::new(GitWork::new(dir.path().to_path_buf(), 64 * MIB, MEMORY_MIN));
+        let (held_tx, held_rx) = tokio::sync::oneshot::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let holder = tokio::spawn({
+            let work = work.clone();
+            async move {
+                work.run(OrgId::from_u128(8), move |_admit| {
+                    let _ = held_tx.send(());
+                    let _ = done_rx.recv();
+                    Ok(())
+                })
+                .await
+            }
+        });
+        held_rx.await?;
+        let ran = work.run(OrgId::from_u128(9), |_admit| Ok(())).await;
+        let _ = done_tx.send(());
+        holder.await??;
+        assert!(matches!(&ran, Err(ShakoError::Overloaded(m)) if m.contains("git_memory_bytes")));
         Ok(())
     }
 }
