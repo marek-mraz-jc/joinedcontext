@@ -382,4 +382,255 @@ mod tests {
             assert!(!allowed(refused), "{refused} must be refused");
         }
     }
+
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const HOST: &str = "www.city.test";
+
+    /// A client that reaches `server` under [`HOST`] over plain http, as a test fixture may.
+    fn fixture(server: &MockServer) -> (Client, CrawlPolicy, Url) {
+        let client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve(HOST, *server.address())
+            .build()
+            .expect("a client");
+        let policy = CrawlPolicy {
+            allow_plain_http: true,
+            max_page_bytes: 64,
+        };
+        let base =
+            Url::parse(&format!("http://{HOST}:{}/", server.address().port())).expect("a URL");
+        (client, policy, base)
+    }
+
+    async fn get(server: &MockServer, at: &str) -> FetchOutcome {
+        let (client, policy, base) = fixture(server);
+        let url = base.join(at).expect("joins");
+        fetch_url(
+            &client,
+            &policy,
+            HOST,
+            &url,
+            policy.max_page_bytes,
+            None,
+            None,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_known_page_sends_its_validators_and_an_unchanged_one_is_not_modified() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/page"))
+            .and(header("if-none-match", "\"v1\""))
+            // `header` would split the date at its comma.
+            .and(wiremock::matchers::header_exists("if-modified-since"))
+            .respond_with(ResponseTemplate::new(304))
+            .mount(&server)
+            .await;
+        let (client, policy, base) = fixture(&server);
+        let url = base.join("page").expect("joins");
+        let outcome = fetch_url(
+            &client,
+            &policy,
+            HOST,
+            &url,
+            64,
+            Some("\"v1\""),
+            Some("Tue, 01 Sep 2026 08:00:00 GMT"),
+        )
+        .await;
+        assert!(matches!(outcome, FetchOutcome::NotModified { final_url } if final_url == url));
+        // A validator that is no header value is left out, never sent broken.
+        let outcome = fetch_url(
+            &client,
+            &policy,
+            HOST,
+            &url,
+            64,
+            Some("bad\nvalue"),
+            Some("x\ny"),
+        )
+        .await;
+        assert!(matches!(outcome, FetchOutcome::Status(s) if s == StatusCode::NOT_FOUND));
+    }
+
+    #[tokio::test]
+    async fn a_redirect_on_the_site_is_followed_and_one_off_it_is_reported() {
+        let server = MockServer::start().await;
+        Mock::given(path("/old"))
+            .respond_with(ResponseTemplate::new(301).insert_header("location", "/new"))
+            .mount(&server)
+            .await;
+        Mock::given(path("/new"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("moved"))
+            .mount(&server)
+            .await;
+        Mock::given(path("/away"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("location", "https://elsewhere.test/x"),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(path("/port"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("location", format!("http://{HOST}:1/x")),
+            )
+            .mount(&server)
+            .await;
+        match get(&server, "old").await {
+            FetchOutcome::Success {
+                final_url,
+                body,
+                status,
+                ..
+            } => {
+                assert_eq!(final_url.path(), "/new");
+                assert_eq!(status, StatusCode::OK);
+                assert_eq!(body, b"moved");
+            }
+            other => panic!("followed, not {other:?}"),
+        }
+        assert!(matches!(
+            get(&server, "away").await,
+            FetchOutcome::RedirectExternal { target_url } if target_url.host_str() == Some("elsewhere.test")
+        ));
+        assert!(matches!(
+            get(&server, "port").await,
+            FetchOutcome::RedirectExternal { target_url } if target_url.port() == Some(1)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_broken_redirect_fails_with_its_reason() {
+        let server = MockServer::start().await;
+        Mock::given(path("/loop"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/loop"))
+            .mount(&server)
+            .await;
+        Mock::given(path("/bare"))
+            .respond_with(ResponseTemplate::new(302))
+            .mount(&server)
+            .await;
+        Mock::given(path("/bytes"))
+            .respond_with(ResponseTemplate::new(302).append_header(
+                "location",
+                reqwest::header::HeaderValue::from_bytes(b"/\xff").expect("a value"),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(path("/creds"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", format!("http://u:p@{HOST}/x")),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(path("/badurl"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "http://[::1"))
+            .mount(&server)
+            .await;
+        let failed = |outcome: FetchOutcome| match outcome {
+            FetchOutcome::Failed(why) => why,
+            other => panic!("failed, not {other:?}"),
+        };
+        assert_eq!(
+            failed(get(&server, "loop").await),
+            "too many redirects (> 5 hops)"
+        );
+        assert_eq!(
+            failed(get(&server, "bare").await),
+            "redirect missing location header"
+        );
+        assert_eq!(
+            failed(get(&server, "bytes").await),
+            "invalid location header encoding"
+        );
+        assert!(failed(get(&server, "badurl").await).starts_with("invalid redirect URL"));
+        // A hop that carries credentials is refused before it is sent.
+        assert!(matches!(
+            get(&server, "creds").await,
+            FetchOutcome::RedirectExternal { .. } | FetchOutcome::Refused
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_error_status_and_an_oversized_body_are_named() {
+        let server = MockServer::start().await;
+        Mock::given(path("/gone"))
+            .respond_with(ResponseTemplate::new(410))
+            .mount(&server)
+            .await;
+        Mock::given(path("/big"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("x".repeat(65)))
+            .mount(&server)
+            .await;
+        assert!(
+            matches!(get(&server, "gone").await, FetchOutcome::Status(s) if s == StatusCode::GONE)
+        );
+        assert!(matches!(get(&server, "big").await, FetchOutcome::TooLarge));
+    }
+
+    #[tokio::test]
+    async fn a_body_longer_than_its_stream_allows_is_too_large_without_a_length() {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("a connection");
+            let mut request = [0_u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
+            let chunk = "x".repeat(40);
+            let answer = format!(
+                "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n28\r\n{chunk}\r\n28\r\n{chunk}\r\n0\r\n\r\n"
+            );
+            let _ = socket.write_all(answer.as_bytes()).await;
+        });
+        let client = Client::builder()
+            .resolve(HOST, addr)
+            .build()
+            .expect("a client");
+        let policy = CrawlPolicy {
+            allow_plain_http: true,
+            max_page_bytes: 64,
+        };
+        let url = Url::parse(&format!("http://{HOST}:{}/", addr.port())).expect("a URL");
+        assert!(matches!(
+            fetch_url(&client, &policy, HOST, &url, 64, None, None).await,
+            FetchOutcome::TooLarge
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_site_fails_with_the_whole_chain_and_a_refused_one_is_refused() {
+        let client = Client::builder().build().expect("a client");
+        let policy = CrawlPolicy {
+            allow_plain_http: true,
+            max_page_bytes: 64,
+        };
+        let url = Url::parse("http://nothing.invalid/").expect("a URL");
+        assert!(matches!(
+            fetch_url(&client, &policy, "nothing.invalid", &url, 64, None, None).await,
+            FetchOutcome::Failed(why) if why.contains(": ")
+        ));
+        let guarded = client_with_tls(
+            Arc::new(agent_proxy::public_dns::PublicOnly),
+            public_tls().expect("native roots"),
+        )
+        .expect("a client");
+        let local = Url::parse("http://localhost/").expect("a URL");
+        assert!(matches!(
+            fetch_url(&guarded, &policy, "localhost", &local, 64, None, None).await,
+            FetchOutcome::Refused
+        ));
+        let https = CrawlPolicy::default();
+        assert!(matches!(
+            fetch_url(&guarded, &https, "localhost", &local, 64, None, None).await,
+            FetchOutcome::Refused
+        ));
+    }
 }

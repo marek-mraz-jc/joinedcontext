@@ -151,6 +151,53 @@ async fn an_unknown_broker_or_account_is_404_and_no_account_400() {
     );
 }
 
+#[tokio::test]
+async fn an_account_the_caller_may_not_read_is_the_same_404_and_a_broken_broker_422() {
+    let state = state().await;
+    state.mirror.upsert(envelope(
+        "Role",
+        "broker-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["MqttBroker"], "verbs": ["read"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "bea-broker-reader",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "bea@hel.fi" }], "role": "broker-reader", "scope": { "project": "helsinki" } }),
+    ));
+    let (hidden, body) = explain(&state, "bea", "air", "?account=fleet").await;
+    let (unknown, unknown_body) = explain(&state, "bea", "air", "?account=nobody").await;
+    assert_eq!(
+        (hidden, unknown),
+        (StatusCode::NOT_FOUND, StatusCode::NOT_FOUND),
+        "{body}"
+    );
+    assert_eq!(
+        body["detail"]
+            .as_str()
+            .map(|d| d.replace("fleet", "nobody")),
+        unknown_body["detail"].as_str().map(str::to_owned),
+        "an unreadable account reads exactly like a missing one"
+    );
+
+    state.mirror.upsert(envelope(
+        "MqttBroker",
+        "broken",
+        "helsinki",
+        json!({ "roles": "sensor" }),
+    ));
+    let (status, body) = explain(&state, "stef", "broken", "?account=fleet").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("MQTT broker 'broken' does not read"),
+        "{body}"
+    );
+}
+
 async fn propose_account(state: &AppState, who: &str, role: &str) -> (StatusCode, String) {
     let body = json!({
         "apiVersion": "joinedcontext.com/v1alpha1", "kind": "ServiceAccount",

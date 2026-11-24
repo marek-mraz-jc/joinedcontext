@@ -436,14 +436,10 @@ pub trait Store: Send + Sync {
     /// `false`: another run holds the source and nothing was written.
     fn claim_harvest_run<'a>(
         &'a self,
-        _ctx: &'a RequestCtx,
-        _run: HarvestRun,
-        _stale_before: jc_time::TimestampTz,
-    ) -> BoxFuture<'a, Result<bool>> {
-        Box::pin(std::future::ready(Err(
-            crate::error::DataroomError::NotSupported("this store holds no harvest lock".into()),
-        )))
-    }
+        ctx: &'a RequestCtx,
+        run: HarvestRun,
+        stale_before: jc_time::TimestampTz,
+    ) -> BoxFuture<'a, Result<bool>>;
 
     /// Appends an activity audit row (`C13`).
     fn record_activity<'a>(

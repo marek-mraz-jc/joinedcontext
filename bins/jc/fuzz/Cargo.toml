@@ -1,0 +1,24 @@
+# Fuzzing Model Tools' `/generate` (bins/jc/src/modules/model_tools, T-7641) under libFuzzer:
+# `cargo +nightly fuzz run model_tools_generate corpus/model_tools_generate`. Not a workspace member.
+[package]
+name = "jc-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+jc = { path = "..", default-features = false, features = ["model-tools"] }
+
+[[bin]]
+name = "model_tools_generate"
+path = "fuzz_targets/model_tools_generate.rs"
+test = false
+doc = false
+bench = false

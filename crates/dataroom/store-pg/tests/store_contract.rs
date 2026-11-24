@@ -46,5 +46,6 @@ both_stores!(
     guarded_writes,
     audited_writes,
     edges,
+    minted_and_redirected,
     twin_catalogues
 );

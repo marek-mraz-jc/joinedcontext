@@ -761,11 +761,11 @@ jobs:
       - working-directory: vendor/joinedcontext-platform/crates/assistant/widget
         run: >-
           node --test --experimental-test-coverage --test-coverage-include=render.js --test-coverage-include=visitor.js
-          --test-coverage-lines=99 --test-coverage-functions=99 render.test.js app/app.test.mjs
+          --test-coverage-lines=100 --test-coverage-functions=100 render.test.js app/app.test.mjs
       - working-directory: vendor/viz
         run: >-
           node --test --experimental-test-coverage --test-coverage-include=site/refuse.js
-          --test-coverage-lines=99 --test-coverage-functions=99 tests/*.test.mjs
+          --test-coverage-lines=100 --test-coverage-functions=100 tests/*.test.mjs
   # The whole UI vitest in four shards (vitest --shard splits the files: every file once, in one
   # of them), as the standalone Portal ran it. The ui job above ran none of it, so a branch went
   # green with 46 red files (jc-multiorg-portal 42601018361, merged as 12aa4b3e). Shard job names

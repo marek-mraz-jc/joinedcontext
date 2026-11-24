@@ -46,12 +46,9 @@ jobs:
           - { ws: root, dir: ".", args: "nextest --profile ci --workspace" }
           - { ws: antares, dir: crates/antares, args: "nextest --profile ci --workspace" }
           - { ws: portal, dir: crates/portal, args: "--workspace -j 2" }
-          # extra: a second measure folded into the same export; jcctl's `it` binary (T-7793), as
-          # ci.yml's platform-test runs it.
-          - ws: platform
-            dir: vendor/joinedcontext-platform
-            args: "--workspace --lib --bins"
-            extra: "-p jcctl --test it -- --skip ingestion_examples_tests:: --skip library_blueprints_tests::"
+          # context-gateway's `it` binary as ci.yml platform-test runs it: most of the gateway's
+          # handlers are tested there, through the router (T-7767)
+          - { ws: platform, dir: vendor/joinedcontext-platform, args: "--workspace --lib --bins", extra: "-p context-gateway --test it" }
     defaults: { run: { working-directory: "${{ matrix.dir }}" } }
     services:
       postgres:
@@ -116,11 +113,12 @@ jobs:
             out=tests-failed
             echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
           }
+          # a second test run of the workspace adds to the same profile data before the report
           if [ -n "${{ matrix.extra }}" ]; then
             # shellcheck disable=SC2086
-            cargo llvm-cov --locked --no-report --no-fail-fast ${{ matrix.extra }} || {
+            DCAT_RECORDS_DIR="$RUNNER_TEMP/dcat-records" cargo llvm-cov ${{ matrix.extra }} --locked --no-report --no-fail-fast || {
               out=tests-failed
-              echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
+              echo "::warning::tests failed in ${{ matrix.ws }} (${{ matrix.extra }}): its crates are not judged by the ratchet tonight"
             }
           fi
           # the full export: the ratchet merges each function's instances from its records

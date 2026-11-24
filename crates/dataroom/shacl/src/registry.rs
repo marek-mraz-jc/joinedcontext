@@ -374,6 +374,28 @@ impl ProfileRegistry {
         Ok(stack)
     }
 
+    /// Refuses a profile upload that takes a built-in's id or whose shapes do not parse.
+    fn check_profile(&self, profile: &ProfileRecord) -> Result<()> {
+        if DcatProfile::by_id(&profile.id).is_some() {
+            return Err(DataroomError::field_error(
+                "profile.id",
+                format!(
+                    "{} ships with the release; upload under an id of your own, with it as \
+                     baseProfile",
+                    profile.id
+                ),
+            ));
+        }
+        parse_shapes_graph(&profile.shapes_turtle, &RdfLimits::uploaded_shapes())
+            .map(|_| ())
+            .map_err(|e| {
+                DataroomError::field_error(
+                    "profile.shapesTurtle",
+                    format!("not SHACL in Turtle: {e}"),
+                )
+            })
+    }
+
     /// Uploads and registers a new profile or profile version (enforcing `RdfLimits::uploaded_shapes()`,
     /// refusing `owl:imports`, deriving form layout) and returns a [`ProfileDryRunReport`] against
     /// `existing_datasets` (C17).
@@ -518,27 +540,6 @@ impl ProfileRegistry {
 impl DatasetValidator for ProfileRegistry {
     fn load_stored_profiles(&self, catalogue: &Catalogue, stored: &[ProfileRecord]) {
         self.load_stored(scope_of(catalogue), stored);
-    }
-
-    fn check_profile(&self, profile: &ProfileRecord) -> Result<()> {
-        if DcatProfile::by_id(&profile.id).is_some() {
-            return Err(DataroomError::field_error(
-                "profile.id",
-                format!(
-                    "{} ships with the release; upload under an id of your own, with it as \
-                     baseProfile",
-                    profile.id
-                ),
-            ));
-        }
-        parse_shapes_graph(&profile.shapes_turtle, &RdfLimits::uploaded_shapes())
-            .map(|_| ())
-            .map_err(|e| {
-                DataroomError::field_error(
-                    "profile.shapesTurtle",
-                    format!("not SHACL in Turtle: {e}"),
-                )
-            })
     }
 
     fn check_profile_choice(

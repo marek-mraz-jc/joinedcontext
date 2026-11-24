@@ -600,6 +600,41 @@ async fn a_cursor_object_asks_only_the_members_it_names() {
     );
 }
 
+/// T-7767: a `cursor` that is neither the previous answer's object nor absent is a tool error
+/// saying what it must be, and a body that is no JSON is the JSON-RPC parse error; no member
+/// is asked for either.
+#[tokio::test]
+async fn a_cursor_of_the_wrong_shape_and_a_body_that_is_no_json_are_refused() {
+    let realm = common::Realm::new();
+    let broker = common::BrokerStub::start(vec![json!([])]).await;
+    let edge = token(&realm, json!("context-gateway"));
+    let (_, answer) = send(
+        app(&broker.url, &realm, false),
+        post(
+            SERVER,
+            Some(&edge),
+            call(
+                "query_entities",
+                json!({ "type": ["AirQualityObserved"], "cursor": "q20" }),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(answer["result"]["isError"], json!(true), "{answer}");
+    assert!(answer.to_string().contains("nextCursor"), "{answer}");
+
+    let garbled = Request::builder()
+        .method(Method::POST)
+        .uri(SERVER)
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {edge}"))
+        .body(Body::from("{not json"))
+        .expect("a request");
+    let (_, answer) = send(app(&broker.url, &realm, false), garbled).await;
+    assert_eq!(answer["error"]["code"], json!(-32700), "{answer}");
+    assert!(broker.hops().is_empty());
+}
+
 /// ADR-N-043 §5: the gateway loads each `McpServer` beside the Endpoints, its members resolved to
 /// their slugs in the manifest's order; a member that names no Endpoint is left out, and a
 /// manifest that breaks MF-53 is not served.

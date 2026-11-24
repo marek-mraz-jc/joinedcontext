@@ -416,6 +416,28 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_refusal_of_the_needs_names_the_endpoint_field_and_others_pass_unchanged() {
+        let invalid = ApiError::Invalid {
+            detail: "x".into(),
+            errors: vec!["type Bike is hidden".into(), "name is hidden".into()],
+        };
+        assert!(matches!(
+            on_endpoint("bikes", invalid),
+            ApiError::Unprocessable { detail, errors }
+                if detail == "endpointName: 'bikes' does not serve what the template reads"
+                    && errors == ["endpointName: type Bike is hidden", "endpointName: name is hidden"]
+        ));
+        assert!(matches!(
+            on_endpoint("bikes", ApiError::BadRequest("no slug".into())),
+            ApiError::Unprocessable { errors, .. } if errors == ["endpointName: no slug"]
+        ));
+        assert!(matches!(
+            on_endpoint("bikes", ApiError::Unavailable("down".into())),
+            ApiError::Unavailable(why) if why == "down"
+        ));
+    }
+
     fn tree(paths: &[&str]) -> BTreeMap<String, String> {
         paths
             .iter()

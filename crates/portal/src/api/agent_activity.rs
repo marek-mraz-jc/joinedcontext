@@ -708,6 +708,49 @@ mod tests {
         parse_time(text).expect("a time")
     }
 
+    /// Each alert names what crossed the line in words a person reads on the notice: the
+    /// refusals, the share of the cap of the named run, or its writes outside office hours.
+    #[test]
+    fn each_alert_kind_reads_as_its_own_notice() {
+        let alert = |kind, run_title: Option<&str>| AgentAlert {
+            kind,
+            project: "helsinki".into(),
+            profile: "analyst".into(),
+            run_id: Some("r1".into()),
+            run_title: run_title.map(str::to_owned),
+            count: 3,
+            at: "2026-11-24T22:10:00Z".into(),
+        };
+        assert_eq!(
+            signal_detail(&alert(AlertKind::RefusalSpike, None)),
+            "3 refused tool calls in the last hour"
+        );
+        assert_eq!(
+            signal_detail(&alert(AlertKind::SpendShare, Some("air report"))),
+            "run “air report” used 3 % of its token cap"
+        );
+        assert_eq!(
+            signal_detail(&alert(AlertKind::OffHoursWrite, Some("air report"))),
+            "run “air report” wrote 3 time(s) outside office hours, the first at 2026-11-24T22:10:00Z"
+        );
+        assert_eq!(
+            signal_detail(&alert(AlertKind::SpendShare, None)),
+            "run “” used 3 % of its token cap"
+        );
+    }
+
+    /// A text longer than a step shows is cut at a character, never inside one, and marked.
+    #[test]
+    fn a_long_text_is_cut_at_a_character_and_marked() {
+        let short = "ä".repeat(TEXT_CHARS);
+        assert_eq!(clip(&short), short);
+        let long = "ä".repeat(TEXT_CHARS + 1);
+        let cut = clip(&long);
+        assert_eq!(cut.chars().count(), TEXT_CHARS + 1);
+        assert!(cut.ends_with('…'), "{cut}");
+        assert!(cut.starts_with(&"ä".repeat(TEXT_CHARS)));
+    }
+
     fn event(seq: i64, at: &str, payload: Value) -> AgentRunEvent {
         AgentRunEvent {
             run_id: "r1".into(),
@@ -780,6 +823,15 @@ mod tests {
         let reason = refused.reason.unwrap();
         assert!(reason.starts_with("forbidden"), "{reason}");
         assert!(!reason.contains("abc.def.ghi"), "{reason}");
+        // A sandbox refusal names how many blocks it refused, not what they held.
+        let blocked = step(&event(
+            2,
+            "2026-10-21T10:00:01Z",
+            json!({ "tool": "jc_endpoint_propose", "exitCode": 3,
+                    "refused": [{ "code": "rm -rf /" }, { "code": "curl x" }] }),
+        ));
+        assert_eq!(blocked.verdict, StepVerdict::Refused);
+        assert_eq!(blocked.reason.as_deref(), Some("2 block(s) refused"));
     }
 
     #[test]

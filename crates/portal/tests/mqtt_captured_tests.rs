@@ -169,6 +169,26 @@ async fn a_reader_another_projects_steward_and_an_unknown_broker_get_the_same_40
 }
 
 #[tokio::test]
+async fn a_broker_whose_manifest_does_not_read_is_the_same_404_as_a_missing_one() {
+    let state = state().await;
+    state.mirror.upsert(envelope(
+        "MqttBroker",
+        "broken",
+        "helsinki",
+        json!({ "roles": "camera" }),
+    ));
+    for method in ["GET", "DELETE"] {
+        let (broken, _) = call(&state, "eva", method, "broken").await;
+        let (missing, _) = call(&state, "eva", method, "nope").await;
+        assert_eq!(
+            (broken, missing),
+            (StatusCode::NOT_FOUND, StatusCode::NOT_FOUND),
+            "{method}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_wildcard_topic_or_a_limit_out_of_range_is_refused_naming_it() {
     let state = state().await;
     for query in ["cameras?limit=0", "cameras?limit=1001"] {
@@ -187,6 +207,62 @@ async fn a_wildcard_topic_or_a_limit_out_of_range_is_refused_naming_it() {
             "{body}"
         );
     }
+}
+
+/// A pool on a port nothing listens on: every query fails after a short acquire timeout.
+fn closed_pool() -> sqlx::PgPool {
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind")
+        .local_addr()
+        .expect("address")
+        .port();
+    sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy(&format!("postgres://portal@127.0.0.1:{closed}/portal"))
+        .expect("a lazy pool")
+}
+
+#[tokio::test]
+async fn a_capture_store_that_does_not_answer_is_a_503_with_a_next_step() {
+    let mut state = state().await;
+    // The capture of a project with an Organization asks the database for the project's key.
+    for manifest in [
+        json!({ "apiVersion": joinedcontext_portal::resource::API_VERSION, "kind": "Organization", "metadata": { "name": "hel", "namespace": ORG_NAMESPACE }, "spec": { "displayName": { "en": "Helsinki" }, "domain": "hel.fi" } }),
+        json!({ "apiVersion": joinedcontext_portal::resource::API_VERSION, "kind": "Project", "metadata": { "name": "helsinki", "namespace": ORG_NAMESPACE }, "spec": { "organizationRef": "hel" } }),
+    ] {
+        state
+            .mirror
+            .upsert(serde_json::from_value(manifest).expect("manifest"));
+    }
+    state.mqtt_capture =
+        std::sync::Arc::new(joinedcontext_portal::mqtt_capture::CaptureStore::new(
+            Some(closed_pool()),
+            state.mirror.clone(),
+        ));
+    for method in ["GET", "DELETE"] {
+        let (status, body) = call(&state, "eva", method, "cameras").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{method}: {body}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("try again in a minute"),
+            "{body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_delete_whose_activity_record_fails_still_removes_the_capture() {
+    let mut state = state().await;
+    state.activity = joinedcontext_portal::activity::ActivityStore::new(
+        Some(closed_pool()),
+        state.mirror.clone(),
+    );
+    let (status, _) = call(&state, "eva", "DELETE", "cameras").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, body) = call(&state, "eva", "GET", "cameras").await;
+    assert_eq!(body["messages"], json!([]));
 }
 
 #[tokio::test]
