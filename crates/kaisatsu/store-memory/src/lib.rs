@@ -5967,6 +5967,29 @@ mod tests {
             "a client mapping is not a realm role"
         );
         assert!(!ada.client_roles.contains_key("app"));
+        let reader = RoleRepresentation {
+            id: "reader-id".into(),
+            name: "reader".into(),
+            ..Default::default()
+        };
+        let mut for_group = mapping("abe", &reader, None);
+        for_group.principal_kind = "group".into();
+        store.inner.write().role_mappings.push(for_group);
+        store
+            .remove_role_mapping(R, "group", "abe", None, "reader")
+            .await
+            .expect("remove");
+        assert!(store.inner.read().role_mappings.is_empty());
+        let ada = store
+            .get_user_by_id(R, None, "ada")
+            .await
+            .expect("read")
+            .expect("person");
+        assert_eq!(
+            ada.realm_roles,
+            ["reader"],
+            "a group's mapping is not the person's"
+        );
     }
 
     /// A row handed over without an id gets a fresh one, on its own and beside a person's update.
