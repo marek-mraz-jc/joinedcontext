@@ -743,7 +743,7 @@ mod tests {
             .expect("a call")
             .expect_err("kind is text");
         assert!(wrong.starts_with("the change_resource call does not parse"), "{wrong}");
-        let after_prose = "```json\n{not json\n```\n```json\n{\"tool\":\"change_resource\",\"kind\":\"Role\",\"name\":\"r\",\"delete\":true}\n```";
+        let after_prose = "```json\n{not: json}\n```\n```json\n{\"tool\":\"change_resource\",\"kind\":\"Role\",\"name\":\"r\",\"delete\":true}\n```";
         assert_eq!(
             tool_call(after_prose).expect("a call").expect("parses").name,
             "r"

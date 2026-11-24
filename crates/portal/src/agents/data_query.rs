@@ -819,7 +819,7 @@ mod tests {
         assert!(tool_calls("plain prose").is_empty());
         // T-7711: arguments that are no object, a blank tool name and a fence that is no JSON.
         let shapes = tool_calls(
-            "```json\n{\"tool\":\"query_endpoint\",\"endpoint\":\"e\",\"name\":\"q\",\"arguments\":[1]}\n```\n             ```json\n{\"tool\":\"query_endpoint\",\"endpoint\":\"e\",\"name\":\"  \"}\n```\n             ```json\n{oops\n```\n             ```json\n{\"tool\":\"query_endpoint\",\"endpoint\":\" e \",\"name\":\"q\",\"arguments\":null}\n```",
+            "```json\n{\"tool\":\"query_endpoint\",\"endpoint\":\"e\",\"name\":\"q\",\"arguments\":[1]}\n```\n```json\n{\"tool\":\"query_endpoint\",\"endpoint\":\"e\",\"name\":\"  \"}\n```\n```json\n{oops}\n```\n```json\n{\"tool\":\"query_endpoint\",\"endpoint\":\" e \",\"name\":\"q\",\"arguments\":null}\n```",
         );
         assert_eq!(shapes.len(), 3, "the broken fence is passed over: {shapes:?}");
         assert_eq!(shapes[0], Err("arguments must be an object".to_owned()));

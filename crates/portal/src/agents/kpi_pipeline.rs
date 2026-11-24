@@ -95,13 +95,15 @@ fn seconds_of(period: &str) -> Option<u64> {
     let split = period.find(|c: char| !c.is_ascii_digit())?;
     let (number, unit) = period.split_at(split);
     let number: u64 = number.parse().ok()?;
-    match unit {
-        "s" => Some(number),
-        "m" => Some(number * 60),
-        "h" => Some(number * 3600),
-        "d" => Some(number * 86_400),
-        _ => None,
-    }
+    let unit = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        _ => return None,
+    };
+    // The model writes the number: one too large for seconds is no period.
+    number.checked_mul(unit)
 }
 
 /// The ISO 8601 duration of a period, for `calculationPeriod`.
