@@ -36,13 +36,23 @@ fuzz_target!(|data: &[u8]| {
     let conf = SCANNERS[*pick as usize % SCANNERS.len()];
     let obj = serde_json::json!({ "scanner": serde_json::from_str::<serde_json::Value>(conf).expect("seed config") });
     let scanner = Scanner::from_config(obj.as_object().expect("object")).expect("seed scanner");
-    let name = if pick % 2 == 0 { "upload/a.csv" } else { "upload/a.json" };
+    let name = if pick % 2 == 0 {
+        "upload/a.csv"
+    } else {
+        "upload/a.json"
+    };
     if let Ok(parts) = scanner.scan(raw, name) {
         // a byte scanner hands on slices of the stream: never more bytes than it read. The
         // structured ones (csv rows repeat the header names, JSON escapes) and decompression grow.
-        let structured = ["csv", "json_documents", "xml_documents", "decompress", "switch"]
-            .iter()
-            .any(|k| conf.contains(k));
+        let structured = [
+            "csv",
+            "json_documents",
+            "xml_documents",
+            "decompress",
+            "switch",
+        ]
+        .iter()
+        .any(|k| conf.contains(k));
         if !structured {
             let total: usize = parts.iter().map(|p| p.as_bytes_ref().len()).sum();
             assert!(total <= raw.len(), "{conf}");

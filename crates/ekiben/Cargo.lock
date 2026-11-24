@@ -1729,15 +1729,12 @@ dependencies = [
  "lz4_flex",
  "quick-xml",
  "regex",
- "serde",
  "serde_json",
  "serde_norway",
  "snap",
  "tar",
  "tempfile",
- "thiserror 2.0.21",
  "tokio",
- "tracing",
  "zstd",
 ]
 

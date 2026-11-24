@@ -27,7 +27,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     // the secret fields hold a known value, so an answer that repeats it is caught
-    if let Some(creds) = config.get_mut("credentials").and_then(|c| c.as_object_mut()) {
+    if let Some(creds) = config
+        .get_mut("credentials")
+        .and_then(|c| c.as_object_mut())
+    {
         for k in ["password", "secret", "token", "private_key_pass"] {
             if creds.contains_key(k) {
                 creds.insert(k.into(), SECRET.into());
