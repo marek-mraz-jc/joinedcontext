@@ -1434,4 +1434,164 @@ mod tests {
             assert_eq!(got, want, "{set}");
         }
     }
+
+    /// Grants what `allow` lists and remembers each target it was asked about.
+    struct Recording {
+        allow: Vec<Action>,
+        asked: std::sync::Mutex<Vec<(Action, ObjectTarget)>>,
+    }
+
+    impl Authorizer for Recording {
+        fn check(
+            &self,
+            _: &RequestCtx,
+            action: Action,
+            object: &ObjectTarget,
+        ) -> crate::authz::Decision {
+            self.asked
+                .lock()
+                .expect("lock")
+                .push((action, object.clone()));
+            if self.allow.contains(&action) {
+                crate::authz::Decision::allow("test")
+            } else {
+                crate::authz::Decision::deny_hidden("test")
+            }
+        }
+    }
+
+    fn recording(allow: &[Action]) -> Recording {
+        Recording {
+            allow: allow.to_vec(),
+            asked: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Each set asks the authorizer about its own kind of object (a sample of the active
+    /// organization), holds `read` and the write permissions by the answers, and is scoped to the
+    /// realm and the caller's organizations by the right field.
+    #[test]
+    fn a_sets_scope_asks_about_its_object_kind_and_filters_by_realm_and_organization() {
+        let principal = crate::authz::Principal {
+            subject: Some("u".into()),
+            organizations: vec!["hel".into()],
+            org_roles: HashMap::from([("hel".into(), vec!["org-admin".into()])]),
+            ..crate::authz::Principal::anonymous()
+        };
+        let ctx = RequestCtx::new("dev", principal).with_org("hel");
+        let kind = |set: &str| {
+            let auth = recording(&[]);
+            let scope = scope_for_context(&ctx, &auth, set);
+            assert!(!scope.holds("read"), "{set}");
+            let asked = auth.asked.lock().expect("lock").clone();
+            assert_eq!(asked.len(), 2, "{set}: read and update");
+            assert_eq!((asked[0].0, asked[1].0), (Action::Read, Action::Update));
+            assert_eq!(asked[0].1, asked[1].1);
+            serde_json::to_value(&asked[0].1).expect("json")
+        };
+        for (sets, want) in [
+            (
+                &[
+                    "Realms",
+                    "IdentityProviders",
+                    "SigningKeys",
+                    "RequiredActions",
+                ][..],
+                json!({"kind": "realm", "realm_id": "dev"}),
+            ),
+            (
+                &["Organizations", "OrganizationDomains", "BrandingBlocks"][..],
+                json!({"kind": "organization", "realm_id": "dev", "org_id": "hel"}),
+            ),
+            (
+                &[
+                    "People",
+                    "Memberships",
+                    "Credentials",
+                    "Consents",
+                    "WebAuthnCredentials",
+                    "EmailOutbox",
+                    "IdentityProviderLinks",
+                ][..],
+                json!({"kind": "person", "realm_id": "dev", "org_id": "hel", "person_id": "*"}),
+            ),
+            (
+                &["Sessions", "ClientSessions", "OfflineSessions"][..],
+                json!({"kind": "session", "realm_id": "dev", "org_id": "hel", "person_id": "*"}),
+            ),
+            (
+                &["Events", "AdminEvents"][..],
+                json!({"kind": "audit", "realm_id": "dev", "org_id": "hel"}),
+            ),
+        ] {
+            for set in sets {
+                assert_eq!(kind(set), want, "{set}");
+            }
+        }
+        for (set, k, id_field) in [
+            ("Groups", "group", "group_id"),
+            ("GroupMembers", "group", "group_id"),
+            ("Roles", "role", "role_id"),
+            ("RoleMappings", "role", "role_id"),
+            ("Applications", "application", "client_id"),
+            ("ProtocolMappers", "application", "client_id"),
+            ("ClientScopes", "clientScope", "scope_id"),
+        ] {
+            let got = kind(set);
+            assert_eq!(got["kind"], k, "{set}");
+            assert_eq!(got[id_field], "*", "{set}");
+            assert_eq!(got["org_id"], "hel", "{set}");
+        }
+
+        let reader = recording(&[Action::Read]);
+        let scope = scope_for_context(&ctx, &reader, "People");
+        assert!(scope.holds("read") && !scope.holds("write:Person"));
+        let writer = recording(&[Action::Read, Action::Update]);
+        let scope = scope_for_context(&ctx, &writer, "People");
+        for p in [
+            "read",
+            "write:Realm",
+            "write:Person",
+            "write:Session",
+            "write:ClientScope",
+        ] {
+            assert!(scope.holds(p), "{p}");
+        }
+        let paths = |set: &str| -> Vec<(Vec<String>, Vec<Value>)> {
+            scope_for_context(&ctx, &writer, set)
+                .restrictions
+                .into_iter()
+                .map(|r| (r.path, r.any_of))
+                .collect()
+        };
+        let dev = || vec![json!("dev")];
+        let hel = || vec![json!("hel")];
+        assert_eq!(paths("Realms"), [(vec!["id".to_owned()], dev())]);
+        assert_eq!(paths("SigningKeys"), [(vec!["realm_id".to_owned()], dev())]);
+        assert_eq!(
+            paths("Organizations"),
+            [
+                (vec!["realm_id".to_owned()], dev()),
+                (vec!["id".to_owned()], hel())
+            ]
+        );
+        assert_eq!(
+            paths("People"),
+            [
+                (vec!["realm_id".to_owned()], dev()),
+                (vec!["org_id".to_owned()], hel())
+            ]
+        );
+        let admin = RequestCtx::new("dev", crate::authz::Principal::realm_admin("a"));
+        let wide: Vec<_> = scope_for_context(&admin, &writer, "People")
+            .restrictions
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        assert_eq!(
+            wide,
+            [vec!["realm_id".to_owned()]],
+            "no organization filter realm-wide"
+        );
+    }
 }
