@@ -190,23 +190,6 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    #[derive(Clone, Default)]
-    struct Buffer(Arc<Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Buffer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
     /// One test at a time holds the process's window.
     static SERIAL: Mutex<()> = Mutex::new(());
 
@@ -214,11 +197,11 @@ mod tests {
     fn logged(f: impl FnOnce()) -> String {
         use tracing_subscriber::layer::SubscriberExt;
         let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
-        let buffer = Buffer::default();
-        let writer = buffer.clone();
+        use std::io::{Read as _, Seek as _};
+        let file = Arc::new(tempfile::tempfile().expect("a temporary log file"));
         let fmt = tracing_subscriber::fmt::layer()
             .with_ansi(false)
-            .with_writer(move || writer.clone())
+            .with_writer(Arc::clone(&file))
             .with_filter(tracing_subscriber::filter::filter_fn(|m| {
                 !is_slow_statement(m)
             }));
@@ -229,8 +212,11 @@ mod tests {
             f();
             flush(Instant::now() + WINDOW);
         });
-        String::from_utf8_lossy(&buffer.0.lock().unwrap_or_else(PoisonError::into_inner))
-            .into_owned()
+        let mut log = String::new();
+        let mut reader = &*file;
+        reader.rewind().expect("rewind the log");
+        reader.read_to_string(&mut log).expect("utf8 log");
+        log
     }
 
     /// sqlx's slow event, field for field (sqlx-core 0.9 logger.rs).
@@ -288,15 +274,24 @@ mod tests {
                 target: "sqlx::query",
                 summary = "update ledger set n = 5 where k = 'x' …",
                 db.statement = "  ",
+                db.system = "postgresql",
                 elapsed_secs = 3.0,
+                rows_secs = 0.5,
                 slow_threshold = ?Duration::from_secs(1),
                 "slow statement: execution time exceeded alert threshold"
             );
+            slow("select a from aardvark", 1.0);
         });
+        // One line per fingerprint, in fingerprint order.
+        let order: Vec<usize> = ["select a from aardvark", "update ledger"]
+            .iter()
+            .map(|f| log.find(f).expect(f))
+            .collect();
+        assert!(order[0] < order[1], "{log}");
         let line = log
             .lines()
             .find(|l| l.contains("jc::slow_statement") && l.contains("ledger"))
-            .unwrap_or_else(|| panic!("{log}"));
+            .expect("a folded ledger line");
         assert!(
             line.contains("update ledger set n = ? where k = ?"),
             "{log}"

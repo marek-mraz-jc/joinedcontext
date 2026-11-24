@@ -681,7 +681,12 @@ struct Net {
     http: reqwest::blocking::Client,
     kubeconfig: Option<PathBuf>,
     portal_database_url: Option<String>,
+    /// The certificate transparency search ([`CT_BASE`]).
+    ct_base: String,
 }
+
+/// crt.sh, the certificate transparency search the weekly count reads.
+const CT_BASE: &str = "https://crt.sh";
 
 impl Net {
     fn new(
@@ -710,6 +715,7 @@ impl Net {
             http,
             kubeconfig,
             portal_database_url,
+            ct_base: CT_BASE.to_owned(),
         })
     }
 
@@ -851,7 +857,10 @@ impl World for Net {
         }
         // `%.<domain>`: every subdomain; the bare name matches certificates naming exactly it, which
         // undercounts (2026-11-15: nothing after 2026-10-10 for joinedcontext.com).
-        let url = format!("https://crt.sh/?q=%25.{domain}&output=json&exclude=expired");
+        let url = format!(
+            "{}/?q=%25.{domain}&output=json&exclude=expired",
+            self.ct_base
+        );
         let body = self
             .http
             .get(url)
@@ -1440,6 +1449,206 @@ hosts = { portal = "smartcity.nitra.sk" }
             "{}",
             text(&r)
         );
+    }
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|a| (*a).to_owned()).collect()
+    }
+
+    #[test]
+    fn the_command_answers_2_on_bad_usage_and_1_when_nothing_can_be_checked() {
+        assert_eq!(command(&args(&[])), 2);
+        assert_eq!(command(&args(&["records"])), 2);
+        assert_eq!(command(&args(&["domains"])), 2, "--config is required");
+        assert_eq!(command(&args(&["domains", "--edge", "not-an-ip"])), 2);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jc.toml");
+        let p = path.to_str().unwrap();
+        assert_eq!(
+            command(&args(&["domains", "--config", p])),
+            2,
+            "no such file"
+        );
+        std::fs::write(&path, "base_domain = [1]\n").unwrap();
+        assert_eq!(
+            command(&args(&["domains", "--config", p])),
+            2,
+            "not jc.toml"
+        );
+        // A config without a base domain reads, and reports that nothing can be checked: no
+        // network call is made.
+        std::fs::write(&path, "role = \"all\"\n").unwrap();
+        assert_eq!(
+            command(&args(&["domains", "--config", p, "--edge", "192.0.2.1"])),
+            1
+        );
+    }
+
+    /// An HTTP listener on its own thread and runtime, for the blocking client.
+    fn serve(router: axum::Router) -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                axum::serve(listener, router).await.unwrap();
+            });
+        });
+        addr
+    }
+
+    /// A port nothing listens on, held for the test's life.
+    fn refused() -> (std::net::SocketAddr, tokio::net::TcpSocket) {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        (socket.local_addr().unwrap(), socket)
+    }
+
+    #[test]
+    fn the_http01_probe_returns_the_status_the_host_answers() {
+        let net = Net::new(None, None).unwrap();
+        let addr = serve(axum::Router::new().route(
+            "/.well-known/acme-challenge/jc-doctor-probe",
+            axum::routing::get(|| async { axum::http::StatusCode::NOT_FOUND }),
+        ));
+        assert_eq!(net.http01(&addr.to_string()), Ok(404));
+        let (gone, _held) = refused();
+        assert!(net.http01(&gone.to_string()).is_err());
+        // Without a kubeconfig or the Portal's database those checks are not asked.
+        assert!(net.certificates().is_none());
+        assert!(net.registry().is_none());
+    }
+
+    #[test]
+    fn the_weekly_count_counts_distinct_serials_of_the_last_seven_days() {
+        let mut net = Net::new(None, None).unwrap();
+        let recent = civil(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                - 86_400,
+        );
+        let body = serde_json::json!([
+            {"serial_number": "a1", "not_before": recent, "id": 1},
+            {"serial_number": "a1", "not_before": recent, "id": 2},
+            {"serial_number": "b2", "not_before": recent, "id": 3},
+            {"serial_number": "c3", "not_before": "2020-01-01T00:00:00", "id": 4},
+        ]);
+        let addr = serve(
+            axum::Router::new()
+                .route(
+                    "/",
+                    axum::routing::get(move |q: axum::extract::RawQuery| {
+                        let body = body.clone();
+                        async move {
+                            assert_eq!(
+                                q.0.as_deref(),
+                                Some("q=%25.city.example&output=json&exclude=expired")
+                            );
+                            axum::Json(body)
+                        }
+                    }),
+                )
+                .route(
+                    "/busy/",
+                    axum::routing::get(|| async { axum::http::StatusCode::BAD_GATEWAY }),
+                )
+                .route("/junk/", axum::routing::get(|| async { "<html>" })),
+        );
+        net.ct_base = format!("http://{addr}");
+        assert_eq!(net.issued_last_week("city.example"), Ok(2));
+        net.ct_base = format!("http://{addr}/busy");
+        assert!(
+            net.issued_last_week("city.example")
+                .unwrap_err()
+                .contains("502")
+        );
+        net.ct_base = format!("http://{addr}/junk");
+        assert!(
+            net.issued_last_week("city.example")
+                .unwrap_err()
+                .starts_with("crt.sh answer")
+        );
+    }
+
+    #[test]
+    fn a_kubeconfig_or_database_that_does_not_answer_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let net = Net::new(Some(dir.path().join("missing-kubeconfig")), None).unwrap();
+        let e = net.certificates().expect("asked").unwrap_err();
+        assert!(e.starts_with("kubectl"), "{e}");
+        let (gone, _held) = refused();
+        let url = format!("postgres://portal:pw-not-shown@{gone}/portal");
+        let net = Net::new(None, Some(url)).unwrap();
+        let e = net.registry().expect("asked").unwrap_err();
+        assert_eq!(
+            e,
+            "the Portal's database (JC_PORTAL_DATABASE_URL) refused the connection"
+        );
+    }
+
+    /// The registry read against a real Portal table. Runs when `JC_PG_TEST_DATABASE_URL`
+    /// names a superuser connection (as tests/restart_pg.rs).
+    #[test]
+    fn the_registry_rows_come_from_the_portals_organization_hosts() {
+        let Ok(admin) = std::env::var("JC_PG_TEST_DATABASE_URL") else {
+            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
+            return;
+        };
+        let db = format!("doctor{}", std::process::id());
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let url = rt.block_on(async {
+            let pool = sqlx::PgPool::connect(&admin).await.unwrap();
+            for q in [
+                format!("DROP DATABASE IF EXISTS {db}"),
+                format!("CREATE DATABASE {db}"),
+            ] {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(q))
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            let mut url = url::Url::parse(&admin).unwrap();
+            url.set_path(&db);
+            let pool = sqlx::PgPool::connect(url.as_str()).await.unwrap();
+            sqlx::raw_sql(
+                "CREATE TABLE organization_hosts (host text, organization text, state text);
+                 INSERT INTO organization_hosts VALUES
+                   ('portal.b.test', 'b', 'active'), ('portal.a.test', 'a', 'removed');",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            url.to_string()
+        });
+        let net = Net::new(None, Some(url.clone())).unwrap();
+        let rows = net.registry().expect("asked").unwrap();
+        let got: Vec<(&str, &str, &str)> = rows
+            .iter()
+            .map(|r| (r.host.as_str(), r.organization.as_str(), r.state.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("portal.a.test", "a", "removed"),
+                ("portal.b.test", "b", "active")
+            ]
+        );
+        // A database without the Portal's table says what failed.
+        let mut other = url::Url::parse(&admin).unwrap();
+        other.set_path("postgres");
+        let net = Net::new(None, Some(other.to_string())).unwrap();
+        let e = net.registry().expect("asked").unwrap_err();
+        assert!(e.contains("organization_hosts"), "{e}");
     }
 
     #[test]

@@ -202,6 +202,8 @@ mod forge_tests {
                 let main = String::from_utf8_lossy(&body).contains("\"branch\":\"main\"")
                     || String::from_utf8_lossy(&body).contains("\"default_branch\":\"main\"");
                 seen.lock().unwrap().push(format!("{call} {authed} {main}"));
+                // 0: the connection drops without an answer (the task ends mid-request).
+                assert_ne!(status, 0, "shako drops the connection");
                 axum::http::StatusCode::from_u16(status)
                     .unwrap()
                     .into_response()
@@ -308,6 +310,22 @@ mod forge_tests {
             assert!(e.contains(call) && e.contains(status), "{e}");
             let token = setup.value(Secret::ShakoToken).unwrap();
             assert!(!e.contains(token), "{e}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_connection_dropped_mid_provisioning_names_the_call() {
+        let cases: [(Script, &str); 3] = [
+            (&[("POST", 0)], "POST "),
+            (&[("POST", 201), ("GET contents", 0)], "GET "),
+            (&[("POST", 201), ("PUT", 0)], "PUT "),
+        ];
+        for (script, call) in cases {
+            let (addr, _calls) = shako(script).await;
+            let (siblings, setup, _dir) = fixture(Some(addr), &Module::ALL);
+            let e = forge(&siblings, &setup).await.unwrap_err().to_string();
+            assert!(e.contains(&format!("{call}http://")), "{e}");
+            assert!(!e.contains("answered"), "{e}");
         }
     }
 

@@ -405,6 +405,11 @@ mod tests {
         assert!(e.starts_with("url must not carry a password"), "{e}");
         s.url = "postgres://antares_app@db:notaport/jc".into();
         assert!(s.app_options().unwrap_err().contains("does not parse"));
+        // A URL the URL parser takes and the Postgres driver does not.
+        let e = section("postgres://antares_app@db/jc?sslmode=sometimes")
+            .validate()
+            .unwrap_err();
+        assert_eq!(e, "url is not a Postgres URL");
     }
 
     /// T-7488 against a real server: each unsafe request login is refused with the reason and

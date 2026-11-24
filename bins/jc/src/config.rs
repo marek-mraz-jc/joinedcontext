@@ -1627,7 +1627,12 @@ fn remote_modules(
 #[must_use]
 #[allow(clippy::disallowed_methods)] // The one reader.
 pub fn process_env() -> BTreeMap<String, String> {
-    std::env::vars()
+    own_env(std::env::vars())
+}
+
+/// The keys of `vars` [`process_env`] keeps.
+fn own_env(vars: impl IntoIterator<Item = (String, String)>) -> BTreeMap<String, String> {
+    vars.into_iter()
         .filter_map(|(k, v)| {
             if k == REFUSED_MODEL_KEY {
                 // The proxy's own name for the model key is read only to refuse it: its value is
@@ -1654,6 +1659,11 @@ const REFUSED_MODEL_KEY: &str = "JC_MODEL_KEY";
 #[must_use]
 #[allow(clippy::disallowed_methods)] // The one reader, for the assistant's keys.
 pub fn assistant_env(key: &str) -> Option<String> {
+    assistant_value(key, |k| std::env::var(k).ok())
+}
+
+/// [`assistant_env`] over `read`: an allowed key's value, when it holds more than blanks.
+fn assistant_value(key: &str, read: impl Fn(&str) -> Option<String>) -> Option<String> {
     let allowed = key.starts_with("JC_ASSISTANT_")
         || key.starts_with("JC_DAILY_TOKENS_")
         || matches!(
@@ -1663,10 +1673,7 @@ pub fn assistant_env(key: &str) -> Option<String> {
     if !allowed {
         return None;
     }
-    match std::env::var(key) {
-        Ok(v) if !v.trim().is_empty() => Some(v),
-        _ => None,
-    }
+    read(key).filter(|v| !v.trim().is_empty())
 }
 
 /// One key of the Portal's or the gateway's own configuration (`JC_*`), as the standalone
@@ -2149,16 +2156,15 @@ mod tests {
     fn no_jc_key_starts_with_jc_underscore() {
         // The Portal reads bare JC_* keys; jc's own must never collide with them.
         let cmd = Cli::command();
-        let mut seen = 0;
-        for arg in cmd.get_arguments() {
-            if let Some(env) = arg.get_env() {
-                let env = env.to_string_lossy();
-                // JCBIN_ never collides with the Portal's JC_* keys.
-                assert!(env.starts_with("JCBIN_"), "{env} must start with JCBIN_");
-                seen += 1;
-            }
-        }
-        assert!(seen >= 10, "every flag reads a JCBIN_ variable");
+        let envs: Vec<String> = cmd
+            .get_arguments()
+            .filter_map(|arg| arg.get_env())
+            .map(|env| env.to_string_lossy().into_owned())
+            .collect();
+        // JCBIN_ never collides with the Portal's JC_* keys.
+        let foreign: Vec<&String> = envs.iter().filter(|e| !e.starts_with("JCBIN_")).collect();
+        assert_eq!(foreign, Vec::<&String>::new());
+        assert!(envs.len() >= 10, "every flag reads a JCBIN_ variable");
     }
 
     #[test]
@@ -2540,7 +2546,15 @@ path_prefix = "/api/endpoint"
             "JCBIN_DATAROOM_PORTAL_TOKEN".to_owned(),
             "a-static-token".to_owned(),
         )]);
-        assert!(Secrets::load_from(&cfg, &env).is_ok(), "no file is opened");
+        let log = crate::captured(|| {
+            assert!(Secrets::load_from(&cfg, &env).is_ok(), "no file is opened");
+        });
+        assert!(
+            log.contains("deprecated and not read")
+                && log.contains("JCBIN_DATAROOM_PORTAL_TOKEN, [[organizations]] alpha"),
+            "{log}"
+        );
+        assert!(!log.contains("a-static-token"), "{log}");
         assert_eq!(
             unread_publisher_tokens(&cfg, &env),
             [
@@ -2583,18 +2597,14 @@ path_prefix = "/api/endpoint"
                 }
             };
             let from_file = Secrets::load_from(&with_file, &BTreeMap::new()).unwrap();
-            let Some(g) = given(&from_file) else {
-                panic!("{name}")
-            };
+            let g = given(&from_file).expect(name);
             assert_eq!(
                 (g.secret.expose(), g.source),
                 ("from-the-file", jc_secret::Source::File)
             );
             let env_only = Config::merge(cli(&["--role", "all"]), FileConfig::default()).unwrap();
             let from_env = Secrets::load_from(&env_only, &value).unwrap();
-            let Some(g) = given(&from_env) else {
-                panic!("{name}")
-            };
+            let g = given(&from_env).expect(name);
             assert_eq!(
                 (g.secret.expose(), g.source),
                 ("from-the-env", jc_secret::Source::Env)
@@ -2645,6 +2655,19 @@ path_prefix = "/api/endpoint"
         assert_eq!(assistant_env("JC_MODEL_KEY_FILE"), None);
         assert_eq!(assistant_env("JC_OIDC_CLIENT_SECRET"), None);
         assert_eq!(assistant_env("JC_ASSISTANT_UNSET_IN_TESTS"), None);
+        // A set value is handed on; a blank one counts as unset; a refused key is never read.
+        let read = |k: &str| match k {
+            "JC_MODEL_BASE" => Some("https://models.example/v1".to_owned()),
+            "JC_ASSISTANT_TITLE" => Some("  ".to_owned()),
+            _ => Some("read".to_owned()),
+        };
+        assert_eq!(
+            assistant_value("JC_MODEL_BASE", read).as_deref(),
+            Some("https://models.example/v1")
+        );
+        assert_eq!(assistant_value("JC_ASSISTANT_TITLE", read), None);
+        assert_eq!(assistant_value("JC_MODEL_KEY", read), None);
+        assert_eq!(assistant_value("PATH", read), None);
         assert_eq!(antares_env("ANTARES_UNSET_IN_TESTS"), None);
         assert_eq!(secrets.report(), [("model-key", jc_secret::Source::File)]);
     }
@@ -2653,12 +2676,27 @@ path_prefix = "/api/endpoint"
     /// Dataroom alone needs no secret from it.
     #[test]
     fn the_process_environment_gives_only_jcs_own_names() {
-        for (k, v) in process_env() {
-            let ours = k.starts_with("JCBIN_")
-                || k.starts_with(EKIBEN_VAR_PREFIX)
-                || k.starts_with("DAIYA_VAR_");
-            assert!(ours || (k == REFUSED_MODEL_KEY && v.is_empty()), "{k}");
-        }
+        let pair = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+        let kept = own_env([
+            pair("JCBIN_ROLE", "all"),
+            pair("EKIBEN_VAR_TOKEN", "t"),
+            pair("DAIYA_VAR_URL", "u"),
+            pair(REFUSED_MODEL_KEY, "a-model-key"),
+            pair("JC_PORTAL_BROKER_URL", "p"),
+            pair("HOME", "/root"),
+            pair("jcbin_role", "lower"),
+        ]);
+        // The refused model key is kept by name only, to refuse it; its value is dropped.
+        assert_eq!(
+            kept,
+            BTreeMap::from([
+                pair("DAIYA_VAR_URL", "u"),
+                pair("EKIBEN_VAR_TOKEN", "t"),
+                pair("JCBIN_ROLE", "all"),
+                pair(REFUSED_MODEL_KEY, ""),
+            ])
+        );
+        assert!(process_env().keys().all(|k| !k.starts_with("JC_PORTAL_")));
         let cfg = Config::merge(cli(&["--role", "dataroom"]), FileConfig::default()).unwrap();
         assert!(
             Secrets::load(&cfg)

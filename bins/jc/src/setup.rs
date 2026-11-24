@@ -844,6 +844,28 @@ mod tests {
             .filter(|m| m["config"]["included.custom.audience"] == ASSISTANT_CLIENT)
             .collect();
         assert_eq!(named.len(), 1, "{portal}");
+        // A Portal client shipped without mappers gets the list; files without it are left.
+        let mut bare = vec![
+            ("a.json".to_owned(), json!({"realm": "x"})),
+            (
+                "b.json".to_owned(),
+                json!({"clients": [{"clientId": PORTAL_CLIENT}]}),
+            ),
+        ];
+        add_assistant_audience(&mut bare);
+        assert_eq!(bare[0].1, json!({"realm": "x"}));
+        let mappers = bare[1].1["clients"][0]["protocolMappers"]
+            .as_array()
+            .unwrap();
+        assert_eq!(mappers.len(), 1);
+        assert_eq!(
+            mappers[0]["config"]["included.custom.audience"],
+            ASSISTANT_CLIENT
+        );
+        // No Portal client at all: nothing changes.
+        let mut other = vec![("c.json".to_owned(), json!({"clients": [{"clientId": "x"}]}))];
+        add_assistant_audience(&mut other);
+        assert_eq!(other[0].1, json!({"clients": [{"clientId": "x"}]}));
     }
 
     #[test]
@@ -889,6 +911,37 @@ mod tests {
 
     fn none() -> BTreeMap<Secret, Given> {
         BTreeMap::new()
+    }
+
+    #[test]
+    fn a_state_dir_that_cannot_be_made_or_a_stale_file_that_cannot_go_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a-file");
+        std::fs::write(&file, "x").unwrap();
+        // A state directory under a regular file cannot be created.
+        let e = private_dir(&file.join("state")).unwrap_err().to_string();
+        assert!(e.contains("cannot create state dir"), "{e}");
+        let e = Setup::prepare(&file.join("state"), &Module::ALL, &BTreeMap::new())
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("a-file"), "{e}");
+        // A directory where an old secret file was is no file to remove: named, not skipped.
+        let stale = dir.path().join("stale");
+        std::fs::create_dir(&stale).unwrap();
+        let e = remove_stale(&stale).unwrap_err().to_string();
+        assert!(e.contains("cannot remove") && e.contains("stale"), "{e}");
+        // A file that is there goes, and a missing one is fine.
+        assert!(remove_stale(&file).is_ok() && !file.exists());
+        assert!(remove_stale(&file).is_ok());
+    }
+
+    #[test]
+    fn the_broker_takes_the_antares_admin_token_as_its_service_credential() {
+        assert_eq!(
+            Secret::service_credential(Module::Antares),
+            Some(Secret::AntaresAdminToken)
+        );
+        assert_eq!(Secret::service_credential(Module::Portal), None);
     }
 
     #[test]

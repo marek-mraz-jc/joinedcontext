@@ -159,7 +159,7 @@ impl Remote {
         if let Some((token, until)) = self
             .cache
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&module)
             && Instant::now() < *until
         {
@@ -175,7 +175,7 @@ impl Remote {
         .await?;
         self.cache
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(module, (token.clone(), Instant::now() + life));
         Ok(token)
     }
@@ -287,7 +287,9 @@ const LOCAL_TOKEN_SECONDS: i64 = 300;
 /// beside each other), started on first use; a failed start is retried on the next.
 pub fn local_issuer() -> Result<Arc<jc_door::issuer::LocalIssuer>, String> {
     static ISSUER: Mutex<Option<Arc<jc_door::issuer::LocalIssuer>>> = Mutex::new(None);
-    let mut held = ISSUER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut held = ISSUER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(issuer) = held.as_ref() {
         return Ok(Arc::clone(issuer));
     }
@@ -653,6 +655,45 @@ mod tests {
         let ok = remote(token_endpoint(StatusCode::OK, Arc::new(AtomicUsize::new(0))).await);
         let (_l, router) = ok
             .forward(Module::Ekiben, base, jc_secret::Secret::new("local".into()))
+            .await
+            .unwrap();
+        let (status, _, _) = call(router, None).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn a_body_over_the_cap_answers_413_and_a_cut_answer_502() {
+        let ok = remote(token_endpoint(StatusCode::OK, Arc::new(AtomicUsize::new(0))).await);
+        let (_l, router) = ok
+            .forward(
+                Module::Shako,
+                upstream().await,
+                jc_secret::Secret::new("local".into()),
+            )
+            .await
+            .unwrap();
+        let big = Request::builder()
+            .method("POST")
+            .uri("/upload")
+            .body(Body::from(vec![0u8; MAX_BODY_BYTES + 1]))
+            .unwrap();
+        let resp = router.oneshot(big).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        // A module that promises 100 bytes and closes after 5.
+        let cut = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", cut.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+            let (mut conn, _) = cut.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = conn.read(&mut buf).await.unwrap();
+            conn.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\nshort")
+                .await
+                .unwrap();
+        });
+        let (_l, router) = ok
+            .forward(Module::Shako, base, jc_secret::Secret::new("local".into()))
             .await
             .unwrap();
         let (status, _, _) = call(router, None).await;
