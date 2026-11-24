@@ -8,7 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
-import { handPrefill, takePrefill } from "../src/assistant/state";
+import { handPrefill } from "../src/assistant/state";
 import { findFormPage, queryFormPage } from "./formPage";
 import { jsonResponse, list, problem, renderRoute } from "./pageHarness";
 
@@ -308,9 +308,9 @@ describe("dashboards page, remaining branches", () => {
     window.history.pushState({}, "", `${PATH}?edit=air`);
     handPrefill(PATH, changed as unknown as Record<string, unknown>);
     await renderRoute({ path: `${PATH}?edit=air`, answer: answering() });
-    expect(await findFormPage(en.dashboards.edit)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Air renamed" })).toBeInTheDocument();
-    void takePrefill;
+    const form = await findFormPage(en.dashboards.edit);
+    // The form holds the assistant's manifest, not the stored one.
+    await waitFor(() => expect(within(form).getByDisplayValue("Air renamed")).toBeInTheDocument());
   });
 
   it("opens the layer a change was asked for from the lists when the assistant left no manifest", async () => {
