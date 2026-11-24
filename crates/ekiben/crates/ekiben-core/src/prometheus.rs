@@ -467,10 +467,9 @@ impl SeriesData {
                 let secs = ns as f64 / 1_000_000_000.0;
                 sum.add(secs);
                 count.fetch_add(1, Ordering::Relaxed);
+                // `counts` has one slot per bound; above the last bound only `+Inf` (the count) moves.
                 if let Some(i) = bounds.iter().position(|b| secs <= *b) {
-                    if let Some(c) = counts.get(i) {
-                        c.fetch_add(1, Ordering::Relaxed);
-                    }
+                    counts[i].fetch_add(1, Ordering::Relaxed);
                 }
             }
         }

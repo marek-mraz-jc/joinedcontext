@@ -268,7 +268,7 @@ async fn a_failed_read_ends_the_buffered_input_with_that_error() {
     let mut buffered = BufferedInput::new(input, Arc::new(MemoryBuffer::new(1024, Gauge::noop())));
     buffered.connect(&ctx).await.unwrap();
     assert_eq!(texts(&buffered.read_batch(&ctx).await.unwrap().0), ["a"]);
-    let err = buffered.read_batch(&ctx).await.unwrap_err();
+    let err = buffered.read_batch(&ctx).await.err().unwrap();
     assert!(err.to_string().contains("socket reset"), "{err}");
     // The error is reported once; the next read is a plain end.
     assert!(matches!(buffered.read_batch(&ctx).await, Err(CoreError::EndOfInput)));
@@ -378,7 +378,7 @@ async fn the_registry_builds_no_buffer_for_none_and_refuses_an_unknown_one() {
     assert!(reg.build_buffer(&conf(json!({"none": {}})), &ctx).unwrap().is_none());
     assert!(reg.build_buffer(&conf(json!({"memory": {}})), &ctx).unwrap().is_some());
     let err = reg.build_buffer(&conf(json!({"disk": {}})), &ctx).err().unwrap();
-    assert_eq!(err.to_string(), "type 'disk' was not recognised as a buffer");
+    assert!(err.to_string().ends_with("type 'disk' was not recognised as a buffer"), "{err}");
     // A registered constructor's own refusal comes back unchanged.
     let err = reg
         .build_buffer(&conf(json!({"memory": {"limit": 0}})), &ctx)
@@ -694,6 +694,19 @@ async fn a_batched_output_passes_identity_and_connection_through() {
     assert!(out.is_connected());
     // Closing with nothing waiting writes nothing.
     out.close().await.unwrap();
+    // A batching policy that batches nothing builds the plain output; a path outside `root.`
+    // names its processors' context as given.
+    let reg = Registry::new();
+    reg.register_output("collect", |_, _| Ok(Arc::new(Collect::default()) as Arc<dyn Output>));
+    reg.register_processor("bang", |_, _| Ok(Arc::new(Bang) as Arc<dyn Processor>));
+    let plain = reg
+        .build_output(&conf(json!({"collect": {"batching": {"count": 1}}})), &sctx)
+        .unwrap();
+    plain.write_batch(&sctx, parts(&["x"])).await.unwrap();
+    let custom = reg
+        .build_output_at(&conf(json!({"collect": {}, "processors": [{"bang": {}}]})), &sctx, "output_resources.sink")
+        .unwrap();
+    custom.write_batch(&sctx, parts(&["y"])).await.unwrap();
     assert!(inner.got.lock().unwrap().is_empty());
 }
 
@@ -857,6 +870,8 @@ fn backoff_reads_every_interval_and_refuses_a_bad_duration() {
     for key in ["initial_interval", "max_interval", "max_elapsed_time"] {
         assert!(BackoffConfig::from_json_value(&json!({ key: "soon" }), Duration::ZERO).is_err(), "{key}");
     }
+    let only_initial = BackoffConfig::from_json_value(&json!({"initial_interval": "2s"}), Duration::from_secs(3)).unwrap();
+    assert_eq!((only_initial.initial_interval, only_initial.max_elapsed_time), (Duration::from_secs(2), Duration::from_secs(3)));
     let d = BackoffConfig::from_json_value(&json!("not an object"), Duration::from_secs(9)).unwrap();
     assert_eq!(d.max_elapsed_time, Duration::from_secs(9));
 }
@@ -1103,7 +1118,7 @@ fn structured_reads_refuse_empty_missing_and_multi_document_parts() {
     assert_eq!(Part::from_str("1 2").as_structured_ref().unwrap_err(), "message contains multiple valid documents");
     assert!(Part::from_str("1 }").as_structured_ref().is_err());
     assert!(Part::from_str("{").as_structured_ref().is_err());
-    assert_eq!(Part::from_str("[1]").as_structured_ref().unwrap(), Value::Array(vec![Value::Int(1)]));
+    assert_eq!(Part::from_str("[1]").as_structured_ref().unwrap(), Value::Array(vec![Value::Int(1)].into()));
 }
 
 #[test]
@@ -1112,7 +1127,9 @@ fn size_estimates_cover_every_value_kind() {
     assert_eq!(size(Value::Uint(0)), 1);
     assert_eq!(size(Value::Uint(12345)), 5);
     assert_eq!(size(Value::Number("1.50".into())), 4);
-    assert_eq!(size(Value::Bytes(b"abc".to_vec())), 5);
+    // Bytes set as a structured value become raw bytes; inside an array they are estimated.
+    assert_eq!(size(Value::Bytes(b"abc".to_vec())), 3);
+    assert_eq!(size(Value::Array(vec![Value::Bytes(b"abc".to_vec())].into())), 5 + 1 + 2);
     assert_eq!(size(Value::String("abc".into())), 5);
     assert_eq!(size(Value::Float(1.0)), 24);
 }
@@ -1226,6 +1243,14 @@ fn stream_metrics_charge_time_and_count_errors_per_processor_path() {
     assert_eq!(m.get_counter("c0"), 1);
     let snap = m.snapshot_json(1);
     assert!(snap.to_string().contains("t0"));
+    // The per-path error counters are capped too: a path past the cap is not counted.
+    for i in 0..4100 {
+        m.register_processor_error(&format!("p{i}"), Namespaced::bare(exporter.clone()).counter("e"));
+    }
+    let late = Namespaced::bare(exporter.clone()).counter("late_error");
+    m.register_processor_error("p-late", late.clone());
+    m.incr_processor_error_at("", "p-late", 1);
+    assert_eq!(late.value(), 0.0);
 }
 
 #[test]
@@ -1342,7 +1367,9 @@ fn gauges_counters_and_vectors_ignore_wrong_kinds_and_invalid_input() {
     c.incr_f64(f64::NAN);
     c.incr_f64(1.5);
     assert_eq!(c.value(), 1.5);
-    assert_eq!(ekiben_core::Counter::noop().value(), 0.0);
+    let noop_counter = ekiben_core::Counter::noop();
+    noop_counter.incr_f64(1.0);
+    assert_eq!(noop_counter.value(), 0.0);
     // A name taken by another kind gives a no-op handle, before and after the family exists.
     let wrong = ns.gauge("hits");
     wrong.set(9);

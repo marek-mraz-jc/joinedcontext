@@ -130,7 +130,9 @@ async fn core_output_reaches_matching_subscribers_and_one_member_per_queue_group
     let mut b = Part::from_str("two");
     b.meta_set_str("zone", "south");
     out.write_batch(&c.sctx, vec![a, b]).await.unwrap();
-    let (p1, _) = read(&mut plain, &c).await;
+    let (p1, ack) = read(&mut plain, &c).await;
+    // A message without a reply subject is acked with nothing to answer.
+    ack.ack();
     let (p2, _) = read(&mut plain, &c).await;
     assert_eq!((text(&p1), text(&p2)), ("one".to_string(), "two".to_string()));
     assert_eq!(p1.meta_get_str("nats_subject"), "city.north");
@@ -186,7 +188,14 @@ async fn request_reply_gets_the_response_the_input_stored_or_its_ack() {
     let out = asking.await.unwrap().unwrap();
     assert_eq!(text(&out[0][0]), "pong");
     assert_eq!(out[0][0].meta_get_str("served_by"), "edge");
-    // Without a stored response the input answers `+ACK`.
+    // An empty stored response, or none, makes the input answer `+ACK`.
+    let pctx = c.pctx.clone();
+    let rr_empty = rr.clone();
+    let asking = tokio::spawn(async move { rr_empty.process_batch(&pctx, vec![Part::from_str("ping")]).await });
+    let (msg, ack) = read(&mut responder, &c).await;
+    msg.sync_response_store().unwrap().add(&[]);
+    ack.ack();
+    assert_eq!(text(&asking.await.unwrap().unwrap()[0][0]), "+ACK");
     let pctx = c.pctx.clone();
     let rr3 = rr.clone();
     let asking = tokio::spawn(async move { rr3.process_batch(&pctx, vec![Part::from_str("ping")]).await });
@@ -250,7 +259,10 @@ async fn core_components_stay_inside_the_organization_subject_prefix() {
         .reg
         .build_processor(&conf(json!({"nats_request_reply": {"urls": [url], "subject": "other.x"}})), &c.pctx, "0")
         .unwrap();
-    assert!(rr.process_batch(&c.pctx, vec![Part::from_str("x")]).await.is_err());
+    // The observed processor marks the message failed instead of asking.
+    let out = rr.process_batch(&c.pctx, vec![Part::from_str("x")]).await.unwrap();
+    let err = out[0][0].error_get().map(ToString::to_string).unwrap_or_default();
+    assert!(err.contains("outside organization prefix"), "{err}");
 }
 
 #[tokio::test]
@@ -279,7 +291,7 @@ async fn core_and_jetstream_configs_are_refused_with_the_field_named() {
         ("nats", json!({"urls": [url], "subject": "s", "nak_delay": "soon"}), "soon"),
         ("nats", json!({"subject": "s"}), "at least one URL"),
         ("nats_out", json!({"urls": [url]}), "nats output requires a 'subject' field"),
-        ("nats_out", json!({"urls": [url], "subject": "${! "}), "${!"),
+        ("nats_out", json!({"urls": [url], "subject": "${! "}), "does not parse"),
         ("nats_jetstream", json!({"urls": [url]}), "nats_jetstream output requires a 'subject' field"),
         ("nats_jetstream", json!({"urls": [url], "subject": "s", "max_in_flight": 0}), "max_in_flight must be a positive integer"),
         ("nats_jetstream", json!({"urls": [url], "subject": "s", "max_in_flight": "many"}), "max_in_flight must be a positive integer"),
@@ -366,6 +378,9 @@ async fn deliver_new_and_last_start_where_they_say() {
     new.close().await.unwrap();
     assert!(!new.is_connected());
     assert!(matches!(new.read_batch(&c.sctx).await, Err(CoreError::NotConnected)));
+    let (p, _) = read(&mut last, &c).await;
+    assert_eq!(text(&p), "3");
+    // Nothing left and the stream stopping: the waiting read ends.
     c.stop.send(true).unwrap();
     assert!(matches!(last.read_batch(&c.sctx).await, Err(CoreError::EndOfInput)));
 }
@@ -376,6 +391,8 @@ fn the_memory_cluster_pulls_acks_and_redelivers_by_consumer() {
     cl.publish_jetstream("a.1".into(), BTreeMap::new(), Bytes::from_static(b"x"));
     cl.publish_jetstream("b.1".into(), BTreeMap::new(), Bytes::from_static(b"y"));
     cl.ensure_consumer("c", "b.*", "all", 1);
+    // Ensuring it again keeps its position.
+    cl.ensure_consumer("c", "b.*", "new", 1);
     // Unknown consumers and sequences change nothing.
     assert!(cl.try_pull_jetstream("ghost").is_none());
     cl.ack_jetstream("ghost", 1);

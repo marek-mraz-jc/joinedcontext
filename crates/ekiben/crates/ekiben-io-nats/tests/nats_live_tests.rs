@@ -469,6 +469,55 @@ async fn nats_request_reply_on_a_live_server() {
 }
 
 #[tokio::test]
+async fn jetstream_connect_names_what_is_missing_and_reads_existing_consumer_filters() {
+    let Some(srv) = start_server("jetstream_missing", &[], &[]) else {
+        return;
+    };
+    let (reg, sctx, _) = make_ctx("org-a", Some("org_a"));
+    let connect_err = |v: serde_json::Value| {
+        let (reg, sctx) = (reg.clone(), sctx.clone());
+        async move {
+            let mut i = reg.build_input(&conf(v), &sctx).unwrap();
+            i.connect(&sctx).await.err().map(|e| e.to_string()).unwrap_or_default()
+        }
+    };
+    let err = connect_err(serde_json::json!({"nats_jetstream": {"urls": [srv.url], "subject": "org_a.none"}})).await;
+    assert!(err.contains("no JetStream stream holds subject 'org_a.none'"), "{err}");
+    let err = connect_err(serde_json::json!({"nats_jetstream": {"urls": [srv.url], "subject": "org_a.x", "stream": "NOPE"}})).await;
+    assert!(err.contains("failed to open JetStream stream 'NOPE'"), "{err}");
+    let err = connect_err(serde_json::json!({"nats_jetstream": {"urls": [srv.url], "bind": true, "durable": "d"}})).await;
+    assert!(err.contains("bind with only durable"), "{err}");
+    add_stream(&srv.url, "MULTI", &["org_a.m.>"]).await;
+    let stream = js(&srv.url).await.get_stream("MULTI").await.unwrap();
+    stream
+        .create_consumer(jetstream::consumer::pull::Config {
+            durable_name: Some("multi".into()),
+            filter_subjects: vec!["org_a.m.a".into(), "org_a.m.b".into()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    stream
+        .create_consumer(jetstream::consumer::pull::Config {
+            durable_name: Some("everything".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    // Bound consumers keep their own filters: several subjects, or the stream's when none.
+    for durable in ["multi", "everything"] {
+        let mut i = reg
+            .build_input(
+                &conf(serde_json::json!({"nats_jetstream": {"urls": [srv.url], "bind": true, "stream": "MULTI", "durable": durable}})),
+                &sctx,
+            )
+            .unwrap();
+        i.connect(&sctx).await.unwrap();
+        assert!(i.is_connected(), "{durable}");
+    }
+}
+
+#[tokio::test]
 async fn core_nats_input_and_output_on_a_live_server() {
     let Some(srv) = start_server("core_nats", &[], &[]) else {
         return;

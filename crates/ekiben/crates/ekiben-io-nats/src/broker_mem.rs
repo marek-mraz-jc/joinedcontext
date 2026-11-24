@@ -151,12 +151,11 @@ impl InMemoryNatsCluster {
             }
         }
         let mut rr = self.rr_counter.lock().unwrap();
+        // A group exists only once a member matched, so it is never empty.
         for indices in queue_groups.values() {
-            if !indices.is_empty() {
-                let chosen = indices[*rr % indices.len()];
-                *rr = rr.wrapping_add(1);
-                let _ = subs[chosen].tx.try_send(msg.clone());
-            }
+            let chosen = indices[*rr % indices.len()];
+            *rr = rr.wrapping_add(1);
+            let _ = subs[chosen].tx.try_send(msg.clone());
         }
     }
 
