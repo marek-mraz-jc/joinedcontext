@@ -1923,6 +1923,61 @@ fn policy_tenant() -> Result<antares_model::TenantId, String> {
     antares_model::TenantId::new_internal(crate::views::POLICY_TENANT).map_err(|e| e.to_string())
 }
 
+/// A store that refuses every call (a Postgres pool on a port nobody
+/// listens on): each read and write of the state answers the store's error,
+/// never an empty success.
+#[cfg(all(test, feature = "postgres"))]
+mod refusing_store {
+    use super::*;
+
+    fn refusing() -> AppState {
+        let pool = antares_sql::sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(300))
+            .connect_lazy("postgres://antares@127.0.0.1:1/antares")
+            .expect("a lazy pool parses");
+        let store = AnyStore::Pg(antares_sql::store::any::PgBackend::new(pool));
+        AppState::with_store("http://localhost:0".into(), Arc::new(store), "postgres")
+    }
+
+    #[tokio::test]
+    async fn every_entity_call_answers_the_stores_error() {
+        let st = refusing();
+        let t = antares_model::TenantId::try_from("refused".to_owned()).unwrap();
+        assert!(st.stored_type_names(&t).await.is_err());
+        assert!(st
+            .scan_entities(&t, &["T".to_owned()], &[], 0, 10)
+            .await
+            .is_err());
+        assert!(st
+            .mutate_entities(&t, &["urn:ngsi-ld:T:1".to_owned()], |_, _| true)
+            .await
+            .is_err());
+    }
+
+    #[cfg(feature = "views")]
+    #[tokio::test]
+    async fn every_document_call_answers_the_stores_error() {
+        let st = refusing();
+        let doc = serde_json::json!({"id": "v", "tenant": "refused"});
+        assert!(st.view_digests().await.is_err());
+        assert!(st.view_revision().await.is_err());
+        assert!(st.view_doc("v").await.is_err());
+        assert!(st.put_view_doc("v", doc.clone()).await.is_err());
+        assert!(st.delete_view_doc("v").await.is_err());
+        assert!(st.grant_docs().await.is_err());
+        assert!(st.grant_doc("g").await.is_err());
+        assert!(st.put_grant_doc("g", doc.clone()).await.is_err());
+        assert!(st.delete_grant_doc("g").await.is_err());
+        assert!(st.policy_docs().await.is_err());
+        assert!(st.policy_revision().await.is_err());
+        assert!(st.policy_doc("refused").await.is_err());
+        assert!(st.put_policy_doc("refused", doc).await.is_err());
+        assert!(st.delete_policy_doc("refused").await.is_err());
+        let t = antares_model::TenantId::try_from("refused".to_owned()).unwrap();
+        assert!(st.purge_tenant_documents(&t).await.is_err());
+    }
+}
+
 #[cfg(test)]
 mod jsonld_context_locality_5_13 {
     use super::*;

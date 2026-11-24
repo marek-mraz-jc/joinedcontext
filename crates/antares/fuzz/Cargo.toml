@@ -121,6 +121,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "body_bounds"
+path = "fuzz_targets/body_bounds.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "accept_header"
 path = "fuzz_targets/accept_header.rs"
 test = false
