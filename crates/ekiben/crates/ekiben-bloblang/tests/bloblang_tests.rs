@@ -843,6 +843,34 @@ fn a_failing_secret_argument_never_reaches_the_error() {
         .unwrap_err()
         .to_string();
     assert!(!err.contains(SECRET), "env leaked: {err}");
+    // A parser that quotes only the unread tail, and a value Rust escapes when it quotes it.
+    for (value, mapping, piece) in [
+        (
+            format!("2024{SECRET}"),
+            r#"root = env("K").ts_parse("2006")"#,
+            SECRET,
+        ),
+        (
+            format!("pa\"ss\\{SECRET}"),
+            r#"root = env("K").number()"#,
+            SECRET,
+        ),
+        (
+            format!("{SECRET}x"),
+            r#"root = env("K").ts_strptime("%Y")"#,
+            SECRET,
+        ),
+    ] {
+        let err = Environment::new()
+            .with_env_vars([("K".to_string(), value)].into_iter().collect())
+            .compile_mapping(mapping)
+            .unwrap()
+            .execute_bytes(b"{}")
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains(piece), "{mapping} leaked: {err}");
+        assert!(err.contains("[redacted]"), "{mapping}: {err}");
+    }
 }
 
 #[test]

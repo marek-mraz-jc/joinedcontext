@@ -248,21 +248,47 @@ pub(crate) fn eval_method(
     ctx: &mut EvalContext<'_, '_>,
 ) -> Result<Value, String> {
     let res = eval_method_inner(target_expr, name, args, ctx);
-    // Bento quotes a failing value in its error (`parsing "<value>"`); a value read straight from
-    // env() or file() is often a credential, and errors reach logs and DLQ metadata, so its text
-    // is replaced. ponytail: a value passed through a variable first is not traced.
+    // Bento quotes a failing value in its error (`parsing "<value>"`, `extra text "<tail>"`); a
+    // value read straight from env() or file() is often a credential, and errors reach logs and DLQ
+    // metadata, so its raw text and every quoted piece of the error (escaped or a fragment) are
+    // replaced. ponytail: a value passed through a variable first is not traced.
     match (res, target_expr) {
         (Err(e), Expr::FunctionCall { name: f, .. }) if SECRET_SOURCES.contains(&f.as_str()) => {
-            match ctx.eval_expr(target_expr) {
-                Ok(Value::String(v)) if !v.is_empty() => Err(e.replace(&v, "[redacted]")),
+            let e = match ctx.eval_expr(target_expr) {
+                Ok(Value::String(v)) if !v.is_empty() => e.replace(&v, "[redacted]"),
                 Ok(Value::Bytes(b)) if !b.is_empty() => {
-                    Err(e.replace(&*String::from_utf8_lossy(&b), "[redacted]"))
+                    e.replace(&*String::from_utf8_lossy(&b), "[redacted]")
                 }
-                _ => Err(e),
-            }
+                _ => e,
+            };
+            Err(redact_quoted(&e))
         }
         (res, _) => res,
     }
+}
+
+/// Replaces each `"..."` (with backslash escapes) and `'...'` segment of an error by `"[redacted]"`.
+fn redact_quoted(e: &str) -> String {
+    let mut out = String::with_capacity(e.len());
+    let mut chars = e.chars();
+    while let Some(c) = chars.next() {
+        if c != '"' && c != '\'' {
+            out.push(c);
+            continue;
+        }
+        // An unterminated quote runs to the end, so the rest is dropped too.
+        let mut escaped = false;
+        for d in chars.by_ref() {
+            match d {
+                _ if escaped => escaped = false,
+                '\\' if c == '"' => escaped = true,
+                _ if d == c => break,
+                _ => {}
+            }
+        }
+        out.push_str("\"[redacted]\"");
+    }
+    out
 }
 
 /// Functions whose answer can hold a secret (an environment variable, a mounted file).
