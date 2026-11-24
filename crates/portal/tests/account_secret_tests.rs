@@ -470,7 +470,7 @@ async fn each_refusal_before_keycloak_names_its_reason_and_generates_nothing() {
 async fn keycloak_without_the_client_or_the_secret_says_so_and_a_lost_record_keeps_the_secret() {
     let keycloak = realm().await;
     let (config, state) = state(&keycloak);
-    for name in ["fresh", "gone", "mute", "quiet"] {
+    for name in ["fresh", "gone", "mute", "quiet", "hush"] {
         state.mirror.upsert(account(
             name,
             json!([{ "kind": "oauth-client", "name": "main" }]),
@@ -489,6 +489,15 @@ async fn keycloak_without_the_client_or_the_secret_says_so_and_a_lost_record_kee
         "quiet",
         "uuid-quiet",
         json!({ "type": "secret", "value": "quiet-secret" }),
+    )
+    .await;
+    // `hush`'s realm does not answer for its service-account user at all (no route): the
+    // secret is still answered, and its earlier tokens stay valid until they expire.
+    managed_client(
+        &keycloak,
+        "hush",
+        "uuid-hush",
+        json!({ "type": "secret", "value": "hush-secret" }),
     )
     .await;
     // The realm names no user for the account's client: the secret is still issued, and no
@@ -527,4 +536,7 @@ async fn keycloak_without_the_client_or_the_secret_says_so_and_a_lost_record_kee
     let issued: Value = serde_json::from_str(&body).expect("json");
     assert_eq!(issued["clientSecret"], "quiet-secret", "{issued}");
     assert_eq!(issued["clientId"], "ovzdusie-quiet", "{issued}");
+    let (status, _, body) = call(&state, &config, ana(), "POST", &secret_of("hush")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("hush-secret"), "{body}");
 }
