@@ -80,6 +80,7 @@ declare const JCRender: {
   live(data: unknown, lang: string): string | null;
   csv(table: { columns: string[]; rows: unknown[][] } | null): string | null;
   csvName(caption: string | null | undefined): string;
+  retryable(word: string): boolean;
   resetAt(seconds: unknown, lang: string, now?: number): string | null;
 };
 export default JCRender;

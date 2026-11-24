@@ -1559,7 +1559,10 @@ async fn a_stopped_answer_ends_its_model_loop_records_its_spend_and_frees_its_sl
         .fetch_one(&mut *tx)
         .await
         .expect("one");
-    assert_eq!(tokens, 100, "the finished router call is spent, the cut one is not");
+    assert_eq!(
+        tokens, 100,
+        "the finished router call is spent, the cut one is not"
+    );
     drop(tx);
     // The slot is free: the same visitor asks again at once and is answered.
     let mut again = ask(json!({"message": "A v sobotu?"}), None);

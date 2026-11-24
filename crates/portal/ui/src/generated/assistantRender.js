@@ -376,7 +376,7 @@ var JCRender = (function () {
   // widget's languages; any other key is spelt out from its camelCase.
   // One label table with the CKAN publisher and theme (T-4661): jc-core's field-order.json,
   // which the server puts before this script as JC_FIELDS and `node --test` reads as a file.
-  var FIELDS = typeof JC_FIELDS !== "undefined" ? JC_FIELDS : require("../../jc-core/data/field-order.json");
+  var FIELDS = typeof JC_FIELDS !== "undefined" ? JC_FIELDS : null;
   var LABELS = FIELDS.labels;
   var TYPES = {
     AirQualityObserved: { sk: "Kvalita ovzdušia", cs: "Kvalita ovzduší", en: "Air quality", de: "Luftqualität" },

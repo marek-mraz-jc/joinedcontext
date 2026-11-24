@@ -1170,6 +1170,9 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
     const time = new Intl.DateTimeFormat("de", { hour: "numeric", minute: "2-digit" }).format(new Date(before + 3600e3));
     expect(alert).toHaveTextContent(`Der Assistent hat sein Limit erreicht. Versuchen Sie es nach ${time} erneut.`);
     expect(alert).not.toHaveTextContent("denný limit");
+    // Nothing changes before the limit resets: no Try again, the question stays in the box.
+    expect(within(dialog).queryByRole("button", { name: /Erneut|Try again/ })).toBeNull();
+    expect(within(dialog).getAllByRole("textbox")[0]).toHaveValue("PM10?");
   });
 
   it("gives the frame to paste for a public assistant", async () => {

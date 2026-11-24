@@ -395,9 +395,9 @@ export function AssistantChat({
     setFailure(null);
     setLast(null);
     // The question comes back into the box when no answer does, to resend or reword (T-4160, finding 122).
-    const missed = () => {
+    const missed = (again = true) => {
       setQuestion((now) => (now === "" ? message : now));
-      setLast(message);
+      if (again) setLast(message);
     };
     setBusy(true);
     const controller = new AbortController();
@@ -413,7 +413,9 @@ export function AssistantChat({
           connectors: connectors.length > 0 ? on : undefined,
         },
         (name, data) => {
-          if (name === "error") missed();
+          // A limit, a full conversation or a declined question offers no Try again: nothing
+          // changes before it resets (T-4671).
+          if (name === "error") missed(JCRender.retryable(JCRender.reduce(undefined, name, data).error?.word ?? "failed"));
           update((turn) => {
             const state = JCRender.reduce(turn.state, name, data, Date.now() - turn.started);
             if (state.conversation) conversation.current = state.conversation;
