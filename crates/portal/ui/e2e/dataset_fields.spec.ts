@@ -137,7 +137,7 @@ for (const width of [1440, 400]) {
       expect(await axeViolations(page)).toEqual([]);
 
       await dialog.getByRole("button", { name: "Preview the entry" }).click();
-      await expect(group.getByText("Your organization requires this field: fill it.")).toBeVisible();
+      await expect(group.getByText("Your organization requires this field. Fill it in.")).toBeVisible();
       await shoot(page, info, "fields-required", width);
       expect(await axeViolations(page)).toEqual([]);
 

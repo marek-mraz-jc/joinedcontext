@@ -34,13 +34,13 @@ export const FREQUENCIES = [
 export type CatalogBlock = Record<string, unknown>;
 
 /** One of the Organization's own dataset fields (`spec.datasetFields`, T-7746), as the draft offers them. */
-export interface DatasetField {
+export type DatasetField = {
   name: string;
   label: Record<string, string>;
   type: "text" | "number" | "date" | "url" | "enum";
   values?: string[];
   required?: boolean;
-}
+};
 
 export interface PublishForm {
   /** The language the texts below are in: the draft's keyword language, else the reader's. */

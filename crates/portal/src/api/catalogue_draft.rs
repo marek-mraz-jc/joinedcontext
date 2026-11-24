@@ -65,7 +65,7 @@ pub struct CatalogueDraft {
     pub attributes: Vec<DraftAttribute>,
     /// The project's own Organization's dataset fields (`spec.datasetFields`, T-7746), which the
     /// form fills into `catalog.fields`; never another Organization's.
-    #[schema(value_type = Vec<Object>)]
+    #[schema(value_type = Vec<std::collections::HashMap<String, serde_json::Value>>)]
     #[serde(default)]
     pub dataset_fields: Vec<jc_core::kinds::DatasetField>,
 }

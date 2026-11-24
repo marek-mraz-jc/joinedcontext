@@ -9921,12 +9921,12 @@
         "email": "Enter an e-mail address such as opendata@example.org.",
         "period": "The end of the period cannot be before its start. Pick an end date after the start.",
         "title": "Give the dataset a title.",
-        "fieldRequired": "Your organization requires this field: fill it.",
+        "fieldRequired": "Your organization requires this field. Fill it in.",
         "field": {
-          "text": "Write one line of text.",
-          "number": "Write a number.",
+          "text": "Enter one line of text.",
+          "number": "Enter a number.",
           "date": "Pick a date.",
-          "url": "Write an https:// address.",
+          "url": "Enter an https:// address.",
           "enum": "Pick one of the listed values."
         }
       },

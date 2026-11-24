@@ -938,18 +938,20 @@ fn organization_dataset_fields_show_in_the_about_table_per_portal_display() {
         ),
         vec![dist("csv", &ep("file.csv"), json!({}))],
     );
-    let mut block = BrandingBlock::default();
-    block.dataset_fields = dataroom_core::branding::BrandingDatasetFields {
-        organization: "bbsk".into(),
-        namespace: "https://bbsk.sk/ns/dataset-fields/bbsk/".into(),
-        fields: serde_json::from_value(json!([
-            { "name": "funding", "label": { "en": "Funding", "sk": "Financovanie" },
-              "type": "enum", "values": ["eu", "city"] },
-            { "name": "reviewed", "label": { "sk": "Revízia" }, "type": "date" },
-            { "name": "page", "label": { "en": "Report" }, "type": "url" },
-            { "name": "budget", "label": { "en": "Budget" }, "type": "number" }
-        ]))
-        .expect("definitions"),
+    let block = BrandingBlock {
+        dataset_fields: dataroom_core::branding::BrandingDatasetFields {
+            organization: "bbsk".into(),
+            namespace: "https://bbsk.sk/ns/dataset-fields/bbsk/".into(),
+            fields: serde_json::from_value(json!([
+                { "name": "funding", "label": { "en": "Funding", "sk": "Financovanie" },
+                  "type": "enum", "values": ["eu", "city"] },
+                { "name": "reviewed", "label": { "sk": "Revízia" }, "type": "date" },
+                { "name": "page", "label": { "en": "Report" }, "type": "url" },
+                { "name": "budget", "label": { "en": "Budget" }, "type": "number" }
+            ]))
+            .expect("definitions"),
+        },
+        ..BrandingBlock::default()
     };
     let page = |block: &BrandingBlock| {
         render_dataset_page_full(

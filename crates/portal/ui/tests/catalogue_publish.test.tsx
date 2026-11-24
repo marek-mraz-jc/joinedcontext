@@ -338,7 +338,7 @@ describe("publish a dataset in one step (EP-83)", () => {
     expect(reviewed).toHaveAccessibleDescription("A date, for example: 2026-11-23");
 
     await user.click(within(dialog).getByRole("button", { name: "Preview the entry" }));
-    expect(await within(group).findByText("Your organization requires this field: fill it.")).toBeInTheDocument();
+    expect(await within(group).findByText("Your organization requires this field. Fill it in.")).toBeInTheDocument();
     expect(within(dialog).queryByRole("region", { name: "3. Preview" })).toBeNull();
     await user.selectOptions(funding, "eu");
     fireEvent.change(reviewed, { target: { value: "2026-11-23" } });
