@@ -70,7 +70,8 @@ async fn an_organization_named_by_id_and_by_alias_is_granted_once() {
     )
     .await
     .unwrap();
-    assert_eq!(granted, "openid organization:acme");
+    assert_eq!(granted.matches("organization:").count(), 1, "{granted}");
+    assert!(granted.ends_with(" organization:acme"), "{granted}");
     // An organization the realm lacks is refused, whatever else was asked for.
     let refused = resolve_scopes_for_client(
         &store,

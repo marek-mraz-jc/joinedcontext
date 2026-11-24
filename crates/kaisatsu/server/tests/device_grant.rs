@@ -501,7 +501,7 @@ async fn an_answer_another_tab_settled_first_is_a_conflict_page() {
     let csrf = page_form(&app, &sso, &user_code).await;
     // The compare-and-set finds the code already decided (or expired) since the page read it.
     faults.empty("decide_device_code", 0, 1);
-    let (st, html) = answer(&app, &sso, &csrf, &user_code, None).await;
+    let (st, html) = answer(&app, &sso, &csrf, &user_code, Some("allow")).await;
     assert_eq!(st, StatusCode::CONFLICT, "{html}");
     assert!(!html.contains("Device Login Successful"), "{html}");
     // The device was not approved by the lost answer.

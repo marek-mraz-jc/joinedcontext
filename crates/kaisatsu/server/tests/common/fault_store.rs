@@ -273,7 +273,16 @@ impl Store for FaultStore {
         match self.outcome("list_users") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
             Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
-            _ => self.inner.list_users(),
+            _ => self.inner.list_users(
+                realm_id,
+                allowed_orgs,
+                search,
+                email,
+                username,
+                exact,
+                first,
+                max,
+            ),
         }
     }
 

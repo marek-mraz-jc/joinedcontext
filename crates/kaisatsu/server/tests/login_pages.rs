@@ -666,7 +666,7 @@ async fn action_links_without_a_client_unknown_actions_and_forged_keys() {
     let link = action_link(&store, &["TERMS_AND_CONDITIONS"], &member.id).await;
     let (st, _, html) = get(&app, &link, None).await;
     assert_eq!(st, StatusCode::OK, "{html}");
-    assert!(html.contains("Terms and Conditions"), "{html}");
+    assert!(html.contains("Terms and conditions"), "{html}");
     let (st, _, html) = open_action_link(&app, &link).await;
     assert_eq!(st, StatusCode::OK, "{html}");
     assert!(!html.contains("Back to undefined"), "{html}");

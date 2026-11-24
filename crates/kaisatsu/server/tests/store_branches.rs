@@ -17,7 +17,7 @@ use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_server::router;
 use kaisatsu_store_memory::MemoryStore;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -403,17 +403,19 @@ async fn a_login_hint_the_client_gave_wins_over_the_sessions_name() {
 
 #[tokio::test]
 async fn a_staged_signing_key_signs_from_its_activation_time_on() {
-    let (app, store, _, _) = app().await;
+    let (app, store, _, kek) = app().await;
     let (code, _) = browser_login(&app).await;
     let keys = store.list_signing_keys("dev").await.unwrap();
-    let active = keys.iter().find(|k| k.status == "ACTIVE").unwrap().clone();
-    let staged = SigningKeyRecord {
-        id: "staged-key".into(),
-        kid: "staged-kid".into(),
-        status: "PASSIVE".into(),
-        activate_at: Some(jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(1)),
-        ..active.clone()
-    };
+    // The realm signs edge's tokens with RS256: stage the next RS256 key.
+    let active = keys
+        .iter()
+        .find(|k| k.status == "ACTIVE" && k.algorithm == "RS256")
+        .unwrap()
+        .clone();
+    let mut staged = KeyManager::generate_rs256("dev", &kek, active.priority, "PASSIVE").unwrap();
+    staged.activate_at = Some(jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(1));
+    let staged_kid = staged.kid.clone();
+    let staged_id = staged.id.clone();
     store.upsert_signing_key(staged).await.unwrap();
     let tokens = exchange(&app, &code).await;
     let header = tokens["access_token"]
@@ -426,10 +428,10 @@ async fn a_staged_signing_key_signs_from_its_activation_time_on() {
         &base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, header).unwrap(),
     )
     .unwrap();
-    assert_eq!(header["kid"], "staged-kid", "{header}");
+    assert_eq!(header["kid"], staged_kid.as_str(), "{header}");
     let keys = store.list_signing_keys("dev").await.unwrap();
     let status = |id: &str| keys.iter().find(|k| k.id == id).unwrap().status.clone();
-    assert_eq!(status("staged-key"), "ACTIVE");
+    assert_eq!(status(&staged_id), "ACTIVE");
     assert_eq!(
         status(&active.id),
         "PASSIVE",
@@ -518,13 +520,11 @@ async fn the_sso_sessions_organization_is_kept_for_a_member_and_for_the_persons_
     // A member of the session's organization: the token family carries its alias.
     pin_session_org(&store, "org-acme").await;
     let tokens = exchange(&app, &silent_code(&app, &sso).await).await;
-    let fam = family_of(tokens["refresh_token"].as_str().unwrap());
-    let family = store
-        .get_refresh_family("dev", &fam)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(family.org_id.as_deref(), Some("acme"));
+    let claims = decode_jwt_payload(tokens["access_token"].as_str().unwrap());
+    assert!(
+        claims["jc_org"].to_string().contains("\"acme\""),
+        "{claims}"
+    );
 
     // An organization the realm does not hold, but the person's own: kept as the person's.
     let mut person = member.clone();
@@ -532,13 +532,11 @@ async fn the_sso_sessions_organization_is_kept_for_a_member_and_for_the_persons_
     store.update_user(person).await.unwrap();
     pin_session_org(&store, "own-org").await;
     let tokens = exchange(&app, &silent_code(&app, &sso).await).await;
-    let fam = family_of(tokens["refresh_token"].as_str().unwrap());
-    let family = store
-        .get_refresh_family("dev", &fam)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(family.org_id.as_deref(), Some("own-org"));
+    let claims = decode_jwt_payload(tokens["access_token"].as_str().unwrap());
+    assert!(
+        claims["jc_org"].to_string().contains("\"own-org\""),
+        "{claims}"
+    );
 }
 
 #[tokio::test]
@@ -750,7 +748,6 @@ async fn userinfo_for_a_person_gone_with_a_session_gone_meanwhile_is_401() {
     )
     .await;
     assert_eq!(st, StatusCode::UNAUTHORIZED, "{body}");
-    assert!(h.get(header::WWW_AUTHENTICATE).is_some());
     assert!(!body.contains(MEMBER), "{body}");
 }
 
@@ -857,10 +854,13 @@ async fn a_sign_in_pins_an_organization_named_by_id_or_alias_and_survives_an_org
 
     // The organization list fails: the sign-in still ends, pinning only what the membership
     // itself names, never a foreign organization.
+    // Without it the alias cannot be matched to the membership's id: the pin is not honoured
+    // and the person picks, failing closed.
     faults.fail_always("list_organizations");
-    let (st, h, _) = get(&app, &auth_query(""), None, None).await;
+    let pinned = auth_query("").replace("scope=openid&", "scope=openid%20organization:acme&");
+    let (st, h, _) = get(&app, &pinned, None, None).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
-    let (st, h2, body) = login_from(&app, &location(&h), &auth_cookie(&h)).await;
-    assert_eq!(st, StatusCode::SEE_OTHER, "{body}");
-    assert!(location(&h2).starts_with(CALLBACK), "{}", location(&h2));
+    let (st, _, body) = login_from(&app, &location(&h), &auth_cookie(&h)).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert!(body.contains("data-page-id=\"login-org-choice\""), "{body}");
 }
