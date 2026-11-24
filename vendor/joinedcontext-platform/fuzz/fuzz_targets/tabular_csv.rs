@@ -17,7 +17,12 @@ fuzz_target!(|data: &[u8]| {
         .filter_map(|pair| pair.split_once('='))
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .collect();
-    let get = |name: &str| params.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
+    let get = |name: &str| {
+        params
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    };
     let Ok(window) = Window::parse(&params) else {
         return;
     };

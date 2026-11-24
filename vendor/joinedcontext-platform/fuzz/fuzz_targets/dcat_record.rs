@@ -12,7 +12,10 @@ fuzz_target!(|data: &[u8]| {
     };
     let _ = jc_dcat::ws_address(text);
     let literal = jc_dcat::literal(text);
-    assert!(literal.starts_with('"') && literal.ends_with('"'), "{literal}");
+    assert!(
+        literal.starts_with('"') && literal.ends_with('"'),
+        "{literal}"
+    );
     let _ = jc_dcat::escape(text);
     let Ok(record) = serde_json::from_str::<Value>(text) else {
         return;
