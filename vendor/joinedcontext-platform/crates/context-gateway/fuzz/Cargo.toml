@@ -44,3 +44,15 @@ path = "fuzz_targets/owned_payload.rs"
 test = false
 doc = false
 bench = false
+
+# The platform workspace's patches (its Cargo.toml), from here.
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../../../../crates/antares/crates/antares-ql" }
+ngsild-jsonld = { path = "../../../../../crates/antares/crates/antares-jsonld" }
+ngsild-matcher = { path = "../../../../../crates/antares/crates/antares-matcher" }
+ngsild-model = { path = "../../../../../crates/antares/crates/antares-model" }
+
+[patch.crates-io]
+ml-kem = { path = "../../../../ml-kem" }
+rstar = { path = "../../../../../crates/antares/vendor/rstar" }
+geo-types = { path = "../../../../../crates/antares/vendor/geo-types" }
