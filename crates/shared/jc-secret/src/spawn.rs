@@ -75,12 +75,16 @@ mod tests {
     #[test]
     #[allow(clippy::disallowed_methods)] // The test stands in for the parent environment.
     fn a_secret_named_by_the_parent_is_not_passed() {
-        let parent = |name: &str| match name {
-            "PATH" => std::env::var_os("PATH"),
-            "JCBIN_EKIBEN_TOKEN" => Some("leak-me".into()),
-            _ => None,
+        // The parent holds a secret; the helper asks it for the passed names only, so the
+        // secret's name is never read and its value never reaches the child.
+        let asked = std::cell::RefCell::new(Vec::new());
+        let parent = |name: &str| {
+            asked.borrow_mut().push(name.to_owned());
+            (name == "PATH").then(|| std::env::var_os("PATH")).flatten()
         };
         let shown = child_env(command_with("env", parent));
-        assert!(!shown.contains("leak-me"), "{shown}");
+        assert_eq!(*asked.borrow(), PASSED, "only the passed names are read");
+        assert!(!shown.contains("JCBIN_EKIBEN_TOKEN"), "{shown}");
+        assert!(shown.contains("PATH="), "{shown}");
     }
 }

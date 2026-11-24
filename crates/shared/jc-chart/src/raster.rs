@@ -864,14 +864,7 @@ mod tests {
                 "{input}"
             );
             let got = crate::spec::cell(row.get("observedAt"), Scale::Temporal, &mut cats);
-            assert_eq!(
-                got.map(|c| match c {
-                    Cell::Number(n) => n,
-                    Cell::Category(_) => f64::NAN,
-                }),
-                cell,
-                "{input}"
-            );
+            assert_eq!(got, cell.map(Cell::Number), "{input}");
         }
     }
 
@@ -1790,5 +1783,80 @@ mod tests {
             time_ticks(0.5 * hour, 11.5 * hour, 6),
             [2.0 * hour, 4.0 * hour, 6.0 * hour, 8.0 * hour, 10.0 * hour]
         );
+    }
+
+    #[test]
+    fn a_short_pixel_buffer_is_never_written_or_read_past() {
+        // A canvas whose buffer is shorter than its sides: set and blit skip what is not there.
+        let mut short = Canvas {
+            width: 4,
+            height: 4,
+            pixels: vec![0; 3 * 4],
+        };
+        short.set(1, 0, [9, 9, 9]);
+        short.set(3, 3, [9, 9, 9]);
+        assert_eq!(short.pixels, [0, 0, 0, 9, 9, 9, 0, 0, 0, 0, 0, 0]);
+        let mut target = Canvas::new(4, 4);
+        let before = target.pixels.clone();
+        target.blit(&short, 0, 0);
+        assert_eq!(
+            &target.pixels[..12],
+            &short.pixels[..],
+            "the first row comes over"
+        );
+        assert_eq!(&target.pixels[12..], &before[12..], "the rest stays paper");
+    }
+
+    #[test]
+    fn a_line_point_without_a_y_or_with_an_unknown_group_is_left_out() {
+        let light = palette()[0];
+        let ch = |scale| Channel {
+            scale,
+            title: String::new(),
+            categories: 0,
+        };
+        let line = Chart {
+            mark: Mark::Line,
+            width: 200,
+            height: 150,
+            title: String::new(),
+            x: Some(ch(Scale::Quantitative)),
+            y: Some(ch(Scale::Quantitative)),
+            colors: 0,
+            points: vec![
+                Point {
+                    x: Some(Cell::Number(1.0)),
+                    ..Point::default()
+                },
+                Point {
+                    x: Some(Cell::Number(2.0)),
+                    y: Some(Cell::Number(2.0)),
+                    color: Some(5),
+                    ..Point::default()
+                },
+            ],
+        };
+        let drawn = canvas(&line, later()).expect("drawn");
+        assert_eq!(count(&drawn, light), 0, "no point of the line is drawn");
+    }
+
+    #[test]
+    fn the_xy_painter_draws_nothing_for_an_arc() {
+        let pie = Chart {
+            mark: Mark::Arc,
+            width: 120,
+            height: 120,
+            title: String::new(),
+            x: None,
+            y: None,
+            colors: 1,
+            points: vec![Point {
+                theta: Some(1.0),
+                ..Point::default()
+            }],
+        };
+        let mut c = Canvas::new(120, 120);
+        draw_xy(&mut c, &pie, 40, 0, later()).expect("in time");
+        assert_eq!(count(&c, palette()[0]), 0, "no slice is painted here");
     }
 }
