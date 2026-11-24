@@ -842,8 +842,10 @@ pub async fn export(
         shako.branch_head(&revision).await?
     };
 
+    // Read at the commit the index names, so a branch that moves during the export cannot hand
+    // back files of two revisions.
     let (files, unreadable) =
-        read_project(shako, &project, &revision, &endpoints_by_slug(&state)).await?;
+        read_project(shako, &project, &commit, &endpoints_by_slug(&state)).await?;
     // A manifest the caller may not read is counted, never named (MF-18, R20). The question is
     // the manifest's, not the kind's: a grant bound to one context space reads that space's
     // manifests and no other, which is what the resource lists already ask (PF-60, T-0986).
@@ -1363,7 +1365,7 @@ mod tests {
         assert_eq!(files.linkml.as_deref(), Some(LINKML));
         assert_eq!(
             files.missing,
-            ["JSON Schema: not in the repository, and Model Tools could not generate it: no model tools service is configured"],
+            ["JSON Schema: not in the repository, and Model Tools could not generate it: service unavailable: no model tools service is configured"],
             "an artifact path with no file falls back to Model Tools"
         );
     }
