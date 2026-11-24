@@ -142,6 +142,8 @@ async function steps(res, asked) {
     send("tool", { name: "query_entities", status: "failed" });
     await pause(gap);
     send("error", { status: 502, title: "Bad Gateway", detail: "The data source did not answer." });
+    // `linger` keeps the stream open after the error, as the service does while it writes the turn down.
+    if (asked.includes("linger")) await pause(60000);
     return res.end();
   }
   send("tool", { name: "query_entities", status: "done" });
@@ -517,6 +519,14 @@ test("a long wait counts the seconds, Stop ends it, and a failed read says which
   await askLive(page, "oldest fail gap50");
   await expect(page.locator(".jc-bot.jc-error [role=alert]")).toBeVisible();
   expect(await page.evaluate(() => window.said)).toContain("Reading BBSK bridge register: Bridges, Year built < 1950 (failed)");
+});
+
+test("an error ends the busy state at once, even while the stream stays open (T-7765)", async ({ page }) => {
+  await askLive(page, "oldest fail linger gap50");
+  await expect(page.locator(".jc-bot.jc-error [role=alert]")).toBeVisible();
+  await expect(page.locator(".jc-form .jc-stop")).toBeHidden({ timeout: 1000 });
+  await expect(page.locator(".jc-form .jc-submit")).toBeVisible();
+  await expect(page.locator(".jc-progress")).toHaveCount(0);
 });
 
 test("reduced motion keeps the bubble and its steps still (T-7753)", async ({ page }) => {
