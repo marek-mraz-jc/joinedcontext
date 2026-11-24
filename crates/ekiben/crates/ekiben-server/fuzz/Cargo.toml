@@ -1,8 +1,10 @@
 # Fuzzes every ekiben-server entry point that reads outside input (T-7583): cron expressions and
 # zones, quotas files and bodies, organization variable and token files, `ekiben test` definitions,
 # `--set metrics.*` arguments and the API's Authorization and X-Jc-Org headers. Each must answer a
-# value or an error, never panic, hang or allocate without bound. Run by hand:
-# cargo +nightly fuzz run <target> -- -max_total_time=300. Not a member of the ekiben workspace.
+# value or an error, never panic, hang or allocate without bound. Run by hand (the ekiben workspace
+# builds for musl by default, which the sanitizer cannot link):
+# cargo +nightly fuzz run <target> --target x86_64-unknown-linux-gnu -- -max_total_time=300
+# Not a member of the ekiben workspace.
 [package]
 name = "ekiben-server-fuzz"
 version = "0.0.0"

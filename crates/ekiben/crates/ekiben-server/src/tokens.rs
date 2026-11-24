@@ -241,6 +241,8 @@ mod tests {
         write(&big, &"#".repeat(MAX_FILE_BYTES as usize + 1));
         let err = OrgTokenFile::load(&big).expect_err("big");
         assert!(err.contains("larger than 1048576 bytes"), "{err}");
+        let err = OrgTokenFile::load(dir.path()).expect_err("a directory");
+        assert!(err.starts_with("org tokens file '"), "{err}");
         let bad = dir.path().join("bad");
         write(&bad, "org-a\n");
         assert!(OrgTokenFile::load(&bad)

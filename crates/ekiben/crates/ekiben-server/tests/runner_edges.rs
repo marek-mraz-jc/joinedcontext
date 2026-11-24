@@ -221,12 +221,19 @@ async fn a_refused_write_counts_failed_messages_and_fails_the_run() {
         write_fails: true,
         ..Default::default()
     };
-    let r = rig(vec![Step::Batch(vec!["a", "b"])], false, out);
-    let s = run(&r, conf(""), ResourceManager::new()).await;
+    let mut steps = vec![Step::Batch(vec!["a", "b"])];
+    steps.extend((0..200).map(|_| Step::Batch(vec!["c"])));
+    let r = rig(steps, false, out);
+    let s = run(
+        &r,
+        conf("pipeline:\n  threads: 1\n"),
+        ResourceManager::new(),
+    )
+    .await;
     assert!(!s.success);
     assert_eq!(s.error.as_deref(), Some("disk full"));
     assert_eq!(s.messages_out, 0);
-    assert_eq!(s.messages_failed, 1);
+    assert!(s.messages_failed >= 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -349,10 +356,10 @@ async fn inline_resources_buffer_and_secret_refs_are_built_for_the_run() {
         "buffer:\n  memory: {}\n",
         "pipeline:\n  processors:\n    - resource: up\n    - mapping: 'root = env(\"API_KEY\")'\n",
         "cache_resources:\n  - label: c\n    memory: {}\n  - memory: {}\n",
-        "rate_limit_resources:\n  - label: rl\n    local:\n      count: 10\n      interval: 1s\n",
-        "processor_resources:\n  - label: up\n    mapping: 'root = content().uppercase()'\n",
-        "input_resources:\n  - label: in\n    generate:\n      count: 1\n      mapping: 'root = 1'\n",
-        "output_resources:\n  - label: out\n    drop: {}\n",
+        "rate_limit_resources:\n  - label: rl\n    local:\n      count: 10\n      interval: 1s\n  - local: {}\n",
+        "processor_resources:\n  - label: up\n    mapping: 'root = content().uppercase()'\n  - mapping: 'root = 1'\n",
+        "input_resources:\n  - label: in\n    generate:\n      count: 1\n      mapping: 'root = 1'\n  - generate:\n      count: 1\n      mapping: 'root = 1'\n",
+        "output_resources:\n  - label: out\n    drop: {}\n  - drop: {}\n",
     ));
     let s = run(&r, c, resources.clone()).await;
     assert!(s.success, "{:?}", s.error);

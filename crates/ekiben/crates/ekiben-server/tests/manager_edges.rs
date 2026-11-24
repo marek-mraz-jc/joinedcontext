@@ -185,13 +185,13 @@ fn register_resources_counts_what_it_registers() {
     let m = manager();
     let o = OrgId::default();
     let text = concat!(
-        "cache_resources:\n  - label: c\n    memory: {}\n",
+        "cache_resources:\n  - label: c\n    memory: {}\n  - label: '${EKIBEN_VAR_T7583_LABEL:c2}'\n    memory: {}\n",
         "rate_limit_resources:\n  - label: rl\n    local:\n      count: 1\n      interval: 1s\n",
         "processor_resources:\n  - label: p\n    mapping: 'root = this'\n",
         "input_resources:\n  - label: i\n    generate:\n      count: 1\n      mapping: 'root = 1'\n",
         "output_resources:\n  - label: out\n    drop: {}\n",
     );
-    assert_eq!(m.register_resources(&o, text).unwrap(), 5);
+    assert_eq!(m.register_resources(&o, text).unwrap(), 6);
     assert!(m.register_resources(&o, "input: [\n").is_err());
     assert!(m
         .register_resources(

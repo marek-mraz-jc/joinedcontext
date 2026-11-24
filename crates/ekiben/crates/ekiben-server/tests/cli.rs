@@ -411,7 +411,7 @@ fn schedule_loads_its_configs_and_stops_on_sigterm() {
     let cfg = write(
         d,
         "tick.yaml",
-        "schedule:\n  period: 1s\ninput:\n  generate:\n    count: 1\n    mapping: 'root = 1'\noutput:\n  drop: {}\n",
+        "schedule:\n  period: ${EKIBEN_VAR_T7583_PERIOD:1s}\ninput:\n  generate:\n    count: 1\n    mapping: 'root = 1'\noutput:\n  drop: {}\n",
     );
     let child = Command::new(env!("CARGO_BIN_EXE_ekiben"))
         .args(["schedule", &cfg])

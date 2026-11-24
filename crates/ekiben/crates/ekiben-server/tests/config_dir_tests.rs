@@ -192,7 +192,10 @@ async fn a_file_moved_to_another_organization_moves_its_stream() {
     // A new version that does not build is refused; the running one stays.
     std::fs::write(
         dir.path().join("s.yaml"),
-        STREAM.replace("drop: {}", "no_such_output: {}"),
+        STREAM.replace("org-a", "org-b").replace(
+            "output:",
+            "pipeline:\n  processors:\n    - mapping: 'root = ('\noutput:",
+        ),
     )
     .unwrap();
     let errors = cd.sync(&m).await;

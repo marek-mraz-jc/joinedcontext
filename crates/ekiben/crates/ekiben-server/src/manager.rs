@@ -737,15 +737,15 @@ impl StreamManager {
         let key = stream_key(caller_org, id);
         let mut removed = {
             let mut guard = self.streams.write().await;
-            if !guard.contains_key(&key) {
+            let Entry::Occupied(slot) = guard.entry(key.clone()) else {
                 return Err(not_found(id));
-            }
+            };
             if let Some(p) = &self.persistence {
                 p.deleted(&key.0, id)
                     .await
                     .map_err(|e| CoreError::other(format!("stream '{id}' was not removed: {e}")))?;
             }
-            guard.remove(&key).ok_or_else(|| not_found(id))?
+            slot.remove()
         };
 
         let handle = removed.handle.take();

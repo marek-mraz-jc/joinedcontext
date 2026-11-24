@@ -1395,6 +1395,10 @@ tests:
                 "failed to parse config file",
             ),
             (
+                "    target_processors: 'broken_yaml.yaml#/pipeline'\n",
+                "failed to parse config file",
+            ),
+            (
                 "    target_processors: 'other.yaml#/pipeline'\n",
                 "failed to parse config file",
             ),
@@ -1413,6 +1417,7 @@ tests:
             assert!(err.contains(want), "{extra}: {err}");
         }
         write(d, "bad_target.yaml", "input: 5\npipeline: {}\n");
+        write(d, "broken_yaml.yaml", "pipeline: [\n");
         write(d, "broken.blobl", "root = (");
         let err = execute(
             &reg,
