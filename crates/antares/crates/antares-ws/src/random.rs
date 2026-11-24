@@ -42,5 +42,7 @@ mod tests {
         assert!(equal(b"abc", b"abc"));
         assert!(!equal(b"abc", b"abd"));
         assert!(!equal(b"abc", b"ab"));
+        // two differing bytes whose differences cancel under xor still differ
+        assert!(!equal(b"ab", b"`c"));
     }
 }

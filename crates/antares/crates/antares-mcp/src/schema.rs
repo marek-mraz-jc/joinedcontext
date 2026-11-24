@@ -667,10 +667,7 @@ mod tests {
     }
 
     fn given(v: Value) -> Map<String, Value> {
-        match v {
-            Value::Object(m) => m,
-            _ => Map::new(),
-        }
+        serde_json::from_value(v).unwrap_or_default()
     }
 
     #[test]
@@ -898,6 +895,19 @@ mod tests {
         assert!(outer(json!({"each": [{}, {}]})).is_err_and(|e| e.contains("takes 0 to 1")));
         assert!(outer(json!({"each": [7]})).is_err_and(|e| e.contains("must be an object")));
         assert!(outer(json!({"each": []})).is_ok());
+        assert_eq!(
+            outer(json!({"each": [{"uri": "https://x.example/"}]})),
+            Err("argument n.each.uri: not an endpoint this deployment lets a tool notify".into())
+        );
+        // a name or a text that is no string says so
+        assert_eq!(
+            check(&req("type", Kind::Type), &json!(7), &n),
+            Err("argument type: must be a string".into())
+        );
+        assert_eq!(
+            check(&req("q", Kind::Text(8)), &json!(["x"]), &n),
+            Err("argument q: must be a string".into())
+        );
         let schema = schema_of(Kind::Object(OUTER), &n);
         assert_eq!(
             schema.pointer("/properties/endpoint/required"),

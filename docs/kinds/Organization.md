@@ -162,11 +162,11 @@ Type: one of `"none"`, `"soft"`
 |---|---|---|---|
 | `accent` | string | no | Highlight colour, e.g. `#f59e0b`. |
 | `background` | string | no | Page background, e.g. `#ffffff`. |
-| `footerBackground` | string | no | The page footer, e.g. `#0f172a`. |
-| `footerText` | string | no | Text and links in the footer, at least 4.5:1 on its background, e.g. `#ffffff`. |
-| `headerBackground` | string | no | The open data portal's header bar, e.g. `#0b5394`. |
-| `headerText` | string | no | Text and links in the header bar, at least 4.5:1 on its background, e.g. `#ffffff`. |
-| `link` | string | no | Links in the page, at least 4.5:1 on the background, e.g. `#1d4ed8` (T-7744). |
+| `footerBackground` | string | no | The page footer, six hex digits after a hash, such as 0f172a. |
+| `footerText` | string | no | Text and links in the footer, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff. |
+| `headerBackground` | string | no | The open data portal's header bar, six hex digits after a hash, such as 0b5394. |
+| `headerText` | string | no | Text and links in the header bar, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff. |
+| `link` | string | no | Links in the page, at least 4.5:1 on the background, six hex digits after a hash, such as 1d4ed8 (T-7744). |
 | `primary` | string | no | Primary action colour, e.g. `#0b5394`. |
 | `secondary` | string | no | Secondary colour for links and focus, e.g. `#0f766e`. |
 | `text` | string | no | Body text, e.g. `#0f172a`. |

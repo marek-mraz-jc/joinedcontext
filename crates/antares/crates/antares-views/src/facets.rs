@@ -395,6 +395,9 @@ mod tests {
         let (all, more) = counted(attrs.iter(), None, MAX_LIMIT);
         assert_eq!(all.len(), 4);
         assert!(!more);
+        // a limit of exactly the values held leaves none out
+        let (exact, more) = counted(attrs.iter(), None, 4);
+        assert_eq!((exact.len(), more), (4, false));
     }
 
     #[test]

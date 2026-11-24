@@ -40,6 +40,8 @@ describe("a period as an ISO 8601 duration", () => {
   it("converts the units a person types", () => {
     expect(toIsoDuration("15m")).toBe("PT15M");
     expect(toIsoDuration("1h")).toBe("PT1H");
+    // A unit the cadence does not know (milliseconds) falls back to the quarter hour.
+    expect(toIsoDuration("250ms")).toBe("PT15M");
     expect(toIsoDuration("30s")).toBe("PT30S");
     expect(toIsoDuration("7d")).toBe("P7D");
     expect(toIsoDuration(" 5M ")).toBe("PT5M");

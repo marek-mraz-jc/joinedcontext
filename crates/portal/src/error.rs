@@ -216,6 +216,12 @@ impl IntoResponse for ApiError {
 }
 
 impl ApiError {
+    /// An error of ours as a 500, worded by the error, for `.map_err(ApiError::internal)`: the
+    /// answer keeps the wording out (`internal_error_hides_message`), the log keeps it.
+    pub fn internal(err: impl std::fmt::Display) -> Self {
+        Self::Internal(err.to_string())
+    }
+
     /// A failed database call as an answer. No connection in time, a lost connection or a server
     /// restarting is a dependency down, 503 with a next step; the rest is our bug (T-6520). The
     /// caller logs `err`: the DSN, the SQL and the driver's wording stay out of the answer (TS-09).
@@ -582,6 +588,9 @@ mod tests {
 
     #[tokio::test]
     async fn internal_error_hides_message() {
+        assert!(
+            matches!(ApiError::internal("disk full"), ApiError::Internal(m) if m == "disk full")
+        );
         let secret_msg = "database password leaked";
         let res = ApiError::Internal(secret_msg.to_string()).into_response();
         assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);

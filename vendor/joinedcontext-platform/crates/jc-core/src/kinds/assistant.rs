@@ -890,6 +890,19 @@ impl ReasoningEffort {
             effort => serde_json::json!({"effort": effort}),
         }
     }
+
+    /// The output tokens a call at this effort may think through on top of its answer's cap
+    /// (T-7758): Gemini and Anthropic count reasoning inside `max_tokens`, and a 700-token answer
+    /// at `low` came back cut after 697 tokens of thought.
+    pub fn allowance(self) -> u64 {
+        match self {
+            Self::None => 0,
+            Self::Minimal => 512,
+            Self::Low => 1_024,
+            Self::Medium => 4_096,
+            Self::High => 8_192,
+        }
+    }
 }
 
 /// The reasoning effort of the router, judge and answer calls apart; each `low` when absent.

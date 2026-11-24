@@ -13859,7 +13859,6 @@
       "fixHint": "Fix the marked fields ({count}), then publish again.",
       "reset": "Reset",
       "resetField": "Reset {field} to inherited",
-      "pick": "Pick a colour for {field}",
       "inheritOption": "Inherited ({value})",
       "default": "default",
       "why": "Nothing changed yet.",

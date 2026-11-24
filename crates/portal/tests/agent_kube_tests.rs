@@ -482,6 +482,128 @@ async fn the_policy_is_applied_before_the_job_that_it_holds() {
     );
 }
 
+async fn schedule_against(api: &MockServer) -> Result<bool, String> {
+    let kube = KubeClient::with_token(&api.uri(), TOKEN).expect("a client");
+    schedule_workspace_job(
+        Some(&kube),
+        NAMESPACE,
+        PORTAL_NAMESPACE,
+        &run(),
+        TICKET,
+        PROXY_BASE,
+        &profile(),
+        TTL_SECS,
+    )
+    .await
+}
+
+async fn refuses(api: &MockServer, http_method: &str, api_path: &str, status: u16) {
+    Mock::given(method(http_method))
+        .and(path(api_path.to_owned()))
+        .respond_with(
+            ResponseTemplate::new(status)
+                .set_body_json(json!({ "kind": "Status", "message": "refused" })),
+        )
+        .mount(api)
+        .await;
+}
+
+/// A cluster that refuses any of the objects before the Job gets no Job: a pod must never start
+/// without its NetworkPolicy, its ServiceAccount or its ticket Secret.
+#[tokio::test]
+async fn a_refused_object_stops_the_schedule_before_the_job() {
+    let order = [
+        service_account_path(),
+        policy_path(),
+        secret_path(),
+        job_path(),
+    ];
+    for refused in 0..order.len() {
+        let api = MockServer::start().await;
+        for (at, api_path) in order.iter().enumerate() {
+            if at == refused {
+                refuses(&api, "PATCH", api_path, 403).await;
+            } else {
+                accepts_apply(&api, api_path).await;
+            }
+        }
+        let outcome = schedule_against(&api).await;
+        assert!(
+            outcome.is_err(),
+            "{} was refused, yet: {outcome:?}",
+            order[refused]
+        );
+        let requests = api.received_requests().await.unwrap_or_default();
+        for later in &order[refused + 1..] {
+            assert!(
+                applied_all(&requests, later).is_empty(),
+                "{later} applied after {} was refused",
+                order[refused]
+            );
+        }
+    }
+}
+
+/// The Job's owner on the Secret is a tidy-up, not a condition: a Job the API does not show, an
+/// API that fails the read and a refused second apply each leave the run scheduled, the Secret
+/// applied once without an owner.
+#[tokio::test]
+async fn a_job_that_cannot_own_its_secret_still_runs() {
+    for job_read in [404, 500, 200] {
+        let api = MockServer::start().await;
+        for api_path in [service_account_path(), policy_path(), job_path()] {
+            accepts_apply(&api, &api_path).await;
+        }
+        let without_uid = job_read == 200;
+        Mock::given(method("GET"))
+            .and(path(job_path()))
+            .respond_with(if without_uid {
+                ResponseTemplate::new(200).set_body_json(
+                    json!({ "apiVersion": "batch/v1", "kind": "Job", "metadata": {} }),
+                )
+            } else {
+                ResponseTemplate::new(job_read).set_body_json(json!({ "kind": "Status" }))
+            })
+            .mount(&api)
+            .await;
+        accepts_apply(&api, &secret_path()).await;
+        assert_eq!(
+            schedule_against(&api).await,
+            Ok(true),
+            "Job read answered {job_read}"
+        );
+        let requests = api.received_requests().await.unwrap_or_default();
+        let secrets = applied_all(&requests, &secret_path());
+        assert_eq!(secrets.len(), 1, "Job read answered {job_read}");
+        assert!(secrets[0]["metadata"]["ownerReferences"].is_null());
+    }
+
+    let api = MockServer::start().await;
+    for api_path in [service_account_path(), policy_path(), job_path()] {
+        accepts_apply(&api, &api_path).await;
+    }
+    Mock::given(method("GET"))
+        .and(path(job_path()))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "metadata": { "uid": JOB_UID } })),
+        )
+        .mount(&api)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path(secret_path()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "kind": "Status" })))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&api)
+        .await;
+    refuses(&api, "PATCH", &secret_path(), 409).await;
+    assert_eq!(schedule_against(&api).await, Ok(true));
+    let requests = api.received_requests().await.unwrap_or_default();
+    let secrets = applied_all(&requests, &secret_path());
+    assert_eq!(secrets.len(), 2);
+    assert_eq!(secrets[1]["metadata"]["ownerReferences"][0]["uid"], JOB_UID);
+}
+
 #[tokio::test]
 async fn cancelling_removes_all_four_objects() {
     let api = MockServer::start().await;

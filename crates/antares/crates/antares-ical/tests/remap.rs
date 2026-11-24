@@ -100,6 +100,21 @@ fn a_language_a_sub_attribute_and_a_constant_category_are_read() {
     assert!(has(&l, "SUMMARY:Market"), "{l:?}");
     assert!(has(&l, "DESCRIPTION:pod holým nebom"), "{l:?}");
     assert!(has(&l, "CATEGORIES:Kultúra"), "{l:?}");
+    // language and firstOf serve LOCATION too
+    let located = json!({"preset": "sdm-event", "mapping": {
+        "LOCATION": {"attribute": "title", "language": "en"},
+        "DESCRIPTION": {"firstOf": ["place", "venue"]}}});
+    let e = entity(&json!({
+        "title": {"type": "LanguageProperty", "languageMap": {"sk": "Trh", "en": "Market"}},
+        "venue": {"type": "Property", "value": "Hala"}}));
+    let l = render(&located, &e);
+    assert!(
+        has(&l, "LOCATION:Market") && has(&l, "DESCRIPTION:Hala"),
+        "{l:?}"
+    );
+    let first =
+        json!({"preset": "sdm-event", "mapping": {"LOCATION": {"firstOf": ["place", "venue"]}}});
+    assert!(has(&render(&first, &e), "LOCATION:Hala"));
     // a language the entity lacks falls back to @none, then to the first tag
     let e = entity(&json!({"title": {"type": "LanguageProperty", "languageMap": {"sk": "Trh"}}}));
     assert!(has(&render(&ical, &e), "SUMMARY:Trh"));
@@ -169,6 +184,11 @@ fn status_organizer_and_last_modified_follow_their_value_types() {
     assert!(has(&l, "STATUS:CONFIRMED"), "{l:?}");
     assert!(has(&l, "ORGANIZER:mailto:kultura@zvolen.sk"), "{l:?}");
     assert!(has(&l, "LAST-MODIFIED:20260930T080000Z"), "{l:?}");
+    // schema-org's eventStatus mapping says CONFIRMED for a value it does not map
+    let preset = json!({"preset": "schema-org"});
+    let other = entity(&json!({"eventStatus": {"type": "Property", "value": "EventUnheardOf"}}));
+    let unmapped = render(&preset, &other);
+    assert!(has(&unmapped, "STATUS:CONFIRMED"), "{unmapped:?}");
     // a value that is no calendar status or address is left out; DTSTAMP stays modifiedAt
     let e = entity(&json!({
         "state": {"type": "Property", "value": "postponed"},
@@ -424,6 +444,15 @@ fn an_output_is_refused_with_its_reason() {
     let prague = json!({"name": "vsetky", "timezone": "Europe/Prague", "sources": [{}]});
     assert!(output(&prague).is_ok());
     let many: Vec<Value> = (0..11).map(|_| json!({})).collect();
+    // the bounds themselves hold: limit 10000, ten sources of distinct types
+    let ten: Vec<Value> = (0..10)
+        .map(|i| json!({"type": format!("T{i}"), "mapping": {"DTSTART": "startDate", "SUMMARY": "name"}}))
+        .collect();
+    assert!(output(&json!({"name": "vsetky", "limit": 10_000, "sources": [{}]})).is_ok());
+    assert!(output(&json!({"name": "vsetky", "sources": ten})).is_ok());
+    let longest = json!({"name": "vsetky",
+        "sources": [{"preset": "sdm-event", "mapping": {"SUMMARY": {"attribute": "name", "truncate": 10_000}}}]});
+    assert_eq!(output(&longest).err(), None);
     for (bad, why) in [
         (json!({"version": 2}), "version"),
         (json!({"name": "Všetky"}), "1 to 40"),
@@ -434,6 +463,11 @@ fn an_output_is_refused_with_its_reason() {
         ),
         (json!({"lang": "slovensky"}), "language tag"),
         (json!({"limit": 0}), "limit"),
+        (json!({"limit": 10_001}), "limit"),
+        (
+            json!({"sources": [{"preset": "sdm-event", "mapping": {"SUMMARY": {"attribute": "name", "truncate": 10_001}}}]}),
+            "`truncate` is 1 to 10000",
+        ),
         (json!({"sort": "name"}), "start or -start"),
         (json!({"filter": {"q": "a==1\n"}}), "filter"),
         (json!({"sources": []}), "1 to 10"),
@@ -443,6 +477,14 @@ fn an_output_is_refused_with_its_reason() {
         (
             json!({"sources": [{"type": "Festival"}]}),
             "no calendar preset",
+        ),
+        (
+            json!({"sources": [{"type": "Festival", "preset": "sdm-event", "mapping": {"DTSTART": "startDate"}}]}),
+            "no calendar preset",
+        ),
+        (
+            json!({"sources": [{"mapping": {"SUMMARY": {"attribute": "name", "default": "x"}}}]}),
+            "does not take `map`",
         ),
     ] {
         let mut o = ok.clone();

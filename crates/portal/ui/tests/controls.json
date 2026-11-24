@@ -2129,7 +2129,8 @@
         "Switch": 1
       },
       "tests": [
-        "kpi_editor.test.tsx"
+        "kpi_editor.test.tsx",
+        "kpi_editor_fields.test.tsx"
       ]
     },
     "src/pages/pipelines/LifetimeChoice.tsx": {
@@ -2154,6 +2155,7 @@
         "Button": 5
       },
       "tests": [
+        "output_mapper_edges.test.ts",
         "output_mapper_g18_ui.test.tsx"
       ]
     },
@@ -2162,6 +2164,7 @@
         "Button": 3
       },
       "tests": [
+        "output_mapper_edges.test.ts",
         "output_mapper_g18_ui.test.tsx",
         "output_mapper_ui.test.tsx"
       ]
@@ -2193,7 +2196,8 @@
         "Button": 3
       },
       "tests": [
-        "pipeline_overview.test.tsx"
+        "pipeline_overview.test.tsx",
+        "pipeline_overview_actions.test.tsx"
       ]
     },
     "src/pages/pipelines/PipelineRejected.tsx": {
@@ -2887,8 +2891,7 @@
     },
     "src/pages/portals/PortalAppearance.tsx": {
       "controls": {
-        "Button": 3,
-        "input": 1
+        "Button": 3
       },
       "tests": [
         "portal_appearance.test.tsx"

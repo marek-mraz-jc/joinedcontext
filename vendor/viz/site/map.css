@@ -27,3 +27,8 @@ html[data-theme="dark"] .hint { color: #b4bac2; }
 .jc-pop dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 .jc-pop p { margin: 6px 0 0; color: #555; font-size: 12px; }
 .jc-pop a { display: inline-block; margin-top: 6px; }
+/* T-7755: a popup's close button is a 44 px target on a touch screen. */
+@media (pointer: coarse) {
+  .maplibregl-popup-close-button { min-width: 44px; min-height: 44px; font-size: 22px; }
+  .maplibregl-popup-content { padding-right: 44px; }
+}

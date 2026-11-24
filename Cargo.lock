@@ -3110,6 +3110,7 @@ name = "dataroom-store-pg"
 version = "0.1.0"
 dependencies = [
  "dataroom-core",
+ "dataroom-search",
  "dataroom-store-memory",
  "jc-time",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",

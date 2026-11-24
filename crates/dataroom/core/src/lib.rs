@@ -28,4 +28,4 @@ pub use jc_core::kinds::is_declared_iri;
 pub use model::*;
 pub use odata_defs::{dataroom_service, scope_for_context};
 pub use ops::{all_operations, execute_operation, OpContext, OperationDef};
-pub use store::{DatasetFilter, Store};
+pub use store::{DatasetFilter, PickPage, SearchCandidate, SearchPage, SearchQuery, Store};

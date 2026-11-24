@@ -13859,7 +13859,6 @@
       "fixHint": "Opravte označené polia ({count}) a zverejnite znova.",
       "reset": "Obnoviť",
       "resetField": "Obnoviť {field} na zdedené",
-      "pick": "Vybrať farbu pre {field}",
       "inheritOption": "Zdedené ({value})",
       "default": "predvolené",
       "why": "Zatiaľ sa nič nezmenilo.",

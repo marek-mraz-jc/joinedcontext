@@ -245,6 +245,7 @@ pub fn chat_state(
         organization: organization.to_owned(),
         contexts: Default::default(),
         turns: Default::default(),
+        map_sources: Default::default(),
     });
     Ok((chat_state, reader))
 }

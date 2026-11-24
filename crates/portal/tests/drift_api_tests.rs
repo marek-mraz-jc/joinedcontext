@@ -275,6 +275,282 @@ async fn a_resolution_without_a_space_surface_refuses_instead_of_writing_nowhere
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
 }
 
+/// A person granted `verbs` on Entity in the project, or only in `space` when one is named.
+fn granted(
+    state: &AppState,
+    verbs: Value,
+    space: Option<&str>,
+) -> joinedcontext_portal::auth::session::Identity {
+    // A binding scoped to a space names it; the space's project is the one holding it.
+    let scope = match space {
+        Some(space) => {
+            state
+                .mirror
+                .upsert(common::envelope("ContextSpace", space, PROJECT, json!({})));
+            json!({ "contextSpace": space })
+        }
+        None => json!({ "project": PROJECT }),
+    };
+    state.mirror.upsert(common::envelope(
+        "Role",
+        "resolver",
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Entity", "ContextSpace"], "verbs": verbs }] }),
+    ));
+    state.mirror.upsert(common::envelope(
+        "RoleBinding",
+        "resolvers",
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "resolver@hel.fi" }], "role": "resolver", "scope": scope }),
+    ));
+    common::person("resolver")
+}
+
+/// T-7657: a reader bound to one space sees that space's drift and no other, with the instant
+/// of the scan still there.
+#[tokio::test]
+async fn a_reader_of_one_space_sees_only_that_spaces_drift() {
+    let mut state = AppState::new(Config::for_tests(), None);
+    state.drift = scanned();
+    let uri = format!("/api/v1/projects/{PROJECT}/drift");
+    let own = granted(&state, json!(["read"]), Some(SPACE));
+    let answer = common::send(&state, own, "GET", &uri, None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let list: Value = serde_json::from_str(&answer.text).expect("a list");
+    assert_eq!(list["items"].as_array().map(Vec::len), Some(2), "{list}");
+
+    let elsewhere = granted(&state, json!(["read"]), Some("vantaa-air"));
+    let answer = common::send(&state, elsewhere, "GET", &uri, None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let list: Value = serde_json::from_str(&answer.text).expect("a list");
+    assert_eq!(list["items"], json!([]), "{list}");
+    assert_eq!(list["metadata"]["observedAt"], "2026-09-18T09:12:03+00:00");
+}
+
+/// T-7657: revert upserts what the file declares into the space with the Portal's own token and
+/// answers 204; a space that refuses the write is 503 and says which space.
+#[tokio::test]
+async fn revert_writes_the_declared_entity_back_and_a_refusing_space_is_503() {
+    use joinedcontext_portal::auth::client_auth::ClientAuth;
+    use joinedcontext_portal::reconciler::drift::Watch;
+    use wiremock::matchers::{bearer_token, body_string_contains, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let space = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/city/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+        .mount(&space)
+        .await;
+    let mut state = AppState::new(Config::for_tests(), None);
+    state.drift = scanned();
+    state.drift_watch = Some(Arc::new(Watch::new(
+        space.uri(),
+        &format!("{}/realms/city", space.uri()),
+        "portal".to_owned(),
+        ClientAuth::Secret("s".into()),
+    )));
+    let who = granted(&state, json!(["read", "propose"]), None);
+    let uri = format!("/api/v1/projects/{PROJECT}/drift/{SPACE}/{ENTITY}/revert");
+
+    let refusal = Mock::given(method("POST"))
+        .and(path(format!(
+            "/cs/{SPACE}/ngsi-ld/v1/entityOperations/upsert"
+        )))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount_as_scoped(&space)
+        .await;
+    let answer = common::send(&state, who.clone(), "POST", &uri, None).await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("helsinki refused the write"),
+        "{}",
+        answer.text
+    );
+    drop(refusal);
+
+    Mock::given(method("POST"))
+        .and(path(format!(
+            "/cs/{SPACE}/ngsi-ld/v1/entityOperations/upsert"
+        )))
+        .and(bearer_token("t"))
+        .and(body_string_contains(ENTITY))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&space)
+        .await;
+    let answer = common::send(&state, who, "POST", &uri, None).await;
+    assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.text);
+    space.verify().await;
+}
+
+/// One entity the space answers differently, declared in `source`.
+fn drifted_in(source: &str) -> Arc<Store> {
+    let store = Arc::new(Store::default());
+    let mut found = BTreeMap::new();
+    found.insert(
+        PROJECT.to_owned(),
+        Found {
+            observed_at: "2026-09-18T09:12:03Z".parse().expect("an instant"),
+            entities: vec![Drifted {
+                space: SPACE.to_owned(),
+                id: ENTITY.to_owned(),
+                drift: Kind::Modified,
+                diff: Vec::new(),
+                resolutions: vec!["revert", "adopt"],
+                source: source.to_owned(),
+                declared: json!({ "id": ENTITY, "type": "AirQualityObserved" }),
+            }],
+        },
+    );
+    store.replace_all(found);
+    store
+}
+
+/// An adoption by a person granted propose on Entity, with their own token, against `gateway`
+/// (which serves the live entity) and, when `forge` is set, the repository on that mock.
+async fn adopt(
+    gateway: &wiremock::MockServer,
+    forge: bool,
+    store: Arc<Store>,
+) -> (StatusCode, String) {
+    let gateway_url = gateway.uri();
+    let config = Config::from_vars(|key| {
+        match key {
+            "JC_OIDC_ISSUER" => Some(common::REALM.issuer.as_str()),
+            "JC_OIDC_CLIENT_ID" => Some("portal-api"),
+            "JC_OIDC_CLIENT_SECRET" => Some("test-secret"),
+            "JC_PORTAL_COOKIE_KEY" => {
+                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001")
+            }
+            "JC_PORTAL_GATEWAY_URL" => Some(gateway_url.as_str()),
+            _ => None,
+        }
+        .map(str::to_owned)
+    })
+    .expect("config");
+    let mut state = AppState::new(config, None);
+    if forge {
+        let client = joinedcontext_portal::forge::ShakoClient::new(
+            gateway_url.parse().expect("mock url"),
+            "test-owner",
+            "test-repo",
+            "token-xyz",
+        )
+        .expect("client");
+        state = state.with_shako(Arc::new(client));
+    }
+    state.drift = store;
+    state.mirror.upsert(common::envelope(
+        "Role",
+        "adopter",
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Entity", "ContextSpace"], "verbs": ["read", "propose"] }] }),
+    ));
+    state.mirror.upsert(common::envelope(
+        "RoleBinding",
+        "adopters",
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "adopter@hel.fi" }], "role": "adopter",
+                "scope": { "project": PROJECT } }),
+    ));
+    let token = common::REALM.person_token_of("portal-api", "portal-api", "adopter", &[]);
+    let response = server::app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/projects/{PROJECT}/drift/{SPACE}/{ENTITY}/adopt"
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// T-7657: adopting needs a seed file of the entity's own space, a forge, the file still in the
+/// repository and the entity still in the file; each missing piece is refused with what to do,
+/// and nothing is written.
+#[tokio::test]
+async fn adopting_refuses_a_file_that_is_no_seed_gone_or_without_the_entity() {
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let seed = "projects/helsinki/spaces/helsinki/entities/seed/stations.json";
+    let live = || {
+        Mock::given(method("GET"))
+            .and(path(format!("/cs/{SPACE}/ngsi-ld/v1/entities/{ENTITY}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": ENTITY, "type": "AirQualityObserved",
+                "airQualityIndex": { "type": "Property", "value": 7 }
+            })))
+    };
+
+    let gateway = MockServer::start().await;
+    live().mount(&gateway).await;
+    for source in [
+        "projects/helsinki/spaces/helsinki/entities/stations.yaml",
+        "projects/helsinki/spaces/vantaa/entities/seed/stations.json",
+    ] {
+        let (status, text) = adopt(&gateway, false, drifted_in(source)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{source}: {text}");
+        assert!(text.contains("is no seed file of space"), "{text}");
+    }
+    let (status, text) = adopt(&gateway, false, drifted_in(seed)).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(text.contains("forge is not configured"), "{text}");
+
+    let gone = common::forge().await;
+    live().mount(&gone).await;
+    Mock::given(method("GET"))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(query_param("@p", format!("'{seed}'")))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&gone)
+        .await;
+    let (status, text) = adopt(&gone, true, drifted_in(seed)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    assert!(text.contains("is no longer in the repository"), "{text}");
+
+    let other = common::forge().await;
+    live().mount(&other).await;
+    Mock::given(method("GET"))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-1",
+            "Content": common::encode(r#"{ "id": "urn:ngsi-ld:AirQualityObserved:other", "type": "AirQualityObserved" }"#)
+        })))
+        .mount(&other)
+        .await;
+    let (status, text) = adopt(&other, true, drifted_in(seed)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    assert!(text.contains("no longer declares"), "{text}");
+    let sent = other.received_requests().await.unwrap_or_default();
+    assert!(
+        !sent.iter().any(|r| r.method.as_str() == "POST"),
+        "nothing written: {:?}",
+        sent.iter()
+            .map(|r| r.url.path().to_owned())
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Adopting writes the live values of the attributes the seed file declares into that file, on a
 /// branch of its own, and opens the merge request an approver decides (F-POR4-004): what the
 /// space holds beside them and what only the broker keeps stay out, and the other entity of the

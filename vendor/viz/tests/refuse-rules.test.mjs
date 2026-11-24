@@ -104,8 +104,8 @@ test("map: a spec is a JSON object", () => {
   assert.deepEqual(map(mapSpec()), []);
 });
 
-test("map: at most 2 MB", () => {
-  assert.ok(map(mapSpec({ title: "x".repeat(2 * 1024 * 1024) })).includes("/ at most 2 MB"));
+test("map: at most 8 MB", () => {
+  assert.ok(map(mapSpec({ title: "x".repeat(8 * 1024 * 1024) })).includes("/ at most 8 MB"));
 });
 
 test("map: the map schema", () => {
@@ -165,9 +165,9 @@ test("map: the total and how many of it have no location, as whole numbers", () 
   for (const count of [{ total: 1 }, { total: 10, unlocated: 9 }, { total: 10, unlocated: 0 }]) assert.deepEqual(map(mapSpec({ count })), [], JSON.stringify(count));
 });
 
-test("map: at most 1000 features", () => {
-  const features = Array.from({ length: 1001 }, () => point());
-  assert.deepEqual(map(mapSpec({ data: { type: "FeatureCollection", features } })), ["/data/features at most 1000 features"]);
+test("map: at most 20000 features", () => {
+  const features = Array.from({ length: 20001 }, () => point());
+  assert.deepEqual(map(mapSpec({ data: { type: "FeatureCollection", features } })), ["/data/features at most 20000 features"]);
   assert.deepEqual(map(mapSpec({ data: { type: "FeatureCollection", features: features.slice(1) } })), []);
 });
 

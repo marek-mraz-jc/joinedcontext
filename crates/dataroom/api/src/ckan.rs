@@ -6,7 +6,7 @@
 //! expected by `ours/platform/jcctl-publish/ckan_http.rs`, `ours/portal/catalogue.rs`, and
 //! `ours/deployment/harvest-*.py`.
 
-use crate::{dataset_shown, decision_error, DataroomState};
+use crate::{dataset_shown, decision_error, distribution_ids, listed_to, DataroomState};
 use axum::body::Bytes;
 use axum::extract::{Path, RawQuery, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
@@ -21,7 +21,7 @@ use dataroom_core::{
     RecordState, RequestCtx, Visibility,
 };
 use dataroom_plugin::validate_view_payload;
-use dataroom_search::{apply_fq_to_filter, search_datasets};
+use dataroom_search::{apply_fq_to_filter, search_store};
 use jc_time::TimestampTz;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -370,13 +370,17 @@ async fn answer_ckan_action(
             if !dataset_shown(&state, &ctx, &cat, &ds, pub_rec.as_ref()) {
                 return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
             }
-            let mut views = BTreeMap::new();
-            for dist in &ds.distributions {
-                if let Ok(v) = state.store.list_resource_views(&ctx, &dist.id).await {
-                    if !v.is_empty() {
-                        views.insert(dist.id.clone(), v);
-                    }
-                }
+            let mut views: BTreeMap<String, Vec<_>> = BTreeMap::new();
+            for view in state
+                .store
+                .list_views_of(&ctx, &distribution_ids(&ds))
+                .await
+                .unwrap_or_default()
+            {
+                views
+                    .entry(view.resource_id.clone())
+                    .or_default()
+                    .push(view);
             }
             let ckan_dict = dataset_to_ckan(&ds, pub_rec.as_ref(), &views, &cat.default_language);
             let cacheable = is_anon_get && ds.visibility == Visibility::Public;
@@ -424,50 +428,28 @@ async fn answer_ckan_action(
                 }
             }
 
-            let datasets = match state.store.list_datasets(&ctx).await {
-                Ok(d) => d,
-                Err(e) => return ckan_err(&base, &action, e),
+            // `jc_hide` on `package_search` (`listed_to`), as on the dataset list page.
+            let listed = |ds: &dataroom_core::Dataset, publishers: &[Publisher]| {
+                listed_to(&state, &ctx, &cat, ds, publishers)
             };
-            let publishers = match state.store.list_publishers(&ctx).await {
-                Ok(p) => p,
+            let (outcome, publishers) = match search_store(
+                state.store.as_ref(),
+                &ctx,
+                state.authorizer.as_ref(),
+                &filter,
+                &cat.default_language,
+                &listed,
+                None,
+            )
+            .await
+            {
+                Ok(v) => v,
                 Err(e) => return ckan_err(&base, &action, e),
             };
             let pub_map: BTreeMap<String, Publisher> = publishers
                 .iter()
                 .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p.clone())])
                 .collect();
-
-            // Enforce `jc_hide` on `package_search`: hidden packages are hidden from anonymous callers
-            // and visible to editors of the dataset's publisher (`plugin.py` lines 168-197, D2, G2).
-            let visible_datasets: Vec<dataroom_core::Dataset> = datasets
-                .into_iter()
-                .filter(|ds| {
-                    if !cat.hidden_datasets.contains_key(&ds.name) {
-                        return true;
-                    }
-                    if ctx.subject.is_anonymous() {
-                        return false;
-                    }
-                    let pub_rec = pub_map.get(&ds.publisher_id);
-                    let target = ObjectTarget::from_dataset(ds, pub_rec);
-                    state
-                        .authorizer
-                        .check(&ctx, Action::Propose, &target)
-                        .allowed
-                })
-                .collect();
-
-            let outcome = match search_datasets(
-                &ctx,
-                state.authorizer.as_ref(),
-                &visible_datasets,
-                &publishers,
-                &filter,
-                &cat.default_language,
-            ) {
-                Ok(o) => o,
-                Err(e) => return ckan_err(&base, &action, e),
-            };
 
             let fl_only_name = payload
                 .get("fl")

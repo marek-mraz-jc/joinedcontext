@@ -859,6 +859,7 @@ mod tests {
             "v1.1/Things('not a uri')",
             "v1.1/Things('nouri')",
             "v1.1/ObservedProperties('speed')",
+            "v1.1/ObservedProperties('urn:a:1')",
             "v1.1/Things('urn:a:1')/Datastreams/Observations",
             "v1.1/Things?$filter=name eq 'x'",
             "v1.1/Things?$top=1",
@@ -873,6 +874,26 @@ mod tests {
             assert!(topic(bad).is_err(), "{bad}");
         }
         assert!(topic(&format!("v1.1/Things('urn:a:{}')", "x".repeat(MAX_TOPIC))).is_err());
+        // 21 bytes around the id: 1003 of it make a topic of exactly MAX_TOPIC bytes
+        let sized = |n: usize| format!("v1.1/Things('urn:a:{}')", "x".repeat(n));
+        assert_eq!(sized(1003).len(), MAX_TOPIC);
+        assert!(topic(&sized(1003)).is_ok());
+        assert!(topic(&sized(1004)).is_err());
+        assert_eq!(
+            topic("v1.1/Things('urn:a:1 2')"),
+            Err("a topic holds no space or control character")
+        );
+    }
+
+    /// A Thing's id is its Entity whole, a `/` in it included; a Datastream's ends at the `/`.
+    #[test]
+    fn a_thing_id_is_its_entity_whole() {
+        let urn = |text| match target(text) {
+            Ok(Target::Resource { urn, .. }) => urn,
+            other => format!("{other:?}"),
+        };
+        assert_eq!(urn("v1.1/Things('urn:a:x%2Fy')"), "urn:a:x/y");
+        assert_eq!(urn("v1.1/Datastreams('urn:a:x%2Fy')"), "urn:a:x");
     }
 
     #[test]

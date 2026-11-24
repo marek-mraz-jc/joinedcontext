@@ -13859,7 +13859,6 @@
       "fixHint": "Korrigieren Sie die markierten Felder ({count}) und veröffentlichen Sie erneut.",
       "reset": "Zurücksetzen",
       "resetField": "{field} auf geerbt zurücksetzen",
-      "pick": "Farbe für {field} wählen",
       "inheritOption": "Geerbt ({value})",
       "default": "Vorgabe",
       "why": "Noch nichts geändert.",

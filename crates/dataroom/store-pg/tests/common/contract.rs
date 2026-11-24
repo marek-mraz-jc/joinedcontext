@@ -182,7 +182,10 @@ pub async fn publishers(store: &dyn Store) {
     let err = store.upsert_publisher(&ctx, dup).await.unwrap_err();
     assert!(matches!(err, DataroomError::Conflict(_)), "{err:?}");
 
-    let withdrawn = store.withdraw_publisher(&ctx, "dept").await.unwrap();
+    let withdrawn = store
+        .withdraw_publisher(&ctx, "dept", audit("publisher.withdraw"))
+        .await
+        .unwrap();
     assert_eq!(withdrawn.state, RecordState::Withdrawn);
     assert_eq!(
         store
@@ -194,7 +197,9 @@ pub async fn publishers(store: &dyn Store) {
         RecordState::Withdrawn
     );
     assert!(matches!(
-        store.withdraw_publisher(&ctx, "nobody").await,
+        store
+            .withdraw_publisher(&ctx, "nobody", audit("publisher.withdraw"))
+            .await,
         Err(DataroomError::NotFound(_))
     ));
 
@@ -212,7 +217,7 @@ pub async fn publishers(store: &dyn Store) {
         .await
         .unwrap();
     let target = store
-        .merge_publishers(&ctx, "region", "city")
+        .merge_publishers(&ctx, "region", "city", audit("publisher.merge"))
         .await
         .unwrap();
     assert_eq!(target.name, "city");
@@ -239,7 +244,10 @@ pub async fn publishers(store: &dyn Store) {
     assert_eq!(source.merged_into.as_deref(), Some("city"));
     assert_eq!(source.state, RecordState::Withdrawn);
     // Withdrawing the merged name touches that record, never the target it redirects to.
-    let w = store.withdraw_publisher(&ctx, "region").await.unwrap();
+    let w = store
+        .withdraw_publisher(&ctx, "region", audit("publisher.withdraw"))
+        .await
+        .unwrap();
     assert_eq!(w.name, "region");
     let city = store.get_publisher(&ctx, "city").await.unwrap().unwrap();
     assert_eq!(
@@ -250,17 +258,17 @@ pub async fn publishers(store: &dyn Store) {
 
     // Merging a publisher into itself, or an unknown one, is refused.
     let err = store
-        .merge_publishers(&ctx, "city", "city")
+        .merge_publishers(&ctx, "city", "city", audit("publisher.merge"))
         .await
         .unwrap_err();
     assert!(matches!(err, DataroomError::Validation { .. }), "{err:?}");
     let err = store
-        .merge_publishers(&ctx, "ghost", "city")
+        .merge_publishers(&ctx, "ghost", "city", audit("publisher.merge"))
         .await
         .unwrap_err();
     assert!(matches!(err, DataroomError::NotFound(_)), "{err:?}");
     let err = store
-        .merge_publishers(&ctx, "city", "ghost")
+        .merge_publishers(&ctx, "city", "ghost", audit("publisher.merge"))
         .await
         .unwrap_err();
     assert!(matches!(err, DataroomError::NotFound(_)), "{err:?}");
@@ -271,7 +279,7 @@ pub async fn publishers(store: &dyn Store) {
         .await
         .unwrap();
     store
-        .merge_publishers(&ctx, "region", "third")
+        .merge_publishers(&ctx, "region", "third", audit("publisher.merge"))
         .await
         .unwrap();
     for ds in store.list_datasets(&ctx).await.unwrap() {
@@ -409,10 +417,15 @@ pub async fn datasets(store: &dyn Store) {
             .title,
         "View v1"
     );
-    store.delete_resource_view(&ctx, "v2").await.unwrap();
+    store
+        .delete_resource_view(&ctx, "v2", audit("resource_view.delete"))
+        .await
+        .unwrap();
     assert!(store.get_resource_view(&ctx, "v2").await.unwrap().is_none());
     assert!(matches!(
-        store.delete_resource_view(&ctx, "v2").await,
+        store
+            .delete_resource_view(&ctx, "v2", audit("resource_view.delete"))
+            .await,
         Err(DataroomError::NotFound(_))
     ));
 
@@ -431,7 +444,10 @@ pub async fn datasets(store: &dyn Store) {
         .upsert_shacl_report(&ctx, shacl_report("pkg-air", "dcat-ap-3.0.1", false))
         .await
         .unwrap();
-    store.purge_dataset(&ctx, "air").await.unwrap();
+    store
+        .purge_dataset(&ctx, "air", audit("dataset.purge"))
+        .await
+        .unwrap();
     assert!(store.get_dataset(&ctx, "air").await.unwrap().is_none());
     assert!(
         store
@@ -453,7 +469,9 @@ pub async fn datasets(store: &dyn Store) {
         .is_empty());
     assert!(store.get_resource_view(&ctx, "v1").await.unwrap().is_none());
     assert!(matches!(
-        store.purge_dataset(&ctx, "air").await,
+        store
+            .purge_dataset(&ctx, "air", audit("dataset.purge"))
+            .await,
         Err(DataroomError::NotFound(_))
     ));
 }
@@ -609,8 +627,14 @@ pub async fn edges(store: &dyn Store) {
         .upsert_dataset(&ctx, dataset("noise", "late", "public"))
         .await
         .unwrap();
-    store.merge_publishers(&ctx, "old", "new").await.unwrap();
-    let target = store.merge_publishers(&ctx, "late", "old").await.unwrap();
+    store
+        .merge_publishers(&ctx, "old", "new", audit("publisher.merge"))
+        .await
+        .unwrap();
+    let target = store
+        .merge_publishers(&ctx, "late", "old", audit("publisher.merge"))
+        .await
+        .unwrap();
     assert_eq!(target.name, "new");
     let late = store
         .list_publishers(&ctx)
@@ -883,7 +907,10 @@ pub async fn twin_catalogues(store: &dyn Store) {
         "run-a started at the deadline still holds"
     );
 
-    store.purge_dataset(&a, "twin").await.unwrap();
+    store
+        .purge_dataset(&a, "twin", audit("dataset.purge"))
+        .await
+        .unwrap();
     assert!(store
         .list_resource_views(&a, &resource)
         .await
@@ -1269,9 +1296,18 @@ pub async fn isolation(store: &dyn Store) {
     let mut ds_b = store.get_dataset(&b, "air").await.unwrap().unwrap();
     ds_b.title.insert("sk".into(), "B only".into());
     store.upsert_dataset(&b, ds_b).await.unwrap();
-    store.withdraw_publisher(&b, "city").await.unwrap();
-    store.delete_resource_view(&b, "v1").await.unwrap();
-    store.purge_dataset(&b, "air").await.unwrap();
+    store
+        .withdraw_publisher(&b, "city", audit("publisher.withdraw"))
+        .await
+        .unwrap();
+    store
+        .delete_resource_view(&b, "v1", audit("resource_view.delete"))
+        .await
+        .unwrap();
+    store
+        .purge_dataset(&b, "air", audit("dataset.purge"))
+        .await
+        .unwrap();
 
     let ds_a = store.get_dataset(&a, "air").await.unwrap().unwrap();
     assert_eq!(ds_a.title["sk"], "Dataset air");
@@ -1297,7 +1333,11 @@ pub async fn isolation(store: &dyn Store) {
         assert_eq!(store.list_publishers(c).await.unwrap().len(), 1);
         assert_eq!(store.list_harvest_sources(c).await.unwrap().len(), 1);
         assert_eq!(store.list_harvest_runs(c, None).await.unwrap().len(), 1);
-        assert_eq!(store.list_activity(c, None, 100).await.unwrap().len(), 1);
+        // b's three audited writes above added their rows to b's log alone.
+        assert_eq!(
+            store.list_activity(c, None, 100).await.unwrap().len(),
+            1 + 3 * usize::from(std::ptr::eq(c, &b))
+        );
         // b's report was of the dataset b purged.
         assert_eq!(
             store.list_shacl_reports(c, None, None).await.unwrap().len(),
@@ -1573,4 +1613,214 @@ pub async fn guarded_writes(store: &dyn Store) {
         .await
         .unwrap();
     assert_eq!(names(&rows, |r| r.id.clone()), ["act-c1"]);
+}
+
+/// The audited writes of every other record kind: each commits with its activity row or not at
+/// all (AUD-02, S11-13). A taken activity id refuses the write and leaves the record as it was;
+/// an accepted write leaves one row naming its record.
+pub async fn audited_writes(store: &dyn Store) {
+    let (org, cat) = tenant();
+    store
+        .upsert_catalogue(catalogue(org, cat, "aw", &unique_host("aw")))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+    store
+        .record_activity(&ctx, audit_row("act-taken", "taken"))
+        .await
+        .unwrap();
+    let taken = || audit_row("act-taken", "taken");
+    fn refused<T: std::fmt::Debug>(what: &str, answer: Result<T, DataroomError>) {
+        assert!(
+            matches!(answer, Err(DataroomError::Conflict(_))),
+            "{what}: {answer:?}"
+        );
+    }
+
+    // Publisher: the propose write, guarded on the version it was decided on (S11-25).
+    let city = store
+        .save_publisher(&ctx, publisher("city"), None, audit("publisher.propose"))
+        .await
+        .unwrap();
+    let mut edit = city.clone();
+    edit.uri = "https://example.org/publisher/lost".into();
+    refused(
+        "save_publisher",
+        store
+            .save_publisher(&ctx, edit.clone(), Some(city.modified), taken())
+            .await,
+    );
+    refused(
+        "save_publisher on a stale read",
+        store
+            .save_publisher(
+                &ctx,
+                edit.clone(),
+                Some(ts("2000-01-01T00:00:00Z")),
+                audit("publisher.propose"),
+            )
+            .await,
+    );
+    assert_eq!(
+        store.get_publisher(&ctx, "city").await.unwrap(),
+        Some(city.clone())
+    );
+    let city = store
+        .save_publisher(&ctx, edit, Some(city.modified), audit("publisher.propose"))
+        .await
+        .unwrap();
+    // A version with nanoseconds (TimestampTz::now()) guards the next write as read back.
+    let mut town = publisher("town");
+    town.modified = ts("2026-11-01T10:00:00.123456789Z");
+    store
+        .save_publisher(&ctx, town, None, audit("publisher.propose"))
+        .await
+        .unwrap();
+    let read = store.get_publisher(&ctx, "town").await.unwrap().unwrap();
+    store
+        .save_publisher(
+            &ctx,
+            read.clone(),
+            Some(read.modified),
+            audit("publisher.propose"),
+        )
+        .await
+        .expect("a guarded write on the version just read");
+    store
+        .save_publisher(&ctx, publisher("region"), None, audit("publisher.propose"))
+        .await
+        .unwrap();
+    store
+        .upsert_dataset(&ctx, dataset("bus", "region", "public"))
+        .await
+        .unwrap();
+
+    // Withdraw and merge: neither the publisher nor its datasets move without the row.
+    refused(
+        "withdraw_publisher",
+        store.withdraw_publisher(&ctx, "region", taken()).await,
+    );
+    refused(
+        "merge_publishers",
+        store
+            .merge_publishers(&ctx, "region", "city", taken())
+            .await,
+    );
+    let region = store.get_publisher(&ctx, "region").await.unwrap().unwrap();
+    assert_eq!(
+        (region.state, region.merged_into),
+        (RecordState::Active, None)
+    );
+    let bus = store.get_dataset(&ctx, "bus").await.unwrap().unwrap();
+    assert_eq!(bus.publisher_id, "region");
+
+    // Harvest source, plugin, view, profile and purge.
+    refused(
+        "save_harvest_source",
+        store
+            .save_harvest_source(&ctx, harvest_source("feed"), taken())
+            .await,
+    );
+    assert_eq!(store.get_harvest_source(&ctx, "feed").await.unwrap(), None);
+    refused(
+        "save_plugin",
+        store.save_plugin(&ctx, plugin("viz"), taken()).await,
+    );
+    assert!(store.list_plugins(&ctx).await.unwrap().is_empty());
+    refused(
+        "save_resource_view",
+        store
+            .save_resource_view(&ctx, view("v1", "res-1", 1), taken())
+            .await,
+    );
+    assert_eq!(store.get_resource_view(&ctx, "v1").await.unwrap(), None);
+    refused(
+        "save_profile",
+        store
+            .save_profile(&ctx, profile("local", "1.0"), taken())
+            .await,
+    );
+    assert!(store.list_profiles(&ctx).await.unwrap().is_empty());
+    refused(
+        "purge_dataset",
+        store.purge_dataset(&ctx, "bus", taken()).await,
+    );
+    assert!(store.get_dataset(&ctx, "bus").await.unwrap().is_some());
+    let unchanged = store.list_activity(&ctx, None, 50).await.unwrap();
+
+    // The same writes with a fresh row go through, each with one row naming its record.
+    let feed = store
+        .save_harvest_source(
+            &ctx,
+            harvest_source("feed"),
+            audit("harvest_source.propose"),
+        )
+        .await
+        .unwrap();
+    store
+        .save_plugin(&ctx, plugin("viz"), audit("plugin.propose"))
+        .await
+        .unwrap();
+    store
+        .save_resource_view(&ctx, view("v1", "res-1", 1), audit("resource_view.propose"))
+        .await
+        .unwrap();
+    refused(
+        "delete_resource_view",
+        store.delete_resource_view(&ctx, "v1", taken()).await,
+    );
+    assert!(store.get_resource_view(&ctx, "v1").await.unwrap().is_some());
+    store
+        .delete_resource_view(&ctx, "v1", audit("resource_view.delete"))
+        .await
+        .unwrap();
+    store
+        .save_profile(&ctx, profile("local", "1.0"), audit("profile.propose"))
+        .await
+        .unwrap();
+    refused(
+        "save_profile of a stored version",
+        store
+            .save_profile(&ctx, profile("local", "1.0"), audit("profile.propose"))
+            .await,
+    );
+    let merged = store
+        .merge_publishers(&ctx, "region", "city", audit("publisher.merge"))
+        .await
+        .unwrap();
+    assert_eq!(merged.id, city.id);
+    let withdrawn = store
+        .withdraw_publisher(&ctx, "region", audit("publisher.withdraw"))
+        .await
+        .unwrap();
+    assert_eq!(withdrawn.state, RecordState::Withdrawn);
+    store
+        .purge_dataset(&ctx, "pkg-bus", audit("dataset.purge"))
+        .await
+        .unwrap();
+    assert_eq!(store.get_dataset(&ctx, "bus").await.unwrap(), None);
+
+    let rows = store.list_activity(&ctx, None, 50).await.unwrap();
+    let mut written: Vec<String> = rows
+        .iter()
+        .filter(|r| !unchanged.contains(r))
+        .map(|r| format!("{} {}", r.operation, r.object_id))
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        [
+            "dataset.purge pkg-bus".to_owned(),
+            format!("harvest_source.propose {}", feed.id),
+            "plugin.propose viz".into(),
+            "profile.propose local:1.0".into(),
+            format!("publisher.merge {}", city.id),
+            "publisher.withdraw pub-region".into(),
+            "resource_view.delete v1".into(),
+            "resource_view.propose v1".into(),
+        ]
+    );
+    assert!(rows
+        .iter()
+        .all(|r| (r.org_id, r.catalogue_id) == (org, cat)));
 }

@@ -301,6 +301,19 @@ async fn icsr_a_stored_document_that_is_no_grant_of_its_pair_grants_nothing() {
     ] {
         assert_eq!(ops.put_grant_doc(key, doc).await, Ok(false));
     }
+    // a stored pair with an internal Tenant on either side is no grant (C8)
+    for (target, source) in [("antares-views", "a"), ("a", "antares-views")] {
+        let doc = json!({"target": target, "source": source});
+        assert_eq!(
+            ops.put_grant_doc(&format!("{target}~{source}"), doc).await,
+            Ok(false)
+        );
+        let held = antares_icsr::held(&ops, target, source).await;
+        assert_eq!(held.map(|g| g.is_some()), Ok(false), "{target}~{source}");
+        let path = format!("/q/grants/{target}/{source}");
+        let gone = send(&app, "DELETE", &path, None, None, None).await;
+        assert_eq!(gone.status, 404, "{path}: {}", gone.body);
+    }
     for path in ["/q/grants/b/a", "/q/grants/b/c", "/q/grants/b/d"] {
         let a = send(&app, "GET", path, None, None, None).await;
         assert_eq!(a.status, 404, "{path}: {}", a.body);
@@ -544,6 +557,16 @@ async fn icsr_a_grant_naming_its_caller_decides_a_forward_across_organizations_a
         register(&app, c, "r1", Some(a), json!({})).await.status,
         403
     );
+    // only a self URL may name another Organization's Tenant: a socket forward has no grant check
+    let foreign = register(
+        &app,
+        b,
+        "r2",
+        Some(a),
+        json!({"endpoint": "http://broker.example.org"}),
+    )
+    .await;
+    assert_eq!(foreign.status, 400, "{}", foreign.body);
     assert_eq!(
         ids(&cars(&app, c, Some("carol")).await.body),
         Vec::<String>::new()

@@ -5,7 +5,7 @@ import { isChange, ORG_NAMESPACE } from "../../api/manifest";
 import type { Change } from "../../api/manifest";
 import { useOrganizationManifests } from "../../api/projects";
 import { ChangeNotice } from "../../components/ChangeNotice";
-import { Alert, Badge, Button, Card, Checkbox, Field, Input } from "../../components/ui";
+import { Alert, Badge, Button, Card, Checkbox, Field, InlineError, Input } from "../../components/ui";
 import type { PortalSpec } from "./PortalsArea";
 import { linesOf, usePortalChange } from "./PortalSources";
 import { completed, displayFaults, displayOf, EXTRA_KEY, fieldRowsOf, moved, resolved } from "./portalDisplay";
@@ -134,9 +134,7 @@ export function PortalDisplayTab({ name, spec }: { name: string; spec: PortalSpe
                 {t(`portals.display.hint.${list}`)}
               </p>
               {fault ? (
-                <p role="alert" className="text-body text-danger">
-                  {t(fault)}
-                </p>
+                <InlineError>{t(fault)}</InlineError>
               ) : null}
               <ol className="divide-y divide-border rounded border border-border" aria-describedby={`display-${list}-hint`}>
                 {rows.map((row, at) => (

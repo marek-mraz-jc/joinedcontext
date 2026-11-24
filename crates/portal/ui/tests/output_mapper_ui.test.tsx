@@ -153,6 +153,115 @@ describe("the output mapper in the workbench", () => {
     expect(screen.getByTestId("mapper-preview").textContent).toContain("2026-10-07T08:00:00Z");
   });
 
+  it("writes an expression, a fixed value, a joined text or nothing per attribute, each as chosen", async () => {
+    await i18n.changeLanguage("en");
+    const user = userEvent.setup();
+    show();
+    await pickType(user);
+    const date = await screen.findByTestId("mapper-attribute-dateObserved");
+    const source = (row: HTMLElement, name: string) => within(row).getByRole("combobox", { name: new RegExp(`Source of ${name}`) });
+
+    await user.selectOptions(source(date, "dateObserved"), "expression");
+    const expression = within(date).getByRole("textbox", { name: /Bloblang expression for dateObserved/ });
+    await user.clear(expression);
+    await user.type(expression, "now()");
+    await waitFor(() => expect(written.at(-1)).toContain("let a0 = (now())"));
+
+    await user.selectOptions(source(date, "dateObserved"), "concat");
+    await waitFor(() => expect(written.at(-1)).toContain(".join("));
+
+    await user.selectOptions(source(date, "dateObserved"), "value");
+    await user.type(within(date).getByRole("textbox", { name: /Fixed value of dateObserved/ }), "2026-01-01T00:00:00Z");
+    await waitFor(() => expect(written.at(-1)).toContain('let a0 = "2026-01-01T00:00:00Z"'));
+
+    const pm10 = screen.getByTestId("mapper-attribute-pm10");
+    await user.selectOptions(source(pm10, "pm10"), "value");
+    await user.type(within(pm10).getByRole("spinbutton", { name: /Fixed value of pm10/ }), "12.5");
+    await waitFor(() => expect(written.at(-1)).toContain("let a1 = 12.5"));
+    await user.clear(within(pm10).getByRole("spinbutton", { name: /Fixed value of pm10/ }));
+    await waitFor(() => expect(written.at(-1)).toContain('let a1 = ""'));
+
+    const status = screen.getByTestId("mapper-attribute-status");
+    await user.selectOptions(source(status, "status"), "value");
+    await user.selectOptions(within(status).getByRole("combobox", { name: /Fixed value of status/ }), "closed");
+    await waitFor(() => expect(written.at(-1)).toContain('let a2 = "closed"'));
+
+    await user.selectOptions(source(status, "status"), "");
+    await waitFor(() => expect(written.at(-1)).not.toContain("root.status"));
+  });
+
+  it("says at each attribute what the sample cannot give it, and at the id when no field is chosen", async () => {
+    await i18n.changeLanguage("en");
+    const user = userEvent.setup();
+    show();
+    await pickType(user);
+    const pm10 = await screen.findByTestId("mapper-attribute-pm10");
+    await user.selectOptions(within(pm10).getByRole("combobox", { name: /Source of pm10/ }), "field:status");
+    expect(await within(pm10).findByText(/status holds “working”, which is not a number; pm10 takes a number/)).toBeInTheDocument();
+
+    const status = screen.getByTestId("mapper-attribute-status");
+    await user.selectOptions(within(status).getByRole("combobox", { name: /Source of status/ }), "field:PM10");
+    expect(await within(status).findByText(/PM10 holds “18.4”; status takes one of working, closed/)).toBeInTheDocument();
+
+    await user.selectOptions(within(pm10).getByRole("combobox", { name: /Observed at, for pm10/ }), "status");
+    expect(await within(pm10).findByText(/status holds working, which is no time/)).toBeInTheDocument();
+    expect(written.at(-1)).toContain('"observedAt": if this.status != null');
+    await user.selectOptions(within(pm10).getByRole("combobox", { name: /Observed at, for pm10/ }), "");
+    await waitFor(() => expect(written.at(-1)).not.toContain("observedAt"));
+
+    const date = screen.getByTestId("mapper-attribute-dateObserved");
+    await user.selectOptions(within(date).getByRole("combobox", { name: /Source of dateObserved/ }), "field:observed");
+    await user.selectOptions(within(date).getByRole("combobox", { name: /Change the value/ }), "date");
+    expect(await within(date).findByText(/observed holds “2026-10-07T08:00:00Z”, which the date format of dateObserved cannot read/)).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: /Id from field/ }), "");
+    expect(await screen.findByText("Choose the field each entity's id comes from.")).toBeInTheDocument();
+    expect(written.at(-1)).not.toContain("root.id");
+  });
+
+  it("joins fields, reads a date format, gives an empty field a value and says when a lookup has nothing to translate", async () => {
+    await i18n.changeLanguage("en");
+    const user = userEvent.setup();
+    show();
+    await pickType(user);
+    const date = await screen.findByTestId("mapper-attribute-dateObserved");
+    await user.selectOptions(within(date).getByRole("combobox", { name: /Source of dateObserved/ }), "concat");
+    await user.selectOptions(within(date).getByRole("combobox", { name: /^Field 1/ }), "status");
+    await user.click(within(date).getByRole("button", { name: "Add a field" }));
+    await user.click(within(date).getByRole("button", { name: "Remove the field PM10 from the join" }));
+    await user.selectOptions(within(date).getByRole("combobox", { name: /Between the fields/ }), " - ");
+    await waitFor(() => expect(written.at(-1)).toContain('[ if this.status != null && this.status != "" { this.status.string() } else { deleted() }, if this.id != null'));
+    expect(written.at(-1)).toContain('.join(" - ")');
+
+    await user.selectOptions(within(date).getByRole("combobox", { name: /Source of dateObserved/ }), "field:observed");
+    await user.selectOptions(within(date).getByRole("combobox", { name: /Change the value/ }), "date");
+    await user.selectOptions(within(date).getByRole("combobox", { name: /Date format of the field/ }), "%Y-%m-%d %H:%M:%S");
+    await waitFor(() => expect(written.at(-1)).toContain('ts_strptime("%Y-%m-%d %H:%M:%S")'));
+    await user.click(within(date).getByRole("button", { name: "Remove the step Date in a format" }));
+    await waitFor(() => expect(written.at(-1)).not.toContain("ts_strptime"));
+
+    const pm10 = screen.getByTestId("mapper-attribute-pm10");
+    await user.selectOptions(within(pm10).getByRole("combobox", { name: /Change the value/ }), "default");
+    await user.type(within(pm10).getByRole("spinbutton", { name: /Value when the field is empty/ }), "0");
+    await waitFor(() => expect(written.at(-1)).toContain("} else { 0 }"));
+
+    const status = screen.getByTestId("mapper-attribute-status");
+    await user.selectOptions(within(status).getByRole("combobox", { name: /Change the value/ }), "default");
+    await user.selectOptions(within(status).getByRole("combobox", { name: /Value when the field is empty/ }), "closed");
+    await waitFor(() => expect(written.at(-1)).toContain('} else { "closed" }'));
+    await user.selectOptions(within(status).getByRole("combobox", { name: /Change the value/ }), "lookup");
+    expect(within(status).getByText(/Every value of the sample is already one of the model's/)).toBeInTheDocument();
+  });
+
+  it("keeps a field the sample no longer has as a choice and says so", async () => {
+    await i18n.changeLanguage("en");
+    const attributes = ATTRIBUTES.attributes as Attribute[];
+    show(generate({ type: "AirQualityObserved", idField: "id", attributes: { pm10: { field: "gone" } } }, attributes, "ovzdusie"));
+    const pm10 = await screen.findByTestId("mapper-attribute-pm10");
+    expect(within(pm10).getByRole("combobox", { name: /Source of pm10/ })).toHaveValue("field:gone");
+    expect(within(pm10).getByText(/The sample has no field gone/)).toBeInTheDocument();
+  });
+
   it("never replaces a step written by hand unless asked, and gives it back", async () => {
     await i18n.changeLanguage("en");
     const user = userEvent.setup();

@@ -166,6 +166,28 @@ mod chart_tests {
     use super::*;
     use crate::go_syslog::chart;
 
+    /// With best effort a failed parse keeps a partial message only when it has a priority and a version.
+    #[test]
+    fn best_effort_keeps_only_a_minimally_valid_partial_message() {
+        let (m, e) = parse(b"<1>1 - h", true);
+        assert!(m.is_some() && e.is_some());
+        let (m, e) = parse(b"<1>1 - h", false);
+        assert!(m.is_none() && e.is_some());
+        let (m, e) = parse(b"<1>", true);
+        assert!(m.is_none() && e.is_some());
+        // a complete message is whole either way
+        for input in [
+            &b"<1>1 - - - - - -"[..],
+            b"<1>1 - - - - - - x",
+            b"<1>1 - h a p m [x a=\"b\"]",
+        ] {
+            for best_effort in [true, false] {
+                let (m, e) = parse(input, best_effort);
+                assert!(m.is_some() && e.is_none(), "{input:?} {best_effort}");
+            }
+        }
+    }
+
     /// The machine over `input` with its EOF actions off (eof is never reached).
     fn step(input: &[u8]) -> (i32, Option<String>) {
         let mut m = Machine {

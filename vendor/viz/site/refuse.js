@@ -106,8 +106,9 @@
   // The map spec of ADR-N-053 §2.9: GeoJSON and a field list, no expression and no style.
   // Every member is named here; anything else is refused.
   var MAP_SCHEMA = "urn:joinedcontext:map:v1";
-  var MAP_FEATURES = 1000;
-  var MAP_BYTES = 2 * 1024 * 1024;
+  // A visitor's map of every matching entity (T-7755) reaches 20,000 points.
+  var MAP_FEATURES = 20000;
+  var MAP_BYTES = 8 * 1024 * 1024;
   var MAP_MEMBERS = ["$schema", "title", "data", "label", "popup", "time", "link", "count"];
   var GEOMETRIES = { Point: 0, MultiPoint: 1, LineString: 1, MultiLineString: 2, Polygon: 2, MultiPolygon: 3 };
 
@@ -132,7 +133,7 @@
       errors.push({ pointer: pointer, rule: rule });
     }
     if (!spec || typeof spec !== "object" || Array.isArray(spec)) return [{ pointer: "/", rule: "a spec is a JSON object" }];
-    if (new TextEncoder().encode(JSON.stringify(spec)).length > MAP_BYTES) no("/", "at most 2 MB");
+    if (new TextEncoder().encode(JSON.stringify(spec)).length > MAP_BYTES) no("/", "at most 8 MB");
     if (spec.$schema !== MAP_SCHEMA) no("/$schema", "the map schema " + MAP_SCHEMA);
     Object.keys(spec).forEach(function (key) {
       if (MAP_MEMBERS.indexOf(key) < 0) no("/" + key, "no member of that name");

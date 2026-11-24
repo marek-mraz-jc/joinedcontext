@@ -5,6 +5,7 @@ import { isChange, ORG_NAMESPACE } from "../../api/manifest";
 import type { Change } from "../../api/manifest";
 import { useOrganizationManifests } from "../../api/projects";
 import { ChangeNotice } from "../../components/ChangeNotice";
+import { Swatch } from "../../components/forms/widgets/AppearanceWidgets";
 import { Alert, Badge, Button, Card, Field, Input, Select } from "../../components/ui";
 import type { PortalSpec } from "./PortalsArea";
 import { linesOf, usePortalChange } from "./PortalSources";
@@ -92,17 +93,17 @@ export function PortalAppearanceTab({ name, spec }: { name: string; spec: Portal
       );
     }
     if (field.kind === "colour") {
-      const hex = typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value) ? value : typeof shown === "string" && /^#[0-9a-fA-F]{6}$/.test(shown) ? shown : "#ffffff";
       return (
         <div className="flex items-center gap-2">
-          <input type="color" aria-label={t("portals.appearance.pick", { field: t(`portals.appearance.field.${field.path}`) })} className="h-control shrink-0 cursor-pointer rounded border border-border bg-surface p-1" style={{ width: "48px", minWidth: "48px" }} value={hex} onChange={(e) => set(field.path, e.currentTarget.value)} />
-          <Input id={id} value={value === undefined ? "" : String(value)} placeholder={shown === undefined ? "" : String(shown)} maxLength={7} aria-invalid={invalid || undefined} onChange={(e) => set(field.path, e.currentTarget.value.trim() || undefined)} />
+          <Swatch colour={typeof value === "string" ? value : typeof shown === "string" ? shown : undefined} className="h-control w-control" />
+          <Input id={id} aria-label={t(`portals.appearance.field.${field.path}`)} value={value === undefined ? "" : String(value)} placeholder={shown === undefined ? "" : String(shown)} maxLength={7} aria-invalid={invalid || undefined} onChange={(e) => set(field.path, e.currentTarget.value.trim() || undefined)} />
         </div>
       );
     }
     return (
       <Input
         id={id}
+        aria-label={t(`portals.appearance.field.${field.path}`)}
         type={field.kind === "email" ? "email" : "text"}
         value={value === undefined ? "" : String(value)}
         placeholder={shown === undefined ? "" : String(shown)}

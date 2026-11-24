@@ -174,6 +174,15 @@ async fn speed(b: &Broker, id: &str, speed: i64) -> Result<(), String> {
     b.http.speed(Some("city"), id, speed).await
 }
 
+/// Script the `name` the Thing of Car 1 answers in view m1.
+fn named(name: &str) {
+    sta(
+        "m1/Things('urn:ngsi-ld:Car:1')?$select=name",
+        200,
+        &json!({ "name": name }),
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn sta_mqtt_a_write_publishes_what_it_changed_on_each_topic() -> Result<(), String> {
     let b = broker(Limits::default()).await?;
@@ -183,11 +192,7 @@ async fn sta_mqtt_a_write_publishes_what_it_changed_on_each_topic() -> Result<()
     let obs = "v1.1/Datastreams('urn:ngsi-ld:Car:1%2Fspeed')/Observations";
     let page = "m1/Datastreams('urn:ngsi-ld:Car:1/speed')/Observations?$orderby=phenomenonTime%20desc&$top=10";
     let link = |set: &str, id: &str| format!("http://h/x/views/m1/sta/v1.1/{set}('{id}')");
-    sta(
-        "m1/Things('urn:ngsi-ld:Car:1')?$select=name",
-        200,
-        &json!({"name": "a"}),
-    );
+    named("a");
     sta(page, 200, &json!({"value": []}));
     sta("m1/Things?$top=1", 200, &json!({"value": []}));
     sta("m1/Datastreams?$top=1", 200, &json!({"value": []}));
@@ -212,11 +217,7 @@ async fn sta_mqtt_a_write_publishes_what_it_changed_on_each_topic() -> Result<()
 
     // the write changes the Thing, adds an Observation, and the Thing and its Datastream of
     // the whole-set topics are read for the first time
-    sta(
-        "m1/Things('urn:ngsi-ld:Car:1')?$select=name",
-        200,
-        &json!({"name": "b"}),
-    );
+    named("b");
     sta(
         page,
         200,
@@ -276,7 +277,11 @@ async fn sta_mqtt_a_write_publishes_what_it_changed_on_each_topic() -> Result<()
         &json!({"value": [{"@iot.id": "o2", "@iot.selfLink": link("Observations", "o2")}]}),
     );
     sta("m1/Observations('o2')", 200, &json!({"result": 4}));
+    // the topics left still publish
+    named("c");
     speed(&b, "urn:ngsi-ld:Car:1", 4).await?;
+    let p = next(&mut ws, WAIT).await?.ok_or("closed")?;
+    assert_eq!(published(&p), (thing.to_owned(), json!({"name": "c"})));
     quiet(&mut ws).await?;
 
     send(&mut ws, vec![0xe0, 0]).await?;
@@ -364,6 +369,37 @@ async fn sta_mqtt_refuses_what_is_no_reading_client() -> Result<(), String> {
     // ... and a whole set it cannot read
     send(&mut ws, subscribe(6, &["v1.1/Datastreams"])).await?;
     assert_eq!(next(&mut ws, WAIT).await?, Some(vec![0x90, 3, 0, 6, 0x80]));
+    // a whole set the caller cannot read now is refused by a view that takes Subscriptions too
+    let mut ws = connected(&b, "m2", 0).await?;
+    send(&mut ws, subscribe(7, &["v1.1/Datastreams"])).await?;
+    assert_eq!(next(&mut ws, WAIT).await?, Some(vec![0x90, 3, 0, 7, 0x80]));
+    Ok(())
+}
+
+/// A view of 64 types takes a topic; one of 65 types watches more than one Subscription
+/// may name, so it takes none.
+#[tokio::test(flavor = "multi_thread")]
+async fn sta_mqtt_a_topic_watches_at_most_64_types() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    for (id, count, ack) in [("m8", 64, 0), ("m9", 65, 0x80)] {
+        let types: Vec<String> = (0..count).map(|n| format!("T{n}")).collect();
+        let doc = json!({"id": id, "tenant": "city", "selector": types,
+            "rules": [{"types": types, "attributes": ["speed"]}], "operations": READS});
+        let (code, answer) = b
+            .http
+            .call("PUT", &format!("/q/views/{id}"), &[], Some(&doc))
+            .await?;
+        assert!(code == 201 || code == 204, "{id}: {code} {answer}");
+        sta(&format!("{id}/"), 200, &json!({"value": []}));
+        sta(&format!("{id}/Things('urn:ngsi-ld:T0:1')"), 200, &json!({}));
+        let mut ws = connected(&b, id, 0).await?;
+        send(&mut ws, subscribe(1, &["v1.1/Things('urn:ngsi-ld:T0:1')"])).await?;
+        assert_eq!(
+            next(&mut ws, WAIT).await?,
+            Some(vec![0x90, 3, 0, 1, ack]),
+            "{id}"
+        );
+    }
     Ok(())
 }
 
@@ -392,14 +428,42 @@ async fn sta_mqtt_bounds_close_a_connection() -> Result<(), String> {
     }
     assert!(got.len() < 4, "{got:?}");
 
-    // keep alive 1 s: silent for 1.5 s ends it
+    // keep alive 1 s: silent for 1.5 s ends it, well before the 4 s lifetime
+    let started = std::time::Instant::now();
     let mut ws = connected(&b, "m5", 1).await?;
     assert_eq!(next(&mut ws, WAIT).await?, None, "keep alive");
+    assert!(started.elapsed() < Duration::from_secs(3), "{started:?}");
+    // ... and a client that pings inside it stays
+    let mut ws = connected(&b, "m5", 1).await?;
+    for _ in 0..4 {
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        send(&mut ws, vec![0xc0, 0]).await?;
+        assert_eq!(
+            next(&mut ws, WAIT).await?,
+            Some(vec![0xd0, 0]),
+            "kept alive"
+        );
+    }
 
     // a subscribed connection renews its lease and ends at its lifetime
     let mut ws = connected(&b, "m5", 0).await?;
     send(&mut ws, subscribe(1, &["v1.1/Things('urn:ngsi-ld:Car:1')"])).await?;
     assert_eq!(next(&mut ws, WAIT).await?, Some(vec![0x90, 3, 0, 1, 0]));
+    // past the 3 s lease its Subscription still has a lease ahead of it
+    tokio::time::sleep(Duration::from_millis(3300)).await;
+    let tenant = [("NGSILD-Tenant", "city")];
+    let (code, subs) = b
+        .http
+        .call("GET", "/ngsi-ld/v1/subscriptions", &tenant, None)
+        .await?;
+    assert_eq!(code, 200, "{subs}");
+    let leased = subs.as_array().into_iter().flatten().any(|s| {
+        s.get("expiresAt")
+            .and_then(Value::as_str)
+            .and_then(jc_time::parse_rfc3339)
+            .is_some_and(|t| t > jiff::Timestamp::now())
+    });
+    assert!(leased, "{subs}");
     assert_eq!(next(&mut ws, WAIT).await?, None, "lifetime");
 
     // a removed view closes its connections

@@ -291,6 +291,9 @@ mod tests {
             Err(Bad::Malformed(_))
         ));
         assert_eq!(read(&[0x82, 0xff, 0xff, 0x7f]).err(), Some(Bad::TooBig));
+        // a remaining length of exactly 64 KiB is read on; one byte more is too big
+        assert_eq!(read(&[0x82, 0x80, 0x80, 0x04]).err(), Some(Bad::Incomplete));
+        assert_eq!(read(&[0x82, 0x81, 0x80, 0x04]).err(), Some(Bad::TooBig));
     }
 
     #[test]
@@ -299,7 +302,7 @@ mod tests {
         body.extend(string("v1.1/Things"));
         body.push(1);
         body.extend(string("v1.1/Datastreams"));
-        body.push(0);
+        body.push(2);
         let sub = packet(0x82, &body);
         let topics = vec!["v1.1/Things".to_owned(), "v1.1/Datastreams".to_owned()];
         assert_eq!(
