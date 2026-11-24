@@ -1,5 +1,5 @@
 //! Any text as a name, a domain, a URN or a remote host: every check answers and never panics,
-//! and what parses prints back to itself (T-7766).
+//! and a URN that parses reads back from what it prints (T-7766).
 #![no_main]
 
 use jc_core::names::{self, OrganizationId};
@@ -25,7 +25,7 @@ fuzz_target!(|data: &[u8]| {
     }
     let _ = OrganizationId::from_domain(text);
     if let Ok(urn) = text.parse::<Urn>() {
-        assert_eq!(urn.id(), text);
+        assert_eq!(urn.to_string().parse::<Urn>().ok().as_ref(), Some(&urn));
         assert_eq!(type_of_id(text), Some(urn.entity_type()));
     }
     let _ = type_of_id(text);

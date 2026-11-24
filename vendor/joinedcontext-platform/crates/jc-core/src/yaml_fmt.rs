@@ -55,6 +55,14 @@ type Trivia = Vec<Option<String>>;
 
 /// Formats `src` (one or more YAML documents) into the canonical layout.
 pub fn format(src: &str) -> Result<String> {
+    // YAML ends a line at a lone `\r` too, the lines below only at `\n` (a CRLF's `\r` is trimmed).
+    if let Some(at) = src
+        .match_indices('\r')
+        .find(|(at, _)| !src[at + 1..].starts_with('\n'))
+    {
+        let line = src[..at.0].matches('\n').count() + 1;
+        return Err(unsupported(line, "a carriage return inside a line"));
+    }
     let before = documents(src)?;
     let mut out = String::new();
     for (i, part) in split_documents(src).iter().enumerate() {
@@ -1007,6 +1015,18 @@ mod edge_tests {
             refused("a:\n  x # c\n"),
             "a comment after a value on its own line"
         );
+    }
+
+    /// Fuzz (T-7766): YAML breaks a line at a lone carriage return, the formatter only at `\n`,
+    /// so `0: \n \r?` came out as a file the formatter refused. A carriage return that ends no
+    /// line is refused, naming its line; a CRLF file still formats.
+    #[test]
+    fn a_carriage_return_inside_a_line_is_refused() {
+        assert!(matches!(
+            format("0: \n \r?\n"),
+            Err(FmtError::Unsupported { line: 2, .. })
+        ));
+        assert_eq!(format("a: 1\r\nb: 2\r\n").expect("formats"), "a: 1\nb: 2\n");
     }
 
     /// Fuzz (T-7766): `'?+'` was written plain, and the parser reads a leading `?` as a complex
