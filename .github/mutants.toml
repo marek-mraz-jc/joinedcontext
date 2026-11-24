@@ -38,6 +38,11 @@ exclude_re = [
   # jc-chart rows_of: `id` and `type` hold strings, which the instance loop skips as non-objects, so
   # skipping them by name or not is alike; the @context half is held by a test (T-7622).
   'jc-chart/src/spec\.rs:\d+:29: replace \|\| with && in rows_of',
+  # T-7582 ekiben-io-sql fuzzing: compiled only with the `fuzzing` feature for fuzz/ (cargo fuzz), never in the crate's
+  # tests, so no test builds a mutant of it; the dsn, lint and values fuzz targets run it.
+  'ekiben-io-sql/src/lib\.rs:\d+:\d+: .* in fuzzing::lint_all',
+  'ekiben-io-sql/src/lib\.rs:\d+:\d+: replace fuzzing::lint_all with \(\)',
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: (replace fuzz_values with \(\)|.* in fuzz_values)',
   # T-7632 ekiben-io-ngsild status_text: a body of exactly ERROR_BODY_BYTES is cut at its own length either way.
   'ekiben-io-ngsild/src/client\.rs:\d+:\d+: replace > with >= in status_text',
   # T-7632 ekiben-io-ngsild: the next pass due exactly now sleeps zero either way; an equal timestamp
