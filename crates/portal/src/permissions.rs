@@ -2652,6 +2652,902 @@ mod tests {
         ));
     }
 
+    fn caller(email: &str) -> Identity {
+        Identity {
+            client: None,
+            subject: format!("sub-{email}"),
+            username: email.to_owned(),
+            email: Some(email.to_owned()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        }
+    }
+
+    fn grant(role: &str, rule: Value, space: Option<&str>, organization: Option<&str>) -> Grant {
+        Grant {
+            role: role.to_owned(),
+            binding: format!("{role}-binding"),
+            scope: "project:doprava".to_owned(),
+            space: space.map(str::to_owned),
+            organization: organization.map(str::to_owned),
+            rule: serde_json::from_value(rule).expect("rule"),
+            frozen: Vec::new(),
+        }
+    }
+
+    fn holding(grants: Vec<Grant>) -> Effective {
+        Effective {
+            project: "doprava".to_owned(),
+            bootstrap: false,
+            grants,
+            projects: None,
+        }
+    }
+
+    fn denied(result: Result<(), ApiError>) -> String {
+        match result {
+            Err(ApiError::Denied(message)) => message,
+            other => panic!("expected a 403, got {other:?}"),
+        }
+    }
+
+    /// PF-50, PF-51: a refusal names the first constraint a grant's target breaks, in the words
+    /// of its operator, and with no grant at all the missing verb; the bootstrap group passes.
+    #[test]
+    fn a_refusal_names_the_constraint_broken_or_the_verb_no_role_grants() {
+        let target = serde_json::json!({ "spec": { "audience": "project", "tier": 2 } });
+        for (constraint, says) in [
+            (
+                serde_json::json!({ "field": "spec.audience", "equals": "public" }),
+                "must equal public",
+            ),
+            (
+                serde_json::json!({ "field": "spec.audience", "pattern": "^pub" }),
+                "must match ^pub",
+            ),
+            (
+                serde_json::json!({ "field": "spec.tier", "in": ["1", "3"] }),
+                "must be one of 1, 3",
+            ),
+            (
+                serde_json::json!({ "field": "spec.audience", "notIn": ["project", "x"] }),
+                "must not be one of project, x",
+            ),
+        ] {
+            let field = constraint["field"].as_str().expect("field").to_owned();
+            let effective = holding(vec![grant(
+                "publisher",
+                serde_json::json!({ "kinds": ["Endpoint"], "verbs": ["propose"], "constraints": [constraint] }),
+                None,
+                None,
+            )]);
+            assert_eq!(
+                denied(effective.check("Endpoint", Verb::Propose, Some(&target))),
+                format!("{field} does not satisfy role publisher ({says})")
+            );
+        }
+        let none = holding(Vec::new());
+        assert_eq!(
+            denied(none.check("Endpoint", Verb::Delete, None)),
+            "no role grants delete on Endpoint in project doprava (PF-50)"
+        );
+        let bootstrap = Effective {
+            bootstrap: true,
+            ..holding(Vec::new())
+        };
+        assert!(bootstrap.check("Endpoint", Verb::Delete, None).is_ok());
+        assert!(bootstrap.may_in("Endpoint", Verb::Delete, Some("any")));
+        assert_eq!(bootstrap.spaces_reached(), None);
+    }
+
+    /// TEN-06: a field the installation's operators froze refuses a write that changes it and
+    /// lets a read and a write that keeps it through.
+    #[test]
+    fn a_frozen_field_refuses_a_write_that_changes_it_and_never_a_read() {
+        let mut frozen = grant(
+            "editor",
+            serde_json::json!({ "kinds": ["Project"], "verbs": ["read", "propose"] }),
+            None,
+            None,
+        );
+        frozen.frozen = vec![("/spec/quota/cpu".to_owned(), serde_json::json!("2"))];
+        let effective = holding(vec![frozen]);
+        let changed = serde_json::json!({ "spec": { "quota": { "cpu": "8" } } });
+        assert_eq!(
+            denied(effective.check("Project", Verb::Propose, Some(&changed))),
+            "spec.quota.cpu is set by the installation's operators, not by role editor (TEN-06)"
+        );
+        assert_eq!(
+            denied(effective.check("Project", Verb::Propose, None)),
+            "spec.quota.cpu is set by the installation's operators, not by role editor (TEN-06)"
+        );
+        assert!(effective
+            .check("Project", Verb::Read, Some(&changed))
+            .is_ok());
+        let kept = serde_json::json!({ "spec": { "quota": { "cpu": "2" } } });
+        assert!(effective
+            .check("Project", Verb::Propose, Some(&kept))
+            .is_ok());
+    }
+
+    /// EP-76, AP-120, AP-134, PF-71: approving a public Endpoint, a public App or an App with
+    /// egress needs the publisher's constrained approve, and each refusal says so; an App with
+    /// egress is judged as a public one.
+    #[test]
+    fn public_exposure_needs_the_publishers_approve_and_says_so() {
+        let steward = holding(vec![grant(
+            "steward",
+            serde_json::json!({ "kinds": ["Endpoint", "App"], "verbs": ["approve"],
+                "constraints": [{ "field": "spec.visibility", "notIn": ["public"] },
+                                { "field": "spec.audience", "notIn": ["public"] }] }),
+            None,
+            None,
+        )]);
+        let endpoint = serde_json::json!({ "spec": { "audience": "public" } });
+        assert!(
+            denied(steward.check("Endpoint", Verb::Approve, Some(&endpoint))).contains("EP-76")
+        );
+        let public_app = serde_json::json!({ "spec": { "visibility": "public" } });
+        assert!(denied(steward.check("App", Verb::Approve, Some(&public_app))).contains("AP-120"));
+        let egress = serde_json::json!({ "spec": { "visibility": "project", "egress": [{ "host": "x.example" }] } });
+        assert!(denied(steward.check("App", Verb::Approve, Some(&egress))).contains("AP-134"));
+        let inside = serde_json::json!({ "spec": { "visibility": "project", "egress": [] } });
+        assert!(steward.check("App", Verb::Approve, Some(&inside)).is_ok());
+        let publisher = holding(vec![grant(
+            "publisher",
+            serde_json::json!({ "kinds": ["App"], "verbs": ["approve"],
+                "constraints": [{ "field": "spec.visibility", "equals": "public" }] }),
+            None,
+            None,
+        )]);
+        assert!(publisher.check("App", Verb::Approve, Some(&egress)).is_ok());
+    }
+
+    /// PF-59, PF-60, T-5698: a grant bound to one space reads and writes in that space alone, a
+    /// ContextSpace is in its own space, and an organization grant reads a manifest only through
+    /// its constraints.
+    #[test]
+    fn a_space_bound_grant_reaches_its_space_alone() {
+        let steward = holding(vec![grant(
+            "steward",
+            serde_json::json!({ "kinds": ["Endpoint", "ContextSpace"], "verbs": ["read", "propose"] }),
+            Some("air"),
+            None,
+        )]);
+        let in_air = serde_json::json!({ "spec": { "contextSpaceRef": "air" } });
+        let in_water = serde_json::json!({ "spec": { "contextSpaceRef": "water" } });
+        assert!(steward
+            .check("Endpoint", Verb::Propose, Some(&in_air))
+            .is_ok());
+        assert!(steward
+            .check("Endpoint", Verb::Propose, Some(&in_water))
+            .is_err());
+        assert!(steward.may_in("Endpoint", Verb::Propose, Some("air")));
+        assert!(!steward.may_in("Endpoint", Verb::Propose, Some("water")));
+        assert!(!steward.may_in("Endpoint", Verb::Propose, None));
+        assert_eq!(steward.spaces_reached(), Some(vec!["air".to_owned()]));
+        assert!(steward.may_read_manifest(
+            "ContextSpace",
+            &serde_json::json!({ "metadata": { "name": "air" } })
+        ));
+        assert!(!steward.may_read_manifest(
+            "ContextSpace",
+            &serde_json::json!({ "metadata": { "name": "water" } })
+        ));
+        assert!(!steward.may_read_manifest("Endpoint", &in_water));
+        let envelope = |space: &str| ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "Endpoint".to_owned(),
+            metadata: ObjectMeta::new("bikes", "doprava"),
+            spec: serde_json::json!({ "contextSpaceRef": space }),
+            status: None,
+        };
+        assert!(steward.may_read_envelope("Endpoint", &envelope("air")));
+        assert!(!steward.may_read_envelope("Endpoint", &envelope("water")));
+        let wide = holding(vec![grant(
+            "viewer",
+            serde_json::json!({ "kinds": ["Endpoint"], "verbs": ["read"] }),
+            None,
+            None,
+        )]);
+        assert!(wide.may_read_envelope("Endpoint", &envelope("water")));
+        assert_eq!(wide.spaces_reached(), None);
+
+        let organization = holding(vec![grant(
+            "org-reader",
+            serde_json::json!({ "kinds": ["Endpoint"], "verbs": ["read", "propose"],
+                "constraints": [{ "field": "spec.audience", "equals": "public" }] }),
+            None,
+            Some("hel"),
+        )]);
+        // An organization grant reads through its constraints, never as a project-wide read.
+        assert!(!organization.may_in("Endpoint", Verb::Read, None));
+        assert!(organization.may_in("Endpoint", Verb::Propose, None));
+        assert!(organization.may_read_manifest(
+            "Endpoint",
+            &serde_json::json!({ "spec": { "audience": "public" } })
+        ));
+        assert!(!organization.may_read_manifest(
+            "Endpoint",
+            &serde_json::json!({ "spec": { "audience": "project" } })
+        ));
+    }
+
+    /// AP-73: only a propose grant constrained on the field writes a status field, and the build
+    /// lane's grant authorizes no other proposal.
+    #[test]
+    fn a_status_field_is_written_by_the_grant_constrained_on_it_alone() {
+        let build = holding(vec![grant(
+            "build-lane",
+            serde_json::json!({ "kinds": ["App"], "verbs": ["propose"],
+                "constraints": [{ "field": "status.build", "pattern": ".*" }] }),
+            None,
+            None,
+        )]);
+        assert!(build.may_write_status_field("App", "status.build"));
+        assert!(!build.may_write_status_field("App", "status.phase"));
+        assert!(!build.may_write_status_field("Endpoint", "status.build"));
+        assert!(build
+            .check(
+                "App",
+                Verb::Propose,
+                Some(&serde_json::json!({ "status": { "build": "x" } }))
+            )
+            .is_err());
+        let editor = holding(vec![grant(
+            "editor",
+            serde_json::json!({ "kinds": ["App"], "verbs": ["propose"] }),
+            None,
+            None,
+        )]);
+        assert!(!editor.may_write_status_field("App", "status.build"));
+    }
+
+    fn service_account(namespace: &str, name: &str, roles: Value) -> ResourceEnvelope {
+        ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "ServiceAccount".to_owned(),
+            metadata: ObjectMeta::new(name, namespace),
+            spec: serde_json::json!({ "owner": { "user": "ana@hel.fi" }, "purpose": "ci",
+                                      "roles": roles, "credentials": [] }),
+            status: None,
+        }
+    }
+
+    fn workload(client: &str) -> Identity {
+        Identity {
+            client: Some(client.to_owned()),
+            subject: format!("sub-{client}"),
+            username: format!("service-account-{client}"),
+            ..caller("x@example.test")
+        }
+    }
+
+    /// PF-46, PF-58, AG-131: a workload's token grants its account's Portal roles on their
+    /// scopes, without approve, while each grant is in its window; a person who signed in through
+    /// the account's client, an unknown client and an id two accounts derive grant nothing.
+    #[test]
+    fn a_service_account_proposes_through_its_roles_and_never_approves() {
+        let mirror = Mirror::new();
+        mirror.upsert(org(
+            "Role",
+            "pipeline-editor",
+            serde_json::json!({ "rules": [
+                { "kinds": ["Pipeline"], "verbs": ["read", "propose", "approve"] },
+                { "kinds": ["Endpoint"], "verbs": ["approve"] }
+            ] }),
+        ));
+        mirror.upsert(service_account(
+            "doprava",
+            "ingest",
+            serde_json::json!([
+                { "role": "pipeline-editor", "scope": { "project": "doprava" } },
+                { "role": "pipeline-editor", "scope": { "project": "kultura" },
+                  "validity": { "notAfter": "2020-01-01T00:00:00Z" } },
+                { "role": "gateway-reader", "scope": { "project": "skoly" } }
+            ]),
+        ));
+        let now = TimestampTz::now();
+        let ingest = workload("doprava-ingest");
+        assert!(is_service_account(&mirror, &ingest));
+        assert!(account_holds_portal_role(
+            &mirror,
+            &serde_json::from_value(
+                service_account(
+                    "doprava",
+                    "ingest",
+                    serde_json::json!([
+                        { "role": "pipeline-editor", "scope": { "project": "doprava" } }
+                    ])
+                )
+                .spec
+            )
+            .expect("spec")
+        ));
+        let doprava = effective(&mirror, "", &ingest, "doprava", now);
+        assert!(doprava.may("Pipeline", Verb::Propose));
+        assert!(
+            !doprava.may("Pipeline", Verb::Approve),
+            "a workload proposes, a person approves"
+        );
+        assert!(!doprava.may("Endpoint", Verb::Approve));
+        assert!(doprava
+            .grants
+            .iter()
+            .all(|g| g.binding == "serviceaccount/ingest"));
+        assert!(
+            !effective(&mirror, "", &ingest, "kultura", now).may("Pipeline", Verb::Read),
+            "expired"
+        );
+        assert!(
+            !effective(&mirror, "", &ingest, "skoly", now).may_read_project(),
+            "a gateway template"
+        );
+
+        let person = Identity {
+            username: "ana".to_owned(),
+            ..workload("doprava-ingest")
+        };
+        assert!(!is_service_account(&mirror, &person));
+        assert!(!is_service_account(&mirror, &caller("ana@hel.fi")));
+        assert!(!is_service_account(&mirror, &workload("doprava-other")));
+
+        // `a-b` + `c` and `a` + `b-c` both derive `a-b-c`: that id is nobody's.
+        mirror.upsert(service_account("a-b", "c", serde_json::json!([])));
+        mirror.upsert(service_account("a", "b-c", serde_json::json!([])));
+        assert!(!is_service_account(&mirror, &workload("a-b-c")));
+        // A manifest that does not parse grants nothing.
+        let mut broken = service_account("zoo", "broken", serde_json::json!([]));
+        broken.spec = serde_json::json!({ "purpose": 7 });
+        mirror.upsert(broken);
+        assert!(!is_service_account(&mirror, &workload("zoo-broken")));
+    }
+
+    /// AG-130: the Access tab lists each grant in manifest order with its window's state and its
+    /// Role's rules without approve; a role naming no Role lists no rule.
+    #[test]
+    fn an_accounts_access_lists_each_grant_its_state_and_rules_without_approve() {
+        let mirror = Mirror::new();
+        mirror.upsert(org(
+            "Role",
+            "pipeline-editor",
+            serde_json::json!({ "rules": [
+                { "kinds": ["Pipeline"], "verbs": ["propose", "approve"] },
+                { "kinds": ["Endpoint"], "verbs": ["approve"] }
+            ] }),
+        ));
+        let spec: ServiceAccountSpec = serde_json::from_value(
+            service_account(
+                "doprava",
+                "ingest",
+                serde_json::json!([
+                    { "role": "pipeline-editor", "scope": { "project": "doprava" } },
+                    { "role": "pipeline-editor", "scope": { "contextSpace": "air" },
+                      "validity": { "notBefore": "2999-01-01T00:00:00Z" } },
+                    { "role": "pipeline-editor", "scope": { "organization": "hel" },
+                      "validity": { "notAfter": "2020-01-01T00:00:00Z" } },
+                    { "role": "gateway-reader", "scope": { "project": "doprava" } }
+                ]),
+            )
+            .spec,
+        )
+        .expect("spec");
+        let access = account_access(&mirror, &spec, TimestampTz::now());
+        let summary: Vec<_> = access
+            .iter()
+            .map(|g| (g.index, g.scope.as_str(), g.state, g.rules.len()))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (0, "project:doprava", GrantState::Active, 1),
+                (1, "contextSpace:air", GrantState::Pending, 1),
+                (2, "organization", GrantState::Expired, 1),
+                (3, "project:doprava", GrantState::Active, 0),
+            ]
+        );
+        assert_eq!(access[0].rules[0].kinds, ["Pipeline"]);
+        assert_eq!(access[0].rules[0].verbs, [Verb::Propose]);
+        assert!(access[1].not_before.is_some() && access[2].not_after.is_some());
+    }
+
+    /// API/01 §35, T-3106: a person named in a comment reads a space through a binding naming
+    /// them or a Group whose members name them, matched without case; nobody else does.
+    #[test]
+    fn a_named_person_reads_a_space_through_their_bindings_and_groups() {
+        let mirror = Mirror::new();
+        mirror.upsert(org(
+            "Role",
+            "viewer",
+            serde_json::json!({ "rules": [{ "kinds": ["ContextSpace"], "verbs": ["read"] }] }),
+        ));
+        mirror.upsert(org(
+            "Group",
+            "doprava-team",
+            serde_json::json!({ "members": [{ "user": "Eva@Hel.fi" }] }),
+        ));
+        mirror.upsert(org(
+            "RoleBinding",
+            "team",
+            serde_json::json!({ "subjects": [{ "group": "doprava-team" }], "role": "viewer",
+                                "scope": { "project": "doprava" } }),
+        ));
+        mirror.upsert(org(
+            "RoleBinding",
+            "jan-air",
+            serde_json::json!({ "subjects": [{ "user": "jan@hel.fi" }], "role": "viewer",
+                                "scope": { "contextSpace": "air" } }),
+        ));
+        let eva = named_person(&mirror, "eva@hel.fi");
+        assert_eq!(eva.groups, ["doprava-team"]);
+        assert_eq!(eva.email.as_deref(), Some("eva@hel.fi"));
+        let now = TimestampTz::now();
+        assert!(may_read_space(&mirror, "doprava", "air", "eva@hel.fi", now));
+        assert!(!may_read_space(
+            &mirror,
+            "kultura",
+            "air",
+            "eva@hel.fi",
+            now
+        ));
+        assert!(!may_read_space(
+            &mirror,
+            "doprava",
+            "air",
+            "nobody@hel.fi",
+            now
+        ));
+        assert!(named_person(&mirror, "nobody@hel.fi").groups.is_empty());
+    }
+
+    /// PF-03: the administrators are everyone an administrator binding names, directly or through
+    /// its Group, by lower-case address; a viewer binding names nobody here.
+    #[test]
+    fn the_administrators_are_the_people_an_admin_binding_names() {
+        let mirror = Mirror::new();
+        mirror.upsert(org(
+            "Role",
+            "org-admin",
+            serde_json::json!({ "rules": [{ "kinds": ["RoleBinding"], "verbs": ["read", "propose", "approve", "delete"] }] }),
+        ));
+        mirror.upsert(org(
+            "Role",
+            "viewer",
+            serde_json::json!({ "rules": [{ "kinds": ["RoleBinding"], "verbs": ["read"] }] }),
+        ));
+        mirror.upsert(org(
+            "Group",
+            "admins",
+            serde_json::json!({ "members": [{ "user": "Bo@Hel.fi" }] }),
+        ));
+        mirror.upsert(org(
+            "RoleBinding",
+            "admins",
+            serde_json::json!({ "subjects": [{ "user": "Ana@Hel.fi" }, { "group": "admins" }, { "group": "gone" }],
+                                "role": "org-admin", "scope": { "organization": "hel" } }),
+        ));
+        mirror.upsert(org(
+            "RoleBinding",
+            "viewers",
+            serde_json::json!({ "subjects": [{ "user": "cy@hel.fi" }], "role": "viewer",
+                                "scope": { "organization": "hel" } }),
+        ));
+        assert_eq!(
+            administrator_people(&mirror)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            ["ana@hel.fi", "bo@hel.fi"]
+        );
+        assert!(administrator_people(&Mirror::new()).is_empty());
+    }
+
+    /// ADR-N-068, T-7500: a project mints under its `urnOwner` while it names one, else under its
+    /// Organization's domain; an empty value, an unknown Organization or project mint under none.
+    #[test]
+    fn a_projects_urn_owner_is_its_own_then_its_organizations_domain() {
+        let mirror = Mirror::new();
+        mirror.upsert(org(
+            "Organization",
+            "hel",
+            serde_json::json!({ "domain": "hel.fi" }),
+        ));
+        mirror.upsert(org(
+            "Organization",
+            "blank",
+            serde_json::json!({ "domain": "" }),
+        ));
+        mirror.upsert(org(
+            "Project",
+            "doprava",
+            serde_json::json!({ "organizationRef": "hel" }),
+        ));
+        mirror.upsert(org(
+            "Project",
+            "moved",
+            serde_json::json!({ "organizationRef": "hel", "urnOwner": "old.example" }),
+        ));
+        mirror.upsert(org(
+            "Project",
+            "empty",
+            serde_json::json!({ "organizationRef": "blank", "urnOwner": "" }),
+        ));
+        mirror.upsert(org(
+            "Project",
+            "orphan",
+            serde_json::json!({ "organizationRef": "gone" }),
+        ));
+        mirror.upsert(org("Project", "loose", serde_json::json!({})));
+        assert_eq!(urn_owner(&mirror, "doprava").as_deref(), Some("hel.fi"));
+        assert_eq!(urn_owner(&mirror, "moved").as_deref(), Some("old.example"));
+        assert_eq!(
+            organization_domain(&mirror, "moved").as_deref(),
+            Some("hel.fi")
+        );
+        for none in ["empty", "orphan", "loose", "unknown"] {
+            assert_eq!(urn_owner(&mirror, none), None, "{none}");
+        }
+    }
+
+    /// UI-87: an organization's settings are for its administrators, and the refusal names the
+    /// action and where it is done; the bootstrap group belongs to every Organization.
+    #[test]
+    fn organization_settings_are_for_its_administrators() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(org(
+            "Role",
+            "org-admin",
+            serde_json::json!({ "rules": [{ "kinds": ["RoleBinding"], "verbs": ["approve", "delete"] }] }),
+        ));
+        state.mirror.upsert(org(
+            "RoleBinding",
+            "admins",
+            serde_json::json!({ "subjects": [{ "user": "ana@hel.fi" }], "role": "org-admin",
+                                "scope": { "organization": "hel" } }),
+        ));
+        assert!(require_organization_admin(&state, &caller("ana@hel.fi"), "Renaming").is_ok());
+        assert_eq!(
+            denied(require_organization_admin(
+                &state,
+                &caller("bo@hel.fi"),
+                "Renaming"
+            )),
+            "Renaming is for organization administrators, on the Administration page (UI-87)"
+        );
+        let mut bootstrap = caller("root@hel.fi");
+        bootstrap.groups = vec![state.config.bootstrap_admins.clone()];
+        assert!(is_member_of_organization_of(&state, &bootstrap, "doprava"));
+        assert!(is_member_of_organization_of(
+            &state,
+            &caller("ana@hel.fi"),
+            "doprava"
+        ));
+        assert!(!is_member_of_organization_of(
+            &state,
+            &caller("bo@hel.fi"),
+            "doprava"
+        ));
+        assert!(is_organization_member(&state, &bootstrap));
+        assert!(!is_organization_member(&state, &caller("bo@hel.fi")));
+    }
+
+    /// PF-62, PF-64: a binding or account naming a group no Group manifest declares is a 422
+    /// that lists what is declared; another kind and a declared group pass.
+    #[test]
+    fn a_subject_group_must_be_declared_and_the_refusal_lists_the_declared_ones() {
+        let mirror = Mirror::new();
+        let binding = |group: &str| {
+            serde_json::json!({ "kind": "RoleBinding",
+                "spec": { "subjects": [{ "user": "ana@hel.fi" }, { "group": group }] } })
+        };
+        let refusal = |manifest: &Value| match subjects_name_a_group(&mirror, manifest) {
+            Err(ApiError::BadRequest(message)) => message,
+            other => panic!("expected a 422, got {other:?}"),
+        };
+        assert!(refusal(&binding("team")).ends_with("Declared: none"));
+        mirror.upsert(org(
+            "Group",
+            "editors",
+            serde_json::json!({ "members": [] }),
+        ));
+        mirror.upsert(org("Group", "admins", serde_json::json!({ "members": [] })));
+        let message = refusal(&binding("team"));
+        assert!(
+            message.starts_with("spec.subjects names the group 'team'"),
+            "{message}"
+        );
+        assert!(message.ends_with("Declared: admins, editors"), "{message}");
+        assert!(subjects_name_a_group(&mirror, &binding("editors")).is_ok());
+        let mut account = binding("team");
+        account["kind"] = serde_json::json!("ServiceAccount");
+        assert!(subjects_name_a_group(&mirror, &account).is_err());
+        assert!(subjects_name_a_group(&mirror, &serde_json::json!({ "kind": "Group" })).is_ok());
+        assert!(subjects_name_a_group(&mirror, &serde_json::json!({})).is_ok());
+    }
+
+    /// PF-69, T-4589, S-27: a space-scoped binding lies in the project holding the space and
+    /// reaches that project's own roles; a space two projects hold, an unknown one and an
+    /// organization scope lie in no project; a Role that does not parse grants nothing.
+    #[test]
+    fn a_space_binding_lies_in_the_one_project_holding_the_space() {
+        let mirror = Mirror::new();
+        let space = |project: &str, name: &str| ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "ContextSpace".to_owned(),
+            metadata: ObjectMeta::new(name, project),
+            spec: serde_json::json!({}),
+            status: None,
+        };
+        mirror.upsert(space("doprava", "air"));
+        mirror.upsert(space("doprava", "twice"));
+        mirror.upsert(space("kultura", "twice"));
+        let scoped =
+            |scope: Value| serde_json::json!({ "subjects": [], "role": "r", "scope": scope });
+        assert_eq!(
+            binding_project(
+                &mirror,
+                &scoped(serde_json::json!({ "contextSpace": "air" }))
+            )
+            .as_deref(),
+            Some("doprava")
+        );
+        assert_eq!(
+            binding_project(&mirror, &scoped(serde_json::json!({ "project": "skoly" }))).as_deref(),
+            Some("skoly")
+        );
+        for none in [
+            serde_json::json!({ "contextSpace": "twice" }),
+            serde_json::json!({ "contextSpace": "unknown" }),
+            serde_json::json!({ "organization": "hel" }),
+        ] {
+            assert_eq!(
+                binding_project(&mirror, &scoped(none.clone())),
+                None,
+                "{none}"
+            );
+        }
+        assert_eq!(
+            binding_project(&mirror, &serde_json::json!({ "role": 7 })),
+            None
+        );
+
+        // The project's own Role, reached through a space of it; a broken Role is skipped.
+        mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "Role".to_owned(),
+            metadata: ObjectMeta::new("air-steward", "doprava"),
+            spec: serde_json::json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+            status: None,
+        });
+        mirror.upsert(org("Role", "broken", serde_json::json!({ "rules": "all" })));
+        for (who, role) in [("eva@hel.fi", "air-steward"), ("jan@hel.fi", "broken")] {
+            mirror.upsert(org(
+                "RoleBinding",
+                who.split('@').next().expect("name"),
+                serde_json::json!({ "subjects": [{ "user": who }], "role": role,
+                                    "scope": { "contextSpace": "air" } }),
+            ));
+        }
+        let now = TimestampTz::now();
+        let eva = effective(&mirror, "", &caller("eva@hel.fi"), "doprava", now);
+        assert!(eva.may_in("Endpoint", Verb::Read, Some("air")));
+        assert!(!eva.may_in("Endpoint", Verb::Read, Some("water")));
+        assert!(
+            effective(&mirror, "", &caller("jan@hel.fi"), "doprava", now)
+                .grants
+                .is_empty()
+        );
+    }
+
+    /// ADR-N-058, AP-118: the groups a Policy or an App names, alone or per rule, and nothing of
+    /// another assignee kind or a subject that names a user.
+    #[test]
+    fn the_groups_a_policy_or_an_app_names_are_read_from_each_place() {
+        assert_eq!(
+            policy_groups(&serde_json::json!({
+                "assignee": { "kind": "group", "id": "drivers" },
+                "rules": [
+                    { "assignee": { "kind": "group", "id": "riders" } },
+                    { "assignee": { "kind": "user", "id": "ana" } },
+                    { "assignee": { "kind": "group" } },
+                    {}
+                ]
+            })),
+            ["drivers", "riders"]
+        );
+        assert!(policy_groups(&serde_json::json!({})).is_empty());
+        assert_eq!(
+            app_groups(&serde_json::json!({ "access": [
+                { "subjects": [{ "group": "viewers" }, { "user": "ana" }] },
+                { "role": "x" },
+                { "subjects": [{ "group": "editors" }] }
+            ] })),
+            ["viewers", "editors"]
+        );
+        assert!(app_groups(&serde_json::json!({ "access": "all" })).is_empty());
+    }
+
+    /// TEN-12, ADM-04: in a branch its creator and the parent's approvers (people) hold their
+    /// grants of the whole parent and no space-bound one; anybody else, a workload approver, an
+    /// expired or unknown branch and a branch of a branch hold nothing.
+    #[test]
+    fn a_branch_gives_its_creator_and_the_parents_approvers_their_project_grants_alone() {
+        let mirror = Mirror::new();
+        mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "ContextSpace".to_owned(),
+            metadata: ObjectMeta::new("air", "doprava"),
+            spec: serde_json::json!({}),
+            status: None,
+        });
+        mirror.upsert(org(
+            "Role",
+            "editor",
+            serde_json::json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read", "propose"] }] }),
+        ));
+        mirror.upsert(org(
+            "Role",
+            "approver",
+            serde_json::json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["approve"] }] }),
+        ));
+        for (name, who, role, scope) in [
+            (
+                "ana",
+                "ana@hel.fi",
+                "editor",
+                serde_json::json!({ "project": "doprava" }),
+            ),
+            (
+                "ana-air",
+                "ana@hel.fi",
+                "editor",
+                serde_json::json!({ "contextSpace": "air" }),
+            ),
+            (
+                "bo",
+                "bo@hel.fi",
+                "approver",
+                serde_json::json!({ "project": "doprava" }),
+            ),
+            (
+                "cy",
+                "cy@hel.fi",
+                "editor",
+                serde_json::json!({ "project": "doprava" }),
+            ),
+        ] {
+            mirror.upsert(org(
+                "RoleBinding",
+                name,
+                serde_json::json!({ "subjects": [{ "user": who }], "role": role, "scope": scope }),
+            ));
+        }
+        let live = "b-aaaaaaaaaaaaaaaaaaaaaaaa2t";
+        let expired = "b-aaaaaaaaaaaaaaaaaaaaaaaa3t";
+        let nested = "b-aaaaaaaaaaaaaaaaaaaaaaaa4t";
+        let in_hour = crate::auth::session::now_unix() + 3600;
+        for (name, parent, expires_at) in [
+            (live, "doprava", in_hour),
+            (expired, "doprava", 1),
+            (nested, live, in_hour),
+        ] {
+            crate::project_ids::note_branch(
+                name,
+                crate::project_ids::BranchEntry {
+                    parent: parent.to_owned(),
+                    created_by: "sub-ana@hel.fi".to_owned(),
+                    expires_at,
+                },
+            );
+        }
+        let now = TimestampTz::now();
+        let held = |who: &Identity, project: &str| effective(&mirror, "", who, project, now);
+
+        let creator = held(&caller("ana@hel.fi"), live);
+        assert_eq!(creator.project, live);
+        assert!(creator.may("Endpoint", Verb::Propose));
+        assert!(
+            creator.grants.iter().all(|g| g.space.is_none()),
+            "a space the branch does not hold"
+        );
+        assert_eq!(creator.grants.len(), 1);
+        let approver = held(&caller("bo@hel.fi"), live);
+        assert!(approver.may("Endpoint", Verb::Approve));
+        let workload = Identity {
+            client: Some("ci".to_owned()),
+            ..caller("bo@hel.fi")
+        };
+        assert!(held(&workload, live).grants.is_empty());
+        assert!(
+            held(&caller("cy@hel.fi"), live).grants.is_empty(),
+            "an editor of the parent"
+        );
+        for gone in [expired, nested, "b-aaaaaaaaaaaaaaaaaaaaaaaa5t"] {
+            assert!(
+                held(&caller("ana@hel.fi"), gone).grants.is_empty(),
+                "{gone}"
+            );
+        }
+    }
+
+    /// ADR-N-067: the Organization a binding reaches is its own scope's, its project's or its
+    /// space's project's; and the people a binding at that Organization's own scope names.
+    #[test]
+    fn a_bindings_organization_follows_its_scope() {
+        let mirror = Mirror::new();
+        mirror.upsert(org(
+            "Organization",
+            "hel",
+            serde_json::json!({ "installation": true }),
+        ));
+        mirror.upsert(org("Organization", "ba", serde_json::json!({})));
+        mirror.upsert(org(
+            "Project",
+            "doprava",
+            serde_json::json!({ "organizationRef": "hel" }),
+        ));
+        mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "ContextSpace".to_owned(),
+            metadata: ObjectMeta::new("air", "doprava"),
+            spec: serde_json::json!({}),
+            status: None,
+        });
+        let scoped =
+            |scope: Value| serde_json::json!({ "subjects": [], "role": "r", "scope": scope });
+        for (scope, organization) in [
+            (serde_json::json!({ "organization": "ba" }), Some("ba")),
+            (serde_json::json!({ "project": "doprava" }), Some("hel")),
+            (serde_json::json!({ "contextSpace": "air" }), Some("hel")),
+            (serde_json::json!({ "contextSpace": "water" }), None),
+            (serde_json::json!({}), None),
+        ] {
+            assert_eq!(
+                binding_organization(&mirror, &scoped(scope.clone())).as_deref(),
+                organization,
+                "{scope}"
+            );
+        }
+        assert_eq!(binding_organization(&mirror, &serde_json::json!("x")), None);
+
+        mirror.upsert(org(
+            "Role",
+            "viewer",
+            serde_json::json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+        ));
+        for (name, who, scope) in [
+            (
+                "ana",
+                "ana@hel.fi",
+                serde_json::json!({ "organization": "hel" }),
+            ),
+            (
+                "bo",
+                "bo@ba.sk",
+                serde_json::json!({ "organization": "ba" }),
+            ),
+            (
+                "cy",
+                "cy@hel.fi",
+                serde_json::json!({ "project": "doprava" }),
+            ),
+        ] {
+            mirror.upsert(org(
+                "RoleBinding",
+                name,
+                serde_json::json!({ "subjects": [{ "user": who }], "role": "viewer", "scope": scope }),
+            ));
+        }
+        assert_eq!(
+            organization_scoped_people(&mirror, "hel", TimestampTz::now())
+                .into_iter()
+                .collect::<Vec<_>>(),
+            ["ana@hel.fi"]
+        );
+        assert!(organization_scoped_people(&mirror, "zz", TimestampTz::now()).is_empty());
+    }
+
     #[test]
     fn only_a_subset_of_the_grants_held_before_drops_grants() {
         let grant = |project: &str| serde_json::json!({ "role": "editor", "scope": { "project": project } });

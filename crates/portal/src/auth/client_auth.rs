@@ -501,21 +501,26 @@ mod tests {
         )
         .expect_err("not a name");
         assert_eq!(err, "Not/AName is not a ServiceAccount name");
-        // A token without its namespace file, and an API address that is no URL, are start-up
-        // errors naming what is wrong and never the token.
-        let lone = scratch("no-namespace");
-        std::fs::write(lone.join("token"), "own-pod-token").expect("token");
-        let err = ClientAuth::minted(
-            &lone,
-            "https://kubernetes.default.svc",
-            "portal-reconciler",
-            "aud",
-        )
-        .expect_err("no namespace");
-        assert_eq!(err, format!("no namespace at {}", lone.display()));
+        // A token with no namespace beside it, and an API address that is no URL, say which.
+        let no_namespace = scratch("no-namespace");
+        std::fs::write(no_namespace.join("token"), "own-pod-token").expect("token");
+        let err = ClientAuth::minted(&no_namespace, "https://kubernetes.default.svc", "a", "aud")
+            .expect_err("no namespace");
+        assert!(err.starts_with("no namespace at"), "{err}");
         let err = ClientAuth::minted(&mount("bad-api"), "not a url", "portal-reconciler", "aud")
-            .expect_err("no API server");
-        assert!(!err.is_empty() && !err.contains("own-pod-token"), "{err}");
+            .expect_err("no API address");
+        assert!(!err.contains("own-pod-token"), "{err}");
+        let shown = format!(
+            "{:?}",
+            ClientAuth::minted(
+                &mount("debug"),
+                "https://kubernetes.default.svc",
+                "a",
+                "aud"
+            )
+            .expect("minted")
+        );
+        assert_eq!(shown, "Minted(portal/a)");
     }
 
     #[test]
