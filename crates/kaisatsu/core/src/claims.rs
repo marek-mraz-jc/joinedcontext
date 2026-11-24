@@ -1038,8 +1038,8 @@ mod tests {
 
     /// Edge cases of the mapper pipeline on one token each: an aggregated attribute lists a value
     /// once, a full name of nothing writes no `name`, no web origins write no `allowed-origins`,
-    /// the audience resolver skips the client itself and a client already named, and the user
-    /// info answer is typed `UserInfo`.
+    /// the audience resolver skips the client itself and a client already named, a mapper kind
+    /// not known is refused before anything is written, and the user info answer is typed `UserInfo`.
     #[test]
     fn mapper_edge_cases_write_each_value_once_and_nothing_empty() {
         let realm = RealmConfig::default();
@@ -1117,6 +1117,24 @@ mod tests {
             );
         }
         assert_eq!(info.get("dept"), Some(&json!(["roads", "parks"])));
+        let scripted = ClientRepresentation {
+            client_id: "app".into(),
+            protocol_mappers: vec![mapper("script-mapper", &[("claim.name", "x")])],
+            ..Default::default()
+        };
+        let refused = evaluate_mappers(
+            &MapperContext {
+                client: &scripted,
+                ..ctx
+            },
+            TokenKind::AccessToken,
+        );
+        assert_eq!(
+            refused,
+            Err(KaisatsuError::BadRequest(
+                "unknown protocol mapper kind: script-mapper".into()
+            ))
+        );
     }
 
     /// With an `organization:` scope granted, `jc_org` names only the pinned Organization, and

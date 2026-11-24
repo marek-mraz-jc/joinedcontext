@@ -1427,17 +1427,23 @@ impl Store for MemoryStore {
                 return Err(KaisatsuError::NotFound("client not found".into()));
             }
             let (realm, id) = (&mapping.realm_id, &mapping.principal_id);
-            if mapping.principal_kind == "user" {
-                if !st.users.iter().any(|u| &u.realm_id == realm && &u.id == id) {
-                    return Err(KaisatsuError::NotFound("user not found".into()));
-                }
-            } else if !st
+            // The person a user mapping is reflected on, found once under this write lock.
+            let holder = if mapping.principal_kind == "user" {
+                let at = st
+                    .users
+                    .iter()
+                    .position(|u| &u.realm_id == realm && &u.id == id)
+                    .ok_or_else(|| KaisatsuError::NotFound("user not found".into()))?;
+                Some(at)
+            } else if st
                 .groups
                 .iter()
                 .any(|g| &g.realm_id == realm && &g.id == id)
             {
+                None
+            } else {
                 return Err(KaisatsuError::NotFound("group not found".into()));
-            }
+            };
             st.role_mappings.retain(|rm| {
                 !(rm.realm_id == mapping.realm_id
                     && rm.principal_kind == mapping.principal_kind
@@ -1445,27 +1451,21 @@ impl Store for MemoryStore {
                     && rm.client_uuid == mapping.client_uuid
                     && rm.role_name == mapping.role_name)
             });
-            // Also reflect on user / group representation for immediate claim evaluation
-            if mapping.principal_kind == "user" {
-                let client_id_opt = mapping.client_uuid.as_ref().and_then(|uuid| {
-                    st.clients
-                        .iter()
-                        .find(|c| c.realm_id == mapping.realm_id && &c.id == uuid)
-                        .map(|c| c.client_id.clone())
-                });
-                if let Some(u) = st
-                    .users
-                    .iter_mut()
-                    .find(|u| u.realm_id == mapping.realm_id && u.id == mapping.principal_id)
-                {
-                    if let Some(cid) = client_id_opt {
-                        let list = u.client_roles.entry(cid).or_default();
-                        if !list.contains(&mapping.role_name) {
-                            list.push(mapping.role_name.clone());
-                        }
-                    } else if !u.realm_roles.contains(&mapping.role_name) {
-                        u.realm_roles.push(mapping.role_name.clone());
+            // Also reflect on the user representation for immediate claim evaluation
+            let client_id_opt = mapping.client_uuid.as_ref().and_then(|uuid| {
+                st.clients
+                    .iter()
+                    .find(|c| c.realm_id == mapping.realm_id && &c.id == uuid)
+                    .map(|c| c.client_id.clone())
+            });
+            if let Some(u) = holder.and_then(|at| st.users.get_mut(at)) {
+                if let Some(cid) = client_id_opt {
+                    let list = u.client_roles.entry(cid).or_default();
+                    if !list.contains(&mapping.role_name) {
+                        list.push(mapping.role_name.clone());
                     }
+                } else if !u.realm_roles.contains(&mapping.role_name) {
+                    u.realm_roles.push(mapping.role_name.clone());
                 }
             }
             st.role_mappings.push(mapping);
@@ -3512,6 +3512,103 @@ mod tests {
             .expect("claim");
         let claimed: Vec<&str> = claimed.iter().map(|o| o.id.as_str()).collect();
         assert_eq!(claimed, ["kept-id", "with-user"], "a sent row stays sent");
+    }
+
+    /// A row handed over without an id gets a fresh one, on its own and beside a person's update.
+    #[tokio::test]
+    async fn an_outbox_row_without_an_id_gets_a_fresh_one() {
+        let store = MemoryStore::default();
+        store.create_user(user("u1")).await.expect("user");
+        let row = EmailOutboxRecord {
+            id: String::new(),
+            realm_id: R.into(),
+            org_id: None,
+            user_id: "u1".into(),
+            to_address: "u1@example.test".into(),
+            locale: "en".into(),
+            template_kind: "VERIFY_EMAIL".into(),
+            action_jti: "jti".into(),
+            actions: Vec::new(),
+            client_id: None,
+            redirect_uri: None,
+            lifespan_secs: 900,
+            issuer: "https://idm.example.test/realms/r".into(),
+            status: "pending".into(),
+            attempts: 0,
+            last_error: None,
+            next_attempt_at: TimestampTz::now(),
+            created_at: TimestampTz::now(),
+            sent_at: None,
+        };
+        store.enqueue_outbox(row.clone()).await.expect("enqueue");
+        store
+            .update_user_with_outbox(user("u1"), row)
+            .await
+            .expect("update");
+        let ids: Vec<String> = store
+            .inner
+            .read()
+            .email_outbox
+            .iter()
+            .map(|o| o.id.clone())
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert!(
+            ids.iter().all(|id| uuid::Uuid::parse_str(id).is_ok()),
+            "{ids:?}"
+        );
+        assert_ne!(ids[0], ids[1]);
+    }
+
+    /// A role mapping for a person who is not there is refused, removing one from nobody changes
+    /// nothing, and deleting a role whose client is gone touches no one else.
+    #[tokio::test]
+    async fn a_mapping_for_a_missing_holder_or_client_changes_no_one() {
+        let store = MemoryStore::default();
+        let realm_role = store
+            .upsert_role(RoleRepresentation {
+                realm_id: R.into(),
+                name: "viewer".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("role");
+        let mut u = user("u1");
+        u.realm_roles = vec!["viewer".into()];
+        store.create_user(u).await.expect("user");
+        assert_eq!(
+            store
+                .add_role_mapping(mapping("ghost", &realm_role, None))
+                .await,
+            Err(KaisatsuError::NotFound("user not found".into()))
+        );
+        store
+            .remove_role_mapping(R, "user", "ghost", None, "viewer")
+            .await
+            .expect("removing it from nobody");
+        let orphan = store
+            .upsert_role(RoleRepresentation {
+                realm_id: R.into(),
+                name: "viewer".into(),
+                container_id: Some("gone-client".into()),
+                client_role: true,
+                ..Default::default()
+            })
+            .await
+            .expect("a role of a client that is gone");
+        assert!(
+            store
+                .delete_role(R, orphan.container_id.as_deref(), "viewer")
+                .await
+                .expect("delete")
+        );
+        let held = store
+            .get_user_by_id(R, None, "u1")
+            .await
+            .expect("read")
+            .expect("person");
+        assert_eq!(held.realm_roles, ["viewer"]);
+        assert!(held.client_roles.is_empty());
     }
 
     /// A set the store keeps no rows of answers no row.
