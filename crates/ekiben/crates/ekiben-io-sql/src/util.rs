@@ -1333,7 +1333,7 @@ mod tests {
         // The widest offsets a clock has are offsets.
         for (t, secs) in [("+23:59", 86_340), ("-23:59", -86_340), ("+23", 82_800)] {
             let at = parse_with_offset(&format!("2024-01-02T00:00:00{t}"), "%Y-%m-%dT%H:%M:%S%.f")
-                .unwrap_or_else(|| panic!("{t}"));
+                .expect(t);
             assert_eq!(at.as_second(), 1_704_153_600 - secs, "{t}");
         }
         assert_eq!(
