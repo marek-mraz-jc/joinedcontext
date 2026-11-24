@@ -1207,10 +1207,19 @@ mod tests {
     #[tokio::test]
     async fn a_refused_grant_writes_no_registration() {
         let server = broker_answering(&[("PUT", GRANT, 500)]).await;
-        Mock::given(method("POST")).and(path(REGISTRATIONS)).respond_with(ResponseTemplate::new(201))
-            .expect(0).mount(&server).await;
-        let outcomes = sync_on(&server).converge(&shared_read(true), &Mirror::new()).await;
-        assert!(error_of(&outcomes[0].2).starts_with("the broker refused the provider's export grant"), "{outcomes:?}");
+        Mock::given(method("POST"))
+            .and(path(REGISTRATIONS))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let outcomes = sync_on(&server)
+            .converge(&shared_read(true), &Mirror::new())
+            .await;
+        assert!(
+            error_of(&outcomes[0].2).starts_with("the broker refused the provider's export grant"),
+            "{outcomes:?}"
+        );
     }
 
     /// Two registrations of one hub space reading one provider space through two Endpoints: the
@@ -1218,16 +1227,37 @@ mod tests {
     #[tokio::test]
     async fn one_provider_space_is_read_through_one_endpoint_per_hub_space() {
         let mirror = shared_read(true);
-        let mut second = csr("from-espoo-2", json!({ "kind": "Endpoint", "name": "shared-2", "namespace": "espoo" }));
+        let mut second = csr(
+            "from-espoo-2",
+            json!({ "kind": "Endpoint", "name": "shared-2", "namespace": "espoo" }),
+        );
         second.spec["federation"] = json!({ "identity": "anonymous" });
         mirror.upsert(second);
-        mirror.upsert(in_project("espoo", envelope("Endpoint", "shared-2", json!({ "contextSpaceRef": "src", "slug": "second-slug" }))));
-        mirror.upsert(envelope("SharedSpaceReference", "espoo-2", json!({ "alias": "espoo-2", "endpointSlug": "second-slug" })));
+        mirror.upsert(in_project(
+            "espoo",
+            envelope(
+                "Endpoint",
+                "shared-2",
+                json!({ "contextSpaceRef": "src", "slug": "second-slug" }),
+            ),
+        ));
+        mirror.upsert(envelope(
+            "SharedSpaceReference",
+            "espoo-2",
+            json!({ "alias": "espoo-2", "endpointSlug": "second-slug" }),
+        ));
         let server = broker_answering(&[("PUT", GRANT, 200), ("POST", REGISTRATIONS, 201)]).await;
         let outcomes = sync_on(&server).converge(&mirror, &Mirror::new()).await;
-        let by_name: BTreeMap<_, _> = outcomes.iter().map(|(_, name, outcome)| (name.as_str(), outcome)).collect();
+        let by_name: BTreeMap<_, _> = outcomes
+            .iter()
+            .map(|(_, name, outcome)| (name.as_str(), outcome))
+            .collect();
         assert_eq!(by_name["from-espoo"], &RegistrationOutcome::Written);
-        assert!(error_of(by_name["from-espoo-2"]).contains(&format!("through Endpoint slug {SHARED_SLUG}")), "{outcomes:?}");
+        assert!(
+            error_of(by_name["from-espoo-2"])
+                .contains(&format!("through Endpoint slug {SHARED_SLUG}")),
+            "{outcomes:?}"
+        );
     }
 
     /// A hub space on a broker this Portal has no address for registers nothing, and its gone
@@ -1235,15 +1265,29 @@ mod tests {
     #[tokio::test]
     async fn a_hub_on_an_unreachable_broker_registers_and_removes_nothing() {
         let mirror = shared_read(true);
-        mirror.upsert(envelope("ContextSpace", "hub", json!({ "urnSegment": "hub", "brokerRef": "edge-2" })));
+        mirror.upsert(envelope(
+            "ContextSpace",
+            "hub",
+            json!({ "urnSegment": "hub", "brokerRef": "edge-2" }),
+        ));
         let server = broker_answering(&[]).await;
         let sync = sync_on(&server);
         let outcomes = sync.converge(&mirror, &Mirror::new()).await;
-        assert!(error_of(&outcomes[0].2).contains("lives on a broker this Portal has no address for"), "{outcomes:?}");
+        assert!(
+            error_of(&outcomes[0].2).contains("lives on a broker this Portal has no address for"),
+            "{outcomes:?}"
+        );
         let (outcomes, log) = super::super::logged(sync.converge(&Mirror::new(), &mirror)).await;
         assert!(outcomes.is_empty());
-        assert!(log.contains("registration not removed: its broker has no address"), "{log}");
-        assert!(server.received_requests().await.expect("recorded").is_empty());
+        assert!(
+            log.contains("registration not removed: its broker has no address"),
+            "{log}"
+        );
+        assert!(server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
     }
 
     /// A registration gone since the last pass is deleted, and its shared read's grant with it;
@@ -1252,18 +1296,31 @@ mod tests {
     async fn a_gone_registration_and_its_grant_are_removed_or_the_refusal_logged() {
         let id = registration_id("from-espoo");
         let at = format!("{REGISTRATIONS}/{id}");
-        let server = broker_answering(&[("DELETE", at.as_str(), 204), ("DELETE", GRANT, 404)]).await;
+        let server =
+            broker_answering(&[("DELETE", at.as_str(), 204), ("DELETE", GRANT, 404)]).await;
         let sync = sync_on(&server);
-        let (_, log) = super::super::logged(sync.converge(&Mirror::new(), &shared_read(true))).await;
-        assert!(log.contains("registration removed with its manifest"), "{log}");
-        assert!(log.contains("export grant removed with its shared read"), "{log}");
+        let (_, log) =
+            super::super::logged(sync.converge(&Mirror::new(), &shared_read(true))).await;
+        assert!(
+            log.contains("registration removed with its manifest"),
+            "{log}"
+        );
+        assert!(
+            log.contains("export grant removed with its shared read"),
+            "{log}"
+        );
 
-        let server = broker_answering(&[("DELETE", at.as_str(), 500), ("DELETE", GRANT, 500)]).await;
+        let server =
+            broker_answering(&[("DELETE", at.as_str(), 500), ("DELETE", GRANT, 500)]).await;
         let sync = sync_on(&server);
-        let (_, log) = super::super::logged(sync.converge(&Mirror::new(), &shared_read(true))).await;
+        let (_, log) =
+            super::super::logged(sync.converge(&Mirror::new(), &shared_read(true))).await;
         assert!(log.contains("registration not removed"), "{log}");
         assert!(log.contains("export grant not removed"), "{log}");
-        assert!(log.contains("the broker refused to remove the export grant"), "{log}");
+        assert!(
+            log.contains("the broker refused to remove the export grant"),
+            "{log}"
+        );
     }
 
     fn resolve(mirror: &Mirror) -> Result<Option<String>, String> {
@@ -1271,7 +1328,12 @@ mod tests {
         assert!(refused.is_empty(), "{refused:?}");
         let (project, _, _, _, manifest) = &found[0];
         RegistrationSync::new("http://127.0.0.1:42101/broker")
-            .shared_member(mirror, project, manifest, "http://127.0.0.1:42101/broker/ngsi-ld/v1")
+            .shared_member(
+                mirror,
+                project,
+                manifest,
+                "http://127.0.0.1:42101/broker/ngsi-ld/v1",
+            )
             .map(|shared| shared.map(|s| s.slug))
     }
 
@@ -1280,7 +1342,11 @@ mod tests {
     #[test]
     fn a_shared_read_names_what_the_providers_endpoint_lacks() {
         let mirror = shared_read(false);
-        mirror.upsert(envelope("SharedSpaceReference", "by-ref", json!({ "endpointRef": { "project": "espoo", "name": "shared" } })));
+        mirror.upsert(envelope(
+            "SharedSpaceReference",
+            "by-ref",
+            json!({ "endpointRef": { "project": "espoo", "name": "shared" } }),
+        ));
         assert_eq!(resolve(&mirror), Ok(Some(SHARED_SLUG.to_owned())));
 
         let edit = |spec: Value| {
@@ -1288,13 +1354,33 @@ mod tests {
             mirror.upsert(in_project("espoo", envelope("Endpoint", "shared", spec)));
             mirror
         };
-        assert_eq!(resolve(&edit(json!({ "contextSpaceRef": "src" }))), Err("the Endpoint espoo/shared has no slug yet, so nothing is registered".to_owned()));
-        assert_eq!(resolve(&edit(json!({ "slug": SHARED_SLUG }))), Err("the Endpoint espoo/shared names no Context Space".to_owned()));
+        assert_eq!(
+            resolve(&edit(json!({ "contextSpaceRef": "src" }))),
+            Err("the Endpoint espoo/shared has no slug yet, so nothing is registered".to_owned())
+        );
+        assert_eq!(
+            resolve(&edit(json!({ "slug": SHARED_SLUG }))),
+            Err("the Endpoint espoo/shared names no Context Space".to_owned())
+        );
         let mirror = shared_read(true);
-        mirror.upsert(in_project("espoo", envelope("ContextSpace", "src", json!({ "urnSegment": "src", "brokerRef": "edge-2" }))));
-        assert!(resolve(&mirror).err().unwrap_or_default().contains("lives on a broker this Portal has no address"));
+        mirror.upsert(in_project(
+            "espoo",
+            envelope(
+                "ContextSpace",
+                "src",
+                json!({ "urnSegment": "src", "brokerRef": "edge-2" }),
+            ),
+        ));
+        assert!(resolve(&mirror)
+            .err()
+            .unwrap_or_default()
+            .contains("lives on a broker this Portal has no address"));
         let mirror = shared_read(true);
-        mirror.remove(&crate::resource::ResourceKey { namespace: "espoo".into(), kind: "Endpoint".into(), name: "shared".into() });
+        mirror.remove(&crate::resource::ResourceKey {
+            namespace: "espoo".into(),
+            kind: "Endpoint".into(),
+            name: "shared".into(),
+        });
         assert_eq!(resolve(&mirror), Err("endpointRef names the Endpoint espoo/shared, which does not exist, so nothing is registered".to_owned()));
     }
 
@@ -1308,20 +1394,36 @@ mod tests {
         let manifest = |spec: Value| RawManifest {
             api_version: API_VERSION.into(),
             kind: "ContextSourceRegistration".into(),
-            metadata: RawMetadata { name: "r".into(), namespace: Some("helsinki".into()), rest: serde_json::Map::new() },
+            metadata: RawMetadata {
+                name: "r".into(),
+                namespace: Some("helsinki".into()),
+                rest: serde_json::Map::new(),
+            },
             spec,
             status: None,
         };
         let ngsi_ld = "http://127.0.0.1:42101/broker/ngsi-ld/v1";
-        let base = csr("x", json!({ "kind": "Endpoint", "name": "shared", "namespace": "espoo" })).spec;
+        let base = csr(
+            "x",
+            json!({ "kind": "Endpoint", "name": "shared", "namespace": "espoo" }),
+        )
+        .spec;
         let mut own = base.clone();
         own["endpointRef"]["namespace"] = json!("helsinki");
         let mut caller = base.clone();
         caller["federation"] = json!({ "identity": "caller" });
         let mut none = base.clone();
-        none.as_object_mut().expect("an object").remove("endpointRef");
+        none.as_object_mut()
+            .expect("an object")
+            .remove("endpointRef");
         for spec in [json!({ "contextSpaceRef": 7 }), none, own, caller] {
-            assert!(matches!(sync.shared_member(&mirror, "helsinki", &manifest(spec.clone()), ngsi_ld), Ok(None)), "{spec}");
+            assert!(
+                matches!(
+                    sync.shared_member(&mirror, "helsinki", &manifest(spec.clone()), ngsi_ld),
+                    Ok(None)
+                ),
+                "{spec}"
+            );
         }
     }
 
@@ -1329,13 +1431,24 @@ mod tests {
     /// sent.
     #[tokio::test]
     async fn a_registration_outside_its_project_is_refused() {
-        let mut outside = csr("outside", json!({ "kind": "Endpoint", "name": "x", "namespace": "espoo" }));
+        let mut outside = csr(
+            "outside",
+            json!({ "kind": "Endpoint", "name": "x", "namespace": "espoo" }),
+        );
         outside.spec["federation"] = json!({ "identity": "caller" });
         let mirror = mirror_with(vec![outside]);
         let ((found, refused), log) = super::super::logged(async { declared(&mirror) }).await;
         assert!(found.is_empty(), "{found:?}");
-        let reasons: BTreeMap<_, _> = refused.iter().map(|(_, name, reason)| (name.as_str(), reason.as_str())).collect();
-        assert!(reasons["outside"].starts_with("the manifest reaches outside its project, so it is not registered (PF-48): "), "{reasons:?}");
+        let reasons: BTreeMap<_, _> = refused
+            .iter()
+            .map(|(_, name, reason)| (name.as_str(), reason.as_str()))
+            .collect();
+        assert!(
+            reasons["outside"].starts_with(
+                "the manifest reaches outside its project, so it is not registered (PF-48): "
+            ),
+            "{reasons:?}"
+        );
         assert!(log.contains("reaches outside its project"), "{log}");
     }
 
@@ -1345,45 +1458,112 @@ mod tests {
     #[tokio::test]
     async fn every_broker_answer_to_a_call_is_an_outcome() {
         let body = json!({ "id": "urn:r", "type": "ContextSourceRegistration", "endpoint": "x" });
-        let server = broker_answering(&[("POST", REGISTRATIONS, 409), ("PATCH", "/broker/ngsi-ld/v1/csourceRegistrations/urn:r", 400)]).await;
+        let server = broker_answering(&[
+            ("POST", REGISTRATIONS, 409),
+            (
+                "PATCH",
+                "/broker/ngsi-ld/v1/csourceRegistrations/urn:r",
+                400,
+            ),
+        ])
+        .await;
         let ngsi_ld = format!("{}/broker/ngsi-ld/v1", server.uri());
         let sync = sync_on(&server);
-        let err = sync.write(&ngsi_ld, "hub", "urn:r", &body).await.expect_err("refused update");
+        let err = sync
+            .write(&ngsi_ld, "hub", "urn:r", &body)
+            .await
+            .expect_err("refused update");
         assert!(err.starts_with("the broker refused the update"), "{err}");
         let sent = server.received_requests().await.expect("recorded");
         let patch: Value = serde_json::from_slice(&sent[1].body).expect("json");
         assert_eq!(patch, json!({ "endpoint": "x" }));
 
-        let server = broker_answering(&[("POST", REGISTRATIONS, 500), ("DELETE", "/broker/ngsi-ld/v1/csourceRegistrations/urn:r", 500), ("PUT", GRANT, 201), ("DELETE", GRANT, 500)]).await;
+        let server = broker_answering(&[
+            ("POST", REGISTRATIONS, 500),
+            (
+                "DELETE",
+                "/broker/ngsi-ld/v1/csourceRegistrations/urn:r",
+                500,
+            ),
+            ("PUT", GRANT, 201),
+            ("DELETE", GRANT, 500),
+        ])
+        .await;
         let ngsi_ld = format!("{}/broker/ngsi-ld/v1", server.uri());
         let sync = sync_on(&server);
-        assert!(sync.write(&ngsi_ld, "hub", "urn:r", &body).await.expect_err("refused").starts_with("the broker refused the registration"));
-        assert!(sync.delete(&ngsi_ld, "hub", "urn:r").await.expect_err("refused").starts_with("the broker refused the delete"));
+        assert!(sync
+            .write(&ngsi_ld, "hub", "urn:r", &body)
+            .await
+            .expect_err("refused")
+            .starts_with("the broker refused the registration"));
+        assert!(sync
+            .delete(&ngsi_ld, "hub", "urn:r")
+            .await
+            .expect_err("refused")
+            .starts_with("the broker refused the delete"));
         let shared = SharedMember {
             broker: format!("{}/broker", server.uri()),
-            member: MemberSource { endpoint: ngsi_ld.clone(), tenant: "src".into(), gateway: None },
+            member: MemberSource {
+                endpoint: ngsi_ld.clone(),
+                tenant: "src".into(),
+                gateway: None,
+            },
             tenant: "src".into(),
             slug: SHARED_SLUG.into(),
             caller: (ANONYMOUS_ROLES.0, ANONYMOUS_ROLES.1.to_owned()),
         };
         assert_eq!(sync.put_grant(&shared, "hub").await, Ok(()));
-        assert!(sync.delete_grant(&shared, "hub").await.expect_err("refused").starts_with("the broker refused to remove the export grant"));
-        let gone = broker_answering(&[("DELETE", "/broker/ngsi-ld/v1/csourceRegistrations/urn:r", 404)]).await;
-        assert_eq!(sync_on(&gone).delete(&format!("{}/broker/ngsi-ld/v1", gone.uri()), "hub", "urn:r").await, Ok(()));
+        assert!(sync
+            .delete_grant(&shared, "hub")
+            .await
+            .expect_err("refused")
+            .starts_with("the broker refused to remove the export grant"));
+        let gone = broker_answering(&[(
+            "DELETE",
+            "/broker/ngsi-ld/v1/csourceRegistrations/urn:r",
+            404,
+        )])
+        .await;
+        assert_eq!(
+            sync_on(&gone)
+                .delete(&format!("{}/broker/ngsi-ld/v1", gone.uri()), "hub", "urn:r")
+                .await,
+            Ok(())
+        );
 
         // Unreachable: every call fails with what the client said.
         let socket = tokio::net::TcpSocket::new_v4().expect("a socket");
-        socket.bind("127.0.0.1:0".parse().expect("an address")).expect("bound");
-        let closed = format!("http://127.0.0.1:{}", socket.local_addr().expect("its address").port());
+        socket
+            .bind("127.0.0.1:0".parse().expect("an address"))
+            .expect("bound");
+        let closed = format!(
+            "http://127.0.0.1:{}",
+            socket.local_addr().expect("its address").port()
+        );
         let offline = RegistrationSync::new(format!("{closed}/broker"));
-        let unreachable = SharedMember { broker: format!("{closed}/broker"), ..shared };
-        assert!(offline.write(&format!("{closed}/broker/ngsi-ld/v1"), "hub", "urn:r", &body).await.is_err());
-        assert!(offline.delete(&format!("{closed}/broker/ngsi-ld/v1"), "hub", "urn:r").await.is_err());
+        let unreachable = SharedMember {
+            broker: format!("{closed}/broker"),
+            ..shared
+        };
+        assert!(offline
+            .write(
+                &format!("{closed}/broker/ngsi-ld/v1"),
+                "hub",
+                "urn:r",
+                &body
+            )
+            .await
+            .is_err());
+        assert!(offline
+            .delete(&format!("{closed}/broker/ngsi-ld/v1"), "hub", "urn:r")
+            .await
+            .is_err());
         assert!(offline.put_grant(&unreachable, "hub").await.is_err());
         assert!(offline.delete_grant(&unreachable, "hub").await.is_err());
 
         // A configured admin token that cannot be read sends nothing at all.
-        let locked = RegistrationSync::new(format!("{closed}/broker")).with_admin_token(Some("/nonexistent/token".into()));
+        let locked = RegistrationSync::new(format!("{closed}/broker"))
+            .with_admin_token(Some("/nonexistent/token".into()));
         let unreadable = Err("the broker's admin token is not readable".to_owned());
         assert_eq!(locked.put_grant(&unreachable, "hub").await, unreadable);
         assert_eq!(locked.delete_grant(&unreachable, "hub").await, unreadable);
@@ -1399,7 +1579,12 @@ mod tests {
             phase: crate::resource::Phase::Error,
             observed_revision: None,
             source_url: None,
-            conditions: vec![super::super::streams::make_condition("RegistrationWritten", "False", "BrokerRefused", "x")],
+            conditions: vec![super::super::streams::make_condition(
+                "RegistrationWritten",
+                "False",
+                "BrokerRefused",
+                "x",
+            )],
             build: None,
             shard: None,
             domain_verification: None,
@@ -1408,14 +1593,41 @@ mod tests {
         });
         let bare = envelope("ContextSourceRegistration", "bare", json!({}));
         let mirror = mirror_with(vec![live, bare]);
-        record(&mirror, vec![
-            ("helsinki".into(), "live".into(), RegistrationOutcome::Written),
-            ("helsinki".into(), "bare".into(), RegistrationOutcome::Error("ignored".into())),
-            ("helsinki".into(), "nobody".into(), RegistrationOutcome::Written),
-        ]);
-        let status = mirror.get("helsinki", "ContextSourceRegistration", "live").and_then(|e| e.status).expect("a status");
-        assert_eq!((status.phase, status.conditions.len()), (crate::resource::Phase::Live, 0));
-        assert!(mirror.get("helsinki", "ContextSourceRegistration", "bare").expect("kept").status.is_none());
-        assert!(mirror.get("helsinki", "ContextSourceRegistration", "nobody").is_none());
+        record(
+            &mirror,
+            vec![
+                (
+                    "helsinki".into(),
+                    "live".into(),
+                    RegistrationOutcome::Written,
+                ),
+                (
+                    "helsinki".into(),
+                    "bare".into(),
+                    RegistrationOutcome::Error("ignored".into()),
+                ),
+                (
+                    "helsinki".into(),
+                    "nobody".into(),
+                    RegistrationOutcome::Written,
+                ),
+            ],
+        );
+        let status = mirror
+            .get("helsinki", "ContextSourceRegistration", "live")
+            .and_then(|e| e.status)
+            .expect("a status");
+        assert_eq!(
+            (status.phase, status.conditions.len()),
+            (crate::resource::Phase::Live, 0)
+        );
+        assert!(mirror
+            .get("helsinki", "ContextSourceRegistration", "bare")
+            .expect("kept")
+            .status
+            .is_none());
+        assert!(mirror
+            .get("helsinki", "ContextSourceRegistration", "nobody")
+            .is_none());
     }
 }

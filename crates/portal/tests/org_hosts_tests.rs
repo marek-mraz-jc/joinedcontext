@@ -432,7 +432,9 @@ async fn without_the_edge_ingress_each_moving_host_says_why() {
         state(&pool, &host).await,
         (
             "approved".to_owned(),
-            Some("the edge Ingress apisix is not in apisix; the apisix chart renders it".to_owned())
+            Some(
+                "the edge Ingress apisix is not in apisix; the apisix chart renders it".to_owned()
+            )
         )
     );
     assert!(writes(&server, &[&host]).await.is_empty());
@@ -471,7 +473,10 @@ async fn a_host_removed_mid_pass_is_not_moved_on() {
     row(&pool, &host, "approved").await;
     let server = api(&[&host]).await;
     fallback(&server).await;
-    let dns = Arc::new(RemovedWhileResolving { pool: pool.clone(), host: host.clone() });
+    let dns = Arc::new(RemovedWhileResolving {
+        pool: pool.clone(),
+        host: host.clone(),
+    });
     OrgHosts::new(
         KubeClient::with_token(&server.uri(), "token").expect("a client"),
         NS.to_owned(),
@@ -492,7 +497,10 @@ async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {
     struct Sink(Arc<std::sync::Mutex<Vec<u8>>>);
     impl std::io::Write for Sink {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(bytes);
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend_from_slice(bytes);
             Ok(bytes.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
@@ -508,7 +516,8 @@ async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {
     let guard = tracing::subscriber::set_default(subscriber);
     let out = run.await;
     drop(guard);
-    let text = String::from_utf8_lossy(&sink.0.lock().unwrap_or_else(|e| e.into_inner())).into_owned();
+    let text =
+        String::from_utf8_lossy(&sink.0.lock().unwrap_or_else(|e| e.into_inner())).into_owned();
     (out, text)
 }
 
@@ -528,7 +537,9 @@ async fn an_audited_step_is_logged_with_its_actor() {
 
     let line = log
         .lines()
-        .find(|line| line.contains("operator audit") && line.contains("host.dns-ok") && line.contains(&host))
+        .find(|line| {
+            line.contains("operator audit") && line.contains("host.dns-ok") && line.contains(&host)
+        })
         .unwrap_or_else(|| panic!("no audit line for {host}: {log}"));
     assert!(line.contains("actor=\"reconciler\""), "{line}");
     done(&pool, &[&host]).await;

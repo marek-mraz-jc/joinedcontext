@@ -230,7 +230,8 @@ impl CatalogSync {
             .filter_map(|id| id.strip_prefix("urn:ngsi-ld:DataService:"))
             .map(str::to_owned)
             .collect();
-        let mut held = std::mem::take(&mut *self.counts.lock().unwrap_or_else(PoisonError::into_inner));
+        let mut held =
+            std::mem::take(&mut *self.counts.lock().unwrap_or_else(PoisonError::into_inner));
         held.retain(|slug, _| slugs.contains(slug));
         let stale: Vec<String> = slugs
             .iter()
@@ -857,7 +858,9 @@ mod tests {
     /// A port nothing listens on, held bound (never listening) so no parallel test takes it.
     fn closed_port() -> (tokio::net::TcpSocket, String) {
         let socket = tokio::net::TcpSocket::new_v4().expect("a socket");
-        socket.bind("127.0.0.1:0".parse().expect("an address")).expect("bound");
+        socket
+            .bind("127.0.0.1:0".parse().expect("an address"))
+            .expect("bound");
         let port = socket.local_addr().expect("its address").port();
         (socket, format!("http://127.0.0.1:{port}"))
     }
@@ -880,23 +883,38 @@ mod tests {
     #[tokio::test]
     async fn a_ckan_that_does_not_list_fails_naming_the_site() {
         let http = reqwest::Client::new();
-        let refused = packages(&http, "http://10.0.0.7").await.expect_err("internal");
+        let refused = packages(&http, "http://10.0.0.7")
+            .await
+            .expect_err("internal");
         assert_eq!(
             refused,
             "CKAN at http://10.0.0.7 names the internal address 10.0.0.7; a catalogue is read on the public internet only"
         );
         let cases = [
             (ResponseTemplate::new(503), "did not list its datasets"),
-            (ResponseTemplate::new(200).set_body_string("<html>"), "did not answer JSON"),
-            (ResponseTemplate::new(200).set_body_json(json!({ "success": false })), "answered no package_search result"),
-            (ResponseTemplate::new(200).set_body_json(json!({ "success": true, "result": { "results": [] } })), "answered no package_search result"),
+            (
+                ResponseTemplate::new(200).set_body_string("<html>"),
+                "did not answer JSON",
+            ),
+            (
+                ResponseTemplate::new(200).set_body_json(json!({ "success": false })),
+                "answered no package_search result",
+            ),
+            (
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "success": true, "result": { "results": [] } })),
+                "answered no package_search result",
+            ),
         ];
         for (template, said) in cases {
             let server = MockServer::start().await;
             ckan_answers(&server, template).await;
             let site = ckan_at(&server);
             let err = packages(&http, &site).await.expect_err(said);
-            assert!(err.starts_with(&format!("CKAN at {site} ")) && err.contains(said), "{err}");
+            assert!(
+                err.starts_with(&format!("CKAN at {site} ")) && err.contains(said),
+                "{err}"
+            );
         }
     }
 
@@ -906,8 +924,12 @@ mod tests {
     async fn a_ckan_listing_ends_on_an_empty_page_and_is_capped() {
         let http = reqwest::Client::new();
         let server = MockServer::start().await;
-        ckan_answers(&server, ResponseTemplate::new(200).set_body_json(json!({
-            "success": true, "result": { "count": 5, "results": [] } }))).await;
+        ckan_answers(
+            &server,
+            ResponseTemplate::new(200).set_body_json(json!({
+            "success": true, "result": { "count": 5, "results": [] } })),
+        )
+        .await;
         assert_eq!(packages(&http, &ckan_at(&server)).await, Ok(Vec::new()));
 
         let server = MockServer::start().await;
@@ -921,7 +943,9 @@ mod tests {
         let site = ckan_at(&server);
         assert_eq!(
             packages(&http, &site).await,
-            Err(format!("CKAN at {site} holds more than 20000 datasets; the catalogue reads no further"))
+            Err(format!(
+                "CKAN at {site} holds more than 20000 datasets; the catalogue reads no further"
+            ))
         );
     }
 
@@ -938,29 +962,55 @@ mod tests {
                 .and(header("authorization", "Bearer t"))
                 .respond_with(ResponseTemplate::new(200).set_body_json(body))
         };
-        page("0", json!([{ "id": "urn:ngsi-ld:Dataset:a" }, { "type": "Dataset" }])).mount(&server).await;
+        page(
+            "0",
+            json!([{ "id": "urn:ngsi-ld:Dataset:a" }, { "type": "Dataset" }]),
+        )
+        .mount(&server)
+        .await;
         page("2", json!([])).mount(&server).await;
-        let held = listing(&http, &format!("{}{SURFACE}", server.uri()), "t").await.expect("listed");
-        assert_eq!(held, BTreeMap::from([("urn:ngsi-ld:Dataset:a".to_owned(), Value::Null)]));
+        let held = listing(&http, &format!("{}{SURFACE}", server.uri()), "t")
+            .await
+            .expect("listed");
+        assert_eq!(
+            held,
+            BTreeMap::from([("urn:ngsi-ld:Dataset:a".to_owned(), Value::Null)])
+        );
 
         let cases = [
-            (ResponseTemplate::new(403).set_body_json(json!({ "type": "urn:jc:forbidden", "detail": "no grant" })),
-             "the catalogue did not list: 403 Forbidden (urn:jc:forbidden: no grant)".to_owned()),
-            (ResponseTemplate::new(500).set_body_string("oops"),
-             "the catalogue did not list: 500 Internal Server Error".to_owned()),
+            (
+                ResponseTemplate::new(403)
+                    .set_body_json(json!({ "type": "urn:jc:forbidden", "detail": "no grant" })),
+                "the catalogue did not list: 403 Forbidden (urn:jc:forbidden: no grant)".to_owned(),
+            ),
+            (
+                ResponseTemplate::new(500).set_body_string("oops"),
+                "the catalogue did not list: 500 Internal Server Error".to_owned(),
+            ),
         ];
         for (template, said) in cases {
             let server = MockServer::start().await;
-            Mock::given(method("GET")).respond_with(template).mount(&server).await;
-            assert_eq!(listing(&http, &format!("{}{SURFACE}", server.uri()), "t").await, Err(said));
+            Mock::given(method("GET"))
+                .respond_with(template)
+                .mount(&server)
+                .await;
+            assert_eq!(
+                listing(&http, &format!("{}{SURFACE}", server.uri()), "t").await,
+                Err(said)
+            );
         }
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_string("[not json"))
             .mount(&server)
             .await;
-        let err = listing(&http, &server.uri(), "t").await.expect_err("not JSON");
-        assert!(err.starts_with("the catalogue's listing is not JSON: "), "{err}");
+        let err = listing(&http, &server.uri(), "t")
+            .await
+            .expect_err("not JSON");
+        assert!(
+            err.starts_with("the catalogue's listing is not JSON: "),
+            "{err}"
+        );
         let (_held, closed) = closed_port();
         let err = listing(&http, &closed, "t").await.expect_err("unreachable");
         assert!(err.starts_with("the catalogue did not list: "), "{err}");
@@ -1017,14 +1067,30 @@ mod tests {
             .mount(&server)
             .await;
         let surface = format!("{}{SURFACE}", server.uri());
-        assert_eq!(post(&http, &surface, "delete", "t", &json!(["urn:a"]), Some("gone")).await, Ok(()));
+        assert_eq!(
+            post(
+                &http,
+                &surface,
+                "delete",
+                "t",
+                &json!(["urn:a"]),
+                Some("gone")
+            )
+            .await,
+            Ok(())
+        );
         assert_eq!(
             post(&http, &surface, "upsert", "t", &json!([]), None).await,
             Err("the catalogue refused the upsert: 422 Unprocessable Entity".to_owned())
         );
         let (_held, closed) = closed_port();
-        let err = post(&http, &closed, "upsert", "t", &json!([]), None).await.expect_err("unreachable");
-        assert!(err.starts_with("the catalogue upsert did not reach the gateway: "), "{err}");
+        let err = post(&http, &closed, "upsert", "t", &json!([]), None)
+            .await
+            .expect_err("unreachable");
+        assert!(
+            err.starts_with("the catalogue upsert did not reach the gateway: "),
+            "{err}"
+        );
     }
 
     /// An Endpoint's types are read with their counts, its IRIs named by their term and sorted by
@@ -1039,32 +1105,53 @@ mod tests {
                 "typeList": ["https://smartdatamodels.org/dataModel.Parking/ParkingSpot", "Vehicle", 7] })))
             .mount(&server)
             .await;
-        for (name, count) in [("https://smartdatamodels.org/dataModel.Parking/ParkingSpot", "3"), ("Vehicle", "40")] {
+        for (name, count) in [
+            (
+                "https://smartdatamodels.org/dataModel.Parking/ParkingSpot",
+                "3",
+            ),
+            ("Vehicle", "40"),
+        ] {
             Mock::given(method("GET"))
                 .and(path(format!("{SURFACE}/entities")))
                 .and(query_param("type", name))
-                .respond_with(ResponseTemplate::new(200).insert_header("NGSILD-Results-Count", count))
+                .respond_with(
+                    ResponseTemplate::new(200).insert_header("NGSILD-Results-Count", count),
+                )
                 .mount(&server)
                 .await;
         }
         assert_eq!(
             types_of(&http, &server.uri(), "door").await,
-            Ok(vec![("Vehicle".to_owned(), 40), ("ParkingSpot".to_owned(), 3)])
+            Ok(vec![
+                ("Vehicle".to_owned(), 40),
+                ("ParkingSpot".to_owned(), 3)
+            ])
         );
 
         let types = |list: ResponseTemplate| {
-            Mock::given(method("GET")).and(path(format!("{SURFACE}/types"))).respond_with(list)
+            Mock::given(method("GET"))
+                .and(path(format!("{SURFACE}/types")))
+                .respond_with(list)
         };
         let server = MockServer::start().await;
         types(ResponseTemplate::new(404)).mount(&server).await;
-        let err = types_of(&http, &server.uri(), "door").await.expect_err("no types");
+        let err = types_of(&http, &server.uri(), "door")
+            .await
+            .expect_err("no types");
         assert!(err.starts_with("/types did not read: "), "{err}");
         let server = MockServer::start().await;
-        types(ResponseTemplate::new(200).set_body_string("nope")).mount(&server).await;
-        let err = types_of(&http, &server.uri(), "door").await.expect_err("not JSON");
+        types(ResponseTemplate::new(200).set_body_string("nope"))
+            .mount(&server)
+            .await;
+        let err = types_of(&http, &server.uri(), "door")
+            .await
+            .expect_err("not JSON");
         assert!(err.starts_with("/types is not JSON: "), "{err}");
         let server = MockServer::start().await;
-        types(ResponseTemplate::new(200).set_body_json(json!({ "typeList": ["Vehicle", "Bus"] }))).mount(&server).await;
+        types(ResponseTemplate::new(200).set_body_json(json!({ "typeList": ["Vehicle", "Bus"] })))
+            .mount(&server)
+            .await;
         Mock::given(method("GET"))
             .and(path(format!("{SURFACE}/entities")))
             .and(query_param("type", "Vehicle"))
@@ -1076,8 +1163,12 @@ mod tests {
             Err("the count of Vehicle came without NGSILD-Results-Count".to_owned())
         );
         let server = MockServer::start().await;
-        types(ResponseTemplate::new(200).set_body_json(json!({ "typeList": ["Bus"] }))).mount(&server).await;
-        let err = types_of(&http, &server.uri(), "door").await.expect_err("count refused");
+        types(ResponseTemplate::new(200).set_body_json(json!({ "typeList": ["Bus"] })))
+            .mount(&server)
+            .await;
+        let err = types_of(&http, &server.uri(), "door")
+            .await
+            .expect_err("count refused");
         assert!(err.starts_with("the count of Bus did not read: "), "{err}");
     }
 
@@ -1104,9 +1195,13 @@ mod tests {
             ("urn:ngsi-ld:Dataset:air".to_owned(), json!({})),
         ]);
         let http = reqwest::Client::new();
-        let (counted, log) = super::super::logged(sync.counted(&http, &server.uri(), &wanted)).await;
+        let (counted, log) =
+            super::super::logged(sync.counted(&http, &server.uri(), &wanted)).await;
         assert_eq!(counted, HashMap::from([("bikes".to_owned(), Vec::new())]));
-        assert!(log.contains("catalogue counts not read") && log.contains("trees"), "{log}");
+        assert!(
+            log.contains("catalogue counts not read") && log.contains("trees"),
+            "{log}"
+        );
         // Read from memory the second time: the mock answers /types once.
         let again = sync.counted(&http, &server.uri(), &wanted).await;
         assert_eq!(again, counted);
@@ -1117,20 +1212,37 @@ mod tests {
     #[test]
     fn type_words_go_only_on_a_dataset_the_catalogue_holds() {
         let mut wanted = BTreeMap::from([
-            ("urn:ngsi-ld:DataService:bikes".to_owned(), json!({ "refDataset": { "objectList": [
-                { "object": "urn:ngsi-ld:Dataset:held" }, { "object": "urn:ngsi-ld:Dataset:missing" } ] } })),
+            (
+                "urn:ngsi-ld:DataService:bikes".to_owned(),
+                json!({ "refDataset": { "objectList": [
+                { "object": "urn:ngsi-ld:Dataset:held" }, { "object": "urn:ngsi-ld:Dataset:missing" } ] } }),
+            ),
             ("urn:ngsi-ld:DataService:empty".to_owned(), json!({})),
-            ("urn:ngsi-ld:Dataset:held".to_owned(), json!({ "searchText": { "value": "bikes" } })),
+            (
+                "urn:ngsi-ld:Dataset:held".to_owned(),
+                json!({ "searchText": { "value": "bikes" } }),
+            ),
         ]);
         let counted = HashMap::from([
-            ("bikes".to_owned(), vec![("BikeHireDockingStation".to_owned(), 9)]),
+            (
+                "bikes".to_owned(),
+                vec![("BikeHireDockingStation".to_owned(), 9)],
+            ),
             ("empty".to_owned(), Vec::new()),
         ]);
         with_types(&mut wanted, &counted);
         assert_eq!(wanted.len(), 3, "nothing is added");
-        assert_eq!(wanted["urn:ngsi-ld:Dataset:held"]["searchText"]["value"], "bikes bikehiredockingstation");
-        assert_eq!(wanted["urn:ngsi-ld:DataService:bikes"]["nextQuery"]["value"]["arguments"]["type"], "BikeHireDockingStation");
-        assert!(wanted["urn:ngsi-ld:DataService:empty"].get("entityTypes").is_none());
+        assert_eq!(
+            wanted["urn:ngsi-ld:Dataset:held"]["searchText"]["value"],
+            "bikes bikehiredockingstation"
+        );
+        assert_eq!(
+            wanted["urn:ngsi-ld:DataService:bikes"]["nextQuery"]["value"]["arguments"]["type"],
+            "BikeHireDockingStation"
+        );
+        assert!(wanted["urn:ngsi-ld:DataService:empty"]
+            .get("entityTypes")
+            .is_none());
     }
 
     /// Two installation catalogues say nowhere to write: none is written and the error says so.

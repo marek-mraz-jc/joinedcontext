@@ -11,7 +11,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     if let Some((results, _count)) = catalog::ckan_page(&answer) {
-        let _ = results.iter().filter_map(catalog::Package::from_ckan).count();
+        let _ = results
+            .iter()
+            .filter_map(catalog::Package::from_ckan)
+            .count();
     }
     let said = catalog::explained(&answer);
     assert!(said.chars().count() <= 203, "a reason is cut to its cap");

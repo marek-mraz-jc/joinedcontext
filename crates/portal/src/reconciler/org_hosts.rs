@@ -100,7 +100,8 @@ pub fn acme_ingress(template: &Value, namespace: &str, host: &str) -> Option<Val
         .as_object_mut()
         .into_iter()
         .for_each(|annotations| {
-            annotations.retain(|key, _| !key.starts_with("traefik.ingress.kubernetes.io/router.tls"))
+            annotations
+                .retain(|key, _| !key.starts_with("traefik.ingress.kubernetes.io/router.tls"))
         });
     Some(ingress)
 }
@@ -812,7 +813,9 @@ mod tests {
     /// A pool whose every query fails: its server's port is held bound and never listens.
     fn dead_pool() -> (tokio::net::TcpSocket, PgPool) {
         let socket = tokio::net::TcpSocket::new_v4().expect("a socket");
-        socket.bind("127.0.0.1:0".parse().expect("an address")).expect("bound");
+        socket
+            .bind("127.0.0.1:0".parse().expect("an address"))
+            .expect("bound");
         let port = socket.local_addr().expect("its address").port();
         let pool = sqlx::postgres::PgPoolOptions::new()
             .acquire_timeout(std::time::Duration::from_secs(2))
@@ -846,7 +849,8 @@ mod tests {
     }
 
     fn ours(kind: &str, extra: Value) -> Value {
-        let mut object = json!({ "kind": kind, "metadata": { "name": object_name(HOST), "labels": labels() } });
+        let mut object =
+            json!({ "kind": kind, "metadata": { "name": object_name(HOST), "labels": labels() } });
         if let (Some(object), Some(extra)) = (object.as_object_mut(), extra.as_object()) {
             object.extend(extra.clone());
         }
@@ -860,8 +864,15 @@ mod tests {
         let (_held, pool) = dead_pool();
         let hosts = wave(&server, pool, Canned(Default::default()));
         let ((), log) = super::super::logged(hosts.converge(true)).await;
-        assert!(log.contains("the host registry was not read: no host moves this pass"), "{log}");
-        assert!(server.received_requests().await.expect("recorded").is_empty());
+        assert!(
+            log.contains("the host registry was not read: no host moves this pass"),
+            "{log}"
+        );
+        assert!(server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
     }
 
     /// Each way DNS keeps a host waiting is said: no edge host to compare, an edge that does not
@@ -871,7 +882,11 @@ mod tests {
         let server = MockServer::start().await;
         let (_held, pool) = dead_pool();
         let edge: Vec<IpAddr> = vec!["203.0.113.10".parse().expect("an address")];
-        let hosts = wave(&server, pool.clone(), Canned([("dev.example", Some(edge.clone())), (HOST, None)].into()));
+        let hosts = wave(
+            &server,
+            pool.clone(),
+            Canned([("dev.example", Some(edge.clone())), (HOST, None)].into()),
+        );
         assert_eq!(
             waits(hosts.dns(HOST, &json!({ "spec": {} })).await),
             format!("the edge Ingress apisix names no host to compare {HOST}'s DNS with")
@@ -881,7 +896,10 @@ mod tests {
             format!("waiting for DNS: the lookup of {HOST} got no answer; tried again next pass")
         );
         let unresolved = wave(&server, pool, Canned([("dev.example", None)].into()));
-        assert_eq!(waits(unresolved.dns(HOST, &template()).await), "waiting for DNS: dev.example did not resolve");
+        assert_eq!(
+            waits(unresolved.dns(HOST, &template()).await),
+            "waiting for DNS: dev.example did not resolve"
+        );
     }
 
     /// The edge's parts: its Ingress missing or refused, a certificate without an issuer, and the
@@ -890,23 +908,61 @@ mod tests {
     async fn the_edges_parts_are_read_or_the_reason_given() {
         let (_held, pool) = dead_pool();
         for (status, reason) in [
-            (404, "the edge Ingress apisix is not in apisix; the apisix chart renders it"),
+            (
+                404,
+                "the edge Ingress apisix is not in apisix; the apisix chart renders it",
+            ),
             (500, "the API server answered 500 for Ingress apisix"),
         ] {
             let server = MockServer::start().await;
-            answer(&server, "GET", &format!("{INGRESSES}/apisix"), status, json!({})).await;
-            assert_eq!(wave(&server, pool.clone(), Canned(Default::default())).edge().await.err().as_deref(), Some(reason));
+            answer(
+                &server,
+                "GET",
+                &format!("{INGRESSES}/apisix"),
+                status,
+                json!({}),
+            )
+            .await;
+            assert_eq!(
+                wave(&server, pool.clone(), Canned(Default::default()))
+                    .edge()
+                    .await
+                    .err()
+                    .as_deref(),
+                Some(reason)
+            );
         }
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/apisix"), 200, template()).await;
-        answer(&server, "GET", &format!("{CERTS}/apisix-edge"), 200, json!({ "spec": {} })).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/apisix"),
+            200,
+            template(),
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/apisix-edge"),
+            200,
+            json!({ "spec": {} }),
+        )
+        .await;
         let hosts = wave(&server, pool.clone(), Canned(Default::default()));
         assert_eq!(
             hosts.edge().await.err().as_deref(),
             Some("the edge Certificate apisix-edge in apisix names no issuer to request a host's from")
         );
-        let (_, issuer) = hosts.with_dns01_issuer(Some("letsencrypt-dns01".into())).edge().await.expect("the edge");
-        assert_eq!(issuer, json!({ "name": "letsencrypt-dns01", "kind": "ClusterIssuer" }));
+        let (_, issuer) = hosts
+            .with_dns01_issuer(Some("letsencrypt-dns01".into()))
+            .edge()
+            .await
+            .expect("the edge");
+        assert_eq!(
+            issuer,
+            json!({ "name": "letsencrypt-dns01", "kind": "ClusterIssuer" })
+        );
     }
 
     /// Each refusal on the way to a certificate keeps the host waiting with the object named; an
@@ -918,46 +974,118 @@ mod tests {
         let certify = |server: &MockServer| wave(server, pool.clone(), Canned(Default::default()));
         let server = MockServer::start().await;
         assert_eq!(
-            waits(certify(&server).certify(HOST, &json!({ "spec": {} }), &json!({})).await),
+            waits(
+                certify(&server)
+                    .certify(HOST, &json!({ "spec": {} }), &json!({}))
+                    .await
+            ),
             "the edge Ingress apisix routes no backend to copy"
         );
 
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/{name}"), 500, json!({})).await;
-        assert_eq!(waits(certify(&server).certify(HOST, &template(), &json!({})).await), format!("the API server answered 500 for Ingress {name}"));
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/{name}"),
+            500,
+            json!({}),
+        )
+        .await;
+        assert_eq!(
+            waits(
+                certify(&server)
+                    .certify(HOST, &template(), &json!({}))
+                    .await
+            ),
+            format!("the API server answered 500 for Ingress {name}")
+        );
 
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/{name}"), 404, json!({})).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/{name}"),
+            404,
+            json!({}),
+        )
+        .await;
         answer(&server, "POST", INGRESSES, 403, json!({})).await;
-        assert_eq!(waits(certify(&server).certify(HOST, &template(), &json!({})).await), format!("the API server answered 403 for Ingress {name}"));
+        assert_eq!(
+            waits(
+                certify(&server)
+                    .certify(HOST, &template(), &json!({}))
+                    .await
+            ),
+            format!("the API server answered 403 for Ingress {name}")
+        );
 
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/{name}"), 200, ours("Ingress", json!({}))).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/{name}"),
+            200,
+            ours("Ingress", json!({})),
+        )
+        .await;
         answer(&server, "GET", &format!("{CERTS}/{name}"), 500, json!({})).await;
-        assert_eq!(waits(certify(&server).certify(HOST, &template(), &json!({})).await), format!("the API server answered 500 for Certificate {name}"));
+        assert_eq!(
+            waits(
+                certify(&server)
+                    .certify(HOST, &template(), &json!({}))
+                    .await
+            ),
+            format!("the API server answered 500 for Certificate {name}")
+        );
 
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/{name}"), 200, ours("Ingress", json!({}))).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/{name}"),
+            200,
+            ours("Ingress", json!({})),
+        )
+        .await;
         answer(&server, "GET", &format!("{CERTS}/{name}"), 200, ours("Certificate", json!({ "status": { "conditions": [
             { "type": "Ready", "status": "False", "message": "Issuing certificate as Secret does not exist" }] } }))).await;
         assert_eq!(
-            waits(certify(&server).certify(HOST, &template(), &json!({})).await),
+            waits(
+                certify(&server)
+                    .certify(HOST, &template(), &json!({}))
+                    .await
+            ),
             "the certificate is not issued yet: Issuing certificate as Secret does not exist"
         );
 
         // The Ingress is created (its audit row lost with the database), then the ledger is not read.
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/{name}"), 404, json!({})).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/{name}"),
+            404,
+            json!({}),
+        )
+        .await;
         answer(&server, "POST", INGRESSES, 201, json!({})).await;
         answer(&server, "GET", &format!("{CERTS}/{name}"), 404, json!({})).await;
         answer(&server, "POST", CERTS, 201, json!({})).await;
         let hosts = certify(&server);
         let (step, log) = super::super::logged(hosts.certify(HOST, &template(), &json!({}))).await;
-        assert_eq!(waits(step), "the certificate ledger could not be read; tried again next pass");
+        assert_eq!(
+            waits(step),
+            "the certificate ledger could not be read; tried again next pass"
+        );
         assert!(log.contains("a reconciler step was not audited"), "{log}");
         assert!(log.contains("the certificate ledger was not read"), "{log}");
         let created = server.received_requests().await.expect("recorded");
-        assert!(created.iter().all(|r| !(r.method.as_str() == "POST" && r.url.path() == CERTS)), "no certificate without the ledger");
+        assert!(
+            created
+                .iter()
+                .all(|r| !(r.method.as_str() == "POST" && r.url.path() == CERTS)),
+            "no certificate without the ledger"
+        );
     }
 
     /// Widening: no backend, a foreign Ingress, each refused delete, create or read waits; an
@@ -969,7 +1097,10 @@ mod tests {
         let widen = |server: &MockServer| wave(server, pool.clone(), Canned(Default::default()));
         let acme = ours("Ingress", json!({ "spec": { "rules": [] } }));
         let server = MockServer::start().await;
-        assert_eq!(waits(widen(&server).widen(HOST, &json!({ "spec": {} })).await), "the edge Ingress apisix routes no backend to copy");
+        assert_eq!(
+            waits(widen(&server).widen(HOST, &json!({ "spec": {} })).await),
+            "the edge Ingress apisix routes no backend to copy"
+        );
 
         let cases: [(u16, Value, u16, u16, String); 4] = [
             (200, json!({ "metadata": { "name": name } }), 200, 201, format!("conflict: an Ingress {name} in apisix exists that the Portal did not create; remove it so the host can be served")),
@@ -980,21 +1111,65 @@ mod tests {
         for (get, held, delete, create, reason) in cases {
             let server = MockServer::start().await;
             answer(&server, "GET", &format!("{INGRESSES}/{name}"), get, held).await;
-            answer(&server, "DELETE", &format!("{INGRESSES}/{name}"), delete, json!({})).await;
+            answer(
+                &server,
+                "DELETE",
+                &format!("{INGRESSES}/{name}"),
+                delete,
+                json!({}),
+            )
+            .await;
             answer(&server, "POST", INGRESSES, create, json!({})).await;
             assert_eq!(waits(widen(&server).widen(HOST, &template()).await), reason);
         }
 
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/{name}"), 200, ours("Ingress", json!({ "spec": { "tls": [{ "hosts": [HOST] }] } }))).await;
-        assert!(matches!(widen(&server).widen(HOST, &template()).await, Step::Moved("served")));
-        assert!(server.received_requests().await.expect("recorded").iter().all(|r| r.method.as_str() == "GET"));
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/{name}"),
+            200,
+            ours(
+                "Ingress",
+                json!({ "spec": { "tls": [{ "hosts": [HOST] }] } }),
+            ),
+        )
+        .await;
+        assert!(matches!(
+            widen(&server).widen(HOST, &template()).await,
+            Step::Moved("served")
+        ));
+        assert!(server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .iter()
+            .all(|r| r.method.as_str() == "GET"));
 
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/{name}"), 404, json!({})).await;
-        Mock::given(method("POST")).and(path(INGRESSES)).respond_with(ResponseTemplate::new(201)).expect(1).mount(&server).await;
-        Mock::given(method("DELETE")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&server).await;
-        assert!(matches!(widen(&server).widen(HOST, &template()).await, Step::Moved("served")));
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/{name}"),
+            404,
+            json!({}),
+        )
+        .await;
+        Mock::given(method("POST"))
+            .and(path(INGRESSES))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        assert!(matches!(
+            widen(&server).widen(HOST, &template()).await,
+            Step::Moved("served")
+        ));
     }
 
     /// A database that does not answer: a move is not made and says so, a detail is not written
@@ -1010,9 +1185,27 @@ mod tests {
         let ((), log) = super::super::logged(hosts.detail(HOST, "approved", "waiting")).await;
         assert!(log.contains("a host's detail was not written"), "{log}");
 
-        answer(&server, "GET", INGRESSES, 200, json!({ "items": [{ "metadata": { "labels": labels() } }] })).await;
-        Mock::given(method("DELETE")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&server).await;
-        let failed = hosts.delete_unkept(INGRESS_API, "Ingress", &BTreeSet::new(), &Default::default()).await;
+        answer(
+            &server,
+            "GET",
+            INGRESSES,
+            200,
+            json!({ "items": [{ "metadata": { "labels": labels() } }] }),
+        )
+        .await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let failed = hosts
+            .delete_unkept(
+                INGRESS_API,
+                "Ingress",
+                &BTreeSet::new(),
+                &Default::default(),
+            )
+            .await;
         assert_eq!(failed, Some(BTreeSet::new()));
     }
 
@@ -1025,7 +1218,13 @@ mod tests {
             json!({ "traefik.ingress.kubernetes.io/router.entrypoints": "websecure" })
         );
         let mut bare = template();
-        bare["metadata"].as_object_mut().expect("metadata").remove("annotations");
-        assert_eq!(acme_ingress(&bare, "apisix", HOST).expect("an Ingress")["metadata"]["annotations"], json!({}));
+        bare["metadata"]
+            .as_object_mut()
+            .expect("metadata")
+            .remove("annotations");
+        assert_eq!(
+            acme_ingress(&bare, "apisix", HOST).expect("an Ingress")["metadata"]["annotations"],
+            json!({})
+        );
     }
 }

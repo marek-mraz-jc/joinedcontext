@@ -73,6 +73,7 @@ pub(crate) async fn logged<F: std::future::Future>(run: F) -> (F::Output, String
     let guard = tracing::subscriber::set_default(subscriber);
     let out = run.await;
     drop(guard);
-    let text = String::from_utf8_lossy(&sink.0.lock().unwrap_or_else(|e| e.into_inner())).into_owned();
+    let text =
+        String::from_utf8_lossy(&sink.0.lock().unwrap_or_else(|e| e.into_inner())).into_owned();
     (out, text)
 }

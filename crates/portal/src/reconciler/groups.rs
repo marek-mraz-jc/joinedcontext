@@ -899,7 +899,11 @@ mod tests {
     fn an_organization_group_names_its_organization_and_nothing_else_does() {
         assert_eq!(organization_group("bbsk"), "bbsk_bound");
         assert_eq!(organization_of_group("bbsk_bound"), Some("bbsk"));
-        assert_eq!(organization_of_group("_bound"), None, "an empty Organization");
+        assert_eq!(
+            organization_of_group("_bound"),
+            None,
+            "an empty Organization"
+        );
         assert_eq!(organization_of_group("bbsk-readers"), None);
     }
 
@@ -909,16 +913,28 @@ mod tests {
     async fn a_second_factor_is_required_by_policy_or_by_a_policy_that_does_not_parse() {
         let mirror = mirror_of(vec![
             manifest("Organization", "plain", json!({ "domain": "plain.sk" })),
-            manifest("Organization", "strict", json!({ "policies": { "signIn": { "secondFactor": "required" } } })),
-            manifest("Organization", "broken", json!({ "policies": { "signIn": { "secondFactor": 7 } } })),
+            manifest(
+                "Organization",
+                "strict",
+                json!({ "policies": { "signIn": { "secondFactor": "required" } } }),
+            ),
+            manifest(
+                "Organization",
+                "broken",
+                json!({ "policies": { "signIn": { "secondFactor": 7 } } }),
+            ),
         ]);
         assert!(!requires_second_factor(&mirror, "plain"));
         assert!(!requires_second_factor(&mirror, "nobody"));
         assert!(requires_second_factor(&mirror, "strict"));
-        let (required, log) = super::super::logged(async { requires_second_factor(&mirror, "broken") }).await;
+        let (required, log) =
+            super::super::logged(async { requires_second_factor(&mirror, "broken") }).await;
         assert!(required);
         assert!(log.contains("Organization policies do not parse"), "{log}");
-        assert_eq!(organization_id(&mirror, "plain").as_deref(), Some("sk_plain"));
+        assert_eq!(
+            organization_id(&mirror, "plain").as_deref(),
+            Some("sk_plain")
+        );
         assert_eq!(organization_id(&mirror, "strict"), None, "no domain, no id");
         assert_eq!(organization_id(&mirror, "nobody"), None);
     }
@@ -946,8 +962,16 @@ mod tests {
         );
         assert_eq!(attributes_of(None), json!({ MANAGED_BY: [MANAGED_VALUE] }));
         assert_eq!(derived.organization(), Some("bbsk"));
-        let project = DerivedGroup { jc_org: None, jc_groups: Some("noslash".into()), ..derived.clone() };
-        assert_eq!(project.organization(), None, "a path without its leading slash names none");
+        let project = DerivedGroup {
+            jc_org: None,
+            jc_groups: Some("noslash".into()),
+            ..derived.clone()
+        };
+        assert_eq!(
+            project.organization(),
+            None,
+            "a path without its leading slash names none"
+        );
     }
 
     /// A manifest that does not parse is reported and written nowhere; a managed group no manifest
@@ -956,11 +980,18 @@ mod tests {
     async fn a_broken_manifest_and_a_refused_removal_are_each_an_outcome() {
         let keycloak = realm(json!([managed("g9", "old-team")])).await;
         answer(&keycloak, "DELETE", "/groups/g9", 500, json!({})).await;
-        let mirror = mirror_of(vec![manifest("Group", "city-leads", json!({ "members": "everyone" }))]);
+        let mirror = mirror_of(vec![manifest(
+            "Group",
+            "city-leads",
+            json!({ "members": "everyone" }),
+        )]);
         let outcomes = sync(&keycloak).converge(&mirror).await;
         let broken = only(&outcomes, "city-leads");
         assert!(
-            broken.error.as_deref().is_some_and(|e| e.starts_with("the manifest does not parse: ")),
+            broken
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("the manifest does not parse: ")),
             "{broken:?}"
         );
         assert_eq!(
@@ -975,14 +1006,29 @@ mod tests {
         let keycloak = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/realms/bb/protocol/openid-connect/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t", "expires_in": 60 })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "access_token": "t", "expires_in": 60 })),
+            )
             .mount(&keycloak)
             .await;
         answer(&keycloak, "GET", "/groups", 403, json!({})).await;
-        let outcomes = sync(&keycloak).converge(&mirror_of(vec![manifest("Group", "city-leads", members(&[LEAD]))])).await;
+        let outcomes = sync(&keycloak)
+            .converge(&mirror_of(vec![manifest(
+                "Group",
+                "city-leads",
+                members(&[LEAD]),
+            )]))
+            .await;
         assert_eq!(outcomes.len(), 1, "{outcomes:?}");
         assert_eq!(outcomes[0].name, "*");
-        assert!(outcomes[0].error.as_deref().is_some_and(|e| e.contains("403")), "{outcomes:?}");
+        assert!(
+            outcomes[0]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("403")),
+            "{outcomes:?}"
+        );
     }
 
     /// In an Organization's realm `/{organization}/members` is kept: made when missing, left when
@@ -991,15 +1037,34 @@ mod tests {
     async fn an_organizations_members_group_is_kept_and_each_refusal_said() {
         // Both there: nothing to do.
         let keycloak = realm(json!([managed("root", "bbsk")])).await;
-        answer(&keycloak, "GET", "/groups/root/children", 200, json!([{ "id": "m", "name": "members" }])).await;
-        let outcomes = sync(&keycloak).for_organization("bbsk").converge(&Mirror::new()).await;
-        assert_eq!(only(&outcomes, "bbsk/members"), GroupOutcome::of("bbsk/members"));
+        answer(
+            &keycloak,
+            "GET",
+            "/groups/root/children",
+            200,
+            json!([{ "id": "m", "name": "members" }]),
+        )
+        .await;
+        let outcomes = sync(&keycloak)
+            .for_organization("bbsk")
+            .converge(&Mirror::new())
+            .await;
+        assert_eq!(
+            only(&outcomes, "bbsk/members"),
+            GroupOutcome::of("bbsk/members")
+        );
 
         // The root missing and its create refused.
         let keycloak = realm(json!([])).await;
         answer(&keycloak, "POST", "/groups", 409, json!({})).await;
-        let outcomes = sync(&keycloak).for_organization("bbsk").converge(&Mirror::new()).await;
-        assert_eq!(only(&outcomes, "bbsk/members").error.as_deref(), Some("POST /groups: 409 Conflict"));
+        let outcomes = sync(&keycloak)
+            .for_organization("bbsk")
+            .converge(&Mirror::new())
+            .await;
+        assert_eq!(
+            only(&outcomes, "bbsk/members").error.as_deref(),
+            Some("POST /groups: 409 Conflict")
+        );
 
         // The root made, but the realm does not find it again.
         let keycloak = realm(json!([])).await;
@@ -1007,10 +1072,16 @@ mod tests {
         Mock::given(method("GET"))
             .and(path(format!("{REALM}/groups")))
             .and(query_param("exact", "true"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "id": "x", "name": "bbsk-other" }])))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{ "id": "x", "name": "bbsk-other" }])),
+            )
             .mount(&keycloak)
             .await;
-        let outcomes = sync(&keycloak).for_organization("bbsk").converge(&Mirror::new()).await;
+        let outcomes = sync(&keycloak)
+            .for_organization("bbsk")
+            .converge(&Mirror::new())
+            .await;
         assert_eq!(
             only(&outcomes, "bbsk/members").error.as_deref(),
             Some("the realm did not return the group it just created")
@@ -1019,12 +1090,21 @@ mod tests {
         // The children not listed, then the subgroup's create refused.
         let keycloak = realm(json!([managed("root", "bbsk")])).await;
         answer(&keycloak, "GET", "/groups/root/children", 500, json!({})).await;
-        let outcomes = sync(&keycloak).for_organization("bbsk").converge(&Mirror::new()).await;
-        assert!(only(&outcomes, "bbsk/members").error.as_deref().is_some_and(|e| e.starts_with("GET /groups/root/children: 500")));
+        let outcomes = sync(&keycloak)
+            .for_organization("bbsk")
+            .converge(&Mirror::new())
+            .await;
+        assert!(only(&outcomes, "bbsk/members")
+            .error
+            .as_deref()
+            .is_some_and(|e| e.starts_with("GET /groups/root/children: 500")));
         let keycloak = realm(json!([managed("root", "bbsk")])).await;
         answer(&keycloak, "GET", "/groups/root/children", 200, json!([])).await;
         answer(&keycloak, "POST", "/groups/root/children", 403, json!({})).await;
-        let outcomes = sync(&keycloak).for_organization("bbsk").converge(&Mirror::new()).await;
+        let outcomes = sync(&keycloak)
+            .for_organization("bbsk")
+            .converge(&Mirror::new())
+            .await;
         assert_eq!(
             only(&outcomes, "bbsk/members").error.as_deref(),
             Some("POST /groups/root/children: 403 Forbidden")
@@ -1040,29 +1120,72 @@ mod tests {
         let keycloak = realm(json!([])).await;
         answer(&keycloak, "POST", "/groups", 500, json!({})).await;
         let outcome = only(&sync(&keycloak).converge(&mirror).await, "city-leads");
-        assert_eq!(outcome.error.as_deref(), Some("POST /groups: 500 Internal Server Error"));
+        assert_eq!(
+            outcome.error.as_deref(),
+            Some("POST /groups: 500 Internal Server Error")
+        );
 
         let keycloak = realm(json!([managed("g1", "city-leads")])).await;
         answer(&keycloak, "GET", "/groups/g1/members", 502, json!({})).await;
         let outcome = only(&sync(&keycloak).converge(&mirror).await, "city-leads");
-        assert!(outcome.error.as_deref().is_some_and(|e| e.starts_with("GET /groups/g1/members: 502")), "{outcome:?}");
+        assert!(
+            outcome
+                .error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("GET /groups/g1/members: 502")),
+            "{outcome:?}"
+        );
 
         let keycloak = realm(json!([managed("g1", "city-leads")])).await;
-        answer(&keycloak, "GET", "/groups/g1/members", 200, json!([{ "id": LEFT }])).await;
-        answer(&keycloak, "GET", &format!("/users/{LEAD}"), 200, json!({ "id": LEAD })).await;
-        answer(&keycloak, "PUT", &format!("/users/{LEAD}/groups/g1"), 403, json!({})).await;
-        answer(&keycloak, "DELETE", &format!("/users/{LEFT}/groups/g1"), 500, json!({})).await;
+        answer(
+            &keycloak,
+            "GET",
+            "/groups/g1/members",
+            200,
+            json!([{ "id": LEFT }]),
+        )
+        .await;
+        answer(
+            &keycloak,
+            "GET",
+            &format!("/users/{LEAD}"),
+            200,
+            json!({ "id": LEAD }),
+        )
+        .await;
+        answer(
+            &keycloak,
+            "PUT",
+            &format!("/users/{LEAD}/groups/g1"),
+            403,
+            json!({}),
+        )
+        .await;
+        answer(
+            &keycloak,
+            "DELETE",
+            &format!("/users/{LEFT}/groups/g1"),
+            500,
+            json!({}),
+        )
+        .await;
         let sync_one = sync(&keycloak);
         let outcome = only(&sync_one.converge(&mirror).await, "city-leads");
         // The removal runs after the add: its refusal is the last word.
-        assert_eq!(outcome.error.as_deref(), Some(format!("DELETE /users/{LEFT}/groups/g1: 500 Internal Server Error").as_str()));
+        assert_eq!(
+            outcome.error.as_deref(),
+            Some(format!("DELETE /users/{LEFT}/groups/g1: 500 Internal Server Error").as_str())
+        );
         assert!(outcome.drift.is_empty(), "{outcome:?}");
 
         let keycloak = realm(json!([managed("g1", "city-leads")])).await;
         answer(&keycloak, "GET", "/groups/g1/members", 200, json!([])).await;
         answer(&keycloak, "GET", &format!("/users/{LEAD}"), 500, json!({})).await;
         let outcome = only(&sync(&keycloak).converge(&mirror).await, "city-leads");
-        assert_eq!(outcome.error.as_deref(), Some(format!("GET /users/{LEAD}: 500 Internal Server Error").as_str()));
+        assert_eq!(
+            outcome.error.as_deref(),
+            Some(format!("GET /users/{LEAD}: 500 Internal Server Error").as_str())
+        );
 
         // A derived group whose claims went stale, and the realm refuses the update.
         let keycloak = realm(json!([managed("g2", "bbsk_bound")])).await;
@@ -1076,8 +1199,13 @@ mod tests {
             jc_groups: None,
             second_factor: false,
         };
-        let outcomes = sync(&keycloak).converge_with(&Mirror::new(), &[derived]).await;
-        assert_eq!(only(&outcomes, "bbsk_bound").error.as_deref(), Some("PUT /groups/g2: 403 Forbidden"));
+        let outcomes = sync(&keycloak)
+            .converge_with(&Mirror::new(), &[derived])
+            .await;
+        assert_eq!(
+            only(&outcomes, "bbsk_bound").error.as_deref(),
+            Some("PUT /groups/g2: 403 Forbidden")
+        );
     }
 
     /// A user the realm lacks is asked for once per [`ABSENT_FOR`], and a cache poisoned by a
@@ -1098,7 +1226,11 @@ mod tests {
         }));
         assert!(poison.is_err() && groups.absent.is_poisoned());
         assert_eq!(groups.user_exists("t", LEAD).await, Ok(false));
-        assert_eq!(groups.user_exists("t", LEAD).await, Ok(false), "answered from the cache");
+        assert_eq!(
+            groups.user_exists("t", LEAD).await,
+            Ok(false),
+            "answered from the cache"
+        );
     }
 
     /// The Access page reads a run on the Group manifest: a refusal is an Error phase, a warning
@@ -1129,18 +1261,37 @@ mod tests {
             ],
         );
         let condition = |name: &str| {
-            let status = mirror.get(ORG_NAMESPACE, "Group", name).and_then(|g| g.status).expect("a status");
-            (status.phase, status.conditions.first().cloned().expect("a condition"))
+            let status = mirror
+                .get(ORG_NAMESPACE, "Group", name)
+                .and_then(|g| g.status)
+                .expect("a status");
+            (
+                status.phase,
+                status.conditions.first().cloned().expect("a condition"),
+            )
         };
         let (phase, refused) = condition("refused");
         assert_eq!(phase, Phase::Error);
-        assert_eq!((refused.status.as_str(), refused.reason.as_deref()), ("False", Some("RealmRefused")));
-        assert_eq!(refused.message.as_deref(), Some("POST /groups: 409 Conflict"));
+        assert_eq!(
+            (refused.status.as_str(), refused.reason.as_deref()),
+            ("False", Some("RealmRefused"))
+        );
+        assert_eq!(
+            refused.message.as_deref(),
+            Some("POST /groups: 409 Conflict")
+        );
         let (phase, warned) = condition("warned");
         assert_eq!(phase, Phase::Live);
         assert_eq!(warned.reason.as_deref(), Some("MemberUnknown"));
-        assert_eq!(warned.message.as_deref(), Some("a has no user; b has no user"));
-        assert!(mirror.get(ORG_NAMESPACE, "Group", "bare").expect("kept").status.is_none());
+        assert_eq!(
+            warned.message.as_deref(),
+            Some("a has no user; b has no user")
+        );
+        assert!(mirror
+            .get(ORG_NAMESPACE, "Group", "bare")
+            .expect("kept")
+            .status
+            .is_none());
         assert!(mirror.get(ORG_NAMESPACE, "Group", "nobody").is_none());
     }
 }

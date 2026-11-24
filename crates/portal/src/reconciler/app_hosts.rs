@@ -766,7 +766,15 @@ mod tests {
     #[tokio::test]
     async fn without_the_edge_ingress_every_app_fails_with_the_reason() {
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/apisix"), 404, json!({}), None).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/apisix"),
+            404,
+            json!({}),
+            None,
+        )
+        .await;
         let states = hosts_on(&server)
             .converge(&apps(&["bikes", "trees"]), "city.example")
             .await;
@@ -777,8 +785,18 @@ mod tests {
         );
 
         let refused = MockServer::start().await;
-        answer(&refused, "GET", &format!("{INGRESSES}/apisix"), 403, json!({ "message": "forbidden" }), None).await;
-        let states = hosts_on(&refused).converge(&apps(&["bikes"]), "city.example").await;
+        answer(
+            &refused,
+            "GET",
+            &format!("{INGRESSES}/apisix"),
+            403,
+            json!({ "message": "forbidden" }),
+            None,
+        )
+        .await;
+        let states = hosts_on(&refused)
+            .converge(&apps(&["bikes"]), "city.example")
+            .await;
         assert_eq!(
             failed(states.get("bikes")),
             "the API server answered 403 for Ingress apisix"
@@ -793,13 +811,30 @@ mod tests {
     #[tokio::test]
     async fn an_issued_wildcard_makes_every_host_ready_and_creates_nothing() {
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/apisix"), 200, edge_with(json!([{
-            "hosts": ["*.apps.city.example"], "secretName": "apisix-apps-wildcard-tls" }])), None).await;
-        answer(&server, "GET", &format!("{CERTS}/apisix-apps-wildcard"), 200,
-            wildcard("True", json!(["*.apps.city.example"])), None).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/apisix"),
+            200,
+            edge_with(json!([{
+            "hosts": ["*.apps.city.example"], "secretName": "apisix-apps-wildcard-tls" }])),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/apisix-apps-wildcard"),
+            200,
+            wildcard("True", json!(["*.apps.city.example"])),
+            None,
+        )
+        .await;
         answer(&server, "POST", CERTS, 201, json!({}), Some(0)).await;
         answer(&server, "POST", INGRESSES, 201, json!({}), Some(0)).await;
-        let states = hosts_on(&server).converge(&apps(&["bikes", "trees"]), "city.example").await;
+        let states = hosts_on(&server)
+            .converge(&apps(&["bikes", "trees"]), "city.example")
+            .await;
         assert_eq!(
             states.into_values().collect::<Vec<_>>(),
             vec![HostState::Ready, HostState::Ready]
@@ -811,28 +846,75 @@ mod tests {
     #[tokio::test]
     async fn a_new_app_gets_its_certificate_and_ingress_once() {
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/apisix"), 200, template(), None).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/apisix"),
+            200,
+            template(),
+            None,
+        )
+        .await;
         // A wildcard the API server will not read leaves each host to a certificate of its own.
-        answer(&server, "GET", &format!("{CERTS}/apisix-apps-wildcard"), 500, json!({}), None).await;
-        answer(&server, "GET", &format!("{CERTS}/apisix-edge"), 200, issued_edge(), None).await;
-        answer(&server, "GET", &format!("{CERTS}/app-bikes"), 404, json!({}), None).await;
-        answer(&server, "GET", &format!("{INGRESSES}/app-bikes"), 404, json!({}), None).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/apisix-apps-wildcard"),
+            500,
+            json!({}),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/apisix-edge"),
+            200,
+            issued_edge(),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/app-bikes"),
+            404,
+            json!({}),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/app-bikes"),
+            404,
+            json!({}),
+            None,
+        )
+        .await;
         answer(&server, "POST", CERTS, 201, json!({}), Some(1)).await;
         answer(&server, "POST", INGRESSES, 201, json!({}), Some(1)).await;
         let hosts = hosts_on(&server);
-        let (states, log) = super::super::logged(hosts.converge(&apps(&["bikes"]), "city.example")).await;
+        let (states, log) =
+            super::super::logged(hosts.converge(&apps(&["bikes"]), "city.example")).await;
         assert_eq!(
             states.get("bikes"),
             Some(&HostState::Pending("the certificate is requested".into()))
         );
-        assert!(log.contains("the API server answered 500 for Certificate apisix-apps-wildcard"), "{log}");
+        assert!(
+            log.contains("the API server answered 500 for Certificate apisix-apps-wildcard"),
+            "{log}"
+        );
         let sent = server.received_requests().await.expect("recorded");
         let certificate: Value = sent
             .iter()
             .find(|r| r.method.as_str() == "POST" && r.url.path() == CERTS)
             .map(|r| serde_json::from_slice(&r.body).expect("json"))
             .expect("a certificate was sent");
-        assert_eq!(certificate["spec"]["dnsNames"], json!(["bikes.apps.city.example"]));
+        assert_eq!(
+            certificate["spec"]["dnsNames"],
+            json!(["bikes.apps.city.example"])
+        );
         assert_eq!(certificate["spec"]["issuerRef"]["name"], "letsencrypt-prod");
     }
 
@@ -858,10 +940,36 @@ mod tests {
     #[tokio::test]
     async fn an_edge_without_a_backend_fails_each_app() {
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/apisix"), 200, json!({ "spec": { "rules": [] } }), None).await;
-        answer(&server, "GET", &format!("{CERTS}/apisix-apps-wildcard"), 404, json!({}), None).await;
-        answer(&server, "GET", &format!("{CERTS}/apisix-edge"), 200, issued_edge(), None).await;
-        let states = hosts_on(&server).converge(&apps(&["bikes"]), "city.example").await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/apisix"),
+            200,
+            json!({ "spec": { "rules": [] } }),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/apisix-apps-wildcard"),
+            404,
+            json!({}),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/apisix-edge"),
+            200,
+            issued_edge(),
+            None,
+        )
+        .await;
+        let states = hosts_on(&server)
+            .converge(&apps(&["bikes"]), "city.example")
+            .await;
         assert_eq!(
             failed(states.get("bikes")),
             "the edge Ingress apisix routes no backend to copy"
@@ -869,9 +977,33 @@ mod tests {
     }
 
     async fn edge_ready(server: &MockServer) {
-        answer(server, "GET", &format!("{INGRESSES}/apisix"), 200, template(), None).await;
-        answer(server, "GET", &format!("{CERTS}/apisix-apps-wildcard"), 404, json!({}), None).await;
-        answer(server, "GET", &format!("{CERTS}/apisix-edge"), 200, issued_edge(), None).await;
+        answer(
+            server,
+            "GET",
+            &format!("{INGRESSES}/apisix"),
+            200,
+            template(),
+            None,
+        )
+        .await;
+        answer(
+            server,
+            "GET",
+            &format!("{CERTS}/apisix-apps-wildcard"),
+            404,
+            json!({}),
+            None,
+        )
+        .await;
+        answer(
+            server,
+            "GET",
+            &format!("{CERTS}/apisix-edge"),
+            200,
+            issued_edge(),
+            None,
+        )
+        .await;
     }
 
     /// Objects of an App's name the Portal did not make are never read for state or touched; the
@@ -887,31 +1019,85 @@ mod tests {
         for (certificate, held_ingress, reason) in cases {
             let server = MockServer::start().await;
             edge_ready(&server).await;
-            answer(&server, "GET", &format!("{CERTS}/app-bikes"), 200, certificate, None).await;
+            answer(
+                &server,
+                "GET",
+                &format!("{CERTS}/app-bikes"),
+                200,
+                certificate,
+                None,
+            )
+            .await;
             if let Some(held) = held_ingress {
-                answer(&server, "GET", &format!("{INGRESSES}/app-bikes"), 200, held, None).await;
+                answer(
+                    &server,
+                    "GET",
+                    &format!("{INGRESSES}/app-bikes"),
+                    200,
+                    held,
+                    None,
+                )
+                .await;
             }
             answer(&server, "POST", INGRESSES, 201, json!({}), Some(0)).await;
             answer(&server, "POST", CERTS, 201, json!({}), Some(0)).await;
-            let states = hosts_on(&server).converge(&apps(&["bikes"]), "city.example").await;
+            let states = hosts_on(&server)
+                .converge(&apps(&["bikes"]), "city.example")
+                .await;
             assert_eq!(failed(states.get("bikes")), reason);
         }
 
         let server = MockServer::start().await;
         edge_ready(&server).await;
-        answer(&server, "GET", &format!("{CERTS}/app-bikes"), 200, ours("app-bikes", "bikes", COMPONENT_VALUE, "True"), None).await;
-        answer(&server, "GET", &format!("{INGRESSES}/app-bikes"), 200, ours("app-bikes", "bikes", COMPONENT_VALUE, "True"), None).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/app-bikes"),
+            200,
+            ours("app-bikes", "bikes", COMPONENT_VALUE, "True"),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/app-bikes"),
+            200,
+            ours("app-bikes", "bikes", COMPONENT_VALUE, "True"),
+            None,
+        )
+        .await;
         answer(&server, "POST", INGRESSES, 201, json!({}), Some(0)).await;
-        let states = hosts_on(&server).converge(&apps(&["bikes"]), "city.example").await;
+        let states = hosts_on(&server)
+            .converge(&apps(&["bikes"]), "city.example")
+            .await;
         assert_eq!(states.get("bikes"), Some(&HostState::Ready));
 
         // Held but not issued yet: what cert-manager last said, and the missing Ingress is made.
         let server = MockServer::start().await;
         edge_ready(&server).await;
-        answer(&server, "GET", &format!("{CERTS}/app-bikes"), 200, ours("app-bikes", "bikes", COMPONENT_VALUE, "False"), None).await;
-        answer(&server, "GET", &format!("{INGRESSES}/app-bikes"), 404, json!({}), None).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/app-bikes"),
+            200,
+            ours("app-bikes", "bikes", COMPONENT_VALUE, "False"),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/app-bikes"),
+            404,
+            json!({}),
+            None,
+        )
+        .await;
         answer(&server, "POST", INGRESSES, 201, json!({}), Some(1)).await;
-        let states = hosts_on(&server).converge(&apps(&["bikes"]), "city.example").await;
+        let states = hosts_on(&server)
+            .converge(&apps(&["bikes"]), "city.example")
+            .await;
         assert_eq!(
             states.get("bikes"),
             Some(&HostState::Pending("waiting for HTTP-01".into()))
@@ -923,20 +1109,74 @@ mod tests {
     async fn a_refused_step_fails_the_app_naming_the_object() {
         // (certificate GET, certificate POST, ingress GET, ingress POST, reason)
         let cases: [(u16, u16, u16, u16, &str); 4] = [
-            (500, 201, 404, 201, "the API server answered 500 for Certificate app-bikes"),
-            (404, 409, 404, 201, "the API server answered 409 for Certificate app-bikes"),
-            (404, 201, 500, 201, "the API server answered 500 for Ingress app-bikes"),
-            (404, 201, 404, 422, "the API server answered 422 for Ingress app-bikes"),
+            (
+                500,
+                201,
+                404,
+                201,
+                "the API server answered 500 for Certificate app-bikes",
+            ),
+            (
+                404,
+                409,
+                404,
+                201,
+                "the API server answered 409 for Certificate app-bikes",
+            ),
+            (
+                404,
+                201,
+                500,
+                201,
+                "the API server answered 500 for Ingress app-bikes",
+            ),
+            (
+                404,
+                201,
+                404,
+                422,
+                "the API server answered 422 for Ingress app-bikes",
+            ),
         ];
         for (cert_get, cert_post, ingress_get, ingress_post, reason) in cases {
             let server = MockServer::start().await;
             edge_ready(&server).await;
-            answer(&server, "GET", &format!("{CERTS}/app-bikes"), cert_get, json!({}), None).await;
-            answer(&server, "POST", CERTS, cert_post, json!({ "message": "already exists" }), None).await;
-            answer(&server, "GET", &format!("{INGRESSES}/app-bikes"), ingress_get, json!({}), None).await;
+            answer(
+                &server,
+                "GET",
+                &format!("{CERTS}/app-bikes"),
+                cert_get,
+                json!({}),
+                None,
+            )
+            .await;
+            answer(
+                &server,
+                "POST",
+                CERTS,
+                cert_post,
+                json!({ "message": "already exists" }),
+                None,
+            )
+            .await;
+            answer(
+                &server,
+                "GET",
+                &format!("{INGRESSES}/app-bikes"),
+                ingress_get,
+                json!({}),
+                None,
+            )
+            .await;
             answer(&server, "POST", INGRESSES, ingress_post, json!({}), None).await;
-            let states = hosts_on(&server).converge(&apps(&["bikes"]), "city.example").await;
-            assert_eq!(failed(states.get("bikes")), reason, "{cert_get} {cert_post} {ingress_get} {ingress_post}");
+            let states = hosts_on(&server)
+                .converge(&apps(&["bikes"]), "city.example")
+                .await;
+            assert_eq!(
+                failed(states.get("bikes")),
+                reason,
+                "{cert_get} {cert_post} {ingress_get} {ingress_post}"
+            );
         }
     }
 
@@ -948,7 +1188,11 @@ mod tests {
         assert!(hosts.converge_hostnames(&BTreeMap::new()).await.is_empty());
         let empty = BTreeMap::from([("bikes".to_owned(), Vec::new())]);
         assert!(hosts.converge_hostnames(&empty).await.is_empty());
-        assert!(server.received_requests().await.expect("recorded").is_empty());
+        assert!(server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
     }
 
     /// Each hostname gets an Ingress and a certificate of its own, named after the hostname, wildcard
@@ -959,8 +1203,24 @@ mod tests {
         let name = hostname_object("bikes", "bikes.city.example");
         let server = MockServer::start().await;
         edge_ready(&server).await;
-        answer(&server, "GET", &format!("{CERTS}/{name}"), 404, json!({}), None).await;
-        answer(&server, "GET", &format!("{INGRESSES}/{name}"), 404, json!({}), None).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/{name}"),
+            404,
+            json!({}),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/{name}"),
+            404,
+            json!({}),
+            None,
+        )
+        .await;
         answer(&server, "POST", CERTS, 201, json!({}), Some(1)).await;
         answer(&server, "POST", INGRESSES, 201, json!({}), Some(1)).await;
         let states = hosts_on(&server).converge_hostnames(&wanted).await;
@@ -971,28 +1231,79 @@ mod tests {
         // An object of that name made for the App's host, not its hostname, is not ours to read.
         let server = MockServer::start().await;
         edge_ready(&server).await;
-        answer(&server, "GET", &format!("{CERTS}/{name}"), 200, ours(&name, "bikes", COMPONENT_VALUE, "True"), None).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/{name}"),
+            200,
+            ours(&name, "bikes", COMPONENT_VALUE, "True"),
+            None,
+        )
+        .await;
         let states = hosts_on(&server).converge_hostnames(&wanted).await;
         assert!(failed(states.get("bikes.city.example")).contains("did not create"));
 
         for (status, reason) in [
-            (404, "the edge Ingress apisix is not in apisix; the apisix chart renders it"),
+            (
+                404,
+                "the edge Ingress apisix is not in apisix; the apisix chart renders it",
+            ),
             (500, "the API server answered 500 for Ingress apisix"),
         ] {
             let server = MockServer::start().await;
-            answer(&server, "GET", &format!("{INGRESSES}/apisix"), status, json!({}), None).await;
+            answer(
+                &server,
+                "GET",
+                &format!("{INGRESSES}/apisix"),
+                status,
+                json!({}),
+                None,
+            )
+            .await;
             let states = hosts_on(&server).converge_hostnames(&wanted).await;
             assert_eq!(failed(states.get("bikes.city.example")), reason);
         }
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/apisix"), 200, template(), None).await;
-        answer(&server, "GET", &format!("{CERTS}/apisix-edge"), 404, json!({}), None).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/apisix"),
+            200,
+            template(),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/apisix-edge"),
+            404,
+            json!({}),
+            None,
+        )
+        .await;
         let states = hosts_on(&server).converge_hostnames(&wanted).await;
         assert!(failed(states.get("bikes.city.example")).contains("names no issuer"));
 
         let server = MockServer::start().await;
-        answer(&server, "GET", &format!("{INGRESSES}/apisix"), 200, json!({ "spec": {} }), None).await;
-        answer(&server, "GET", &format!("{CERTS}/apisix-edge"), 200, issued_edge(), None).await;
+        answer(
+            &server,
+            "GET",
+            &format!("{INGRESSES}/apisix"),
+            200,
+            json!({ "spec": {} }),
+            None,
+        )
+        .await;
+        answer(
+            &server,
+            "GET",
+            &format!("{CERTS}/apisix-edge"),
+            200,
+            issued_edge(),
+            None,
+        )
+        .await;
         let states = hosts_on(&server).converge_hostnames(&wanted).await;
         assert_eq!(
             failed(states.get("bikes.city.example")),
@@ -1022,15 +1333,50 @@ mod tests {
             .mount(&server)
             .await;
         answer(&server, "GET", INGRESSES, 500, json!({}), None).await;
-        answer(&server, "DELETE", &format!("{CERTS}/app-gone"), 200, json!({}), Some(1)).await;
-        answer(&server, "DELETE", &format!("{CERTS}/app-stuck"), 500, json!({}), Some(1)).await;
-        answer(&server, "DELETE", &format!("{CERTS}/app-bikes"), 200, json!({}), Some(0)).await;
-        answer(&server, "DELETE", &format!("{CERTS}/app-foreign"), 200, json!({}), Some(0)).await;
+        answer(
+            &server,
+            "DELETE",
+            &format!("{CERTS}/app-gone"),
+            200,
+            json!({}),
+            Some(1),
+        )
+        .await;
+        answer(
+            &server,
+            "DELETE",
+            &format!("{CERTS}/app-stuck"),
+            500,
+            json!({}),
+            Some(1),
+        )
+        .await;
+        answer(
+            &server,
+            "DELETE",
+            &format!("{CERTS}/app-bikes"),
+            200,
+            json!({}),
+            Some(0),
+        )
+        .await;
+        answer(
+            &server,
+            "DELETE",
+            &format!("{CERTS}/app-foreign"),
+            200,
+            json!({}),
+            Some(0),
+        )
+        .await;
         let hosts = hosts_on(&server);
         let ((), log) = super::super::logged(hosts.retire(&apps(&["bikes"]))).await;
         assert!(log.contains("app hosts were not listed"), "{log}");
         assert!(log.contains("retired App's host removed"), "{log}");
-        assert!(log.contains("the API server answered 500 for Certificate app-stuck"), "{log}");
+        assert!(
+            log.contains("the API server answered 500 for Certificate app-stuck"),
+            "{log}"
+        );
 
         let kept = hostname_object("bikes", "bikes.city.example");
         let lapsed = hostname_object("bikes", "old.city.example");
@@ -1043,39 +1389,102 @@ mod tests {
         ] });
         answer(&server, "GET", CERTS, 200, listed.clone(), None).await;
         answer(&server, "GET", INGRESSES, 200, listed, None).await;
-        answer(&server, "DELETE", &format!("{CERTS}/{lapsed}"), 200, json!({}), Some(1)).await;
-        answer(&server, "DELETE", &format!("{INGRESSES}/{lapsed}"), 500, json!({}), Some(1)).await;
-        answer(&server, "DELETE", &format!("{CERTS}/{kept}"), 200, json!({}), Some(0)).await;
-        answer(&server, "DELETE", &format!("{CERTS}/app-bikes"), 200, json!({}), Some(0)).await;
+        answer(
+            &server,
+            "DELETE",
+            &format!("{CERTS}/{lapsed}"),
+            200,
+            json!({}),
+            Some(1),
+        )
+        .await;
+        answer(
+            &server,
+            "DELETE",
+            &format!("{INGRESSES}/{lapsed}"),
+            500,
+            json!({}),
+            Some(1),
+        )
+        .await;
+        answer(
+            &server,
+            "DELETE",
+            &format!("{CERTS}/{kept}"),
+            200,
+            json!({}),
+            Some(0),
+        )
+        .await;
+        answer(
+            &server,
+            "DELETE",
+            &format!("{CERTS}/app-bikes"),
+            200,
+            json!({}),
+            Some(0),
+        )
+        .await;
         let wanted = BTreeMap::from([("bikes".to_owned(), vec!["bikes.city.example".to_owned()])]);
         let hosts = hosts_on(&server);
         let ((), log) = super::super::logged(hosts.retire_hostnames(&wanted)).await;
-        assert!(log.contains("App hostname no longer routed: removed"), "{log}");
-        assert!(log.contains(&format!("the API server answered 500 for Ingress {lapsed}")), "{log}");
+        assert!(
+            log.contains("App hostname no longer routed: removed"),
+            "{log}"
+        );
+        assert!(
+            log.contains(&format!("the API server answered 500 for Ingress {lapsed}")),
+            "{log}"
+        );
 
         let refused = MockServer::start().await;
         answer(&refused, "GET", CERTS, 403, json!({}), Some(1)).await;
         answer(&refused, "GET", INGRESSES, 403, json!({}), Some(1)).await;
         let hosts = hosts_on(&refused);
         let ((), log) = super::super::logged(hosts.retire_hostnames(&BTreeMap::new())).await;
-        assert_eq!(log.matches("app hostnames were not listed").count(), 2, "{log}");
+        assert_eq!(
+            log.matches("app hostnames were not listed").count(),
+            2,
+            "{log}"
+        );
     }
 
     /// A transport failure is said with the object first; an API refusal with its status alone,
     /// never the message body; cert-manager without a message still says something a person reads.
     #[test]
     fn a_kube_error_is_said_without_its_body() {
-        let api = KubeError::Api { status: 409, path: "/x".into(), message: "the-body".into() };
-        assert_eq!(said("Ingress app-a", &api), "the API server answered 409 for Ingress app-a");
+        let api = KubeError::Api {
+            status: 409,
+            path: "/x".into(),
+            message: "the-body".into(),
+        };
+        assert_eq!(
+            said("Ingress app-a", &api),
+            "the API server answered 409 for Ingress app-a"
+        );
         let transport = KubeError::Transport("connection refused".into());
-        assert_eq!(said("Ingress app-a", &transport), "Ingress app-a: cannot reach the API server: connection refused");
-        let silent = json!({ "status": { "conditions": [{ "type": "Ready", "status": "False" }] } });
-        assert_eq!(state_of(&silent), HostState::Pending("cert-manager has not issued it yet".into()));
-        assert_eq!(state_of(&json!({})), HostState::Pending("cert-manager has not picked it up yet".into()));
+        assert_eq!(
+            said("Ingress app-a", &transport),
+            "Ingress app-a: cannot reach the API server: connection refused"
+        );
+        let silent =
+            json!({ "status": { "conditions": [{ "type": "Ready", "status": "False" }] } });
+        assert_eq!(
+            state_of(&silent),
+            HostState::Pending("cert-manager has not issued it yet".into())
+        );
+        assert_eq!(
+            state_of(&json!({})),
+            HostState::Pending("cert-manager has not picked it up yet".into())
+        );
         // An edge Ingress without a class gives its hosts none: the cluster's default class serves.
         let mut classless = template();
-        classless["spec"].as_object_mut().expect("a spec").remove("ingressClassName");
-        let made = ingress(&classless, "apisix", "bikes", "bikes.apps.city.example").expect("an Ingress");
+        classless["spec"]
+            .as_object_mut()
+            .expect("a spec")
+            .remove("ingressClassName");
+        let made =
+            ingress(&classless, "apisix", "bikes", "bikes.apps.city.example").expect("an Ingress");
         assert!(made["spec"].get("ingressClassName").is_none(), "{made}");
         assert_eq!(made["spec"]["rules"][0]["host"], "bikes.apps.city.example");
     }
