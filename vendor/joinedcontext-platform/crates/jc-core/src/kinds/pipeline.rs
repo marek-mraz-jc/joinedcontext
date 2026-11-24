@@ -2349,3 +2349,199 @@ mod literal_key_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kinds::Pipeline;
+
+    /// The refusal of a v1alpha1 Pipeline whose spec is `spec`, or `None` when it is valid.
+    fn refusal(spec: &str) -> Option<String> {
+        let yaml = format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: p\n  namespace: bb-energie\nspec:\n{spec}"
+        );
+        let pipeline = Pipeline::from_yaml(&yaml).unwrap_or_else(|e| panic!("{yaml}\n{e}"));
+        pipeline.validate().err().map(|e| e.to_string())
+    }
+
+    const TARGET: &str = "  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:energie:ep\n";
+
+    fn refused(spec: &str, said: &str) {
+        let refusal = refusal(spec).unwrap_or_else(|| panic!("{spec} is refused"));
+        assert!(refusal.contains(said), "{said}: {refusal}");
+    }
+
+    fn mint(mint: Mint, from: Option<&str>, template: Option<&str>) -> IdMint {
+        IdMint {
+            mint,
+            from: from.map(str::to_owned),
+            template: template.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn class_and_compute_kind_have_their_wire_names() {
+        assert_eq!(PipelineClass::Auto.to_string(), "auto");
+        assert_eq!(PipelineClass::Resident.to_string(), "resident");
+        assert_eq!(PipelineClass::Scheduled.as_str(), "scheduled");
+        use ComputeKind as K;
+        let kinds = [
+            K::Bloblang,
+            K::Mapping,
+            K::Wasm,
+            K::Container,
+            K::Kpi,
+            K::Datacube,
+            K::Script,
+        ]
+        .map(|k| k.as_str());
+        assert_eq!(
+            kinds,
+            ["bloblang", "mapping", "wasm", "container", "kpi", "datacube", "script"]
+        );
+    }
+
+    #[test]
+    fn a_compute_runs_its_own_bloblang_and_nothing_for_other_kinds() {
+        let step = |yaml: &str| serde_norway::from_str::<Compute>(yaml).expect("parses");
+        let own = step("kind: bloblang\nbloblang: 'root = this'\n");
+        assert_eq!(own.mapping().expect("ok").as_deref(), Some("root = this"));
+        let blank = step("kind: bloblang\nbloblang: '  '\n");
+        assert_eq!(blank.mapping().expect("ok"), None);
+        let wasm = step("kind: wasm\nmodule: m\n");
+        assert_eq!(wasm.mapping().expect("ok"), None);
+    }
+
+    #[test]
+    fn a_prefixed_or_kept_id_needs_a_record_path_and_no_template() {
+        for kind in [Mint::Prefixed, Mint::Keep] {
+            assert!(mint(kind, Some("station.code"), None).validate("T").is_ok());
+            let none = mint(kind, None, None).validate("T").unwrap_err().to_string();
+            assert!(none.contains("`from` names the record field"), "{none}");
+            let path = mint(kind, Some("a-b"), None).validate("T").unwrap_err().to_string();
+            assert!(path.contains("record path"), "{path}");
+            let both = mint(kind, Some("a"), Some("urn:ngsi-ld:T:{a}"))
+                .validate("T")
+                .unwrap_err()
+                .to_string();
+            assert!(both.contains("`template` belongs to `mint: template`"), "{both}");
+        }
+    }
+
+    #[test]
+    fn a_template_id_starts_with_the_type_names_a_field_and_holds_urn_text() {
+        let ok = mint(Mint::Template, None, Some("urn:ngsi-ld:Stop:hsl:{stop.id}-{n}"));
+        assert!(ok.validate("Stop").is_ok());
+        assert_eq!(
+            ok.template_parts().expect("parts"),
+            [
+                TemplatePart::Text("urn:ngsi-ld:Stop:hsl:".into()),
+                TemplatePart::Field("stop.id".into()),
+                TemplatePart::Text("-".into()),
+                TemplatePart::Field("n".into()),
+            ]
+        );
+        for (from, template, said) in [
+            (None, None, "`mint: template` needs a `template`"),
+            (Some("a"), Some("urn:ngsi-ld:Stop:{a}"), "`from` belongs to"),
+            (None, Some("urn:ngsi-ld:Other:{a}"), "a template starts"),
+            (None, Some("{a}"), "a template starts"),
+            (None, Some("urn:ngsi-ld:Stop:fixed"), "at least one `{field}`"),
+            (None, Some("urn:ngsi-ld:Stop:{a"), "is closed by a `}`"),
+            (None, Some("urn:ngsi-ld:Stop:{a b}"), "a `{field}` is a record path"),
+            (None, Some("urn:ngsi-ld:Stop:${a}"), "RFC 8141 characters only"),
+            (None, Some("urn:ngsi-ld:Stop:{a}}"), "RFC 8141 characters only"),
+        ] {
+            let said_now = mint(Mint::Template, from, template)
+                .validate("Stop")
+                .unwrap_err()
+                .to_string();
+            assert!(said_now.contains(said), "{template:?}: {said_now}");
+        }
+    }
+
+    #[test]
+    fn a_first_shape_pipeline_needs_an_endpoint_target() {
+        refused("  class: resident\n", "targetEndpoint is required");
+        refused(
+            "  class: resident\n  targetEndpoint: urn:ngsi-ld:Policy:x:y:z\n",
+            "Endpoint",
+        );
+        assert_eq!(refusal(&format!("  class: resident\n{TARGET}")), None);
+    }
+
+    #[test]
+    fn a_first_shape_pipeline_refuses_script_and_kpi_steps() {
+        refused(
+            &format!("  class: resident\n{TARGET}  compute: {{ kind: script }}\n"),
+            "a script step is written in `steps`",
+        );
+        refused(
+            &format!("  class: resident\n{TARGET}  compute: {{ kind: kpi }}\n"),
+            "v1alpha2",
+        );
+    }
+
+    #[test]
+    fn a_first_shape_output_checks_its_type_and_id() {
+        refused(
+            &format!("  class: resident\n{TARGET}  output: {{ type: 'bad type', mode: upsert }}\n"),
+            "bad type",
+        );
+        refused(
+            &format!("  class: resident\n{TARGET}  output: {{ type: Stop, mode: upsert, id: {{ mint: keep }} }}\n"),
+            "spec.output.id",
+        );
+        assert_eq!(
+            refusal(&format!(
+                "  class: resident\n{TARGET}  output: {{ type: Stop, mode: upsert, id: {{ mint: keep, from: code }} }}\n"
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn zero_memory_or_cpu_quotas_are_refused() {
+        refused(
+            &format!("  class: resident\n{TARGET}  quotas: {{ maxMemoryMb: 0 }}\n"),
+            "spec.quotas.maxMemoryMb",
+        );
+        refused(
+            &format!("  class: resident\n{TARGET}  quotas: {{ cpuMillicores: 0 }}\n"),
+            "spec.quotas.cpuMillicores",
+        );
+    }
+
+    #[test]
+    fn a_first_shape_source_checks_its_query_trigger_and_reference() {
+        let spec = |source: &str| format!("  class: resident\n{TARGET}  source: {source}\n");
+        refused(
+            &spec("{ endpointRef: { kind: Endpoint, name: e }, query: { type: Stop, ids: ['urn:ngsi-ld:Stop:a,b'] } }"),
+            "without a comma",
+        );
+        refused(
+            &spec("{ endpointRef: { kind: Endpoint, name: e }, query: { type: Stop, ids: ['urn:ngsi-ld:Bus:a'] } }"),
+            "Bus in query.ids",
+        );
+        refused(
+            &spec("{ endpointRef: { kind: Endpoint, name: e }, query: { type: 'bad type' } }"),
+            "bad type",
+        );
+        refused(
+            &spec("{ endpointRef: { kind: Endpoint, name: e }, trigger: { subscription: { type: 'bad type' } } }"),
+            "bad type",
+        );
+        refused(&spec("{ endpointRef: { kind: Policy, name: e } }"), "Policy");
+        refused(&spec("{ endpointRef: { kind: Endpoint, name: Bad_Name } }"), "Bad_Name");
+        refused(
+            &spec("{ name: Bad_Name, endpointRef: { kind: Endpoint, name: e } }"),
+            "Bad_Name",
+        );
+        assert_eq!(
+            refusal(&spec(
+                "{ name: in, endpointRef: { kind: Endpoint, name: e }, query: { type: Stop, ids: ['urn:ngsi-ld:Stop:a'] } }"
+            )),
+            None
+        );
+    }
+}
