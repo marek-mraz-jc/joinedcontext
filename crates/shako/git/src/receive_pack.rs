@@ -1217,7 +1217,7 @@ mod tests {
             ),
         ];
         for (command, says) in cases {
-            let out = report(&p, &[command.clone()], "report-status", &pack);
+            let out = report(&p, std::slice::from_ref(&command), "report-status", &pack);
             assert!(
                 out.contains("unpack ok") && out.contains(says),
                 "{command}: {out}"

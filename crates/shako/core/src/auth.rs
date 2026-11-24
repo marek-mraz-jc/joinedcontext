@@ -854,10 +854,8 @@ impl TokenVerifier {
     pub fn extract_raw_token(auth_header: &str) -> Option<String> {
         let trimmed = auth_header.trim();
         let (scheme, rest) = trimmed.split_once(' ')?;
+        // `trimmed` ends in a non-space, so `rest` is never empty.
         let rest = rest.trim();
-        if rest.is_empty() {
-            return None;
-        }
         if scheme.eq_ignore_ascii_case("bearer") || scheme.eq_ignore_ascii_case("token") {
             return Some(rest.to_owned());
         }

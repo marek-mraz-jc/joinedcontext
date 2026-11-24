@@ -3369,6 +3369,7 @@ dependencies = [
  "serde_json",
  "shako-api",
  "shako-core",
+ "shako-git",
  "shako-store-memory",
  "tempfile",
  "tokio",
