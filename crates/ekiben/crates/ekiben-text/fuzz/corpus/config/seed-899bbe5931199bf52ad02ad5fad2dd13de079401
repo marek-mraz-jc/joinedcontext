@@ -1,0 +1,1 @@
+{"query": "locations[?state == 'WA'].name | sort(@) | {Cities: join(', ', @)}"}
