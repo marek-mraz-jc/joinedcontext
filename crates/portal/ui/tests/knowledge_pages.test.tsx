@@ -1021,6 +1021,36 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
     });
   });
 
+  it("draws emphasis, line breaks, links, code and a pipe table as elements, and names a connector that failed", async () => {
+    const text = "Dnes *mierne* zvýšené.\nPozri [mapu](https://www.banskabystrica.sk/mapa) a `pm10`.\n\n| Stanica | PM10 |\n| --- | --- |\n| SNP | 21 |";
+    const body = [
+      'event: tool\ndata: {"name":"query_entities","endpoint":"ovzdusie-verejne","status":"failed"}',
+      'event: tool\ndata: {"name":"search_catalog","status":"failed"}',
+      `event: answer\ndata: ${JSON.stringify({ text })}`,
+      'event: done\ndata: {"tokens":9}',
+    ].join("\n\n") + "\n\n";
+    const dialog = await ask(body);
+    const answer = await within(dialog).findByTestId("assistant-answer");
+    expect(within(answer).getByText("mierne").tagName).toBe("EM");
+    expect(answer.querySelector("p br")).not.toBeNull();
+    expect(within(answer).getByRole("link", { name: /mapu/ })).toHaveAttribute("href", "https://www.banskabystrica.sk/mapa");
+    expect(within(answer).getByText("pm10").tagName).toBe("CODE");
+    const table = within(answer).getByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "Stanica" })).toBeInTheDocument();
+    expect(within(table).getByRole("cell", { name: "21" })).toBeInTheDocument();
+    expect(within(dialog).getByText(/ovzdusie-verejne, search_catalog/)).toBeInTheDocument();
+  });
+
+  it("sends the question from the Send button, not only from Enter", async () => {
+    const { writes } = renderAt("/projects/banskabystrica/knowledge");
+    const table = await screen.findByRole("table", { name: "Assistants" });
+    await userEvent.click(within(table).getByRole("button", { name: "Ask obcania" }));
+    const dialog = await screen.findByRole("dialog", { name: "Ask obcania" });
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Your question" }), "PM10?");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(writes.filter((write) => write.path.endsWith("/chat"))).toHaveLength(1));
+  });
+
   it("says a refusal in the Portal's words and keeps the question box usable", async () => {
     renderAt("/projects/banskabystrica/knowledge", {
       chat: {
