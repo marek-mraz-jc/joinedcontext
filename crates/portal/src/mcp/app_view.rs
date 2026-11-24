@@ -192,7 +192,10 @@ mod tests {
         assert_eq!(served[0]["uri"], URI);
         assert_eq!(served[0]["mimeType"], MIME);
         let text = served[0]["text"].as_str().expect("text");
-        assert!(text.contains("\"https://portal.example.org:8443\""), "the origin");
+        assert!(
+            text.contains("\"https://portal.example.org:8443\""),
+            "the origin"
+        );
         assert!(!text.contains("__PORTAL_ORIGIN__"));
         assert!(!text.contains("?<script>"));
         assert_eq!(contents("ui://joinedcontext/other.html", &base), None);

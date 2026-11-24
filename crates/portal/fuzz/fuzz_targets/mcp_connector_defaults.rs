@@ -17,14 +17,19 @@ fuzz_target!(|data: &[u8]| {
     let changed = joinedcontext_portal::mcp::connector::defaults_project(&connector, &mut message);
     if changed {
         assert_eq!(message["method"], "tools/call");
-        assert_eq!(message["params"]["arguments"]["project"], "doprava", "{message}");
-        assert!(before["params"]["arguments"].get("project").is_none(), "{before}");
+        assert_eq!(
+            message["params"]["arguments"]["project"], "doprava",
+            "{message}"
+        );
+        assert!(
+            before["params"]["arguments"].get("project").is_none(),
+            "{before}"
+        );
     } else if before["method"] != "tools/call" || !before["params"].is_object() {
         assert_eq!(message, before);
     } else {
         assert_eq!(
-            message["params"]["arguments"]["project"],
-            before["params"]["arguments"]["project"],
+            message["params"]["arguments"]["project"], before["params"]["arguments"]["project"],
             "{before}"
         );
     }

@@ -167,9 +167,11 @@ impl McpTasks {
             Some(task) => match task.status {
                 Status::Working => Err("the task is still working"),
                 Status::Cancelled => Err("the task was cancelled"),
-                Status::Completed | Status::Failed => {
-                    task.result.clone().map(Some).ok_or("the task left no result")
-                }
+                Status::Completed | Status::Failed => task
+                    .result
+                    .clone()
+                    .map(Some)
+                    .ok_or("the task left no result"),
             },
         }
     }
@@ -304,6 +306,8 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             json!({ "isError": false, "written": true })
         });
+        // The call is under way, waiting, when it is cancelled.
+        tokio::task::yield_now().await;
         let id = started["taskId"].as_str().expect("an id").to_owned();
         let cancelled = tasks.cancel("owner-1", &id).expect("the task");
         assert_eq!(cancelled["status"], json!("cancelled"));
@@ -358,6 +362,13 @@ mod tests {
             ["createdAt", "pollInterval", "status", "taskId", "ttl"]
         );
         assert_eq!(started["status"], json!("working"));
+        // Every call runs to its answer; none of them is the client's to read but the owner's.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let id = started["taskId"].as_str().expect("an id");
+        assert_eq!(
+            tasks.result("sub-1", id),
+            Ok(Some(json!({ "isError": false, "secret": "x" })))
+        );
     }
 
     #[tokio::test]
@@ -425,6 +436,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             json!({ "isError": false, "written": true })
         });
+        tokio::task::yield_now().await;
         let id = started["taskId"].as_str().expect("an id").to_owned();
         assert_eq!(
             tasks.result("owner-1", &id),
@@ -466,6 +478,9 @@ mod tests {
         // The store still works for everybody else.
         let other = tasks.start("owner-1", async { json!({ "isError": false, "ok": 2 }) });
         assert!(other["taskId"].as_str().is_some());
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let other = other["taskId"].as_str().expect("an id");
+        assert!(matches!(tasks.result("owner-1", other), Ok(Some(_))));
     }
 
     /// A store whose lock a panicking thread poisoned: every reader answers as if the task
@@ -566,7 +581,11 @@ mod tests {
         // Age the tasks apart: created_at is in whole seconds.
         {
             let mut map = tasks.tasks.lock().expect("lock");
-            for (age, task) in map.values_mut().filter(|t| t.owner == "owner-1").enumerate() {
+            for (age, task) in map
+                .values_mut()
+                .filter(|t| t.owner == "owner-1")
+                .enumerate()
+            {
                 task.created_at -= 10 * i64::try_from(age).expect("small");
             }
         }

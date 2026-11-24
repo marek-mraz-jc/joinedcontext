@@ -616,7 +616,14 @@ mod tests {
         );
         let sent = json!({ "elicitationId": id, "action": "accept" });
         assert_eq!(
-            asks.answer("sub-1", "jc_resource_delete", "helsinki", &digest, &sent, true),
+            asks.answer(
+                "sub-1",
+                "jc_resource_delete",
+                "helsinki",
+                &digest,
+                &sent,
+                true
+            ),
             Answer::Unknown
         );
         assert_eq!(format!("{asks:?}"), "McpElicitations");
@@ -643,7 +650,14 @@ mod tests {
         );
         let sent = json!({ "id": id, "action": "decline" });
         assert_eq!(
-            asks.answer("sub-1", "jc_resource_delete", "helsinki", &digest, &sent, false),
+            asks.answer(
+                "sub-1",
+                "jc_resource_delete",
+                "helsinki",
+                &digest,
+                &sent,
+                false
+            ),
             Answer::Unknown
         );
         ask(&asks, &digest);
@@ -664,7 +678,14 @@ mod tests {
             Value::Null,
         ] {
             assert_eq!(
-                asks.answer("sub-1", "jc_resource_delete", "helsinki", &digest, &sent, true),
+                asks.answer(
+                    "sub-1",
+                    "jc_resource_delete",
+                    "helsinki",
+                    &digest,
+                    &sent,
+                    true
+                ),
                 Answer::Unknown,
                 "{sent}"
             );
@@ -689,7 +710,10 @@ mod tests {
         assert_eq!(meta.keys().collect::<Vec<_>>(), ["elicitation"]);
         let text = plain["content"][0]["text"].as_str().expect("text");
         assert!(text.contains("expires in 10 minutes"), "{text}");
-        assert!(text.starts_with("Delete?\n\nThe person decides here: https://p/y"), "{text}");
+        assert!(
+            text.starts_with("Delete?\n\nThe person decides here: https://p/y"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -697,7 +721,10 @@ mod tests {
         let a = json!([{ "b": 1, "a": [true, null, "x"] }, 2.5]);
         let b = json!([{ "a": [true, null, "x"], "b": 1 }, 2.5]);
         assert_eq!(digest_of(&a), digest_of(&b));
-        assert_ne!(digest_of(&a), digest_of(&json!([2.5, { "a": [true, null, "x"], "b": 1 }])));
+        assert_ne!(
+            digest_of(&a),
+            digest_of(&json!([2.5, { "a": [true, null, "x"], "b": 1 }]))
+        );
         assert_ne!(digest_of(&json!(null)), digest_of(&json!("null ")));
         assert_eq!(digest_of(&json!({})).len(), 16);
     }
