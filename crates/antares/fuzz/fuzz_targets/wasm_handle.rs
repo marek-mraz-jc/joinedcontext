@@ -10,13 +10,17 @@ use std::time::Duration;
 
 /// One broker for the run, as a page holds one: its wiring keeps an `Arc` cycle (about 50 KB
 /// that LeakSanitizer reports once per construction), and requests share its store as a page's do.
-static BROKER: std::sync::OnceLock<(tokio::runtime::Runtime, antares_wasm::Broker)> = std::sync::OnceLock::new();
+static BROKER: std::sync::OnceLock<(tokio::runtime::Runtime, antares_wasm::Broker)> =
+    std::sync::OnceLock::new();
 
 const METHODS: [&str; 7] = ["GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS"];
 
 fn request(data: &[u8]) -> Option<http::Request<Vec<u8>>> {
     let (&m, rest) = data.split_first()?;
-    let text_end = rest.windows(2).position(|w| w == b"\n\n").map_or(rest.len(), |i| i + 2);
+    let text_end = rest
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .map_or(rest.len(), |i| i + 2);
     let (head, body) = rest.split_at(text_end);
     let head = std::str::from_utf8(head).ok()?;
     let mut lines = head.lines();
@@ -38,7 +42,10 @@ fuzz_target!(|data: &[u8]| {
     }
     let Some(req) = request(data) else { return };
     let (rt, broker) = BROKER.get_or_init(|| {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
         // native wiring spawns the matcher drain on tokio (wasm32 uses spawn_local), as #[tokio::test] does
         let broker = {
             let _context = rt.enter();
@@ -48,7 +55,9 @@ fuzz_target!(|data: &[u8]| {
     });
     // a remote @context fetch is the only step that waits on the outside; the bound keeps a
     // fuzzed URL from stalling the run, and a hang inside the broker shows as libFuzzer's timeout
-    if let Ok(resp) = rt.block_on(async { tokio::time::timeout(Duration::from_secs(2), broker.handle(req)).await }) {
+    if let Ok(resp) = rt
+        .block_on(async { tokio::time::timeout(Duration::from_secs(2), broker.handle(req)).await })
+    {
         let status = resp.status().as_u16();
         assert!((100..600).contains(&status), "status {status}");
     }
