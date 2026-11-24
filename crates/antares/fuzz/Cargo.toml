@@ -28,6 +28,10 @@ antares-mcp = { path = "../crates/antares-mcp", features = ["fuzzing"] }
 odata-batch = { path = "../crates/odata-batch" }
 antares-ws = { path = "../crates/antares-ws" }
 antares-residual = { package = "ngsild-residual", path = "../crates/antares-residual" }
+# wasm_handle: the browser build's request seam, driven natively on a current-thread runtime.
+antares-wasm = { path = "../crates/antares-wasm" }
+http = "1"
+tokio = { version = "1", features = ["rt", "time"] }
 
 [[bin]]
 name = "parse_q"
@@ -214,6 +218,13 @@ bench = false
 [[bin]]
 name = "model_names"
 path = "fuzz_targets/model_names.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wasm_handle"
+path = "fuzz_targets/wasm_handle.rs"
 test = false
 doc = false
 bench = false
