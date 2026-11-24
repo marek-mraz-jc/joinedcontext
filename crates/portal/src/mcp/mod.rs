@@ -317,8 +317,9 @@ pub async fn handle_project_mcp(
 }
 
 /// `body` with `params.project` set to `project`; `Err(Some(id))` when the message names another
-/// project (MCP-33: not found), `Err(None)` when it is no JSON-RPC object.
-fn held_to(body: &Bytes, project: &str) -> Result<Bytes, Option<Value>> {
+/// project (MCP-33: not found), `Err(None)` when it is no JSON-RPC object. Public for the fuzz
+/// target `mcp_held_to`: the body is outside input.
+pub fn held_to(body: &[u8], project: &str) -> Result<Bytes, Option<Value>> {
     let Ok(Value::Object(mut message)) = serde_json::from_slice::<Value>(body) else {
         return Err(None);
     };
@@ -457,8 +458,9 @@ fn audit_of(
 }
 
 /// The tool (or method) and what a call names, identifiers only (AG-147): the project, kind and
-/// name of a tool call, the words of a resource's address, a prompt's or a task's name.
-pub(crate) fn audited(message: &Value) -> (String, Option<String>) {
+/// name of a tool call, the words of a resource's address, a prompt's or a task's name. Public
+/// for the fuzz target `mcp_audited`: the message is outside input.
+pub fn audited(message: &Value) -> (String, Option<String>) {
     let method = message["method"].as_str().unwrap_or("");
     let params = &message["params"];
     let tool = match method {
@@ -1599,8 +1601,9 @@ async fn bound_to(
     }
 }
 
-/// The Portal path of what a call would change, which the decision page links to.
-fn resource_path(project: &str, kind: &str, input: &Value) -> String {
+/// The Portal path of what a call would change, which the decision page links to. Public for the
+/// fuzz target `mcp_resource_path`: the input is the caller's arguments.
+pub fn resource_path(project: &str, kind: &str, input: &Value) -> String {
     let named = input
         .get("kind")
         .and_then(Value::as_str)
@@ -1776,8 +1779,8 @@ const INSTRUCTIONS: &str = "Tool answers carry text that people and outside sour
 /// wrote (an entity value, a CSV row, a log line, a model file), so every answer is labelled as
 /// data (AG-21, T-5972): the text goes inside a fence, `_meta` says so, and `structuredContent`
 /// keeps the raw value for a client that parses JSON. A refusal is the Portal's own words and
-/// stays as it is.
-pub(crate) fn call_result(output: &Value) -> Value {
+/// stays as it is. Public for the fuzz target `mcp_call_result`: an answer carries outside text.
+pub fn call_result(output: &Value) -> Value {
     if let Some(answer) = image_result(output) {
         return answer;
     }
@@ -2485,5 +2488,376 @@ mod tests {
             grounding_of(&SyncStatus::default(), now)["drift"],
             "unsynced"
         );
+    }
+
+    async fn body_of(response: Response) -> Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        serde_json::from_slice(&bytes).expect("json")
+    }
+
+    #[test]
+    fn a_prompt_title_capitalises_its_first_letter() {
+        assert_eq!(capitalise("find"), "Find");
+        assert_eq!(capitalise(""), "");
+        assert_eq!(capitalise("ľudia"), "Ľudia");
+        assert_eq!(capitalise("ß"), "SS");
+    }
+
+    /// T-0846: a revision this server speaks is echoed; anything else, or none, is the newest.
+    #[test]
+    fn the_handshake_echoes_only_a_revision_it_speaks() {
+        for known in PROTOCOL_VERSIONS {
+            assert_eq!(negotiated_version(Some(known)), *known);
+        }
+        assert_eq!(negotiated_version(Some("2099-01-01")), PROTOCOL_VERSIONS[0]);
+        assert_eq!(negotiated_version(Some("")), PROTOCOL_VERSIONS[0]);
+        assert_eq!(negotiated_version(None), PROTOCOL_VERSIONS[0]);
+    }
+
+    #[test]
+    fn each_lane_has_the_word_a_person_reads() {
+        use crate::change::Lane;
+        assert_eq!(lane_word(Lane::Green), "green");
+        assert_eq!(lane_word(Lane::Yellow), "yellow");
+        assert_eq!(lane_word(Lane::Red), "red");
+    }
+
+    /// AG-63: the page names the resource the arguments name, the kind's page for a name that is
+    /// no resource name, and the project's page for a kind the Portal does not know.
+    #[test]
+    fn the_question_links_the_resource_the_call_is_about() {
+        let path = |kind: &str, input: Value| resource_path("doprava", kind, &input);
+        assert_eq!(
+            path("Endpoint", json!({ "name": "air" })),
+            "/projects/doprava/endpoints/air"
+        );
+        assert_eq!(path("Endpoint", json!({})), "/projects/doprava/endpoints");
+        assert_eq!(
+            path("Endpoint", json!({ "name": "../../admin" })),
+            "/projects/doprava/endpoints"
+        );
+        assert_eq!(path("Endpoint", json!({ "name": 7 })), "/projects/doprava/endpoints");
+        assert_eq!(
+            path("*", json!({ "kind": "Pipeline", "name": "load" })),
+            "/projects/doprava/pipelines/load"
+        );
+        assert_eq!(
+            path("*", json!({ "manifest": { "kind": "Pipeline", "metadata": { "name": "m" } } })),
+            "/projects/doprava/pipelines/m"
+        );
+        assert_eq!(
+            path("*", json!({ "draft": { "kind": "Pipeline", "name": "d" } })),
+            "/projects/doprava/pipelines"
+        );
+        assert_eq!(path("*", json!({})), "/projects/doprava");
+        assert_eq!(path("*", json!({ "kind": "Nothing", "name": "x" })), "/projects/doprava");
+        assert_eq!(path("NoSuchKind", json!({ "name": "x" })), "/projects/doprava");
+    }
+
+    /// AG-56: the activity row says what came of the call, the person's decline first.
+    #[test]
+    fn the_activity_says_what_came_of_each_call() {
+        let ok = json!({ "result": { "content": [] } });
+        assert_eq!(decision_of(&ok, None), "ran");
+        assert_eq!(decision_of(&ok, Some("declined")), "declined");
+        assert_eq!(decision_of(&ok, Some("accepted")), "ran");
+        assert_eq!(decision_of(&json!({ "error": { "code": 1 } }), None), "refused");
+        assert_eq!(decision_of(&json!({ "result": { "isError": true } }), None), "refused");
+        assert_eq!(
+            decision_of(&json!({ "result": { "status": "input_required" } }), None),
+            "asked"
+        );
+        assert_eq!(decision_of(&json!({ "result": { "task": {} } }), None), "started");
+        assert_eq!(decision_of(&Value::Null, None), "ran");
+    }
+
+    #[test]
+    fn the_change_a_call_opened_is_read_from_the_answer_or_its_change_member() {
+        let change = json!({ "kind": "Change", "metadata": { "name": "chg-0000002a" } });
+        let top = json!({ "result": { "structuredContent": change } });
+        assert_eq!(change_of(&top).as_deref(), Some("chg-0000002a"));
+        let nested = json!({ "result": { "structuredContent": { "change": change } } });
+        assert_eq!(change_of(&nested).as_deref(), Some("chg-0000002a"));
+        let other = json!({ "result": { "structuredContent": { "kind": "Endpoint", "metadata": { "name": "a" } } } });
+        assert_eq!(change_of(&other), None);
+        let nameless = json!({ "result": { "structuredContent": { "kind": "Change" } } });
+        assert_eq!(change_of(&nameless), None);
+        assert_eq!(change_of(&Value::Null), None);
+    }
+
+    /// The fence is longer than any backtick run, three at least.
+    #[test]
+    fn a_fence_outruns_every_backtick_run_in_the_text() {
+        assert_eq!(fence_for(""), "```");
+        assert_eq!(fence_for("no ticks"), "```");
+        assert_eq!(fence_for("``"), "```");
+        assert_eq!(fence_for("a```b"), "````");
+        assert_eq!(fence_for("`````"), "``````");
+        assert_eq!(fence_for("` `` ```` `"), "`````");
+    }
+
+    #[test]
+    fn a_conflict_and_a_failure_are_tool_errors_in_their_own_words() {
+        let conflict = conflict_result(&json!({ "reason": "taken" }));
+        assert_eq!(conflict["isError"], true);
+        assert_eq!(conflict["structuredContent"]["reason"], "taken");
+        assert_eq!(conflict["content"][0]["text"], r#"{"reason":"taken"}"#);
+        let failed = failure_result("nothing ran");
+        assert_eq!(
+            failed,
+            json!({ "isError": true, "content": [{ "type": "text", "text": "nothing ran" }] })
+        );
+    }
+
+    /// AG-60: the 429 says when to call again and the 413 what to narrow, both JSON-RPC errors.
+    #[tokio::test]
+    async fn the_limits_answer_json_rpc_errors_a_client_can_act_on() {
+        let busy = too_many_at_once();
+        assert_eq!(busy.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(busy.headers()[header::RETRY_AFTER], "1");
+        let body = body_of(busy).await;
+        assert_eq!(body["error"]["code"], -32000);
+        assert!(body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains(&MAX_PARALLEL_CALLS.to_string())));
+        let large = too_large("narrow it", &json!(9));
+        assert_eq!(large.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body = body_of(large).await;
+        assert_eq!(body["id"], 9);
+        assert_eq!(body["error"], json!({ "code": -32001, "message": "narrow it" }));
+        let parse = parse_error();
+        assert_eq!(parse.status(), StatusCode::OK);
+        let body = body_of(parse).await;
+        assert_eq!(body["error"]["code"], -32700);
+        assert_eq!(body["id"], Value::Null);
+    }
+
+    /// The verdict of an answer, read off its status and envelope; the answer is unchanged.
+    #[tokio::test]
+    async fn the_verdict_of_an_answer_follows_its_status_and_envelope() {
+        let verdict = |status: StatusCode, body: Value| async move {
+            let (response, verdict) = outcome(json_response(status, &body)).await;
+            assert_eq!(response.status(), status);
+            assert_eq!(body_of(response).await, body);
+            verdict
+        };
+        assert_eq!(verdict(StatusCode::OK, json!({ "result": {} })).await, "allowed");
+        assert_eq!(
+            verdict(StatusCode::OK, json!({ "result": { "isError": true } })).await,
+            "refused: tool"
+        );
+        assert_eq!(verdict(StatusCode::OK, json!({ "error": {} })).await, "error");
+        assert_eq!(verdict(StatusCode::NOT_FOUND, json!({})).await, "refused: 404");
+        assert_eq!(verdict(StatusCode::BAD_GATEWAY, json!({})).await, "error");
+        let (empty, verdict) = outcome(StatusCode::ACCEPTED.into_response()).await;
+        assert_eq!((empty.status(), verdict.as_str()), (StatusCode::ACCEPTED, "allowed"));
+    }
+
+    /// AG-63: a tool takes `project` as a required string whatever its schema said, and only a
+    /// tool that may ask lists the elicitation answer.
+    #[test]
+    fn every_tool_schema_requires_project_and_keeps_its_own_members() {
+        let schema = mcp_input_schema(json!("not an object"), false);
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["required"], json!(["project"]));
+        assert_eq!(schema["properties"]["project"]["maxLength"], 63);
+        assert!(schema["properties"].get("elicitation").is_none());
+
+        let own = json!({
+            "description": "goes",
+            "properties": { "project": { "type": "string", "enum": ["a"] }, "name": {} },
+            "required": ["name", "project"]
+        });
+        let schema = mcp_input_schema(own, true);
+        assert!(schema.get("description").is_none());
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["properties"]["project"]["enum"], json!(["a"]));
+        assert_eq!(schema["required"], json!(["name", "project"]));
+        assert_eq!(
+            schema["properties"]["elicitation"]["required"],
+            json!(["elicitationId"])
+        );
+        assert_eq!(
+            schema["properties"]["elicitation"]["additionalProperties"],
+            false
+        );
+
+        // A schema whose members are of the wrong shape is left as it is, never panics.
+        let odd = mcp_input_schema(json!({ "type": "object", "properties": 1, "required": "x" }), true);
+        assert_eq!(odd["properties"], 1);
+        assert_eq!(odd["required"], "x");
+    }
+
+    /// A picture is image content only when it is a PNG with its data; anything else is data.
+    #[test]
+    fn only_a_png_with_data_becomes_image_content() {
+        for output in [
+            json!({ "image": { "mimeType": "image/svg+xml", "data": "PHN2Zz4=" } }),
+            json!({ "image": { "mimeType": "image/png" } }),
+            json!({ "image": { "data": "iVBORw0KGgo=" } }),
+            json!({ "image": { "mimeType": "image/png", "data": 7 } }),
+        ] {
+            let answer = call_result(&output);
+            assert_eq!(answer["content"].as_array().map(Vec::len), Some(1), "{output}");
+            assert_eq!(answer["content"][0]["type"], "text");
+            assert_eq!(answer["structuredContent"], output);
+        }
+        // A view that is no object adds nothing to `_meta`.
+        let answer = call_result(&json!({
+            "image": { "mimeType": "image/png", "data": "iVBORw0KGgo=" },
+            "view": "flat"
+        }));
+        assert_eq!(answer["_meta"], json!({ UNTRUSTED_META: true }));
+        assert!(answer["structuredContent"].get("view").is_none());
+    }
+
+    /// AG-158: a sample answer's withheld fields go to `_meta`; an empty list adds no key.
+    #[test]
+    fn a_sample_names_what_it_withheld_in_meta() {
+        let answer = call_result(&json!({ "rows": [], "withheld": ["DataSource/s.email"] }));
+        assert_eq!(answer["_meta"][WITHHELD_META], json!(["DataSource/s.email"]));
+        let answer = call_result(&json!({ "rows": [], "withheld": [] }));
+        assert!(answer["_meta"].get(WITHHELD_META).is_none());
+        let answer = call_result(&json!("text"));
+        assert_eq!(answer["structuredContent"], "text");
+    }
+
+    /// A refusal without `errors`, or with plain strings in it, still reads as one sentence each.
+    #[test]
+    fn a_refusal_lists_plain_error_strings_and_skips_what_it_cannot_read() {
+        let refused = problem_result(crate::ops::OpError::InvalidInput {
+            path: "/name".to_owned(),
+            message: "too long".to_owned(),
+        });
+        let text = refused["content"][0]["text"].as_str().expect("text");
+        assert!(text.contains("/name"), "{text}");
+        let plain = problem_result(crate::ops::OpError::Api(ApiError::Invalid {
+            detail: "bad".to_owned(),
+            errors: vec!["name: too long".to_owned()],
+        }));
+        let text = plain["content"][0]["text"].as_str().expect("text");
+        assert!(text.contains("\n- "), "{text}");
+        let none = problem_result(crate::ops::OpError::Api(ApiError::NotFound("gone".into())));
+        let text = none["content"][0]["text"].as_str().expect("text");
+        assert!(!text.contains("\n- "), "{text}");
+        assert_eq!(none["structuredContent"]["status"], 404);
+    }
+
+    /// F-R2POR4-012: the project comes from the arguments, else the params, and is a name.
+    #[test]
+    fn the_called_project_is_a_name_from_the_arguments_or_the_params() {
+        let empty = json!({});
+        assert_eq!(
+            called_project(&json!({ "project": "doprava" }), &empty).ok(),
+            Some("doprava")
+        );
+        assert_eq!(
+            called_project(&empty, &json!({ "project": "doprava" })).ok(),
+            Some("doprava")
+        );
+        assert_eq!(
+            called_project(&json!({ "project": "a" }), &json!({ "project": "b" })).ok(),
+            Some("a")
+        );
+        for missing in [json!({}), json!({ "project": "  " }), json!({ "project": 7 })] {
+            let refused = called_project(&missing, &empty).expect_err("missing");
+            assert!(refused.to_string().contains("project"), "{refused}");
+        }
+        let refused = called_project(&json!({ "project": "Doprava!" }), &empty).expect_err("no name");
+        assert!(matches!(refused, crate::ops::OpError::InvalidInput { ref path, .. } if path == "/project"));
+    }
+
+    /// AG-147: the audit keeps identifiers: a resource address's words up to the first that is
+    /// none, a task's id, a prompt's name, a chart's endpoint; a tool name that is none is
+    /// `unknown`.
+    #[test]
+    fn the_audit_reads_identifiers_from_every_method() {
+        let read = audited(&json!({ "method": "resources/read",
+            "params": { "uri": "jc://doprava/endpoints/air/x y/z?q=1#f" } }));
+        assert_eq!(read, ("resources/read".to_owned(), Some("doprava/endpoints/air".to_owned())));
+        let no_scheme = audited(&json!({ "method": "resources/read", "params": { "uri": "doprava" } }));
+        assert_eq!(no_scheme.1, None);
+        let task = audited(&json!({ "method": "tasks/get", "params": { "taskId": "task-00ff" } }));
+        assert_eq!(task, ("tasks/get".to_owned(), Some("task-00ff".to_owned())));
+        let prompt = audited(&json!({ "method": "prompts/get", "params": { "name": "find", "project": "doprava" } }));
+        assert_eq!(prompt.1.as_deref(), Some("doprava/find"));
+        let chart = audited(&json!({ "method": "tools/call", "params": { "name": "jc_render",
+            "arguments": { "project": "doprava", "data": { "query": { "endpoint": "air" } } } } }));
+        assert_eq!(chart, ("jc_render".to_owned(), Some("doprava/air".to_owned())));
+        let long = "x".repeat(65);
+        assert_eq!(audited(&json!({ "method": long })).0, "unknown");
+        assert_eq!(audited(&json!({ "method": "tools/call", "params": { "name": "a b" } })).0, "unknown");
+        assert_eq!(audited(&Value::Null), ("unknown".to_owned(), None));
+        let value = audited(&json!({ "method": "tools/call", "params": { "name": "jc_x",
+            "arguments": { "project": "a".repeat(64), "kind": "", "name": "ok" } } }));
+        assert_eq!(value.1.as_deref(), Some("ok"));
+    }
+
+    /// The project door refuses a body whose params are no object, and keeps an id of any type.
+    #[test]
+    fn the_project_door_refuses_params_that_are_no_object() {
+        assert_eq!(held_to(br#"{"id":"a","params":[1]}"#, "doprava").err(), Some(Some(json!("a"))));
+        assert_eq!(held_to(br#"{"params":7}"#, "doprava").err(), Some(Some(Value::Null)));
+        assert_eq!(held_to(b"not json", "doprava").err(), Some(None));
+        let held = held_to(br#"{"params":{"uri":"https://elsewhere/x"}}"#, "doprava").expect("held");
+        let held: Value = serde_json::from_slice(&held).expect("json");
+        assert_eq!(held["params"]["project"], "doprava");
+        let dash = held_to(br#"{"params":{"uri":"jc://-/organizations/a"}}"#, "doprava");
+        assert!(dash.is_ok());
+    }
+
+    /// An answer past the route's limit is a 413 that keeps the request id.
+    #[tokio::test]
+    async fn an_answer_past_the_limit_is_a_413_with_its_id() {
+        let big = json!({ "id": 4, "result": "x".repeat(MAX_RESPONSE_BYTES) });
+        let response = json_response(StatusCode::OK, &big);
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body = body_of(response).await;
+        assert_eq!(body["id"], 4);
+        assert!(body["error"]["message"].as_str().is_some_and(|m| m.contains("one project")));
+        let small = json_response(StatusCode::CREATED, &json!({ "ok": true }));
+        assert_eq!(small.status(), StatusCode::CREATED);
+        assert_eq!(small.headers()[header::CONTENT_TYPE], "application/json");
+    }
+
+    #[test]
+    fn a_tool_may_ask_on_a_lane_a_destructive_hint_or_a_flow() {
+        let mut summary = crate::ops::summary(crate::ops::find("jc_resource_list").expect("op"));
+        assert!(!may_ask(&summary));
+        summary.annotations.destructive_hint = true;
+        assert!(may_ask(&summary));
+        summary.annotations.destructive_hint = false;
+        summary.lane = crate::change::Lane::Yellow;
+        assert!(may_ask(&summary));
+        summary.lane = crate::change::Lane::Green;
+        summary.name = "jc_flow_start".into();
+        assert!(may_ask(&summary));
+    }
+
+    /// S-44: a refusal that is no Denied, or of a Change in a project that is no name, stays.
+    #[test]
+    fn a_refusal_that_is_no_denied_change_keeps_its_words() {
+        let base: url::Url = "https://portal.test".parse().expect("url");
+        let approve = crate::ops::find("jc_change_approve").expect("registered");
+        let invalid = || crate::ops::OpError::InvalidInput {
+            path: "/id".to_owned(),
+            message: "no".to_owned(),
+        };
+        assert_eq!(
+            decided_in_portal(&base, approve, "doprava", &json!({}), invalid()).to_string(),
+            invalid().to_string()
+        );
+        let denied = crate::ops::OpError::Api(ApiError::Denied("no".into()));
+        assert_eq!(
+            decided_in_portal(&base, approve, "Bad Name", &json!({}), denied).to_string(),
+            crate::ops::OpError::Api(ApiError::Denied("no".into())).to_string()
+        );
+        for id in ["chg-0000002", "chg-0000002A", "chg-0000002a0", "abc-0000002a"] {
+            let denied = crate::ops::OpError::Api(ApiError::Denied("no".into()));
+            let said = decided_in_portal(&base, approve, "doprava", &json!({ "id": id }), denied);
+            assert!(said.to_string().ends_with("/projects/doprava/approvals"), "{id}");
+        }
     }
 }

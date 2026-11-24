@@ -674,8 +674,9 @@ fn tab_action(
 
 /// Puts the connector's one project into a `tools/call` that names none (T-6064). The project
 /// comes from the stored scope only; a call that names a project keeps it, so a foreign one is
-/// still refused by `admits`. `true` when the message changed.
-fn defaults_project(connector: &Connector, message: &mut Value) -> bool {
+/// still refused by `admits`. `true` when the message changed. Public for the fuzz target
+/// `mcp_connector_defaults`: the message is outside input.
+pub fn defaults_project(connector: &Connector, message: &mut Value) -> bool {
     let [only] = connector.projects()[..] else {
         return false;
     };

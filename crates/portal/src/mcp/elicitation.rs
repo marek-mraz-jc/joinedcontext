@@ -596,4 +596,109 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn a_poisoned_store_opens_no_question_and_answers_none() {
+        let asks = McpElicitations::new();
+        let held = asks.pending.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = held.lock().expect("the lock");
+            panic!("poison the store");
+        })
+        .join();
+        let digest = digest_of(&arguments());
+        let id = ask(&asks, &digest);
+        assert!(id.starts_with("eli-"), "{id}");
+        assert_eq!(asks.question("sub-1", "helsinki", &id), None);
+        assert_eq!(
+            asks.decide("sub-1", "helsinki", &id, ElicitationDecision::Accept),
+            None
+        );
+        let sent = json!({ "elicitationId": id, "action": "accept" });
+        assert_eq!(
+            asks.answer("sub-1", "jc_resource_delete", "helsinki", &digest, &sent, true),
+            Answer::Unknown
+        );
+        assert_eq!(format!("{asks:?}"), "McpElicitations");
+    }
+
+    /// A question older than ten minutes is neither shown, decided nor answered, and the next ask
+    /// forgets it; one asked at the limit is still open.
+    #[test]
+    fn an_expired_question_is_closed_everywhere_and_forgotten() {
+        let asks = McpElicitations::new();
+        let digest = digest_of(&arguments());
+        let id = ask(&asks, &digest);
+        let asked = |ago: i64| {
+            let mut map = asks.pending.lock().expect("lock");
+            map.get_mut(&id).expect("pending").asked_at = now_unix() - ago;
+        };
+        asked(EXPIRES_IN_SECONDS - 5);
+        assert!(asks.question("sub-1", "helsinki", &id).is_some());
+        asked(EXPIRES_IN_SECONDS + 1);
+        assert_eq!(asks.question("sub-1", "helsinki", &id), None);
+        assert_eq!(
+            asks.decide("sub-1", "helsinki", &id, ElicitationDecision::Accept),
+            None
+        );
+        let sent = json!({ "id": id, "action": "decline" });
+        assert_eq!(
+            asks.answer("sub-1", "jc_resource_delete", "helsinki", &digest, &sent, false),
+            Answer::Unknown
+        );
+        ask(&asks, &digest);
+        assert!(!asks.pending.lock().expect("lock").contains_key(&id));
+    }
+
+    /// An answer naming no id, or an id that is not a string, belongs to no question.
+    #[test]
+    fn an_answer_without_a_string_id_is_unknown() {
+        let asks = McpElicitations::new();
+        let digest = digest_of(&arguments());
+        ask(&asks, &digest);
+        for sent in [
+            json!({}),
+            json!({ "action": "accept" }),
+            json!({ "elicitationId": 7 }),
+            json!("eli-0"),
+            Value::Null,
+        ] {
+            assert_eq!(
+                asks.answer("sub-1", "jc_resource_delete", "helsinki", &digest, &sent, true),
+                Answer::Unknown,
+                "{sent}"
+            );
+        }
+    }
+
+    /// The gate's refusal rides beside the question in `_meta`; a refusal that is no object adds
+    /// nothing, and the question is still there.
+    #[test]
+    fn a_refusal_rides_beside_the_question_and_never_replaces_it() {
+        let refusal = json!({ "error": "verdict_required", "check": "jc_manifest_dry_run" });
+        let doc = document("eli-1", "Delete?", "https://p/x", Some(refusal));
+        let meta = &doc["_meta"][ELICITATION_META];
+        assert_eq!(meta["error"], "verdict_required");
+        assert_eq!(meta["check"], "jc_manifest_dry_run");
+        assert_eq!(meta["elicitation"]["elicitationId"], "eli-1");
+        assert_eq!(meta["elicitation"]["expiresIn"], EXPIRES_IN_SECONDS);
+        let plain = document("eli-2", "Delete?", "https://p/y", Some(json!("words")));
+        let meta = plain["_meta"][ELICITATION_META]
+            .as_object()
+            .expect("an object");
+        assert_eq!(meta.keys().collect::<Vec<_>>(), ["elicitation"]);
+        let text = plain["content"][0]["text"].as_str().expect("text");
+        assert!(text.contains("expires in 10 minutes"), "{text}");
+        assert!(text.starts_with("Delete?\n\nThe person decides here: https://p/y"), "{text}");
+    }
+
+    #[test]
+    fn nested_arrays_and_scalars_digest_by_content() {
+        let a = json!([{ "b": 1, "a": [true, null, "x"] }, 2.5]);
+        let b = json!([{ "a": [true, null, "x"], "b": 1 }, 2.5]);
+        assert_eq!(digest_of(&a), digest_of(&b));
+        assert_ne!(digest_of(&a), digest_of(&json!([2.5, { "a": [true, null, "x"], "b": 1 }])));
+        assert_ne!(digest_of(&json!(null)), digest_of(&json!("null ")));
+        assert_eq!(digest_of(&json!({})).len(), 16);
+    }
 }

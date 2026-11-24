@@ -6,7 +6,9 @@
 # Endpoint preview's body, (T-7605) the unverified `iss` of a bearer token, the double-submit
 # CSRF check over arbitrary headers, the login redirect target and an Organization realm list from
 # jc's host registry, and (T-7652) a forge's receive-pack answer, an App's host name under the apps
-# apex and an App repository's build workflow. Its own
+# apex and an App repository's build workflow, (T-7785) the MCP project door's hold on a body, an MCP
+# call's audit identifiers, an elicitation answer, a question's page path, a tool answer's
+# fence and a connector's default project. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 [package]
@@ -196,6 +198,48 @@ bench = false
 [[bin]]
 name = "kube_objects"
 path = "fuzz_targets/kube_objects.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_held_to"
+path = "fuzz_targets/mcp_held_to.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_audited"
+path = "fuzz_targets/mcp_audited.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_elicitation_answer"
+path = "fuzz_targets/mcp_elicitation_answer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_resource_path"
+path = "fuzz_targets/mcp_resource_path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_call_result"
+path = "fuzz_targets/mcp_call_result.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_connector_defaults"
+path = "fuzz_targets/mcp_connector_defaults.rs"
 test = false
 doc = false
 bench = false
