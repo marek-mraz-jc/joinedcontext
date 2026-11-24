@@ -134,8 +134,9 @@ impl States {
         }
         self.memory
             .lock()
-            .ok()
-            .and_then(|map| map.get(&key(namespace, name)).cloned())
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key(namespace, name))
+            .cloned()
             .unwrap_or_default()
     }
 
@@ -156,9 +157,10 @@ impl States {
             }
             return;
         }
-        if let Ok(mut map) = self.memory.lock() {
-            map.insert(key(namespace, name), stored.clone());
-        }
+        self.memory
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key(namespace, name), stored.clone());
     }
 
     /// Switches syncing off or on for one source (MF-30, the **Pause** button).
@@ -246,6 +248,91 @@ mod tests {
             Stored::default(),
             "two projects may run a source of the same name"
         );
+    }
+
+    fn recorded() -> Stored {
+        Stored {
+            state: State {
+                observed_revision: Some("c0ffee".into()),
+                last_run_at: Some(1_000),
+                open_proposal: Some("chg-sync-regional-c0ffee".into()),
+                paused: true,
+            },
+            open_revision: Some("c0ffee1234".into()),
+            merge_request: Some("https://git.example/org/config/pulls/7".into()),
+            last_error: Some("the forge answered 502".into()),
+        }
+    }
+
+    /// T-7281: in Postgres a run's memory is kept in its project's key and read back whole; a
+    /// project with no key keeps nothing and reads as never run.
+    #[tokio::test]
+    async fn the_database_keeps_a_runs_memory_in_its_projects_key() {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = crate::db::connect(&url).await.expect("connect and migrate");
+        let run = jc_types::ProjectId::mint().path_segment();
+        let project = format!("t7656-{run}");
+        let mirror = std::sync::Arc::new(Mirror::new());
+        crate::project_ids::placed(&pool, &mirror, &project, &format!("t7656org-{run}")).await;
+        let states = States::new(Some((pool, mirror)));
+        assert!(states.is_durable());
+        assert_eq!(states.get(&project, "regional").await, Stored::default());
+        states.put(&project, "regional", &recorded()).await;
+        assert_eq!(states.get(&project, "regional").await, recorded());
+        states.set_paused(&project, "regional", false).await;
+        assert!(!states.get(&project, "regional").await.state.paused);
+        let unplaced = format!("t7656-unplaced-{run}");
+        states.put(&unplaced, "regional", &recorded()).await;
+        assert_eq!(states.get(&unplaced, "regional").await, Stored::default());
+    }
+
+    /// A database that does not answer reads as nothing recorded and a write is only logged:
+    /// one row never stops the tick.
+    #[tokio::test]
+    async fn a_database_that_does_not_answer_reads_as_never_run() {
+        let closed = tokio::net::TcpSocket::new_v4().unwrap();
+        closed.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_secs(2))
+            .connect_lazy(&format!(
+                "postgres://portal@{}/none",
+                closed.local_addr().unwrap()
+            ))
+            .expect("a lazy pool");
+        let mirror = std::sync::Arc::new(Mirror::new());
+        mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Project".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("bb", crate::permissions::ORG_NAMESPACE),
+            spec: serde_json::json!({ "organizationRef": "bbsk" }),
+            status: None,
+        });
+        let states = States::new(Some((pool, mirror)));
+        states.put("bb", "regional", &recorded()).await;
+        assert_eq!(states.get("bb", "regional").await, Stored::default());
+    }
+
+    /// A thread that panicked holding the memory leaves it usable: what a run recorded is still
+    /// what the next run reads.
+    #[tokio::test]
+    async fn a_poisoned_memory_still_records_and_reads() {
+        let states = States::new(None);
+        std::thread::scope(|s| {
+            let _ = s
+                .spawn(|| {
+                    let _held = states.memory.lock().unwrap();
+                    panic!("poison the memory");
+                })
+                .join();
+        });
+        states.put("bb", "regional", &recorded()).await;
+        assert_eq!(states.get("bb", "regional").await, recorded());
     }
 
     #[test]

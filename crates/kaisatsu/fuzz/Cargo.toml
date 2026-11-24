@@ -1,0 +1,55 @@
+# Fuzzes what kaisatsu-core and kaisatsu-store-memory read from outside (T-7608): branding blocks
+# and SVG logos an admin uploads, locale headers and ui_locales, protocol mapper configs with the
+# users and clients they map, and OData query strings against the in-memory store. Each target
+# must end in a value or an error, never a panic, a hang or an allocation past the input's size.
+# Run by hand: cargo +nightly fuzz run <branding|locale|mappers|odata_query> -- -max_total_time=300.
+# Not a member of the root workspace.
+[package]
+name = "kaisatsu-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1.54", features = ["rt"] }
+kaisatsu-core = { path = "../core" }
+kaisatsu-store-memory = { path = "../store-memory" }
+odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
+odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-url" }
+
+[[bin]]
+name = "branding"
+path = "fuzz_targets/branding.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "locale"
+path = "fuzz_targets/locale.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mappers"
+path = "fuzz_targets/mappers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "odata_query"
+path = "fuzz_targets/odata_query.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

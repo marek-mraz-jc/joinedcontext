@@ -1957,6 +1957,45 @@ mod tests {
         ));
     }
 
+    /// Each hold reason keeps its kebab-case word in the database and reads back as itself; a
+    /// word nobody wrote reads as incomplete, the cautious one. Each alert names its run.
+    #[test]
+    fn a_hold_reason_round_trips_its_word_and_each_alert_names_the_run() {
+        for reason in [
+            HoldReason::ShareExceeded,
+            HoldReason::Empty,
+            HoldReason::Incomplete,
+        ] {
+            assert_eq!(HoldReason::parse(reason.as_str()), reason);
+            assert_eq!(
+                json!(reason),
+                json!(reason.as_str()),
+                "the API says the same word"
+            );
+            let hold = Hold {
+                run: "r7".into(),
+                reason,
+                would: 3,
+                ledger: 9,
+            };
+            assert!(
+                hold.detail().starts_with("source deletes held: run r7 "),
+                "{}",
+                hold.detail()
+            );
+        }
+        assert_eq!(HoldReason::parse("unknown"), HoldReason::Incomplete);
+        let incomplete = Hold {
+            run: "r7".into(),
+            reason: HoldReason::Incomplete,
+            would: 0,
+            ledger: 9,
+        };
+        assert!(incomplete
+            .detail()
+            .contains("did not read its source completely"));
+    }
+
     #[test]
     fn only_a_snapshot_rule_within_bounds_acts() {
         let spec = |rule: Value| json!({ "sourceDeletes": rule });

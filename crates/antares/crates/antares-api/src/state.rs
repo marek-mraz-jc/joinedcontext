@@ -1926,7 +1926,7 @@ fn policy_tenant() -> Result<antares_model::TenantId, String> {
 /// A store that refuses every call (a Postgres pool on a port nobody
 /// listens on): each read and write of the state answers the store's error,
 /// never an empty success.
-#[cfg(all(test, feature = "postgres"))]
+#[cfg(all(test, feature = "postgres", feature = "views"))]
 mod refusing_store {
     use super::*;
 

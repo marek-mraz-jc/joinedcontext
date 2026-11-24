@@ -1,7 +1,10 @@
-# Fuzzing the Portal's request-facing parsers (T-7605): the unverified `iss` of a bearer token,
-# the double-submit CSRF check over arbitrary headers, the login redirect target and an
-# Organization realm list from jc's host registry. Not a workspace member; run with
-# `cargo +nightly fuzz run <target>` from crates/portal.
+# Fuzzing the Portal's parsers of outside input (T-7656, T-7727, T-7729): label and field
+# selectors and the list filter and orderBy of a request's query string, the gateway's Prometheus
+# page, a pipeline's cron schedule, the masking of a record the runner posts, and (T-7605) the
+# unverified `iss` of a bearer token, the double-submit CSRF check over arbitrary headers, the
+# login redirect target and an Organization realm list from jc's host registry. Its own
+# workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
+# fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 [package]
 name = "joinedcontext-portal-fuzz"
 version = "0.0.0"
@@ -11,16 +14,50 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[workspace]
+
 [dependencies]
 libfuzzer-sys = "0.4"
+serde_json = "1"
 axum = "0.8"
 cookie = { version = "0.18", features = ["percent-encode"] }
 url = "2"
 joinedcontext-portal = { path = ".." }
 
-# Its own workspace: the Portal's `apps/*` workspace does not build it.
-[workspace]
-members = ["."]
+[[bin]]
+name = "selector"
+path = "fuzz_targets/selector.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filter"
+path = "fuzz_targets/filter.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "prometheus"
+path = "fuzz_targets/prometheus.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "schedule"
+path = "fuzz_targets/schedule.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mask"
+path = "fuzz_targets/mask.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "auth_issuer_of"
@@ -50,8 +87,8 @@ test = false
 doc = false
 bench = false
 
-# The Portal's own patches (../Cargo.toml), one directory deeper: the git and crates.io sources
-# resolve to the monorepo's vendored copies, as they do for the Portal.
+# The Portal's own patches (../Cargo.toml), one directory deeper: the vendored platform, ngsild
+# and the patched rstar and geo-types, so the targets link the code the Portal ships.
 [patch."https://github.com/marek-mraz-jc/joinedcontext-platform.git"]
 jc-core = { path = "../../../vendor/joinedcontext-platform/crates/jc-core" }
 jcctl = { path = "../../../vendor/joinedcontext-platform/crates/jcctl" }

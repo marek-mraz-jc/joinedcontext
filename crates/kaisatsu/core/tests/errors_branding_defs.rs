@@ -78,10 +78,13 @@ async fn every_error_answers_its_status_slug_and_a_safe_detail() {
         assert_eq!(body["errorMessage"], body["detail"]);
     }
     let v = KaisatsuError::field_error("password", "too short");
-    if let KaisatsuError::Validation { fields, message } = &v {
-        assert_eq!(message, "password: too short");
-        assert_eq!(fields["password"], vec!["too short".to_owned()]);
-    }
+    assert_eq!(
+        v,
+        KaisatsuError::Validation {
+            message: "password: too short".into(),
+            fields: BTreeMap::from([("password".into(), vec!["too short".into()])]),
+        }
+    );
 
     let (st, h, body) = answer(KaisatsuError::RateLimited {
         message: "slow down".into(),

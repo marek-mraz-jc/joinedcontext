@@ -971,6 +971,81 @@ mod tests {
         assert_eq!(names.len(), CHECKS.len(), "one entry per check");
     }
 
+    /// The reconciler and `validate` show a refusal's words without its HTTP status; a refusal
+    /// carrying no words of its own reads as its error text.
+    #[test]
+    fn a_refusal_reads_as_its_words_without_the_status() {
+        let words = |detail: &str| detail.to_owned();
+        for (err, said) in [
+            (ApiError::BadRequest(words("b")), "b"),
+            (ApiError::Denied(words("d")), "d"),
+            (ApiError::Conflict(words("c")), "c"),
+            (
+                ApiError::Invalid {
+                    detail: words("i"),
+                    errors: vec![words("x: i")],
+                },
+                "i",
+            ),
+            (
+                ApiError::Unprocessable {
+                    detail: words("u"),
+                    errors: vec![],
+                },
+                "u",
+            ),
+            (ApiError::NotFound(words("n")), "not found: n"),
+            (ApiError::Forbidden, "forbidden"),
+        ] {
+            assert_eq!(reason(&err), said, "{err:?}");
+        }
+    }
+
+    /// An Organization's appearance that is no object, or holds a field of the wrong type, is
+    /// refused naming `spec.appearance`; one without an appearance, or another kind, passes.
+    #[test]
+    fn an_appearance_of_the_wrong_shape_is_refused_naming_the_field() {
+        let mirror = Mirror::new();
+        let bounds = OrganizationBounds::default();
+        let ground = Ground {
+            mirror: &mirror,
+            bounds: &bounds,
+            mqtt_default: None,
+            apex: None,
+            domain: None,
+            portals: None,
+            load: false,
+        };
+        let org = |spec: Value| {
+            envelope(
+                "Organization",
+                "hel",
+                crate::permissions::ORG_NAMESPACE,
+                spec,
+            )
+        };
+        for appearance in [
+            json!("blue"),
+            json!({ "colours": 3 }),
+            json!({ "shortName": [1] }),
+        ] {
+            let refused =
+                organization_appearance(&ground, "", &org(json!({ "appearance": appearance })))
+                    .expect_err("refused");
+            assert!(
+                reason(&refused).starts_with("spec.appearance: "),
+                "{refused:?}"
+            );
+        }
+        assert!(organization_appearance(&ground, "", &org(json!({ "domain": "hel.fi" }))).is_ok());
+        assert!(organization_appearance(
+            &ground,
+            "p",
+            &envelope("ContextSpace", "air", "p", json!({ "appearance": "blue" }))
+        )
+        .is_ok());
+    }
+
     /// P-19 (T-6713): one credential typed under a name that does not say so (an API key in a
     /// DataSource's query) is refused at propose, at approval and at load, each naming the
     /// field path and the rule and never the value.

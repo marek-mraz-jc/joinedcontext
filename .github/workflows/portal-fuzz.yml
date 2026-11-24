@@ -1,0 +1,37 @@
+# The Portal's parsers of outside input under libFuzzer (crates/portal/fuzz, T-7656, T-7727,
+# T-7729): label and field selectors, the list filter and orderBy, the gateway's metrics page, a
+# pipeline's cron schedule and the masking of a record the runner posts. On demand only, an hour
+# per target by default. A crash uploads its input as an artifact; add it as a named regression
+# test with the fix, and to fuzz/seeds/<target> so the next run starts from it.
+name: portal-fuzz
+on:
+  workflow_dispatch:
+    inputs:
+      seconds: { description: "fuzzing time in seconds", default: "3600" }
+permissions: { contents: read }
+concurrency:
+  group: "portal-fuzz-${{ github.ref }}"
+  cancel-in-progress: true
+jobs:
+  parsers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [selector, filter, prometheus, schedule, mask, auth_issuer_of, auth_csrf_double_submit, auth_login_redirect, auth_realms_parse]
+    defaults: { run: { working-directory: crates/portal } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust
+        with: { workspace: crates/portal/fuzz, key: portal-fuzz, toolchain: nightly }
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: cargo-fuzz }
+      - env: { SECONDS_TO_FUZZ: "${{ inputs.seconds }}", TARGET: "${{ matrix.target }}" }
+        run: |
+          case "$SECONDS_TO_FUZZ" in ''|*[!0-9]*) echo "seconds: a whole number" >&2; exit 1 ;; esac
+          mkdir -p "fuzz/corpus/$TARGET"
+          cargo +nightly fuzz run "$TARGET" --release --target x86_64-unknown-linux-gnu "fuzz/corpus/$TARGET" "fuzz/seeds/$TARGET" -- -max_total_time="$SECONDS_TO_FUZZ" -timeout=10 -rss_limit_mb=2048
+      - if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: "portal-fuzz-${{ matrix.target }}", path: crates/portal/fuzz/artifacts }

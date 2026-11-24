@@ -1,5 +1,4 @@
-target
-corpus/*/*
-!corpus/*/seed-*
-artifacts
-coverage
+target/
+corpus/
+artifacts/
+coverage/

@@ -133,9 +133,7 @@ impl SampleStore {
         } else {
             record
         };
-        let Ok(mut map) = self.inner.write() else {
-            return;
-        };
+        let mut map = self.inner.write().unwrap_or_else(|e| e.into_inner());
         let nodes = map
             .entry((project.to_owned(), pipeline.to_owned()))
             .or_default();
@@ -159,9 +157,7 @@ impl SampleStore {
         pipeline: &str,
         now: TimestampTz,
     ) -> BTreeMap<String, Vec<Sample>> {
-        let Ok(map) = self.inner.read() else {
-            return BTreeMap::new();
-        };
+        let map = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let Some(nodes) = map.get(&(project.to_owned(), pipeline.to_owned())) else {
             return BTreeMap::new();
         };
@@ -310,6 +306,56 @@ mod tests {
         assert!(store.read("hel", "air", later).is_empty(), "samples expire");
     }
 
+    /// A stream that is no object, or whose pipeline or processor list has another shape, is
+    /// left as it is: the runner refuses it with its own words.
+    #[test]
+    fn a_stream_of_another_shape_is_left_untapped() {
+        for shape in [
+            json!("input: {}"),
+            json!({ "pipeline": "none" }),
+            json!({ "pipeline": { "processors": { "label": "step_0" } } }),
+        ] {
+            let mut stream = shape.clone();
+            with_taps(&mut stream, "http://portal", "s-1");
+            assert_eq!(stream, shape);
+        }
+    }
+
+    /// One pipeline keeps at most 64 nodes: a new node past them is dropped, a node it keeps
+    /// still takes samples.
+    #[test]
+    fn a_pipeline_keeps_samples_of_at_most_sixty_four_nodes() {
+        let store = SampleStore::default();
+        for n in 0..=MAX_NODES {
+            store.push("hel", "air", &format!("step_{n}"), json!({ "n": n }));
+        }
+        store.push("hel", "air", "step_0", json!({ "n": "again" }));
+        let read = store.read("hel", "air", TimestampTz::now());
+        assert_eq!(read.len(), MAX_NODES);
+        assert!(!read.contains_key(&format!("step_{MAX_NODES}")));
+        assert_eq!(read["step_0"][0].record, json!({ "n": "again" }));
+    }
+
+    /// A thread that panicked holding the samples leaves the store usable: samples are still
+    /// kept and read.
+    #[test]
+    fn a_poisoned_store_still_keeps_and_reads_samples() {
+        let store = SampleStore::default();
+        std::thread::scope(|s| {
+            let _ = s
+                .spawn(|| {
+                    let _held = store.inner.write().unwrap();
+                    panic!("poison the samples");
+                })
+                .join();
+        });
+        store.push("hel", "air", "input", json!({ "n": 1 }));
+        assert_eq!(
+            store.read("hel", "air", TimestampTz::now())["input"].len(),
+            1
+        );
+    }
+
     #[test]
     fn a_reader_sees_no_hidden_attribute_and_no_secret() {
         let record = json!({
@@ -327,5 +373,14 @@ mod tests {
             "a reference stays"
         );
         assert!(!seen.to_string().contains("hunter2"));
+        let list = redacted(
+            json!([{ "password": "hunter2" }, "Bearer abc.def"]),
+            &["password".to_owned()],
+        );
+        assert_eq!(
+            list,
+            json!([{ "password": "•••" }, "Bearer [MASKED]"]),
+            "a list is masked inside"
+        );
     }
 }

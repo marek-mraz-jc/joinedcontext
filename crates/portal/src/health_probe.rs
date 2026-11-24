@@ -604,6 +604,83 @@ mod tests {
         assert_eq!(check(&green, "ngsi-ld"), Some(Status::Ok));
     }
 
+    /// Each space is counted on the broker it names: a space the Portal reaches no broker for
+    /// is skipped, a broker that fails is a red `entities` check, and a counted space keeps its
+    /// count for the next round's comparison.
+    #[tokio::test]
+    async fn spaces_are_counted_on_their_broker_and_a_failed_count_is_red() {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let broker = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/q/tenants/.*air$"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({"counts": {"entities": 20, "attrInstances": 7}}),
+                ),
+            )
+            .mount(&broker)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/q/tenants/.*broken$"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&broker)
+            .await;
+        let file = std::env::temp_dir().join(format!("probe-token-{}", std::process::id()));
+        std::fs::write(&file, "t").expect("write the token");
+        let mirror = Mirror::default();
+        for (name, spec) in [
+            ("air", serde_json::json!({})),
+            ("broken", serde_json::json!({"retention": {"days": 30}})),
+            ("far", serde_json::json!({"brokerRef": "edge"})),
+        ] {
+            mirror.upsert(
+                serde_json::from_value(serde_json::json!({
+                    "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
+                    "metadata": {"name": name, "namespace": "bbsk"},
+                    "spec": spec,
+                }))
+                .expect("a space"),
+            );
+        }
+        let counter = Arc::new(Counter::new(Some(broker.uri()), Some(file.clone())));
+        let probes = Probes::new(None, Some(counter));
+        let t0 = TimestampTz::now();
+        let first = probes.findings(&mirror, t0).await;
+        let check = |findings: &[Finding], space: &str, check: &str| {
+            findings
+                .iter()
+                .find(|f| f.name == space && f.check == check)
+                .map(|f| f.status)
+        };
+        assert_eq!(
+            check(&first, "air", "entities"),
+            Some(Status::Ok),
+            "{first:?}"
+        );
+        assert_eq!(check(&first, "broken", "entities"), Some(Status::Error));
+        assert!(
+            first.iter().all(|f| f.name != "far"),
+            "no broker reached for far: {first:?}"
+        );
+        assert_eq!(
+            probes
+                .counts
+                .lock()
+                .await
+                .get(&("bbsk".into(), "air".into())),
+            Some(&20)
+        );
+        assert!(!probes
+            .counts
+            .lock()
+            .await
+            .contains_key(&("bbsk".into(), "broken".into())));
+        let second = probes.findings(&mirror, t0 + EVERY).await;
+        let _ = std::fs::remove_file(&file);
+        assert_eq!(check(&second, "air", "entities"), Some(Status::Ok));
+    }
+
     /// What `run` logs. Every test that runs a round captures: a round run with no subscriber
     /// lets tracing-core take its one-dispatcher fast path and a capturing test misses lines.
     async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {

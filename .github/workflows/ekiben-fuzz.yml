@@ -51,8 +51,8 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "ekiben-text-fuzz-${{ matrix.target }}", path: crates/ekiben/crates/ekiben-text/fuzz/artifacts }
-  # The parsers of ekiben-io-http and ekiben-io-remote that read bytes from outside (T-7579):
-  # MQTT wire, multipart bodies, route patterns and paths, ftp/imap config fields, raw mails.
+  # The parsers of ekiben-io-file, ekiben-io-http and ekiben-io-remote that read bytes from outside (T-7579, T-7581):
+  # io-file scanners, cron, sftp/s3 configs and S3 listings (T-7581), MQTT wire, multipart bodies, route patterns and paths, ftp/imap config fields, raw mails.
   io:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -60,6 +60,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { crate: ekiben-io-file, target: scan }
+          - { crate: ekiben-io-file, target: scanner_config }
+          - { crate: ekiben-io-file, target: cron }
+          - { crate: ekiben-io-file, target: connector_config }
+          - { crate: ekiben-io-file, target: s3_listing }
           - { crate: ekiben-io-http, target: mqtt_wire }
           - { crate: ekiben-io-http, target: multipart }
           - { crate: ekiben-io-http, target: path }
