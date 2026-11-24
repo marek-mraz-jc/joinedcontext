@@ -312,6 +312,157 @@ async fn a_bad_draft_is_400_and_no_view_is_503() {
     );
 }
 
+/// jana as a member of the project's group, whom the gateway's door admits (EP-14).
+fn member() -> joinedcontext_portal::auth::session::Identity {
+    joinedcontext_portal::auth::session::Identity {
+        groups: vec!["city".into()],
+        ..person("jana")
+    }
+}
+
+/// The broker's answer to the next preview of `kind` (`q` or `x`), over the rig's own 200.
+async fn broker_answers(broker: &MockServer, kind: &str, answer: ResponseTemplate) {
+    let route = match kind {
+        "q" => "^/q/views/[a-z0-9-]+/preview$",
+        _ => "^/x/views/[a-z0-9-]+/ical/v1/preview$",
+    };
+    Mock::given(method("POST"))
+        .and(path_regex(route))
+        .respond_with(answer)
+        .with_priority(1)
+        .mount(broker)
+        .await;
+}
+
+/// EP-85: what the broker refuses reaches the person as the Portal's own status: its 400 with
+/// the broker's reason, its 403 as a denial, anything else as a 503 naming the status.
+#[tokio::test]
+async fn a_draft_preview_carries_the_brokers_refusal() {
+    for (answer, want, says) in [
+        (
+            ResponseTemplate::new(400).set_body_json(json!({"detail": "q: unknown attribute"})),
+            StatusCode::BAD_REQUEST,
+            "q: unknown attribute",
+        ),
+        (
+            ResponseTemplate::new(403).set_body_json(json!({})),
+            StatusCode::FORBIDDEN,
+            "no reason given",
+        ),
+        (
+            ResponseTemplate::new(502).set_body_json(json!({})),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "refused the preview (502)",
+        ),
+    ] {
+        let r = rig(true).await;
+        broker_answers(&r.broker, "q", answer).await;
+        let answer = send(
+            &r.state,
+            member(),
+            "POST",
+            &route("air-staff"),
+            Some(draft()),
+        )
+        .await;
+        assert_eq!(answer.status, want, "{}", answer.text);
+        assert!(answer.text.contains(says), "{says}: {}", answer.text);
+    }
+}
+
+/// T-6762: the calendar preview maps the broker's answers the same way, and a 404 means the
+/// Endpoint does not serve `ical` yet; a 200 the Portal cannot read is a 503, never a 500.
+#[tokio::test]
+async fn a_calendar_preview_carries_the_brokers_refusal() {
+    for (answer, want, says) in [
+        (
+            ResponseTemplate::new(400).set_body_json(json!({"title": "bad sort"})),
+            StatusCode::BAD_REQUEST,
+            "bad sort",
+        ),
+        (
+            ResponseTemplate::new(403).set_body_json(json!({"detail": "not yours"})),
+            StatusCode::FORBIDDEN,
+            "not yours",
+        ),
+        (
+            ResponseTemplate::new(404).set_body_json(json!({})),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "does not serve `ical` yet",
+        ),
+        (
+            ResponseTemplate::new(500).set_body_json(json!({})),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "refused the preview (500)",
+        ),
+        (
+            ResponseTemplate::new(200).set_body_json(json!({"read": "three"})),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "cannot read",
+        ),
+        (
+            ResponseTemplate::new(200).set_body_string("<html>"),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "cannot read",
+        ),
+    ] {
+        let r = rig(true).await;
+        broker_answers(&r.broker, "x", answer).await;
+        let answer = send(
+            &r.state,
+            member(),
+            "POST",
+            &ical_route("air-staff"),
+            Some(preset(json!({}))),
+        )
+        .await;
+        assert_eq!(answer.status, want, "{}", answer.text);
+        assert!(answer.text.contains(says), "{says}: {}", answer.text);
+    }
+}
+
+/// A calendar preview asks for 1 to 50 events; past either end is a 422 naming `limit`, and
+/// without a broker address the preview is a 503 that says so.
+#[tokio::test]
+async fn a_calendar_preview_limit_is_1_to_50_and_needs_a_broker() {
+    let r = rig(true).await;
+    for limit in [0, 51] {
+        let mut body = preset(json!({}));
+        body["limit"] = json!(limit);
+        let answer = send(
+            &r.state,
+            member(),
+            "POST",
+            &ical_route("air-staff"),
+            Some(body),
+        )
+        .await;
+        assert_eq!(
+            answer.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{limit}: {}",
+            answer.text
+        );
+        assert!(answer.text.contains("1 to 50"), "{}", answer.text);
+    }
+    let bare = rig(false).await;
+    let answer = send(
+        &bare.state,
+        member(),
+        "POST",
+        &ical_route("air-staff"),
+        Some(preset(json!({}))),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(answer.text.contains("no broker address"), "{}", answer.text);
+}
+
 fn ical_route(name: &str) -> String {
     format!("/api/v1/projects/city/endpoints/{name}/ical-preview")
 }

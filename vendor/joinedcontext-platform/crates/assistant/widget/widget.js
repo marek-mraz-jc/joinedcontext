@@ -12,7 +12,7 @@
   var api = /^https:\/\/[a-z0-9.-]+(:\d{1,5})?$/i.test(String(config.api || "")) ? config.api : "";
   var WORDS = {
     sk: { ask: "Napíšte otázku", send: "Odoslať", stop: "Zastaviť", stopped: "Odpoveď ste zastavili.",
-      tools: "Živé dáta, ktoré smie asistent čítať", thinking: "Hľadám…",
+      tools: "Živé dáta, ktoré smie asistent čítať",
       script: "Skript, ktorý asistent spustil", failed: "Odpoveď sa nepodarilo načítať. Skúste to znova.",
       offline: "Nepodarilo sa spojiť so službou. Skontrolujte pripojenie a skúste to znova.",
       busy: "Položili ste veľa otázok naraz. Počkajte chvíľu a skúste to znova.",
@@ -43,7 +43,7 @@
       dock: "Pripnúť k okraju", undock: "Plávajúce okno", follow: "Otvárať dataset automaticky",
       opened: "Otvoril som dataset {title}", back: "Späť", changed: "Stránka zmenená na dataset {title}" },
     en: { ask: "Type your question", send: "Send", stop: "Stop", stopped: "You stopped the answer.",
-      tools: "Live data the assistant may read", thinking: "Looking it up…",
+      tools: "Live data the assistant may read",
       script: "Script the assistant ran", failed: "The answer could not be loaded. Try again.",
       offline: "The service could not be reached. Check your connection and try again.",
       busy: "You asked many questions at once. Wait a moment and try again.",
@@ -74,7 +74,7 @@
       dock: "Dock to the side", undock: "Floating window", follow: "Open the dataset automatically",
       opened: "I opened the dataset {title}", back: "Back", changed: "The page changed to the dataset {title}" },
     cs: { ask: "Napište otázku", send: "Odeslat", stop: "Zastavit", stopped: "Odpověď jste zastavili.",
-      tools: "Živá data, která smí asistent číst", thinking: "Hledám…",
+      tools: "Živá data, která smí asistent číst",
       script: "Skript, který asistent spustil", failed: "Odpověď se nepodařilo načíst. Zkuste to znovu.",
       offline: "Službu se nepodařilo zastihnout. Zkontrolujte připojení a zkuste to znovu.",
       busy: "Položili jste mnoho otázek najednou. Chvíli počkejte a zkuste to znovu.",
@@ -1319,7 +1319,8 @@
     var dots = box.appendChild(el("span", "jc-dots"));
     dots.setAttribute("aria-hidden", "true");
     for (var i = 0; i < 3; i++) dots.appendChild(el("i"));
-    var now = box.appendChild(el("p", "jc-now", w.thinking));
+    // Until the server's first stage: the words of that stage, so the line never jumps (T-7789).
+    var now = box.appendChild(el("p", "jc-now", JCRender.stage({ stage: "understanding" }, lang)));
     now.setAttribute("role", "status");
     var clock = box.appendChild(el("span", "jc-elapsed"));
     clock.setAttribute("aria-hidden", "true");

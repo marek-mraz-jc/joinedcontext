@@ -2,6 +2,8 @@
 # Which ci.yml jobs a change needs: reads the changed paths (one per line) and prints
 # `job=true|false` lines, to $GITHUB_OUTPUT when set. Without a usable base (a dispatch, a new
 # branch, a base git cannot reach) every job runs.
+# `assistant` says whether the change needs the pre-production assistant gate on jc-dev
+# (.github/assistant-gate-paths.txt, read by assistant-gate.py; T-7788); it is no ci job.
 # `ship` says whether the push changes what the jc image holds (ci.yml builds and promotes one on
 # main and ship-proof/** only). With REUSE=1 (every push) a check job whose exact name already
 # concluded success in another ci run of this same commit (a fast-forward of a branch head ci
@@ -55,6 +57,9 @@ map() {
 }
 
 all() { for j in $JOBS; do echo "$j=true"; done; }
+
+# assistant: changed paths on stdin -> `assistant=true|false` (T-7788)
+assistant() { python3 "$(dirname "$0")/assistant-gate.py" classify; }
 
 # trunk <ref>: the refs that keep their own base (`before`): each merged head is checked against
 # the head before it
@@ -208,6 +213,8 @@ if [ "${1:-}" = --selftest ]; then
   check 'deploy/components/jc/images.yaml\ncrates/antares/crates/antares-broker/src/lib.rs' 'root antares deploy'
   [ "$(printf 'deploy/components/jc/images.yaml\n' | map | ship)" = ship=false ] || { echo "FAIL: a pin ships"; exit 1; }
   check '.github/scripts/changes.sh' "$JOBS"
+  [ "$(printf 'vendor/joinedcontext-platform/crates/assistant/src/lib.rs\n' | assistant)" = assistant=true ] \
+    && [ "$(printf 'docs/a.md\n' | assistant)" = assistant=false ] || { echo "FAIL: assistant"; exit 1; }
   for r in refs/heads/jc-portal-1 refs/heads/main refs/heads/ship-proof/x; do trunk "$r" || { echo "FAIL: trunk $r"; exit 1; }; done
   for r in refs/heads/jc-ui-node24 refs/pull/1/merge; do ! trunk "$r" || { echo "FAIL: branch $r"; exit 1; }; done
   [ "$(printf 'root=false\nui=true\nimage=false\n' | ship)" = ship=true ] || { echo "FAIL: ship ui"; exit 1; }
@@ -243,8 +250,10 @@ fi
 if [ -z "$base" ] || [ "$base" = "$zero" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
   echo "no base: every job runs"
   lines=$(all)
+  echo assistant=true | tee -a "$out"
 else
   lines=$(git diff --name-only "$base" HEAD | map)
+  git diff --name-only "$base" HEAD | assistant | tee -a "$out"
 fi
 echo "$lines" | ship | tee -a "$out"
 if [ "${REUSE:-0}" = 1 ]; then

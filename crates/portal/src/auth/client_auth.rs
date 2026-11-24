@@ -226,13 +226,20 @@ mod tests {
         assert_eq!(wait(&[]), 5);
         assert_eq!(wait(&[("retry-after", "Wed, 21 Oct 2026 07:28:00 GMT")]), 5);
         assert_eq!(wait(&[("retry-after", "3600")]), 60);
-        // A value that is not text is no wait at all and falls back to the default.
+        assert_eq!(wait(&[("retry-after", " 9 ")]), 9);
+        assert_eq!(wait(&[("retry-after", "-3")]), 5);
+        // A value that is no text falls through to the next header, then to the default.
         let mut opaque = reqwest::header::HeaderMap::new();
         opaque.insert(
             "retry-after",
             reqwest::header::HeaderValue::from_bytes(b"\xff7").expect("bytes"),
         );
         assert_eq!(paced_wait(&opaque).as_secs(), 5);
+        opaque.insert(
+            "x-ratelimit-reset",
+            reqwest::header::HeaderValue::from_static("11"),
+        );
+        assert_eq!(paced_wait(&opaque).as_secs(), 11);
     }
 
     /// T-4424: a call answered 429 is made again, built anew each time, and after five retries
@@ -257,7 +264,7 @@ mod tests {
         let answer = paced(|| {
             built += 1;
             let request = http.get(realm.uri());
-            async { request.send().await.map_err(|err| err.to_string()) }
+            async { Ok(request.send().await.expect("the mock answers")) }
         })
         .await
         .expect("an answer");
@@ -270,7 +277,7 @@ mod tests {
             .await;
         let answer = paced(|| {
             let request = http.get(busy.uri());
-            async { request.send().await.map_err(|err| err.to_string()) }
+            async { Ok(request.send().await.expect("the mock answers")) }
         })
         .await
         .expect("an answer");
@@ -520,5 +527,11 @@ mod tests {
     fn its_debug_output_never_carries_the_secret() {
         let shown = format!("{:?}", ClientAuth::Secret("s3cr3t-do-not-leak".into()));
         assert!(!shown.contains("s3cr3t"), "{shown}");
+        assert_eq!(shown, "Secret([redacted])");
+        let path = format!(
+            "{:?}",
+            ClientAuth::Assertion(PathBuf::from("/var/run/token"))
+        );
+        assert_eq!(path, "Assertion(\"/var/run/token\")");
     }
 }

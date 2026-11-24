@@ -288,7 +288,8 @@ async fn erase(
 }
 
 /// Forgets the answers a deployment keeps (API/05 §3, T-4731), answered with
-/// `{"forgotten": n}`; an unknown project or deployment keeps none, so it answers 0.
+/// `{"forgotten": n}`. No answer is kept since T-7789, so it answers 0; the Portal still calls it
+/// after a re-index.
 async fn forget_answers(
     State(state): State<Arc<ChatState>>,
     Path((project, deployment)): Path<(String, String)>,
@@ -297,9 +298,8 @@ async fn forget_answers(
     if let Err(refused) = the_portal(&state, &headers).await {
         return *refused;
     }
-    let forgotten = state.answers.forget(&format!("{project}/{deployment}"));
-    tracing::info!(%project, %deployment, forgotten, "the deployment's kept answers were forgotten");
-    Json(json!({ "forgotten": forgotten })).into_response()
+    tracing::debug!(%project, %deployment, "no kept answers to forget");
+    Json(json!({ "forgotten": 0 })).into_response()
 }
 
 /// What a data subject's erasure searches the stored conversations for.

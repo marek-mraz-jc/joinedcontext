@@ -18,6 +18,7 @@
 "antares-ogc" = { lines = 99.70, functions = 99.17 }
 "antares-ops" = { lines = 99.00, functions = 99.00 }
 "antares-sta" = { lines = 100.00, functions = 99.78 }
+"antares-store" = { lines = 98.90, functions = 96.00 }
 "antares-views" = { lines = 99.88, functions = 99.30 }
 "antares-wasm" = { lines = 97.53, functions = 100.00 }
 "antares-ws" = { lines = 99.04, functions = 99.19 }
@@ -64,8 +65,9 @@
 "jc" = { lines = 89.83, functions = 83.79 }
 "jc-audit" = { lines = 100.00, functions = 100.00 }
 "jc-chart" = { lines = 99.75, functions = 100.00 }
+"jc-core" = { lines = 94.39, functions = 94.61 }
 "jc-dcat" = { lines = 97.56, functions = 97.76 }
-"jc-door" = { lines = 97.40, functions = 100.00 }
+"jc-door" = { lines = 97.78, functions = 100.00 }
 "jc-embedder" = { lines = 96.08, functions = 87.50 }
 "jc-http" = { lines = 100.00, functions = 100.00 }
 "jc-limits" = { lines = 100.00, functions = 100.00 }
