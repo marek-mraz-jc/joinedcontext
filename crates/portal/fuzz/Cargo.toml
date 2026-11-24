@@ -48,3 +48,20 @@ path = "fuzz_targets/auth_realms_parse.rs"
 test = false
 doc = false
 bench = false
+
+# The Portal's own patches (../Cargo.toml), one directory deeper: the git and crates.io sources
+# resolve to the monorepo's vendored copies, as they do for the Portal.
+[patch."https://github.com/marek-mraz-jc/joinedcontext-platform.git"]
+jc-core = { path = "../../../vendor/joinedcontext-platform/crates/jc-core" }
+jcctl = { path = "../../../vendor/joinedcontext-platform/crates/jcctl" }
+context-gateway = { path = "../../../vendor/joinedcontext-platform/crates/context-gateway" }
+
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../../vendor/ngsild/crates/antares-ql" }
+ngsild-jsonld = { path = "../../../vendor/ngsild/crates/antares-jsonld" }
+ngsild-matcher = { path = "../../../vendor/ngsild/crates/antares-matcher" }
+ngsild-model = { path = "../../../vendor/ngsild/crates/antares-model" }
+
+[patch.crates-io]
+rstar = { path = "../../antares/vendor/rstar" }
+geo-types = { path = "../../antares/vendor/geo-types" }
