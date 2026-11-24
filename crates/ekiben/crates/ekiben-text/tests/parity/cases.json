@@ -70214,6 +70214,18 @@
   }
  },
  {
+  "name": "parse_log rfc5424 a numeric-offset timestamp on a day the month lacks, run into the hostname",
+  "processor": {
+   "parse_log": {
+    "format": "syslog_rfc5424"
+   }
+  },
+  "input": "<1>1 2003-02-30T05:14:15+01:00x - - - - -",
+  "expected": {
+   "text": "ERROR: parsing time \"2003-02-30T05:14:15+01:00\": day out of range [col 30]\n"
+  }
+ },
+ {
   "name": "parse_log rfc5424 a timestamp with a leap second",
   "processor": {
    "parse_log": {
