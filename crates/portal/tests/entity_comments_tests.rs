@@ -508,6 +508,105 @@ async fn comments_whose_database_is_down_are_a_503() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
     let (status, problem) = call(&state, READER, "GET", "/api/v1/notifications", None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    // a new comment reads the project's key from that database first
+    let (status, problem) = call(
+        &state,
+        READER,
+        "POST",
+        COMMENTS,
+        Some(json!({ "urn": URN, "text": "pm10 jumped" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+}
+
+#[tokio::test]
+async fn an_entity_holding_the_most_comments_refuses_one_more_with_a_409() {
+    let world = world().await;
+    let state = &world.state;
+    let max =
+        usize::try_from(joinedcontext_portal::entity_comments::MAX_PER_ENTITY).expect("a size");
+    for n in 0..max {
+        let text = format!("reading {n}");
+        let kept = state
+            .comments
+            .add(
+                joinedcontext_portal::entity_comments::Author {
+                    id: "sami.air",
+                    name: "Sami",
+                    subject: "f:1:sami.air",
+                },
+                joinedcontext_portal::entity_comments::NewComment {
+                    project: PROJECT,
+                    space: "air",
+                    urn: URN,
+                    text: &text,
+                    mentions: &[],
+                },
+            )
+            .await
+            .expect("the memory store answers");
+        assert!(kept.is_some(), "comment {n} is kept");
+    }
+    let (status, problem) = call(
+        state,
+        READER,
+        "POST",
+        COMMENTS,
+        Some(json!({ "urn": URN, "text": "one more" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    assert!(
+        problem
+            .to_string()
+            .contains("most comments it keeps (1000)"),
+        "{problem}"
+    );
+    // another entity of the same space still takes a comment
+    let other = "urn:ngsi-ld:AirQualityObserved:hel.fi:air:2";
+    Mock::given(method("GET"))
+        .and(path(format!("/cs/air/ngsi-ld/v1/entities/{other}")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "id": other, "type": "AirQualityObserved" })),
+        )
+        .mount(&world.gateway)
+        .await;
+    let (status, made) = call(
+        state,
+        READER,
+        "POST",
+        COMMENTS,
+        Some(json!({ "urn": other, "text": "one more" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+}
+
+#[tokio::test]
+async fn a_blank_display_name_signs_the_comment_with_the_username() {
+    let world = world().await;
+    let state = &world.state;
+    let blank = common::REALM.person_token_with(
+        "portal-api",
+        "portal-api",
+        "sami.air",
+        &[],
+        json!({ "name": "   " }),
+    );
+    let request = Request::builder()
+        .method("POST")
+        .uri(COMMENTS)
+        .header(header::AUTHORIZATION, format!("Bearer {blank}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "urn": URN, "text": "signed by my username" }).to_string(),
+        ))
+        .expect("a request");
+    let (status, made) = answer(state, request).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    assert_eq!(made["authorName"], READER, "{made}");
 }
 
 #[tokio::test]

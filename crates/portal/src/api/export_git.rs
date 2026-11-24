@@ -280,7 +280,23 @@ pub async fn archive(
 
 #[cfg(test)]
 mod tests {
-    use super::{bundle_head, within_import};
+    use super::{bundle_head, stored_zip, within_import};
+    use crate::error::ApiError;
+
+    /// Two entries under one path are refused, never an archive whose second file hides the
+    /// first.
+    #[test]
+    fn an_archive_with_one_path_twice_is_refused() {
+        let twice = [
+            ("project.yaml".to_owned(), b"a".to_vec()),
+            ("project.yaml".to_owned(), b"b".to_vec()),
+        ];
+        assert!(
+            matches!(stored_zip(&twice), Err(ApiError::Internal(m)) if m.contains("archive entry failed"))
+        );
+        let once = stored_zip(&twice[..1]).expect("one entry is an archive");
+        assert_eq!(&once[..2], b"PK");
+    }
 
     /// F-R2POR2-023 (T-6226): an export is refused once its bundles add up past what an import
     /// reads back, naming the limit, and passes below it.

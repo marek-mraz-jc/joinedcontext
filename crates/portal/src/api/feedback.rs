@@ -99,7 +99,7 @@ pub fn scrub(text: &str) -> String {
 /// The page without its query and fragment, which can carry a name or a filter value, and as a
 /// path alone: a part holding anything but `A-Z a-z 0-9 / _ . ~ % -`, or an address, is kept as
 /// `_`, so the page is one line wherever it is written (the board's task file, T-3272).
-fn page_of(page: &str) -> Result<String, ApiError> {
+pub fn page_of(page: &str) -> Result<String, ApiError> {
     let page = page.split(['?', '#']).next().unwrap_or_default().trim();
     if !page.starts_with('/') || page.starts_with("//") || page.len() > MAX_PAGE {
         return Err(ApiError::Invalid {
@@ -119,7 +119,8 @@ fn page_of(page: &str) -> Result<String, ApiError> {
     Ok(parts.join("/"))
 }
 
-fn screenshot_of(data: &str) -> Result<Vec<u8>, ApiError> {
+/// The PNG bytes of a `data:image/png;base64,` URL of at most 2 MB, refused naming the field.
+pub fn screenshot_of(data: &str) -> Result<Vec<u8>, ApiError> {
     let invalid = |why: &str| ApiError::Invalid {
         detail: format!("screenshot {why}"),
         errors: vec!["screenshot".into()],
@@ -196,9 +197,9 @@ pub async fn send_feedback(
             wait.div_ceil(60)
         ))
         .into_response();
-        if let Ok(value) = HeaderValue::from_str(&wait.to_string()) {
-            refused.headers_mut().insert(header::RETRY_AFTER, value);
-        }
+        refused
+            .headers_mut()
+            .insert(header::RETRY_AFTER, HeaderValue::from(wait));
         return Ok(refused);
     }
     let id = state

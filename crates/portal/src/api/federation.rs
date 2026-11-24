@@ -416,7 +416,8 @@ mod tests {
 
     /// UI-27: a manifest that names no space, no catalogue, no target or no need still is a node
     /// of its own, with no edge drawn for what it does not name; a registration without
-    /// `federation` authenticates as its ServiceAccount, and a localized title keeps every locale.
+    /// `federation` authenticates as its ServiceAccount, a localized title keeps every locale and a
+    /// plain one is the English title.
     #[test]
     fn what_a_manifest_does_not_name_draws_no_edge() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
@@ -424,7 +425,9 @@ mod tests {
         space["metadata"]["title"] = json!({ "en": "Air", "sk": "Ovzdušie" });
         space["status"] = json!({ "phase": "Live" });
         put(&state, space);
-        put(&state, manifest("Endpoint", "loose", json!({})));
+        let mut loose = manifest("Endpoint", "loose", json!({}));
+        loose["metadata"]["title"] = json!("Open door");
+        put(&state, loose);
         put(&state, manifest("Pipeline", "idle", json!({})));
         put(
             &state,
@@ -488,6 +491,12 @@ mod tests {
         assert_eq!(air.phase.as_deref(), Some("Live"));
         assert_eq!(air.title.get("sk").map(String::as_str), Some("Ovzdušie"));
         assert_eq!(air.title.len(), 2);
+        // a plain title is the English one
+        assert_eq!(
+            node("Endpoint/loose").title,
+            BTreeMap::from([("en".to_owned(), "Open door".to_owned())])
+        );
+        assert!(node("Pipeline/idle").title.is_empty());
         assert_eq!(node("Pipeline/idle").health, NodeHealth::Unknown);
     }
 }

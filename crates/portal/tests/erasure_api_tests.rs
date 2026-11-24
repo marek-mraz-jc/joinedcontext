@@ -113,6 +113,11 @@ const TRIP: &str = "urn:ngsi-ld:Trip:hel.fi:trips:7";
 /// The space `trips` read through a forge holding its model and a gateway holding the subject's
 /// one Trip with its history: what an export and an erasure read before they answer.
 async fn surfaced(state: AppState, gateway: &MockServer) -> AppState {
+    surfaced_with(state, gateway, LINKML).await
+}
+
+/// [`surfaced`] with a forge holding `linkml` as the space's model.
+async fn surfaced_with(state: AppState, gateway: &MockServer, linkml: &str) -> AppState {
     use joinedcontext_portal::auth::client_auth::ClientAuth;
     use joinedcontext_portal::reconciler::drift::Watch;
     let shako = common::forge().await;
@@ -120,7 +125,7 @@ async fn surfaced(state: AppState, gateway: &MockServer) -> AppState {
         .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({ "Sha": "blob-trips", "Content": common::encode(LINKML) })),
+                .set_body_json(json!({ "Sha": "blob-trips", "Content": common::encode(linkml) })),
         )
         .mount(&shako)
         .await;
@@ -328,6 +333,44 @@ async fn an_export_without_what_it_needs_says_what_is_missing() {
     assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
     assert!(answer.text.contains("has no data model"), "{}", answer.text);
 
+    // a model whose classes name no data subject: 400 naming the annotation
+    let plain = surfaced_with(
+        state.clone(),
+        &gateway,
+        "id: https://example.org/trips\nname: trips\nslots:\n  rider:\n    range: string\nclasses:\n  Trip:\n    slots: [rider]\n",
+    )
+    .await;
+    let answer = send(&plain, "anna", "POST", &uri, body()).await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+    assert!(
+        answer.text.contains("names no data subject"),
+        "{}",
+        answer.text
+    );
+    assert!(answer.text.contains("dataSubjectRef"), "{}", answer.text);
+
+    // a subject no record can hold, or a blank reason: 400 before anything is read
+    for (subject, reason) in [
+        ("", "Art. 15 request 9"),
+        ("r\u{7}42", "Art. 15"),
+        ("r-42", "  "),
+    ] {
+        let answer = send(
+            &state,
+            "anna",
+            "POST",
+            &uri,
+            Some(json!({ "subject": subject, "reason": reason })),
+        )
+        .await;
+        assert_eq!(
+            answer.status,
+            StatusCode::BAD_REQUEST,
+            "{subject:?}: {}",
+            answer.text
+        );
+    }
+
     // no key to hash the subject with: 503 naming JC_PORTAL_ERASURE_KEY
     let mut keyless = state.clone();
     let mut config = (*keyless.config).clone();
@@ -482,6 +525,25 @@ async fn the_proposer_never_approves_and_the_approver_types_the_proposals_subjec
         "the answer never echoes the value: {}",
         other.text
     );
+
+    // a subject no record can hold is refused before the log is read
+    for bad in ["", "   ", "r\"42", "r\\42"] {
+        let typed = send(
+            &state,
+            "boris",
+            "POST",
+            &approve,
+            Some(json!({ "subject": bad })),
+        )
+        .await;
+        assert_eq!(
+            typed.status,
+            StatusCode::BAD_REQUEST,
+            "{bad:?}: {}",
+            typed.text
+        );
+        assert!(typed.text.contains("no quote, backslash"), "{}", typed.text);
+    }
 
     let unknown = send(
         &state,

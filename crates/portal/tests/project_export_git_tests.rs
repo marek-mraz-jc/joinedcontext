@@ -320,6 +320,31 @@ async fn an_app_building_from_outside_the_forge_is_not_exported() {
     );
 }
 
+/// A registry entry that names no Organization cannot travel: the export says the mirror has
+/// not caught up rather than writing an entry the target cannot place.
+#[tokio::test]
+async fn a_project_whose_registry_entry_names_no_organization_is_not_exported() {
+    let (_server, state) = world(HEAD).await;
+    state.mirror.upsert(envelope(
+        "Project",
+        "ovzdusie",
+        ORG_NAMESPACE,
+        json!({ "repository": { "name": "ovzdusie" }, "ref": "main" }),
+    ));
+    let answer = export(&state, steward(), "?format=git").await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("registry entry of 'ovzdusie'"),
+        "{}",
+        answer.text
+    );
+}
+
 /// What the forge hands back as a bundle but is none is an internal error, never a zip that
 /// an import would refuse later.
 #[tokio::test]
