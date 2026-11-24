@@ -4228,7 +4228,7 @@ async fn handle_logout_request(
     let clear_cookie = sign_in_cookie("sso", "", 0);
 
     if let Some(target_uri) = post_logout {
-        // validate_post_logout_redirect_uri parsed it already.
+        // The check above matched it trimmed; a target only valid once trimmed fails here.
         let Ok(mut url) = url::Url::parse(target_uri) else {
             return Err(KaisatsuError::BadRequest(
                 "invalid post_logout_redirect_uri".into(),
@@ -4323,6 +4323,17 @@ mod auth_cookie_tests {
 mod tests {
     use super::*;
     use kaisatsu_store_memory::MemoryStore;
+
+    /// The invariant the session-cookie `let ... else` arms rely on (login handlers.rs, logout):
+    /// a cookie of a random handle, or the clearing one, is always a valid header value.
+    #[test]
+    fn every_sign_in_cookie_is_a_valid_header_value() {
+        for _ in 0..1000 {
+            let value = sign_in_cookie("sso", &random_handle_256(), i64::MAX);
+            assert!(header::HeaderValue::from_str(&value).is_ok(), "{value}");
+        }
+        assert!(header::HeaderValue::from_str(&sign_in_cookie("sso", "", 0)).is_ok());
+    }
 
     fn state() -> OidcState {
         OidcState {

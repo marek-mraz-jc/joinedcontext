@@ -649,6 +649,32 @@ fn refused(e: reqwest::Error) -> KaisatsuError {
 mod tests {
     use super::*;
 
+    /// The invariant guard.rs relies on where it reads a refusal's reason: validate_url refuses
+    /// every malformed, private or unlisted URL with OutboundRefused, never another error.
+    #[test]
+    fn validate_url_refuses_only_with_outbound_refused() {
+        let guard = OutboundGuard::new(OutboundPolicy::default());
+        let listed = ["only.example".to_owned()];
+        for raw in [
+            "",
+            "not a url",
+            "ftp://x.example/",
+            "http://x.example/",
+            "https:///nohost",
+            "https://127.0.0.1/",
+            "https://10.0.0.1/",
+            "https://169.254.169.254/",
+            "https://[::1]/",
+            "https://localhost/",
+            "https://other.example/",
+        ] {
+            match guard.validate_url(raw, Some(&listed)) {
+                Ok(_) | Err(KaisatsuError::OutboundRefused(_)) => {}
+                Err(other) => panic!("{raw}: {other:?}"),
+            }
+        }
+    }
+
     /// A resolver that never answers is cut at the outbound deadline, and one that answers
     /// with no address is refused, never dialled.
     #[tokio::test(start_paused = true)]

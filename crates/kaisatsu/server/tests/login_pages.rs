@@ -927,11 +927,14 @@ async fn an_authenticator_link_alone_enrols_the_app_and_keeps_the_password() {
         .unwrap()
         .to_owned();
     let session = extract_hidden_input(&html, "session_code");
-    let secret = store
+    let opened = store
         .get_auth_session_by_id("dev", &session)
         .await
         .unwrap()
-        .unwrap()
+        .unwrap();
+    // An action session always names the link's person (the form's account label needs it).
+    assert_eq!(opened.user_id.as_deref(), Some(member.id.as_str()));
+    let secret = opened
         .pending_totp_secret
         .expect("the form generated a secret");
     let realm = store.get_realm("dev").await.unwrap().unwrap();
