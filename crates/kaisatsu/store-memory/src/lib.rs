@@ -4377,6 +4377,47 @@ mod tests {
         assert_eq!(store.list_client_scopes("q").await.expect("q").len(), 2);
     }
 
+    fn auth_session(realm: &str, id: &str) -> AuthSession {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "realmId": realm, "handleHash": format!("{realm}-{id}"),
+            "clientId": "portal", "redirectUri": "https://x.test/cb", "responseType": "code",
+            "responseMode": "query", "scope": "openid", "codeChallenge": "c",
+            "codeChallengeMethod": "S256", "csrfToken": "t", "stepStateJson": "{}",
+            "acrAchieved": "pwd", "createdAt": "2026-11-14T00:00:00Z",
+            "expiresAt": (TimestampTz::now() + SignedDuration::from_hours(1)).to_rfc3339()
+        }))
+        .expect("auth session")
+    }
+
+    /// An auth session is replaced by its id within its realm only.
+    #[tokio::test]
+    async fn auth_sessions_are_kept_per_realm_and_id() {
+        let store = MemoryStore::default();
+        for (realm, id) in [(R, "a"), (R, "b"), ("q", "a")] {
+            store
+                .put_auth_session(auth_session(realm, id))
+                .await
+                .expect("put");
+        }
+        let mut again = auth_session(R, "a");
+        again.scope = "openid profile".into();
+        store.put_auth_session(again).await.expect("again");
+        let get = |realm: &'static str, id: &'static str| {
+            let store = &store;
+            async move {
+                store
+                    .get_auth_session_by_id(realm, id)
+                    .await
+                    .expect("get")
+                    .map(|s| s.scope)
+            }
+        };
+        assert_eq!(get(R, "a").await.as_deref(), Some("openid profile"));
+        assert_eq!(get(R, "b").await.as_deref(), Some("openid"));
+        assert_eq!(get("q", "a").await.as_deref(), Some("openid"));
+        assert_eq!(get("q", "b").await, None);
+    }
+
     /// A rename may take a client id another realm uses; it renames this client's service
     /// account and no other person.
     #[tokio::test]
