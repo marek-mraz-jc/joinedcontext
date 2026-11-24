@@ -7861,6 +7861,420 @@ output_error{stream="kpi"} 6
         }
     }
 
+    fn forge_at_dead() -> Arc<ShakoClient> {
+        Arc::new(
+            ShakoClient::new(DEAD.parse().expect("url"), "o", "r", "token")
+                .expect("a forge client"),
+        )
+    }
+
+    fn status_of_in(mirror: &Mirror, kind: &str, name: &str) -> crate::resource::Status {
+        mirror
+            .find(|envelope| envelope.kind == kind && envelope.metadata.name == name)
+            .and_then(|envelope| envelope.status)
+            .expect("the resource and its status")
+    }
+
+    /// A forge, a kube API or a secret store that answers every call with `status`.
+    async fn answering(status: u16) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(status).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn forge_at(server: &MockServer) -> Arc<ShakoClient> {
+        Arc::new(
+            ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "token")
+                .expect("a forge client"),
+        )
+    }
+
+    fn space(project: &str, name: &str, spec: serde_json::Value) -> ResourceEnvelope {
+        let mut envelope = envelope("ContextSpace", project, name);
+        envelope.spec = spec;
+        envelope
+    }
+
+    /// OpenBao holding `holds` (name, value) under the pod's login.
+    async fn openbao(holds: &[(&str, &str)]) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/kubernetes/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "auth": { "client_token": "a-session-token", "lease_duration": 3600, "renewable": true }
+            })))
+            .mount(&server)
+            .await;
+        for (name, value) in holds {
+            Mock::given(method("GET"))
+                .and(path(format!("/v1/secret/data/{name}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "data": { "data": { "secret": value }, "metadata": { "version": 1 } }
+                })))
+                .mount(&server)
+                .await;
+        }
+        server
+    }
+
+    fn resolver(bao: &MockServer, scratch: &Scratch) -> crate::pipeline_secrets::Resolver {
+        let jwt = scratch.path().join("sa-token");
+        std::fs::write(&jwt, "a.service.account.token").expect("the token");
+        crate::pipeline_secrets::Resolver::new(crate::pipeline_secrets::Backend::OpenBao {
+            address: bao.uri(),
+            role: "portal".to_owned(),
+            jwt_path: jwt,
+        })
+    }
+
+    /// DM-121: each space's personal-data key resolves through its reference; a block that is
+    /// no block, a reference the backend does not hold and a key shorter than 32 bytes each
+    /// leave that space without a key and say so naming the reference, never the value. A
+    /// cluster that refuses the gateway's Secret keeps the keys for the subject lookup.
+    #[tokio::test]
+    async fn each_spaces_personal_data_key_resolves_or_says_why_not() {
+        const KEY: &str = "0123456789abcdef0123456789abcdef-long-enough";
+        let bao = openbao(&[("space-key", KEY), ("short-key", "too-short")]).await;
+        let scratch = Scratch::new("t7806-keys").expect("scratch");
+        let mirror = Mirror::new();
+        let key_ref = |name: &str| json!({ "personalData": { "keyRef": { "name": name } } });
+        mirror.upsert(space("city", "plain", json!({})));
+        mirror.upsert(space("city", "broken", json!({ "personalData": "a key" })));
+        mirror.upsert(space("city", "unheld", key_ref("missing-key")));
+        mirror.upsert(space("city", "short", key_ref("short-key")));
+        mirror.upsert(space("city", "kept", key_ref("space-key")));
+        let kube = answering(500).await;
+        let keys = Arc::new(crate::personal_keys::Keys::default());
+        let syncer = bare_syncer()
+            .with_personal_keys(Arc::clone(&keys), Some("jc-gateway".to_owned()))
+            .with_pipeline_secrets(resolver(&bao, &scratch))
+            .with_credential_secrets(
+                Arc::new(
+                    crate::apps::kube::KubeClient::with_token(&kube.uri(), "kube-token")
+                        .expect("kube"),
+                ),
+                "jc",
+            );
+        let (_, log) =
+            crate::reconciler::logged(syncer.resolve_personal_keys(&mirror, scratch.path())).await;
+        assert!(keys.of("city", "kept").is_some());
+        for space in ["plain", "broken", "unheld", "short"] {
+            assert!(keys.of("city", space).is_none(), "{space} holds no key");
+        }
+        for line in [
+            "a space's personalData block is not one",
+            "a space's personal-data key does not resolve",
+            "secret_ref=missing-key",
+            "a space's personal-data key is shorter than 32 bytes",
+            "secret_ref=short-key",
+            "the gateway's personal-data keys were not written",
+        ] {
+            assert!(log.contains(line), "{line} in {log}");
+        }
+        assert!(!log.contains(KEY) && !log.contains("too-short"), "{log}");
+
+        // Without a cluster the keys reach the subject lookup alone, and the log says so.
+        let alone = bare_syncer()
+            .with_personal_keys(Arc::clone(&keys), Some("jc-gateway".to_owned()))
+            .with_pipeline_secrets(resolver(&bao, &scratch));
+        let (_, log) =
+            crate::reconciler::logged(alone.resolve_personal_keys(&mirror, scratch.path())).await;
+        assert!(log.contains(KEYS_LOOKUP_ONLY), "{log}");
+        assert!(keys.of("city", "kept").is_some());
+
+        // A cluster that takes the Secret: no warning.
+        let taking = answering(200).await;
+        let written = bare_syncer()
+            .with_personal_keys(Arc::clone(&keys), Some("jc-gateway".to_owned()))
+            .with_pipeline_secrets(resolver(&bao, &scratch))
+            .with_credential_secrets(
+                Arc::new(
+                    crate::apps::kube::KubeClient::with_token(&taking.uri(), "kube-token")
+                        .expect("kube"),
+                ),
+                "jc",
+            );
+        let (_, log) =
+            crate::reconciler::logged(written.resolve_personal_keys(&mirror, scratch.path())).await;
+        assert!(!log.contains("were not written"), "{log}");
+        assert!(!taking
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+
+        // No secret backend: every reference fails to resolve, and no space keeps a key.
+        let unbacked = bare_syncer().with_personal_keys(Arc::clone(&keys), None);
+        let (_, log) =
+            crate::reconciler::logged(unbacked.resolve_personal_keys(&mirror, scratch.path()))
+                .await;
+        assert!(keys.of("city", "kept").is_none());
+        assert!(log.contains("secret_ref=space-key"), "{log}");
+        assert!(
+            !log.contains(KEYS_LOOKUP_ONLY),
+            "no key, nothing to say: {log}"
+        );
+    }
+
+    /// MF-44: a sync source's webhook block that is no block, or whose secret does not resolve
+    /// or has no backend to resolve from, leaves the source shut to the webhook and says why.
+    #[tokio::test]
+    async fn a_webhook_secret_that_does_not_resolve_leaves_its_source_shut() {
+        let source = |name: &str, webhook: serde_json::Value| {
+            let mut envelope = envelope("SyncSource", "city", name);
+            envelope.spec = json!({ "webhook": webhook });
+            envelope
+        };
+        let mirror = Mirror::new();
+        mirror.upsert(source("broken", json!("a secret")));
+        mirror.upsert(source(
+            "unheld",
+            json!({ "secretRef": { "name": "hook-secret" } }),
+        ));
+        let polled = envelope("SyncSource", "city", "polled");
+        mirror.upsert(polled);
+        let scratch = Scratch::new("t7806-hooks").expect("scratch");
+        let bao = openbao(&[]).await;
+        let accepted = Arc::new(crate::sync::webhook_secrets::Accepted::new());
+        let syncer = bare_syncer()
+            .with_webhook_secrets(Arc::clone(&accepted))
+            .with_pipeline_secrets(resolver(&bao, &scratch));
+        let (_, log) =
+            crate::reconciler::logged(syncer.resolve_webhook_secrets(&mirror, scratch.path()))
+                .await;
+        assert!(accepted.is_empty());
+        assert!(
+            log.contains("the webhook block of a sync source is not one"),
+            "{log}"
+        );
+        assert!(
+            log.contains("a sync source's webhook secret does not resolve"),
+            "{log}"
+        );
+        assert!(log.contains("secret=hook-secret"), "{log}");
+
+        let unbacked = bare_syncer().with_webhook_secrets(Arc::clone(&accepted));
+        let (_, log) =
+            crate::reconciler::logged(unbacked.resolve_webhook_secrets(&mirror, scratch.path()))
+                .await;
+        assert!(accepted.is_empty());
+        assert!(log.contains("this Portal has no secret backend"), "{log}");
+    }
+
+    fn app(name: &str, lifecycle: &str, build: Option<serde_json::Value>) -> ResourceEnvelope {
+        let mut envelope = envelope("App", "city", name);
+        envelope.spec = json!({ "lifecycle": lifecycle });
+        if let Some(status) = envelope.status.as_mut() {
+            status.build = build.map(|build| serde_json::from_value(build).expect("a build"));
+        }
+        envelope
+    }
+
+    /// AP-72 and AP-13a: an App whose build is not on this host keeps the previous one serving
+    /// and says `BuildMissing`; a published App with no build at all reads `NoBuild` and is
+    /// warned of once while it stands, and the warning clears when it goes.
+    #[tokio::test]
+    async fn an_app_without_its_build_on_the_host_says_so() {
+        let cache = Scratch::new("t7806-builds").expect("scratch");
+        let build = json!({
+            "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "commit": "abc123",
+            "sdkVersion": "1.0.0",
+            "builtAt": "2026-11-24T10:00:00Z"
+        });
+        let mirror = Arc::new(Mirror::new());
+        mirror.upsert(app("parking", "published", Some(build)));
+        mirror.upsert(app("draft", "published", None));
+        mirror.upsert(app("idea", "draft", None));
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+            .with_apps_cache_dir(Some(cache.path().display().to_string()));
+        let transitions = super::super::transitions::Transitions::of(&mirror);
+        let log = crate::reconciler::logged(async { syncer.report_missing_builds(&transitions) })
+            .await
+            .1;
+        let reason = |name: &str| {
+            status_of_in(&mirror, "App", name)
+                .conditions
+                .first()
+                .and_then(|condition| condition.reason.clone())
+        };
+        assert_eq!(reason("parking").as_deref(), Some("BuildMissing"));
+        assert_eq!(reason("draft").as_deref(), Some("NoBuild"));
+        assert_eq!(
+            reason("idea").as_deref(),
+            Some("Before"),
+            "a draft serves nothing"
+        );
+        assert!(
+            log.contains("the build the manifest names is not on the host"),
+            "{log}"
+        );
+        assert!(
+            log.contains("a published App has no build to serve"),
+            "{log}"
+        );
+
+        // The same App unbuilt next run is not news; once it goes, the warning clears.
+        let again = crate::reconciler::logged(async { syncer.report_missing_builds(&transitions) })
+            .await
+            .1;
+        assert!(
+            !again.contains("a published App has no build to serve"),
+            "{again}"
+        );
+        mirror.remove(&crate::resource::ResourceKey {
+            namespace: "city".to_owned(),
+            kind: "App".to_owned(),
+            name: "draft".to_owned(),
+        });
+        let cleared =
+            crate::reconciler::logged(async { syncer.report_missing_builds(&transitions) })
+                .await
+                .1;
+        assert!(
+            cleared.contains("published Apps with no build to serve: some no longer stand"),
+            "{cleared}"
+        );
+    }
+
+    /// PF-31: an Organization the artifact store refused says so on its status; one that is not
+    /// in the mirror is left alone, and a registry that cannot be read issues nothing.
+    #[tokio::test]
+    async fn an_artifact_store_refusal_marks_the_organization() {
+        let mirror = Arc::new(Mirror::new());
+        let mut organization = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        organization.spec = json!({});
+        mirror.upsert(organization);
+        let store = crate::artifact_store::Client::new(crate::artifact_store::Settings {
+            endpoint: DEAD.to_owned(),
+            bucket: "artifacts".to_owned(),
+            region: "eu".to_owned(),
+            root_access_key: "root".to_owned(),
+            root_secret_key: "root-secret".to_owned(),
+        })
+        .expect("a store client");
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+            .with_artifact_store(Arc::new(store), Some(dead_pool()));
+        let transitions = super::super::transitions::Transitions::of(&mirror);
+        syncer.mark_artifact_store(&transitions, "bbsk", "the store answered 403");
+        syncer.mark_artifact_store(&transitions, "unknown", "never shown");
+        let marked = status_of_in(&mirror, "Organization", "bbsk");
+        assert_eq!(marked.conditions.len(), 1);
+        assert_eq!(marked.conditions[0].r#type, "ArtifactStoreCredentials");
+        assert_eq!(marked.conditions[0].reason.as_deref(), Some("StoreRefused"));
+        assert_eq!(
+            marked.conditions[0].message.as_deref(),
+            Some("the store answered 403")
+        );
+        assert!(mirror
+            .get(crate::permissions::ORG_NAMESPACE, "Organization", "unknown")
+            .is_none());
+
+        let (_, log) =
+            crate::reconciler::logged(syncer.converge_artifact_store(&transitions)).await;
+        assert!(
+            log.contains("the project registry was not read, so no artifact credential is issued"),
+            "{log}"
+        );
+    }
+
+    /// PF-41: an Organization that declares a domain is checked; a database that cannot store
+    /// the check is a line in the log and the Organization shows no state. One without a domain
+    /// is not checked.
+    #[tokio::test]
+    async fn a_domain_check_that_cannot_be_stored_shows_no_state() {
+        let mirror = Arc::new(Mirror::new());
+        let mut declared = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        declared.spec = json!({ "domain": "bb.sk" });
+        mirror.upsert(declared);
+        mirror.upsert(envelope(
+            "Organization",
+            crate::permissions::ORG_NAMESPACE,
+            "nodomain",
+        ));
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror)).with_domain_verification(
+            Arc::new(crate::domain_verification::Verifier::new(
+                dead_pool(),
+                crate::domain_verification::NetLookup::new().expect("a resolver"),
+                "portal.bb.sk",
+            )),
+        );
+        let (_, log) = crate::reconciler::logged(syncer.verify_domains()).await;
+        assert!(
+            log.contains("the domain verification was not stored"),
+            "{log}"
+        );
+        assert!(log.contains("organization=bbsk"), "{log}");
+        assert!(!log.contains("organization=nodomain"), "{log}");
+        assert!(status_of_in(&mirror, "Organization", "bbsk")
+            .domain_verification
+            .is_none());
+    }
+
+    /// PF-77 and T-6706: a project whose registry entry is gone has its repository archived,
+    /// and every repository gets its branch rules once; a forge that refuses either is said and
+    /// tried again next run, one that takes them is not asked again.
+    #[tokio::test]
+    async fn deleted_repositories_are_archived_and_branch_rules_set_once() {
+        for (status, archived, protected) in [(500, false, false), (200, true, true)] {
+            let forge = answering(status).await;
+            let mirror = Arc::new(Mirror::new());
+            mirror.set_repositories(BTreeMap::from([(
+                "gone".to_owned(),
+                "gone-repo".to_owned(),
+            )]));
+            let fresh = Mirror::new();
+            fresh.set_repositories(BTreeMap::from([(
+                "kept".to_owned(),
+                "kept-repo".to_owned(),
+            )]));
+            let syncer = Syncer::new(forge_at(&forge), Arc::clone(&mirror));
+            let (_, log) = crate::reconciler::logged(async {
+                syncer.archive_deleted_projects(&fresh).await;
+                syncer.protect_repositories(&fresh).await;
+            })
+            .await;
+            assert_eq!(
+                log.contains("a deleted project's repository is archived"),
+                archived,
+                "{log}"
+            );
+            assert_eq!(
+                log.contains("a deleted project's repository did not archive"),
+                !archived,
+                "{log}"
+            );
+            assert!(
+                !log.contains("project=kept "),
+                "a live project is not archived: {log}"
+            );
+            let held = syncer
+                .protected
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone();
+            assert_eq!(held.contains("kept-repo"), protected, "{log}");
+            assert_eq!(held.contains("r"), protected, "{log}");
+            assert_eq!(
+                log.contains("the repository's branch rules were not set"),
+                !protected,
+                "{log}"
+            );
+
+            let asked = forge.received_requests().await.unwrap_or_default().len();
+            syncer.protect_repositories(&fresh).await;
+            let again = forge.received_requests().await.unwrap_or_default().len();
+            assert_eq!(
+                again == asked,
+                protected,
+                "rules set once are not set again"
+            );
+        }
+    }
+
     const PIPELINE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: NAME\n  namespace: ovzdusie\nspec:\n  class: auto\n  period: 60s\n  source:\n    dataSourceRef:\n      kind: DataSource\n      name: hsl\n  compute:\n    kind: bloblang\n    bloblang: root = this\n  targetEndpoint: urn:ngsi-ld:Endpoint:example.org:ovzdusie:all\n";
 
     #[test]
