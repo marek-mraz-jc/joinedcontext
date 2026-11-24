@@ -62,7 +62,7 @@ where
 {
     let kept = KEPT
         .read()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(slug)
         .filter(|(at, age, _)| at.elapsed() < *age)
         .map(|(at, age, answer)| (answer.clone(), age.saturating_sub(at.elapsed())));
@@ -75,7 +75,9 @@ where
     } else {
         INCOMPLETE_MAX_AGE
     };
-    let mut kept = KEPT.write().unwrap_or_else(|e| e.into_inner());
+    let mut kept = KEPT
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if kept.len() >= KEPT_MAX && !kept.contains_key(slug) {
         kept.clear();
     }
@@ -523,6 +525,87 @@ pub fn router() -> axum::Router<AppState> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Past [`KEPT_MAX`] Endpoints the kept answers are dropped together, so an answer kept before
+    /// is built again; the kept set never grows past the cap.
+    #[tokio::test]
+    async fn past_the_cap_the_kept_answers_start_over() {
+        let builds = std::sync::atomic::AtomicUsize::new(0);
+        let build = |slug: String| {
+            let builds = &builds;
+            async move {
+                builds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let answer = EndpointStandards {
+                    slug,
+                    types: vec![],
+                    entity_type: None,
+                    standards: vec![],
+                    base: String::new(),
+                    served: vec![],
+                    licence: None,
+                    requests_per_minute: None,
+                };
+                (answer, true)
+            }
+        };
+        let slug = |n: usize| format!("t7658-cap-{n}");
+        kept_or_built(&slug(0), build(slug(0))).await;
+        kept_or_built(&slug(0), build(slug(0))).await;
+        assert_eq!(builds.load(std::sync::atomic::Ordering::SeqCst), 1, "kept");
+        for n in 1..=KEPT_MAX {
+            kept_or_built(&slug(n), build(slug(n))).await;
+        }
+        assert!(KEPT.read().expect("lock").len() <= KEPT_MAX);
+        let before = builds.load(std::sync::atomic::Ordering::SeqCst);
+        let (answer, age) = kept_or_built(&slug(0), build(slug(0))).await;
+        assert_eq!(answer.slug, slug(0));
+        assert_eq!(age, MAX_AGE);
+        assert_eq!(
+            builds.load(std::sync::atomic::Ordering::SeqCst),
+            before + 1,
+            "dropped with the rest, so built again"
+        );
+    }
+
+    /// The OData door's metadata is read only from a 200: a refused connection and a 500 are
+    /// both no metadata.
+    #[tokio::test]
+    async fn read_text_is_none_unless_the_endpoint_answers_200() {
+        let refused = Endpoint {
+            read: "http://127.0.0.1:1/".into(),
+            shown: String::new(),
+        };
+        assert_eq!(refused.read_text("odata/v4/$metadata").await, None);
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(500).set_body_string("<Edmx/>"))
+            .mount(&server)
+            .await;
+        let failing = Endpoint {
+            read: format!("{}/", server.uri()),
+            shown: String::new(),
+        };
+        assert_eq!(failing.read_text("odata/v4/$metadata").await, None);
+    }
+
+    /// A representation the Portal has no guide for lists no field and no example, and asks the
+    /// Endpoint nothing: `read` points at a port nothing listens on.
+    #[tokio::test]
+    async fn a_standard_without_a_guide_lists_nothing() {
+        let at = Endpoint {
+            read: "http://127.0.0.1:1/".into(),
+            shown: "https://data.example/".into(),
+        };
+        let entity = (
+            "AirQualityObserved".to_owned(),
+            json!({ "id": "x", "pm10": 3 }),
+        );
+        let guide = guide(&at, "wfs", Some(&entity)).await;
+        assert_eq!(guide.representation, "wfs");
+        assert!(guide.fields.is_empty());
+        assert!(guide.examples.is_empty());
+        assert_eq!(guide.first, None);
+    }
 
     #[tokio::test]
     async fn a_failing_gateway_is_asked_once_per_endpoint_in_the_short_window() {

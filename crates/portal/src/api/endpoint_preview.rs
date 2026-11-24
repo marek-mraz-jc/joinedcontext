@@ -402,7 +402,7 @@ pub async fn preview_ical(
 }
 
 /// The page as a Query Entities query: the type, the ids that align it, the window.
-fn query_of(request: &PreviewRequest) -> Result<String, String> {
+pub fn query_of(request: &PreviewRequest) -> Result<String, String> {
     jc_core::names::validate_entity_type(&request.entity_type)
         .map_err(|err| format!("type: {err}"))?;
     let limit = request.limit.unwrap_or(DEFAULT_PAGE);

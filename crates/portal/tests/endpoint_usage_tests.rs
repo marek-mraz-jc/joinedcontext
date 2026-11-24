@@ -229,6 +229,43 @@ async fn a_reader_sees_the_counts_of_the_endpoints_they_may_read_and_no_other() 
 
 /// T-6186: the calls of each kind of caller add up per Endpoint, an older gateway's line without a
 /// kind is `unknown`, and a kind the Portal does not know refuses the post whole.
+/// A usage database that does not answer is a 503 on the Endpoint's page, the project list and
+/// the export alike, never an empty chart that reads as no calls.
+#[tokio::test]
+async fn a_usage_database_that_is_down_is_a_503_never_zero_calls() {
+    // port 1 is privileged and nothing in a test container listens there
+    let down = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy("postgres://portal:portal@127.0.0.1:1/portal")
+        .expect("a lazy pool");
+    let state = state().await.with_db(down);
+    // a project of the registry, so its key is read from the database that is down
+    state.mirror.upsert(common::envelope(
+        "Project",
+        "mesto",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "hel" }),
+    ));
+    for uri in [
+        "/api/v1/projects/mesto/endpoints/air/usage?days=7",
+        "/api/v1/projects/mesto/usage/endpoints",
+        "/api/v1/projects/mesto/usage/endpoints/export?month=2026-11",
+    ] {
+        let answer = get(&state, "jana", uri).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{uri}: {}",
+            answer.text
+        );
+        assert!(
+            answer.text.contains("did not answer"),
+            "{uri}: {}",
+            answer.text
+        );
+    }
+}
+
 #[tokio::test]
 async fn the_usage_splits_by_kind_of_caller() {
     let state = state().await;

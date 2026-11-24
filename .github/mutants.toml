@@ -201,6 +201,13 @@ exclude_re = [
   'crates/embedder/src/model\.rs:\d+:\d+: replace \|\| with && in Engine::embed',
   # T-7539: tokenizers 0.23.2 defaults max_length to 512, which is MAX_TOKENS.
   'crates/embedder/src/model\.rs:\d+:\d+: delete field max_length from struct TruncationParams expression in Embedder::load',
+  # antares-store trait defaults (T-7595): each mutant replaces a default method's body with the very value that body
+  # returns (an empty answer, zero, None, the default standing, a no-op setter), so no driver can tell them apart.
+  'antares-store/src/lib\.rs:\d+:\d+: replace CurrentStateDriver::(outbox_peek|outbox_ack|outbox_retain|outbox_event|entity_type_names|entity_types_beside|remapped_id|entity_id_segments|entity_attr_pairs|retain_current|history_overrides|tenant_standing) -> .* with (Ok\(vec!\[\]\)|Ok\(0\)|Ok\(None\)|Ok\(Default::default\(\)\))$',
+  'antares-store/src/lib\.rs:\d+:\d+: replace TemporalDriver::(attr_instance_count|attr_instance_bytes|retain_history|drop_retained_history|retain_audit|versions|erase|purge_tenant) -> .* with (Ok\(0\)|Ok\(vec!\[\]\)|Ok\(Default::default\(\)\)|Ok\(\(\)\))$',
+  'antares-store/src/lib\.rs:\d+:\d+: replace (CurrentStateDriver::set_outbox|TemporalDriver::set_short_history) with \(\)$',
+  # antares-store NoTemporal::list answers Vec::new() already (T-7595).
+  'antares-store/src/lib\.rs:\d+:\d+: replace <impl TemporalDriver for NoTemporal>::list -> Result<Vec<Value>, NgsiError> with Ok\(vec!\[\]\)$',
   # antares-bus NatsBus::ensure_streams -> Ok(()): get_or_create keeps a stream that exists, and a
   # live-NATS test cannot delete the shared streams under the other tests (nextest runs the binaries
   # side by side), so only a fresh server tells; streams_and_bucket_carry_their_contract pins the
