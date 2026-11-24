@@ -558,6 +558,139 @@ async fn totp_wrong_replayed_and_combined() {
     }
 }
 
+#[tokio::test]
+async fn a_code_used_once_is_refused_in_the_code_step_of_another_sign_in() {
+    let (app, store) = app().await;
+    let now = jc_time::TimestampTz::now().as_second();
+    let code = steward_totp(&store, now).await;
+    let a = start(&app, "").await;
+    a.password(&app, STEWARD, STEWARD_PW).await;
+    let (st, _, html) = a.post(&app, &[("otp", &code)]).await;
+    assert!(
+        st == StatusCode::SEE_OTHER || page_id(&html) == "org-choice",
+        "{st} {html}"
+    );
+    // A second sign-in, password first, then the same code in its own step: the code step is
+    // shown again with the invalid-code message, and nothing signs in.
+    let b = start(&app, "").await;
+    let (_, _, html) = b.password(&app, STEWARD, STEWARD_PW).await;
+    assert!(html.contains("name=\"otp\""), "{html}");
+    let (st, h, html) = b.post(&app, &[("otp", &code)]).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(!is_code(st, &h));
+    assert!(
+        html.contains("name=\"otp\"") && html.contains("Invalid authenticator code"),
+        "{html}"
+    );
+    assert!(!html.contains("Invalid username or password"), "{html}");
+}
+
+#[tokio::test]
+async fn a_picked_language_stays_with_the_sign_in_and_a_realm_without_a_logo_has_none() {
+    let (app, _) = app().await;
+    let a = start(&app, "").await;
+    let (st, _, html) = get_with_cookie(
+        &app,
+        &format!("{}&kc_locale=de", a.url),
+        None,
+        Some(&a.cookie),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(html.contains("lang=\"de\""), "{html}");
+    // The next page of the same sign-in, without the picker: still German.
+    let (st, _, html) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        html.contains("lang=\"de\""),
+        "the picked language is kept: {html}"
+    );
+    // An unknown language is ignored, the kept one stays.
+    let (_, _, html) = get_with_cookie(
+        &app,
+        &format!("{}&kc_locale=xx", a.url),
+        None,
+        Some(&a.cookie),
+    )
+    .await;
+    assert!(html.contains("lang=\"de\""), "{html}");
+
+    let (st, _, body) = get(&app, "/realms/dev/login-resources/logo.svg", None).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+    assert!(!body.contains("<svg"));
+}
+
+#[tokio::test]
+async fn switching_to_a_passkey_from_the_password_step_keeps_the_named_person() {
+    let (app, _) = app().await;
+    let a = start(&app, "").await;
+    let (st, _, html) = a.post(&app, &[("username", MEMBER)]).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    let (st, _, html) = a.post(&app, &[("switch_to", "passkey")]).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(html.contains("webauthn"), "the passkey step: {html}");
+    // Rendered again, the same challenge is kept for the ceremony.
+    let (_, _, again) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    assert!(again.contains("webauthn"), "{again}");
+}
+
+const ACTION: &str = "/realms/dev/login-actions/action-token";
+
+async fn action_link(store: &MemoryStore, actions: &[&str], sub: &str) -> String {
+    let (kek, store) = (
+        store.kek().clone(),
+        Arc::new(store.clone()) as Arc<dyn Store>,
+    );
+    let token = kaisatsu_login::EmailSender::mint_action_token(
+        &store,
+        &kek,
+        "dev",
+        "https://idm.dev.example.test/realms/dev",
+        sub,
+        actions.iter().map(|a| (*a).to_owned()).collect(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    format!("{ACTION}?key={token}")
+}
+
+#[tokio::test]
+async fn action_links_without_a_client_unknown_actions_and_forged_keys() {
+    let (app, store) = app().await;
+    let member = user(&store, MEMBER).await;
+    // Terms without a client: the confirm page names the terms; done, the page offers the way
+    // back without naming an app.
+    let link = action_link(&store, &["TERMS_AND_CONDITIONS"], &member.id).await;
+    let (st, _, html) = get(&app, &link, None).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(html.contains("Terms and Conditions"), "{html}");
+    let (st, _, html) = open_action_link(&app, &link).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(!html.contains("Back to undefined"), "{html}");
+    let member_after = user(&store, MEMBER).await;
+    assert!(
+        !member_after
+            .required_actions
+            .iter()
+            .any(|a| a == "TERMS_AND_CONDITIONS")
+    );
+    // An action this server does not run changes nothing.
+    let link = action_link(&store, &["NOT_AN_ACTION"], &member.id).await;
+    let (st, _, html) = open_action_link(&app, &link).await;
+    assert!(!st.is_server_error(), "{st} {html}");
+    let unchanged = user(&store, MEMBER).await;
+    assert_eq!(unchanged.required_actions, member_after.required_actions);
+    assert_eq!(unchanged.email_verified, member_after.email_verified);
+    // A key that is no token: the unusable-link page, nothing applied.
+    let (st, _, html) = post_form(&app, ACTION, &[("key", "not-a-token")], None).await;
+    assert!(st.is_client_error() || st == StatusCode::OK, "{st}");
+    assert!(!st.is_server_error(), "{html}");
+    assert!(!html.contains("account has been updated"), "{html}");
+}
+
 fn extract_input_value(html: &str, name: &str) -> String {
     let marker = format!("name=\"{name}\"");
     let i = html.find(&marker).expect("input");

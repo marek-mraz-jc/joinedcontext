@@ -454,6 +454,81 @@ fn record(raw: &str, user_code: &str, client: &str, ttl: i64) -> DeviceCodeRecor
     }
 }
 
+/// The device flow on a store that fails or loses the calls a test names.
+async fn fault_app() -> (Router, Arc<MemoryStore>, Arc<fault_store::FaultStore>) {
+    let kek = Kek::generate_for_tests();
+    let memory = Arc::new(MemoryStore::new(kek.clone()));
+    let faults = fault_store::FaultStore::new(memory.clone());
+    let state = setup_dev_realm_on(faults.clone(), kek).await;
+    add_public(&memory, "jcctl", true).await;
+    (
+        router(state, mount()).layer(Extension(mount())),
+        memory,
+        faults,
+    )
+}
+
+fn conflict() -> KaisatsuError {
+    KaisatsuError::Conflict("user code taken".into())
+}
+
+#[tokio::test]
+async fn a_taken_user_code_is_drawn_again_and_a_store_that_never_frees_one_is_a_server_error() {
+    let (app, _, faults) = fault_app().await;
+    // One collision: the next draw is stored and the device gets its codes.
+    faults.fail("put_device_code", 0, 1, conflict);
+    let (device_code, user_code) = authorize(&app, "jcctl").await;
+    assert!(
+        !device_code.is_empty() && user_code.len() == 9,
+        "{user_code}"
+    );
+    // Every draw collides: the device gets a 500, never a code that was not stored.
+    faults.fail("put_device_code", 0, u32::MAX, conflict);
+    let (st, _, body) = post_form(&app, DEVICE, &[("client_id", "jcctl")], None).await;
+    assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(!body.contains("device_code"), "{body}");
+    // Any other store error ends the loop at once.
+    faults.fail("put_device_code", 0, 1, fault_store::storage);
+    let (st, _, body) = post_form(&app, DEVICE, &[("client_id", "jcctl")], None).await;
+    assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+}
+
+#[tokio::test]
+async fn an_answer_another_tab_settled_first_is_a_conflict_page() {
+    let (app, _, faults) = fault_app().await;
+    let (device_code, user_code) = authorize(&app, "jcctl").await;
+    let sso = sign_in_at_page(&app, &user_code).await;
+    let csrf = page_form(&app, &sso, &user_code).await;
+    // The compare-and-set finds the code already decided (or expired) since the page read it.
+    faults.empty("decide_device_code", 0, 1);
+    let (st, html) = answer(&app, &sso, &csrf, &user_code, None).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{html}");
+    assert!(!html.contains("Device Login Successful"), "{html}");
+    // The device was not approved by the lost answer.
+    let (st, body) = poll(&app, "jcctl", &device_code).await;
+    assert_eq!(
+        (st, error(&body).as_str()),
+        (StatusCode::BAD_REQUEST, "authorization_pending"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn an_approved_code_without_its_person_or_session_gets_no_tokens() {
+    let (app, store) = app().await;
+    let mut rec = record("approved-nobody", "BCDFGHJK", "jcctl", 600);
+    rec.status = DeviceStatus::Approved;
+    store.put_device_code(rec).await.unwrap();
+    let (st, body) = poll(&app, "jcctl", "approved-nobody").await;
+    assert_eq!(
+        (st, error(&body).as_str()),
+        (StatusCode::BAD_REQUEST, "invalid_grant"),
+        "{body}"
+    );
+    assert!(body.contains("Device code not valid"), "{body}");
+    assert!(!body.contains("access_token"), "{body}");
+}
+
 #[tokio::test]
 async fn an_expired_code_is_expired_at_the_token_endpoint_and_on_the_page() {
     let (app, store) = app().await;
