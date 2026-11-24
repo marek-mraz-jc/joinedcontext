@@ -925,14 +925,23 @@ mod tests {
         }
         let (dir, path) = config(&format!("{section}{IDM_ORG}"));
         std::fs::write(dir.path().join("state/kaisatsu-kek"), [b'k'; 32]).unwrap();
-        let mut a = args(path);
-        a.from = Some("nowhere".to_owned());
         // The store migrates as the owner; the request login holds no grant until jc itself
-        // starts on this database, so the first read is refused and named as a store error.
-        let e = main(a).await.unwrap_err();
-        assert!(e.starts_with("kaisatsu store: "), "{e}");
-        assert!(e.contains("permission denied"), "{e}");
-        assert!(!e.contains("pw-"), "{e}");
+        // starts on this database, so the first read is refused and named as a store error,
+        // in every mode and from the installation realm or the one named.
+        for (apply, retire, restore, from) in [
+            (false, false, false, None),
+            (true, false, false, Some("dev")),
+            (false, true, false, None),
+            (false, false, true, None),
+        ] {
+            let mut a = args(path.clone());
+            (a.apply, a.retire, a.restore) = (apply, retire, restore);
+            a.from = from.map(str::to_owned);
+            let e = main(a).await.unwrap_err();
+            assert!(e.starts_with("kaisatsu store: "), "{e}");
+            assert!(e.contains("permission denied"), "{e}");
+            assert!(!e.contains("pw-"), "{e}");
+        }
     }
 
     #[test]
