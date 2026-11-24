@@ -1,0 +1,61 @@
+# Fuzzes what the assistant reads from outside (T-7768): a crawled site's robots.txt, sitemaps,
+# HTML, WordPress listings and PDFs; an uploaded file's name and bytes; a visitor's question and
+# feedback bodies and a usage range; and the model's and the gateway's text the chat parses
+# (tool results, tables, cards, briefs, redaction). Each target must end in a value or an error,
+# never a panic, a hang or an allocation past the input's size.
+# Run by hand: cargo +nightly fuzz run <crawl_text|upload|chat_request|chat_text> -- -max_total_time=300
+# (KREUZBERG_PDFIUM_PREBUILT as for the crate itself). Not a member of any workspace.
+[package]
+name = "assistant-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+url = "2.5"
+texting_robots = "0.2.2"
+assistant = { path = ".." }
+
+[[bin]]
+name = "crawl_text"
+path = "fuzz_targets/crawl_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "upload"
+path = "fuzz_targets/upload.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chat_request"
+path = "fuzz_targets/chat_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chat_text"
+path = "fuzz_targets/chat_text.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+
+# The root workspace's patches the assistant's dependency tree needs (Cargo.toml at the jc root).
+[patch.crates-io]
+kreuzberg = { path = "../../../vendor/kreuzberg" }
+paste = { path = "../../../../paste" }
+rstar = { path = "../../../../../crates/antares/vendor/rstar" }
+geo-types = { path = "../../../../../crates/antares/vendor/geo-types" }
+faster-hex = { path = "../../../../faster-hex" }

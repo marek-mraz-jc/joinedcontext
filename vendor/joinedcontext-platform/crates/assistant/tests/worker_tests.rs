@@ -348,6 +348,80 @@ async fn a_job_whose_source_went_away_is_closed_without_a_crawl() {
     drop_database(admin, pool, &name).await;
 }
 
+/// A website's sitemap check reads only its sitemap, an upload source's job has nothing to
+/// fetch, and a catalogue source without the public Endpoint address fails with that setting.
+#[tokio::test]
+async fn a_sitemap_check_an_upload_and_a_catalogue_without_its_address_are_each_worked() {
+    let (admin, pool, name) = database("kinds").await;
+    let server = MockServer::start().await;
+    let port = server.address().port();
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    let crawler = Crawler::new(
+        Arc::new(FixtureResolver::new(&[("www.city.test", port)])),
+        CrawlPolicy {
+            allow_plain_http: true,
+            max_page_bytes: 1024 * 1024,
+        },
+    )
+    .expect("crawler");
+    let mut upload = spec("https://unused.test/", None);
+    upload.source = SourceType::Upload;
+    upload.start_urls = Vec::new();
+    let mut catalogue = spec("https://unused.test/", None);
+    catalogue.source = SourceType::Catalogue;
+    catalogue.start_urls = Vec::new();
+    catalogue.languages = vec!["sk".into()];
+    let source = |name: &str, spec: KnowledgeSourceSpec| Source {
+        project: "helsinki".into(),
+        name: name.into(),
+        spec,
+        ckan_url: None,
+        catalogue: Vec::new(),
+    };
+    let mut website = spec(&format!("http://www.city.test:{port}/"), None);
+    website.sitemap = true;
+    let sources = vec![
+        source("city-web", website),
+        source("files", upload),
+        source("data", catalogue),
+    ];
+    assistant::crawl::queue::enqueue_check(&pool, "helsinki", "city-web")
+        .await
+        .expect("queued");
+    assistant::crawl::queue::enqueue(&pool, "helsinki", "files")
+        .await
+        .expect("queued");
+    assistant::crawl::queue::enqueue(&pool, "helsinki", "data")
+        .await
+        .expect("queued");
+    for _ in 0..3 {
+        assert!(
+            worker::work_one(&pool, &crawler, &reader(), "hel.fi", "worker-a", &sources)
+                .await
+                .expect("worked")
+        );
+    }
+    let jobs: Vec<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT source, state, error FROM crawl_jobs ORDER BY source")
+            .fetch_all(&pool)
+            .await
+            .expect("jobs");
+    assert_eq!(jobs[0].0, "city-web");
+    assert_eq!(jobs[0].1, "done", "{jobs:?}");
+    assert_eq!(jobs[1].0, "data");
+    assert_ne!(jobs[1].1, "done", "{jobs:?}");
+    assert!(
+        jobs[1].2.as_deref().is_some_and(|e| e.contains("JC_ASSISTANT_ENDPOINT_URL")),
+        "{jobs:?}"
+    );
+    assert_eq!((jobs[2].0.as_str(), jobs[2].1.as_str()), ("files", "done"));
+    drop_database(admin, pool, &name).await;
+}
+
 #[tokio::test]
 async fn a_catalogue_job_indexes_its_datasets_and_one_naming_no_instance_fails_with_why() {
     let (admin, pool, name) = database("catalogue").await;

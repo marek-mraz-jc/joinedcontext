@@ -1374,6 +1374,39 @@ mod tests {
     }
 
     #[test]
+    fn a_history_across_new_year_is_a_dated_line_and_two_places_get_a_legend() {
+        let start = time::macros::datetime!(2025-12-15 00:00 UTC);
+        let values = |offset: f64| -> Vec<Value> {
+            (0..40 * 24)
+                .map(|h| {
+                    let at = start + time::Duration::hours(h);
+                    json!([offset + (h % 24) as f64, at.format(&Rfc3339).expect("a time")])
+                })
+                .collect()
+        };
+        let one = json!({"entities": [{"id": "urn:ngsi-ld:AirQualityObserved:a", "type": "AirQualityObserved",
+            "pm10": {"type": "Property", "values": values(0.0)}}]});
+        let read = history(&one.to_string(), &json!({"attrs": ["pm10"]})).expect("a history");
+        assert_eq!(read.made.per, "day");
+        let table = history_table("air", "AirQualityObserved", &read, "");
+        let chart = super::super::viz::aggregated(&table).expect("a chart");
+        assert_eq!(chart["spec"]["encoding"]["x"]["scale"]["type"], "utc");
+        assert_eq!(chart["spec"]["encoding"]["x"]["axis"]["format"], "%-d %b %Y");
+        assert_eq!(chart["spec"]["encoding"]["color"]["legend"], Value::Null);
+        assert_eq!(chart["series"], "a");
+        assert_eq!(chart["spec"]["mark"]["point"], true, "40 points are drawn as points");
+
+        let two = json!({"entities": [
+            {"id": "urn:ngsi-ld:AirQualityObserved:a", "type": "AirQualityObserved", "pm10": {"type": "Property", "values": values(0.0)}},
+            {"id": "urn:ngsi-ld:AirQualityObserved:b", "type": "AirQualityObserved", "pm10": {"type": "Property", "values": values(5.0)}}]});
+        let read = history(&two.to_string(), &json!({"attrs": ["pm10"]})).expect("a history");
+        let table = history_table("air", "AirQualityObserved", &read, "");
+        let chart = super::super::viz::aggregated(&table).expect("a chart");
+        assert_eq!(chart["spec"]["encoding"]["color"]["legend"]["orient"], "bottom");
+        assert!(chart.get("series").is_none());
+    }
+
+    #[test]
     fn thirty_days_of_hours_become_daily_points_with_the_method_named() {
         let start = time::macros::datetime!(2026-10-01 00:00 UTC);
         let values: Vec<Value> = (0..720)

@@ -459,6 +459,43 @@ async fn only_the_portals_service_account_is_answered() {
 
 /// The inventory: the sources, the tree a level at a time, the documents, a page's links, a
 /// page's passages, and the usage of a deployment.
+/// A store that cannot be reached is a 503 on every administration path, said in words and
+/// without the database's own error.
+#[tokio::test]
+async fn every_administration_path_says_the_store_could_not_be_read_when_it_is_down() {
+    let w = world("admindown").await;
+    let uuid = "00000000-0000-4000-8000-000000000000";
+    let calls: Vec<(&str, String, Option<Value>)> = vec![
+        ("GET", format!("{BASE}/sources"), None),
+        ("GET", format!("{BASE}/sources/web/pages?parent={}", w.root), None),
+        ("GET", format!("{BASE}/sources/web/documents"), None),
+        ("GET", format!("{BASE}/sources/web/search?q=odpad"), None),
+        ("GET", format!("{BASE}/sources/web/pages/{}/links", w.root), None),
+        ("GET", format!("{BASE}/sources/web/errors"), None),
+        ("GET", format!("{BASE}/sources/web/passages?page={}", w.child), None),
+        ("POST", format!("{BASE}/sources/web/inclusion"), Some(json!({"pages": [w.root], "included": false}))),
+        ("POST", format!("{BASE}/sources/web/recrawl"), None),
+        ("GET", format!("{BASE}/sources/subory/files"), None),
+        ("DELETE", format!("{BASE}/sources/subory/files/1"), None),
+        ("GET", format!("{BASE}/deployments/obcania/usage"), None),
+        ("GET", format!("{BASE}/conversations"), None),
+        ("GET", format!("{BASE}/conversations/{uuid}"), None),
+        ("DELETE", format!("{BASE}/conversations/{uuid}"), None),
+        ("GET", format!("{BASE}/conversations/usage"), None),
+        ("GET", format!("{BASE}/conversations/export"), None),
+        ("GET", format!("{BASE}/conversations/{uuid}/turns/1/same"), None),
+        ("POST", format!("{BASE}/erasures"), Some(json!({"terms": ["urn:ngsi-ld:BikeTrip:t-0"]}))),
+    ];
+    w.pool.close().await;
+    for (verb, uri, body) in calls {
+        let (status, problem) = call(&w.app, verb, &uri, Some(PORTAL_TOKEN), body).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{verb} {uri}: {problem}");
+        let detail = problem["detail"].as_str().unwrap_or_default();
+        assert!(!detail.contains("pool"), "{verb} {uri}: {detail}");
+    }
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 #[tokio::test]
 async fn the_inventory_reads_level_by_level() {
     let w = world("admininventory").await;
