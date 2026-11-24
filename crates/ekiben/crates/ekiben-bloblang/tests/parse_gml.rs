@@ -155,6 +155,9 @@ fn an_arc_through_three_points_stays_on_its_circle() {
     // A clockwise arc sweeps the other way, below the x axis.
     let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:Arc><gml:posList>10 0 0 -10 -10 0</gml:posList></gml:Arc></gml:segments></gml:Curve>"#), None, None).unwrap();
     assert!(items(coords(&g)).iter().all(|p| xy(p).1 <= 1e-9));
+    // Nearly collinear at projected scale (an offset of 1e-6 over 2e6 metres) is a line too.
+    let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:ArcString><gml:posList>0 0 1000000 1000000 2000000 2000000.000001</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#), None, None).unwrap();
+    assert_eq!(items(coords(&g)).len(), 3);
     // Three collinear positions are a straight line.
     let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:ArcString><gml:posList>0 0 1 1 2 2</gml:posList></gml:ArcString></gml:segments></gml:Curve>"#), None, None).unwrap();
     assert_eq!(items(coords(&g)).len(), 3);
