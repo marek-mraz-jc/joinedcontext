@@ -877,14 +877,14 @@ pub static DELIVERY_WIDTH_PER_TENANT: std::sync::LazyLock<usize> = std::sync::La
 /// unparseable or zero — a zero would mint a semaphore that admits nobody
 /// and stop delivery altogether — and the ceiling bounds what a deployment
 /// can ask for where a larger number would be meaningless.
-fn count_from(raw: Option<&str>, default: usize, ceiling: usize) -> usize {
+pub(crate) fn count_from(raw: Option<&str>, default: usize, ceiling: usize) -> usize {
     positive(raw).unwrap_or(default).min(ceiling)
 }
 
 /// A deployment knob's value: a number above zero, else `None` (unset, not a
 /// number, zero or negative), so a typo keeps the default instead of
 /// disabling the bound.
-fn positive<T: std::str::FromStr + PartialOrd + Default>(raw: Option<&str>) -> Option<T> {
+pub(crate) fn positive<T: std::str::FromStr + PartialOrd + Default>(raw: Option<&str>) -> Option<T> {
     raw.and_then(|v| v.parse().ok())
         .filter(|n| *n > T::default())
 }

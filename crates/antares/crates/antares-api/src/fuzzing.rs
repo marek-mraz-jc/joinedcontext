@@ -82,3 +82,17 @@ pub fn tenant_header(value: &[u8]) -> bool {
 pub fn accept_header(value: &[u8]) -> bool {
     headers(header::ACCEPT, value).is_some_and(|h| crate::negotiate::parse_accept_geo(&h).is_ok())
 }
+
+/// The request body's depth scan (`bounds_layer`) and the deployment knobs'
+/// parsers (`ANTARES_MEMORY_BUDGET`, the count knobs): none panics, a depth
+/// never exceeds the bytes scanned, and a knob is a number above zero or
+/// its default.
+pub fn body_bounds(data: &[u8]) -> bool {
+    let depth = crate::bounds::json_depth(data);
+    assert!(depth <= data.len(), "depth {depth} over {} bytes", data.len());
+    let text = String::from_utf8_lossy(data);
+    let count = crate::bounds::count_from(Some(&text), 7, 64);
+    assert!((1..=64).contains(&count), "count {count}");
+    assert!(crate::bounds::positive::<u64>(Some(&text)).is_none_or(|n| n > 0));
+    crate::bounds::MemoryBudget::parse(&text).is_ok()
+}

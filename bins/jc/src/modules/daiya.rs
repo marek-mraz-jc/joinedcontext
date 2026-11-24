@@ -328,8 +328,7 @@ mod tests {
             mount(),
         )
         .await
-        .err()
-        .expect("an unparsable reach refuses the start");
+        .expect_err("an unparsable reach refuses the start");
         assert!(!e.is_empty());
         let bad_dir = DaiyaSection {
             provisioning_dir: Some(tmp.path().join("missing")),
