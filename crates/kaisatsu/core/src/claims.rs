@@ -1222,6 +1222,57 @@ mod tests {
 
     /// A pairwise subject needs one redirect host: an address that is no URL, or has no host,
     /// counts none.
+    /// The subject a client sees: local without a pairwise mapper; with one on an active scope
+    /// (before the client's own mappers) or on the client, the pairwise value of its sector.
+    #[test]
+    fn the_subject_follows_the_first_pairwise_mapper_of_the_scopes_then_the_client() {
+        let pairwise = |salt: &str| {
+            mapper(
+                "oidc-sha256-pairwise-sub-mapper",
+                &[("pairwiseSubAlgorithmSalt", salt)],
+            )
+        };
+        let mut client = ClientRepresentation {
+            client_id: "app".into(),
+            redirect_uris: vec!["https://a.example/cb".into()],
+            ..Default::default()
+        };
+        client.protocol_mappers.push(mapper("oidc-sub-mapper", &[]));
+        assert_eq!(
+            compute_subject_for_client(&client, &[], "u1").expect("sub"),
+            "u1"
+        );
+        let scope = |m: ProtocolMapperRepresentation| ClientScopeRepresentation {
+            name: "s".into(),
+            protocol_mappers: vec![mapper("oidc-amr-mapper", &[]), m],
+            ..Default::default()
+        };
+        let by_scope = compute_subject_for_client(&client, &[scope(pairwise("one"))], "u1")
+            .expect("scope pairwise");
+        assert_eq!(
+            by_scope,
+            compute_pairwise_sub(&pairwise("one"), &client, "u1").expect("pairwise")
+        );
+        assert_ne!(by_scope, "u1");
+        client.protocol_mappers.push(pairwise("two"));
+        let by_client = compute_subject_for_client(&client, &[], "u1").expect("client pairwise");
+        assert_eq!(
+            by_client,
+            compute_pairwise_sub(&pairwise("two"), &client, "u1").expect("pairwise")
+        );
+        assert_ne!(by_client, by_scope, "another salt, another subject");
+        assert_eq!(
+            compute_subject_for_client(&client, &[scope(pairwise("one"))], "u1").expect("sub"),
+            by_scope,
+            "the scope's mapper comes first"
+        );
+        client.redirect_uris.push("https://b.example/cb".into());
+        assert!(
+            compute_subject_for_client(&client, &[], "u1").is_err(),
+            "two hosts and no sector"
+        );
+    }
+
     #[test]
     fn pairwise_hosts_skip_redirects_without_a_host() {
         let pairwise = mapper(
