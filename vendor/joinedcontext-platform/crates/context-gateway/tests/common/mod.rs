@@ -21,24 +21,27 @@ pub const ISSUER: &str = "https://2.28.67.127.sslip.io/realms/joinedcontext";
 /// The key id the realm publishes.
 pub const KID: &str = "realm-key-1";
 
-/// Writes every gateway log line, down to TRACE, into a sink for the rest of the process
-/// (T-7767): a field of a log line is evaluated only when a subscriber takes the line, so
-/// without one a line whose field fails to format would pass every test. A test that captures
-/// lines sets its own subscriber, which this one does not replace.
+/// Installs the binary's one subscriber (T-7767): every gateway log line down to TRACE, the
+/// rest from INFO, each written to the capture of the thread that logged it ([`Log`]) and
+/// otherwise dropped. A field of a log line is evaluated only when a subscriber takes the line,
+/// so without one a line whose field fails to format would pass every test.
 pub fn every_log_line() {
     use tracing_subscriber::layer::SubscriberExt;
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
         let subscriber = tracing_subscriber::fmt()
-            .with_writer(std::io::sink)
+            .with_writer(|| Log(LOG.with(|log| log.borrow().clone()).unwrap_or_default().0))
+            .with_ansi(false)
             .with_max_level(tracing::Level::TRACE)
             .finish()
             .with(
                 tracing_subscriber::filter::Targets::new()
+                    .with_default(tracing::Level::INFO)
                     .with_target("context_gateway", tracing::Level::TRACE)
                     .with_target("personal_read", tracing::Level::TRACE),
             );
-        let _ = tracing::subscriber::set_global_default(subscriber);
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("no other subscriber in the test binary");
     });
 }
 
@@ -786,16 +789,7 @@ pub struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 impl Log {
     /// Starts capturing this thread's lines.
     pub fn capture() -> Self {
-        static INSTALLED: std::sync::Once = std::sync::Once::new();
-        INSTALLED.call_once(|| {
-            tracing::subscriber::set_global_default(
-                tracing_subscriber::fmt()
-                    .with_writer(|| Log(LOG.with(|log| log.borrow().clone()).unwrap_or_default().0))
-                    .with_ansi(false)
-                    .finish(),
-            )
-            .expect("no other subscriber in the test binary");
-        });
+        every_log_line();
         let log = Log::default();
         LOG.with(|current| *current.borrow_mut() = Some(log.clone()));
         log
