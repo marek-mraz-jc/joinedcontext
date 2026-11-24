@@ -44,7 +44,11 @@ pub fn run(ctx: &ProcContext, procs: &[Arc<dyn Processor>], message: &[u8]) -> u
         .enable_time()
         .build()
         .expect("a current-thread runtime");
-    rt.block_on(execute_all(ctx, procs, vec![vec![Part::new(message.to_vec())]]))
-        .map(|batches| batches.iter().map(Vec::len).sum())
-        .unwrap_or(0)
+    rt.block_on(execute_all(
+        ctx,
+        procs,
+        vec![vec![Part::new(message.to_vec())]],
+    ))
+    .map(|batches| batches.iter().map(Vec::len).sum())
+    .unwrap_or(0)
 }

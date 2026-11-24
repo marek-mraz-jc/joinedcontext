@@ -31,7 +31,11 @@ fuzz_target!(|data: &[u8]| {
     let procs = ekiben_processors_fuzz::build(&ctx, &config).expect("every listed format builds");
     let out = ekiben_processors_fuzz::run(&ctx, &procs, message);
     // The org's in-flight quota (at least MAX_ARCHIVE_MEMBERS) caps the fan-out of one message.
-    let cap = ctx.org.quotas.read().map_or(0, |q| q.max_in_flight_messages);
+    let cap = ctx
+        .org
+        .quotas
+        .read()
+        .map_or(0, |q| q.max_in_flight_messages);
     let cap = cap.max(ekiben_processors::archive::MAX_ARCHIVE_MEMBERS);
     assert!(out <= cap, "{format} gave {out} messages");
 });
