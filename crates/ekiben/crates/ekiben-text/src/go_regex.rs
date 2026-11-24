@@ -87,11 +87,9 @@ fn push_range(out: &mut String, lo: u32, hi: u32) {
 }
 
 /// Ends the open group's last operand for the nested repeat limit: a new one starts.
-fn fold(frames: &mut [(u64, u64)]) {
-    if let Some(f) = frames.last_mut() {
-        f.0 = f.0.max(f.1);
-        f.1 = 1;
-    }
+fn fold(f: &mut (u64, u64)) {
+    f.0 = f.0.max(f.1);
+    f.1 = 1;
 }
 
 struct Parser<'a> {
@@ -392,7 +390,7 @@ impl<'a> Parser<'a> {
                             }
                             None => {
                                 self.bump();
-                                fold(&mut frames);
+                                fold(&mut frames[frame]);
                                 out.push_str("\\{");
                                 last_repeat = None;
                                 operand = true;
@@ -439,7 +437,7 @@ impl<'a> Parser<'a> {
                     self.bump();
                     let esc = self.escape(false)?;
                     if !matches!(&esc, Escape::Quote(l) if l.is_empty()) {
-                        fold(&mut frames);
+                        fold(&mut frames[frame]);
                     }
                     match esc {
                         Escape::Char(ch) => push_literal(&mut out, ch),
@@ -455,7 +453,7 @@ impl<'a> Parser<'a> {
                 }
                 '[' => {
                     self.bump();
-                    fold(&mut frames);
+                    fold(&mut frames[frame]);
                     self.class(&mut out)?;
                 }
                 '(' => {
@@ -487,7 +485,7 @@ impl<'a> Parser<'a> {
                     };
                     if opens {
                         next_operand = false;
-                        fold(&mut frames);
+                        fold(&mut frames[frame]);
                         frames.push((1, 1));
                     }
                 }
@@ -503,7 +501,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     self.bump();
-                    fold(&mut frames);
+                    fold(&mut frames[frame]);
                     next_operand = c != '|';
                     match c {
                         '.' | '^' | '$' | '|' => out.push(c),

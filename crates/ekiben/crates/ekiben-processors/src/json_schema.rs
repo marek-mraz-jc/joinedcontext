@@ -179,8 +179,11 @@ impl Schema {
         };
         // Draft-07: a `$ref` stands for its whole schema; its siblings are ignored.
         if let Some(r) = obj.get("$ref").and_then(Value::as_str) {
-            if let Some(target) = self.resolve(r) {
-                self.walk(target, doc, at, out, depth + 1);
+            // build checks every `$ref` it walks; one inside a node only another `$ref` reaches
+            // (an `enum` member, say) is checked here and fails closed.
+            match self.resolve(r) {
+                Some(target) => self.walk(target, doc, at, out, depth + 1),
+                None => out.push((at.into(), format!("$ref {r} does not resolve"))),
             }
             return;
         }
@@ -999,6 +1002,17 @@ mod tests {
             build(json!({"schema_path": "s.json"}), Some(dir.clone())),
             Ok(())
         );
+        // Without a file root a schema_path is read as given.
+        let absolute = dir.join("s.json").to_string_lossy().into_owned();
+        assert_eq!(build(json!({ "schema_path": absolute }), None), Ok(()));
+        // A pattern used twice compiles once; a keyword holding no schema object is skipped.
+        assert_eq!(
+            build(
+                json!({"schema": r#"{"pattern":"^a$","properties":5,"patternProperties":{"^a$":{"pattern":"^a$"}}}"#}),
+                None
+            ),
+            Ok(())
+        );
         for (config, want) in [
             (json!({"schema": "{}", "schema_path": "s.json"}), "not both"),
             (json!({}), "a schema or schema_path is required"),
@@ -1018,6 +1032,23 @@ mod tests {
             assert!(err.contains(want), "{config}: {err}");
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_ref_only_another_ref_reaches_fails_closed_when_it_does_not_resolve() {
+        // build checks the `$ref`s of the nodes it walks; an `enum` member is not one of them.
+        let schema = Schema::compile(json!({"$ref": "#/enum/0", "enum": [{"$ref": "#/nope"}]}))
+            .expect("the outer $ref resolves");
+        assert_eq!(
+            schema.validate(&json!(1)),
+            vec!["(root) $ref #/nope does not resolve".to_string()]
+        );
+        let ok = Schema::compile(
+            json!({"$ref": "#/enum/0", "enum": [{"$ref": "#/enum/1"}, {"type": "integer"}]}),
+        )
+        .expect("compiles");
+        assert!(ok.validate(&json!(1)).is_empty());
+        assert_eq!(ok.validate(&json!("x")).len(), 1);
     }
 
     #[tokio::test]
@@ -1477,6 +1508,10 @@ mod tests {
             ("uri", "urn:ngsi-ld:X:1", true),
             ("uri", "no scheme", false),
             ("uri", "https://www.facebook.com/pages/Ko%C5%BEn%C3%", false),
+            // Each of an escape's two digits must be hex.
+            ("uri", "https://example.org/a%4z", false),
+            ("uri", "https://example.org/a%z4", false),
+            ("uri", "https://example.org/a%4A", true),
             ("uri", "https://a/b%2", false),
             ("uri", "https://a/b%zz", false),
             ("uri", "https://a/b c", true),
