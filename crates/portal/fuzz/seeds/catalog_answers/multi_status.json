@@ -1,0 +1,1 @@
+{"success":[],"errors":[{"entityId":"urn:a","error":{"detail":"too large"}},{"entityId":"urn:b","error":{"title":"BadRequestData"}}]}
