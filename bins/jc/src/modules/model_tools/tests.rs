@@ -1102,11 +1102,11 @@ fn a_member_name_is_quoted_in_jc_types_only_when_it_is_no_identifier() {
     let model = MODEL
         .replace(
             "slots: [status, capacity]",
-            "slots: [status, capacity, _hidden, $ref, a_b$c, 9lives]",
+            "slots: [status, capacity, _hidden, $ref, a_b$c, 9lives, counts]",
         )
         .replace(
             "enums:\n",
-            "  _hidden: {}\n  $ref: {}\n  a_b$c: {}\n  9lives: {}\nenums:\n",
+            "  _hidden: {}\n  $ref: {}\n  a_b$c: {}\n  9lives: {}\n  counts:\n    range: integer\n    multivalued: true\nenums:\n",
         );
     let (_, out) = generate(&source(&model));
     let ts = out["typescript"].as_str().unwrap_or_default();
@@ -1115,6 +1115,7 @@ fn a_member_name_is_quoted_in_jc_types_only_when_it_is_no_identifier() {
         "  $ref?: string | null;",
         "  a_b$c?: string | null;",
         "  \"9lives\"?: string | null;",
+        "  counts?: string | null;",
     ] {
         assert!(ts.contains(line), "{line}: {out}");
     }
