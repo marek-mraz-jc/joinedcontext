@@ -291,17 +291,22 @@ fn step<T, E: std::fmt::Display>(what: &str, r: Result<T, E>) -> Result<T, CoreE
     r.map_err(|e| CoreError::other(format!("sftp input: {what}: {e}")))
 }
 
+/// A session idle 300 s is closed; a keepalive every 30 s keeps a watcher's session open through NAT.
+fn client_config() -> client::Config {
+    client::Config {
+        inactivity_timeout: Some(Duration::from_secs(300)),
+        keepalive_interval: Some(Duration::from_secs(30)),
+        ..client::Config::default()
+    }
+}
+
 /// Connects to `target` through `org`'s outbound rule, checks the pinned host key, logs in and
 /// opens the SFTP subsystem.
 pub async fn connect(target: &SftpTarget, org: &OrgContext) -> Result<Session, CoreError> {
     let addrs =
         ekiben_io_http::outbound::resolve_host_checked(&target.host, target.port, org).await?;
     let tcp = ekiben_io_http::outbound::connect_checked(&addrs, CONNECT_TIMEOUT).await?;
-    let config = Arc::new(client::Config {
-        inactivity_timeout: Some(Duration::from_secs(300)),
-        keepalive_interval: Some(Duration::from_secs(30)),
-        ..client::Config::default()
-    });
+    let config = Arc::new(client_config());
     let seen = Arc::new(std::sync::Mutex::new(None));
     let handler = Pinned {
         fingerprint: target.host_key_fingerprint.clone(),

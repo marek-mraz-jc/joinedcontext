@@ -72,9 +72,6 @@ exclude_re = [
   # T-7581 ekiben-io-file LinesScanner memchr only picks how many bytes to take per step; the line ends where
   # ends_with(delim) says and the size check counts the same bytes, so any other split yields the same lines.
   'ekiben-io-file/src/scanner_lines\.rs:\d+:\d+: replace memchr -> Option<usize> with Some\(0\)',
-  # T-7581 ekiben-io-sftp connect: inactivity_timeout and keepalive_interval act only on a session idle 30 s / 300 s;
-  # a test cannot hold an idle session that long inside the mutants timeout.
-  'ekiben-io-sftp/src/input\.rs:\d+:\d+: delete field (inactivity_timeout|keepalive_interval) from struct client::Config expression in connect',
   # T-7669 json_schema type_of: an integer is i64 or u64 and its f64 has no fraction, so any one test answers
   # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',

@@ -375,3 +375,15 @@ async fn the_pin_checks_a_host_key_and_a_host_certificate_by_their_key() {
         }
     }
 }
+
+#[test]
+fn the_client_closes_an_idle_session_and_sends_keepalives() {
+    let c = client_config();
+    assert_eq!(c.inactivity_timeout, Some(Duration::from_secs(300)));
+    assert_eq!(c.keepalive_interval, Some(Duration::from_secs(30)));
+    let d = client::Config::default();
+    assert_ne!(
+        (d.inactivity_timeout, d.keepalive_interval),
+        (c.inactivity_timeout, c.keepalive_interval)
+    );
+}
