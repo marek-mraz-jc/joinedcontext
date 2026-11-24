@@ -165,6 +165,12 @@ pub enum OidcError {
     Discovery(String),
 }
 
+impl From<url::ParseError> for OidcError {
+    fn from(error: url::ParseError) -> Self {
+        Self::Url(error.to_string())
+    }
+}
+
 /// The discovered Keycloak realm plus the http client used for every server-to-server call.
 pub struct OidcClient {
     /// The discovered realm: the authorization URL and the ID token verifier. Token requests do
@@ -256,8 +262,7 @@ fn backchannel_url(config: &OidcConfig, endpoint: &Url) -> Result<Url, OidcError
     let issuer = config.issuer.as_str().trim_end_matches('/');
     match endpoint.as_str().strip_prefix(issuer) {
         Some(rest) if rest.starts_with('/') => {
-            Url::parse(&format!("{}{rest}", config.backchannel()))
-                .map_err(|e| OidcError::Url(e.to_string()))
+            Ok(Url::parse(&format!("{}{rest}", config.backchannel()))?)
         }
         _ => Ok(endpoint.clone()),
     }
@@ -271,8 +276,7 @@ impl OidcClient {
         let http = http_client(crate::reach::builder(), config)?;
 
         // A trailing slash makes the discovered `issuer` claim mismatch; Keycloak publishes none.
-        let issuer = IssuerUrl::new(config.issuer.as_str().trim_end_matches('/').to_string())
-            .map_err(|e| OidcError::Url(e.to_string()))?;
+        let issuer = IssuerUrl::new(config.issuer.as_str().trim_end_matches('/').to_string())?;
         let metadata = PortalProviderMetadata::discover_async(issuer.clone(), &discovery)
             .await
             .map_err(|e| OidcError::Discovery(source_chain(&e)))?;
@@ -291,8 +295,7 @@ impl OidcClient {
 
         let token_host = Some(authority(&config.issuer)).filter(|a| *a != authority(&token_url));
 
-        let redirect = RedirectUrl::new(redirect_uri.to_string())
-            .map_err(|e| OidcError::Url(e.to_string()))?;
+        let redirect = RedirectUrl::new(redirect_uri.to_string())?;
         let client = verifying_client(metadata, &config.client_id, redirect.clone());
 
         Ok(Self {
@@ -657,8 +660,7 @@ fn park_flows(
         if flows.is_empty() {
             return Ok(jar.remove(session::removal(FLOW_COOKIE)));
         }
-        let value = serde_json::to_string(&flows)
-            .map_err(|e| ApiError::Internal(format!("serialize oidc flow: {e}")))?;
+        let value = serde_json::to_string(&flows).map_err(ApiError::internal)?;
         if value.len() <= FLOWS_MAX_BYTES || flows.len() == 1 {
             return Ok(jar.add(secure_cookie(FLOW_COOKIE, value, FLOW_TTL_SECS)));
         }
@@ -825,8 +827,7 @@ pub async fn login(
     // Back to the host the person started on: each Organization's Portal host has its own.
     let redirect_uri = redirect_uri_here(&state);
     if redirect_uri != client.redirect_uri {
-        let url = RedirectUrl::new(redirect_uri.clone())
-            .map_err(|e| ApiError::Internal(format!("redirect uri: {e}")))?;
+        let url = RedirectUrl::new(redirect_uri.clone()).map_err(ApiError::internal)?;
         request = request.set_redirect_uri(std::borrow::Cow::Owned(url));
     }
     // The sign-in page in the Portal's language: a Slovak Portal led to an English login (T-4199).
@@ -1672,9 +1673,8 @@ pub(crate) mod tests {
             .await
             .expect("discovery");
 
-        let Err(ApiError::Unavailable(message)) = client.service_token().await else {
-            panic!("a refused client-credentials grant is Unavailable");
-        };
+        let message = format!("{:?}", client.service_token().await);
+        assert!(message.starts_with("Err(Unavailable("), "{message}");
         for leaked in [
             "s3cr3t",
             "unauthorized_client",
@@ -2223,6 +2223,1274 @@ pub(crate) mod tests {
             matches!(refused, Err(ApiError::Unauthorized)),
             "{refused:?}"
         );
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // T-7783: the sign-in flow end to end against a realm that signs ES256, the Organization
+    // realms, the logout doors and every refusal of the token endpoint.
+    // ---------------------------------------------------------------------------------------
+
+    use axum::extract::{Form, Query, State};
+    use axum_extra::extract::cookie::{CookieJar, Key, PrivateCookieJar};
+    use wiremock::matchers::{body_string_contains, header as wm_header};
+
+    const ROOT_PEM: &str = "-----BEGIN CERTIFICATE-----
+MIIBlDCCATmgAwIBAgIUQqJSe2fHMOBaJY5alDspnz7zEmEwCgYIKoZIzj0EAwIw
+HjEcMBoGA1UEAwwTamMtcG9ydGFsLXRlc3Qtcm9vdDAgFw0yNjExMjQyMTQ5NTVa
+GA8yMTI2MTAzMTIxNDk1NVowHjEcMBoGA1UEAwwTamMtcG9ydGFsLXRlc3Qtcm9v
+dDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABL2msXhRl0s23EckWkyNhxnD1CQu
+3WHfzTgzCXd5zB/+G+iOF6GH3iQRqnVKZLk9Pjy5DnqGJAJWHacX+EtCpgOjUzBR
+MB0GA1UdDgQWBBSHdKjw55XtdlkLL+0sqLuExJFY3jAfBgNVHSMEGDAWgBSHdKjw
+55XtdlkLL+0sqLuExJFY3jAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0kA
+MEYCIQDZj/6cUHpdVxlVbLKAr/XLSdOtyswwQ0PH1TXlot9gQwIhAIk/hl3Rv8hk
+QBscU7MjEGan3Dhawtnn2+fD51T2sLSc
+-----END CERTIFICATE-----
+";
+
+    /// The Organization `hel` on its own Portal host.
+    pub(crate) fn hel() -> crate::organization_host::OrganizationHost {
+        crate::organization_host::OrganizationHost {
+            organization: "hel".into(),
+            base: "https://portal.hel.test".parse().expect("url"),
+        }
+    }
+
+    /// The Organization `ba` on its own Portal host, with no realm of its own.
+    fn ba() -> crate::organization_host::OrganizationHost {
+        crate::organization_host::OrganizationHost {
+            organization: "ba".into(),
+            base: "https://portal.ba.test".parse().expect("url"),
+        }
+    }
+
+    /// Organization `organization`'s own realm at `issuer`, its keys at `jwks_url`, signing in
+    /// as the installation's client `portal` on the host `base`.
+    pub(crate) fn realm_at(
+        organization: &str,
+        issuer: &str,
+        jwks_url: &str,
+        base: &Url,
+    ) -> crate::auth::realms::OrganizationRealm {
+        let setting = crate::auth::realms::RealmSetting {
+            organization: organization.into(),
+            issuer: issuer.parse().expect("issuer"),
+            jwks_url: jwks_url.parse().expect("jwks url"),
+        };
+        let installation = crate::config::OidcConfig {
+            issuer: "https://idm.example.test/realms/jc".parse().expect("url"),
+            client_id: "portal".into(),
+            auth: ClientAuth::Secret("s3cr3t-of-the-installation".into()),
+            extra_ca_pem: None,
+            admin_url: None,
+        };
+        crate::auth::realms::OrganizationRealm::new(&setting, &installation, base, None)
+    }
+
+    /// `state` holding exactly the realms `realms`.
+    fn with_realms(
+        mut state: AppState,
+        realms: Vec<crate::auth::realms::OrganizationRealm>,
+    ) -> AppState {
+        state.organization_realms = crate::auth::realms::OrganizationRealms::new(
+            realms
+                .into_iter()
+                .map(|realm| (realm.organization.clone(), Arc::new(realm)))
+                .collect(),
+        );
+        state
+    }
+
+    /// A realm signing ES256 with one key, publishing a logout endpoint; its issuer and the key.
+    async fn signing_realm(kid: &str) -> (MockServer, String, jsonwebtoken::EncodingKey) {
+        let (key, jwk) = signing_key(kid);
+        let server = MockServer::start().await;
+        let issuer = format!("{}{REALM}", server.uri().trim_end_matches('/'));
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/.well-known/openid-configuration")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+                "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+                "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+                "end_session_endpoint": format!("{issuer}/protocol/openid-connect/logout"),
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["ES256"]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/protocol/openid-connect/certs")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "keys": [jwk] })),
+            )
+            .mount(&server)
+            .await;
+        (server, issuer, key)
+    }
+
+    /// A token of `issuer` for the Portal's client, signed by `key` under `kid`, with `claims`.
+    fn signed(
+        issuer: &str,
+        key: &jsonwebtoken::EncodingKey,
+        kid: &str,
+        claims: serde_json::Value,
+    ) -> String {
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+        header.kid = Some(kid.into());
+        let now = session::now_unix();
+        let mut all = serde_json::json!({
+            "iss": issuer, "aud": "portal", "iat": now, "exp": now + 300,
+        });
+        all.as_object_mut()
+            .expect("an object")
+            .extend(claims.as_object().cloned().unwrap_or_default());
+        jsonwebtoken::encode(&header, &all, key).expect("signed")
+    }
+
+    /// The token endpoint of `server` answering a code exchange carrying `code` with `body`.
+    async fn answer_code(server: &MockServer, code: &str, status: u16, body: serde_json::Value) {
+        Mock::given(wm_method("POST"))
+            .and(wm_path(format!("{REALM}/protocol/openid-connect/token")))
+            .and(body_string_contains(format!("code={code}&")))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .mount(&server)
+            .await;
+    }
+
+    /// A Portal on `https://portal.test` signing in at the realm `server`; `installation` keeps
+    /// the realm in its configuration too, as a real start does.
+    async fn portal_of(server: &MockServer, installation: bool) -> AppState {
+        let mut config = crate::config::Config::for_tests();
+        config.public_base_url = "https://portal.test".parse().expect("url");
+        let oidc = config_for(server);
+        let client = OidcClient::discover(
+            &oidc,
+            &crate::config::Config::redirect_uri_at(&config.public_base_url),
+        )
+        .await
+        .expect("discovery");
+        config.oidc = installation.then_some(oidc);
+        AppState::new(config, Some(client))
+    }
+
+    /// A login in flight, as the login handler parks it.
+    fn flow(csrf_state: &str, nonce: &str, redirect_uri: &str) -> FlowState {
+        FlowState {
+            pkce_verifier: "verifier-of-the-test-flow".into(),
+            csrf_state: csrf_state.into(),
+            nonce: nonce.into(),
+            redirect_to: "/projects/helsinki".into(),
+            redirect_uri: redirect_uri.into(),
+            started_at: session::now_unix(),
+        }
+    }
+
+    /// The cookies `jar` hands the browser, as the browser sends them back.
+    fn replayed(jar: PrivateCookieJar, key: &Key) -> PrivateCookieJar {
+        let response = (jar, axum::http::StatusCode::OK).into_response();
+        let mut headers = axum::http::HeaderMap::new();
+        for value in response.headers().get_all(axum::http::header::SET_COOKIE) {
+            let pair = value
+                .to_str()
+                .expect("ascii")
+                .split(';')
+                .next()
+                .expect("pair");
+            headers.append(axum::http::header::COOKIE, pair.parse().expect("cookie"));
+        }
+        PrivateCookieJar::from_headers(&headers, key.clone())
+    }
+
+    /// The browser of `state` with `flows` in flight.
+    fn browser(state: &AppState, flows: Vec<FlowState>) -> PrivateCookieJar {
+        let key = &state.config.cookie_key;
+        replayed(
+            park_flows(PrivateCookieJar::new(key.clone()), flows).expect("park"),
+            key,
+        )
+    }
+
+    fn query(code: Option<&str>, state: Option<&str>) -> CallbackQuery {
+        CallbackQuery {
+            code: code.map(str::to_owned),
+            state: state.map(str::to_owned),
+            error: None,
+            error_description: None,
+        }
+    }
+
+    async fn call_back(
+        state: &AppState,
+        query: CallbackQuery,
+        jar: PrivateCookieJar,
+    ) -> Result<Response, ApiError> {
+        callback(State(state.clone()), Query(query), jar, CookieJar::new()).await
+    }
+
+    /// The refusal of `result`, as its debug text: the variant and the message.
+    fn refusal(result: Result<Response, ApiError>) -> String {
+        format!("{:?}", result.err())
+    }
+
+    fn location(response: &Response) -> String {
+        response
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    fn set_cookies(response: &Response) -> Vec<String> {
+        response
+            .headers()
+            .get_all(axum::http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().expect("ascii").to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_token_refusal_reads_as_its_text_alone() {
+        let refusal = TokenRefusal::from("the token endpoint answered 500".to_owned());
+        assert_eq!(refusal.to_string(), "the token endpoint answered 500");
+        assert!(refusal.code.is_empty() && refusal.description.is_empty());
+    }
+
+    #[test]
+    fn a_host_reads_with_its_port_only_when_the_url_names_one() {
+        let url = |raw: &str| Url::parse(raw).expect("url");
+        assert_eq!(authority(&url("https://idm.test/realms/jc")), "idm.test");
+        assert_eq!(
+            authority(&url("https://idm.test:443/realms/jc")),
+            "idm.test"
+        );
+        assert_eq!(authority(&url("http://idm.test:8080/x")), "idm.test:8080");
+        assert_eq!(authority(&url("http://127.0.0.1:9/")), "127.0.0.1:9");
+    }
+
+    #[test]
+    fn only_an_endpoint_under_the_issuer_moves_to_the_back_channel() {
+        let mut config = oidc_config(None);
+        config.admin_url = Some("http://keycloak.internal:8080".parse().expect("url"));
+        let url = |raw: &str| Url::parse(raw).expect("url");
+        assert_eq!(
+            backchannel_url(
+                &config,
+                &url("https://idm.example.test/realms/bb/protocol/openid-connect/token")
+            )
+            .expect("moved")
+            .as_str(),
+            "http://keycloak.internal:8080/realms/bb/protocol/openid-connect/token"
+        );
+        for elsewhere in [
+            "https://other.example.test/realms/bb/protocol/openid-connect/token",
+            "https://idm.example.test/realms/bbx/token",
+            "https://idm.example.test/realms/b",
+        ] {
+            assert_eq!(
+                backchannel_url(&config, &url(elsewhere))
+                    .expect("as published")
+                    .as_str(),
+                elsewhere
+            );
+        }
+        config.admin_url = None;
+        let token = "https://idm.example.test/realms/bb/protocol/openid-connect/token";
+        assert_eq!(
+            backchannel_url(&config, &url(token))
+                .expect("same")
+                .as_str(),
+            token
+        );
+    }
+
+    #[test]
+    fn a_private_root_joins_the_public_ones_and_a_broken_one_is_named() {
+        let mut config = oidc_config(None);
+        config.extra_ca_pem = Some(ROOT_PEM.as_bytes().to_vec());
+        assert!(http_client(reqwest::ClientBuilder::new(), &config).is_ok());
+        config.extra_ca_pem = Some(format!("{ROOT_PEM}{ROOT_PEM}").into_bytes());
+        assert!(http_client(reqwest::ClientBuilder::new(), &config).is_ok());
+        config.extra_ca_pem = Some(
+            b"-----BEGIN CERTIFICATE-----\n!!!not base64!!!\n-----END CERTIFICATE-----\n".to_vec(),
+        );
+        let broken = format!(
+            "{:?}",
+            http_client(reqwest::ClientBuilder::new(), &config).map(|_| ())
+        );
+        assert!(broken.contains("JC_OIDC_CA_FILE"), "{broken}");
+    }
+
+    #[test]
+    fn a_client_the_tls_stack_cannot_build_stops_start_up_with_the_reason() {
+        // rustls speaks no TLS 1.0, so a client capped there has no version left to speak.
+        let built = http_client(
+            reqwest::ClientBuilder::new().max_tls_version(reqwest::tls::Version::TLS_1_0),
+            &oidc_config(None),
+        );
+        let text = format!("{:?}", built.map(|_| ()));
+        assert!(text.starts_with("Err(HttpClient("), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_redirect_uri_that_is_no_url_stops_discovery() {
+        let server = mock_realm().await;
+        let failed = OidcClient::discover(&config_for(&server), "not a url")
+            .await
+            .map(|_| ());
+        let text = format!("{failed:?}");
+        assert!(text.starts_with("Err(Url("), "{text}");
+        assert!(OidcError::from(url::ParseError::EmptyHost)
+            .to_string()
+            .starts_with("invalid issuer or redirect url: "));
+    }
+
+    #[tokio::test]
+    async fn a_realm_without_a_token_endpoint_is_not_one_to_sign_in_at() {
+        let server = MockServer::start().await;
+        let issuer = format!("{}{REALM}", server.uri().trim_end_matches('/'));
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/.well-known/openid-configuration")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+                "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["RS256"]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/protocol/openid-connect/certs")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "keys": [] })),
+            )
+            .mount(&server)
+            .await;
+        let failed = OidcClient::discover(&config_for(&server), "https://portal.test/cb")
+            .await
+            .map(|_| ());
+        let text = format!("{failed:?}");
+        assert!(text.contains("publishes no token endpoint"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_back_channel_on_another_host_is_asked_with_the_issuers_host() {
+        // The issuer is `localhost`, the back channel `127.0.0.1`: the realm stamps `iss` from
+        // the `Host` it is asked with, so the token request names the public one.
+        let server = MockServer::start().await;
+        let port = server.address().port();
+        let issuer = format!("http://localhost:{port}{REALM}");
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/.well-known/openid-configuration")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+                "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+                "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["RS256"]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/protocol/openid-connect/certs")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "keys": [] })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(wm_method("POST"))
+            .and(wm_path(format!("{REALM}/protocol/openid-connect/token")))
+            .and(wm_header("host", format!("localhost:{port}").as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "service-access", "token_type": "Bearer", "expires_in": 120
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut config = config_for(&server);
+        config.issuer = issuer.parse().expect("issuer");
+        config.admin_url = Some(format!("http://127.0.0.1:{port}").parse().expect("url"));
+        let client = OidcClient::discover(&config, "https://portal.test/cb")
+            .await
+            .expect("discovery");
+        assert_eq!(
+            client.token_host.as_deref(),
+            Some(format!("localhost:{port}").as_str())
+        );
+        assert_eq!(client.token_url.host_str(), Some("127.0.0.1"));
+        assert_eq!(
+            client.service_token().await.expect("token"),
+            "service-access"
+        );
+    }
+
+    /// The realm of [`mock_realm`] whose discovery names `token_endpoint`.
+    async fn realm_with_token_endpoint(token_endpoint: &str) -> MockServer {
+        let server = MockServer::start().await;
+        let issuer = format!("{}{REALM}", server.uri().trim_end_matches('/'));
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/.well-known/openid-configuration")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+                "token_endpoint": token_endpoint,
+                "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["RS256"]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/protocol/openid-connect/certs")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "keys": [] })),
+            )
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn a_token_endpoint_that_does_not_answer_or_breaks_off_is_a_refusal_without_a_token() {
+        // Port 9 refuses the connection; the truncating server promises a body and stops.
+        let refused = realm_with_token_endpoint("http://127.0.0.1:9/token").await;
+        let client = OidcClient::discover(&config_for(&refused), "https://portal.test/cb")
+            .await
+            .expect("discovery");
+        let text = format!("{:?}", client.service_token().await);
+        assert!(text.starts_with("Err(Unavailable("), "{text}");
+        let ended = client.refresh(&a_session(Some("opaque-refresh"))).await;
+        assert!(matches!(ended, Err(ApiError::Unauthorized)), "{ended:?}");
+
+        let (truncating, served) = crate::auth::bearer::tests::truncating_server().await;
+        let broken = realm_with_token_endpoint(&format!("{truncating}/token")).await;
+        let client = OidcClient::discover(&config_for(&broken), "https://portal.test/cb")
+            .await
+            .expect("discovery");
+        let failed = client
+            .token_request(&[("grant_type", "client_credentials")])
+            .await
+            .map(|_| ());
+        let text = format!("{failed:?}");
+        assert!(text.starts_with("Err(TokenRefusal"), "{text}");
+        assert!(!text.contains("s3cr3t"), "{text}");
+        served.await.expect("served");
+    }
+
+    #[tokio::test]
+    async fn a_success_that_is_no_token_response_is_refused_without_quoting_the_body() {
+        let server = mock_realm().await;
+        Mock::given(wm_method("POST"))
+            .and(wm_path(format!("{REALM}/protocol/openid-connect/token")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("{\"access\":\"leaked-value\""),
+            )
+            .mount(&server)
+            .await;
+        let client = OidcClient::discover(&config_for(&server), "https://portal.test/cb")
+            .await
+            .expect("discovery");
+        let failed = client
+            .token_request(&[("grant_type", "client_credentials")])
+            .await
+            .map(|_| ());
+        let text = format!("{failed:?}");
+        assert!(text.contains("not a token response"), "{text}");
+        assert!(!text.contains("leaked-value"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn a_failed_reload_of_the_keys_keeps_the_ones_held() {
+        let (key, jwk) = signing_key("held");
+        let server = MockServer::start().await;
+        let issuer = format!("{}{REALM}", server.uri().trim_end_matches('/'));
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/.well-known/openid-configuration")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+                "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+                "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["ES256"]
+            })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/.well-known/openid-configuration")))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        Mock::given(wm_method("GET"))
+            .and(wm_path(format!("{REALM}/protocol/openid-connect/certs")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "keys": [jwk] })),
+            )
+            .mount(&server)
+            .await;
+        let client = OidcClient::discover(&config_for(&server), "https://portal.test/cb")
+            .await
+            .expect("discovery");
+        let (stranger, _) = signing_key("stranger");
+        let forged: CoreIdToken = id_token_of(&issuer, &stranger, "stranger")
+            .parse()
+            .expect("jwt");
+        let refused = client
+            .verify(|realm| forged.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+            .await;
+        assert!(refused.is_err());
+        let held: CoreIdToken = id_token_of(&issuer, &key, "held").parse().expect("jwt");
+        let verified = client
+            .verify(|realm| held.claims(&realm.id_token_verifier(), |_: Option<&Nonce>| Ok(())))
+            .await;
+        assert!(verified.is_ok(), "{verified:?}");
+    }
+
+    #[test]
+    fn a_login_cookie_that_does_not_open_as_flows_is_refused_and_old_flows_are_dropped() {
+        let key = Key::generate();
+        let garbled = PrivateCookieJar::new(key.clone()).add(secure_cookie(
+            FLOW_COOKIE,
+            "{\"not\":\"a list\"}".into(),
+            60,
+        ));
+        let text = format!("{:?}", parked_flows(&replayed(garbled, &key)).err());
+        assert!(text.contains("the login cookie is unreadable"), "{text}");
+
+        let mut old = flow("old", "n", "");
+        old.started_at -= FLOW_TTL_SECS;
+        let jar = replayed(
+            park_flows(
+                PrivateCookieJar::new(key.clone()),
+                vec![flow("new", "n", ""), old],
+            )
+            .expect("park"),
+            &key,
+        );
+        let flows = parked_flows(&jar).expect("flows");
+        assert_eq!(
+            flows
+                .iter()
+                .map(|f| f.csrf_state.as_str())
+                .collect::<Vec<_>>(),
+            ["new"]
+        );
+        assert!(parked_flows(&PrivateCookieJar::new(key))
+            .expect("none")
+            .is_empty());
+    }
+
+    #[test]
+    fn the_flow_cookie_keeps_the_newest_logins_that_fit_and_none_removes_it() {
+        let key = Key::generate();
+        let many: Vec<FlowState> = (0..12).map(|i| flow(&format!("s{i}"), "n", "")).collect();
+        let kept = parked_flows(&replayed(
+            park_flows(PrivateCookieJar::new(key.clone()), many).expect("park"),
+            &key,
+        ))
+        .expect("flows");
+        assert_eq!(kept.len(), FLOWS_IN_FLIGHT);
+        assert_eq!(kept[0].csrf_state, "s0", "the newest stays");
+
+        let long = |s: &str| FlowState {
+            redirect_to: format!("/{}", "x".repeat(900)),
+            ..flow(s, "n", "")
+        };
+        let kept = parked_flows(&replayed(
+            park_flows(
+                PrivateCookieJar::new(key.clone()),
+                vec![long("a"), long("b"), long("c"), long("d")],
+            )
+            .expect("park"),
+            &key,
+        ))
+        .expect("flows");
+        assert_eq!(
+            kept.iter()
+                .map(|f| f.csrf_state.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b"],
+            "the oldest go until the rest fit"
+        );
+
+        let huge = FlowState {
+            redirect_to: format!("/{}", "y".repeat(FLOWS_MAX_BYTES * 2)),
+            ..flow("only", "n", "")
+        };
+        let jar = park_flows(PrivateCookieJar::new(key.clone()), vec![huge]).expect("park");
+        assert!(
+            jar.get(FLOW_COOKIE).is_some(),
+            "one flow is kept whatever its size"
+        );
+
+        let emptied = park_flows(PrivateCookieJar::new(key), Vec::new()).expect("park");
+        assert!(emptied.get(FLOW_COOKIE).is_none());
+    }
+
+    #[test]
+    fn a_return_target_with_a_backslash_or_a_control_character_past_its_start_goes_home() {
+        for refused in ["/a\\b", "/a\nb", "/a\rb", "/projects/\u{7f}", "/x\u{0}y"] {
+            assert_eq!(safe_redirect(Some(refused.into())), "/", "{refused:?}");
+        }
+        for kept in ["/projects/helsinki?page=2#top", "/a/b/c", "/é"] {
+            assert_eq!(safe_redirect(Some(kept.into())), kept);
+        }
+        assert_eq!(safe_redirect(Some(String::new())), "/");
+        assert_eq!(safe_redirect(Some("/".into())), "/");
+    }
+
+    #[test]
+    fn a_language_is_two_or_three_letters_lower_cased_or_nothing() {
+        assert_eq!(ui_locale(Some(" SK ")).as_deref(), Some("sk"));
+        assert_eq!(ui_locale(Some("ces")).as_deref(), Some("ces"));
+        for dropped in ["", "s", "deut", "s1", "sk-SK", "&x=", "ľš"] {
+            assert_eq!(ui_locale(Some(dropped)), None, "{dropped:?}");
+        }
+        assert_eq!(ui_locale(None), None);
+    }
+
+    #[test]
+    fn a_token_that_is_not_three_readable_parts_ends_no_session() {
+        use base64::Engine as _;
+        let events = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(format!(r#"{{"events":{{"{LOGOUT_EVENT}":{{}}}}}}"#));
+        assert!(ends_a_session(&format!("h.{events}.s")));
+        assert!(!ends_a_session("no-dots-at-all"));
+        assert!(!ends_a_session("h.!!!not-base64!!!.s"));
+        assert!(!ends_a_session("h.bm90LWpzb24.s"));
+        let with_nonce = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
+            r#"{{"nonce":"n","events":{{"{LOGOUT_EVENT}":{{}}}}}}"#
+        ));
+        assert!(!ends_a_session(&format!("h.{with_nonce}.s")));
+        let other_event = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(r#"{"events":{"http://example.test/other":{}}}"#);
+        assert!(!ends_a_session(&format!("h.{other_event}.s")));
+    }
+
+    #[test]
+    fn the_back_channel_door_is_described_with_its_form_and_example() {
+        use utoipa::OpenApi as _;
+        let doc = serde_json::to_value(crate::openapi::ApiDoc::openapi()).expect("json");
+        let door = &doc["paths"]["/api/v1/auth/backchannel-logout"]["post"];
+        assert!(
+            door["requestBody"]["content"]["application/x-www-form-urlencoded"].is_object(),
+            "{door}"
+        );
+        assert!(door["responses"]["401"].is_object(), "{door}");
+    }
+
+    #[tokio::test]
+    async fn the_realm_client_is_the_installations_or_a_live_organizations() {
+        let server = mock_realm().await;
+        let issuer = format!("{}{REALM}", server.uri().trim_end_matches('/'));
+        let installation_less = AppState::new(crate::config::Config::for_tests(), None);
+        let text = format!(
+            "{:?}",
+            realm_client(&installation_less, None).await.map(|_| ())
+        );
+        assert!(
+            text.contains("no identity provider is configured"),
+            "{text}"
+        );
+        let state = with_realms(
+            installation_less,
+            vec![realm_at(
+                "hel",
+                &issuer,
+                &format!("{issuer}/protocol/openid-connect/certs"),
+                &hel().base,
+            )],
+        );
+        let text = format!("{:?}", realm_client(&state, Some("gone")).await.map(|_| ()));
+        assert_eq!(text, "Err(Unauthorized)");
+        let client = realm_client(&state, Some("hel")).await.expect("discovered");
+        assert_eq!(
+            client.redirect_uri,
+            "https://portal.hel.test/api/v1/auth/callback"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_login_on_a_host_without_its_own_realm_comes_back_to_that_host() {
+        let (server, _, _) = signing_realm("k").await;
+        let state = portal_of(&server, true).await;
+        let jar = PrivateCookieJar::new(state.config.cookie_key.clone());
+        let response = crate::organization_host::scope(
+            ba(),
+            login(
+                State(state.clone()),
+                Query(LoginQuery {
+                    redirect_to: Some("//evil.example".into()),
+                    lang: Some("SK".into()),
+                    step_up: true,
+                }),
+                jar,
+            ),
+        )
+        .await
+        .expect("login");
+        let target = location(&response);
+        assert!(
+            target
+                .contains("redirect_uri=https%3A%2F%2Fportal.ba.test%2Fapi%2Fv1%2Fauth%2Fcallback"),
+            "{target}"
+        );
+        assert!(target.contains("ui_locales=sk") && target.contains("acr_values=mfa"));
+        assert!(target.contains("prompt=login"), "{target}");
+        let parked = parked_flows(&replayed(
+            PrivateCookieJar::new(state.config.cookie_key.clone()),
+            &state.config.cookie_key,
+        ));
+        assert!(parked.expect("none").is_empty());
+        let cookie = set_cookies(&response)
+            .into_iter()
+            .find(|c| c.starts_with(&format!("{FLOW_COOKIE}=")))
+            .expect("a flow cookie");
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            cookie
+                .split(';')
+                .next()
+                .expect("pair")
+                .parse()
+                .expect("cookie"),
+        );
+        let flows = parked_flows(&PrivateCookieJar::from_headers(
+            &headers,
+            state.config.cookie_key.clone(),
+        ))
+        .expect("flows");
+        assert_eq!(flows[0].redirect_to, "/", "an open redirect goes home");
+        assert_eq!(
+            flows[0].redirect_uri,
+            "https://portal.ba.test/api/v1/auth/callback"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_provider_error_is_echoed_only_to_the_login_this_browser_started() {
+        let (server, _, _) = signing_realm("k").await;
+        let state = portal_of(&server, true).await;
+        let here = redirect_uri_here(&state);
+        let errored = |state_param: &str, description: Option<&str>| CallbackQuery {
+            code: None,
+            state: Some(state_param.into()),
+            error: Some("access_denied".into()),
+            error_description: description.map(str::to_owned),
+        };
+        let ours = refusal(
+            call_back(
+                &state,
+                errored("st-1", Some("the person said no")),
+                browser(&state, vec![flow("st-1", "n", &here)]),
+            )
+            .await,
+        );
+        assert!(
+            ours.contains("identity provider rejected the login: the person said no"),
+            "{ours}"
+        );
+        let bare = refusal(
+            call_back(
+                &state,
+                errored("st-1", None),
+                browser(&state, vec![flow("st-1", "n", &here)]),
+            )
+            .await,
+        );
+        assert!(bare.contains("rejected the login: access_denied"), "{bare}");
+        let theirs = refusal(
+            call_back(
+                &state,
+                errored("st-other", Some("<script>")),
+                browser(&state, vec![flow("st-1", "n", &here)]),
+            )
+            .await,
+        );
+        assert!(
+            theirs.contains("a login this browser did not start"),
+            "{theirs}"
+        );
+        assert!(!theirs.contains("<script>"), "{theirs}");
+    }
+
+    #[tokio::test]
+    async fn a_callback_refuses_what_its_login_did_not_start_or_cannot_finish() {
+        let (server, issuer, key) = signing_realm("k").await;
+        let state = portal_of(&server, true).await;
+        let here = redirect_uri_here(&state);
+        answer_code(
+            &server,
+            "refused",
+            400,
+            serde_json::json!({ "error": "invalid_grant", "error_description": "Code already used" }),
+        )
+        .await;
+        answer_code(
+            &server,
+            "no-id",
+            200,
+            serde_json::json!({ "access_token": "a", "token_type": "Bearer" }),
+        )
+        .await;
+        answer_code(
+            &server,
+            "wrong-nonce",
+            200,
+            serde_json::json!({
+                "access_token": "a", "token_type": "Bearer",
+                "id_token": signed(&issuer, &key, "k", serde_json::json!({ "sub": "ana", "nonce": "other" })),
+            }),
+        )
+        .await;
+
+        let missing_code = refusal(
+            call_back(
+                &state,
+                query(None, Some("st")),
+                browser(&state, vec![flow("st", "n", &here)]),
+            )
+            .await,
+        );
+        assert!(missing_code.contains("missing code"), "{missing_code}");
+
+        let elsewhere = refusal(
+            call_back(
+                &state,
+                query(Some("refused"), Some("st")),
+                browser(
+                    &state,
+                    vec![flow(
+                        "st",
+                        "n",
+                        "https://portal.ba.test/api/v1/auth/callback",
+                    )],
+                ),
+            )
+            .await,
+        );
+        assert!(
+            elsewhere.contains("started on another Portal host"),
+            "{elsewhere}"
+        );
+
+        // A flow parked before the redirect URI was kept is redeemed with the client's own.
+        let old = refusal(
+            call_back(
+                &state,
+                query(Some("refused"), Some("st")),
+                browser(&state, vec![flow("st", "n", "")]),
+            )
+            .await,
+        );
+        assert!(
+            old.contains("the authorization code could not be exchanged"),
+            "{old}"
+        );
+        assert!(!old.contains("Code already used"), "{old}");
+
+        let no_id = refusal(
+            call_back(
+                &state,
+                query(Some("no-id"), Some("st")),
+                browser(&state, vec![flow("st", "n", &here)]),
+            )
+            .await,
+        );
+        assert!(no_id.contains("returned no id_token"), "{no_id}");
+
+        let replayed_token = refusal(
+            call_back(
+                &state,
+                query(Some("wrong-nonce"), Some("st")),
+                browser(&state, vec![flow("st", "n", &here)]),
+            )
+            .await,
+        );
+        assert!(
+            replayed_token.contains("the id_token did not verify"),
+            "{replayed_token}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_login_mints_the_session_from_the_verified_id_token_alone() {
+        let (server, issuer, key) = signing_realm("k").await;
+        let state = portal_of(&server, true).await;
+        let here = redirect_uri_here(&state);
+        let now = session::now_unix();
+        let refresh = signed(&issuer, &key, "k", serde_json::json!({ "exp": now + 1800 }));
+        answer_code(
+            &server,
+            "good",
+            200,
+            serde_json::json!({
+                "access_token": "the-access-token", "token_type": "Bearer", "expires_in": 120,
+                "refresh_token": refresh,
+                "id_token": signed(&issuer, &key, "k", serde_json::json!({
+                    "sub": "f:1:ana", "nonce": "n-1", "name": "Ana Novak",
+                    "email": "ana@hel.test", "email_verified": false,
+                    "auth_time": now - 5, "amr": ["pwd", "otp"],
+                    "groups": ["/rangers", "/rangers/north"],
+                    "realm_access": { "roles": ["portal-viewer"] },
+                })),
+            }),
+        )
+        .await;
+        let response = call_back(
+            &state,
+            query(Some("good"), Some("st-2")),
+            browser(
+                &state,
+                vec![flow("st-1", "n-0", &here), flow("st-2", "n-1", &here)],
+            ),
+        )
+        .await
+        .expect("signed in");
+        assert_eq!(location(&response), "/projects/helsinki");
+        let cookies = set_cookies(&response);
+        for name in [
+            session::SESSION_COOKIE,
+            session::REFRESH_COOKIE,
+            csrf::CSRF_COOKIE,
+        ] {
+            assert!(
+                cookies.iter().any(|c| c.starts_with(&format!("{name}="))),
+                "{name}: {cookies:?}"
+            );
+        }
+        let flow_cookie = cookies
+            .iter()
+            .find(|c| c.starts_with(&format!("{FLOW_COOKIE}=")))
+            .expect("the other tab's flow stays");
+        assert!(!flow_cookie.contains("Max-Age=0"), "{flow_cookie}");
+        let mut headers = axum::http::HeaderMap::new();
+        for cookie in &cookies {
+            headers.append(
+                axum::http::header::COOKIE,
+                cookie
+                    .split(';')
+                    .next()
+                    .expect("pair")
+                    .parse()
+                    .expect("cookie"),
+            );
+        }
+        let session = session::load_with(&headers, &state).expect("the session");
+        let identity = &session.identity;
+        assert_eq!(
+            identity.username, "f:1:ana",
+            "no preferred_username: the subject"
+        );
+        assert_eq!(identity.name.as_deref(), Some("Ana Novak"));
+        assert_eq!(identity.email, None, "an unverified address grants nothing");
+        assert_eq!(identity.groups, ["rangers", "rangers/north"]);
+        assert_eq!(identity.roles, ["portal-viewer"]);
+        assert!(identity.second_factor);
+        assert_eq!(session.stepped_up_at, Some(now - 5));
+        assert_eq!(session.expires_at, now + 1800, "the refresh token's exp");
+        let left = parked_flows(&PrivateCookieJar::from_headers(
+            &headers,
+            state.config.cookie_key.clone(),
+        ))
+        .expect("flows");
+        assert_eq!(
+            left.iter()
+                .map(|f| f.csrf_state.as_str())
+                .collect::<Vec<_>>(),
+            ["st-1"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_login_through_an_organizations_realm_holds_no_bootstrap_group() {
+        let (server, issuer, key) = signing_realm("hel-key").await;
+        let installation = AppState::new(crate::config::Config::for_tests(), None);
+        let admins = installation.config.bootstrap_admins.clone();
+        let state = with_realms(
+            installation,
+            vec![realm_at(
+                "hel",
+                &issuer,
+                &format!("{issuer}/protocol/openid-connect/certs"),
+                &hel().base,
+            )],
+        );
+        answer_code(
+            &server,
+            "hel-code",
+            200,
+            serde_json::json!({
+                "access_token": "a", "token_type": "Bearer",
+                "id_token": signed(&issuer, &key, "hel-key", serde_json::json!({
+                    "sub": "hel:ana", "preferred_username": "ana", "nonce": "n",
+                    "groups": [format!("/{admins}"), "/rangers"],
+                    "realm_access": { "roles": [admins.clone(), "viewer"] },
+                })),
+            }),
+        )
+        .await;
+        let jar = browser(
+            &state,
+            vec![flow(
+                "st",
+                "n",
+                "https://portal.hel.test/api/v1/auth/callback",
+            )],
+        );
+        let response = crate::organization_host::scope(
+            hel(),
+            call_back(&state, query(Some("hel-code"), Some("st")), jar),
+        )
+        .await
+        .expect("signed in");
+        let mut headers = axum::http::HeaderMap::new();
+        for cookie in set_cookies(&response) {
+            headers.append(
+                axum::http::header::COOKIE,
+                cookie
+                    .split(';')
+                    .next()
+                    .expect("pair")
+                    .parse()
+                    .expect("cookie"),
+            );
+        }
+        let (session, realm) = crate::organization_host::scope(hel(), async {
+            session::load_with_realm(&headers, &state).expect("the realm's session")
+        })
+        .await;
+        assert_eq!(realm.as_deref(), Some("hel"));
+        assert_eq!(session.identity.username, "ana");
+        assert_eq!(session.identity.groups, ["rangers"]);
+        assert_eq!(session.identity.roles, ["viewer"]);
+    }
+
+    #[tokio::test]
+    async fn a_logout_names_the_realm_the_session_came_from_and_hints_its_own_id_token() {
+        let (server, _, _) = signing_realm("k").await;
+        let state = portal_of(&server, false).await;
+        let key = state.config.cookie_key.clone();
+        let session = a_session(Some("opaque-refresh"));
+        state.keep_session_claims(&session);
+        let jar = replayed(
+            session::store(PrivateCookieJar::new(key.clone()), &session).expect("store"),
+            &key,
+        );
+        let response = logout(State(state.clone()), jar, CookieJar::new())
+            .await
+            .expect("logged out");
+        let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("body");
+        let target: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        let url = Url::parse(target["endSessionUrl"].as_str().expect("url")).expect("url");
+        let pairs: std::collections::HashMap<String, String> =
+            url.query_pairs().into_owned().collect();
+        assert!(
+            url.path().ends_with("/protocol/openid-connect/logout"),
+            "{url}"
+        );
+        assert_eq!(
+            pairs.get("post_logout_redirect_uri").map(String::as_str),
+            Some("https://portal.test/api/v1/auth/callback")
+        );
+        assert_eq!(
+            pairs.get("id_token_hint").map(String::as_str),
+            Some("opaque-id-token-for-tests")
+        );
+        assert!(
+            !pairs.contains_key("client_id"),
+            "no installation client is configured: {url}"
+        );
+        assert!(state.is_revoked(&session));
+    }
+
+    #[tokio::test]
+    async fn a_logout_of_a_realm_that_is_gone_still_clears_the_browser_and_goes_home() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let key = state.config.cookie_key.clone();
+        let session = a_session(None);
+        let gone = crate::organization_host::OrganizationHost {
+            organization: "gone".into(),
+            base: "https://portal.gone.test".parse().expect("url"),
+        };
+        let response = crate::organization_host::scope(gone, async {
+            let jar = replayed(
+                session::store_in(PrivateCookieJar::new(key.clone()), &session, Some("gone"))
+                    .expect("store"),
+                &key,
+            );
+            logout(State(state.clone()), jar, CookieJar::new()).await
+        })
+        .await
+        .expect("logged out");
+        let cookies = set_cookies(&response);
+        assert!(cookies
+            .iter()
+            .any(|c| c.starts_with(session::SESSION_COOKIE) && c.contains("Max-Age=0")));
+        let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("body");
+        let target: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(target["endSessionUrl"], "https://portal.gone.test/");
+    }
+
+    /// A logout token of `issuer` for `sub`, signed by `key` under `kid`.
+    fn logout_token(issuer: &str, key: &jsonwebtoken::EncodingKey, kid: &str, sub: &str) -> String {
+        signed(
+            issuer,
+            key,
+            kid,
+            serde_json::json!({
+                "sub": sub, "jti": "logout-1", "typ": "Logout",
+                "events": { LOGOUT_EVENT: {} },
+            }),
+        )
+    }
+
+    async fn back_channel(state: &AppState, token: String) -> Result<Response, ApiError> {
+        backchannel_logout(
+            State(state.clone()),
+            Form(BackChannelLogoutForm {
+                logout_token: token,
+            }),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn an_organizations_realm_ends_its_own_sessions_back_channel() {
+        let (installation_realm, installation_issuer, installation_key) = signing_realm("i").await;
+        let (hel_realm, hel_issuer, hel_key) = signing_realm("h").await;
+        let state = with_realms(
+            portal_of(&installation_realm, true).await,
+            vec![
+                realm_at(
+                    "hel",
+                    &hel_issuer,
+                    &format!("{hel_issuer}/protocol/openid-connect/certs"),
+                    &hel().base,
+                ),
+                realm_at(
+                    "down",
+                    "http://127.0.0.1:9/realms/down",
+                    "http://127.0.0.1:9/realms/down/protocol/openid-connect/certs",
+                    &ba().base,
+                ),
+            ],
+        );
+        let mut ana = a_session(None);
+        ana.identity.subject = "hel:ana".into();
+        let answered = back_channel(&state, logout_token(&hel_issuer, &hel_key, "h", "hel:ana"))
+            .await
+            .expect("ended");
+        assert_eq!(answered.status(), axum::http::StatusCode::NO_CONTENT);
+        assert!(state.is_revoked(&ana));
+
+        // The installation's key does not sign for the Organization's realm.
+        let forged = refusal(
+            back_channel(
+                &state,
+                logout_token(&hel_issuer, &installation_key, "i", "hel:bo"),
+            )
+            .await,
+        );
+        assert!(
+            forged.contains("the logout token did not verify"),
+            "{forged}"
+        );
+        // And the installation realm still ends its own.
+        let mut bo = a_session(None);
+        bo.identity.subject = "bo".into();
+        back_channel(
+            &state,
+            logout_token(&installation_issuer, &installation_key, "i", "bo"),
+        )
+        .await
+        .expect("ended");
+        assert!(state.is_revoked(&bo));
+        // A realm that does not answer discovery cannot end anything yet.
+        let down = refusal(
+            back_channel(
+                &state,
+                logout_token("http://127.0.0.1:9/realms/down", &hel_key, "h", "down:x"),
+            )
+            .await,
+        );
+        assert!(down.contains("Unavailable"), "{down}");
+        drop(hel_realm);
+    }
+
+    #[tokio::test]
+    async fn a_logout_token_that_is_no_jwt_is_refused_before_any_key_is_asked() {
+        use base64::Engine as _;
+        let (server, _, _) = signing_realm("k").await;
+        let state = portal_of(&server, true).await;
+        let events = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
+            r#"{{"sub":"ana","events":{{"{LOGOUT_EVENT}":{{}}}}}}"#
+        ));
+        let refused = refusal(back_channel(&state, format!("!!.{events}.sig")).await);
+        assert!(
+            refused.contains("the logout token is not a JWT"),
+            "{refused}"
+        );
+        let no_event = refusal(back_channel(&state, "a.b.c".into()).await);
+        assert!(
+            no_event.contains("carries no back-channel logout event"),
+            "{no_event}"
+        );
+        let reads = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path().ends_with("/certs"))
+            .count();
+        assert_eq!(reads, 1, "discovery's read alone");
+    }
+
+    #[test]
+    fn groups_lose_their_leading_slash_and_only_a_proving_token_has_a_step_up_time() {
+        use base64::Engine as _;
+        let token = |payload: serde_json::Value| {
+            format!(
+                "h.{}.s",
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string())
+            )
+        };
+        assert_eq!(
+            token_groups(&token(serde_json::json!({ "groups": ["/a", "/a/b", "c"] }))),
+            ["a", "a/b", "c"]
+        );
+        assert!(token_groups(&token(serde_json::json!({}))).is_empty());
+        assert!(token_groups("garbage").is_empty());
+        assert_eq!(
+            second_factor_at(&token(serde_json::json!({ "acr": "mfa", "auth_time": 7 }))),
+            Some(7)
+        );
+        assert_eq!(
+            second_factor_at(&token(
+                serde_json::json!({ "amr": ["pwd"], "auth_time": 7 })
+            )),
+            None
+        );
+        assert_eq!(
+            second_factor_at(&token(serde_json::json!({ "acr": "mfa" }))),
+            None
+        );
+        assert_eq!(jwt_payload::<serde_json::Value>("only.one"), None);
+        assert_eq!(jwt_exp("h.e30.s"), None);
     }
 
     fn oidc_config(ca_file: Option<&str>) -> crate::config::OidcConfig {

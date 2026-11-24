@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      matrix: { target: [selector, filter, prometheus, schedule, mask, list_query, device_jwks, test_publish, feedback, mentions, bundle_head, trash_entity, preview_query, auth_issuer_of, auth_csrf_double_submit, auth_login_redirect, auth_realms_parse] }
+      matrix: { target: [selector, filter, prometheus, schedule, mask, list_query, device_jwks, test_publish, feedback, mentions, bundle_head, trash_entity, preview_query, auth_issuer_of, auth_csrf_double_submit, auth_login_redirect, auth_realms_parse, auth_session_cookie, auth_bearer_token, auth_second_factor] }
     defaults: { run: { working-directory: crates/portal } }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

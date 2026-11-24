@@ -5,7 +5,8 @@
 # feedback body, a comment's mentions, a git bundle's header, an entity bound for the trash and an
 # Endpoint preview's body, and (T-7605) the unverified `iss` of a bearer token, the double-submit
 # CSRF check over arbitrary headers, the login redirect target and an Organization realm list from
-# jc's host registry. Its own
+# jc's host registry, and (T-7783) the session cookie line, a presented bearer token and a token's
+# second-factor claims. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 [package]
@@ -25,6 +26,7 @@ serde_json = "1"
 axum = "0.8"
 cookie = { version = "0.18", features = ["percent-encode"] }
 url = "2"
+tokio = { version = "1", features = ["rt"] }
 joinedcontext-portal = { path = ".." }
 jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
 
@@ -80,6 +82,27 @@ bench = false
 [[bin]]
 name = "test_publish"
 path = "fuzz_targets/test_publish.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_session_cookie"
+path = "fuzz_targets/auth_session_cookie.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_bearer_token"
+path = "fuzz_targets/auth_bearer_token.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "auth_second_factor"
+path = "fuzz_targets/auth_second_factor.rs"
 test = false
 doc = false
 bench = false
