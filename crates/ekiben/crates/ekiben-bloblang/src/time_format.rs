@@ -1392,6 +1392,8 @@ mod tests {
             "03 12 UTC +0000 % %q"
         );
         assert_eq!(format_strftime(&east, "%I %Z %p %P"), "03 +05:30 PM pm");
+        // Go's unpadded hour, minute and second.
+        assert_eq!(format_go_layout(&east, "3:4:5"), "3:7:9");
         // A '%' that ends the format has no specifier and is copied.
         assert_eq!(format_strftime(&east, "%H%"), "15%");
         Ok(())
