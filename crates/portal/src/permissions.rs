@@ -206,14 +206,26 @@ fn branch_effective(
     project: &str,
     now: TimestampTz,
 ) -> Effective {
+    let state = crate::project_ids::branch_state(project);
+    branch_rights(mirror, bootstrap_group, identity, project, &state, now)
+}
+
+/// [`branch_effective`] for a branch in the state `state`.
+fn branch_rights(
+    mirror: &Mirror,
+    bootstrap_group: &str,
+    identity: &Identity,
+    project: &str,
+    state: &crate::project_ids::BranchState,
+    now: TimestampTz,
+) -> Effective {
     let mut effective = Effective {
         project: project.to_owned(),
         bootstrap: false,
         grants: Vec::new(),
         projects: None,
     };
-    let crate::project_ids::BranchState::Live(branch) = crate::project_ids::branch_state(project)
-    else {
+    let crate::project_ids::BranchState::Live(branch) = state else {
         return effective;
     };
     let parent = effective_of_parent(mirror, bootstrap_group, identity, &branch.parent, now);
@@ -3426,23 +3438,31 @@ mod tests {
         let live = "b-aaaaaaaaaaaaaaaaaaaaaaaa2t";
         let expired = "b-aaaaaaaaaaaaaaaaaaaaaaaa3t";
         let nested = "b-aaaaaaaaaaaaaaaaaaaaaaaa4t";
-        let in_hour = crate::auth::session::now_unix() + 3600;
-        for (name, parent, expires_at) in [
-            (live, "doprava", in_hour),
-            (expired, "doprava", 1),
-            (nested, live, in_hour),
-        ] {
-            crate::project_ids::note_branch(
-                name,
-                crate::project_ids::BranchEntry {
-                    parent: parent.to_owned(),
-                    created_by: "sub-ana@hel.fi".to_owned(),
-                    expires_at,
-                },
-            );
-        }
+        // The branch table is process-global: the states go in directly, never through it.
+        let entry = |parent: &str| {
+            crate::project_ids::BranchState::Live(crate::project_ids::BranchEntry {
+                parent: parent.to_owned(),
+                created_by: "sub-ana@hel.fi".to_owned(),
+                expires_at: crate::auth::session::now_unix() + 3600,
+            })
+        };
+        let states = [
+            (live, entry("doprava")),
+            (expired, crate::project_ids::BranchState::Gone),
+            (nested, entry(live)),
+            (
+                "b-aaaaaaaaaaaaaaaaaaaaaaaa5t",
+                crate::project_ids::BranchState::Unread,
+            ),
+        ];
         let now = TimestampTz::now();
-        let held = |who: &Identity, project: &str| effective(&mirror, "", who, project, now);
+        let held = |who: &Identity, project: &str| {
+            let (_, state) = states
+                .iter()
+                .find(|(name, _)| *name == project)
+                .expect("a branch of the test");
+            branch_rights(&mirror, "", who, project, state, now)
+        };
 
         let creator = held(&caller("ana@hel.fi"), live);
         assert_eq!(creator.project, live);
@@ -3463,6 +3483,16 @@ mod tests {
             held(&caller("cy@hel.fi"), live).grants.is_empty(),
             "an editor of the parent"
         );
+        // Through `effective`: a branch nobody opened holds nothing, whatever the table holds.
+        assert!(effective(
+            &mirror,
+            "",
+            &caller("ana@hel.fi"),
+            "b-aaaaaaaaaaaaaaaaaaaaaaaa9t",
+            now
+        )
+        .grants
+        .is_empty());
         for gone in [expired, nested, "b-aaaaaaaaaaaaaaaaaaaaaaaa5t"] {
             assert!(
                 held(&caller("ana@hel.fi"), gone).grants.is_empty(),

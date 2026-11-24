@@ -679,7 +679,7 @@ static BRANCHES: std::sync::RwLock<Option<HashMap<String, BranchEntry>>> =
 /// How often the branch table is read again and expired branches swept.
 pub const BRANCH_WATCH: std::time::Duration = std::time::Duration::from_secs(30);
 
-pub(crate) fn note_branch(name: &str, entry: BranchEntry) {
+fn note_branch(name: &str, entry: BranchEntry) {
     let mut table = BRANCHES.write().unwrap_or_else(|p| p.into_inner());
     table
         .get_or_insert_with(HashMap::new)
