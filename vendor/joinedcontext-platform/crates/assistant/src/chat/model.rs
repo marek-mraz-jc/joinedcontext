@@ -1111,6 +1111,36 @@ mod tests {
         }
     }
 
+    /// T-7765: every stage's call, streamed or not, asks OpenRouter for its fastest provider
+    /// unless the deployment names its own routing, which is sent as written.
+    #[tokio::test]
+    async fn every_call_asks_for_the_fastest_provider() {
+        use jc_core::kinds::{ProviderRouting, ProviderSort, ReasoningEffort};
+        let (model, _realm, _proxy) = thinking_model().await;
+        let fastest = json!({ "sort": "latency", "allow_fallbacks": true });
+        for json in [false, true] {
+            for stream in [false, true] {
+                let call = Call {
+                    json,
+                    ..answer_call(700, ReasoningEffort::Low)
+                };
+                assert_eq!(model.body(&call, &[], stream)["provider"], fastest);
+            }
+        }
+        let pinned = ProviderRouting {
+            sort: Some(ProviderSort::Throughput),
+            ..ProviderRouting::default()
+        };
+        let call = Call {
+            provider: Some(&pinned),
+            ..answer_call(700, ReasoningEffort::Low)
+        };
+        assert_eq!(
+            model.body(&call, &[], true)["provider"],
+            json!({ "sort": "throughput", "allow_fallbacks": true })
+        );
+    }
+
     /// T-7758: the 700-token answer at `low` that came back cut after 697 tokens of thought gets
     /// its effort's allowance on top, and answers in one call.
     #[tokio::test]
