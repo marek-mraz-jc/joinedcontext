@@ -6,3 +6,4 @@ mod common;
 mod git_checkouts_tests;
 mod preview_render_tests;
 mod roles_tests;
+mod validate_layout_tests;

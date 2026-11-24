@@ -45,6 +45,5 @@ mod sops_tests;
 mod sync_command_tests;
 mod sync_daemon_tests;
 mod taxonomy_tests;
-mod validate_layout_tests;
 mod waves_tests;
 mod workspace_command_tests;

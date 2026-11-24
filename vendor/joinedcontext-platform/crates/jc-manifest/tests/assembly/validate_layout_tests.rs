@@ -4,8 +4,8 @@
 use crate::common;
 
 use common::{temp_dir, write, ENDPOINT, ORG, PROJECT, SPACE};
-use jcctl::assemble::Directories;
-use jcctl::commands::validate::{run, run_assembled, run_project};
+use jc_manifest::assemble::Directories;
+use jc_manifest::validate::{run, run_assembled, run_project};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -35,7 +35,7 @@ fn with(slug: &str, dir: &Path) -> Directories {
     Directories(BTreeMap::from([(slug.to_owned(), dir.to_path_buf())]))
 }
 
-fn messages(report: &jcctl::commands::validate::Report) -> Vec<String> {
+fn messages(report: &jc_manifest::validate::Report) -> Vec<String> {
     report.findings.iter().map(ToString::to_string).collect()
 }
 
