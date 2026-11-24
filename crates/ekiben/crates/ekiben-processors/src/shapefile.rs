@@ -764,17 +764,15 @@ mod tests {
     /// member ending in `ext` set to `value`: 16 is its CRC-32, 24 its declared size.
     fn patch_central(ext: &str, at: usize, value: u32) -> Vec<u8> {
         let mut zip = rezip(|_| {});
-        let mut i = 0;
-        while let Some(off) = zip[i..].windows(4).position(|w| w == b"PK\x01\x02") {
-            let h = i + off;
-            let name_len = usize::from(u16::from_le_bytes([zip[h + 28], zip[h + 29]]));
-            if zip[h + 46..h + 46 + name_len].ends_with(ext.as_bytes()) {
-                zip[h + at..h + at + 4].copy_from_slice(&value.to_le_bytes());
-                return zip;
-            }
-            i = h + 4;
-        }
-        panic!("no {ext} member");
+        let h = (0..zip.len() - 46)
+            .find(|&h| {
+                let name_len = usize::from(u16::from_le_bytes([zip[h + 28], zip[h + 29]]));
+                zip[h..h + 4] == *b"PK\x01\x02"
+                    && zip[h + 46..h + 46 + name_len].ends_with(ext.as_bytes())
+            })
+            .expect("a central directory header for the member");
+        zip[h + at..h + at + 4].copy_from_slice(&value.to_le_bytes());
+        zip
     }
 
     #[test]
@@ -820,6 +818,12 @@ mod tests {
         .unwrap_err();
         assert!(
             err.contains("roads.prj") && err.contains("KKJ_Finland_Uniform_Coordinate_System"),
+            "{err}"
+        );
+        // A .prj with no quoted name is named by its first 80 characters.
+        let err = crs_of("a.prj", "LOCAL_CS[x]".repeat(10).as_bytes()).unwrap_err();
+        assert!(
+            err.contains(&format!("the CRS {:?}", &"LOCAL_CS[x]".repeat(10)[..80])),
             "{err}"
         );
         let err = crs_of("a.prj", br#"PROJCS["x",AUTHORITY["EPSG","2393"]]"#).unwrap_err();
