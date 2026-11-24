@@ -423,6 +423,7 @@ mod tests {
                 "{why}: the token is logged"
             );
         }
+        std::io::Write::flush(&mut Captured(std::sync::Arc::clone(&log))).expect("flush");
         let logged = String::from_utf8(log.lock().expect("log").clone()).expect("utf-8");
         assert!(logged.contains("a pipeline sink was refused"), "{logged}");
         for client in ["zilina-pipelines", "praha-pl-other", "pipeline-runner"] {

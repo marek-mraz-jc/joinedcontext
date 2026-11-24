@@ -190,10 +190,9 @@ impl AppState {
             &self.organization_hosts.current(),
         )?;
         if let Some(addr) = reach {
+            // `parse` admits only key URLs with a host.
             for s in &settings {
-                if let Some(host) = s.jwks_url.host_str() {
-                    crate::reach::add(host, addr);
-                }
+                crate::reach::add(s.jwks_url.host_str().unwrap_or_default(), addr);
             }
         }
         let held = self.organization_realms.current();
@@ -795,7 +794,10 @@ mod tests {
         let mut orphan = envelope("App", "orphan", "free", serde_json::json!({}));
         orphan.metadata.namespace = None;
         state.mirror.upsert(orphan);
-        assert!(of_app(&state, "orphan").is_none(), "an App of no project");
+        assert!(
+            of_app(&state, "orphan").is_none(),
+            "the mirror leaves out an App of no project"
+        );
 
         let token = |key: &jsonwebtoken::EncodingKey, kid: &str, iss: &str, app: &str| {
             let client = crate::reconciler::app_clients::client_id(app);
