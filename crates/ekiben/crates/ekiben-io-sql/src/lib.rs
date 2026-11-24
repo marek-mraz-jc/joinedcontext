@@ -131,7 +131,8 @@ mod tests {
     /// the connection lint, which reads an object, adds nothing.
     #[test]
     fn a_config_that_is_no_object_is_named_once_by_every_lint() {
-        let lints: [(&str, fn(&serde_json::Value) -> Vec<String>); 8] = [
+        type Lint = fn(&serde_json::Value) -> Vec<String>;
+        let lints: [(&str, Lint); 8] = [
             ("sql_raw input", crate::input_sql_raw::lint),
             ("sql_select input", crate::input_sql_select::lint),
             ("sql output", crate::output_sql_deprecated::lint),
