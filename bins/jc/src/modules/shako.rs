@@ -514,16 +514,15 @@ mod tests {
             .filter(|f| std::fs::read(f).is_ok_and(|b| b == bytes))
             .collect();
         assert_eq!(blobs.len(), 1, "the manifest is a blob: {blobs:?}");
+        /// Whether the trim was logged, asked after a tick that lets the spawned trim run.
+        async fn trimmed(log: &Path) -> bool {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            std::fs::read_to_string(log)
+                .unwrap()
+                .contains("store log trimmed")
+        }
         tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-                if std::fs::read_to_string(log.path())
-                    .unwrap()
-                    .contains("store log trimmed")
-                {
-                    break;
-                }
-            }
+            while !trimmed(log.path()).await {}
         })
         .await
         .expect("the log is trimmed beside the start");
