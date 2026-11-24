@@ -923,6 +923,13 @@ async fn each_shape_rule_is_refused_by_its_field_before_anything_is_written() {
     let mut over = board();
     over["panels"][6]["aggregation"] = json!("avg");
     cases.push((over, "panels[6].aggregation"));
+    let mut counted = board();
+    counted["variables"][0]["attribute"] = json!("availableBikeNumber");
+    cases.push((counted, "variables[0].attribute"));
+    let mut linked = board();
+    linked["panels"][0]["filters"][0] =
+        json!({ "attribute": "refOwner", "op": "eq", "value": "urn:ngsi-ld:Owner:1" });
+    cases.push((linked, "panels[0].filters[0].attribute"));
     let mut wordy = board();
     wordy["panels"][7]["text"]["content"] = json!("x".repeat(builder::MAX_CONTENT + 1));
     cases.push((wordy, "panels[7].text.content"));
@@ -1505,4 +1512,445 @@ async fn a_preview_of_a_bar_chart_reads_one_row_per_entity_and_a_text_panel_read
         "{}",
         answer.text
     );
+}
+
+/// The dashboards service with a datasource for the closed Endpoint of `bikes` as well.
+async fn daiya_reading_closed() -> MockServer {
+    let server = daiya().await;
+    Mock::given(method("GET"))
+        .and(path("/grafana/api/datasources"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "uid": DATASOURCE, "type": "ngsild-grafana-datasource",
+              "url": format!("http://gateway:8080/api/endpoint/{PUBLIC_SLUG}") },
+            { "uid": "bikes-closed-ds", "type": "ngsild-grafana-datasource",
+              "url": format!("http://gateway:8080/api/endpoint/{CLOSED_SLUG}") },
+            { "uid": "prometheus", "type": "prometheus", "url": "http://prometheus:9090" },
+        ])))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    server
+}
+
+/// A variable's values are read as the person through the dashboards service, sorted and
+/// deduplicated; a query parameter the door does not take, a reader, a closed Endpoint the
+/// service cannot read and a query the service fails are each refused with the reason.
+#[tokio::test]
+async fn a_variables_values_are_read_as_the_person_and_each_failure_says_why() {
+    let shako = common::forge().await;
+    let grafana = daiya().await;
+    let state = world(&shako, &grafana);
+    let values = format!("{BUILDER}/values?endpoint=bikes-open&type=BikeHireDockingStation");
+    let answer = send(
+        &state,
+        person("eva"),
+        "GET",
+        &format!("{values}&attribute=status"),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    assert_eq!(
+        body(&answer)["options"],
+        json!([{ "text": "closed", "value": "closed" }, { "text": "open", "value": "open" }])
+    );
+    let stray = send(
+        &state,
+        person("eva"),
+        "GET",
+        &format!("{values}&attribute=status&sql=1"),
+        None,
+    )
+    .await;
+    assert_eq!(stray.status, StatusCode::BAD_REQUEST, "{}", stray.text);
+    let reader = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{values}&attribute=status"),
+        None,
+    )
+    .await;
+    assert_eq!(reader.status, StatusCode::FORBIDDEN, "{}", reader.text);
+    let number = send(
+        &state,
+        person("eva"),
+        "GET",
+        &format!("{values}&attribute=availableBikeNumber"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        number.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        number.text
+    );
+    let closed = send(
+        &state,
+        person("eva"),
+        "GET",
+        &format!(
+            "{BUILDER}/values?endpoint=bikes-closed&type=BikeHireDockingStation&attribute=status"
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(
+        closed.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        closed.text
+    );
+    assert!(
+        body(&closed)["errors"].to_string().contains("endpoint:"),
+        "{}",
+        closed.text
+    );
+
+    let failing = daiya().await;
+    Mock::given(method("POST"))
+        .and(path("/grafana/api/ds/query"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "error": "the broker did not answer in time" })),
+        )
+        .with_priority(1)
+        .mount(&failing)
+        .await;
+    let state = world(&shako, &failing);
+    let answer = send(
+        &state,
+        person("eva"),
+        "GET",
+        &format!("{values}&attribute=status"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("the broker did not answer in time"),
+        "{}",
+        answer.text
+    );
+}
+
+/// A panel on a closed Endpoint the dashboards service holds no datasource for is refused by its
+/// field before anything is written; one it holds previews with the person's token, which a
+/// session without one does not carry: the panel says so instead of failing the request.
+#[tokio::test]
+async fn a_closed_endpoint_needs_its_datasource_and_previews_with_the_persons_token() {
+    let shako = common::forge().await;
+    let grafana = daiya().await;
+    let state = world(&shako, &grafana);
+    let mut sent = board();
+    sent["panels"][1]["endpoint"] = json!("bikes-closed");
+    let answer = send(
+        &state,
+        person("eva"),
+        "POST",
+        BUILDER,
+        Some(json!({ "board": sent.clone() })),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        answer.text
+    );
+    assert!(
+        body(&answer)["errors"]
+            .to_string()
+            .contains("panels[1].endpoint"),
+        "{}",
+        answer.text
+    );
+    assert!(committed_files(&shako, REPO).await.is_empty());
+
+    let grafana = daiya_reading_closed().await;
+    let state = world(&shako, &grafana);
+    let preview = json!({ "board": sent, "panel": 2 });
+    let answer = send(
+        &state,
+        person("eva"),
+        "POST",
+        &format!("{BUILDER}/preview"),
+        Some(preview),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    assert!(answer.text.contains("sign in again"), "{}", answer.text);
+}
+
+/// A dashboard file over the size the builder writes is refused by `board` before it is proposed.
+#[tokio::test]
+async fn a_dashboard_over_the_file_limit_is_refused_before_it_is_proposed() {
+    let shako = common::forge().await;
+    let grafana = daiya().await;
+    let many: Vec<String> = (0..builder::MAX_OPTIONS)
+        .map(|i| format!("station-{i:03}-{}", "x".repeat(100)))
+        .collect();
+    Mock::given(method("POST"))
+        .and(path("/grafana/api/ds/query"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "results": { "A": {
+                "frames": [{ "fields": [{ "name": "status", "values": many }] }]
+            }}})),
+        )
+        .with_priority(1)
+        .mount(&grafana)
+        .await;
+    let state = world(&shako, &grafana);
+    let mut sent = board();
+    let variable = sent["variables"][0].clone();
+    sent["variables"] = json!((0..builder::MAX_VARIABLES)
+        .map(|i| {
+            let mut copy = variable.clone();
+            if i > 0 {
+                copy["name"] = json!(format!("status{i}"));
+            }
+            copy
+        })
+        .collect::<Vec<_>>());
+    let answer = send(
+        &state,
+        person("eva"),
+        "POST",
+        BUILDER,
+        Some(json!({ "board": sent })),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("board: the dashboard is over 256 KiB"),
+        "{}",
+        answer.text
+    );
+    assert!(committed_files(&shako, REPO).await.is_empty());
+}
+
+/// A dashboard only an open Change holds reads from its branch; a uid neither main nor a Change
+/// holds is not found, and so are a uid the builder did not mint, a version list with no commit
+/// and a version the history does not hold.
+#[tokio::test]
+async fn a_dashboard_waiting_for_approval_reads_from_its_change_and_an_absent_one_is_not_found() {
+    let shako = common::forge().await;
+    let branch = format!("portal/grafana-{PROJECT}-{FIXTURE_UID}");
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [{
+            "Number": 5, "HtmlUrl": "https://shako.example/pulls/5", "State": "open",
+            "Title": "add dashboard Bike stations", "Head": branch, "Base": "main",
+            "Mergeable": true, "Merged": false
+        }]})))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let text = std::fs::read_to_string(FIXTURE).expect("the fixture");
+    holds(&shako, FIXTURE_UID, &branch, "blob-pr", &text).await;
+    let grafana = daiya_reading_closed().await;
+    let state = world(&shako, &grafana);
+    let read = send(
+        &state,
+        person("eva"),
+        "GET",
+        &format!("{BUILDER}/{FIXTURE_UID}"),
+        None,
+    )
+    .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    assert_eq!(body(&read)["board"]["title"], "Bike stations");
+    assert_eq!(body(&read)["board"]["panels"][0]["endpoint"], "bikes-open");
+    assert_eq!(
+        body(&read)["base"],
+        Value::Null,
+        "a Change's file is no base to edit from"
+    );
+
+    let absent = send(
+        &state,
+        person("eva"),
+        "GET",
+        &format!("{BUILDER}/{UID}"),
+        None,
+    )
+    .await;
+    assert_eq!(absent.status, StatusCode::NOT_FOUND, "{}", absent.text);
+    let minted = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{BUILDER}/not-ours/versions"),
+        None,
+    )
+    .await;
+    assert_eq!(minted.status, StatusCode::NOT_FOUND, "{}", minted.text);
+    history(&shako, UID, &[]).await;
+    let none = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{BUILDER}/{UID}/versions"),
+        None,
+    )
+    .await;
+    assert_eq!(none.status, StatusCode::NOT_FOUND, "{}", none.text);
+    history(
+        &shako,
+        FIXTURE_UID,
+        &[("3333333333333333333333333333333333333333", "eva")],
+    )
+    .await;
+    let unknown = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{BUILDER}/{FIXTURE_UID}/versions/4444444444444444444444444444444444444444"),
+        None,
+    )
+    .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND, "{}", unknown.text);
+    assert!(unknown.text.contains("has no version"), "{}", unknown.text);
+}
+
+/// Restoring a version of a dashboard main no longer holds is not found; removing one whose file
+/// names no title proposes the removal under its uid.
+#[tokio::test]
+async fn a_restore_needs_the_saved_dashboard_and_a_removal_names_an_untitled_one_by_uid() {
+    const OLD: &str = "5555555555555555555555555555555555555555";
+    let shako = common::forge().await;
+    let grafana = daiya().await;
+    let state = world(&shako, &grafana);
+    let text = std::fs::read_to_string(FIXTURE).expect("the fixture");
+    history(&shako, FIXTURE_UID, &[(OLD, "eva")]).await;
+    holds(&shako, FIXTURE_UID, OLD, "blob-old", &text).await;
+    let restore = send(
+        &state,
+        person("eva"),
+        "POST",
+        &format!("{BUILDER}/{FIXTURE_UID}/versions/{OLD}/restore"),
+        None,
+    )
+    .await;
+    assert_eq!(restore.status, StatusCode::NOT_FOUND, "{}", restore.text);
+
+    holds(&shako, UID, "main", "blob-1", "not json").await;
+    let removed = send(
+        &state,
+        person("eva"),
+        "DELETE",
+        &format!("{BUILDER}/{UID}"),
+        None,
+    )
+    .await;
+    assert_eq!(removed.status, StatusCode::ACCEPTED, "{}", removed.text);
+    let titles: Vec<String> = shako
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/PullRequests"))
+        .filter_map(|r| serde_json::from_slice::<Value>(&r.body).ok())
+        .filter_map(|b| b["Title"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(titles, [format!("remove dashboard {UID}")], "{titles:?}");
+}
+
+/// The builder's start lists no waiting dashboard when the forge holds no pull requests; with no
+/// forge configured a create says so; a body that is not JSON is a 400.
+#[tokio::test]
+async fn a_forge_without_pull_requests_or_none_at_all_is_answered_plainly() {
+    let shako = common::forge().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(404))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let grafana = daiya().await;
+    let state = world(&shako, &grafana);
+    let start = send(&state, person("eva"), "GET", BUILDER, None).await;
+    assert_eq!(start.status, StatusCode::OK, "{}", start.text);
+    assert_eq!(body(&start)["pending"], json!([]));
+    assert_eq!(body(&start)["mayEdit"], true);
+
+    let broken = common::send_body(
+        &state,
+        person("eva"),
+        "POST",
+        BUILDER,
+        "application/json",
+        axum::body::Body::from("{\"board\": "),
+    )
+    .await;
+    assert_eq!(broken.status, StatusCode::BAD_REQUEST, "{}", broken.text);
+
+    let mut forgeless = state.clone();
+    forgeless.shako = None;
+    let answer = send(
+        &forgeless,
+        person("eva"),
+        "POST",
+        BUILDER,
+        Some(json!({ "board": board() })),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("git forge is not configured"),
+        "{}",
+        answer.text
+    );
+}
+
+/// Moving saved charts needs the database that holds them; with nothing a dashboard can hold, a
+/// proposing run is a conflict and writes nothing.
+#[tokio::test]
+async fn saved_charts_need_a_database_and_something_to_move() {
+    let shako = common::forge().await;
+    let grafana = daiya().await;
+    let state = world(&shako, &grafana);
+    let moves = format!("{BUILDER}/saved-charts");
+    let answer = send(&state, person("eva"), "POST", &moves, Some(json!({}))).await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(answer.text.contains("no database"), "{}", answer.text);
+
+    let Some(pool) = database().await else { return };
+    let mut state = world(&shako, &grafana);
+    state.db = Some(pool.clone());
+    common::keyed_project(&state, &pool, PROJECT, "grafana-tests").await;
+    let dry = send(
+        &state,
+        person("eva"),
+        "POST",
+        &moves,
+        Some(json!({ "dryRun": true })),
+    )
+    .await;
+    assert_eq!(dry.status, StatusCode::OK, "{}", dry.text);
+    let answer = send(&state, person("eva"), "POST", &moves, Some(json!({}))).await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(answer.text.contains("nothing to move"), "{}", answer.text);
+    assert!(committed_files(&shako, REPO).await.is_empty());
 }

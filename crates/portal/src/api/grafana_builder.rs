@@ -768,9 +768,7 @@ async fn file_of(
     for variable in &board.variables {
         values.push(read_values(state, &client, org, headers, project, variable).await?);
     }
-    let text = serde_json::to_string_pretty(&compile(uid, board, &sources, &values))
-        .map_err(|err| ApiError::Internal(err.to_string()))?
-        + "\n";
+    let text = format!("{:#}\n", compile(uid, board, &sources, &values));
     if text.len() > builder::MAX_FILE {
         return Err(refused(
             "board",
@@ -786,14 +784,21 @@ async fn file_of(
 /// The Change of one dashboard file: written (or removed with `content` `None`) on its own
 /// branch, refused while another Change of it is open.
 #[allow(clippy::too_many_arguments)]
+/// What a Change does to a dashboard's file: writes this text over the file it replaces, if any,
+/// or removes the file.
+#[derive(Clone, Copy)]
+enum Edit<'a> {
+    Write(&'a str, Option<&'a crate::forge::RepoFile>),
+    Remove(&'a crate::forge::RepoFile),
+}
+
 async fn propose(
     state: &AppState,
     identity: &Identity,
     project: &str,
     uid: &str,
     title: &str,
-    content: Option<&str>,
-    existing: Option<&crate::forge::RepoFile>,
+    edit: Edit<'_>,
 ) -> Result<Change, ApiError> {
     let shako = forge(state, project)?;
     let base = shako.default_branch().await?;
@@ -812,14 +817,14 @@ async fn propose(
         email: &author_email,
     };
     let path = builder::path_of(project, uid);
-    let (verb, summary) = match (content, existing) {
-        (Some(_), None) => ("add", crate::change::PlanSummary::new(1, 0, 0)),
-        (Some(_), Some(_)) => ("change", crate::change::PlanSummary::new(0, 1, 0)),
-        (None, _) => ("remove", crate::change::PlanSummary::new(0, 0, 1)),
+    let (verb, summary) = match edit {
+        Edit::Write(_, None) => ("add", crate::change::PlanSummary::new(1, 0, 0)),
+        Edit::Write(_, Some(_)) => ("change", crate::change::PlanSummary::new(0, 1, 0)),
+        Edit::Remove(_) => ("remove", crate::change::PlanSummary::new(0, 0, 1)),
     };
     let message = format!("{verb} dashboard {title}");
-    match (content, existing) {
-        (Some(content), existing) => {
+    match edit {
+        Edit::Write(content, existing) => {
             shako
                 .put_file(&crate::forge::FileWrite {
                     path: &path,
@@ -831,7 +836,7 @@ async fn propose(
                 })
                 .await?;
         }
-        (None, Some(existing)) => {
+        Edit::Remove(existing) => {
             shako
                 .delete_file(&crate::forge::FileDelete {
                     path: &path,
@@ -842,7 +847,6 @@ async fn propose(
                 })
                 .await?;
         }
-        (None, None) => return Err(no_dashboard(project, uid)),
     }
     let pr_body = format!(
         "{verb}s the dashboard `{title}` in `{path}`, built in the Portal from choices. Once this \
@@ -899,8 +903,7 @@ pub async fn builder_create(
         &project,
         &uid,
         board.title.trim(),
-        Some(&text),
-        None,
+        Edit::Write(&text, None),
     )
     .await?;
     Ok((StatusCode::ACCEPTED, Json(BuilderSaved { uid, change })))
@@ -971,8 +974,7 @@ pub async fn builder_update(
         &project,
         &uid,
         board.title.trim(),
-        Some(&text),
-        Some(&existing),
+        Edit::Write(&text, Some(&existing)),
     )
     .await?;
     Ok((StatusCode::ACCEPTED, Json(BuilderSaved { uid, change })))
@@ -1017,8 +1019,7 @@ pub async fn builder_delete(
         &project,
         &uid,
         &title,
-        None,
-        Some(&existing),
+        Edit::Remove(&existing),
     )
     .await?;
     Ok((StatusCode::ACCEPTED, Json(BuilderSaved { uid, change })))
@@ -1317,8 +1318,7 @@ pub async fn builder_restore(
         &project,
         &uid,
         board.title.trim(),
-        Some(&text),
-        Some(&existing),
+        Edit::Write(&text, Some(&existing)),
     )
     .await?;
     Ok((StatusCode::ACCEPTED, Json(BuilderSaved { uid, change })))
@@ -1424,8 +1424,7 @@ pub async fn builder_saved_charts(
                     &project,
                     &uid,
                     saved_charts::TITLE,
-                    Some(text),
-                    None,
+                    Edit::Write(text, None),
                 )
                 .await?,
             ),
@@ -1526,5 +1525,60 @@ fn held_as(kind: &str, value_type: Option<&str>) -> String {
         ("Relationship", _) => "a link to another entity".to_owned(),
         ("GeoProperty", _) => "a location".to_owned(),
         (other, _) => format!("a {other}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_names_how_the_model_holds_an_attribute() {
+        assert_eq!(held_as("Property", Some("string")), "text");
+        assert_eq!(held_as("Property", Some("integer")), "a integer");
+        assert_eq!(held_as("Property", None), "a Property");
+        assert_eq!(
+            held_as("Relationship", Some("string")),
+            "a link to another entity"
+        );
+        assert_eq!(held_as("GeoProperty", None), "a location");
+        assert_eq!(held_as("LanguageProperty", None), "a LanguageProperty");
+    }
+
+    #[test]
+    fn a_builder_branch_names_its_uid_and_no_other_branch_does() {
+        let uid = "jcd-0123456789abcdef";
+        assert_eq!(
+            uid_of_branch("helsinki", &branch_of("helsinki", uid)),
+            Some(uid)
+        );
+        assert_eq!(
+            uid_of_branch("helsinki", &format!("{}_k3x", branch_of("helsinki", uid))),
+            Some(uid),
+            "a retry's nonce follows the uid"
+        );
+        assert_eq!(uid_of_branch("espoo", &branch_of("helsinki", uid)), None);
+        assert_eq!(
+            uid_of_branch("helsinki", "portal/grafana-helsinki-notauid"),
+            None
+        );
+        assert_eq!(uid_of_branch("helsinki", "main"), None);
+    }
+
+    #[test]
+    fn each_frame_carries_the_ref_id_of_its_query() {
+        let answer = json!({ "results": {
+            "A": { "frames": [{ "fields": [] }, { "refId": "Z", "fields": [] }] },
+            "B": { "error": "no frames" },
+        }});
+        let frames = frames_of(&answer);
+        assert_eq!(
+            frames,
+            [
+                json!({ "fields": [], "refId": "A" }),
+                json!({ "refId": "Z", "fields": [] })
+            ]
+        );
+        assert!(frames_of(&json!({ "message": "no results" })).is_empty());
     }
 }

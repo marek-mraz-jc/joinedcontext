@@ -3,7 +3,8 @@
 # Prometheus page, a pipeline's cron schedule, the masking of a record the runner posts, the list
 # query string and its cursor, a device's JSON Web Key Set, an MQTT test-publish body, and (T-7658) a
 # feedback body, a comment's mentions, a git bundle's header, an entity bound for the trash and an
-# Endpoint preview's body. Its own
+# Endpoint preview's body, and (T-7659) an export's revision and kinds filter, the secrets a bundle
+# strips and a visualization's title. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 [package]
@@ -127,6 +128,27 @@ bench = false
 [[bin]]
 name = "preview_query"
 path = "fuzz_targets/preview_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "export_query"
+path = "fuzz_targets/export_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "export_secrets"
+path = "fuzz_targets/export_secrets.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "grafana_title"
+path = "fuzz_targets/grafana_title.rs"
 test = false
 doc = false
 bench = false

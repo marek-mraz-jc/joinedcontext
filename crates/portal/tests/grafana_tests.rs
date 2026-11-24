@@ -713,3 +713,158 @@ async fn the_client_speaks_a_real_grafanas_api() {
             .expect("already gone is fine");
     }
 }
+
+/// A project the registry holds no key for keeps no visualization: the page lists none, a save
+/// and a remove say why and who fixes it.
+#[tokio::test]
+async fn a_project_outside_the_registry_lists_nothing_and_keeps_nothing() {
+    let _alone = DATABASE.lock().await;
+    let Some(pool) = database().await else { return };
+    let server = grafana_with_organization().await;
+    let mut state = world(Some(&server));
+    state.db = Some(pool);
+    let listed = send(&state, person("vera"), "GET", PAGE, None).await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
+    assert_eq!(body(&listed)["items"], json!([]));
+    let saved = send(&state, person("eva"), "POST", PAGE, Some(asked(json!({})))).await;
+    assert_eq!(saved.status, StatusCode::NOT_FOUND, "{}", saved.text);
+    assert!(
+        saved.text.contains("belongs to no active Organization"),
+        "{}",
+        saved.text
+    );
+    let removed = send(
+        &state,
+        person("eva"),
+        "DELETE",
+        &format!("{PAGE}/ab12"),
+        None,
+    )
+    .await;
+    assert_eq!(removed.status, StatusCode::NOT_FOUND, "{}", removed.text);
+    assert!(writes_of(&server).await.is_empty());
+}
+
+/// A remove names a visualization the project does not hold as not found; a save into a Grafana
+/// that has no organization for the project is a conflict naming who adds it, and writes nothing.
+#[tokio::test]
+async fn an_unknown_visualization_is_not_found_and_a_grafana_without_the_organization_is_a_conflict(
+) {
+    let _alone = DATABASE.lock().await;
+    let Some(pool) = database().await else { return };
+    let server = grafana_with_organization().await;
+    let mut state = world(Some(&server));
+    state.db = Some(pool.clone());
+    common::keyed_project(&state, &pool, PROJECT, "grafana-tests").await;
+    let removed = send(
+        &state,
+        person("eva"),
+        "DELETE",
+        &format!("{PAGE}/zz99"),
+        None,
+    )
+    .await;
+    assert_eq!(removed.status, StatusCode::NOT_FOUND, "{}", removed.text);
+    assert!(
+        removed.text.contains("visualization zz99 not found"),
+        "{}",
+        removed.text
+    );
+
+    let empty = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/grafana/api/orgs/name/helsinki"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&empty)
+        .await;
+    let mut state = world(Some(&empty));
+    state.db = Some(pool.clone());
+    common::keyed_project(&state, &pool, PROJECT, "grafana-tests").await;
+    let saved = send(&state, person("eva"), "POST", PAGE, Some(asked(json!({})))).await;
+    assert_eq!(saved.status, StatusCode::CONFLICT, "{}", saved.text);
+    assert!(saved.text.contains("ask your operator"), "{}", saved.text);
+    assert!(writes_of(&empty).await.is_empty());
+}
+
+/// A database that does not answer is a 503 that says the visualizations could not be read,
+/// never the driver's error.
+#[tokio::test]
+async fn a_database_that_does_not_answer_is_a_503_without_its_error() {
+    let mut state = world(None);
+    state.mirror.upsert(envelope(
+        "Project",
+        PROJECT,
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "grafana-tests" }),
+    ));
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+    let port = closed.local_addr().expect("an address").port();
+    drop(closed);
+    state.db = Some(
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_secs(3))
+            .connect_lazy(&format!(
+                "postgres://nobody:secret-pw@127.0.0.1:{port}/none"
+            ))
+            .expect("a lazy pool"),
+    );
+    let listed = send(&state, person("vera"), "GET", PAGE, None).await;
+    assert_eq!(
+        listed.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        listed.text
+    );
+    assert!(
+        listed
+            .text
+            .contains("the saved visualizations could not be read or written"),
+        "{}",
+        listed.text
+    );
+    assert!(!listed.text.contains("secret-pw"), "{}", listed.text);
+}
+
+/// The form's lists: a Grafana that fails is the request's error; an Endpoint whose space has no
+/// model offers no types.
+#[tokio::test]
+async fn the_form_reports_a_failing_grafana_and_offers_no_types_without_a_model() {
+    let failing = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/grafana/api/orgs/name/helsinki"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&failing)
+        .await;
+    let state = world(Some(&failing));
+    let options = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{PAGE}/options"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        options.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        options.text
+    );
+    assert!(!options.text.contains(PASSWORD), "{}", options.text);
+
+    let state = world(None);
+    let air = send(
+        &state,
+        person("vera"),
+        "GET",
+        &format!("{PAGE}/options?endpoint=air-closed&type=AirQualityObserved"),
+        None,
+    )
+    .await;
+    assert_eq!(air.status, StatusCode::OK, "{}", air.text);
+    assert_eq!(body(&air)["types"], json!([]));
+    assert_eq!(body(&air)["attributes"], json!([]));
+    assert!(body(&air)["endpoints"]
+        .as_array()
+        .is_some_and(|list| !list.is_empty()));
+}

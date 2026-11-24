@@ -73,7 +73,7 @@ pub struct RevisionList {
 ///
 /// The key stays with an empty string rather than disappearing: a bundle must stay re-importable,
 /// and a manifest that lost a required field would not validate on the way back in.
-pub(crate) fn strip_secret_values(value: &mut Value) {
+pub fn strip_secret_values(value: &mut Value) {
     match value {
         Value::Object(map) => {
             for (key, child) in map.iter_mut() {
@@ -105,7 +105,7 @@ fn shako(state: &AppState, project: &str) -> Result<std::sync::Arc<ShakoClient>,
 }
 
 /// Whether a revision is a commit id rather than a branch name (MF-17).
-pub(crate) fn is_commit(revision: &str) -> bool {
+pub fn is_commit(revision: &str) -> bool {
     (7..=40).contains(&revision.len())
         && revision
             .chars()
@@ -114,7 +114,7 @@ pub(crate) fn is_commit(revision: &str) -> bool {
 
 /// A revision is put into a forge URL, so it is checked before it is used. Branch names and
 /// commit shas are the whole of what a caller may name here.
-fn valid_revision(revision: &str) -> bool {
+pub fn valid_revision(revision: &str) -> bool {
     !revision.is_empty()
         && revision.len() <= 128
         && !revision.starts_with('-')
@@ -137,7 +137,7 @@ fn selected(raw: Option<&str>) -> Option<Vec<String>> {
 /// `kinds=endpoints,pipelines` as the kind names the manifests carry. An unknown plural filters
 /// everything out rather than being ignored: a filter that silently does nothing is a bug that
 /// ships a bigger bundle than the caller asked for.
-fn kind_filter(raw: Option<&str>) -> Option<Vec<String>> {
+pub fn kind_filter(raw: Option<&str>) -> Option<Vec<String>> {
     selected(raw).map(|plurals| {
         plurals
             .iter()
@@ -252,9 +252,7 @@ async fn read_project(
                 if envelope.kind == "SharedSpaceReference" {
                     reference_by_name(&mut envelope.spec, endpoints);
                 }
-                let content = serde_norway::to_string(&envelope).map_err(|e| {
-                    ApiError::Internal(format!("manifest '{path}' did not serialise: {e}"))
-                })?;
+                let content = yaml(&envelope)?;
                 files.push(Exported {
                     path,
                     content,
@@ -314,11 +312,6 @@ fn native_matches_filters(
         })
 }
 
-fn pretty(value: &Value) -> Result<String, ApiError> {
-    serde_json::to_string_pretty(value)
-        .map_err(|e| ApiError::Internal(format!("schema did not serialise: {e}")))
-}
-
 fn attachment(body: Vec<u8>, content_type: &'static str, filename: String) -> Response {
     (
         StatusCode::OK,
@@ -358,10 +351,7 @@ fn bundle_index(
         readme: description.map(|d| d.readme.clone()),
         schemas: description.map(|d| jc_core::kinds::BundleSchemas {
             kinds: d.kinds.clone(),
-            models: match d.models_json() {
-                Value::Object(members) => members.into_iter().collect(),
-                _ => BTreeMap::new(),
-            },
+            models: d.models_json().into_iter().collect(),
         }),
         // A YAML bundle; a git-native export lists its repositories here (MF-45).
         repositories: Vec::new(),
@@ -374,8 +364,14 @@ fn bundle_index(
         "metadata": { "name": header.project, "namespace": crate::permissions::ORG_NAMESPACE },
         "spec": spec,
     });
-    serde_norway::to_string(&bundle)
-        .map_err(|e| ApiError::Internal(format!("bundle index did not serialise: {e}")))
+    yaml(&bundle)
+}
+
+/// A manifest or an index as YAML. Every value here is a JSON tree with string keys, which YAML
+/// always holds, so the error arm is not reached in practice.
+fn yaml(value: &impl Serialize) -> Result<String, ApiError> {
+    serde_norway::to_string(value)
+        .map_err(|e| ApiError::Internal(format!("export did not serialise: {e}")))
 }
 
 /// The checksum of every file the bundle carries, over the bytes as exported (MF-42).
@@ -472,23 +468,21 @@ struct Description {
 
 impl Description {
     /// The models as the YAML index and the JSON list carry them.
-    fn models_json(&self) -> Value {
-        Value::Object(
-            self.models
-                .iter()
-                .map(|(name, files)| {
-                    (
-                        name.clone(),
-                        serde_json::json!({
-                            "classes": files.classes,
-                            "linkml": files.linkml,
-                            "jsonSchema": files.json_schema,
-                            "missing": files.missing,
-                        }),
-                    )
-                })
-                .collect(),
-        )
+    fn models_json(&self) -> serde_json::Map<String, Value> {
+        self.models
+            .iter()
+            .map(|(name, files)| {
+                (
+                    name.clone(),
+                    serde_json::json!({
+                        "classes": files.classes,
+                        "linkml": files.linkml,
+                        "jsonSchema": files.json_schema,
+                        "missing": files.missing,
+                    }),
+                )
+            })
+            .collect()
     }
 }
 
@@ -513,13 +507,15 @@ fn beside(manifest_path: &str, relative: &str) -> Option<String> {
 /// The LinkML source and JSON Schema of one `DataModel`: the repository's own files, a JSON
 /// Schema generated by Model Tools when the repository has none, and the reason for anything
 /// that could not be had.
-async fn model_files(state: &AppState, file: &Exported, all: &[Exported]) -> ModelFiles {
-    let Some(envelope) = &file.manifest else {
-        return ModelFiles::default();
-    };
+async fn model_files(
+    state: &AppState,
+    envelope: &ResourceEnvelope,
+    path: &str,
+    all: &[Exported],
+) -> ModelFiles {
     let spec = &envelope.spec;
     let content_at = |relative: &str| {
-        let wanted = beside(&file.path, relative)?;
+        let wanted = beside(path, relative)?;
         all.iter()
             .find(|other| other.path == wanted)
             .map(|other| other.content.clone())
@@ -603,10 +599,10 @@ async fn describe(
 ) -> Description {
     let mut by_kind: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut models = BTreeMap::new();
-    for file in included {
-        let Some(envelope) = &file.manifest else {
-            continue;
-        };
+    for (file, envelope) in included
+        .iter()
+        .filter_map(|file| Some((file, file.manifest.as_ref()?)))
+    {
         by_kind
             .entry(envelope.kind.clone())
             .or_default()
@@ -614,7 +610,7 @@ async fn describe(
         if envelope.kind == "DataModel" {
             models.insert(
                 envelope.metadata.name.clone(),
-                model_files(state, file, all).await,
+                model_files(state, envelope, &file.path, all).await,
             );
         }
     }
@@ -970,24 +966,21 @@ pub async fn export(
             list["readme"] = Value::String(description.readme.clone());
             list["schemas"] = serde_json::json!({
                 "kinds": description.kinds,
-                "models": description.models_json(),
+                "models": Value::Object(description.models_json()),
             });
         }
-        let body = serde_json::to_vec_pretty(&list)
-            .map_err(|e| ApiError::Internal(format!("export did not serialise: {e}")))?;
         return Ok(attachment(
-            body,
+            format!("{list:#}").into_bytes(),
             "application/json",
             format!("{project}-{short}.json"),
         ));
     }
 
+    // Each included file's content is its manifest as YAML already (read_project).
     let mut body = String::new();
-    for envelope in &manifests {
-        let document = serde_norway::to_string(envelope)
-            .map_err(|e| ApiError::Internal(format!("export did not serialise: {e}")))?;
+    for file in &included {
         body.push_str("---\n");
-        body.push_str(&document);
+        body.push_str(&file.content);
     }
     if let Some(description) = &description {
         // The closing index carries what the manifests mean; import reads it as provenance and
@@ -1072,8 +1065,9 @@ async fn zip_archive(
     complete: bool,
 ) -> Result<Vec<u8>, ApiError> {
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    // Writing into memory fails only on an entry named twice, which a forge listing one path
+    // twice would cause.
+    let failed = |err: zip::result::ZipError| ApiError::Internal(format!("archive failed: {err}"));
     let mut items = Vec::new();
     let mut native_files = Vec::new();
     // What the archive actually carries, which is not `included`: the native files of the
@@ -1101,12 +1095,7 @@ async fn zip_archive(
             }
         }
         archived.push(file);
-        let zipped =
-            |err: zip::result::ZipError| ApiError::Internal(format!("archive entry failed: {err}"));
-        writer.start_file(&file.path, options).map_err(zipped)?;
-        writer
-            .write_all(file.content.as_bytes())
-            .map_err(|e| ApiError::Internal(format!("archive write failed: {e}")))?;
+        put(&mut writer, &file.path, &file.content).map_err(failed)?;
     }
     let description = if complete {
         Some(describe(state, included, files, header, true).await)
@@ -1133,7 +1122,7 @@ async fn zip_archive(
         for (kind, schema) in &description.kinds {
             entries.push((
                 format!("{SCHEMAS_DIR}kinds/{kind}.schema.json"),
-                pretty(schema)?,
+                format!("{schema:#}"),
             ));
         }
         for (name, model) in &description.models {
@@ -1146,23 +1135,28 @@ async fn zip_archive(
             if let Some(schema) = &model.json_schema {
                 entries.push((
                     format!("{SCHEMAS_DIR}models/{name}/{name}.schema.json"),
-                    pretty(schema)?,
+                    format!("{schema:#}"),
                 ));
             }
         }
     }
     for (entry, content) in entries {
-        writer
-            .start_file(entry, options)
-            .map_err(|err| ApiError::Internal(format!("archive entry failed: {err}")))?;
-        writer
-            .write_all(content.as_bytes())
-            .map_err(|e| ApiError::Internal(format!("archive write failed: {e}")))?;
+        put(&mut writer, &entry, &content).map_err(failed)?;
     }
-    let cursor = writer
-        .finish()
-        .map_err(|err| ApiError::Internal(format!("archive did not close: {err}")))?;
-    Ok(cursor.into_inner())
+    Ok(writer.finish().map_err(failed)?.into_inner())
+}
+
+/// One deflated entry of an archive.
+fn put(
+    writer: &mut zip::ZipWriter<std::io::Cursor<Vec<u8>>>,
+    name: &str,
+    content: &str,
+) -> zip::result::ZipResult<()> {
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    writer.start_file(name, options)?;
+    writer.write_all(content.as_bytes())?;
+    Ok(())
 }
 
 #[utoipa::path(
@@ -1255,6 +1249,342 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_spec_that_is_not_an_object_names_no_endpoint_to_rewrite() {
+        let endpoints = HashMap::from([("s".to_owned(), ("p".to_owned(), "e".to_owned()))]);
+        for mut spec in [
+            Value::Null,
+            serde_json::json!("s"),
+            serde_json::json!(["s"]),
+        ] {
+            let before = spec.clone();
+            reference_by_name(&mut spec, &endpoints);
+            assert_eq!(spec, before);
+        }
+    }
+
+    #[test]
+    fn a_path_beside_a_manifest_resolves_in_its_directory_and_never_above_the_repository() {
+        let manifest = "projects/p/datamodels/air.yaml";
+        assert_eq!(
+            beside(manifest, "air.linkml.yaml").as_deref(),
+            Some("projects/p/datamodels/air.linkml.yaml")
+        );
+        assert_eq!(
+            beside(manifest, "./gen//../gen/air.schema.json").as_deref(),
+            Some("projects/p/datamodels/gen/air.schema.json")
+        );
+        assert_eq!(
+            beside(manifest, "../../../other.yaml").as_deref(),
+            Some("other.yaml"),
+            "out of the project is a path no file of the project has"
+        );
+        assert_eq!(beside(manifest, "../../../../etc/passwd"), None);
+        assert_eq!(beside("bundle.yaml", "../x"), None);
+    }
+
+    fn data_model(spec: &str) -> ResourceEnvelope {
+        serde_norway::from_str(&format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: air\n  namespace: p\nspec:\n{spec}"
+        ))
+        .expect("a DataModel")
+    }
+
+    fn native(path: &str, content: &str) -> Exported {
+        Exported {
+            path: path.to_owned(),
+            content: content.to_owned(),
+            manifest: None,
+        }
+    }
+
+    const MODEL_PATH: &str = "projects/p/datamodels/air.yaml";
+    const LINKML: &str = "id: https://example.org/air\nname: air\n";
+
+    fn state(model_tools: Option<String>) -> AppState {
+        let mut config = crate::config::Config::for_tests();
+        config.model_tools_url = model_tools;
+        AppState::new(config, None)
+    }
+
+    #[tokio::test]
+    async fn a_model_names_what_it_lacks_and_reads_the_rest_from_the_repository() {
+        let state = state(None);
+        let all = [
+            native("projects/p/datamodels/air.linkml.yaml", LINKML),
+            native(
+                "projects/p/datamodels/air.schema.json",
+                r#"{"title":"air"}"#,
+            ),
+            native("projects/p/datamodels/broken.json", "{not json"),
+        ];
+        let whole = data_model(
+            "  classes: [AirQualityObserved, 7]\n  linkml: air.linkml.yaml\n  artifacts:\n    jsonSchema: air.schema.json\n",
+        );
+        let files = model_files(&state, &whole, MODEL_PATH, &all).await;
+        assert_eq!(files.classes, ["AirQualityObserved"]);
+        assert_eq!(files.linkml.as_deref(), Some(LINKML));
+        assert_eq!(files.json_schema, Some(serde_json::json!({"title": "air"})));
+        assert!(files.missing.is_empty(), "{:?}", files.missing);
+
+        let lost =
+            data_model("  linkml: gone.linkml.yaml\n  artifacts:\n    jsonSchema: broken.json\n");
+        let files = model_files(&state, &lost, MODEL_PATH, &all).await;
+        assert_eq!(files.linkml, None);
+        assert_eq!(files.json_schema, None);
+        assert_eq!(files.missing.len(), 3, "{:?}", files.missing);
+        assert_eq!(
+            files.missing[0],
+            "LinkML source: `gone.linkml.yaml` is not in the repository"
+        );
+        assert!(
+            files.missing[1].starts_with("JSON Schema: `broken.json` is not JSON ("),
+            "{}",
+            files.missing[1]
+        );
+        assert_eq!(
+            files.missing[2],
+            "JSON Schema: no LinkML source to generate it from"
+        );
+
+        let bare = data_model("  classes: []\n");
+        let files = model_files(&state, &bare, MODEL_PATH, &all).await;
+        assert_eq!(
+            files.missing,
+            [
+                "LinkML source: the manifest names none (`spec.linkml`)",
+                "JSON Schema: no LinkML source to generate it from"
+            ]
+        );
+        let unlisted =
+            data_model("  linkml: air.linkml.yaml\n  artifacts:\n    jsonSchema: none.json\n");
+        let files = model_files(&state, &unlisted, MODEL_PATH, &all).await;
+        assert_eq!(files.linkml.as_deref(), Some(LINKML));
+        assert_eq!(
+            files.missing,
+            ["JSON Schema: not in the repository, and Model Tools could not generate it: no model tools service is configured"],
+            "an artifact path with no file falls back to Model Tools"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_model_without_its_schema_is_compiled_by_model_tools_or_says_why_not() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let tools = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .and(body_partial_json(serde_json::json!({ "source": LINKML })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "jsonSchema": { "title": "compiled" } })),
+            )
+            .mount(&tools)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({ "errors": ["slot pm10 has no range", "no classes"] }),
+            ))
+            .mount(&tools)
+            .await;
+        let state = state(Some(tools.uri()));
+        let source_only = data_model("  linkml: air.linkml.yaml\n");
+        let all = [native("projects/p/datamodels/air.linkml.yaml", LINKML)];
+        let files = model_files(&state, &source_only, MODEL_PATH, &all).await;
+        assert_eq!(
+            files.json_schema,
+            Some(serde_json::json!({"title": "compiled"}))
+        );
+        assert!(files.missing.is_empty(), "{:?}", files.missing);
+
+        let all = [native(
+            "projects/p/datamodels/air.linkml.yaml",
+            "name: broken\n",
+        )];
+        let files = model_files(&state, &source_only, MODEL_PATH, &all).await;
+        assert_eq!(files.json_schema, None);
+        assert_eq!(
+            files.missing,
+            ["JSON Schema: not in the repository, and the LinkML source does not compile: slot pm10 has no range; no classes"]
+        );
+    }
+
+    fn header(omitted: usize) -> IndexHeader<'static> {
+        IndexHeader {
+            project: "p",
+            revision: "8c56954",
+            exporter: "ana",
+            omitted,
+        }
+    }
+
+    #[test]
+    fn the_readme_lists_twelve_names_a_kind_holds_and_counts_the_rest() {
+        let names: Vec<String> = (1..=13).map(|i| format!("ep-{i:02}")).collect();
+        let by_kind = BTreeMap::from([("Endpoint".to_owned(), names)]);
+        let text = readme(&header(0), &by_kind, &BTreeMap::new(), false);
+        assert!(text.contains("| Endpoint | 13 (`ep-01`, "), "{text}");
+        assert!(text.contains("`ep-12` and 1 more) |"), "{text}");
+        assert!(!text.contains("`ep-13`"), "{text}");
+        assert!(text.contains("`schemas.kinds.Endpoint`"), "{text}");
+        assert!(!text.contains("## Data models"), "{text}");
+        assert!(!text.contains("not in this download"), "{text}");
+        let twelve = BTreeMap::from([(
+            "Endpoint".to_owned(),
+            (1..=12).map(|i| format!("ep-{i:02}")).collect::<Vec<_>>(),
+        )]);
+        assert!(!readme(&header(0), &twelve, &BTreeMap::new(), true).contains("more)"));
+    }
+
+    #[test]
+    fn the_readme_says_which_model_files_are_missing_and_what_the_repository_withheld() {
+        let by_kind = BTreeMap::from([("DataModel".to_owned(), vec!["air".to_owned()])]);
+        let models = BTreeMap::from([(
+            "air".to_owned(),
+            ModelFiles {
+                classes: vec!["AirQualityObserved".into(), "Device".into()],
+                linkml: None,
+                json_schema: Some(serde_json::json!({})),
+                missing: vec!["LinkML source: `x.yaml` is not in the repository".into()],
+            },
+        )]);
+        let archive = readme(&header(2), &by_kind, &models, true);
+        assert!(
+            archive.contains(
+                "| air | AirQualityObserved, Device | missing | `schemas/models/air/air.schema.json` |"
+            ),
+            "{archive}"
+        );
+        assert!(
+            archive.contains(
+                "## Missing\n\n- air: LinkML source: `x.yaml` is not in the repository\n"
+            ),
+            "{archive}"
+        );
+        assert!(
+            archive.contains("\n2 files of the project are not in this download"),
+            "{archive}"
+        );
+        let stream = readme(&header(0), &by_kind, &models, false);
+        assert!(
+            stream.contains(
+                "| air | AirQualityObserved, Device | missing | `schemas.models.air.jsonSchema` |"
+            ),
+            "{stream}"
+        );
+        let complete = BTreeMap::from([(
+            "air".to_owned(),
+            ModelFiles {
+                linkml: Some(LINKML.into()),
+                ..ModelFiles::default()
+            },
+        )]);
+        let text = readme(&header(0), &by_kind, &complete, false);
+        assert!(
+            text.contains("| `schemas.models.air.linkml` | missing |"),
+            "{text}"
+        );
+        assert!(!text.contains("## Missing"), "{text}");
+    }
+
+    #[test]
+    fn a_script_and_a_mapping_with_native_blocks_are_code_and_nothing_else_is() {
+        let envelope = |kind: &str, spec: Value| ResourceEnvelope {
+            kind: kind.to_owned(),
+            spec,
+            ..data_model("  classes: []\n")
+        };
+        assert!(carries_code(&envelope("Script", serde_json::json!({}))));
+        assert!(carries_code(&envelope(
+            "Mapping",
+            serde_json::json!({ "native": [{ "bloblang": "root = this" }] })
+        )));
+        assert!(!carries_code(&envelope(
+            "Mapping",
+            serde_json::json!({ "native": [] })
+        )));
+        assert!(!carries_code(&envelope(
+            "Mapping",
+            serde_json::json!({ "rules": [] })
+        )));
+        assert!(!carries_code(&envelope(
+            "Endpoint",
+            serde_json::json!({ "native": [1] })
+        )));
+    }
+
+    #[tokio::test]
+    async fn an_archive_carries_a_models_schema_without_its_source_and_its_index() {
+        let state = state(None);
+        let model = data_model("  classes: [Air]\n  artifacts:\n    jsonSchema: air.schema.json\n");
+        let files = vec![
+            Exported {
+                path: MODEL_PATH.to_owned(),
+                content: "kind: DataModel\n".to_owned(),
+                manifest: Some(model),
+            },
+            native(
+                "projects/p/datamodels/air.schema.json",
+                r#"{"title":"air"}"#,
+            ),
+        ];
+        let included: Vec<&Exported> = files.iter().take(1).collect();
+        let bytes = zip_archive(&state, &files, &included, &header(0), None, None, true)
+            .await
+            .expect("an archive");
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("a zip");
+        let mut names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "README.md",
+                "bundle.yaml",
+                "projects/p/datamodels/air.schema.json",
+                "projects/p/datamodels/air.yaml",
+                "schemas/kinds/DataModel.schema.json",
+                "schemas/models/air/air.schema.json",
+            ]
+        );
+        let mut schema = String::new();
+        std::io::Read::read_to_string(
+            &mut archive
+                .by_name("schemas/models/air/air.schema.json")
+                .expect("the schema"),
+            &mut schema,
+        )
+        .expect("text");
+        assert_eq!(schema, "{\n  \"title\": \"air\"\n}");
+
+        let twice = vec![
+            native("projects/p/a.txt", "one"),
+            native("projects/p/a.txt", "two"),
+        ];
+        let err = zip_archive(&state, &twice, &[], &header(0), None, None, false)
+            .await
+            .expect_err("a path listed twice is refused");
+        assert!(
+            matches!(&err, ApiError::Internal(detail) if detail.starts_with("archive failed: ")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_configuration_backup_needs_a_repository() {
+        let err = configuration_zip(&state(None), "p", "ana")
+            .await
+            .expect_err("no forge, no backup");
+        assert!(matches!(err, ApiError::Unavailable(_)), "{err:?}");
+    }
+
+    #[test]
+    fn an_archive_refuses_an_entry_named_twice() {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        put(&mut writer, "README.md", "one").expect("the first entry");
+        assert!(put(&mut writer, "README.md", "two").is_err());
+    }
 
     #[test]
     fn secret_values_are_emptied_wherever_they_hide() {
