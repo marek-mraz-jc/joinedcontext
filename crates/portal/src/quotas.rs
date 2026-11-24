@@ -802,5 +802,25 @@ mod tests {
             .is_err(),
             "a project without its own floor keeps the organization's"
         );
+        // Only a Pipeline's own clock is held to the floor: a spec that is no Pipeline spec
+        // (another door refuses it) and a pipeline its source drives have none.
+        for clockless in [
+            json!({ "class": 7, "period": "1s" }),
+            json!({ "class": "resident", "source": { "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } } }),
+        ] {
+            assert!(
+                check(&mirror, "ovzdusie", "Pipeline", "x", &clockless, &bounds()).is_ok(),
+                "{clockless}"
+            );
+        }
+    }
+
+    /// `beyond` answers nothing for a dimension it does not count; `check` lets a manifest of a
+    /// counted kind through when the dimension has no limit at all.
+    #[test]
+    fn an_uncounted_dimension_stands_nobody_beyond() {
+        let mirror = mirror_with(vec![resident("a"), resident("b")]);
+        assert!(beyond(&mirror, "ovzdusie", "unknownDimension", &bounds()).is_empty());
+        assert!(beyond(&mirror, "ovzdusie", "", &bounds()).is_empty());
     }
 }
