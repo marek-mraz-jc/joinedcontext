@@ -209,6 +209,21 @@ fn from_names_the_crs_of_a_gml_without_srs_name() {
     )
     .unwrap();
     assert_eq!(positional, g);
+    for bad in ["EPSG:no", "urn:ogc:def:crs:EPSG::99999"] {
+        let err = parse_gml(&p, Some(bad), Some("EPSG:4326")).unwrap_err();
+        assert!(
+            err.starts_with("parameter from: parse_gml: srsName"),
+            "{bad}: {err}"
+        );
+    }
+    // A from given beside a srsName is ignored: the GML's own CRS wins.
+    let named = text(
+        r#"<gml:Point srsName="EPSG:3879"><gml:pos>25497363.07 6672958.39</gml:pos></gml:Point>"#,
+    );
+    assert_eq!(
+        parse_gml(&named, Some("EPSG:no"), Some("EPSG:4326")).unwrap(),
+        g
+    );
 }
 
 #[test]

@@ -1365,6 +1365,25 @@ mod tests {
     }
 
     #[test]
+    fn a_fraction_whose_shown_digits_are_all_zero_prints_no_dot() -> R {
+        // Go's formatNano trims the zeros of a `.999` fraction and drops the dot when none is left.
+        let dt = at("2026-11-24T10:00:07.000000005Z")?;
+        assert_eq!(format_go_layout(&dt, "05.999"), "07");
+        assert_eq!(format_go_layout(&dt, "05.999999"), "07");
+        assert_eq!(format_go_layout(&dt, "05.999999999"), "07.000000005");
+        Ok(())
+    }
+
+    #[test]
+    fn strptime_twelve_hour_clock_maps_midnight_and_noon() -> R {
+        for (input, hour) in [("12 AM", 0), ("03 AM", 3), ("12 PM", 12), ("03 pm", 15)] {
+            let dt = parse_strptime(&format!("2026-11-24 {input}"), "%Y-%m-%d %I %p")?;
+            assert_eq!(dt.hour(), hour, "{input}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn strptime_reads_every_directive_and_refuses_out_of_range_fields() -> R {
         let p = parse_strptime;
         assert_eq!(rfc(&p("31.02.2026", "%d.%m.%Y")?), "2026-03-03T00:00:00Z");

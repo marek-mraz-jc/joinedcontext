@@ -112,15 +112,21 @@ pub(crate) fn is_known_crs(code: u32) -> bool {
 
 /// The PROJ definition of a CRS named `EPSG:n`, by its OGC URN or URL, or a WGS 84 alias.
 fn crs(param: &str, name: &str) -> Result<Proj, String> {
+    crs_in(CRS, param, name)
+}
+
+/// [`crs`] over a given table, so a test can give it a definition PROJ refuses.
+fn crs_in(table: &[(u32, &str)], param: &str, name: &str) -> Result<Proj, String> {
     let code = epsg_code(name);
     let known = || {
-        CRS.iter()
+        table
+            .iter()
             .map(|(c, _)| format!("EPSG:{c}"))
             .collect::<Vec<_>>()
             .join(", ")
     };
     let def = code
-        .and_then(|code| CRS.iter().find(|(c, _)| *c == code))
+        .and_then(|code| table.iter().find(|(c, _)| *c == code))
         .ok_or_else(|| {
             format!(
                 "parameter {param}: {name:?} is not a known CRS; use one of {}",
@@ -579,4 +585,62 @@ fn position(out: &mut String, v: &Value, width: &mut Option<usize>) -> Result<()
         let _ = write!(out, "{f}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{ArgList, Assignment, Expr, Statement};
+
+    #[test]
+    fn a_method_no_family_implements_is_refused_at_run_time() {
+        // The parser refuses an unknown name; a tree built by hand reaches the end of the
+        // dispatch, where geo, the last family, answers None.
+        let query = Expr::MethodCall {
+            target: Box::new(Expr::Literal(Value::String("x".into()))),
+            name: "no_such_method".into(),
+            args: ArgList::Positional(Vec::new()),
+        };
+        let stmt = Statement::Single {
+            line: 1,
+            assignment: Assignment::Json(Default::default()),
+            query,
+        };
+        let exec = crate::Executor::new(
+            "test".into(),
+            Default::default(),
+            vec![stmt],
+            crate::Environment::new(),
+        );
+        let err = exec.exec_on_value(Value::Null).map(|_| ()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unrecognised method 'no_such_method'"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_crs_definition_proj_refuses_names_the_parameter_and_crs() {
+        let table = [(4326, "+proj=no_such_projection")];
+        let err = crs_in(&table, "from", "EPSG:4326").map(|_| ()).unwrap_err();
+        assert!(err.starts_with("parameter from: EPSG:4326: "), "{err}");
+        let err = crs_in(&table, "to", "EPSG:3857").map(|_| ()).unwrap_err();
+        assert!(
+            err.contains("EPSG:3857\" is not a known CRS; use one of EPSG:4326"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_pole_has_no_web_mercator_position() {
+        let pole = Value::Array(vec![Value::Float(0.0), Value::Float(90.0)].into());
+        let err = geo_transform(&pole, "EPSG:4326", "EPSG:3857")
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            err.starts_with("geo_transform from EPSG:4326 to EPSG:3857"),
+            "{err}"
+        );
+    }
 }
