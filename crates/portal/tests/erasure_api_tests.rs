@@ -475,6 +475,178 @@ async fn an_erasure_log_that_is_down_or_read_only_proposes_nothing() {
     );
 }
 
+/// The erasure log refuses `project`'s rows as `kind` says, through a trigger the test owns:
+/// `raise` fails the write, `skip` drops it so the statement returns no row, `off` removes it.
+/// `activity` refuses the project's activity events too. Other tests' projects are untouched.
+async fn log_faults(state: &AppState, project: &str, kind: &str, activity: bool) {
+    let pool = state.db.as_ref().expect("a database");
+    let name = format!("fault_{}", project.replace('-', "_"));
+    let body = match kind {
+        "skip" => "RETURN NULL;",
+        _ => "RAISE EXCEPTION 'injected fault';",
+    };
+    let statements = [
+        format!("DROP TRIGGER IF EXISTS {name} ON erasures"),
+        format!("DROP TRIGGER IF EXISTS {name} ON activity"),
+        format!(
+            "CREATE OR REPLACE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN IF NEW.project = '{project}' THEN {body} END IF; RETURN NEW; END $$"
+        ),
+    ];
+    for statement in statements {
+        // the names are the test's own project, never outside input
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(pool)
+            .await
+            .expect("the fault trigger");
+    }
+    let mut triggers = Vec::new();
+    match kind {
+        "raise" => triggers.push(("erasures", "INSERT OR UPDATE")),
+        "skip" => triggers.push(("erasures", "UPDATE")),
+        _ => {}
+    }
+    if activity {
+        triggers.push(("activity", "INSERT"));
+    }
+    for (table, on) in triggers {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TRIGGER {name} BEFORE {on} ON {table} FOR EACH ROW EXECUTE FUNCTION {name}()"
+        )))
+        .execute(pool)
+        .await
+        .expect("the fault trigger");
+    }
+}
+
+/// A log that fails the proposal's insert, the approval's or the decline's update after the
+/// project's key is claimed says nothing was proposed, erased or declined; a decline the log
+/// drops is a 409; an activity log that refuses the event still answers the decline.
+#[tokio::test]
+async fn an_erasure_log_that_fails_after_the_key_claim_does_nothing() {
+    let Some((state, project)) = world().await else {
+        return;
+    };
+    let gateway = MockServer::start().await;
+    model(&state, &project);
+    let state = surfaced(state, &gateway).await;
+    let base = format!("/api/v1/projects/{project}/spaces/{SPACE}/erasures");
+    let body = json!({"subject": "r-42", "reason": "Art. 17 request 9"});
+
+    log_faults(&state, &project, "raise", false).await;
+    let proposed = send(&state, "anna", "POST", &base, Some(body.clone())).await;
+    assert_eq!(
+        proposed.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        proposed.text
+    );
+    assert!(
+        proposed.text.contains("nothing was proposed"),
+        "{}",
+        proposed.text
+    );
+    log_faults(&state, &project, "off", false).await;
+    let listed = send(&state, "anna", "GET", &base, None).await;
+    assert!(listed.text.contains("\"items\":[]"), "{}", listed.text);
+
+    let id = proposal(&state, &project, 0).await;
+    log_faults(&state, &project, "raise", false).await;
+    let approved = send(
+        &state,
+        "boris",
+        "POST",
+        &format!("{base}/{id}/approve"),
+        Some(json!({"subject": "r-42"})),
+    )
+    .await;
+    assert_eq!(
+        approved.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        approved.text
+    );
+    assert!(
+        approved.text.contains("nothing was erased"),
+        "{}",
+        approved.text
+    );
+
+    log_faults(&state, &project, "skip", false).await;
+    for (who, verb, request) in [
+        ("boris", "approve", json!({"subject": "r-42"})),
+        ("anna", "decline", json!({"reason": "withdrawn"})),
+    ] {
+        let dropped = send(
+            &state,
+            who,
+            "POST",
+            &format!("{base}/{id}/{verb}"),
+            Some(request),
+        )
+        .await;
+        assert_eq!(
+            dropped.status,
+            StatusCode::CONFLICT,
+            "{verb}: {}",
+            dropped.text
+        );
+        assert!(dropped.text.contains("only a proposal"), "{}", dropped.text);
+    }
+
+    log_faults(&state, &project, "off", true).await;
+    let declined = send(
+        &state,
+        "anna",
+        "POST",
+        &format!("{base}/{id}/decline"),
+        Some(json!({"reason": "withdrawn"})),
+    )
+    .await;
+    log_faults(&state, &project, "off", false).await;
+    assert_eq!(declined.status, StatusCode::OK, "{}", declined.text);
+    let read = send(&state, "anna", "GET", &format!("{base}/{id}"), None).await;
+    assert!(read.text.contains("\"declined\""), "{}", read.text);
+}
+
+/// An export whose space answers the subject's entities but not their history is a 503 that
+/// says so, and hands out nothing.
+#[tokio::test]
+async fn an_export_whose_history_does_not_answer_is_503() {
+    let Some((state, project)) = world().await else {
+        return;
+    };
+    let gateway = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path_regex("^/cs/[^/]+/ngsi-ld/v1/temporal/entities/.+$"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&gateway)
+        .await;
+    model(&state, &project);
+    let state = surfaced(state, &gateway).await;
+    let answer = send(
+        &state,
+        "anna",
+        "POST",
+        &format!("/api/v1/projects/{project}/spaces/{SPACE}/subjects/export"),
+        Some(json!({"subject": "r-42", "reason": "Art. 15 request 9"})),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("history did not answer"),
+        "{}",
+        answer.text
+    );
+    assert!(!answer.text.contains(TRIP), "{}", answer.text);
+}
+
 #[tokio::test]
 async fn the_proposer_never_approves_and_the_approver_types_the_proposals_subject() {
     let Some((state, project)) = world().await else {
