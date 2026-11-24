@@ -852,9 +852,78 @@ async fn a_sign_in_without_a_client_names_no_app() {
         .unwrap();
     s.client_id = String::new();
     store.put_auth_session(s).await.unwrap();
-    let (st, _, html) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    let url = a.url.replace("client_id=edge", "client_id=");
+    let (st, _, html) = get_with_cookie(&app, &url, None, Some(&a.cookie)).await;
     assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "login");
     assert!(!html.contains("edge"), "{html}");
+}
+
+/// A new password by link without "sign out other devices" keeps the person's sessions.
+#[tokio::test]
+async fn a_password_set_by_link_without_signing_out_keeps_other_sessions() {
+    let (app, store) = app().await;
+    let a = start(&app, "").await;
+    let (st, h, _) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert!(is_code(st, &h));
+    let member = user(&store, MEMBER).await;
+    let sessions = store
+        .list_user_sso_sessions("dev", &member.id)
+        .await
+        .unwrap();
+    assert!(!sessions.is_empty());
+    let link = action_link(&store, &["UPDATE_PASSWORD"], &member.id).await;
+    let (st, h, html) = open_action_link(&app, &link).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "action-token-form");
+    let cookie = h[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let (st, _, html) = post_form(
+        &app,
+        ACTION,
+        &[
+            ("csrf_token", &extract_hidden_input(&html, "csrf_token")),
+            ("session_code", &extract_hidden_input(&html, "session_code")),
+            ("new_password", "KeptSessionsPass321!"),
+        ],
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "account-updated");
+    assert_eq!(
+        store
+            .list_user_sso_sessions("dev", &member.id)
+            .await
+            .unwrap()
+            .len(),
+        sessions.len()
+    );
+    let b = start(&app, "").await;
+    let (st, h, _) = b.password(&app, MEMBER, "KeptSessionsPass321!").await;
+    assert!(is_code(st, &h), "the new password signs in");
+}
+
+#[tokio::test]
+async fn a_passkey_assertion_from_the_name_step_is_checked_for_anyone() {
+    let (app, store) = app().await;
+    let a = start(&app, "").await;
+    let mut s = store
+        .get_auth_session_by_id("dev", &a.session)
+        .await
+        .unwrap()
+        .unwrap();
+    s.webauthn_challenge = Some("conditional-ui-challenge".into());
+    store.put_auth_session(s).await.unwrap();
+    // A conditional-UI assertion names no person in advance; a garbled one signs nobody on.
+    let (st, h, _) = a.post(&app, &[("webauthn_assertion_response", "{}")]).await;
+    assert!(st.is_client_error(), "{st}");
+    assert!(!is_code(st, &h));
 }
 
 fn extract_input_value(html: &str, name: &str) -> String {
