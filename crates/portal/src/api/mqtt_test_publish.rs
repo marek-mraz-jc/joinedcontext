@@ -342,8 +342,10 @@ async fn mapping_steps(
     pipeline: &ResourceEnvelope,
     payload: &str,
 ) -> Vec<Step> {
-    // An envelope always serialises; a Null would be refused by `tested_spec` below.
-    let mut manifest = serde_json::to_value(pipeline).unwrap_or_default();
+    let mut manifest = match serde_json::to_value(pipeline) {
+        Ok(manifest) => manifest,
+        Err(error) => return unchecked_both(error.to_string()),
+    };
     if let Some(object) = manifest.as_object_mut() {
         object.remove("status");
     }
@@ -368,29 +370,41 @@ async fn mapping_steps(
         Ok(trace) => trace,
         Err(error) => return unchecked_both(why(&error)),
     };
-    // A run that captured nothing carries the runner's silence as its error, so a trace with
-    // no error holds at least one record.
-    if let Some(error) = trace.errors.first() {
-        return vec![
-            Step::new(
-                "mapping",
-                Outcome::Refused,
-                format!("the mapping failed: {}", error.message),
-            ),
-            Step::new("endpoint", Outcome::Unchecked, "no record to check"),
-        ];
-    }
-    let mapping = Step::new(
-        "mapping",
-        Outcome::Ok,
-        format!("{} record(s)", trace.mapping.len()),
-    );
+    let mapping = match mapping_step(&trace) {
+        Ok(mapping) => mapping,
+        Err(steps) => return steps,
+    };
     let endpoint = match crate::record_check::check_trace(state, project, &manifest, &trace.mapping)
     {
         Ok(checked) => endpoint_step(&checked),
         Err(error) => Step::new("endpoint", Outcome::Unchecked, why(&error)),
     };
     vec![mapping, endpoint]
+}
+
+/// The mapping step of a run, or both steps when the run left no record to check: a failure
+/// names the runner's error, a run with no record and no error (a runner that captured nothing
+/// answers its silence as an error today, `pipeline_test::run_stream_within`) says so.
+fn mapping_step(trace: &jcctl::pipeline_test::TestTrace) -> Result<Step, Vec<Step>> {
+    let refused = |why: String| {
+        vec![
+            Step::new("mapping", Outcome::Refused, why),
+            Step::new("endpoint", Outcome::Unchecked, "no record to check"),
+        ]
+    };
+    if let Some(error) = trace.errors.first() {
+        return Err(refused(format!("the mapping failed: {}", error.message)));
+    }
+    if trace.mapping.is_empty() {
+        return Err(refused(
+            "the mapping made no record of this message".to_owned(),
+        ));
+    }
+    Ok(Step::new(
+        "mapping",
+        Outcome::Ok,
+        format!("{} record(s)", trace.mapping.len()),
+    ))
 }
 
 fn endpoint_step(checked: &crate::record_check::Checked) -> Step {
@@ -770,6 +784,41 @@ mod tests {
             findings,
             expires: None,
         }
+    }
+
+    #[test]
+    fn the_mapping_step_names_a_failure_a_run_with_no_record_and_the_records_made() {
+        let mut trace = jcctl::pipeline_test::TestTrace::default();
+        let none = vec![
+            Step::new(
+                "mapping",
+                Outcome::Refused,
+                "the mapping made no record of this message",
+            ),
+            Step::new("endpoint", Outcome::Unchecked, "no record to check"),
+        ];
+        assert_eq!(mapping_step(&trace), Err(none));
+        trace.mapping = vec![serde_json::json!({ "id": "urn:ngsi-ld:Camera:west" }); 2];
+        assert_eq!(
+            mapping_step(&trace),
+            Ok(Step::new("mapping", Outcome::Ok, "2 record(s)"))
+        );
+        trace.errors.push(jcctl::pipeline_test::TestError {
+            stage: "mapping".into(),
+            step: Some(1),
+            line: None,
+            message: "expected object".into(),
+        });
+        let failed = mapping_step(&trace).expect_err("a failed run");
+        assert_eq!(
+            failed[0],
+            Step::new(
+                "mapping",
+                Outcome::Refused,
+                "the mapping failed: expected object"
+            )
+        );
+        assert_eq!(failed[1].outcome, Outcome::Unchecked);
     }
 
     #[test]
