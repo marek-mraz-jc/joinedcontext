@@ -504,7 +504,7 @@ test("the pending answer shows each real step as it happens, then gives way to t
   await expect(page.locator(".jc-progress")).toHaveCount(0);
   // One announcement per step, none twice and never a second.
   const said = await page.evaluate(() => window.said);
-  expect(said).toEqual(["Looking it up…", "Reading your question…", "Searching 412 sources for „oldest bridges region“…",
+  expect(said).toEqual(["Reading your question…", "Searching 412 sources for „oldest bridges region“…",
     "Reading BBSK bridge register: Bridges, Year built < 1950…", "Reading BBSK bridge register: Bridges, Year built < 1950 · 1,651 rows, 0.8 s",
     "Checking 6 passages…", "Checked 6 passages: they answer the question", "Writing the answer from 2 sources…"]);
 });
