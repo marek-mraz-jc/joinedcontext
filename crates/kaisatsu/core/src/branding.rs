@@ -205,12 +205,11 @@ fn font_or(value: &str, fallback: &str) -> String {
     }
 }
 
+/// A bare file name: letters, digits, `.`, `_` and `-` (so no scheme, no `/`), never `..`;
+/// anything else is empty.
 fn asset_name(value: &str) -> String {
     let trimmed = value.trim();
-    if trimmed.is_empty()
-        || trimmed.contains("://")
-        || trimmed.starts_with('/')
-        || trimmed.contains("..")
+    if trimmed.contains("..")
         || !trimmed
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
@@ -375,5 +374,104 @@ mod tests {
         assert!(clean.logo.is_empty());
         assert!(clean.logo_svg.is_empty());
         assert_eq!(clean.primary_foreground, "#ffffff");
+    }
+
+    #[test]
+    fn css_variables_carry_the_sanitised_colours_and_fonts() {
+        let mut b = BrandingBlock::default();
+        b.colours.primary = "#000000".into();
+        b.colours.text = "red;}</style><script>".into();
+        b.fonts.heading = "Georgia, serif".into();
+        let css = b.css_variables();
+        assert!(css.starts_with(":root {\n"), "{css}");
+        assert!(css.contains("  --jc-primary: #000000;\n"), "{css}");
+        assert!(css.contains("  --jc-primary-fg: #ffffff;\n"), "{css}");
+        assert!(css.contains(&format!(
+            "  --jc-secondary: {};\n",
+            Colours::default().secondary
+        )));
+        assert!(css.contains(&format!("  --jc-accent: {};\n", Colours::default().accent)));
+        assert!(css.contains(&format!(
+            "  --jc-background: {};\n",
+            Colours::default().background
+        )));
+        assert!(
+            css.contains(&format!("  --jc-text: {};\n", Colours::default().text)),
+            "{css}"
+        );
+        assert!(
+            css.contains("  --jc-font-heading: Georgia, serif;\n"),
+            "{css}"
+        );
+        assert!(css.contains(&format!("  --jc-font-body: {};\n}}", Fonts::default().body)));
+        assert!(!css.contains("script"), "{css}");
+    }
+
+    #[test]
+    fn an_asset_is_a_bare_file_name() {
+        let logo = |v: &str| {
+            BrandingBlock {
+                logo: v.into(),
+                ..BrandingBlock::default()
+            }
+            .sanitised()
+            .logo
+        };
+        assert_eq!(logo(" city-logo_2.svg "), "city-logo_2.svg");
+        for bad in [
+            "",
+            "https://evil.example/x.svg",
+            "/etc/passwd",
+            "..",
+            "a..svg",
+            "../x.svg",
+            "logo svg",
+            "logo.svg?x=1",
+            "c:\\x.svg",
+        ] {
+            assert_eq!(logo(bad), "", "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_event_handler_is_an_on_word_starting_an_attribute_and_followed_by_equals() {
+        for unsafe_svg in [
+            "onload=\"x\"",
+            "<svg onload=\"x\"/>",
+            "<svg\nonclick = 'x'/>",
+            "<svg/onbegin=x>",
+            "<svg a=\"\"onfocusin=x>",
+        ] {
+            assert!(!is_safe_svg(unsafe_svg), "{unsafe_svg}");
+        }
+        for safe in [
+            "<svg dataonx=\"1\"/>",
+            "<svg on=\"1\"/>",
+            "<svg><text> online </text></svg>",
+            "<svg><text>on</text></svg>",
+            "<svg id=\"button\"/>",
+        ] {
+            assert!(is_safe_svg(safe), "{safe}");
+        }
+    }
+
+    /// WCAG 2 relative luminance and contrast ratio.
+    #[test]
+    fn luminance_and_contrast_follow_wcag() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        let lum = |c: &str| luminance(c).expect("colour");
+        assert!(near(lum("#000000"), 0.0));
+        assert!(near(lum("#ffffff"), 1.0));
+        assert!(near(lum("#ff0000"), 0.2126));
+        assert!(near(lum("#00ff00"), 0.7152));
+        assert!(near(lum("#0000ff"), 0.0722));
+        assert!(near(lum("#808080"), 0.215_861), "{}", lum("#808080"));
+        assert!(near(lum("#0a0a0a"), 0.003_035), "{}", lum("#0a0a0a"));
+        assert!(near(lum("#1d4ed8"), 0.106_679), "{}", lum("#1d4ed8"));
+        assert_eq!(luminance("blue"), None);
+        assert!(near(contrast(1.0, 0.0), 21.0));
+        assert!(near(contrast(0.0, 1.0), 21.0));
+        assert!(near(contrast(0.5, 0.5), 1.0));
+        assert!(near(contrast(0.2, 0.7), 0.75 / 0.25));
     }
 }

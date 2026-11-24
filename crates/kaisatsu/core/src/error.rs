@@ -345,4 +345,32 @@ mod problem_tests {
             assert_eq!(got, body);
         }
     }
+
+    #[test]
+    fn an_oauth_error_carries_its_own_status() {
+        for status in [400, 401, 403] {
+            assert_eq!(KaisatsuError::oauth(status, "e", "d").status_code(), status);
+        }
+    }
+
+    /// RFC 9449 section 8: a resource server's nonce demand is a 401 with the DPoP challenge and
+    /// the nonce in `DPoP-Nonce`.
+    #[test]
+    fn a_dpop_nonce_demand_answers_401_with_the_challenge_and_the_nonce() {
+        let resp = KaisatsuError::Unauthorized("use_dpop_nonce:n-123".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let h = resp.headers();
+        assert_eq!(h[header::CONTENT_TYPE], "application/problem+json");
+        assert_eq!(h[header::CACHE_CONTROL], "no-store");
+        assert_eq!(h["dpop-nonce"], "n-123");
+        let challenge = h[header::WWW_AUTHENTICATE].to_str().expect("ascii");
+        assert!(
+            challenge.starts_with("DPoP error=\"use_dpop_nonce\""),
+            "{challenge}"
+        );
+        let plain = KaisatsuError::Unauthorized("token expired".into()).into_response();
+        assert_eq!(plain.status(), StatusCode::UNAUTHORIZED);
+        assert!(plain.headers().get("dpop-nonce").is_none());
+        assert!(plain.headers().get(header::WWW_AUTHENTICATE).is_none());
+    }
 }
