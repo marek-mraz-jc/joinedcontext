@@ -1497,7 +1497,7 @@ fn assignee_id(project: &str, policy: &PolicySpec) -> String {
 }
 
 fn with_gateway(mut document: Value) -> Value {
-    if let Some(policies) = document["policies"].as_array_mut() {
+    if let Some(policies) = document.get_mut("policies").and_then(Value::as_array_mut) {
         policies.push(json!({
             "id": format!("@{GATEWAY_CLIENT}"),
             "effect": "permit",
@@ -4399,7 +4399,7 @@ mod tests {
         at
     }
 
-    const PIPELINE: &str = "  class: resident\n  sources: [{dataSourceRef: {kind: DataSource, name: feed}}]\n  outputs:\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-air:air-public\", type: Car}\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-air:air-public\", type: Bus}\n  history: [{type: Car, attributes: [{names: [speed], keep: every}]}]\n";
+    const PIPELINE: &str = "  class: resident\n  sources: [{dataSourceRef: {kind: DataSource, name: feed}}]\n  outputs:\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-air:air-public\", type: Car}\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-air:air-public\", type: Bus}\n  history: [{type: Car, attributes: [{names: [speed], keep: changes, heartbeat: PT15M}]}]\n";
 
     /// Every kind the views read, each with a manifest whose spec does not read beside a good
     /// one: the bad one is left out (the load reported it), the good one is read, a declared
@@ -4829,7 +4829,7 @@ mod tests {
             "policyRef": "urn:ngsi-ld:Policy:city.example:city-air:cars",
             "representations": {"feed": [
                 {"name": "news", "sources": [{"type": "Car"}]},
-                {"name": "broken", "sources": [{"type": "Car"}], "query": "q=((("}
+                {"name": "broken", "sources": [{"type": "Car"}], "query": "q=a&q=b"}
             ]}
         }));
         let (view, log) = crate::reconciler::logged(async { endpoint_view(&s, &e) }).await;
@@ -4880,10 +4880,18 @@ mod tests {
     #[test]
     fn a_draft_of_the_saved_projection_is_the_saved_view() {
         let mut s = sources(vec![("cars", cars())]);
-        cars_projection(
-            &mut s,
-            endpoint(json!({"projectionRef": {"kind": "ModelProjection", "name": "cars-only"}})),
+        s.projections.insert(
+            ("city".into(), "cars-only".into()),
+            serde_json::from_value(json!({
+                "contextSpaceRef": "air", "dataModelRef": {"name": "air", "version": "1"},
+                "classes": [{"name": "Car", "slots": ["speed"]}],
+                "filter": {"q": "speed>0"}
+            }))
+            .expect("a projection"),
         );
+        s.endpoints.push(endpoint(
+            json!({"projectionRef": {"kind": "ModelProjection", "name": "cars-only"}}),
+        ));
         let sync = having(s, "http://broker.invalid", Path::new("/nonexistent"));
         let draft = Draft {
             projection: Some((
