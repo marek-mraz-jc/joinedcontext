@@ -343,14 +343,19 @@ fn until_midnight(now: time::OffsetDateTime) -> u64 {
 }
 
 /// A capped question's whole stream (T-4671): its one `error` event, then `done` with nothing
-/// spent; no answer, no citation, no card and no follow-up.
-fn capped(refusal: &Event, anonymous: bool) -> Response {
+/// spent; no answer, no citation, no card and no follow-up. `Retry-After` says when the limit
+/// resets, so the chat names the time in the reader's language (T-7790).
+fn capped(refusal: &Event, anonymous: bool, retry: Option<u64>) -> Response {
     let events = [
         sse(refusal, anonymous),
         sse(&Event::Done(Spent::default(), 0), anonymous),
     ]
     .map(Ok::<_, Infallible>);
-    Sse::new(futures_util::stream::iter(events)).into_response()
+    let mut response = Sse::new(futures_util::stream::iter(events)).into_response();
+    if let Some(value) = retry.and_then(|r| HeaderValue::from_str(&r.to_string()).ok()) {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    response
 }
 
 /// The request body (API/05 §1.1).
@@ -428,6 +433,10 @@ pub fn router(state: Arc<ChatState>) -> Router {
         .route(
             "/api/v1/d/{public_id}/turns/{turn}/resume",
             get(resume).options(preflight),
+        )
+        .route(
+            "/api/v1/d/{public_id}/turns/{turn}/cancel",
+            post(cancel).options(preflight),
         )
         .route(
             "/api/v1/d/{public_id}/map/{id}",
@@ -562,6 +571,11 @@ fn with_cors(mut response: Response, origin: Option<HeaderValue>) -> Response {
         let headers = response.headers_mut();
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
         headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+        // The widget names when a limit resets from Retry-After (T-7790).
+        headers.insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static("Retry-After"),
+        );
     }
     response
 }
@@ -760,7 +774,8 @@ async fn record(
     )
     .bind(&deployment.project)
     .bind(&deployment.name)
-    .bind(spent.cached)
+    // No answer is kept since T-7789; the column keeps the earlier turns' history.
+    .bind(false)
     .bind(i32::try_from(spent.calls).unwrap_or(i32::MAX))
     .bind(ms(spent.first_token_ms))
     .bind(ms(Some(total_ms)))
@@ -820,14 +835,25 @@ pub fn over_cost_cap(spent_micros: u64, cap_usd: f64) -> bool {
 /// Whether a [`warm_types`] runs, so a slow minute never stacks a second one on it.
 static WARMING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Clears [`WARMING`] when a warm-up ends, a panicking one included, so the next one runs.
+struct Warming;
+
+impl Drop for Warming {
+    fn drop(&mut self) {
+        WARMING.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 /// Warms routing's type lists for every deployment's connectors that anyone may read, ahead of
 /// the first question (T-4611). Called after each read of the manifests; a run still going when
-/// the next one is due is left to finish.
+/// the next one is due is left to finish. The connectors are listed first and the sources'
+/// languages read after, so a slow language count never holds a listing (T-7789).
 pub async fn warm_types(state: Arc<ChatState>) {
     use std::sync::atomic::Ordering;
     if WARMING.swap(true, Ordering::AcqRel) {
         return;
     }
+    let _warming = Warming;
     let snapshot = state
         .snapshot
         .read()
@@ -835,20 +861,9 @@ pub async fn warm_types(state: Arc<ChatState>) {
         .unwrap_or_default();
     let mut connectors = Vec::new();
     for deployment in &snapshot.deployments {
-        // The sources' languages too, so no question waits on them (T-7765).
-        if deployment.spec.routes() != Routes::Data {
-            routed::warm_languages(
-                &state.answers,
-                &state.pool,
-                &format!("{}/{}", deployment.project, deployment.name),
-                &crate::sources_by_project(&deployment.project, &deployment.spec.sources),
-                deployment.spec.channel.is_anonymous(),
-            )
-            .await;
-        }
         // No person: only what a visitor may read is listed, with no token.
         let mut failed = Vec::new();
-        for connector in connected(&state, deployment, None, None, &mut failed).await {
+        for connector in connected(&state, deployment, None, None, &mut failed, None).await {
             if !connectors
                 .iter()
                 .any(|c: &Connected| c.surface.slug == connector.surface.slug)
@@ -858,7 +873,15 @@ pub async fn warm_types(state: Arc<ChatState>) {
         }
     }
     routed::warm(&state.answers, &state.http, &connectors).await;
-    WARMING.store(false, Ordering::Release);
+    // The sources' languages too, so no question waits on them (T-7765).
+    for deployment in &snapshot.deployments {
+        if deployment.spec.routes() != Routes::Data {
+            let name = format!("{}/{}", deployment.project, deployment.name);
+            let sources = crate::sources_by_project(&deployment.project, &deployment.spec.sources);
+            let public_only = deployment.spec.channel.is_anonymous();
+            routed::warm_languages(&state.answers, &state.pool, &name, &sources, public_only).await;
+        }
+    }
 }
 
 /// The name a connector gives a resolved Endpoint: `{project}/{endpoint}` for a project of
@@ -892,13 +915,16 @@ fn reached(state: &ChatState, deployment: &Deployment) -> Vec<String> {
 /// asker may reach, with their tools: a public Endpoint without a token; on an `internal`
 /// deployment, any other Endpoint with the person's token, when there is one (AG-106, AG-115).
 /// One that joined by the selector or the server is offered every read tool. One whose tools
-/// cannot be listed is reported and left out (AG-104).
+/// cannot be listed is reported and left out (AG-104). Past `deadline` a public Endpoint is
+/// listed by its last listing however old, and one with none, or read with a token, is left out
+/// as one that failed (T-7789); warming passes none and waits as long as each connector allows.
 async fn connected(
     state: &ChatState,
     deployment: &Deployment,
     chosen: Option<&[String]>,
     person: Option<&PersonToken>,
     failed: &mut Vec<Event>,
+    deadline: Option<tokio::time::Instant>,
 ) -> Vec<Connected> {
     let Ok(snapshot) = state.snapshot.read().map(|s| s.clone()) else {
         return Vec::new();
@@ -964,12 +990,24 @@ async fn connected(
     let listings: Vec<_> = reachable
         .iter()
         .map(|(connector, _, _, _, surface)| async move {
-            match mcp::reads_any(&connector.tools) {
-                true => routed::listing(&state.answers, &state.http, surface)
-                    .await
-                    .map(|listed| mcp::picked(&listed, &connector.tools)),
-                false => Ok(Vec::new()),
+            if !mcp::reads_any(&connector.tools) {
+                return Ok(Vec::new());
             }
+            let listing = routed::listing(&state.answers, &state.http, surface);
+            let listed = match deadline {
+                None => listing.await,
+                // A kept listing answers on the first poll, before the deadline is looked at.
+                Some(at) => match tokio::time::timeout_at(at, listing).await {
+                    Ok(listed) => listed,
+                    Err(_) => surface
+                        .token
+                        .is_none()
+                        .then(|| state.answers.listing_within(&surface.slug, Duration::MAX))
+                        .flatten()
+                        .ok_or_else(|| "the Endpoint did not list its tools in time".to_owned()),
+                },
+            };
+            listed.map(|listed| mcp::picked(&listed, &connector.tools))
         })
         .collect();
     let listed: Vec<_> = futures_util::stream::iter(listings)
@@ -1303,7 +1341,8 @@ fn done(spent: &Spent, total_ms: u64, anonymous: bool) -> serde_json::Value {
         return json!({
             "firstTokenMs": spent.first_token_ms,
             "totalMs": total_ms,
-            "cached": spent.cached,
+            // API/05 names it; no answer is kept since T-7789.
+            "cached": false,
             "stagesMs": spent.stages.json(),
         });
     }
@@ -1314,7 +1353,8 @@ fn done(spent: &Spent, total_ms: u64, anonymous: bool) -> serde_json::Value {
         "modelCalls": spent.calls,
         "firstTokenMs": spent.first_token_ms,
         "totalMs": total_ms,
-        "cached": spent.cached,
+        // API/05 names it; no answer is kept since T-7789.
+        "cached": false,
         "stagesMs": spent.stages.json(),
         "judgeSkipped": spent.stages.judge_skipped,
         "providers": spent.providers.json(),
@@ -1556,14 +1596,38 @@ async fn resume(
     with_cors(response, origin)
 }
 
-async fn replay(
+/// `POST /api/v1/d/{publicId}/turns/{turn}/cancel` (T-7790, API/05 §1.6.2): the visitor's Stop.
+/// The held turn's model loop ends, what it spent is recorded and its stream slot is freed. Bound
+/// to the visitor's address and deployment as a resume is; a finished turn answers 204 as well.
+async fn cancel(
+    State(state): State<Arc<ChatState>>,
+    Path((public_id, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let (deployment, origin) = match placed(&state, &public_id, &headers) {
+        Ok(placed) => placed,
+        Err(refused) => return *refused,
+    };
+    let response = match held_turn(&state, &deployment, &public_id, &id, &headers, "cancel").await {
+        Ok(turn) => {
+            turn.cancel();
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(refused) => *refused,
+    };
+    with_cors(response, origin)
+}
+
+/// The visitor's own held turn `id`: a current visitor token, the same address and deployment,
+/// within `RESUMES_PER_MINUTE` per address and `purpose` (resume or cancel).
+async fn held_turn(
     state: &ChatState,
     deployment: &Deployment,
     public_id: &str,
     id: &str,
-    after: usize,
     headers: &HeaderMap,
-) -> Response {
+    purpose: &str,
+) -> Result<Arc<resume::Turn>, Box<Response>> {
     let token = headers
         .get(VISITOR_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -1574,14 +1638,14 @@ async fn replay(
         .visitor(public_id, token, unix_now())
         .is_none()
     {
-        return problem(
+        return Err(Box::new(problem(
             401,
             "Overenie prehliadača vypršalo. Obnovte stránku a skúste to znova.",
-        );
+        )));
     }
     let visitor = limits.visitor(&client_of(headers), today());
     let key = format!(
-        "{}/{}\u{0}{visitor}\u{0}resume",
+        "{}/{}\u{0}{visitor}\u{0}{purpose}",
         deployment.project, deployment.name
     );
     let admitted = limits.admit(
@@ -1590,17 +1654,32 @@ async fn replay(
     );
     drop(limits);
     if let Err(retry) = admitted {
-        return too_many(
+        return Err(Box::new(too_many(
             retry,
             "Z tejto siete prišlo veľa obnovení za krátky čas. Počkajte chvíľu a skúste to znova.",
-        );
+        )));
     }
-    let turn = match state.turns.find(public_id, &visitor, id, Instant::now()) {
-        resume::Found::Live(turn) => turn,
-        resume::Found::Gone => {
-            return problem(410, "This answer can no longer be resumed; ask again.")
-        }
-        resume::Found::Missing => return problem(404, "No such answer of this visitor."),
+    match state.turns.find(public_id, &visitor, id, Instant::now()) {
+        resume::Found::Live(turn) => Ok(turn),
+        resume::Found::Gone => Err(Box::new(problem(
+            410,
+            "This answer can no longer be resumed; ask again.",
+        ))),
+        resume::Found::Missing => Err(Box::new(problem(404, "No such answer of this visitor."))),
+    }
+}
+
+async fn replay(
+    state: &ChatState,
+    deployment: &Deployment,
+    public_id: &str,
+    id: &str,
+    after: usize,
+    headers: &HeaderMap,
+) -> Response {
+    let turn = match held_turn(state, deployment, public_id, id, headers, "resume").await {
+        Ok(turn) => turn,
+        Err(refused) => return *refused,
     };
     let anonymous = deployment.spec.channel.is_anonymous();
     let stream = futures_util::StreamExt::map(turn.events_from(after), move |(index, event)| {
@@ -2136,7 +2215,8 @@ async fn ask(
         }
         tracing::info!(deployment = %key, cap = cap.name(), "a question was refused at its cap");
         let zone = clock::Zone::of(&deployment.spec.languages);
-        return capped(&cap.event(time::OffsetDateTime::now_utc(), zone), anonymous);
+        let now = time::OffsetDateTime::now_utc();
+        return capped(&cap.event(now, zone), anonymous, cap.retry_after(now));
     }
     let (tokens_per_day, tokens_per_conversation) =
         (budget.tokens_per_day, budget.tokens_per_conversation);
@@ -2181,6 +2261,17 @@ async fn ask(
             "question asked"
         );
         let trace = trace::Trace::new(logged_question);
+        // The first event, before any listing or model call (T-7789): the reader sees "Reading
+        // your question" at once, then the stages in the order they run.
+        let reading = Event::Stage {
+            stage: "understanding",
+            topic: None,
+            detail: agent::Detail::default(),
+        };
+        if let Some(turn) = &held {
+            turn.push(&reading);
+        }
+        let _ = tx.send(reading).await;
         let mut failed = Vec::new();
         // `answer.routes` narrows what the answer may use (T-4281): `rag` connects nothing,
         // `data` searches nothing.
@@ -2188,14 +2279,22 @@ async fn ask(
         let connectors = if routes == Routes::Rag {
             Vec::new()
         } else {
-            connected(
+            // One deadline for every listing (T-7789): past it a connector is named by its last
+            // listing however old, so a slow or silent gateway never holds the question.
+            let began = Instant::now();
+            let deadline = tokio::time::Instant::now() + routed::ROUTING_DEADLINE;
+            let listed = connected(
                 &state,
                 &deployment,
                 question.connectors.as_deref(),
                 person.as_ref(),
                 &mut failed,
+                Some(deadline),
             )
-            .await
+            .await;
+            let output = format!("{} connectors offered", listed.len());
+            trace.note("tool", "connected", began, None, Some(&output));
+            listed
         };
         let sources = if routes == Routes::Data {
             Vec::new()
@@ -2286,14 +2385,21 @@ async fn ask(
         let (inner, mut passing) = tokio::sync::mpsc::channel::<Event>(32);
         let answering = async {
             // A raised data loop keeps its answer call's time after its last tool (T-4294).
-            let answered = tokio::time::timeout(
+            let running = tokio::time::timeout(
                 ANSWER_TIMEOUT.max(ask.data_time + DATA_ANSWER),
                 agent::SPENT_SO_FAR.scope(
                     Arc::clone(&so_far),
                     agent::answer(&ask, &question.history, &question.message, &inner),
                 ),
-            )
-            .await;
+            );
+            // The visitor's Stop drops the model loop, its call in flight included (T-7790).
+            let answered = match &held {
+                Some(turn) => tokio::select! {
+                    answered = running => Some(answered),
+                    () = turn.cancelled() => None,
+                },
+                None => Some(running.await),
+            };
             drop(inner);
             answered
         };
@@ -2324,10 +2430,16 @@ async fn ask(
             seen
         };
         let (answered, mut seen) = tokio::join!(answering, forwarding);
-        let timed_out = answered.is_err();
+        let timed_out = matches!(answered, Some(Err(_)));
         let spent = match answered {
-            Ok(spent) => spent,
-            Err(_) => {
+            Some(Ok(spent)) => spent,
+            None => {
+                // The calls made before the Stop, so the day's cost holds them.
+                let spent = so_far.lock().map(|s| s.clone()).unwrap_or_default();
+                tracing::info!(deployment = %name, model_calls = spent.calls, "the visitor stopped the answer");
+                spent
+            }
+            Some(Err(_)) => {
                 let cut = Event::Error {
                     status: 504,
                     title: "Answer Took Too Long",
@@ -2367,9 +2479,6 @@ async fn ask(
             personal: deployment.spec.transcript_redaction
                 == Some(jc_core::kinds::TranscriptRedaction::Personal),
         };
-        if let Err(err) = transcript::store(&state.pool, &kept).await {
-            tracing::error!(%err, "a turn's transcript was not stored");
-        }
         tracing::info!(
             deployment = %name,
             tokens_in = spent.input,
@@ -2377,7 +2486,6 @@ async fn ask(
             model_calls = spent.calls,
             first_token_ms = spent.first_token_ms,
             total_ms,
-            cached = spent.cached,
             "question answered"
         );
         if let Err(err) = record(&state.pool, &deployment, &conversation_id, &spent, total_ms).await
@@ -2396,6 +2504,11 @@ async fn ask(
             turn.finish(Instant::now());
         }
         let _ = tx.send(done).await;
+        // The transcript after done: the visitor waits on nothing it does not read. Its spend and
+        // the stream's limit counted before done, so a fast second question meets them (T-7772).
+        if let Err(err) = transcript::store(&state.pool, &kept).await {
+            tracing::error!(%err, "a turn's transcript was not stored");
+        }
     }.instrument(span));
 
     let first = futures_util::stream::once(async move {

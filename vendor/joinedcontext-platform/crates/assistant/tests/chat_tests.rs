@@ -1142,48 +1142,8 @@ async fn a_data_question_is_answered_from_the_endpoints_live_values() {
     tx.rollback().await.expect("rollback");
     assert_eq!(tokens, 1330);
 
-    // T-4731: the same first question within LIVE_LIFE is answered from the cache at once, with
-    // no model call and no read: the table, the answer and its citations as they were sent.
+    // A follow-up reads the types kept by the first question (T-7789: no answer is kept).
     let calls_before = model_calls(&w.proxy).await.len();
-    let reads_before = tool_calls_of(&w.gateway, "query_entities").await.len();
-    let (_, again, _) = answer_of(
-        &w.app,
-        ask(
-            json!({"message": "aké je NO2 na námestí SNP"}),
-            Some(ORIGIN),
-        ),
-    )
-    .await;
-    assert_eq!(
-        again.last().map(|(_, d)| d["cached"].clone()),
-        Some(json!(true))
-    );
-    let names: Vec<&str> = again.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(
-        names,
-        // The read's step too, so the replayed answer can still be checked (T-4801).
-        [
-            "conversation",
-            "step",
-            "data",
-            "answer",
-            "citations",
-            "done"
-        ]
-    );
-    let first: Vec<&Value> = events
-        .iter()
-        .filter(|(n, _)| ["step", "data", "answer", "citations"].contains(&n.as_str()))
-        .map(|(_, d)| d)
-        .collect();
-    let replayed: Vec<&Value> = again[1..5].iter().map(|(_, d)| d).collect();
-    assert_eq!(replayed, first);
-    assert_eq!(model_calls(&w.proxy).await.len(), calls_before);
-    assert_eq!(
-        tool_calls_of(&w.gateway, "query_entities").await.len(),
-        reads_before
-    );
-    // A follow-up in the conversation is never answered from the cache.
     script_routed(&w.proxy, vec![
         completion(json!({"role": "assistant", "content": "{\"route\": \"data\", \"data\": [{\"endpoint\": \"ovzdusie\", \"type\": \"AirQualityObserved\"}]}"}), 400),
     ], vec![], vec![
@@ -1452,6 +1412,124 @@ async fn an_answer_whose_visitor_left_runs_to_its_end_and_resumes_on_the_next_pa
         statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
         "{statuses:?}"
     );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+fn cancel_of(turn: &str, token: Option<&str>, client: &str) -> Request<Body> {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/api/v1/d/hronov-obcania/turns/{turn}/cancel"))
+        .header("x-forwarded-for", format!("{client}, 10.0.0.1"));
+    if let Some(token) = token {
+        request = request.header(VISITOR_HEADER, token);
+    }
+    request.body(Body::empty()).expect("a request")
+}
+
+/// T-7790: the visitor's Stop cancels a held turn. The model loop ends before its answer call,
+/// the stream closes with `done`, the calls made so far are recorded and the visitor's stream
+/// slot is free for the next question. Only the visitor's own turn can be stopped.
+#[tokio::test]
+async fn a_stopped_answer_ends_its_model_loop_records_its_spend_and_frees_its_slot() {
+    let mut held = deployment(Channel::Public, 50_000, 10);
+    if let Some(rate) = held.spec.rate_limit.as_mut() {
+        rate.streams_per_client = 1;
+    }
+    let w = world("chatstop", held).await;
+    let slow = std::time::Duration::from_millis(1_500);
+    script_routed(
+        &w.proxy,
+        vec![completion(json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"knižnica\"]}"}), 100)],
+        vec![completion(json!({"role": "assistant", "content": "{\"answers\": true}"}), 100).set_delay(slow)],
+        vec![streamed(&["Do 18:00 ", "[1]."], 90, 10).set_delay(slow)],
+    )
+    .await;
+    let token = visitor_token(&w.state, "hronov-obcania", "0").await;
+    let mut request = ask(json!({"message": "Dokedy je otvorená knižnica?"}), None);
+    request
+        .headers_mut()
+        .insert(VISITOR_HEADER, token.parse().expect("a header value"));
+    let response = w.app.clone().oneshot(request).await.expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let first = futures_util::StreamExt::next(&mut body)
+        .await
+        .expect("an event")
+        .expect("bytes");
+    let first = String::from_utf8_lossy(&first).to_string();
+    let data = first
+        .lines()
+        .find_map(|l| l.strip_prefix("data: "))
+        .expect("the conversation event");
+    let turn = serde_json::from_str::<Value>(data).expect("json")["turn"]
+        .as_str()
+        .expect("a visitor's stream names its turn")
+        .to_owned();
+    // Another address and no token cannot stop it; an unknown turn is missing.
+    let other = visitor_token(&w.state, "hronov-obcania", "1").await;
+    let app = &w.app;
+    let status = |request: Request<Body>| async move {
+        app.clone()
+            .oneshot(request)
+            .await
+            .expect("an answer")
+            .status()
+    };
+    assert_eq!(
+        status(cancel_of(&turn, Some(&other), "198.51.100.9")).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        status(cancel_of(&turn, None, "203.0.113.7")).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let unknown = "6f1c0e9e-3b1a-4d7e-9b51-2c4f8f2a7c11";
+    assert_eq!(
+        status(cancel_of(unknown, Some(&token), "203.0.113.7")).await,
+        StatusCode::NOT_FOUND
+    );
+    // A slow call is with the model: the visitor stops the answer.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(
+        status(cancel_of(&turn, Some(&token), "203.0.113.7")).await,
+        StatusCode::NO_CONTENT
+    );
+    let rest = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        futures_util::StreamExt::collect::<Vec<_>>(body),
+    )
+    .await
+    .expect("the stream ends at the stop");
+    let text: String = rest
+        .into_iter()
+        .map(|chunk| String::from_utf8_lossy(&chunk.expect("bytes")).to_string())
+        .collect();
+    let names: Vec<String> = events_in(&text).into_iter().map(|(n, _)| n).collect();
+    assert!(!names.iter().any(|n| n == "answer"), "{names:?}");
+    assert_eq!(names.last().map(String::as_str), Some("done"), "{names:?}");
+    // No model call starts after the stop: the loop ended with the call it was cut in.
+    let at_stop = model_calls(&w.proxy).await.len();
+    tokio::time::sleep(std::time::Duration::from_millis(2_000)).await;
+    assert_eq!(model_calls(&w.proxy).await.len(), at_stop, "the loop ended");
+    // The router call that finished is recorded for the stopped turn.
+    let mut tx = assistant::project_scope(&w.pool, "hronov")
+        .await
+        .expect("scope");
+    let (tokens,): (i64,) = sqlx::query_as("SELECT tokens FROM conversations")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("one");
+    assert_eq!(
+        tokens, 100,
+        "the finished router call is spent, the cut one is not"
+    );
+    drop(tx);
+    // The slot is free: the same visitor asks again at once and is answered.
+    let mut again = ask(json!({"message": "A v sobotu?"}), None);
+    again
+        .headers_mut()
+        .insert(VISITOR_HEADER, token.parse().expect("a header value"));
+    assert_eq!(status(again).await, StatusCode::OK);
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
@@ -3282,27 +3360,6 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
     assert_eq!(done["cached"], false);
     assert!(done["firstTokenMs"].as_u64().is_some() && done["totalMs"].as_u64().is_some());
 
-    // The same first question, written otherwise, is answered from the cache.
-    let (_, again, _) = answer_of(
-        &w.app,
-        ask(json!({"message": "  dokedy je OTVORENÁ knižnica "}), None),
-    )
-    .await;
-    assert_eq!(
-        model_calls(&w.proxy).await.len(),
-        2,
-        "the cache made a model call"
-    );
-    let names: Vec<&str> = again.iter().map(|(n, _)| n.as_str()).collect();
-    // The follow-up chips are replayed too (T-4731).
-    assert_eq!(
-        names,
-        ["conversation", "answer", "citations", "followups", "done"]
-    );
-    assert_eq!(again[1].1["text"], answer);
-    assert_eq!(again[2].1, events[13].1);
-    assert_eq!(again[4].1["cached"], true);
-    without_internals(&again[4].1);
     // The skip is counted, so the eval shows how often the judgement is saved (T-4360).
     let mut tx = assistant::project_scope(&w.pool, "hronov")
         .await
@@ -3314,6 +3371,23 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
             .expect("timings");
     tx.rollback().await.expect("rollback");
     assert_eq!(skipped, [true]);
+
+    // T-7789: the same first question again is answered afresh: no answer is kept, so none is
+    // replayed to the next visitor, and the router is asked again.
+    let (_, again, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "Dokedy je otvorená knižnica?"}), None),
+    )
+    .await;
+    assert!(model_calls(&w.proxy).await.len() > 2, "{again:?}");
+    assert_eq!(again[1].0, "stage", "{again:?}");
+    assert_eq!(again[1].1["stage"], "understanding");
+    assert!(
+        !again
+            .iter()
+            .any(|(n, d)| n == "answer" && d["text"] == answer),
+        "the first answer was replayed: {again:?}"
+    );
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
@@ -3643,6 +3717,170 @@ async fn a_router_that_fails_searches_the_question_and_a_refusal_is_not_cached()
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// T-7789: a silent gateway holds no question past one routing deadline. Its Endpoint never lists
+/// its tools in time and has no listing kept, so the question goes on without it after
+/// `ROUTING_DEADLINE`, and the reader is told "understanding" before anything is listed.
+#[tokio::test]
+async fn a_silent_gateway_holds_the_question_one_routing_deadline_at_most() {
+    let mut d = deployment(Channel::Public, 50_000, 10);
+    // The connector's own timeout is for real reads: far past the routing deadline.
+    for connector in &mut d.spec.connectors {
+        connector.timeout_seconds = 20;
+    }
+    let w = world("chatsilent", d).await;
+    Mock::given(method("POST"))
+        .and(path(format!("/api/endpoint/{SLUG}/mcp")))
+        .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(30)))
+        .with_priority(1)
+        .mount(&w.gateway)
+        .await;
+    script_routed(
+        &w.proxy,
+        vec![completion(
+            json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"knižnica otváracie hodiny\"]}"}),
+            130,
+        )],
+        vec![],
+        vec![streamed(&["Knižnica je otvorená od 9.00 do 18.00 [1]."], 900, 40)],
+    )
+    .await;
+    let began = std::time::Instant::now();
+    let (status, events, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "Dokedy je otvorená knižnica?"}), None),
+    )
+    .await;
+    let took = began.elapsed();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        (events[1].0.as_str(), &events[1].1["stage"]),
+        ("stage", &json!("understanding")),
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(|(n, _)| n == "answer"),
+        "answered without the Endpoint: {events:?}"
+    );
+    assert!(
+        took < assistant::chat::routed::ROUTING_DEADLINE + std::time::Duration::from_secs(4),
+        "the question waited {took:?} on a silent gateway"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// T-7789: 16 questions at once from 16 visitors, against a model that takes 200 ms a call, are
+/// each answered: none is refused with 503 (the service holds `MAX_QUESTIONS`), and 9 in 10 end
+/// within 10 s, the owner's budget for a whole answer.
+#[tokio::test]
+async fn sixteen_questions_at_once_are_answered_within_the_budget() {
+    let mut sources_only = deployment(Channel::Public, 50_000, 10);
+    sources_only.spec.connectors.clear();
+    let w = world("chatload", sources_only).await;
+    assistant::chat::warm_types(Arc::clone(&w.state)).await;
+    let pause = std::time::Duration::from_millis(200);
+    Mock::given(method("POST"))
+        .and(path("/v1/llm/chat/completions"))
+        .and(body_string_contains(ROUTER))
+        .respond_with(
+            completion(
+                json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"knižnica otváracie hodiny\"]}"}),
+                130,
+            )
+            .set_delay(pause),
+        )
+        .with_priority(1)
+        .mount(&w.proxy)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/llm/chat/completions"))
+        .respond_with(
+            streamed(&["Knižnica je otvorená od 9.00 do 18.00 [1]."], 900, 40).set_delay(pause),
+        )
+        .with_priority(2)
+        .mount(&w.proxy)
+        .await;
+    const QUESTIONS: usize = 16;
+    let asked = (0..QUESTIONS).map(|i| {
+        let app = w.app.clone();
+        async move {
+            let began = std::time::Instant::now();
+            let (status, events, _) = answer_of(
+                &app,
+                ask_from(
+                    json!({"message": "Dokedy je otvorená knižnica?"}),
+                    None,
+                    &format!("203.0.113.{}", 100 + i),
+                ),
+            )
+            .await;
+            (status, events, began.elapsed())
+        }
+    });
+    let mut took = Vec::new();
+    for (status, events, elapsed) in futures_util::future::join_all(asked).await {
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            !events
+                .iter()
+                .any(|(n, d)| n == "error" && d["status"] == 503),
+            "a question was refused: {events:?}"
+        );
+        assert!(
+            events.iter().any(|(n, _)| n == "answer"),
+            "unanswered: {events:?}"
+        );
+        took.push(elapsed);
+    }
+    took.sort_unstable();
+    let p90 = took[(QUESTIONS * 9).div_ceil(10) - 1];
+    assert!(
+        p90 < std::time::Duration::from_secs(10),
+        "p90 {p90:?}, all {took:?}"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// T-7772: the turn's transcript is stored after `done`, its question and spend before it. A second
+/// question sent the moment the first one's `done` arrives, the stream still open, meets
+/// `messagesPerConversation` as before.
+#[tokio::test]
+async fn a_question_sent_at_done_still_meets_the_conversation_limit() {
+    use futures_util::StreamExt;
+    let mut limited = deployment(Channel::Public, 1_000_000, 10);
+    if let Some(budget) = limited.spec.budget.as_mut() {
+        budget.messages_per_conversation = 1;
+    }
+    let w = world("chatatdone", limited).await;
+    script(
+        &w.proxy,
+        vec![completion(json!({"role": "assistant", "content": "Áno."}), 50); 2],
+    )
+    .await;
+    let response = w
+        .app
+        .clone()
+        .oneshot(ask(json!({"message": "a"}), Some(ORIGIN)))
+        .await
+        .expect("an answer");
+    let mut stream = response.into_body().into_data_stream();
+    let mut text = String::new();
+    while !text.contains("event: done") {
+        let chunk = stream.next().await.expect("done arrives").expect("a chunk");
+        text.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    let first = events_in(&text);
+    let id = first[0].1["id"].as_str().expect("an id").to_owned();
+    let (status, body, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "b", "conversation": id}), Some(ORIGIN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body:?}");
+    assert_eq!(body[0].1["title"], "Conversation Budget Spent");
+    drop(stream);
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// T-4149: the owner's limits hold before any model call: a question past `questionChars`, the
 /// 11th question of a minute from one visitor (`429`, `Retry-After`, in Slovak), a conversation
 /// past `messagesPerConversation`, and a deployment switched off.
@@ -3812,7 +4050,7 @@ async fn past_the_day_s_cost_cap_the_chat_says_the_limit_and_nothing_else() {
     assert_eq!(cost, 12_000);
     let before = model_calls(&w.proxy).await.len();
 
-    let (status, events, _) = answer_of(
+    let (status, events, headers) = answer_of(
         &w.app,
         ask_from(
             json!({"message": "Dokedy je otvorená knižnica?"}),
@@ -3822,6 +4060,14 @@ async fn past_the_day_s_cost_cap_the_chat_says_the_limit_and_nothing_else() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    // When it resets, in seconds the widget reads across origins (T-7790).
+    let retry: u64 = headers["retry-after"]
+        .to_str()
+        .expect("ascii")
+        .parse()
+        .expect("seconds");
+    assert!((1..=86_400).contains(&retry), "{retry}");
+    assert_eq!(headers["access-control-expose-headers"], "Retry-After");
     let detail = only_the_limit(&events, "Daily Limit Reached");
     assert!(
         detail.starts_with("Asistent dnes dosiahol denný limit. Skúste to znova "),
@@ -4295,8 +4541,13 @@ async fn a_scoped_project_s_public_endpoint_is_read_and_nothing_else_of_it() {
     for slug in [REGION_SLUG, HIDDEN_SLUG, ELSEWHERE_SLUG] {
         recorded_air(&w.gateway, slug).await;
     }
-    script(&w.proxy, vec![
+    // Matched by what each call is told: under a loaded run the first round's judge may ask
+    // before the router does.
+    script_routed(&w.proxy, vec![
         completion(json!({"role": "assistant", "content": "{\"route\": \"data\", \"data\": [{\"endpoint\": \"helsinki/kraj\", \"type\": \"AirQualityObserved\"}, {\"endpoint\": \"bbsk/spisy\", \"type\": \"AirQualityObserved\"}, {\"endpoint\": \"bbsk/kraj\", \"type\": \"AirQualityObserved\"}]}"}), 400),
+    ], vec![
+        completion(json!({"role": "assistant", "content": "{\"answers\": true}"}), 100),
+    ], vec![
         streamed(&["NO2 je 21 [1]."], 900, 30),
     ]).await;
     let (status, events, _) = answer_of(
@@ -4317,7 +4568,8 @@ async fn a_scoped_project_s_public_endpoint_is_read_and_nothing_else_of_it() {
         data[0]["download"],
         format!("https://data.hronov.example/api/endpoint/{REGION_SLUG}/ngsi-ld/v1/entities?type=AirQualityObserved&limit=1000")
     );
-    let router = text_of(&model_calls(&w.proxy).await[0].1["messages"][1]);
+    let calls = model_calls(&w.proxy).await;
+    let router = text_of(&calls_of(&calls, Some(ROUTER))[0]["messages"][1]);
     assert!(
         router.contains("- bbsk/kraj: AirQualityObserved"),
         "{router}"
@@ -4714,7 +4966,7 @@ async fn a_slow_dataset_page_lookup_does_not_hold_the_data_call() {
     let w = world("chatpagedeadline", d).await;
     recorded_air(&w.gateway, SLUG).await;
     let (_, answered) = stamped_data_question(&w.proxy, "NO2 nad 20 má stanica [1].").await;
-    // The first question reads the languages, the digest and the types the next one keeps.
+    // The first question reads the languages and the types the next one keeps.
     let (status, events, _) = answer_of(
         &w.app,
         ask(json!({"message": "Kde je NO2 nad 20?"}), Some(ORIGIN)),
@@ -5567,10 +5819,11 @@ async fn small_talk_and_noise_never_reach_retrieval() {
             answer_of(&w.app, ask(json!({"message": message}), Some(ORIGIN))).await;
         assert_eq!(status, StatusCode::OK);
         let names: Vec<&str> = events.iter().map(|(n, _)| n.as_str()).collect();
+        // Only the first stage, sent as the question arrives (T-7789).
         assert!(
-            !names
-                .iter()
-                .any(|n| *n == "tool" || *n == "stage" || *n == "data"),
+            !events.iter().any(|(n, d)| n == "tool"
+                || n == "data"
+                || (n == "stage" && d["stage"] != "understanding")),
             "{message}: no step, search or read: {names:?}"
         );
         let answer = events

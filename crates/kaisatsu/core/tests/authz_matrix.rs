@@ -482,6 +482,140 @@ fn anonymous_callers_and_other_realms_are_hidden() {
     );
 }
 
+/// A realm-management right is held as a `realm-management` client role or as a realm role of
+/// the same name; a realm admin holds every one.
+#[test]
+fn a_realm_management_right_is_a_client_role_or_a_realm_role() {
+    let mut by_realm_role = Principal::anonymous();
+    by_realm_role.realm_roles = vec!["manage-users".into()];
+    assert!(by_realm_role.has_realm_mgmt_role("manage-users"));
+    assert!(!by_realm_role.has_realm_mgmt_role("view-clients"));
+    let by_client_role = mgmt(&["view-clients"]);
+    assert!(by_client_role.has_realm_mgmt_role("view-clients"));
+    assert!(!by_client_role.has_realm_mgmt_role("manage-users"));
+    let mut other_client = Principal::anonymous();
+    other_client
+        .client_roles
+        .insert("account".into(), vec!["manage-users".into()]);
+    assert!(!other_client.has_realm_mgmt_role("manage-users"));
+    assert!(Principal::realm_admin("a").has_realm_mgmt_role("anything"));
+}
+
+/// SMTP is set by a realm admin or `realm-management` `manage-smtp` alone (T-7152).
+#[test]
+fn smtp_is_set_by_a_realm_admin_or_manage_smtp_only() {
+    assert!(Principal::realm_admin("a").may_set_smtp());
+    assert!(mgmt(&["manage-smtp"]).may_set_smtp());
+    for p in [
+        mgmt(&["manage-realm", "manage-users", "manage-clients"]),
+        org_member("hel", &["org-admin"]),
+        Principal::anonymous(),
+    ] {
+        assert!(!p.may_set_smtp(), "{p:?}");
+    }
+}
+
+fn app(client_id: &str, org: Option<&str>) -> ObjectTarget {
+    ObjectTarget::Application {
+        realm_id: "dev".into(),
+        org_id: org.map(str::to_owned),
+        client_id: client_id.into(),
+        managed_by: None,
+    }
+}
+
+/// A reserved client id is no one's but a realm admin's to write, and an `app-`/`mcp-` id is
+/// created only by a realm-wide client manager: each refusal is a visible 403 saying why.
+#[test]
+fn reserved_and_platform_client_ids_are_refused_visibly() {
+    let manager = mgmt(&["manage-clients", "manage-users"]);
+    for id in [
+        "account",
+        " Admin-CLI ",
+        "broker",
+        "city-realm",
+        "realm-management",
+    ] {
+        for a in [Action::Create, Action::Update, Action::Delete] {
+            let d = check(&manager, None, a, &app(id, None));
+            assert!(!d.allowed && d.visible, "{} {id}: {}", a.as_str(), d.reason);
+            assert!(d.reason.contains("reserved"), "{}", d.reason);
+        }
+        assert!(
+            check(&manager, None, Action::Read, &app(id, None)).allowed,
+            "read {id}"
+        );
+    }
+    let hel_admin = org_member("hel", &["org-admin"]);
+    for id in ["app-traffic", "MCP-tools", " app-x"] {
+        assert!(
+            check(&manager, None, Action::Create, &app(id, None)).allowed,
+            "{id}"
+        );
+        let d = check(
+            &hel_admin,
+            Some("hel"),
+            Action::Create,
+            &app(id, Some("hel")),
+        );
+        assert!(!d.allowed && d.visible, "{id}: {}", d.reason);
+        assert!(d.reason.contains("app- or mcp-"), "{}", d.reason);
+        let admin = check(
+            &Principal::realm_admin("a"),
+            Some("hel"),
+            Action::Create,
+            &app(id, Some("hel")),
+        );
+        assert!(admin.allowed, "a realm admin: {}", admin.reason);
+        let d = check(
+            &mgmt(&["query-groups"]),
+            None,
+            Action::Create,
+            &app(id, None),
+        );
+        assert!(!d.allowed && d.visible, "{id}: {}", d.reason);
+        assert!(
+            check(
+                &hel_admin,
+                Some("hel"),
+                Action::Update,
+                &app(id, Some("hel"))
+            )
+            .allowed
+        );
+    }
+    assert!(
+        check(
+            &hel_admin,
+            Some("hel"),
+            Action::Create,
+            &app("traffic-app", Some("hel"))
+        )
+        .allowed
+    );
+}
+
+/// Realm-wide client management: a realm admin anywhere; `manage-clients`, `view-clients` or
+/// `manage-users` only with no Organization pinned.
+#[test]
+fn realm_wide_client_management_needs_no_pinned_organization() {
+    let wide = |p: Principal, org: Option<&str>| {
+        let c = RequestCtx::new("dev", p);
+        match org {
+            Some(o) => c.with_org(o),
+            None => c,
+        }
+        .manages_clients_realm_wide()
+    };
+    assert!(wide(Principal::realm_admin("a"), Some("hel")));
+    for role in ["manage-clients", "view-clients", "manage-users"] {
+        assert!(wide(mgmt(&[role]), None), "{role}");
+        assert!(!wide(mgmt(&[role]), Some("hel")), "{role} pinned");
+    }
+    assert!(!wide(mgmt(&["query-groups", "manage-realm"]), None));
+    assert!(!wide(org_member("hel", &["org-admin"]), None));
+}
+
 #[test]
 fn allowed_orgs_and_action_names() {
     let ctx = |p: Principal, org: Option<&str>| {

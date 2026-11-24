@@ -679,3 +679,114 @@ fn read_file_on_an_unreadable_path_returns_an_io_error_not_a_panic() {
         );
     }
 }
+
+// ---- T-7793: the remaining shapes a repository file can take ----
+
+#[test]
+fn a_secrets_file_that_is_not_yaml_or_whose_sops_block_is_not_metadata_is_a_parse_error() {
+    let dir = temp_dir("not-yaml");
+    std::fs::write(dir.join("secrets.enc.yaml"), "token: [unclosed\n").expect("write");
+    let identity = age::x25519::Identity::generate();
+    let refused = load(&dir, &identity);
+    assert!(
+        matches!(refused, Err(SopsError::Parse { .. })),
+        "{refused:?}"
+    );
+
+    std::fs::write(dir.join("secrets.enc.yaml"), "token: x\nsops: 5\n").expect("write");
+    match load(&dir, &identity) {
+        Err(error @ SopsError::Parse { .. }) => {
+            assert!(
+                error.to_string().contains("`sops` is not SOPS metadata"),
+                "{error}"
+            );
+        }
+        other => panic!("expected Parse, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_stanza_that_is_not_age_or_wraps_a_short_key_is_passed_over_for_the_next() {
+    let refused = load_edited(
+        "broken-stanza",
+        &[("token", Node::Value("s3cr3t-value"))],
+        |text| {
+            let start = text.find("    age:\n").expect("age block");
+            let end = text.find("    lastmodified").expect("lastmodified");
+            format!(
+                "{}    age:\n        - recipient: age1nothing\n          enc: not an age file\n{}",
+                &text[..start],
+                &text[end..]
+            )
+        },
+    );
+    assert!(
+        matches!(refused, Err(SopsError::NoMatchingIdentity { .. })),
+        "{refused:?}"
+    );
+
+    let (dir, identity) = repository("short-key", &[("token", Node::Value("s3cr3t-value"))]);
+    let file = dir.join("secrets.enc.yaml");
+    let text = std::fs::read_to_string(&file).expect("the file");
+    let short = age::encrypt_and_armor(&identity.to_public(), &[7_u8; 16]).expect("wrap");
+    let indented: String = short
+        .lines()
+        .map(|l| format!("            {l}\n"))
+        .collect();
+    let start = text.find("    age:\n").expect("age block");
+    let end = text.find("    lastmodified").expect("lastmodified");
+    let edited = format!(
+        "{}    age:\n        - recipient: {}\n          enc: |\n{indented}{}",
+        &text[..start],
+        identity.to_public(),
+        &text[end..]
+    );
+    std::fs::write(&file, edited).expect("rewrite");
+    let refused = load(&dir, &identity);
+    assert!(
+        matches!(refused, Err(SopsError::NoMatchingIdentity { .. })),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn an_iv_of_another_length_is_refused_naming_the_member() {
+    let refused = load_edited(
+        "short-iv",
+        &[("token", Node::Value("s3cr3t-value"))],
+        |text| {
+            let literal = literal_of(text, "token");
+            let body = literal
+                .trim_start_matches("ENC[AES256_GCM,")
+                .trim_end_matches(']');
+            let edited: Vec<String> = body
+                .split(',')
+                .map(|part| match part.split_once(':') {
+                    Some(("iv", _)) => "iv:AAAAAAAAAAAAAAAAAAAAAA==".to_owned(),
+                    _ => part.to_owned(),
+                })
+                .collect();
+            text.replace(literal, &format!("ENC[AES256_GCM,{}]", edited.join(",")))
+        },
+    );
+    match refused {
+        Err(error @ SopsError::Value { .. }) => {
+            assert!(
+                error.to_string().contains("the iv is not 32 bytes"),
+                "{error}"
+            );
+        }
+        other => panic!("expected Value, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_mounted_secret_file_is_read_trimmed_and_an_empty_or_missing_one_is_none() {
+    let dir = temp_dir("mounted");
+    std::fs::write(dir.join("token"), "  the-org-token\n").expect("write");
+    std::fs::write(dir.join("blank"), " \n\t").expect("write");
+    let read = jcctl::SecretValue::from_file(&dir.join("token")).expect("a value");
+    assert_eq!(read.expose(), "the-org-token");
+    assert!(jcctl::SecretValue::from_file(&dir.join("blank")).is_none());
+    assert!(jcctl::SecretValue::from_file(&dir.join("missing")).is_none());
+}

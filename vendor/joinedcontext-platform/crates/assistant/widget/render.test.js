@@ -2,7 +2,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, live, liveKey, ended, failedLine, elapsed, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, chartNote, firstTable, mapFirst, mapSource, loadMap, drawnCaption, mapCap, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
+const { reduce, csv, csvName, resetAt, notice, closeTargets, connector, sourceCount, badges, chosen, asksLanguage, ordered, markdown, streamable, sources, label, unlisted, safeUrl, events, language, table, chart, greeting, title, linkHost, followups, restore, remember, stamp, cards, stage, steps, live, liveKey, ended, failedLine, elapsed, tel, mailto, suggestions, trouble, retryable, said, retry, vizOrigin, vizSpec, vizRows, aggregated, chartNote, firstTable, mapFirst, mapSource, loadMap, drawnCaption, mapCap, lasting, recalled, privacyLines, dataset, view } = require("./render.js");
 
 const upTo = (max) => (n) => n >= 1 && n <= max;
 
@@ -90,9 +90,19 @@ test("an http(s) link is a link; any other scheme stays text", () => {
   assert.deepEqual(markdown("[the city](https://hel.fi/x) [bad](javascript:alert(1)) [ftp](ftp://x)", undefined, anyHost), [
     { tag: "p", children: [
       { tag: "a", href: "https://hel.fi/x", children: ["the city"] },
+      " (hel.fi)",
       " [bad](javascript:alert(1)) [ftp](ftp://x)",
     ] },
   ]);
+});
+
+test("where a link leads stands beside words that do not say it (F-R2UI3-002, T-7790)", () => {
+  const one = (text) => markdown(text, undefined, anyHost)[0].children;
+  assert.deepEqual(one("see [hel.fi](https://evil.example/login)"), ["see ", { tag: "a", href: "https://evil.example/login", children: ["hel.fi"] }, " (evil.example)"]);
+  assert.deepEqual(one("[hel.fi](https://el.fi/login)"), [{ tag: "a", href: "https://el.fi/login", children: ["hel.fi"] }, " (el.fi)"]);
+  assert.deepEqual(one("[Pay at mybank.com.example](https://bank.com)"), [{ tag: "a", href: "https://bank.com", children: ["Pay at mybank.com.example"] }, " (bank.com)"]);
+  assert.deepEqual(one("[Open HEL.FI events](https://hel.fi/x)"), [{ tag: "a", href: "https://hel.fi/x", children: ["Open HEL.FI events"] }]);
+  assert.deepEqual(one("[www.hel.fi](https://www.hel.fi/x)"), [{ tag: "a", href: "https://www.hel.fi/x", children: ["www.hel.fi"] }]);
 });
 
 test("HTML and a script tag in the answer stay text", () => {
@@ -358,6 +368,7 @@ test("a link off the allowlist is its words alone, never a link", () => {
     markdown("[radnica](https://www.banskabystrica.sk/kontakt) [výhra](https://evil.example/claim)", undefined, city),
     [{ tag: "p", children: [
       { tag: "a", href: "https://www.banskabystrica.sk/kontakt", children: ["radnica"] },
+      " (banskabystrica.sk)",
       " ",
       "výhra",
     ] }],
@@ -699,7 +710,8 @@ test("with the done event's stage times the steps are named stages with their du
   // A stage without a positive number is left out; one stage, or a cached answer's none, is no list.
   assert.equal(steps([], "cs", { route: 0, answer: 900, search: "x" }), null);
   assert.equal(steps([], "de", {}), null);
-  assert.equal(steps(searches, "fi", { route: 10, answer: 20 }).lines[0], "Choosing the sources 0 s");
+  assert.equal(steps(searches, "fi", { route: 10, answer: 20 }).lines[0], "Lähteiden valinta 0 s");
+  assert.equal(steps(searches, "xx", { route: 10, answer: 20 }).lines[0], "Choosing the sources 0 s");
   // Without stage times the progress lines stand, as before.
   assert.equal(steps(searches, "en", null).lines.length, 2);
   const widget = require("node:fs").readFileSync(require("node:path").join(__dirname, "widget.js"), "utf8");
@@ -1336,4 +1348,102 @@ test("only a map source this service names is read (T-7755)", () => {
   assert.equal(mapSource("/api/v1/d/x/map/" + id + "?x=1"), null);
   assert.equal(mapSource("/api/v1/d/../map/" + id), null);
   assert.equal(mapSource(undefined), null);
+});
+
+// T-7790: one answer's recorded event stream, as both shells read it through `reduce`.
+const RECORDED = [
+  ["conversation", { id: "c-1", at: "2026-11-24T10:00:00Z", turn: "6f1c0e9e-3b1a-4d7e-9b51-2c4f8f2a7c11" }],
+  ["stage", { stage: "searching", topic: "knižnica", count: 4 }],
+  ["tool", { name: "query_entities", endpoint: "ovzdusie", status: "started" }],
+  ["tool", { name: "query_entities", status: "failed" }],
+  ["step", { source: "Ovzdušie", count: 3, ms: 120 }],
+  ["script", { code: "print(1)", output: "1" }],
+  ["script", { code: "x" , error: "boom" }],
+  ["data", { columns: ["name"], rows: [["A"]] }],
+  ["visualization", { spec: { mark: "bar" } }],
+  ["delta", { text: "Do 18:00 " }],
+  ["delta", { text: "[1]." }],
+  ["delta", { text: 7 }],
+  ["answer", { text: "Do 18:00 [1]." }],
+  ["delta", { text: "late" }],
+  ["citations", [{ n: 1, url: "https://example.org/a", title: "A" }]],
+  ["followups", { questions: ["A v sobotu?", 4, "A v sobotu?"] }],
+  ["unknown", { x: 1 }],
+  ["done", { stagesMs: { route: 900, answer: 1200 } }]
+];
+
+test("the reducer turns a recorded stream into one turn, never changing the one before (T-7790)", () => {
+  let turn = undefined;
+  const seen = [];
+  RECORDED.forEach(([name, data], i) => {
+    const before = turn === undefined ? undefined : JSON.stringify(turn);
+    const next = reduce(turn, name, data, i * 100);
+    if (before !== undefined) assert.equal(JSON.stringify(turn), before, "the old turn stays");
+    turn = next;
+    seen.push(turn.text);
+  });
+  assert.equal(turn.conversation, "c-1");
+  assert.equal(turn.at, "2026-11-24T10:00:00Z");
+  assert.equal(turn.resumable, "6f1c0e9e-3b1a-4d7e-9b51-2c4f8f2a7c11");
+  assert.deepEqual(turn.stages, [{ stage: "searching", topic: "knižnica", count: 4, ms: 100 }]);
+  assert.deepEqual(turn.tools, [{ name: "query_entities", endpoint: "ovzdusie", status: "started" }, { name: "query_entities", endpoint: null, status: "failed" }]);
+  assert.deepEqual(turn.reads, [{ source: "Ovzdušie", count: 3, ms: 120 }]);
+  assert.deepEqual(turn.scripts, [{ code: "print(1)", output: "1" }, { code: "x", output: "boom" }]);
+  assert.equal(turn.data.length, 1);
+  assert.equal(turn.visuals.length, 1);
+  // The streamed text grows; the answer replaces it at once, before its citations; a late delta is ignored.
+  assert.equal(seen[10], "Do 18:00 [1].");
+  assert.equal(seen[12], "Do 18:00 [1].");
+  assert.equal(turn.text, "Do 18:00 [1].");
+  assert.equal(turn.answered, true);
+  assert.deepEqual(turn.citations, [{ n: 1, url: "https://example.org/a", title: "A" }]);
+  assert.deepEqual(turn.followups, ["A v sobotu?"]);
+  assert.deepEqual(turn.timed, { route: 900, answer: 1200 });
+  assert.equal(turn.done, true);
+  assert.equal(turn.error, null);
+  // The steps panel reads the same state.
+  assert.equal(steps(turn.stages, "en", turn.timed, []).lines.length, 2);
+});
+
+test("the reducer keeps an error by the widget's word, and odd data as nothing (T-7790)", () => {
+  const failed = reduce(undefined, "error", { status: 429, title: "Daily Limit Reached", detail: "Skúste to zajtra." });
+  assert.deepEqual(failed.error, { word: "limit", status: 429, title: "Daily Limit Reached", detail: "Skúste to zajtra." });
+  assert.deepEqual(reduce(undefined, "error", null).error, { word: "offline", status: null, title: null, detail: null });
+  assert.equal(reduce(undefined, "answer", {}).text, "");
+  assert.deepEqual(reduce(undefined, "citations", { n: 1 }).citations, []);
+  assert.equal(reduce(undefined, "done", { stagesMs: 5 }).timed, null);
+  assert.deepEqual(reduce(undefined, "conversation", { id: 4 }).conversation, null);
+  assert.equal(reduce(undefined, "tool", { status: "done" }).tools[0].status, "done");
+  assert.deepEqual(reduce(undefined, "script", {}).scripts, [{ code: "", output: "" }]);
+});
+
+test("a table becomes CSV a spreadsheet opens and never runs (T-7790, T-7775 item 7)", () => {
+  assert.equal(csv({ columns: ["name", "value"], rows: [["Most, starý", "=1+1"], ["\"q\"", -3], ["+x", "@y"], ["\tt", "\rr"], [null, { a: 1 }], "skip", ["only"]] }),
+    "\ufeffname,value\r\n\"Most, starý\",'=1+1\r\n\"\"\"q\"\"\",-3\r\n'+x,'@y\r\n'\tt,\"'\rr\"\r\n,\"{\"\"a\"\":1}\"\r\nonly,\r\n");
+  assert.equal(csv({ columns: ["a"] }), "\ufeffa\r\n");
+  assert.equal(csv({ columns: [] }), null);
+  assert.equal(csv(null), null);
+  assert.equal(csvName("Kvalita ovzdušia — Bánska Bystrica"), "Kvalita-ovzdusia-Banska-Bystrica.csv");
+  assert.equal(csvName("../../etc/passwd"), "etc-passwd.csv");
+  assert.equal(csvName(""), "data.csv");
+  assert.equal(csvName("x".repeat(200)).length, 84);
+});
+
+test("a limit names when it resets in the reader's language (T-7790)", () => {
+  const now = new Date(2026, 10, 24, 10, 0).getTime();
+  assert.equal(resetAt(3600, "en", now), new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(new Date(now + 3600e3)));
+  assert.equal(resetAt("86400", "sk", now), new Intl.DateTimeFormat("sk", { day: "numeric", month: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(now + 86400e3)));
+  assert.equal(resetAt(60, "fi", now), "10.01");
+  assert.match(resetAt(60, "zz-bad", now), /10:01/);
+  assert.match(resetAt(60, undefined), /\d/);
+  for (const bad of [0, -5, "x", null, 401 * 86400]) assert.equal(resetAt(bad, "en", now), null);
+});
+
+test("an uploaded file is one source whichever page it cites, named, never linked (T-4869, T-7790)", () => {
+  const grouped = sources([{ n: 1, url: "upload:subory/Návod.md#page=1" }, { n: 2, url: "upload:subory/Návod.md#page=3" }]);
+  assert.equal(grouped.list.length, 1);
+  assert.deepEqual(grouped.list[0].numbers, [1, 2]);
+  assert.equal(grouped.list[0].domain, "");
+  assert.equal(label(grouped.list[0]), "Návod.md");
+  assert.equal(safeUrl(grouped.list[0].url), null);
 });

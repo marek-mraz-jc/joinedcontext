@@ -367,3 +367,45 @@ pub fn context() -> Value {
 pub fn schema() -> Value {
     serde_json::to_value(schemars::schema_for!(KeyPerformanceIndicator)).unwrap_or(Value::Null)
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    fn indicator(unit_code: Option<&str>, start: &str) -> KeyPerformanceIndicator {
+        let urn = indicator_urn("hel.fi", "helsinki", "ageing-index").expect("a kpi urn");
+        KeyPerformanceIndicator::new(
+            &urn,
+            "count(age>=65) / count(age<15)",
+            IndicatorValue::Text("high".into()),
+            unit_code,
+            Period {
+                start: start.into(),
+                end: "2026-09-13T08:00:00Z".into(),
+            },
+            "2026-09-13T08:00:12Z",
+            Provenance::to("urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all"),
+            Provenance::to("urn:ngsi-ld:AgentRun:hel.fi:helsinki:3f9c2a1e"),
+        )
+    }
+
+    #[test]
+    fn an_indicator_without_a_unit_code_validates() {
+        indicator(None, "2026-09-13T07:00:00Z")
+            .validate()
+            .expect("valid without a unit");
+    }
+
+    #[test]
+    fn rejects_a_calculation_period_without_a_start() {
+        let refused = indicator(None, "").validate();
+        assert!(
+            matches!(
+                &refused,
+                Err(Error::Name { field, reason, .. })
+                    if *field == "calculationPeriod" && *reason == "start and end are both given"
+            ),
+            "not refused: {refused:?}"
+        );
+    }
+}

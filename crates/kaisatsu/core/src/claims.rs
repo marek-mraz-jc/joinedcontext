@@ -438,14 +438,15 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
         .flat_map(|s| s.protocol_mappers.iter())
         .chain(ctx.client.protocol_mappers.iter());
 
+    let unknown =
+        |kind: &str| KaisatsuError::BadRequest(format!("unknown protocol mapper kind: {kind}"));
     for mapper in all_mappers {
-        if !is_known_mapper_kind(&mapper.protocol_mapper) {
-            return Err(KaisatsuError::BadRequest(format!(
-                "unknown protocol mapper kind: {}",
-                mapper.protocol_mapper
-            )));
-        }
+        // An unknown kind is refused whether or not it applies to this token kind: here when it
+        // does not, by the match's last arm when it does.
         if !mapper_applies_to(mapper, kind) {
+            if !is_known_mapper_kind(&mapper.protocol_mapper) {
+                return Err(unknown(&mapper.protocol_mapper));
+            }
             continue;
         }
         match mapper.protocol_mapper.as_str() {
@@ -711,7 +712,7 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     }
                 }
             }
-            _ => {}
+            other => return Err(unknown(other)),
         }
     }
 
@@ -1222,6 +1223,97 @@ mod tests {
 
     /// A pairwise subject needs one redirect host: an address that is no URL, or has no host,
     /// counts none.
+    /// A person's client roles: the direct ones plus the client composites of each realm role
+    /// they hold, sorted and once each; a client role named like a held realm role adds nothing,
+    /// and an empty list is dropped.
+    #[test]
+    fn effective_client_roles_add_only_held_realm_roles_composites() {
+        let role =
+            |name: &str, client_role: bool, composites: &[(&str, &[&str])]| RoleRepresentation {
+                name: name.into(),
+                client_role,
+                composites: crate::model::RoleComposites {
+                    client: composites
+                        .iter()
+                        .map(|(c, r)| {
+                            ((*c).to_owned(), r.iter().map(|x| (*x).to_owned()).collect())
+                        })
+                        .collect(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+        let all = [
+            role("editor", false, &[("app", &["write", "read"])]),
+            role("admin", true, &[("app", &["delete"])]),
+            role("unheld", false, &[("app", &["export"])]),
+        ];
+        let direct = HashMap::from([
+            ("app".to_owned(), vec!["read".to_owned()]),
+            ("empty".to_owned(), Vec::new()),
+        ]);
+        let got = effective_client_roles(&direct, &["editor".into(), "admin".into()], &all);
+        assert_eq!(
+            got,
+            BTreeMap::from([(
+                "app".to_owned(),
+                vec!["read".to_owned(), "write".to_owned()]
+            )])
+        );
+        assert!(effective_client_roles(&HashMap::new(), &[], &all).is_empty());
+    }
+
+    /// The subject a client sees: local without a pairwise mapper; with one on an active scope
+    /// (before the client's own mappers) or on the client, the pairwise value of its sector.
+    #[test]
+    fn the_subject_follows_the_first_pairwise_mapper_of_the_scopes_then_the_client() {
+        let pairwise = |salt: &str| {
+            mapper(
+                "oidc-sha256-pairwise-sub-mapper",
+                &[("pairwiseSubAlgorithmSalt", salt)],
+            )
+        };
+        let mut client = ClientRepresentation {
+            client_id: "app".into(),
+            redirect_uris: vec!["https://a.example/cb".into()],
+            ..Default::default()
+        };
+        client.protocol_mappers.push(mapper("oidc-sub-mapper", &[]));
+        assert_eq!(
+            compute_subject_for_client(&client, &[], "u1").expect("sub"),
+            "u1"
+        );
+        let scope = |m: ProtocolMapperRepresentation| ClientScopeRepresentation {
+            name: "s".into(),
+            protocol_mappers: vec![mapper("oidc-amr-mapper", &[]), m],
+            ..Default::default()
+        };
+        let by_scope = compute_subject_for_client(&client, &[scope(pairwise("one"))], "u1")
+            .expect("scope pairwise");
+        assert_eq!(
+            by_scope,
+            compute_pairwise_sub(&pairwise("one"), &client, "u1").expect("pairwise")
+        );
+        assert_ne!(by_scope, "u1");
+        client.protocol_mappers.push(pairwise("two"));
+        let by_client = compute_subject_for_client(&client, &[], "u1").expect("client pairwise");
+        assert_eq!(
+            by_client,
+            compute_pairwise_sub(&pairwise("two"), &client, "u1").expect("pairwise")
+        );
+        assert_ne!(by_client, by_scope, "another salt, another subject");
+        assert_eq!(
+            compute_subject_for_client(&client, &[scope(pairwise("one"))], "u1").expect("sub"),
+            by_scope,
+            "the scope's mapper comes first"
+        );
+        client.redirect_uris.push("https://b.example/cb".into());
+        assert!(
+            compute_subject_for_client(&client, &[], "u1").is_err(),
+            "two hosts and no sector"
+        );
+    }
+
     #[test]
     fn pairwise_hosts_skip_redirects_without_a_host() {
         let pairwise = mapper(

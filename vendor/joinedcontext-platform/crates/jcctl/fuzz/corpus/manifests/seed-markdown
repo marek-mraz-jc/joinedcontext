@@ -1,0 +1,6 @@
+# Page
+
+```yaml
+kind: Endpoint
+metadata: {name: a}
+```
