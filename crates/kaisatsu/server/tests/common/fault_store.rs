@@ -110,7 +110,7 @@ impl Store for FaultStore {
     fn upsert_realm<'a>(&'a self, realm: RealmConfig) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_realm") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_realm(realm),
         }
     }
@@ -126,7 +126,7 @@ impl Store for FaultStore {
     fn upsert_organization<'a>(&'a self, org: Organization) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_organization") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_organization(org),
         }
     }
@@ -170,7 +170,7 @@ impl Store for FaultStore {
     fn upsert_membership<'a>(&'a self, m: Membership) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_membership") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_membership(m),
         }
     }
@@ -210,7 +210,7 @@ impl Store for FaultStore {
     ) -> StoreFuture<'a, ()> {
         match self.outcome("set_user_grants") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self
                 .inner
                 .set_user_grants(realm_id, user_id, realm_roles, client_roles),
@@ -305,7 +305,7 @@ impl Store for FaultStore {
     fn upsert_credential<'a>(&'a self, cred: CredentialRecord) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_credential") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_credential(cred),
         }
     }
@@ -446,7 +446,7 @@ impl Store for FaultStore {
     ) -> StoreFuture<'a, ()> {
         match self.outcome("add_user_to_group") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.add_user_to_group(realm_id, user_id, group_id),
         }
     }
@@ -459,7 +459,7 @@ impl Store for FaultStore {
     ) -> StoreFuture<'a, ()> {
         match self.outcome("remove_user_from_group") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self
                 .inner
                 .remove_user_from_group(realm_id, user_id, group_id),
@@ -530,7 +530,7 @@ impl Store for FaultStore {
     fn add_role_mapping<'a>(&'a self, mapping: RoleMappingRecord) -> StoreFuture<'a, ()> {
         match self.outcome("add_role_mapping") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.add_role_mapping(mapping),
         }
     }
@@ -545,7 +545,7 @@ impl Store for FaultStore {
     ) -> StoreFuture<'a, ()> {
         match self.outcome("remove_role_mapping") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.remove_role_mapping(
                 realm_id,
                 principal_kind,
@@ -730,7 +730,7 @@ impl Store for FaultStore {
     fn upsert_idp<'a>(&'a self, idp: IdentityProviderRepresentation) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_idp") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_idp(idp),
         }
     }
@@ -761,7 +761,7 @@ impl Store for FaultStore {
     fn upsert_signing_key<'a>(&'a self, key: SigningKeyRecord) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_signing_key") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_signing_key(key),
         }
     }
@@ -784,7 +784,7 @@ impl Store for FaultStore {
     ) -> StoreFuture<'a, ()> {
         match self.outcome("ensure_signing_key") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.ensure_signing_key(realm_id, algorithm),
         }
     }
@@ -792,7 +792,7 @@ impl Store for FaultStore {
     fn put_auth_session<'a>(&'a self, session: AuthSession) -> StoreFuture<'a, ()> {
         match self.outcome("put_auth_session") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.put_auth_session(session),
         }
     }
@@ -812,7 +812,7 @@ impl Store for FaultStore {
     fn delete_auth_session<'a>(&'a self, realm_id: &'a str, id: &'a str) -> StoreFuture<'a, ()> {
         match self.outcome("delete_auth_session") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.delete_auth_session(realm_id, id),
         }
     }
@@ -820,7 +820,7 @@ impl Store for FaultStore {
     fn put_auth_code<'a>(&'a self, code: AuthorizationCodeRecord) -> StoreFuture<'a, ()> {
         match self.outcome("put_auth_code") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.put_auth_code(code),
         }
     }
@@ -839,7 +839,7 @@ impl Store for FaultStore {
     fn put_par_request<'a>(&'a self, par: ParRequestRecord) -> StoreFuture<'a, ()> {
         match self.outcome("put_par_request") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.put_par_request(par),
         }
     }
@@ -859,7 +859,7 @@ impl Store for FaultStore {
     fn put_device_code<'a>(&'a self, rec: DeviceCodeRecord) -> StoreFuture<'a, ()> {
         match self.outcome("put_device_code") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.put_device_code(rec),
         }
     }
@@ -905,7 +905,7 @@ impl Store for FaultStore {
     fn upsert_sso_session<'a>(&'a self, session: SsoSession) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_sso_session") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_sso_session(session),
         }
     }
@@ -973,7 +973,7 @@ impl Store for FaultStore {
     fn upsert_offline_session<'a>(&'a self, session: OfflineSession) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_offline_session") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_offline_session(session),
         }
     }
@@ -986,7 +986,7 @@ impl Store for FaultStore {
     ) -> StoreFuture<'a, ()> {
         match self.outcome("delete_user_client_offline_sessions") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self
                 .inner
                 .delete_user_client_offline_sessions(realm_id, user_id, client_id),
@@ -996,7 +996,7 @@ impl Store for FaultStore {
     fn upsert_refresh_family<'a>(&'a self, family: RefreshTokenFamily) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_refresh_family") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_refresh_family(family),
         }
     }
@@ -1032,7 +1032,7 @@ impl Store for FaultStore {
     ) -> StoreFuture<'a, ()> {
         match self.outcome("revoke_offline_families_for_user") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self
                 .inner
                 .revoke_offline_families_for_user(realm_id, user_id),
@@ -1047,7 +1047,7 @@ impl Store for FaultStore {
     ) -> StoreFuture<'a, ()> {
         match self.outcome("revoke_refresh_families_for_session") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => {
                 self.inner
                     .revoke_refresh_families_for_session(realm_id, sso_session_id, client_id)
@@ -1058,7 +1058,7 @@ impl Store for FaultStore {
     fn mark_token_revoked<'a>(&'a self, rec: RevokedTokenRecord) -> StoreFuture<'a, ()> {
         match self.outcome("mark_token_revoked") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.mark_token_revoked(rec),
         }
     }
@@ -1090,7 +1090,7 @@ impl Store for FaultStore {
     fn upsert_login_failure<'a>(&'a self, rec: LoginFailureRecord) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_login_failure") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_login_failure(rec),
         }
     }
@@ -1116,7 +1116,7 @@ impl Store for FaultStore {
     ) -> StoreFuture<'a, ()> {
         match self.outcome("clear_login_failure") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.clear_login_failure(realm_id, target_key),
         }
     }
@@ -1124,7 +1124,7 @@ impl Store for FaultStore {
     fn upsert_consent<'a>(&'a self, consent: ConsentRecord) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_consent") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_consent(consent),
         }
     }
@@ -1157,7 +1157,7 @@ impl Store for FaultStore {
     fn upsert_required_action<'a>(&'a self, ra: RequiredActionConfig) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_required_action") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_required_action(ra),
         }
     }
@@ -1176,7 +1176,7 @@ impl Store for FaultStore {
     fn upsert_branding<'a>(&'a self, branding: BrandingBlock) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_branding") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_branding(branding),
         }
     }
@@ -1196,7 +1196,7 @@ impl Store for FaultStore {
     fn append_event<'a>(&'a self, event: AuditEvent) -> StoreFuture<'a, ()> {
         match self.outcome("append_event") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.append_event(event),
         }
     }
@@ -1216,7 +1216,7 @@ impl Store for FaultStore {
     fn append_admin_event<'a>(&'a self, event: AdminEvent) -> StoreFuture<'a, ()> {
         match self.outcome("append_admin_event") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.append_admin_event(event),
         }
     }
@@ -1249,7 +1249,7 @@ impl Store for FaultStore {
     ) -> StoreFuture<'a, ()> {
         match self.outcome("update_webauthn_credential") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.update_webauthn_credential(cred),
         }
     }
@@ -1309,7 +1309,7 @@ impl Store for FaultStore {
     fn enqueue_outbox<'a>(&'a self, outbox: EmailOutboxRecord) -> StoreFuture<'a, ()> {
         match self.outcome("enqueue_outbox") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.enqueue_outbox(outbox),
         }
     }
@@ -1376,7 +1376,7 @@ impl Store for FaultStore {
     fn upsert_idp_link<'a>(&'a self, link: IdentityProviderLinkRecord) -> StoreFuture<'a, ()> {
         match self.outcome("upsert_idp_link") {
             Some(Outcome::Fail(e)) => Box::pin(async move { Err(e) }),
-            Some(Outcome::Empty) => Box::pin(async { Ok(Default::default()) }),
+            Some(Outcome::Empty) => Box::pin(async { Ok(()) }),
             _ => self.inner.upsert_idp_link(link),
         }
     }

@@ -107,42 +107,6 @@ fn auth_cookie(h: &HeaderMap) -> String {
         .expect("auth cookie")
 }
 
-/// K5: logout without `id_token_hint` shows the confirmation page; this submits its form (the
-/// single-use `logout_csrf_token` and the echoed hidden fields) as the browser would.
-async fn confirm_logout(
-    app: &Router,
-    query: &str,
-    cookie: Option<&str>,
-) -> (StatusCode, HeaderMap, String) {
-    let logout = "/realms/dev/protocol/openid-connect/logout";
-    let (st, h, html) = get(app, &format!("{logout}{query}"), cookie, None).await;
-    assert_eq!(st, StatusCode::OK, "{html}");
-    assert!(html.contains("login-logout-confirm"), "{html}");
-    assert!(
-        h[header::CONTENT_SECURITY_POLICY]
-            .to_str()
-            .unwrap()
-            .contains("nonce-")
-    );
-    let mut pairs = vec![(
-        "logout_csrf_token".to_owned(),
-        extract_hidden_input(&html, "logout_csrf_token"),
-    )];
-    for name in ["client_id", "post_logout_redirect_uri", "state"] {
-        if html.contains(&format!("name=\"{name}\" value=\"")) {
-            pairs.push((
-                name.to_owned(),
-                extract_hidden_input(&html, name).replace("&amp;", "&"),
-            ));
-        }
-    }
-    let refs: Vec<(&str, &str)> = pairs
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    post_form(app, logout, &refs, cookie).await
-}
-
 fn auth_query(extra: &str) -> String {
     format!(
         "{AUTH}?client_id=edge&redirect_uri={}&response_type=code&scope=openid&state=st-1&nonce=n-1&code_challenge={}&code_challenge_method=S256{extra}",
@@ -740,7 +704,7 @@ async fn userinfo_for_a_person_gone_with_a_session_gone_meanwhile_is_401() {
     // the handler falls back to.
     faults.empty("get_user_by_id", 0, 1);
     faults.empty("get_sso_session", 1, 1);
-    let (st, h, body) = get(
+    let (st, _, body) = get(
         &app,
         "/realms/dev/protocol/openid-connect/userinfo",
         None,

@@ -615,6 +615,16 @@ async fn a_picked_language_stays_with_the_sign_in_and_a_realm_without_a_logo_has
     .await;
     assert!(html.contains("lang=\"de\""), "{html}");
 
+    // A realm that turned password reset off offers no forgot-password link.
+    let (app2, store) = crate::app().await;
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.reset_password_allowed = false;
+    store.upsert_realm(realm).await.unwrap();
+    let b = start(&app2, "").await;
+    let (_, _, html) = get_with_cookie(&app2, &b.url, None, Some(&b.cookie)).await;
+    assert!(html.contains("name=\"password\""), "{html}");
+    assert!(!html.contains("kc-forgot-password"), "{html}");
+
     let (st, _, body) = get(&app, "/realms/dev/login-resources/logo.svg", None).await;
     assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
     assert!(!body.contains("<svg"));
