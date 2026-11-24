@@ -73,10 +73,7 @@ pub struct Allowance {
 fn words<T: Serialize>(items: &[T]) -> Vec<String> {
     items
         .iter()
-        .filter_map(|item| match serde_json::to_value(item) {
-            Ok(serde_json::Value::String(word)) => Some(word),
-            _ => None,
-        })
+        .filter_map(|item| serde_json::to_value(item).ok()?.as_str().map(str::to_owned))
         .collect()
 }
 

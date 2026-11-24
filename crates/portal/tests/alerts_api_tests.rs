@@ -211,6 +211,157 @@ async fn a_target_the_caller_may_not_read_is_not_there_and_a_bad_subscription_sa
     );
 }
 
+/// A Context Space and one of its types are watched by whoever reads the space; a space the
+/// caller may not read is not there, a type without its space is refused, and every mute length
+/// the page offers is taken.
+#[tokio::test]
+async fn a_reader_of_a_space_watches_it_and_its_types_and_mutes_for_each_length() {
+    let state = world().await;
+    state.mirror.upsert(envelope(
+        "ContextSpace",
+        "ovzdusie",
+        "helsinki",
+        json!({ "title": { "en": "Air" } }),
+    ));
+    let new = |scope: &str, target: &str| {
+        Some(
+            json!({ "project": "helsinki", "scope": scope, "target": target, "events": ["stale"], "delivery": "digest" }),
+        )
+    };
+    let space = send(
+        &state,
+        person("jana"),
+        "PUT",
+        ALERTS,
+        new("space", "ovzdusie"),
+    )
+    .await;
+    assert_eq!(space.status, StatusCode::OK, "{}", space.text);
+    assert_eq!(body(&space)["scope"], "space");
+    assert_eq!(body(&space)["delivery"], "digest");
+    let kind = send(
+        &state,
+        person("jana"),
+        "PUT",
+        ALERTS,
+        new("type", "ovzdusie/AirQualityObserved"),
+    )
+    .await;
+    assert_eq!(kind.status, StatusCode::OK, "{}", kind.text);
+    assert_eq!(body(&kind)["target"], "ovzdusie/AirQualityObserved");
+
+    for (scope, target) in [("space", "nowhere"), ("type", "nowhere/AirQualityObserved")] {
+        let missing = send(&state, person("jana"), "PUT", ALERTS, new(scope, target)).await;
+        assert_eq!(
+            missing.status,
+            StatusCode::NOT_FOUND,
+            "{target}: {}",
+            missing.text
+        );
+    }
+    let outsider = send(
+        &state,
+        person("mikko"),
+        "PUT",
+        ALERTS,
+        new("space", "ovzdusie"),
+    )
+    .await;
+    assert_eq!(outsider.status, StatusCode::NOT_FOUND, "{}", outsider.text);
+    let bare = send(
+        &state,
+        person("jana"),
+        "PUT",
+        ALERTS,
+        new("type", "AirQualityObserved"),
+    )
+    .await;
+    assert_eq!(bare.status, StatusCode::BAD_REQUEST, "{}", bare.text);
+    assert!(bare.text.contains("{space}/{Type}"), "{}", bare.text);
+
+    let id = body(&space)["id"].as_i64().expect("an id");
+    let now = jc_time::TimestampTz::now();
+    for (length, at_least_hours) in [("1h", 0), ("7d", 24 * 6), ("forever", 24 * 365 * 99)] {
+        let muted = send(
+            &state,
+            person("jana"),
+            "POST",
+            &format!("{ALERTS}/{id}/mute"),
+            Some(json!({ "for": length })),
+        )
+        .await;
+        assert_eq!(muted.status, StatusCode::OK, "{length}: {}", muted.text);
+        let until: jc_time::TimestampTz = body(&muted)["mutedUntil"]
+            .as_str()
+            .and_then(|until| until.parse().ok())
+            .expect("a mute end");
+        assert!(
+            until > now + jiff::SignedDuration::from_hours(at_least_hours),
+            "{length}: {until:?}"
+        );
+    }
+}
+
+/// A database that does not answer is a dependency down on every door of the alerts: 503 with a
+/// next step, never a 500 or an empty list that reads as "no alerts".
+#[tokio::test]
+async fn an_alert_store_that_does_not_answer_is_503_on_every_door() {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    let state = world().await.with_db(pool);
+    state.mirror.upsert(envelope(
+        "Project",
+        "helsinki",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "helsinki-org" }),
+    ));
+    let new = json!({ "project": "helsinki", "scope": "pipeline", "target": "stations", "events": ["failure"], "delivery": "portal" });
+    for (http, uri, body) in [
+        ("GET", ALERTS.to_owned(), None),
+        ("PUT", ALERTS.to_owned(), Some(new)),
+        (
+            "POST",
+            format!("{ALERTS}/1/mute"),
+            Some(json!({ "for": "1h" })),
+        ),
+        ("DELETE", format!("{ALERTS}/1"), None),
+        ("GET", NOTICES.to_owned(), None),
+        ("POST", format!("{NOTICES}/1/read"), None),
+    ] {
+        let answer = send(&state, person("jana"), http, &uri, body).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{http} {uri}: {}",
+            answer.text
+        );
+        assert!(
+            answer.text.contains("could not be read or written"),
+            "{http} {uri}: {}",
+            answer.text
+        );
+    }
+}
+
+/// A project whose Organization the registry does not hold keeps no alert: the subscription is
+/// refused naming the step that fixes it, and nothing is stored.
+#[tokio::test]
+async fn a_project_outside_the_registry_keeps_no_alert_and_says_who_adds_it() {
+    let state = common::unplaced(world().await, "helsinki").await;
+    let new = json!({ "project": "helsinki", "scope": "pipeline", "target": "stations", "events": ["failure"], "delivery": "portal" });
+    let refused = send(&state, person("jana"), "PUT", ALERTS, Some(new)).await;
+    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
+    assert!(
+        refused.text.contains("Organizations page"),
+        "{}",
+        refused.text
+    );
+    let mine = send(&state, person("jana"), "GET", ALERTS, None).await;
+    assert_eq!(body(&mine)["items"], json!([]), "{}", mine.text);
+}
+
 #[tokio::test]
 async fn a_notice_is_its_subscriber_s_and_goes_quiet_when_they_lose_read() {
     let state = world().await;

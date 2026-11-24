@@ -4,7 +4,7 @@
 
 use dataroom_core::ckan_compat::{
     ckan_license_list, dataset_from_ckan, dataset_to_ckan, distribution_from_ckan,
-    distribution_to_ckan, resource_view_to_ckan,
+    distribution_to_ckan, resource_view_from_ckan, resource_view_to_ckan,
 };
 use dataroom_core::{
     AgentDetails, CatalogueId, ContactKind, ContactPoint, DataService, Dataset, OrgId, Publisher,
@@ -498,4 +498,110 @@ fn resources_views_and_licences_convert_alone() {
         Some("http://data.europa.eu/nuts/code/SK032")
     );
     assert_eq!(pkg["license_id"], Value::Null);
+}
+
+#[test]
+fn package_show_writes_only_the_halves_a_dataset_holds() {
+    let mut ds = minimal("polovica");
+    ds.temporal = Some(TemporalPeriod {
+        start: Some(Date(jc_time::parse_date("2026-01-01").unwrap())),
+        end: None,
+    });
+    ds.contact_point = Some(ContactPoint {
+        uri: None,
+        kind: ContactKind::Organization,
+        name: BTreeMap::new(),
+        email: String::new(),
+        url: None,
+        identifier: None,
+    });
+    ds.publisher = Some(AgentDetails {
+        name: texts(&[("sk", "Mesto")]),
+        ..AgentDetails::default()
+    });
+    let pkg = dataset_to_ckan(&ds, None, &BTreeMap::new(), "sk");
+    assert_eq!(extra(&pkg, "temporal_start"), Some("2026-01-01"));
+    assert_eq!(extra(&pkg, "temporal_end"), None);
+    assert_eq!(
+        (extra(&pkg, "contact_name"), extra(&pkg, "contact_email")),
+        (None, None)
+    );
+    assert_eq!(extra(&pkg, "publisher_name"), Some("Mesto"));
+    assert_eq!(extra(&pkg, "publisher_uri"), None);
+
+    ds.temporal = Some(TemporalPeriod {
+        start: None,
+        end: Some(Date(jc_time::parse_date("2026-12-31").unwrap())),
+    });
+    ds.spatial = vec!["http://data.europa.eu/nuts/code/SK032".into()];
+    let pkg = dataset_to_ckan(&ds, None, &BTreeMap::new(), "sk");
+    assert_eq!(
+        (extra(&pkg, "temporal_start"), extra(&pkg, "temporal_end")),
+        (None, Some("2026-12-31"))
+    );
+    assert_eq!(
+        extra(&pkg, "spatial_uri"),
+        Some("http://data.europa.eu/nuts/code/SK032")
+    );
+}
+
+#[test]
+fn package_create_skips_empty_and_non_text_translations() {
+    let (org, cat) = ids();
+    let ds = dataset_from_ckan(
+        org,
+        cat,
+        &json!({"name": "bez-nazvu", "title": "", "notes": "",
+                "title_translated": {"en": "", "de": 3}, "notes_translated": {"en": "", "de": null},
+                "extras": [{"key": "contact_email", "value": "data@mesto.sk"}]}),
+        None,
+        "sk",
+    );
+    assert_eq!(
+        ds.title,
+        texts(&[("sk", "bez-nazvu")]),
+        "the name stands in for a missing title"
+    );
+    assert!(
+        ds.description.is_empty() || !ds.description.values().any(String::is_empty),
+        "{:?}",
+        ds.description
+    );
+    let cp = ds
+        .contact_point
+        .expect("an email alone makes a contact point");
+    assert_eq!(cp.email, "data@mesto.sk");
+    assert!(cp.name.is_empty());
+
+    let dist = distribution_from_ckan(
+        &json!({"name": "", "description": "", "url": "https://x.example/a.csv",
+                "name_translated": {"en": "", "de": 1}, "description_translated": {"en": "", "sk": "Popis"}}),
+        "pkg-1",
+        "res-1",
+        "sk",
+    );
+    assert!(dist.title.is_empty(), "{:?}", dist.title);
+    assert_eq!(dist.description, texts(&[("sk", "Popis")]));
+}
+
+#[test]
+fn a_view_keeps_only_its_own_settings_as_config() {
+    let view = resource_view_from_ckan(
+        &json!({"id": "v-1", "resource_id": "r-9", "view_type": "image_view", "title": "Mapa",
+                "description": "", "order": 2, "image_url": "https://x.example/m.png"}),
+        "v-old",
+        "r-1",
+        "image_view",
+    );
+    assert_eq!(
+        view.config.get("image_url"),
+        Some(&json!("https://x.example/m.png"))
+    );
+    assert!(!view.config.contains_key("title") && !view.config.contains_key("order"));
+    let bare = resource_view_from_ckan(&json!("not an object"), "v-2", "r-1", "image_view");
+    assert!(bare.config.is_empty());
+    assert_eq!(
+        (bare.id.as_str(), bare.resource_id.as_str()),
+        ("v-2", "r-1")
+    );
 }

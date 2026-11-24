@@ -399,3 +399,144 @@ async fn an_account_without_a_secret_or_with_the_platforms_client_is_refused_by_
     assert_eq!(access["noSecret"], "key-pair", "{access}");
     assert_eq!(secret_calls(&keycloak).await, 0);
 }
+
+/// The Portal's state with `config` changed by `change`: the same mirror and stores.
+fn changed(state: &AppState, change: impl FnOnce(&mut Config)) -> AppState {
+    let mut state = state.clone();
+    let mut config = (*state.config).clone();
+    change(&mut config);
+    state.config = std::sync::Arc::new(config);
+    state
+}
+
+/// Mounts `account`'s managed client on `keycloak` under `uuid`, answering `secret` (or nothing)
+/// when a new one is generated; its service-account user is not mounted, so the realm answers 404.
+async fn managed_client(keycloak: &MockServer, account: &str, uuid: &str, secret: Value) {
+    let mut client = desired_external("ovzdusie", account, &ClientCredential::Secret);
+    client["id"] = json!(uuid);
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients")))
+        .and(query_param("clientId", format!("ovzdusie-{account}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([client])))
+        .mount(keycloak)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REALM}/clients/{uuid}/client-secret")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(secret))
+        .mount(keycloak)
+        .await;
+}
+
+/// What the door refuses before Keycloak is asked: an account with no credential, one whose
+/// manifest no longer parses, a Portal with no realm or one whose issuer names no realm. Each says what to do, and no secret is generated.
+#[tokio::test]
+async fn each_refusal_before_keycloak_names_its_reason_and_generates_nothing() {
+    let keycloak = realm().await;
+    let (config, state) = state(&keycloak);
+    state.mirror.upsert(account("lonely", json!([]), None));
+    state.mirror.upsert(envelope(
+        "ServiceAccount",
+        "broken",
+        "ovzdusie",
+        json!({ "owner": "not an object" }),
+    ));
+    let ana = || Some(person("ana@hel.fi"));
+    let (status, _, body) = call(&state, &config, ana(), "POST", &secret_of("lonely")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("has no oauth-client credential"), "{body}");
+    let (status, _, body) = call(&state, &config, ana(), "POST", &secret_of("broken")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("does not parse"), "{body}");
+
+    let no_realm = changed(&state, |config| config.oidc = None);
+    let (status, _, body) = call(&no_realm, &config, ana(), "POST", &secret_of("vendor")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("no sign-in realm"), "{body}");
+    let not_a_realm = changed(&state, |config| {
+        if let Some(oidc) = config.oidc.as_mut() {
+            oidc.issuer = format!("{}/plain", keycloak.uri()).parse().expect("a url");
+        }
+    });
+    let (status, _, body) = call(&not_a_realm, &config, ana(), "POST", &secret_of("vendor")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("not a realm URL"), "{body}");
+    assert_eq!(secret_calls(&keycloak).await, 0);
+}
+
+/// Keycloak's side: a client not created yet is a 409 that says to wait, a realm that does not
+/// find the client or answers no secret is a 503 to retry; a secret issued while the realm does
+/// not name the account's user, and while the activity log is down, is still answered once.
+#[tokio::test]
+async fn keycloak_without_the_client_or_the_secret_says_so_and_a_lost_record_keeps_the_secret() {
+    let keycloak = realm().await;
+    let (config, state) = state(&keycloak);
+    for name in ["fresh", "gone", "mute", "quiet", "hush"] {
+        state.mirror.upsert(account(
+            name,
+            json!([{ "kind": "oauth-client", "name": "main" }]),
+            None,
+        ));
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients")))
+        .and(query_param("clientId", "ovzdusie-fresh"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+    managed_client(&keycloak, "mute", "uuid-mute", json!({ "type": "secret" })).await;
+    managed_client(
+        &keycloak,
+        "quiet",
+        "uuid-quiet",
+        json!({ "type": "secret", "value": "quiet-secret" }),
+    )
+    .await;
+    // `hush`'s realm does not answer for its service-account user at all (no route): the
+    // secret is still answered, and its earlier tokens stay valid until they expire.
+    managed_client(
+        &keycloak,
+        "hush",
+        "uuid-hush",
+        json!({ "type": "secret", "value": "hush-secret" }),
+    )
+    .await;
+    // The realm names no user for the account's client: the secret is still issued, and no
+    // token is revoked by a guess.
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REALM}/clients/uuid-quiet/service-account-user"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(&keycloak)
+        .await;
+    let ana = || Some(person("ana@hel.fi"));
+
+    let (status, _, body) = call(&state, &config, ana(), "POST", &secret_of("fresh")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("does not exist yet"), "{body}");
+    for account in ["gone", "mute"] {
+        let (status, _, body) = call(&state, &config, ana(), "POST", &secret_of(account)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{account}: {body}");
+        assert!(
+            body.contains("Keycloak did not answer"),
+            "{account}: {body}"
+        );
+        assert!(!body.contains("uuid-"), "{account}: {body}");
+    }
+
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    let unrecorded = state.clone().with_db(pool);
+    let (status, cache, body) =
+        call(&unrecorded, &config, ana(), "POST", &secret_of("quiet")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(cache.as_deref(), Some("no-store"));
+    let issued: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(issued["clientSecret"], "quiet-secret", "{issued}");
+    assert_eq!(issued["clientId"], "ovzdusie-quiet", "{issued}");
+    let (status, _, body) = call(&state, &config, ana(), "POST", &secret_of("hush")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("hush-secret"), "{body}");
+}

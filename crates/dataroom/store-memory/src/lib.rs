@@ -318,20 +318,20 @@ fn withdraw_publisher_in(
 
 /// Removes the dataset `id_or_name` names, its views and its SHACL findings.
 fn purge_dataset_in(inner: &mut Inner, ctx: &RequestCtx, id_or_name: &str) -> Result<()> {
-    let Some(key) = dataset_key(inner, ctx, id_or_name) else {
+    let Some(removed) =
+        dataset_key(inner, ctx, id_or_name).and_then(|key| inner.datasets.remove(&key))
+    else {
         return Err(DataroomError::NotFound(format!(
             "dataset '{id_or_name}' not found"
         )));
     };
-    if let Some(removed) = inner.datasets.remove(&key) {
-        let res_ids: Vec<String> = removed.distributions.iter().map(|r| r.id.clone()).collect();
-        inner.views.retain(|(oid, cid, _), v| {
-            !(*oid == ctx.org_id && *cid == ctx.catalogue_id && res_ids.contains(&v.resource_id))
-        });
-        inner.shacl_reports.retain(|(oid, cid, _), r| {
-            !(*oid == ctx.org_id && *cid == ctx.catalogue_id && r.dataset_id == removed.id)
-        });
-    }
+    let res_ids: Vec<String> = removed.distributions.iter().map(|r| r.id.clone()).collect();
+    inner.views.retain(|(oid, cid, _), v| {
+        !(*oid == ctx.org_id && *cid == ctx.catalogue_id && res_ids.contains(&v.resource_id))
+    });
+    inner.shacl_reports.retain(|(oid, cid, _), r| {
+        !(*oid == ctx.org_id && *cid == ctx.catalogue_id && r.dataset_id == removed.id)
+    });
     Ok(())
 }
 

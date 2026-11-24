@@ -218,6 +218,58 @@ async fn a_saved_deployment_reads_its_context() {
     assert_eq!(missing.status, 404);
 }
 
+/// A saved deployment's name that is no name is not there; one whose manifest no longer reads is
+/// our error, worded for the log; an Endpoint whose manifest no longer reads is left out of the
+/// context and one with a title shows it in the asked language.
+#[tokio::test]
+async fn a_bad_name_an_unreadable_manifest_and_an_endpoint_title_each_read_as_they_are() {
+    let state = state();
+    let mut parking = state
+        .mirror
+        .get("bb", "Endpoint", "parking")
+        .expect("parking");
+    parking.metadata.title =
+        serde_json::from_value(json!({ "sk": "Parkoviská", "en": "Car parks" })).ok();
+    state.mirror.upsert(parking);
+    state.mirror.upsert(common::envelope(
+        "Endpoint",
+        "broken",
+        "bb",
+        json!({ "contextSpaceRef": 7, "slug": "eeeeeeeeeeeeeeeeeeeeeeeeee" }),
+    ));
+    state.mirror.upsert(common::envelope(
+        "AssistantDeployment",
+        "zle",
+        "bb",
+        json!({ "channel": 5 }),
+    ));
+    let context = |name: &str| {
+        let state = state.clone();
+        let uri = format!("/api/v1/projects/bb/knowledge/deployments/{name}/context?lang=sk");
+        async move { common::send(&state, admin(), "GET", &uri, None).await }
+    };
+    let read = context("doprava").await;
+    assert_eq!(read.status, 200, "{}", read.text);
+    let read: Value = serde_json::from_str(&read.text).expect("json");
+    let titles: Vec<&str> = read["endpoints"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e["title"].as_str())
+        .collect();
+    assert!(titles.contains(&"Parkoviská"), "{read}");
+    assert!(
+        !slugs(&read).contains(&"eeeeeeeeeeeeeeeeeeeeeeeeee"),
+        "{read}"
+    );
+
+    let nameless = context("Not_A_Name").await;
+    assert_eq!(nameless.status, 404, "{}", nameless.text);
+    let unreadable = context("zle").await;
+    assert_eq!(unreadable.status, 500, "{}", unreadable.text);
+    assert!(!unreadable.text.contains("channel"), "{}", unreadable.text);
+}
+
 /// AG-113: a caller who may not read the project learns nothing; the preview is a dry run of an
 /// AssistantDeployment alone, and a field the kind does not know is refused.
 #[tokio::test]

@@ -1,0 +1,1 @@
+{"name":"ovzdusie","title":"Kvalita ovzdušia","notes":"Merania","license_id":"cc-by","tags":[{"name":"air"}],"extras":[{"key":"temporal_start","value":"2026-01-01"}],"resources":[{"name":"CSV","url":"https://x.example/a.csv","format":"CSV"}],"view_type":"image_view","image_url":"https://x.example/m.png"}

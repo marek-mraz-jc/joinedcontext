@@ -232,6 +232,38 @@ async fn a_key_the_portal_never_made_is_a_404_and_a_huge_body_is_refused() {
         .await
         .expect("a response");
     assert_eq!(answer.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    // One byte over the handler's own ceiling passes the body limit layer and is refused by it.
+    let over = format!(
+        "\"{}\"",
+        "x".repeat(joinedcontext_portal::api::live::MAX_NOTIFICATION - 1)
+    );
+    assert_eq!(
+        over.len(),
+        joinedcontext_portal::api::live::MAX_NOTIFICATION + 1
+    );
+    let key = state.live.key(PROJECT, "air", "T");
+    let answer = server::app(state.clone())
+        .oneshot(post(format!("/live-notify/{key}"), over))
+        .await
+        .expect("a response");
+    assert_eq!(answer.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let answer = server::app(state.clone())
+        .oneshot(post(format!("/live-notify/{key}"), "{not json".into()))
+        .await
+        .expect("a response");
+    assert_eq!(answer.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn an_api_path_no_route_serves_is_a_problem_naming_the_path() {
+    let state = world();
+    let (status, body) = call(&state, READER, "GET", "/api/v1/no-such-thing", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(
+        body.to_string()
+            .contains("API endpoint '/no-such-thing' not found"),
+        "{body}"
+    );
 }
 
 #[tokio::test]

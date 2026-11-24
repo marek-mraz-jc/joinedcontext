@@ -1,0 +1,35 @@
+# What dataroom-core and dataroom-server read from outside (crates/dataroom/fuzz, T-7624): branding
+# overrides (JSON and YAML), uploaded logos, CKAN payloads, file names and bytes, slugs, language
+# tags, ids, vocabulary IRIs and whole CKAN dumps through the import. On demand only, an hour per
+# target by default. A crash uploads its input as an artifact; add it as a named regression test
+# with the fix, and to fuzz/corpus/<target> as a seed-* file so the next run replays it.
+name: dataroom-fuzz
+on:
+  workflow_dispatch:
+    inputs:
+      seconds: { description: "fuzzing time in seconds", default: "3600" }
+permissions: { contents: read }
+concurrency:
+  group: "dataroom-fuzz-${{ github.ref }}"
+  cancel-in-progress: true
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: { target: [branding, logo, ckan_payload, text_fields, ckan_import] }
+    defaults: { run: { working-directory: crates/dataroom } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust
+        with: { workspace: crates/dataroom/fuzz, key: dataroom-fuzz, toolchain: nightly }
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: cargo-fuzz }
+      - env: { SECONDS_TO_FUZZ: "${{ inputs.seconds }}", TARGET: "${{ matrix.target }}" }
+        run: |
+          case "$SECONDS_TO_FUZZ" in ''|*[!0-9]*) echo "seconds: a whole number" >&2; exit 1 ;; esac
+          cargo +nightly fuzz run "$TARGET" --release --target x86_64-unknown-linux-gnu --fuzz-dir fuzz -- -max_total_time="$SECONDS_TO_FUZZ" -timeout=10 -rss_limit_mb=2048
+      - if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: "dataroom-fuzz-${{ matrix.target }}", path: crates/dataroom/fuzz/artifacts }

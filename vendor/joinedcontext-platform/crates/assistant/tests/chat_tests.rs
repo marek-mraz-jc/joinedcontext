@@ -4044,6 +4044,68 @@ fn verdict(body: Value, origin: Option<&str>, client: &str) -> Request<Body> {
         .expect("a request")
 }
 
+/// A store that is down is a 503 in words for a question that continues a conversation and for
+/// a verdict; a history turn past the cap and an unknown assistant are refused before either.
+#[tokio::test]
+async fn a_store_that_is_down_is_said_and_a_long_history_turn_or_unknown_id_refused() {
+    let w = world("chatdown", deployment(Channel::Public, 1_000_000, 50)).await;
+    let long = "x".repeat(assistant::chat::MAX_TEXT_CHARS + 1);
+    let (status, _, _) = answer_of(
+        &w.app,
+        ask(
+            json!({"message": "a", "history": [{"role": "user", "text": long}]}),
+            Some(ORIGIN),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let unknown = Request::builder()
+        .method("POST")
+        .uri("/api/v1/d/nobody-here/chat")
+        .header("content-type", "application/json")
+        .header("origin", ORIGIN)
+        .body(Body::from(json!({"message": "a"}).to_string()))
+        .expect("a request");
+    assert_eq!(
+        w.app
+            .clone()
+            .oneshot(unknown)
+            .await
+            .expect("an answer")
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+
+    w.pool.close().await;
+    let conversation = "00000000-0000-4000-8000-000000000000";
+    let response = w
+        .app
+        .clone()
+        .oneshot(ask(
+            json!({"conversation": conversation, "message": "Kedy je zber?"}),
+            Some(ORIGIN),
+        ))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let response = w
+        .app
+        .clone()
+        .oneshot(verdict(
+            json!({"conversation": conversation, "turn": 1, "verdict": "up"}),
+            Some(ORIGIN),
+            "203.0.113.9",
+        ))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+        .await
+        .expect("a body");
+    assert!(String::from_utf8_lossy(&bytes).contains("Try again in a minute"));
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// T-4174, API/05 §1.8: a verdict on an answer of a current conversation is stored with its turn
 /// and note alone and a second one replaces it; an unknown conversation, a turn not asked, a
 /// foreign origin and a secret in the note are refused, and the route has the chat's per-client

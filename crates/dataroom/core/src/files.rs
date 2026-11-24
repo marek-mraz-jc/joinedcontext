@@ -203,7 +203,7 @@ impl FileStore {
         self.org_dir(org).join(cat.to_string())
     }
 
-    fn io(e: std::io::Error) -> DataroomError {
+    fn io(e: impl std::fmt::Display) -> DataroomError {
         DataroomError::Storage(format!("file store: {e}"))
     }
 
@@ -227,8 +227,7 @@ impl FileStore {
     }
 
     fn write_index(dir: &Path, entries: &[FileEntry]) -> Result<()> {
-        let raw = serde_json::to_vec_pretty(entries)
-            .map_err(|e| DataroomError::Storage(format!("file index: {e}")))?;
+        let raw = serde_json::to_vec_pretty(entries).map_err(Self::io)?;
         Self::write_atomic(&dir.join("index.json"), &raw)
     }
 
@@ -536,6 +535,148 @@ mod tests {
             files.delete(a, &hero.id),
             Err(DataroomError::NotFound(_))
         ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn entry(id: &str, name: &str, size: u64, sha256: &str) -> FileEntry {
+        FileEntry {
+            id: id.into(),
+            name: name.into(),
+            content_type: "image/png".into(),
+            size,
+            sha256: sha256.into(),
+            uploaded_by: "ana".into(),
+            uploaded_at: jc_time::TimestampTz::now(),
+        }
+    }
+
+    #[test]
+    fn a_damaged_index_or_a_blocked_path_is_a_storage_error() {
+        let (files, root) = store();
+        let (org, cat) = key(4);
+        let dir = files.dir(org, cat);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("index.json"), b"{not json").unwrap();
+        let err = files.list(org, cat).unwrap_err();
+        assert!(err.to_string().contains("file index unreadable"), "{err}");
+        assert_eq!(err.status_code(), 500);
+        fs::remove_file(dir.join("index.json")).unwrap();
+        fs::create_dir(dir.join("index.json")).unwrap();
+        let err = files.list(org, cat).unwrap_err();
+        assert!(err.to_string().contains("file store:"), "{err}");
+
+        // the Organization's folder is a file: usage and a new upload refuse, nothing is written
+        let (org2, cat2) = key(5);
+        fs::write(files.org_dir(org2), b"x").unwrap();
+        assert!(files
+            .usage(org2)
+            .unwrap_err()
+            .to_string()
+            .contains("file store:"));
+        let err = files.put((org2, cat2), "a.png", PNG, "ana").unwrap_err();
+        assert!(matches!(err, DataroomError::Storage(_)), "{err}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_file_count_and_byte_caps_refuse_naming_the_limit() {
+        let (files, root) = store();
+        let (org, cat) = key(6);
+        let full: Vec<_> = (0..MAX_ORG_FILES)
+            .map(|i| entry(&format!("f-{i}"), "a.png", 1, "x"))
+            .collect();
+        FileStore::write_index(&files.dir(org, cat), &full).unwrap();
+        let err = files.put((org, cat), "b.png", PNG, "ana").unwrap_err();
+        assert!(
+            err.to_string().contains("holds 500 files, its limit"),
+            "{err}"
+        );
+        assert_eq!(err.status_code(), 422);
+
+        // bytes: one more small file past 200 MB is refused, replacing the big one is not
+        let (org, cat) = key(7);
+        let big = entry("f-big", "big.png", MAX_ORG_BYTES - 4, "y");
+        FileStore::write_index(&files.dir(org, cat), &[big]).unwrap();
+        let err = files.put((org, cat), "b.png", PNG, "ana").unwrap_err();
+        assert!(err.to_string().contains("its limit is 200.0 MB"), "{err}");
+        let (_, after) = files.replace((org, cat), "f-big", PNG, "ben").unwrap();
+        assert_eq!(
+            (after.size, after.uploaded_by.as_str()),
+            (PNG.len() as u64, "ben")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_unknown_id_is_not_found_and_listing_orders_by_name_then_id() {
+        let (files, root) = store();
+        let k = key(8);
+        let gone =
+            |r: Result<_>| matches!(r, Err(DataroomError::NotFound(m)) if m == "no file nope");
+        assert!(gone(files.rename(k, "nope", "x.png")));
+        assert!(gone(files.replace(k, "nope", PNG, "ana")));
+        assert!(
+            matches!(files.delete(k, "nope"), Err(DataroomError::NotFound(m)) if m == "no file nope")
+        );
+        let entries = [
+            entry("f-2", "b.png", 1, "x"),
+            entry("f-3", "a.png", 1, "x"),
+            entry("f-1", "b.png", 1, "x"),
+        ];
+        FileStore::write_index(&files.dir(k.0, k.1), &entries).unwrap();
+        let order: Vec<_> = files
+            .list(k.0, k.1)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(order, ["f-3", "f-1", "f-2"]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_or_unreadable_bytes_answer_none_or_a_storage_error() {
+        let (files, root) = store();
+        let k = key(9);
+        let (a, b) = ("a".repeat(64), "b".repeat(64));
+        let dir = files.dir(k.0, k.1);
+        FileStore::write_index(
+            &dir,
+            &[entry("f-a", "a.png", 1, &a), entry("f-b", "b.png", 1, &b)],
+        )
+        .unwrap();
+        // in the index, bytes gone: none, as for a hash nobody holds
+        assert!(files.read(k, &a).unwrap().is_none());
+        assert!(files.read(k, &"c".repeat(64)).unwrap().is_none());
+        // the bytes' path is a folder: reading and dropping them refuse instead of losing track
+        fs::create_dir(dir.join(&b)).unwrap();
+        assert!(matches!(files.read(k, &b), Err(DataroomError::Storage(_))));
+        assert!(matches!(
+            files.delete(k, "f-b"),
+            Err(DataroomError::Storage(_))
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_poisoned_lock_still_serves_every_write() {
+        let (files, root) = store();
+        let files = std::sync::Arc::new(files);
+        let held = std::sync::Arc::clone(&files);
+        let _ = std::thread::spawn(move || {
+            let _g = held.lock.lock().unwrap();
+            panic!("poison the lock");
+        })
+        .join();
+        assert!(files.lock.is_poisoned());
+        let k = key(10);
+        let put = files.put(k, "a.png", PNG, "ana").unwrap();
+        let (_, renamed) = files.rename(k, &put.id, "b.png").unwrap();
+        assert_eq!(renamed.name, "b.png");
+        let (_, replaced) = files.replace(k, &put.id, b"%PDF-1.7\n", "ben").unwrap();
+        assert_eq!(replaced.content_type, "application/pdf");
+        assert_eq!(files.delete(k, &put.id).unwrap().id, put.id);
+        assert!(files.list(k.0, k.1).unwrap().is_empty());
         let _ = fs::remove_dir_all(root);
     }
 
