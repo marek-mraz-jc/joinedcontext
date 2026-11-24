@@ -145,6 +145,8 @@ impl CurrentStateDriver for OneDoc {
         Ok(ids
             .iter()
             .map(|id| match &held {
+                // an id ending in `:gone` is absent: no slot, the closure not called
+                Some(_) if id.ends_with(":gone") => None,
                 Some(doc) => Some(f(id, &mut doc.clone())),
                 None => Some(Err(())),
             })
@@ -730,15 +732,20 @@ async fn a_batch_driver_reporting_unraised_rejections_fails_the_batch() {
     assert!(none.is_empty());
 }
 
-/// The typed batch hands each rejection the closure raised back to its own id, in input order,
-/// and an accepted id reads Ok.
+/// The typed batch hands each rejection the closure raised back to its own id, in input order;
+/// an accepted id reads Ok and an absent one has no slot.
 #[tokio::test]
 async fn a_batch_rejection_reaches_the_id_that_raised_it() {
     let t = tenant();
     let d = OneDoc(std::sync::Mutex::new(Some(
         serde_json::json!({"id": "urn:a"}),
     )));
-    let ids = ["urn:a".to_owned(), "urn:b".to_owned(), "urn:c".to_owned()];
+    let ids = [
+        "urn:a".to_owned(),
+        "urn:b".to_owned(),
+        "urn:gone".to_owned(),
+        "urn:c".to_owned(),
+    ];
     let out = d
         .batch_mutate::<String>(&t, &ids, |id, doc| {
             assert_eq!(doc["id"], "urn:a");
@@ -755,6 +762,7 @@ async fn a_batch_rejection_reaches_the_id_that_raised_it() {
         vec![
             Some(Ok(())),
             Some(Err("urn:b refused".to_owned())),
+            None,
             Some(Err("urn:c refused".to_owned())),
         ]
     );
