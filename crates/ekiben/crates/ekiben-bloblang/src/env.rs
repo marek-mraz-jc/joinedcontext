@@ -183,3 +183,78 @@ impl Environment {
         parser::parse_field(self, expr)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imports_read_memory_files_with_or_without_a_dot_slash_and_refuse_the_rest() {
+        let mem = MemoryImporter {
+            files: HashMap::from([("a.blobl".to_string(), b"root = 1".to_vec())]),
+        };
+        assert_eq!(mem.import("a.blobl").ok(), Some(b"root = 1".to_vec()));
+        assert_eq!(mem.import("./a.blobl").ok(), Some(b"root = 1".to_vec()));
+        assert_eq!(
+            mem.import("b.blobl").err().as_deref(),
+            Some("import file 'b.blobl' not found")
+        );
+        assert_eq!(
+            DisabledImporter.import("a.blobl").err().as_deref(),
+            Some("imports are disabled in this context")
+        );
+    }
+
+    #[test]
+    fn the_default_environment_allows_every_known_name_and_no_host_access() {
+        let env = Environment::default();
+        assert!(env.has_function("now") && env.has_method("uppercase"));
+        assert_eq!(env.max_map_recursion, Environment::DEFAULT_MAX_MAP_STACKS);
+        assert!(!env.allow_host_env && !env.allow_host_file);
+        assert_eq!(env.lookup_env("CARGO_PKG_NAME"), None);
+        let names = env.function_names();
+        assert!(names.windows(2).all(|w| w[0] <= w[1]) && names.contains(&"now".to_string()));
+        let methods = env.method_names();
+        assert!(
+            methods.windows(2).all(|w| w[0] <= w[1]) && methods.contains(&"uppercase".to_string())
+        );
+    }
+
+    #[test]
+    fn removed_functions_and_methods_fail_at_parse_time() {
+        let env = Environment::new()
+            .without_functions(&["now"])
+            .without_methods(&["uppercase"])
+            .with_host_file(true);
+        assert!(!env.has_function("now") && !env.has_method("uppercase"));
+        assert!(env.allow_host_file);
+        assert!(env.compile_mapping("root = now()").is_err());
+        assert!(env.compile_mapping(r#"root = "a".uppercase()"#).is_err());
+        assert!(env.compile_mapping(r#"root = "a".lowercase()"#).is_ok());
+        assert!(env.compile_field("${! this.a }").is_ok());
+    }
+
+    #[test]
+    fn env_reads_overrides_first_then_the_host_only_when_enabled_and_inside_the_prefix() {
+        let host = std::env::var("CARGO_PKG_NAME").ok();
+        assert!(host.is_some(), "cargo sets CARGO_PKG_NAME for a test run");
+        let vars = HashMap::from([("CARGO_PKG_NAME".to_string(), "override".to_string())]);
+        let env = Environment::new()
+            .with_env_vars(vars.clone())
+            .with_host_env(true);
+        assert_eq!(
+            env.lookup_env("CARGO_PKG_NAME").as_deref(),
+            Some("override")
+        );
+        let open = Environment::new().with_host_env(true);
+        assert_eq!(open.lookup_env("CARGO_PKG_NAME"), host);
+        let fenced = open.clone().with_host_env_prefix("CARGO_PKG_");
+        assert_eq!(fenced.lookup_env("NAME"), host);
+        assert_eq!(fenced.lookup_env("CARGO_PKG_NAME"), host);
+        assert_eq!(fenced.lookup_env("PATH"), None);
+        let off = Environment::new()
+            .with_host_env(false)
+            .with_host_env_prefix("CARGO_PKG_");
+        assert_eq!(off.lookup_env("NAME"), None);
+    }
+}

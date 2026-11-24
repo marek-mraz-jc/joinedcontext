@@ -168,9 +168,14 @@ fn widen(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
 mod tests {
     use super::*;
 
+    /// The two tests of the process-wide READS bound take turns: one holding places while the
+    /// other counts them made each fail now and then in a parallel run.
+    static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn extent_reads_run_at_most_extent_reads_at_once() {
         use std::sync::atomic::{AtomicUsize, Ordering};
+        let _turn = TURN.lock().await;
         let (now, most) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let reads = (0..EXTENT_READS.saturating_mul(3)).map(|_| {
             bounded(async {
@@ -187,6 +192,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn an_extent_read_past_the_wait_states_none() {
+        let _turn = TURN.lock().await;
         let late = bounded(std::future::pending::<()>());
         let answered = tokio::time::timeout(EXTENT_WAIT.saturating_mul(2), late).await;
         assert_eq!(answered, Ok(None));
