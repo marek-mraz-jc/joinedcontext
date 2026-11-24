@@ -261,9 +261,11 @@ pub(crate) fn eval_number_family(
             }
             let sign = if val < 0 { "-" } else { "" };
             let abs = val.unsigned_abs();
-            let factor = 10u128.pow(scale as u32);
-            let whole = abs / factor;
-            let frac = abs % factor;
+            // |val| < 2^127 < 10^39: a larger scale leaves no whole part (and 10^scale overflows).
+            let (whole, frac) = match 10u128.checked_pow(scale as u32) {
+                Some(factor) => (abs / factor, abs % factor),
+                None => (0, abs),
+            };
             Ok(Value::String(format!(
                 "{sign}{whole}.{frac:0>width$}",
                 width = scale as usize
