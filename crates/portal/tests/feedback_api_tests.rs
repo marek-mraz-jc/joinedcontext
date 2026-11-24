@@ -119,6 +119,18 @@ async fn a_feedback_arrives_scrubbed_without_its_author_and_an_administrator_rea
     )
     .await;
     assert_eq!(shot.status.as_u16(), 200);
+    // a page cursor that is no number, or a parameter the list does not take, is a 400
+    for query in ["?after=first", "?limit=5"] {
+        let refused = send(
+            &state,
+            person("admin"),
+            "GET",
+            &format!("/api/v1/organization/feedback{query}"),
+            None,
+        )
+        .await;
+        assert_eq!(refused.status.as_u16(), 400, "{query}: {}", refused.text);
+    }
     let after = send(
         &state,
         person("admin"),

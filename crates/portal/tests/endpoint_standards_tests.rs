@@ -383,6 +383,34 @@ async fn a_door_that_refuses_or_lacks_the_type_shows_no_examples_for_it() {
     }
 }
 
+/// With no gateway configured the Portal reads through its own public address, and an Endpoint
+/// lists only the standards it serves: a guide for each, none for the rest.
+#[tokio::test]
+async fn an_endpoint_lists_only_the_standards_it_serves() {
+    let slug = "standards-ngsi-ld-only";
+    let mirror = mirror(slug, "public");
+    if let Some(mut endpoint) = mirror.get(PROJECT, "Endpoint", "air") {
+        endpoint.spec["enabledRepresentations"] = json!(["ngsi-ld"]);
+        mirror.upsert(endpoint);
+    }
+    let mut config = Config::for_tests();
+    config.gateway_url = None;
+    let state = AppState::new(config, None).with_mirror(Arc::new(mirror));
+    let (status, _, answer) = get(
+        state,
+        &format!("/api/v1/catalogue/endpoints/{slug}/standards"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let served: Vec<&str> = answer["standards"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s["representation"].as_str())
+        .collect();
+    assert_eq!(served, ["ngsi-ld"], "{answer}");
+}
+
 #[tokio::test]
 async fn an_endpoint_whose_gateway_is_down_lists_its_standards_without_examples() {
     let slug = "standards-gateway-down";

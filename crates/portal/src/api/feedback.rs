@@ -148,7 +148,7 @@ fn admit(subject: &str, now: Instant) -> Result<(), u64> {
     let mut sent = SENT
         .get_or_init(Mutex::default)
         .lock()
-        .unwrap_or_else(|p| p.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let times = crate::api::knowledge::within_span(&mut sent, subject, now, hour);
     if times.len() >= PER_HOUR {
         let oldest = times.first().copied().unwrap_or(now);

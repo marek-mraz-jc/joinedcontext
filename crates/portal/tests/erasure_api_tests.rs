@@ -526,6 +526,33 @@ async fn the_proposer_never_approves_and_the_approver_types_the_proposals_subjec
         other.text
     );
 
+    // a body that is no JSON object of the route's shape is a 400 on every write
+    for (who, uri) in [
+        ("boris", approve.clone()),
+        ("anna", format!("{base}/{id}/decline")),
+        (
+            "anna",
+            format!("/api/v1/projects/{project}/spaces/{SPACE}/subjects/export"),
+        ),
+        ("anna", base.clone()),
+    ] {
+        let broken = common::send_body(
+            &state,
+            common::person(who),
+            "POST",
+            &uri,
+            "application/json",
+            axum::body::Body::from("{\"subject\": "),
+        )
+        .await;
+        assert_eq!(
+            broken.status,
+            StatusCode::BAD_REQUEST,
+            "{uri}: {}",
+            broken.text
+        );
+    }
+
     // a subject no record can hold is refused before the log is read
     for bad in ["", "   ", "r\"42", "r\\42"] {
         let typed = send(
