@@ -267,6 +267,7 @@ async fn world(test: &str, deployment: Deployment) -> World {
         organization: "hronov".into(),
         contexts: Default::default(),
         turns: Default::default(),
+        map_sources: Default::default(),
     });
     World {
         admin,
@@ -1450,6 +1451,138 @@ async fn an_answer_whose_visitor_left_runs_to_its_end_and_resumes_on_the_next_pa
     assert!(
         statuses.contains(&StatusCode::TOO_MANY_REQUESTS),
         "{statuses:?}"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+fn map_page_of(id: &str, cursor: Option<&str>, token: Option<&str>, client: &str) -> Request<Body> {
+    let query = cursor.map(|c| format!("?cursor={c}")).unwrap_or_default();
+    let mut request = Request::builder()
+        .uri(format!("/api/v1/d/hronov-obcania/map/{id}{query}"))
+        .header("x-forwarded-for", format!("{client}, 10.0.0.1"));
+    if let Some(token) = token {
+        request = request.header(VISITOR_HEADER, token);
+    }
+    request.body(Body::empty()).expect("a request")
+}
+
+/// T-7755: a visitor's map source answers the read's own filter again, page by page, from the
+/// public Endpoint as anyone, with the map's columns and the location alone; it is that
+/// address's and that deployment's only, and a bad cursor, no token or an unknown id is refused.
+#[tokio::test]
+async fn a_map_source_pages_the_reads_filter_with_the_maps_columns_alone() {
+    use assistant::chat::map_source::{Read, PAGE};
+    let w = world("chatmapsource", deployment(Channel::Public, 50_000, 10)).await;
+    let mcp = || Mock::given(method("POST")).and(path("/api/endpoint/bbsk-registre/mcp"));
+    let page = |entities: Value| {
+        ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {
+            "content": [{"type": "text", "text": entities.to_string()}]}}))
+    };
+    mcp()
+        .and(body_string_contains("\"cursor\":\"c1\""))
+        .respond_with(page(json!({"entities": [
+            {"id": "urn:ngsi-ld:Bridge:2", "type": "Bridge", "name": "Most 2", "yearBuilt": 1850,
+             "location": {"type": "Point", "coordinates": [19.2, 48.6]}}]})))
+        .with_priority(1)
+        .mount(&w.gateway)
+        .await;
+    mcp()
+        .respond_with(page(json!({"entities": [
+            {"id": "urn:ngsi-ld:Bridge:1", "type": "Bridge", "name": "Most 1", "yearBuilt": 1890, "owner": "BBSK",
+             "location": {"type": "Point", "coordinates": [19.1, 48.7]}},
+            {"id": "urn:ngsi-ld:Bridge:9", "type": "Bridge", "name": "Bez polohy", "yearBuilt": 1870}],
+            "nextCursor": "c1"})))
+        .with_priority(2)
+        .mount(&w.gateway)
+        .await;
+    let token = visitor_token(&w.state, "hronov-obcania", "0").await;
+    let day = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after 1970")
+        .as_secs()
+        / 86_400;
+    let visitor = w.state.limits.lock().await.visitor("203.0.113.7", day);
+    let read = Read {
+        slug: "bbsk-registre".into(),
+        kind: "Bridge".into(),
+        q: Some("yearBuilt<1900".into()),
+        timeout: std::time::Duration::from_secs(5),
+        fields: vec!["name".into(), "yearBuilt".into()],
+    };
+    let id = w
+        .state
+        .map_sources
+        .hold("hronov-obcania", &visitor, read, std::time::Instant::now())
+        .expect("an id");
+    let body = |response: axum::response::Response| async move {
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("a body");
+        (
+            status,
+            serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+        )
+    };
+    let get = |request: Request<Body>| async {
+        body(w.app.clone().oneshot(request).await.expect("an answer")).await
+    };
+    let (status, first) = get(map_page_of(&id, None, Some(&token), "203.0.113.7")).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        first,
+        json!({"type": "FeatureCollection", "next": "c1", "features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [19.1, 48.7]},
+             "properties": {"name": "Most 1", "yearBuilt": 1890}}]})
+    );
+    let (status, second) = get(map_page_of(&id, Some("c1"), Some(&token), "203.0.113.7")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(second["features"][0]["properties"]["name"], "Most 2");
+    assert!(second.get("next").is_none(), "the last page names no next");
+    // Each page asked the read's own filter, the map's columns and the location, as anyone.
+    let calls = tool_calls_of(&w.gateway, "query_entities").await;
+    assert_eq!(calls.len(), 2);
+    assert_eq!(
+        calls[0]["params"]["arguments"],
+        json!({"type": ["Bridge"], "q": "yearBuilt<1900", "pick": ["name", "yearBuilt", "location"],
+            "format": "keyValues", "limit": PAGE})
+    );
+    assert_eq!(calls[1]["params"]["arguments"]["cursor"], "c1");
+    let requests = w.gateway.received_requests().await.unwrap_or_default();
+    assert!(
+        requests
+            .iter()
+            .all(|r| !r.headers.contains_key("authorization")),
+        "a map page is read as anyone, never with a held token"
+    );
+    // Refused: no token, another address, an unknown id, a bad cursor.
+    assert_eq!(
+        get(map_page_of(&id, None, None, "203.0.113.7")).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get(map_page_of(&id, None, Some(&token), "198.51.100.9"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let unknown = "0".repeat(32);
+    assert_eq!(
+        get(map_page_of(&unknown, None, Some(&token), "203.0.113.7"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(map_page_of(&id, Some("a%20b"), Some(&token), "203.0.113.7"))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        tool_calls_of(&w.gateway, "query_entities").await.len(),
+        2,
+        "a refused page reads nothing"
     );
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
@@ -2999,6 +3132,9 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
     .await
     .expect("dates");
     tx.commit().await.expect("commit");
+    // Warming reads the sources' languages ahead of the first question, which never waits on
+    // them (T-7765).
+    assistant::chat::warm_types(Arc::clone(&w.state)).await;
     script_routed(
         &w.proxy,
         vec![completion(
@@ -3111,7 +3247,8 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
     );
     assert_eq!(answering["model"], "test/answer");
     assert_eq!(answering["stream"], true);
-    assert_eq!(answering["max_tokens"], 700);
+    // T-7758: the answer keeps its 700 and medium thinking gets its own 4,096 on top.
+    assert_eq!(answering["max_tokens"], 700 + 4_096);
     assert!(answering.get("tools").is_none());
     let passages: Value = serde_json::from_str(
         answering["messages"][2]["content"]

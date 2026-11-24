@@ -438,6 +438,9 @@ migrate_password_file = "/run/secrets/shako-migrate-password"
 - shako keeps every record (repos, PRs, issues, counters...) through an op log `shako.store_log` (forced RLS)
   beside the typed tables every read answers from, which a log an earlier release left is projected into
   before serving (T-7508; no mirror, replace rather than roll that update); its repositories live under `<state_dir>/shako`, no longer a temp dir.
+  The log keeps what a rollback can need: an entry the tables hold goes once the tenant has been projected for
+  30 days and the entry is 30 days old (T-7564, trimmed beside each start; create_repo entries stay).
+  After those 30 days only a release that reads `shako.projection` (T-7508 or later) is a safe rollback target.
 - ekiben saves continuous stream definitions as posted (before `${VAR}` interpolation, so no filled secret is
   stored) in schema `ekiben` through `ekiben_server::StreamPersistence`, and starts them again at boot. A refused
   save refuses the create; a refused delete keeps the stream.
@@ -499,7 +502,7 @@ are zeroed on drop. A module builder gets its own entries only.
 | shako signing key | `JCBIN_SHAKO_SIGNING_KEY` | `JCBIN_SHAKO_SIGNING_KEY_FILE` | generated per boot |
 | shako service token | `JCBIN_SHAKO_TOKEN` | `JCBIN_SHAKO_TOKEN_FILE` | generated per boot, memory only |
 | ekiben API token | `JCBIN_EKIBEN_TOKEN` | `JCBIN_EKIBEN_TOKEN_FILE` | generated per boot, memory only |
-| dataroom Portal token | `JCBIN_DATAROOM_PORTAL_TOKEN` | `JCBIN_DATAROOM_PORTAL_TOKEN_FILE` | generated per boot, memory only |
+| dataroom Portal token | none (S11-23: a service token per publication; `JCBIN_DATAROOM_PORTAL_TOKEN` is ignored with a warning) | `JCBIN_DATAROOM_PORTAL_TOKEN_FILE` (deprecated, never read) | in-process issuer all in one, kaisatsu in a role split |
 | daiya Portal password | `JCBIN_DAIYA_PORTAL_PASSWORD` | `JCBIN_DAIYA_PORTAL_PASSWORD_FILE` | generated per boot, memory only |
 | Antares admin token | `JCBIN_ANTARES_ADMIN_TOKEN` | `JCBIN_ANTARES_ADMIN_TOKEN_FILE` | memory only; a 0600 file while the Portal runs beside it |
 | Portal age identity | refused (file only) | `JCBIN_PORTAL_AGE_KEY_FILE`, `portal.age_key_file` | the Portal's `JC_PORTAL_SOPS_AGE_KEY_FILE` |

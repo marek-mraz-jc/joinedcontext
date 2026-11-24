@@ -11,8 +11,9 @@ use crate::sources::{
 use dataroom_core::ops::{HarvestRunner, PreviewRecord, SourcePreview, SourceTest, PREVIEW_MAX};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
-    ActivityRow, DataroomError, Dataset, HarvestLogLine, HarvestRun, HarvestRunState,
-    HarvestSkippedItem, HarvestSource, HarvestSourceKind, RecordState, RequestCtx, Result, Store,
+    ActivityRow, Catalogue, DataroomError, Dataset, HarvestBudget, HarvestLogLine, HarvestRun,
+    HarvestRunState, HarvestSkippedItem, HarvestSource, HarvestSourceKind, RecordState, RequestCtx,
+    Result, Store,
 };
 use jc_time::TimestampTz;
 use serde_json::{json, Value};
@@ -185,7 +186,7 @@ impl MapFetcher {
     ) {
         self.responses
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
                 url.into(),
                 FetchResponse::Ok {
@@ -203,7 +204,7 @@ impl MapFetcher {
     ) {
         self.responses
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(
                 url.into(),
                 FetchResponse::Redirect {
@@ -218,7 +219,7 @@ impl MapFetcher {
     pub fn insert_status(&self, url: impl Into<String>, status: u16) {
         self.statuses
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(url.into())
             .or_default()
             .push(status);
@@ -227,7 +228,7 @@ impl MapFetcher {
     pub fn pinned_seen(&self) -> Vec<(String, Vec<SocketAddr>)> {
         self.pinned_seen
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 }
@@ -242,11 +243,14 @@ impl OutboundFetcher for MapFetcher {
     ) -> BoxFuture<'a, Result<FetchResponse>> {
         self.pinned_seen
             .write()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push((target.host.clone(), target.pinned_addrs.clone()));
 
         let url = target.url.as_str();
-        let mut statuses = self.statuses.write().unwrap_or_else(|e| e.into_inner());
+        let mut statuses = self
+            .statuses
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(status) = statuses.get_mut(url).filter(|q| !q.is_empty()) {
             let status = status.remove(0);
             return Box::pin(std::future::ready(Err(DataroomError::OutboundRefused(
@@ -257,7 +261,7 @@ impl OutboundFetcher for MapFetcher {
         let found = self
             .responses
             .read()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(url)
             .cloned()
             .ok_or_else(|| DataroomError::OutboundRefused(format!("no response for {url}")));
@@ -520,9 +524,33 @@ impl HarvestEngine {
         cat_allowed_hosts: &[String],
         accept: &str,
     ) -> Result<(Option<String>, String)> {
-        self.phased_fetch(url, source, cat_allowed_hosts, accept)
+        self.phased_fetch(url, source, cat_allowed_hosts, accept, self.max_bytes)
             .await
             .map_err(|(_, e)| e)
+    }
+
+    /// [`Self::checked_fetch`] of one read of a run: at most what is left of the run's byte
+    /// budget, counted into `tally` (ODP-13, S11-35).
+    async fn budgeted_fetch(
+        &self,
+        tally: &mut Tally,
+        url: &str,
+        source: &HarvestSource,
+        cat_allowed_hosts: &[String],
+        accept: &str,
+    ) -> Result<(Option<String>, String)> {
+        let cap = tally.cap(self.max_bytes);
+        match self
+            .phased_fetch(url, source, cat_allowed_hosts, accept, cap)
+            .await
+        {
+            Ok((ct, body)) => {
+                tally.bytes = tally.bytes.saturating_add(body.len() as u64);
+                Ok((ct, body))
+            }
+            Err((Stop::TooLarge, _)) if cap < self.max_bytes => Err(tally.over_bytes()),
+            Err((_, e)) => Err(e),
+        }
     }
 
     /// [`Self::checked_fetch`], telling where it stopped: the guard, the read, or the cap.
@@ -532,6 +560,7 @@ impl HarvestEngine {
         source: &HarvestSource,
         cat_allowed_hosts: &[String],
         accept: &str,
+        max_bytes: usize,
     ) -> std::result::Result<(Option<String>, String), (Stop, DataroomError)> {
         let guard = |e: DataroomError| {
             // A name that does not resolve is a source that cannot be reached, not a refusal.
@@ -590,18 +619,17 @@ impl HarvestEngine {
 
             match self
                 .fetcher
-                .fetch_hop(&target, accept, self.max_bytes, self.timeout)
+                .fetch_hop(&target, accept, max_bytes, self.timeout)
                 .await
                 .map_err(read)?
             {
                 FetchResponse::Ok { content_type, body } => {
-                    if body.len() > self.max_bytes {
+                    if body.len() > max_bytes {
                         return Err((
                             Stop::TooLarge,
                             DataroomError::OutboundRefused(format!(
-                                "{current_url} body size {} exceeded cap of {} bytes",
+                                "{current_url} body size {} exceeded cap of {max_bytes} bytes",
                                 body.len(),
-                                self.max_bytes
                             )),
                         ));
                     }
@@ -636,6 +664,7 @@ impl HarvestEngine {
         source: &HarvestSource,
         cat_allowed_hosts: &[String],
         default_lang: &str,
+        tally: &mut Tally,
     ) -> Result<(Vec<(String, Dataset)>, Vec<HarvestSkippedItem>)> {
         // Check cross-organization harvest policy if the source URL points to another catalogue
         // on this installation (C9).
@@ -654,11 +683,11 @@ impl HarvestEngine {
 
         match source.kind {
             HarvestSourceKind::ArcGisRest => {
-                self.gather_arcgis_rest(ctx, source, cat_allowed_hosts, default_lang)
+                self.gather_arcgis_rest(ctx, source, cat_allowed_hosts, default_lang, tally)
                     .await
             }
             HarvestSourceKind::OgcRecords => {
-                self.gather_ogc_records(ctx, source, cat_allowed_hosts, default_lang)
+                self.gather_ogc_records(ctx, source, cat_allowed_hosts, default_lang, tally)
                     .await
             }
             HarvestSourceKind::ArcGisHub => {
@@ -677,7 +706,7 @@ impl HarvestEngine {
                         break;
                     };
                     let (_, body) = self
-                        .checked_fetch(&url, source, cat_allowed_hosts, "application/json")
+                        .budgeted_fetch(tally, &url, source, cat_allowed_hosts, "application/json")
                         .await?;
                     let page: Value = serde_json::from_str(&body).map_err(|e| {
                         DataroomError::OutboundRefused(format!("invalid Hub JSON: {e}"))
@@ -686,6 +715,7 @@ impl HarvestEngine {
                         expected_total = Some(m as usize);
                     }
                     if let Some(arr) = page.get("features").and_then(Value::as_array) {
+                        tally.records(arr.len())?;
                         features.extend(arr.iter().cloned());
                     }
                     next_url = page
@@ -749,7 +779,8 @@ impl HarvestEngine {
             HarvestSourceKind::NkodSparql => {
                 let url = nkod_query_url(source)?;
                 let (_, body) = self
-                    .checked_fetch(
+                    .budgeted_fetch(
+                        tally,
                         &url,
                         source,
                         cat_allowed_hosts,
@@ -759,14 +790,16 @@ impl HarvestEngine {
                 let val: Value = serde_json::from_str(&body).map_err(|e| {
                     DataroomError::OutboundRefused(format!("invalid SPARQL JSON: {e}"))
                 })?;
-                Ok(parse_nkod_sparql_bindings(
+                let (kept, skipped) = parse_nkod_sparql_bindings(
                     ctx.org_id,
                     ctx.catalogue_id,
                     source,
                     cat_allowed_hosts,
                     &val,
                     default_lang,
-                ))
+                );
+                tally.records(kept.len() + skipped.len())?;
+                Ok((kept, skipped))
             }
             HarvestSourceKind::DcatAp => {
                 let mut all_datasets = Vec::new();
@@ -781,7 +814,8 @@ impl HarvestEngine {
                         return Err(incomplete(format!("the feed's pages loop back to {url}")));
                     }
                     let (ct, body) = self
-                        .checked_fetch(
+                        .budgeted_fetch(
+                            tally,
                             &url,
                             source,
                             cat_allowed_hosts,
@@ -796,6 +830,7 @@ impl HarvestEngine {
                         ct.as_deref(),
                         default_lang,
                     )?;
+                    tally.records(page_ds.len())?;
                     all_datasets.extend(page_ds);
                     next_url = next;
                 }
@@ -821,7 +856,7 @@ impl HarvestEngine {
                         format!("{base}/api/3/action/package_search?rows=1000&start={start}")
                     };
                     let (_, body) = self
-                        .checked_fetch(&url, source, cat_allowed_hosts, "application/json")
+                        .budgeted_fetch(tally, &url, source, cat_allowed_hosts, "application/json")
                         .await?;
                     let (page_ds, count) = parse_ckan_search_page(
                         ctx.org_id,
@@ -832,6 +867,7 @@ impl HarvestEngine {
                     )?;
                     total = Some(count);
                     let fetched_len = page_ds.len();
+                    tally.records(fetched_len)?;
                     all_datasets.extend(page_ds);
                     start += fetched_len;
                     if fetched_len == 0 || start >= count {
@@ -862,6 +898,7 @@ impl HarvestEngine {
         source: &HarvestSource,
         cat_allowed_hosts: &[String],
         lang: &str,
+        tally: &mut Tally,
     ) -> Result<Gathered> {
         let root = arcgis_services_root(&source.url);
         let start = source.url.split(['?', '#']).next().unwrap_or(&source.url);
@@ -883,7 +920,8 @@ impl HarvestEngine {
                     )));
                 }
                 let (_, body) = self
-                    .checked_fetch(
+                    .budgeted_fetch(
+                        tally,
                         &format!("{folder}?f=json"),
                         source,
                         cat_allowed_hosts,
@@ -930,6 +968,7 @@ impl HarvestEngine {
                 services.len()
             )));
         }
+        tally.records(services.len() + skipped.len())?;
         let mut kept = Vec::new();
         for url in services {
             let item_id = url
@@ -938,7 +977,8 @@ impl HarvestEngine {
                 .trim_start_matches('/')
                 .to_owned();
             let (_, body) = self
-                .checked_fetch(
+                .budgeted_fetch(
+                    tally,
                     &format!("{url}?f=json"),
                     source,
                     cat_allowed_hosts,
@@ -983,6 +1023,7 @@ impl HarvestEngine {
         source: &HarvestSource,
         cat_allowed_hosts: &[String],
         lang: &str,
+        tally: &mut Tally,
     ) -> Result<Gathered> {
         let (mut kept, mut skipped) = (Vec::new(), Vec::new());
         let (mut read, mut matched) = (0usize, None);
@@ -996,10 +1037,11 @@ impl HarvestEngine {
                 return Err(incomplete(format!("the pages loop back to {url}")));
             }
             let (_, body) = self
-                .checked_fetch(&url, source, cat_allowed_hosts, RECORDS_ACCEPT)
+                .budgeted_fetch(tally, &url, source, cat_allowed_hosts, RECORDS_ACCEPT)
                 .await?;
             let page =
                 parse_ogc_records_page(ctx.org_id, ctx.catalogue_id, source, &url, &body, lang)?;
+            tally.records(page.kept.len() + page.skipped.len())?;
             matched = matched.or(page.matched);
             read += page.read;
             kept.extend(page.kept);
@@ -1133,6 +1175,14 @@ impl HarvestEngine {
         }
         Ok((out, skipped))
     }
+}
+
+/// The catalogue of `ctx`; not found when its organization holds none of that id.
+async fn catalogue_of(store: &dyn Store, ctx: &RequestCtx) -> Result<Catalogue> {
+    store
+        .get_catalogue(ctx.org_id, ctx.catalogue_id)
+        .await?
+        .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))
 }
 
 /// Where a guarded fetch stopped (ODP-15): the guard refused the address, the read failed, or
@@ -1392,10 +1442,7 @@ impl HarvestRunner for HarvestEngine {
         source: &'a HarvestSource,
     ) -> BoxFuture<'a, Result<SourceTest>> {
         Box::pin(async move {
-            let cat = store
-                .get_catalogue(ctx.org_id, ctx.catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let cat = catalogue_of(store, ctx).await?;
             let Ok((url, accept)) = Self::first_page(source) else {
                 return Ok(SourceTest::RefusedHost);
             };
@@ -1418,7 +1465,7 @@ impl HarvestRunner for HarvestEngine {
             };
             let read = tokio::time::timeout(
                 cap,
-                probe.phased_fetch(&url, source, &cat.allowed_outbound_hosts, accept),
+                probe.phased_fetch(&url, source, &cat.allowed_outbound_hosts, accept, budget),
             )
             .await;
             let outcome = match read {
@@ -1450,10 +1497,7 @@ impl HarvestRunner for HarvestEngine {
                     partial: false,
                 });
             }
-            let cat = store
-                .get_catalogue(ctx.org_id, ctx.catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let cat = catalogue_of(store, ctx).await?;
             let budget = source
                 .budget
                 .map_or(self.max_bytes, |b| {
@@ -1479,6 +1523,9 @@ impl HarvestRunner for HarvestEngine {
                     source,
                     &cat.allowed_outbound_hosts,
                     &cat.default_language,
+                    // The probe caps each read at the byte budget; the records a run would
+                    // refuse are still shown.
+                    &mut Tally::new(None),
                 ),
             )
             .await;
@@ -1514,10 +1561,7 @@ impl HarvestEngine {
         {
             let mut logs = Vec::new();
 
-            let cat = store
-                .get_catalogue(ctx.org_id, ctx.catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let cat = catalogue_of(store, ctx).await?;
 
             // Ensure target publisher exists (`harvest-hub.py` line 213).
             if store
@@ -1538,6 +1582,7 @@ impl HarvestEngine {
                     source,
                     &cat.allowed_outbound_hosts,
                     &cat.default_language,
+                    &mut Tally::new(source.budget),
                 )
                 .await;
 
@@ -1556,7 +1601,6 @@ impl HarvestEngine {
                 other => other,
             };
             let gather_res = gather_res.and_then(|(kept, skipped)| {
-                over_budget(source, &kept, skipped.len())?;
                 if kept.is_empty() {
                     // An answer with nothing to keep is an outage, not a catalogue to empty.
                     Err(DataroomError::OutboundRefused(
@@ -1598,6 +1642,27 @@ impl HarvestEngine {
 
             // Index existing datasets from this harvest source by `harvest_source_item_id`.
             let existing_all = store.list_datasets(ctx).await?;
+            // ODP-14: each `dct:identifier` another source of this catalogue holds, by the
+            // place of that source; an earlier source keeps the record.
+            let place: BTreeMap<String, u32> = store
+                .list_harvest_sources(ctx)
+                .await?
+                .into_iter()
+                .map(|s| (s.name, s.position))
+                .collect();
+            let mut held_identifiers: BTreeMap<String, (u32, Dataset)> = BTreeMap::new();
+            for ds in &existing_all {
+                let (Some(identifier), Some(holder)) =
+                    (ds.identifier.clone(), ds.harvest_source_id.clone())
+                else {
+                    continue;
+                };
+                if holder == source.name || ds.state != RecordState::Active {
+                    continue;
+                }
+                let at = place.get(&holder).copied().unwrap_or(u32::MAX);
+                held_identifiers.insert(identifier, (at, ds.clone()));
+            }
             let mut existing_by_item: BTreeMap<String, Dataset> = BTreeMap::new();
             // Ids and names of every record this source does not hold: a local dataset or another
             // source's. A harvested item never takes one of them over (C9, C16).
@@ -1631,27 +1696,6 @@ impl HarvestEngine {
             let mut updated_count = 0usize;
             let mut unchanged_count = 0usize;
             let mut withdrawn_count = 0usize;
-            // ODP-14: each `dct:identifier` another source of this catalogue holds, by the
-            // place of that source; an earlier source keeps the record.
-            let place: BTreeMap<String, u32> = store
-                .list_harvest_sources(ctx)
-                .await?
-                .into_iter()
-                .map(|s| (s.name, s.position))
-                .collect();
-            let mut held_identifiers: BTreeMap<String, (u32, Dataset)> = BTreeMap::new();
-            for ds in store.list_datasets(ctx).await? {
-                let (Some(identifier), Some(holder)) =
-                    (ds.identifier.clone(), ds.harvest_source_id.clone())
-                else {
-                    continue;
-                };
-                if holder == source.name || ds.state != RecordState::Active {
-                    continue;
-                }
-                let at = place.get(&holder).copied().unwrap_or(u32::MAX);
-                held_identifiers.insert(identifier, (at, ds));
-            }
 
             for (item_id, mut incoming) in kept_items {
                 let title = dataroom_core::text_in_lang(&incoming.title, None)
@@ -1817,30 +1861,52 @@ impl HarvestEngine {
     }
 }
 
-/// A run past `source`'s budget fails before it writes or withdraws anything (ODP-13).
-fn over_budget(source: &HarvestSource, kept: &[(String, Dataset)], skipped: usize) -> Result<()> {
-    let Some(budget) = source.budget else {
-        return Ok(());
-    };
-    let records = (kept.len() + skipped) as u64;
-    if records > budget.records {
-        return Err(DataroomError::OutboundRefused(format!(
-            "the run read {records} records, past its budget of {}; nothing is written or withdrawn",
-            budget.records
-        )));
+/// What a run has read so far against its source's budget (ODP-13), checked at each page: a
+/// run past it fails at the page that crosses it, before the next is read or anything is
+/// written or withdrawn (S11-35). The reads of this installation's own gateway that turn a
+/// kept record into a converted one ([`HarvestEngine::convert`]) are not counted.
+struct Tally {
+    budget: Option<HarvestBudget>,
+    records: u64,
+    bytes: u64,
+}
+
+impl Tally {
+    fn new(budget: Option<HarvestBudget>) -> Self {
+        Self {
+            budget,
+            records: 0,
+            bytes: 0,
+        }
     }
-    let bytes: u64 = kept
-        .iter()
-        .map(|(_, ds)| serde_json::to_vec(ds).map_or(0, |v| v.len() as u64))
-        .sum();
-    if bytes > budget.bytes {
-        return Err(DataroomError::OutboundRefused(format!(
-            "the run's records hold {bytes} bytes, past its budget of {}; nothing is written or \
-             withdrawn",
-            budget.bytes
-        )));
+
+    /// The most the next read may hold: the engine's cap, or what is left of the budget.
+    fn cap(&self, max: usize) -> usize {
+        self.budget.map_or(max, |b| {
+            usize::try_from(b.bytes.saturating_sub(self.bytes))
+                .unwrap_or(usize::MAX)
+                .min(max)
+        })
     }
-    Ok(())
+
+    fn over_bytes(&self) -> DataroomError {
+        let budget = self.budget.map_or(0, |b| b.bytes);
+        DataroomError::OutboundRefused(format!(
+            "the run read past its budget of {budget} bytes; nothing is written or withdrawn"
+        ))
+    }
+
+    /// Counts `n` more records read; past the budget, the run stops here.
+    fn records(&mut self, n: usize) -> Result<()> {
+        self.records = self.records.saturating_add(n as u64);
+        match self.budget {
+            Some(b) if self.records > b.records => Err(DataroomError::OutboundRefused(format!(
+                "the run read {} records, past its budget of {}; nothing is written or withdrawn",
+                self.records, b.records
+            ))),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// The first link of `ds` a page would put in an `href` with a scheme other than `http(s)` or
@@ -1891,9 +1957,7 @@ fn non_http_link(ds: &Dataset) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::guard::{is_private_or_internal_ip, validate_outbound_url};
-    use dataroom_core::{
-        Catalogue, CatalogueId, HarvestBudget, OrgId, Publisher, Subject, ThemeTokens,
-    };
+    use dataroom_core::{Catalogue, CatalogueId, OrgId, Publisher, Subject, ThemeTokens};
     use dataroom_store_memory::MemoryStore;
 
     fn test_setup() -> (OrgId, CatalogueId, RequestCtx, MemoryStore) {
@@ -2635,6 +2699,30 @@ mod tests {
             ds.landing_page = Some(fine.to_owned());
             assert_eq!(non_http_link(&ds), None, "{fine:?}");
         }
+        // Each field names itself, in the order a page reads them.
+        ds.landing_page = None;
+        let js = "javascript:x".to_owned();
+        ds.documentation = vec!["https://a.sk/doc".into(), js.clone()];
+        assert_eq!(non_http_link(&ds), Some("documentation"));
+        ds.documentation.clear();
+        let dist = |patch: Value| -> dataroom_core::Distribution {
+            let mut base =
+                json!({"id": "d", "datasetId": "x", "title": {}, "accessUrl": "https://a.sk/f"});
+            base.as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            serde_json::from_value(base).unwrap()
+        };
+        for (patch, field) in [
+            (json!({"downloadUrl": js}), "download link"),
+            (json!({"accessUrl": js}), "access link"),
+            (json!({"uri": js}), "distribution IRI"),
+        ] {
+            ds.distributions = vec![dist(json!({})), dist(patch)];
+            assert_eq!(non_http_link(&ds), Some(field));
+        }
+        ds.distributions = vec![dist(json!({"uri": "https://a.sk/d"}))];
+        assert_eq!(non_http_link(&ds), None);
     }
 
     #[tokio::test]
@@ -2681,6 +2769,62 @@ mod tests {
             .error
             .as_deref()
             .is_some_and(|e| e.contains("past its budget"))));
+    }
+
+    /// S11-35: the budget is checked at each page, so a run past it stops at the page that
+    /// crosses it; the pages after it are never read.
+    #[tokio::test]
+    async fn a_run_stops_reading_at_the_page_that_crosses_its_budget() {
+        let first = "https://hub.bbsk.sk/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created";
+        let page = |n: usize| {
+            let next = (n < 3).then(
+                || json!([{ "rel": "next", "href": format!("https://hub.bbsk.sk/p{}", n + 1) }]),
+            );
+            json!({ "numberMatched": 6, "links": next.unwrap_or(json!([])), "features": [
+                hub_item(&format!("item{n}a"), "Cesty", "https://hub.bbsk.sk/a"),
+                hub_item(&format!("item{n}b"), "Mosty", "https://hub.bbsk.sk/b"),
+            ] })
+        };
+        let page_len = page(1).to_string().len() as u64;
+        for budget in [
+            HarvestBudget {
+                records: 3,
+                bytes: u64::MAX,
+            },
+            HarvestBudget {
+                records: 100,
+                bytes: page_len + 10,
+            },
+        ] {
+            let (_, _, ctx, store) = test_setup();
+            let fetcher = MapFetcher::new();
+            let mut sources = hub_world(
+                &store,
+                &ctx,
+                &[("hub", "hub.bbsk.sk", 0)],
+                &fetcher,
+                page(1),
+            )
+            .await;
+            fetcher.insert(first, Some("application/json"), page(1).to_string());
+            for n in 2..=3 {
+                let url = format!("https://hub.bbsk.sk/p{n}");
+                fetcher.insert(url, Some("application/json"), page(n).to_string());
+            }
+            sources[0].budget = Some(budget);
+            let engine = HarvestEngine::new(Arc::new(fetcher.clone())).with_dns_resolution(false);
+            let err = engine
+                .run_source(&ctx, &store, &sources[0])
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("past its budget"), "{err}");
+            assert_eq!(
+                fetcher.pinned_seen().len(),
+                2,
+                "page 3 is never read: {budget:?}"
+            );
+            assert!(store.list_datasets(&ctx).await.unwrap().is_empty());
+        }
     }
 
     /// A source whose only allowed host is its url's own (T-7416: the admin names it, no

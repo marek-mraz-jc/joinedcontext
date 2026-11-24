@@ -52,6 +52,9 @@ enum Engine {
     /// A stand-in for the service's own tests: a vector from the text's bytes, after `millis`.
     #[cfg(test)]
     Fake { millis: u64 },
+    /// A model that fails every text, for the service's refusal of a failed embedding.
+    #[cfg(test)]
+    Broken,
 }
 
 /// The loaded model. Cloning shares it; one embedding runs at a time, on `threads` ONNX Runtime
@@ -181,6 +184,8 @@ impl Engine {
             Self::Onnx { tokenizer, session } => (tokenizer, session),
             #[cfg(test)]
             Self::Fake { millis } => return Ok(fake(text, *millis)),
+            #[cfg(test)]
+            Self::Broken => return Err(Error::Model("embedding failed: broken".into())),
         };
         let failed = |why: String| Error::Model(format!("embedding failed: {why}"));
         let encoding = tokenizer
@@ -281,6 +286,14 @@ impl Embedder {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn broken() -> Self {
+        Self {
+            engine: Arc::new(Mutex::new(Engine::Broken)),
+            turns: Turns::new(),
+        }
+    }
+
     /// One text through the model. `turn` moves into the blocking task, so a caller that goes
     /// away mid-text gives the model back when it is free, not before.
     async fn run(&self, turn: OwnedSemaphorePermit, text: String) -> Result<Vec<f32>, Error> {
@@ -343,6 +356,127 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(millis)).await;
         done.lock().expect("lock").push(who);
         drop(turn);
+    }
+
+    /// A fresh directory under the system's temp dir, holding `files`.
+    fn dir_with(name: &str, files: &[(&str, &[u8])]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("jc-embedder-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        for (file, bytes) in files {
+            std::fs::write(dir.join(file), bytes).expect("write");
+        }
+        dir
+    }
+
+    #[test]
+    fn a_file_is_handed_on_only_with_its_pinned_hash() {
+        // SHA-256 of "abc".
+        let sha = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let dir = dir_with("checked", &[("good", b"abc"), ("bad", b"abd")]);
+        assert_eq!(read_checked(&dir, "good", sha).expect("pinned"), b"abc");
+        let mut opened = open_checked(&dir, "good", sha).expect("pinned");
+        let mut back = String::new();
+        std::io::Read::read_to_string(&mut opened, &mut back).expect("read");
+        assert_eq!(
+            back, "",
+            "handed back at its end, the same open file that was hashed"
+        );
+        for err in [
+            read_checked(&dir, "bad", sha).err(),
+            open_checked(&dir, "bad", sha).err(),
+        ] {
+            assert!(
+                matches!(&err, Some(Error::Model(why)) if why.contains("bad is not the pinned file")
+                    && why.contains(&format!("expected {sha}")) && why.contains("e5-small.sh")),
+                "{err:?}"
+            );
+        }
+        for err in [
+            read_checked(&dir, "missing", sha).err(),
+            open_checked(&dir, "missing", sha).err(),
+        ] {
+            assert!(
+                matches!(&err, Some(Error::Model(why)) if why.contains("missing could not be read")),
+                "{err:?}"
+            );
+        }
+        let unreadable = open_checked(&dir, "", sha).err();
+        assert!(
+            matches!(&unreadable, Some(Error::Model(why)) if why.contains("could not be read")),
+            "a directory opens but cannot be hashed: {unreadable:?}"
+        );
+        std::fs::remove_dir_all(dir).expect("clean");
+    }
+
+    #[test]
+    fn a_directory_without_the_pinned_files_does_not_load() {
+        let empty = dir_with("empty", &[]);
+        let err = Embedder::load(&empty, 1).err().map(|e| e.to_string());
+        assert!(
+            err.as_deref()
+                .is_some_and(|e| e.contains("tokenizer.json could not be read")),
+            "{err:?}"
+        );
+        let other = dir_with("other", &[("tokenizer.json", b"{}")]);
+        let err = Embedder::load(&other, 1).err().map(|e| e.to_string());
+        assert!(
+            err.as_deref()
+                .is_some_and(|e| e.contains("tokenizer.json is not the pinned file")),
+            "{err:?}"
+        );
+        std::fs::remove_dir_all(empty).expect("clean");
+        std::fs::remove_dir_all(other).expect("clean");
+    }
+
+    #[tokio::test]
+    async fn a_question_reports_its_wait_and_its_run_and_passages_read_as_passages() {
+        let embedder = Embedder::fake(40);
+        let (vector, took) = embedder.query_timed("when").await.expect("vector");
+        assert_eq!(vector, fake("query: when", 0));
+        assert!(took.ran >= Duration::from_millis(40), "{took:?}");
+        assert!(
+            took.waited < took.ran,
+            "nobody else held the model: {took:?}"
+        );
+        let passages = embedder
+            .passages(&["a".into(), "b".into()])
+            .await
+            .expect("vectors");
+        assert_eq!(passages, [fake("passage: a", 0), fake("passage: b", 0)]);
+        assert!(embedder.passages(&[]).await.expect("none").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_shut_down_or_poisoned_model_is_an_error_not_a_hang() {
+        let embedder = Embedder::fake(0);
+        let engine = Arc::clone(&embedder.engine);
+        std::thread::spawn(move || {
+            let _held = engine.lock().expect("lock");
+            panic!("poison the model on purpose");
+        })
+        .join()
+        .expect_err("the thread panicked");
+        let err = embedder.embed(Kind::Query, &["q".into()]).await.err();
+        assert!(
+            matches!(&err, Some(Error::Model(why)) if why == "an earlier embedding panicked"),
+            "{err:?}"
+        );
+        let embedder = Embedder::fake(0);
+        embedder.turns.model.close();
+        for kind in [Kind::Query, Kind::Passage] {
+            let err = embedder.embed(kind, &["t".into()]).await.err();
+            assert!(
+                matches!(&err, Some(Error::Model(why)) if why == "the embedder was shut down"),
+                "{kind:?}: {err:?}"
+            );
+        }
+        let err = embedder.query_timed("q").await.err();
+        assert!(matches!(err, Some(Error::Model(_))), "{err:?}");
+        let err = Embedder::broken()
+            .embed(Kind::Passage, &["p".into()])
+            .await
+            .err();
+        assert!(matches!(err, Some(Error::Model(_))), "{err:?}");
     }
 
     #[tokio::test(start_paused = true)]

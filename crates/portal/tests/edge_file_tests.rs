@@ -243,6 +243,226 @@ async fn a_refused_write_is_reported_without_the_file() {
     assert!(!reason.contains(CLIENT_SECRET), "{reason}");
 }
 
+/// A port with nothing listening on it: the socket stays bound, so no other test takes the port,
+/// and a connect to it is refused at once.
+fn refused_port() -> (tokio::net::TcpSocket, u16) {
+    let socket = tokio::net::TcpSocket::new_v4().expect("a socket");
+    socket
+        .bind("127.0.0.1:0".parse().expect("an address"))
+        .expect("bound");
+    let port = socket.local_addr().expect("its address").port();
+    (socket, port)
+}
+
+/// A base the API server refuses names the ConfigMap and the status; an API server that cannot
+/// be reached names the ConfigMap; neither writes anything.
+#[tokio::test]
+async fn a_base_that_cannot_be_read_fails_the_run_by_name() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(BASE_PATH))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "kind": "Status" })))
+        .mount(&server)
+        .await;
+    let (outcome, skipped) = edge(&server).converge(&apps(), None).await;
+    assert_eq!(
+        outcome,
+        EdgeOutcome::Failed(
+            "the API server answered 500 for ConfigMap apisix-standalone-base".into()
+        )
+    );
+    assert!(skipped.is_empty(), "{skipped:?}");
+
+    let (_held, port) = refused_port();
+    let gone = EdgeFile::new(
+        KubeClient::with_token(&format!("http://127.0.0.1:{port}"), "token").expect("a client"),
+        NS.to_owned(),
+    );
+    let (outcome, _) = gone.converge(&apps(), None).await;
+    let EdgeOutcome::Failed(reason) = outcome else {
+        panic!("an unreachable API server was not reported: {outcome:?}");
+    };
+    assert!(
+        reason.starts_with("ConfigMap apisix-standalone-base: "),
+        "{reason}"
+    );
+}
+
+/// A served Secret the API server refuses to read names the Secret and the status; a served
+/// Secret without annotations is written with the Portal's mark alone.
+#[tokio::test]
+async fn the_served_secret_is_read_by_name_and_marked_when_it_has_no_annotations() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(BASE_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": { "apisix.yaml": BASE },
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(SECRET_PATH))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({ "kind": "Status" })))
+        .mount(&server)
+        .await;
+    let (outcome, _) = edge(&server).converge(&apps(), None).await;
+    assert_eq!(
+        outcome,
+        EdgeOutcome::Failed(
+            "the API server answered 403 for Secret apisix-standalone-config".into()
+        )
+    );
+
+    let server = api(Some(seeded(BASE, Value::Null))).await;
+    Mock::given(method("PUT"))
+        .and(path(SECRET_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (outcome, _) = edge(&server).converge(&apps(), None).await;
+    assert_eq!(outcome, EdgeOutcome::Written { apps: 1 });
+    let requests = server.received_requests().await.expect("recorded");
+    let put = requests
+        .iter()
+        .find(|r| r.method.as_str() == "PUT")
+        .expect("a PUT");
+    assert_eq!(
+        put_body(put)["metadata"]["annotations"],
+        json!({ COMPOSED_BY: "portal" })
+    );
+}
+
+/// A base that does not compose (here without the Portal's route) is reported with what it
+/// lacks, and the served file is left as it is.
+#[tokio::test]
+async fn a_base_that_does_not_compose_is_reported_and_not_written() {
+    let base = BASE.replace(
+        "  - id: portal-ui\n    uri: /*\n",
+        "  - id: other-ui\n    uri: /*\n",
+    );
+    assert_ne!(base, BASE);
+    let server = api_on(&base, Some(seeded(BASE, json!({})))).await;
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let (outcome, _) = edge(&server).converge(&apps(), None).await;
+    let EdgeOutcome::Failed(reason) = outcome else {
+        panic!("a base without the Portal route composed: {outcome:?}");
+    };
+    assert!(reason.contains("portal-ui"), "{reason}");
+}
+
+/// A host registry that cannot be read leaves the served file as it is, so its hosts keep their
+/// routes until a run reads it again.
+#[tokio::test]
+async fn a_registry_that_cannot_be_read_leaves_the_served_file_as_it_is() {
+    let server = api(Some(seeded(BASE, json!({})))).await;
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let (_held, port) = refused_port();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect_lazy(&format!("postgres://jc:jc@127.0.0.1:{port}/jc"))
+        .expect("a lazy pool");
+    let (outcome, skipped) = edge(&server)
+        .with_registry(Some(pool))
+        .converge(&apps(), None)
+        .await;
+    assert_eq!(
+        outcome,
+        EdgeOutcome::Failed(
+            "the host registry could not be read; the served file stays as it is".into()
+        )
+    );
+    assert!(skipped.is_empty(), "{skipped:?}");
+}
+
+/// T-7137 through the run: each served host of the registry gets its route to jc in the written
+/// file, a removed one gets none, and a host whose route id another host took is left out.
+#[tokio::test]
+async fn the_served_registry_hosts_reach_the_written_file() {
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("connect + migrate");
+    let run = format!("ef{:x}", std::process::id());
+    let served = format!("{run}.city.example");
+    // Both name the route `jc-org-<run>-a-city-example`: the first one takes it.
+    let first = format!("{run}-a.city.example");
+    let second = format!("{run}.a-city.example");
+    let removed = format!("{run}-gone.city.example");
+    let hosts: Vec<_> = [&served, &first, &second, &removed]
+        .into_iter()
+        .map(|host| joinedcontext_portal::host_registry::SeedHost {
+            host: host.clone(),
+            organization: "helsinki".into(),
+            organization_id: None,
+            role: "working".into(),
+        })
+        .collect();
+    joinedcontext_portal::host_registry::seed(&pool, &hosts)
+        .await
+        .expect("seeded");
+    joinedcontext_portal::host_registry::remove(&pool, &removed)
+        .await
+        .expect("removed");
+
+    let base = BASE.replace(
+        "routes:\n",
+        "routes:\n  - id: jc\n    uri: /*\n    host: jc.city.example\n    upstream_id: jc\n",
+    );
+    let server = api_on(&base, Some(seeded(&base, json!({})))).await;
+    Mock::given(method("PUT"))
+        .and(path(SECRET_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (outcome, _) = edge(&server)
+        .with_registry(Some(pool.clone()))
+        .converge(&apps(), None)
+        .await;
+    for host in &hosts {
+        joinedcontext_portal::host_registry::remove(&pool, &host.host)
+            .await
+            .expect("cleaned up");
+    }
+    assert_eq!(outcome, EdgeOutcome::Written { apps: 1 });
+
+    let requests = server.received_requests().await.expect("recorded");
+    let put = requests
+        .iter()
+        .find(|r| r.method.as_str() == "PUT")
+        .expect("a PUT");
+    let file = base64::engine::general_purpose::STANDARD
+        .decode(
+            put_body(put)["data"]["apisix.yaml"]
+                .as_str()
+                .expect("the file"),
+        )
+        .expect("base64");
+    let file: Value = serde_norway::from_slice(&file).expect("YAML");
+    let on = |host: &str| {
+        file["routes"]
+            .as_array()
+            .expect("routes")
+            .iter()
+            .filter(|r| r["host"] == host)
+            .count()
+    };
+    assert_eq!(
+        (on(&served), on(&first), on(&second), on(&removed)),
+        (1, 1, 0, 0)
+    );
+}
+
 /// T-2892, ADR-N-035: the Organization lowers the web rate; the next run writes the file with
 /// the lowered count on the labelled chain, and the served file changes without a helm release.
 #[tokio::test]
@@ -302,6 +522,60 @@ async fn a_lowered_organization_rate_is_written_on_the_next_run() {
         .find(|pc| pc["id"] == "app-air-quality")
         .expect("the App's chain");
     assert_eq!(own["plugins"]["limit-count"]["count"], 60);
+}
+
+/// The operator's bounds hold over the Organization's own rate: a rate above the operator's
+/// ceiling counts the ceiling, and the wasm shards' namespace is the one handed in.
+#[tokio::test]
+async fn the_operators_bounds_cap_the_organizations_rate() {
+    let base = BASE.replace(
+        "  - id: apps-surface\n    plugins:\n",
+        "  - id: apps-surface\n    labels:\n      jc-rate-class: web\n    plugins:\n      \
+         limit-count:\n        count: 300\n        time_window: 60\n        key: remote_addr\n",
+    );
+    let server = api_on(&base, Some(seeded(&base, json!({})))).await;
+    Mock::given(method("PUT"))
+        .and(path(SECRET_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let limits: OrganizationLimits =
+        serde_json::from_value(json!({ "edge": { "requestsPerMinute": { "web": 2000 } } }))
+            .expect("limits");
+    let bounds = jc_core::kinds::OrganizationBounds(BTreeMap::from([(
+        "spec.limits.edge.requestsPerMinute.web".to_string(),
+        jc_core::kinds::org_settings::Bound {
+            min: Some(10),
+            max: Some(500),
+        },
+    )]));
+    let edge = edge(&server)
+        .with_bounds(bounds)
+        .with_wasm_host(Some("jc-wasm".into()));
+    assert_eq!(edge.wasm_host(), Some("jc-wasm"));
+    let (outcome, _) = edge.converge(&apps(), Some(&limits)).await;
+    assert_eq!(outcome, EdgeOutcome::Written { apps: 1 });
+    let requests = server.received_requests().await.expect("recorded");
+    let put = requests
+        .iter()
+        .find(|r| r.method.as_str() == "PUT")
+        .expect("a PUT");
+    let file = base64::engine::general_purpose::STANDARD
+        .decode(
+            put_body(put)["data"]["apisix.yaml"]
+                .as_str()
+                .expect("the file"),
+        )
+        .expect("base64");
+    let file: Value = serde_norway::from_slice(&file).expect("YAML");
+    let surface = file["plugin_configs"]
+        .as_array()
+        .expect("plugin_configs")
+        .iter()
+        .find(|pc| pc["id"] == "apps-surface")
+        .expect("the surface");
+    assert_eq!(surface["plugins"]["limit-count"]["count"], 500);
 }
 
 /// A published App of `class` in `helsinki`, declaring `connect_src`.
@@ -425,6 +699,50 @@ fn a_pod_app_route_carries_the_policy_of_its_manifest() {
 /// T-3579: a published wasm App placed on a shard names that shard's Service as its server, so
 /// the edge routes its `/api` there; a wasm App on no shard yet, a `ui` App, or a Portal without
 /// the shards' namespace names none.
+/// AP-04: an App's own generated Endpoint gives its routes that Endpoint's slug; an App with no
+/// client yet keeps the shared surface, and an App whose spec does not parse is skipped by name.
+#[test]
+fn an_apps_own_endpoint_names_its_slug_and_an_unreadable_app_is_skipped() {
+    let mirror = Mirror::new();
+    mirror.upsert(published("praha-mesto", "ui", json!([])));
+    mirror.upsert(published("no-client-yet", "ui", json!([])));
+    let mut broken = published("broken", "ui", json!([]));
+    broken.spec["kind"] = json!("no-such-class");
+    mirror.upsert(broken);
+    mirror.upsert(ResourceEnvelope {
+        api_version: API_VERSION.into(),
+        kind: "Endpoint".into(),
+        metadata: ObjectMeta {
+            name: "app-praha-mesto".into(),
+            namespace: Some("helsinki".into()),
+            annotations: BTreeMap::from([(
+                jc_core::annotations::GENERATED_BY.to_owned(),
+                joinedcontext_portal::apps::reconciler::GENERATOR.to_owned(),
+            )]),
+            ..Default::default()
+        },
+        spec: json!({
+            "slug": "k4y7pq2mzt6vhx3nbwrs5cjd8f",
+            "contextSpaceRef": { "kind": "ContextSpace", "name": "helsinki-all" },
+        }),
+        status: None,
+    });
+    let secrets: BTreeMap<String, ClientSecret> = ["praha-mesto", "broken"]
+        .into_iter()
+        .map(|name| (name.to_owned(), ClientSecret::from(format!("s-{name}"))))
+        .collect();
+    let (apps, skipped) = edge_apps(&mirror, &secrets, &pod_settings(None), None);
+    let names: Vec<&str> = apps.iter().map(|app| app.name.as_str()).collect();
+    assert_eq!(names, ["praha-mesto"]);
+    assert_eq!(apps[0].slugs, ["k4y7pq2mzt6vhx3nbwrs5cjd8f"]);
+    assert_eq!(skipped.len(), 1, "{skipped:?}");
+    assert_eq!(skipped[0].0, "broken");
+    assert!(
+        skipped[0].1.starts_with("the App does not parse: "),
+        "{skipped:?}"
+    );
+}
+
 #[test]
 fn a_wasm_app_on_a_shard_names_its_shards_service_as_its_server() {
     let mirror = Mirror::new();

@@ -19,8 +19,8 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::Sender;
 
 use super::agent::{
-    fits, name_sources, quoted, send, Ask, Citation, Connected, Event, Spent, Stage, Stages, Table,
-    Turn,
+    fits, name_sources, quoted, send, Ask, Citation, Connected, Detail, Event, Spent, Stage,
+    Stages, Table, Turn,
 };
 use super::model::{Call, CallError, Completion};
 use super::publishers::{catalogue_read, is_catalogue, Publisher};
@@ -1028,45 +1028,144 @@ pub fn verdict(reply: &str, asked: &HashSet<String>) -> Verdict {
     }
 }
 
-/// The languages the deployment's sources are written in, most passages first; none when the
-/// lookup fails (the router then searches in the question's language only).
-async fn languages(ask: &Ask<'_>) -> Vec<String> {
-    if let Some(known) = ask.cache.languages_of(ask.deployment) {
-        return known;
+/// How long a deployment's source languages are named before they are read again, in the
+/// background: they change with a crawl, not with a question (T-7765).
+const LANGUAGES_LIFE: Duration = Duration::from_secs(3600);
+
+/// The languages the deployment's sources are written in, most passages first. Never waits on the
+/// database (T-7765: the count over 112k chunks took up to 20 s a project on prod, in series):
+/// it names the last read, none before the first one (the router then searches in the question's
+/// language only), and starts a read in the background when there is none or it is older than
+/// [`LANGUAGES_LIFE`].
+fn languages(ask: &Ask<'_>) -> Vec<String> {
+    source_languages(
+        ask.cache,
+        ask.pool,
+        ask.deployment,
+        ask.sources,
+        ask.public_only,
+    )
+}
+
+/// [`languages`] by its parts: the last read, and the read started in the background.
+fn source_languages(
+    cache: &AnswerCache,
+    pool: &sqlx::PgPool,
+    deployment: &str,
+    sources: &[(String, Vec<String>)],
+    public_only: bool,
+) -> Vec<String> {
+    let (known, read) = languages_read(cache, pool, deployment, sources, public_only);
+    if let Some(read) = read {
+        tokio::spawn(read);
     }
-    let found = async {
-        // Passages per language, summed over the projects the sources are in (T-4281).
-        let mut counts: HashMap<String, i64> = HashMap::new();
-        for (project, names) in ask.sources {
-            let mut tx = crate::project_scope(ask.pool, project).await?;
-            let rows: Vec<(String, i64)> = sqlx::query_as(
-                "SELECT c.lang, count(*)::int8 FROM chunks c JOIN sites s ON s.id = c.site_id \
-                 WHERE s.source = ANY($1) AND (NOT $2 OR c.visibility = 'public') AND c.lang IS NOT NULL \
-                 GROUP BY c.lang",
-            )
-            .bind(names)
-            .bind(ask.public_only)
-            .fetch_all(&mut *tx)
-            .await?;
-            tx.rollback().await?;
-            for (lang, n) in rows {
-                *counts.entry(lang).or_default() += n;
+    known.unwrap_or_default()
+}
+
+/// Reads the sources' languages unless a read younger than [`LANGUAGES_LIFE`] is kept or one
+/// runs: warming waits for it, ahead of the first question (T-7765).
+pub(crate) async fn warm_languages(
+    cache: &AnswerCache,
+    pool: &sqlx::PgPool,
+    deployment: &str,
+    sources: &[(String, Vec<String>)],
+    public_only: bool,
+) {
+    if let (_, Some(read)) = languages_read(cache, pool, deployment, sources, public_only) {
+        read.await;
+    }
+}
+
+/// The languages last read for the deployment and channel, and the read that refreshes them
+/// when they are missing or old and no read of them runs.
+fn languages_read(
+    cache: &AnswerCache,
+    pool: &sqlx::PgPool,
+    deployment: &str,
+    sources: &[(String, Vec<String>)],
+    public_only: bool,
+) -> (
+    Option<Vec<String>>,
+    Option<impl std::future::Future<Output = ()> + Send + 'static>,
+) {
+    // A public channel's languages count public passages only, so they are kept apart.
+    let key = format!(
+        "{deployment}#{}",
+        if public_only { "public" } else { "all" }
+    );
+    let (known, fresh) = cache.languages_of(&key);
+    let reading = (!fresh)
+        .then(|| Reading::start(&cache.reading_languages, &key))
+        .flatten();
+    let read = reading.map(|reading| {
+        let (pool, sources, kept) = (pool.clone(), sources.to_vec(), cache.languages.clone());
+        async move {
+            match read_languages(&pool, &sources, public_only).await {
+                Ok(found) => {
+                    if let Ok(mut kept) = kept.lock() {
+                        // One entry per deployment and channel, bounded by the manifests.
+                        kept.insert(key, (Instant::now(), found));
+                    }
+                }
+                Err(why) => {
+                    tracing::warn!(deployment = %key, %why, "the sources' languages could not be read; the last read stands in")
+                }
             }
+            drop(reading);
         }
-        let mut ranked: Vec<(String, i64)> = counts.into_iter().collect();
-        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        ranked.truncate(MAX_LANGUAGES);
-        Ok::<_, crate::Error>(ranked.into_iter().map(|(lang, _)| lang).collect::<Vec<_>>())
+    });
+    (known, read)
+}
+
+/// Passages per language, summed over the projects the sources are in (T-4281), most first.
+async fn read_languages(
+    pool: &sqlx::PgPool,
+    sources: &[(String, Vec<String>)],
+    public_only: bool,
+) -> Result<Vec<String>, crate::Error> {
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for (project, names) in sources {
+        let mut tx = crate::project_scope(pool, project).await?;
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT c.lang, count(*)::int8 FROM chunks c JOIN sites s ON s.id = c.site_id \
+             WHERE s.source = ANY($1) AND (NOT $2 OR c.visibility = 'public') AND c.lang IS NOT NULL \
+             GROUP BY c.lang",
+        )
+        .bind(names)
+        .bind(public_only)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.rollback().await?;
+        for (lang, n) in rows {
+            *counts.entry(lang).or_default() += n;
+        }
     }
-    .await;
-    match found {
-        Ok(found) => {
-            ask.cache.keep_languages(ask.deployment, found.clone());
-            found
-        }
-        Err(why) => {
-            tracing::warn!(deployment = %ask.deployment, %why, "the sources' languages could not be read");
-            Vec::new()
+    let mut ranked: Vec<(String, i64)> = counts.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    ranked.truncate(MAX_LANGUAGES);
+    Ok(ranked.into_iter().map(|(lang, _)| lang).collect())
+}
+
+/// A background read in flight, by key; the key is free again when it is dropped, a panic
+/// included, so one read runs per key at a time.
+struct Reading {
+    keys: std::sync::Arc<Mutex<HashSet<String>>>,
+    key: String,
+}
+
+impl Reading {
+    fn start(keys: &std::sync::Arc<Mutex<HashSet<String>>>, key: &str) -> Option<Self> {
+        keys.lock().ok()?.insert(key.to_owned()).then(|| Self {
+            keys: keys.clone(),
+            key: key.to_owned(),
+        })
+    }
+}
+
+impl Drop for Reading {
+    fn drop(&mut self) {
+        if let Ok(mut keys) = self.keys.lock() {
+            keys.remove(&self.key);
         }
     }
 }
@@ -1211,10 +1310,8 @@ pub fn holdings(connectors: &[Connected], live: &[Shown], base: &url::Url) -> Ve
 /// [`holdings`] cited at each Endpoint's dataset page where the sources hold one, so the answer
 /// links the page and not the Endpoint's address (T-4799); a lookup that fails keeps the address.
 async fn holdings_linked(ask: &Ask<'_>, held: Vec<(String, Hit)>) -> Vec<(String, Hit)> {
-    let pages = futures_util::future::join_all(held.iter().map(|(slug, _)| {
-        crate::endpoint_page_projects(ask.pool, slug, ask.sources, ask.public_only)
-    }))
-    .await;
+    let pages =
+        futures_util::future::join_all(held.iter().map(|(slug, _)| endpoint_page(ask, slug))).await;
     held.into_iter()
         .zip(pages)
         .map(|((slug, mut hit), page)| {
@@ -1312,8 +1409,13 @@ pub struct AnswerCache {
     entries: Mutex<HashMap<[u8; 32], Cached>>,
     /// Each Endpoint's type list, by slug, for [`TYPES_LIFE`].
     types: Mutex<HashMap<String, (Instant, Vec<String>)>>,
-    /// Each deployment's source languages, by name, for [`TYPES_LIFE`] (T-4259).
-    languages: Mutex<HashMap<String, (Instant, Vec<String>)>>,
+    /// Each deployment's source languages, by `{name}#{channel}`, read in the background and
+    /// read again after [`LANGUAGES_LIFE`] (T-4259, T-7765).
+    languages: std::sync::Arc<Mutex<HashMap<String, KeptLanguages>>>,
+    /// The deployments whose languages are being read now.
+    reading_languages: std::sync::Arc<Mutex<HashSet<String>>>,
+    /// Each page lookup's answer, or its last deadline, by [`page_key`] (T-7765).
+    pages: Mutex<HashMap<String, PageKept>>,
     /// Each Endpoint's public `tools/list`, by slug, for [`TOOLS_LIFE`] (T-4683).
     tools: Mutex<HashMap<String, (Instant, Vec<Value>)>>,
     /// The Endpoints, by slug, whose last listing failed: how many times in a row, and until
@@ -1330,6 +1432,18 @@ pub struct AnswerCache {
     digests: Mutex<HashMap<String, (Instant, String)>>,
     /// Each catalogue Endpoint's organizations, by slug, read while warming (T-4746).
     publishers: Mutex<HashMap<String, (Instant, Vec<Publisher>)>>,
+}
+
+/// When a deployment's languages were read, and what they are.
+type KeptLanguages = (Instant, Vec<String>);
+
+/// A page lookup as [`kept_lookup`] keeps it.
+#[derive(Debug, Clone)]
+enum PageKept {
+    /// When it answered, and its page or none.
+    Answered(Instant, Option<String>),
+    /// How many times in a row it waited out its deadline, and until when it is left alone.
+    Missed(u32, Instant),
 }
 
 /// When a model was read, and the model.
@@ -1500,18 +1614,46 @@ impl AnswerCache {
         }
     }
 
-    fn languages_of(&self, deployment: &str) -> Option<Vec<String>> {
-        let languages = self.languages.lock().ok()?;
-        languages
-            .get(deployment)
-            .filter(|(at, _)| at.elapsed() < TYPES_LIFE)
-            .map(|(_, listed)| listed.clone())
+    /// The page kept for `key` within [`PAGE_LIFE`]; else `Err` with how many deadlines in a
+    /// row it waited out, `None` while its backoff runs.
+    fn page_of(&self, key: &str) -> Result<Option<String>, Option<u32>> {
+        let kept = self.pages.lock().ok().and_then(|p| p.get(key).cloned());
+        match kept {
+            Some(PageKept::Answered(at, page)) if at.elapsed() < PAGE_LIFE => Ok(page),
+            Some(PageKept::Missed(_, until)) if Instant::now() < until => Err(None),
+            Some(PageKept::Missed(misses, _)) => Err(Some(misses)),
+            _ => Err(Some(0)),
+        }
     }
 
-    fn keep_languages(&self, deployment: &str, listed: Vec<String>) {
-        if let Ok(mut languages) = self.languages.lock() {
-            // One entry per deployment, so it is bounded by the manifests.
-            languages.insert(deployment.to_owned(), (Instant::now(), listed));
+    fn forget_page(&self, key: &str) {
+        if let Ok(mut pages) = self.pages.lock() {
+            pages.remove(key);
+        }
+    }
+
+    fn keep_page(&self, key: &str, kept: PageKept) {
+        if let Ok(mut pages) = self.pages.lock() {
+            // Bounded by the deployments, their Endpoints and types; an answer past its life
+            // goes when the map grows past the answers' own bound.
+            if pages.len() >= CACHE_ENTRIES {
+                pages.retain(
+                    |_, k| matches!(k, PageKept::Answered(at, _) if at.elapsed() < PAGE_LIFE),
+                );
+            }
+            pages.insert(key.to_owned(), kept);
+        }
+    }
+
+    /// The languages last read for `key`, and whether that read is younger than
+    /// [`LANGUAGES_LIFE`].
+    fn languages_of(&self, key: &str) -> (Option<Vec<String>>, bool) {
+        let Ok(languages) = self.languages.lock() else {
+            return (None, false);
+        };
+        match languages.get(key) {
+            Some((at, listed)) => (Some(listed.clone()), at.elapsed() < LANGUAGES_LIFE),
+            None => (None, false),
         }
     }
 
@@ -2234,7 +2376,33 @@ async fn read(ask: &Ask<'_>, connector: &Connected, wanted: &Read) -> Result<Tab
             super::view::finish(ask, connector, schema, &mut table, read, top).await;
         }
     }
+    table.map_read = map_read(connector, wanted, &table, schema);
     Ok(table)
+}
+
+/// The read a visitor's map source answers again (T-7755): a public Endpoint's plain list whose
+/// map draws fewer entities than match. A person's read keeps the rows it drew: no token is held.
+fn map_read(
+    connector: &Connected,
+    wanted: &Read,
+    table: &Table,
+    schema: &Value,
+) -> Option<super::map_source::Read> {
+    let more = table
+        .total
+        .is_some_and(|total| total > table.rows.len() as u64);
+    if connector.surface.token.is_some() || !matches!(wanted.view, View::List) || !more {
+        return None;
+    }
+    let spec = table.map.as_ref()?;
+    super::map_source::Read::of(
+        &connector.surface.slug,
+        &wanted.kind,
+        wanted.q.as_deref(),
+        connector.surface.timeout,
+        spec,
+        schema,
+    )
 }
 
 /// The broker's profile of a broad read's type (`summarize`, T-4680), read beside its rows; `None`
@@ -2385,8 +2553,11 @@ async fn dataset_or(
             return Ok(connector.dataset.clone());
         }
         match own {
-            Some(own) => Ok(own),
-            None => rows_dataset(ask, connector, kind).await,
+            Some(own) => Ok::<_, crate::Error>(own),
+            None => match kept_rows_dataset(ask, connector, kind).await? {
+                Looked::Page(page) => Ok(page),
+                Looked::Deadline | Looked::Skipped => Ok(None),
+            },
         }
     };
     match bounded(PAGE_DEADLINE, found).await {
@@ -2414,22 +2585,109 @@ async fn bounded<T>(deadline: Duration, work: impl std::future::Future<Output = 
     tokio::time::timeout(deadline, work).await.ok()
 }
 
+/// How long a page lookup's answer is kept: a dataset page changes with a crawl, not with a
+/// question (T-7765).
+const PAGE_LIFE: Duration = Duration::from_secs(3600);
+
+/// What a page lookup gave a question (T-7765).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Looked {
+    /// It answered, now or within [`PAGE_LIFE`]: the page or none.
+    Page(Option<String>),
+    /// It waited out its deadline now.
+    Deadline,
+    /// It waited out its deadline lately, so it was not asked: the backoff of a connector's list,
+    /// `BACKOFF_FIRST` doubled on each miss up to `BACKOFF_MAX`.
+    Skipped,
+}
+
+/// The key a page lookup is kept by: the deployment and channel decide the sources it reads.
+fn page_key(ask: &Ask<'_>, what: &str) -> String {
+    format!("{}#{}|{what}", ask.deployment, ask.public_only)
+}
+
+/// `lookup` for `key` within `deadline`, or what it answered last (T-7765: on prod the page scans
+/// waited out their deadline in 15 of 19 tables and 6 of 13 namings, each question again). An
+/// answer is kept for [`PAGE_LIFE`]; a lookup cut at its deadline, or by a caller's own deadline
+/// (the guard counts a drop as a miss), is skipped until its backoff passes. A failed lookup is
+/// neither kept nor backed off.
+async fn kept_lookup<F>(
+    cache: &AnswerCache,
+    key: &str,
+    deadline: Duration,
+    lookup: F,
+) -> Result<Looked, crate::Error>
+where
+    F: std::future::Future<Output = Result<Option<String>, crate::Error>>,
+{
+    let misses = match cache.page_of(key) {
+        Ok(page) => return Ok(Looked::Page(page)),
+        Err(None) => return Ok(Looked::Skipped),
+        Err(Some(misses)) => misses,
+    };
+    let mut miss = Miss::new(cache, key, misses);
+    let found = bounded(deadline, lookup).await;
+    match found {
+        Some(Ok(page)) => {
+            miss.armed = false;
+            cache.keep_page(key, PageKept::Answered(Instant::now(), page.clone()));
+            Ok(Looked::Page(page))
+        }
+        Some(Err(why)) => {
+            miss.armed = false;
+            Err(why)
+        }
+        None => Ok(Looked::Deadline),
+    }
+}
+
+/// Counts a page lookup as missed when it is dropped before it answered: its own deadline, or a
+/// caller's around it.
+struct Miss<'a> {
+    cache: &'a AnswerCache,
+    key: &'a str,
+    misses: u32,
+    armed: bool,
+}
+
+impl<'a> Miss<'a> {
+    fn new(cache: &'a AnswerCache, key: &'a str, misses: u32) -> Self {
+        Self {
+            cache,
+            key,
+            misses,
+            armed: true,
+        }
+    }
+}
+
+impl Drop for Miss<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let wait = BACKOFF_FIRST
+                .saturating_mul(1 << self.misses.min(4))
+                .min(BACKOFF_MAX);
+            self.cache.keep_page(
+                self.key,
+                PageKept::Missed(self.misses + 1, Instant::now() + wait),
+            );
+        }
+    }
+}
+
 /// [`rows_dataset`] beside a read, a step of the turn: `Some` the page or none, also when
 /// [`PAGE_DEADLINE`] passed; `None` when the lookup failed, and the table looks it up again.
 async fn page_step(ask: &Ask<'_>, connector: &Connected, kind: &str) -> Option<Option<String>> {
     let began = Instant::now();
-    let found = match bounded(PAGE_DEADLINE, rows_dataset(ask, connector, kind)).await {
-        Some(Ok(page)) => Some(page),
-        Some(Err(why)) => {
+    let (found, output) = match kept_rows_dataset(ask, connector, kind).await {
+        Ok(Looked::Page(Some(page))) => (Some(Some(page)), "found"),
+        Ok(Looked::Page(None)) => (Some(None), "none"),
+        Ok(Looked::Deadline) => (Some(None), "deadline"),
+        Ok(Looked::Skipped) => (Some(None), "skipped"),
+        Err(why) => {
             tracing::warn!(deployment = %ask.deployment, %why, "the Endpoint's page could not be looked up");
-            None
+            (None, "none")
         }
-        None => Some(None),
-    };
-    let output = match &found {
-        Some(Some(_)) => "found",
-        Some(None) if began.elapsed() >= PAGE_DEADLINE => "deadline",
-        _ => "none",
     };
     ask.trace
         .note("tool", "dataset_page", began, Some(kind), Some(output));
@@ -2448,6 +2706,38 @@ async fn model_step(
     ask.trace
         .note("tool", "data_model", began, Some(kind), Some(found));
     model
+}
+
+/// [`rows_dataset`] kept per deployment, Endpoint and type (T-7765).
+async fn kept_rows_dataset(
+    ask: &Ask<'_>,
+    connector: &Connected,
+    kind: &str,
+) -> Result<Looked, crate::Error> {
+    let key = page_key(ask, &format!("rows {} {kind}", connector.surface.slug));
+    kept_lookup(
+        ask.cache,
+        &key,
+        PAGE_DEADLINE,
+        rows_dataset(ask, connector, kind),
+    )
+    .await
+}
+
+/// The page the sources hold about the Endpoint `slug` ([`crate::endpoint_page_projects`]), kept
+/// per deployment (T-7765); none when the lookup waits out [`PAGE_DEADLINE`] or is backed off.
+pub(super) async fn endpoint_page(
+    ask: &Ask<'_>,
+    slug: &str,
+) -> Result<Option<String>, crate::Error> {
+    let key = page_key(ask, &format!("endpoint {slug}"));
+    let lookup = crate::endpoint_page_projects(ask.pool, slug, ask.sources, ask.public_only);
+    Ok(
+        match kept_lookup(ask.cache, &key, PAGE_DEADLINE, lookup).await? {
+            Looked::Page(page) => page,
+            Looked::Deadline | Looked::Skipped => None,
+        },
+    )
 }
 
 /// The dataset page of `kind` read from `connector` that names no `isPartOf` of its rows:
@@ -3048,7 +3338,25 @@ fn day_reached(now: time::OffsetDateTime, zone: Option<super::clock::Zone>) -> S
 }
 
 fn stage(stage: &'static str, topic: Option<String>) -> Event {
-    Event::Stage { stage, topic }
+    staged(stage, topic, Detail::default())
+}
+
+/// A stage with what it does in the catalogue's words (T-7753).
+fn staged(stage: &'static str, topic: Option<String>, detail: Detail) -> Event {
+    Event::Stage {
+        stage,
+        topic,
+        detail,
+    }
+}
+
+/// A search's stage: its terms and how many sources it searches (T-7753).
+fn searching(ask: &Ask<'_>, query: &str) -> Event {
+    staged(
+        "searching",
+        Some(query.to_owned()),
+        Detail::counted(ask.sources.len()),
+    )
 }
 
 fn millis(took: Duration) -> u64 {
@@ -3062,7 +3370,7 @@ async fn searched(ask: &Ask<'_>, events: &Sender<Event>, query: &str) -> Option<
         endpoint: None,
         status,
     };
-    send(events, stage("searching", Some(query.to_owned()))).await;
+    send(events, searching(ask, query)).await;
     send(events, tool("started")).await;
     let hits = search(ask, query)
         .await
@@ -3145,13 +3453,13 @@ where
 }
 
 /// The steps of a search that already ran, as `searched` shows them while it runs.
-async fn search_steps(events: &Sender<Event>, query: &str, found: bool) {
+async fn search_steps(ask: &Ask<'_>, events: &Sender<Event>, query: &str, found: bool) {
     let tool = |status| Event::Tool {
         name: "search".into(),
         endpoint: None,
         status,
     };
-    send(events, stage("searching", Some(query.to_owned()))).await;
+    send(events, searching(ask, query)).await;
     send(events, tool("started")).await;
     send(events, tool(if found { "done" } else { "failed" })).await;
 }
@@ -3446,7 +3754,8 @@ async fn listed(ask: &Ask<'_>, history: &[Turn]) -> Listed {
         .rev()
         .find(|turn| turn.role == "assistant")
         .map(|turn| turn.text.as_str());
-    let ((live, missing), languages) = tokio::join!(live(ask, said), languages(ask));
+    let languages = languages(ask);
+    let (live, missing) = live(ask, said).await;
     let listed = format!(
         "{} connectors listed, {} did not answer",
         live.len(),
@@ -3553,7 +3862,7 @@ async fn answer_routed(
         return spent;
     };
     let (best, rounds, searches) = if routing.catalogue {
-        send(events, stage("searching", Some(routing.queries.join(", ")))).await;
+        send(events, searching(ask, &routing.queries.join(", "))).await;
         let pages = catalogue_passages(ask, &routing.queries, &live).await;
         (pages, 1, routing.queries.len())
     } else {
@@ -3666,7 +3975,7 @@ struct Opening<'a> {
     early: Option<Routing>,
     direct: bool,
     wanted: Vec<(Read, &'a Connected)>,
-    read: Vec<Result<Table, String>>,
+    read: Vec<Timed>,
     /// The first round, when it finished first.
     first: Option<First>,
     /// The first round, still searching or judging while `first` is `None`.
@@ -3720,6 +4029,15 @@ async fn opening<'a>(
                 }
                 _ => Vec::new(),
             };
+            for (w, connector) in &wanted {
+                let detail = Detail::read(connector, w.q.as_deref());
+                send(
+                    q.events,
+                    staged("reading", Some(w.kind.to_string()), detail),
+                )
+                .await;
+                send(q.events, read_tool(&w.endpoint, "started")).await;
+            }
             let read = read_all(q.ask, &wanted).await;
             (wanted, read)
         };
@@ -3756,7 +4074,7 @@ impl Opening<'_> {
             && self
                 .read
                 .iter()
-                .any(|r| r.as_ref().is_ok_and(|t| !t.rows.is_empty()))
+                .any(|(r, _)| r.as_ref().is_ok_and(|t| !t.rows.is_empty()))
     }
 
     /// The first round, waited for and counted, its step shown unless the message is direct.
@@ -3767,7 +4085,7 @@ impl Opening<'_> {
             None => (&mut self.search).await,
         };
         if !self.direct {
-            search_steps(q.events, q.question, first.0.is_some()).await;
+            search_steps(q.ask, q.events, q.question, first.0.is_some()).await;
         }
         first_counted(q.ask.deployment, spent, first, q.question, !self.direct)
     }
@@ -3984,6 +4302,15 @@ async fn narrowed<'a>(
         queries.iter().take(2).cloned().collect()
     };
     let began = Instant::now();
+    // A narrowing that waited out its deadline lately is skipped until its backoff passes, as a
+    // page lookup is (T-7765): the reads then take their whole type, as past the deadline.
+    let key = page_key(ask, "narrowing");
+    let Err(Some(misses)) = ask.cache.page_of(&key) else {
+        ask.trace
+            .note("tool", "dataset_narrowing", began, None, Some("skipped"));
+        return wanted;
+    };
+    let mut miss = Miss::new(ask.cache, &key, misses);
     let found = bounded(NARROW_DEADLINE, async {
         let pages: Vec<String> = datasets(ask, &asked)
             .await
@@ -4029,6 +4356,12 @@ async fn narrowed<'a>(
             .join("\n"),
         None => "deadline".to_owned(),
     };
+    if found.is_some() {
+        // In time: the next question narrows again, and a past miss is forgotten.
+        miss.armed = false;
+        ask.cache.forget_page(&key);
+    }
+    drop(miss);
     ask.trace
         .note("tool", "dataset_narrowing", began, None, Some(&output));
     for ((w, _), page) in wanted.iter_mut().zip(found.unwrap_or_default()) {
@@ -4041,8 +4374,24 @@ async fn narrowed<'a>(
 
 /// The reads, run at once: two of a slow Endpoint used to take their sum of the answer's time
 /// (T-4680).
-async fn read_all(ask: &Ask<'_>, wanted: &[(Read, &Connected)]) -> Vec<Result<Table, String>> {
-    futures_util::future::join_all(wanted.iter().map(|(w, c)| read(ask, c, w))).await
+async fn read_all(ask: &Ask<'_>, wanted: &[(Read, &Connected)]) -> Vec<Timed> {
+    futures_util::future::join_all(wanted.iter().map(|(w, c)| async move {
+        let at = Instant::now();
+        (read(ask, c, w).await, millis(at.elapsed()))
+    }))
+    .await
+}
+
+/// A read's table or why there is none, and how long it took in milliseconds (T-7753).
+type Timed = (Result<Table, String>, u64);
+
+/// A router read's `tool` event with `status`.
+fn read_tool(endpoint: &str, status: &'static str) -> Event {
+    Event::Tool {
+        name: "query_entities".into(),
+        endpoint: Some(endpoint.to_owned()),
+        status,
+    }
 }
 
 /// The router's tables, sent before an answer that streams; a data answer sends them itself, and
@@ -4060,12 +4409,12 @@ async fn tables_or_none(
     q: Question<'_, '_>,
     routing: &Routing,
     wanted: &[(Read, &Connected)],
-    read: Vec<Result<Table, String>>,
+    read: Vec<Timed>,
 ) -> Option<Vec<Table>> {
     let none = match wanted {
         [(w, _)] if is_catalogue(&w.endpoint) && !routing.rag => read
             .iter()
-            .all(|r| r.as_ref().is_ok_and(|t| t.rows.is_empty()))
+            .all(|(r, _)| r.as_ref().is_ok_and(|t| t.rows.is_empty()))
             .then(|| w.kind.clone()),
         _ => None,
     };
@@ -4081,39 +4430,33 @@ async fn tables_or_none(
     None
 }
 
-/// The reads' steps, streamed in the router's order, and their tables in that order, so the tables
-/// are numbered the same way every time; a failed or empty read adds no table. The tables are sent
-/// later, a data answer's only when it cites them (T-4741). `None` once the client is gone.
+/// The reads' ends, streamed in the router's order, and their tables in that order, so the tables
+/// are numbered the same way every time; a failed or empty read adds no table. Each read's stage
+/// went out when it started (`opening`); its end carries the count and the time (T-7753). The
+/// tables are sent later, a data answer's only when it cites them (T-4741). `None` once the
+/// client is gone.
 async fn read_tables(
     ask: &Ask<'_>,
     wanted: &[(Read, &Connected)],
-    read: Vec<Result<Table, String>>,
+    read: Vec<Timed>,
     events: &Sender<Event>,
 ) -> Option<Vec<Table>> {
     if events.is_closed() {
         return None;
     }
-    let tool = |endpoint: &str, status| Event::Tool {
-        name: "query_entities".into(),
-        endpoint: Some(endpoint.to_owned()),
-        status,
-    };
-    for (w, _) in wanted {
-        send(events, stage("reading", Some(w.kind.to_string()))).await;
-        send(events, tool(&w.endpoint, "started")).await;
-    }
     let mut tables: Vec<Table> = Vec::new();
-    for ((w, connector), result) in wanted.iter().zip(read) {
+    for ((w, connector), (result, ms)) in wanted.iter().zip(read) {
         match result {
             Ok(table) => {
-                send(events, tool(&w.endpoint, "done")).await;
-                let step = super::agent::Step::new(
+                send(events, read_tool(&w.endpoint, "done")).await;
+                let mut step = super::agent::Step::new(
                     connector,
                     Some(w.kind.clone()),
                     w.q.as_deref(),
                     table.total,
                     table.dataset.clone(),
                 );
+                step.ms = Some(ms);
                 send(events, Event::Step(step)).await;
                 if !table.rows.is_empty() {
                     tables.push(table);
@@ -4122,7 +4465,7 @@ async fn read_tables(
             Err(why) => {
                 let endpoint = &w.endpoint;
                 tracing::warn!(deployment = %ask.deployment, %endpoint, %why, "a data read failed");
-                send(events, tool(&w.endpoint, "failed")).await;
+                send(events, read_tool(&w.endpoint, "failed")).await;
             }
         }
     }
@@ -4212,6 +4555,12 @@ async fn search_rounds(
         if !within(q.ask, spent, &messages, ROUTER_TOKENS) {
             break;
         }
+        let passages = best(&found.hits, q.ask.websites).len();
+        send(
+            q.events,
+            staged("checking", None, Detail::counted(passages)),
+        )
+        .await;
         let at = Instant::now();
         let model = judge.model.unwrap_or(q.ask.model.name());
         let call = q.ask.trace.pending("judge", model, at, &messages);
@@ -4227,7 +4576,19 @@ async fn search_rounds(
                 count(spent, &reply);
                 spent.served(Stage::Judge, &reply);
                 let seen: HashSet<String> = found.asked.iter().map(|q| q.to_lowercase()).collect();
-                match verdict(&reply.text, &seen) {
+                let judged = verdict(&reply.text, &seen);
+                let said = match &judged {
+                    Verdict::More(_) => "more",
+                    Verdict::Answers => "answers",
+                    Verdict::Stop => "stop",
+                };
+                let detail = Detail {
+                    count: u64::try_from(passages).ok(),
+                    verdict: Some(said),
+                    ..Detail::default()
+                };
+                send(q.events, staged("checking", None, detail)).await;
+                match judged {
                     Verdict::More(next) => pending = next,
                     Verdict::Answers | Verdict::Stop => break,
                 }
@@ -4421,7 +4782,11 @@ async fn stream_answer(q: Question<'_, '_>, mut spent: Spent, answering: Answeri
         started,
         missing,
     } = answering;
-    send(events, stage("answering", None)).await;
+    send(
+        events,
+        staged("answering", None, Detail::counted(citations.len())),
+    )
+    .await;
     let call = Call {
         model: ask.answer_model,
         max_tokens: ask.output_tokens,
@@ -4508,6 +4873,130 @@ fn worth_text(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7765: a page lookup that waits out its deadline is not asked again while its backoff
+    /// runs, also when a caller's own deadline cut it; once the backoff passed it is asked, and
+    /// its answer serves the next questions without a lookup.
+    #[tokio::test]
+    async fn a_page_lookup_past_its_deadline_is_skipped_until_its_backoff_passes() {
+        let cache = AnswerCache::default();
+        let short = Duration::from_millis(20);
+        let dead = || std::future::pending::<Result<Option<String>, crate::Error>>();
+        let asked = std::sync::atomic::AtomicU32::new(0);
+        // Counts only a lookup that runs: an async block does nothing until it is polled.
+        let counted = |page: Option<&'static str>| {
+            let asked = &asked;
+            async move {
+                asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(page.map(str::to_owned))
+            }
+        };
+        assert_eq!(
+            kept_lookup(&cache, "d#true|rows bbsk Bridge", short, dead())
+                .await
+                .unwrap(),
+            Looked::Deadline
+        );
+        let began = Instant::now();
+        assert_eq!(
+            kept_lookup(&cache, "d#true|rows bbsk Bridge", short, counted(Some("x")))
+                .await
+                .unwrap(),
+            Looked::Skipped
+        );
+        assert!(began.elapsed() < short);
+        // A caller's deadline around the lookup counts as a miss too (name_sources).
+        let cut = bounded(
+            short,
+            kept_lookup(
+                &cache,
+                "d#true|endpoint bbsk",
+                Duration::from_secs(5),
+                dead(),
+            ),
+        )
+        .await;
+        assert!(cut.is_none());
+        assert_eq!(cache.page_of("d#true|endpoint bbsk"), Err(None));
+        // The backoff passed: asked again, and its answer is kept.
+        cache.keep_page(
+            "d#true|rows bbsk Bridge",
+            PageKept::Missed(1, Instant::now()),
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                kept_lookup(
+                    &cache,
+                    "d#true|rows bbsk Bridge",
+                    short,
+                    counted(Some("https://p/"))
+                )
+                .await
+                .unwrap(),
+                Looked::Page(Some("https://p/".into()))
+            );
+        }
+        // Skipped, then asked once; the kept answer served the second question.
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // A miss after misses waits longer, up to BACKOFF_MAX.
+        cache.keep_page("d#true|narrowing", PageKept::Missed(9, Instant::now()));
+        drop(Miss::new(&cache, "d#true|narrowing", 9));
+        let kept = cache.pages.lock().unwrap().get("d#true|narrowing").cloned();
+        let Some(PageKept::Missed(10, until)) = kept else {
+            panic!("{kept:?}")
+        };
+        assert!(until <= Instant::now() + BACKOFF_MAX);
+        assert!(until > Instant::now() + BACKOFF_MAX - Duration::from_secs(5));
+    }
+
+    /// T-7765: a database that does not answer never holds the question. The pool's server
+    /// accepts and stays silent, as a count over a cold chunks table did for up to 20 s; the
+    /// languages come back at once, empty, and a second question starts no second read.
+    #[tokio::test]
+    async fn the_sources_languages_never_wait_on_a_slow_database() {
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = silent.local_addr().unwrap().port();
+        let held = tokio::spawn(async move {
+            let mut open = Vec::new();
+            while let Ok((socket, _)) = silent.accept().await {
+                open.push(socket);
+            }
+        });
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_secs(5))
+            .connect_lazy(&format!("postgres://jc@127.0.0.1:{port}/jc"))
+            .unwrap();
+        let cache = AnswerCache::default();
+        let sources = vec![("bbsk".to_owned(), vec!["web".to_owned()])];
+        let began = Instant::now();
+        let first = source_languages(&cache, &pool, "bbsk/chat", &sources, true);
+        assert!(
+            began.elapsed() < Duration::from_millis(100),
+            "{:?}",
+            began.elapsed()
+        );
+        assert!(first.is_empty());
+        assert!(cache
+            .reading_languages
+            .lock()
+            .unwrap()
+            .contains("bbsk/chat#public"));
+        // Kept languages are named while a read is in flight, and no second read starts.
+        cache.languages.lock().unwrap().insert(
+            "bbsk/chat#public".into(),
+            (Instant::now() - LANGUAGES_LIFE, vec!["sk".into()]),
+        );
+        let began = Instant::now();
+        assert_eq!(
+            source_languages(&cache, &pool, "bbsk/chat", &sources, true),
+            ["sk"]
+        );
+        assert!(began.elapsed() < Duration::from_millis(100));
+        assert_eq!(cache.reading_languages.lock().unwrap().len(), 1);
+        // The private channel's languages are kept apart from the public one's.
+        assert!(source_languages(&cache, &pool, "bbsk/chat", &sources, false).is_empty());
+        held.abort();
+    }
 
     /// The most tokens (by [`tokens_of`]) of a data answer's first call, messages and tool
     /// definitions, for one broad 50-row read with its profile and passages (T-5783: prod's data call
@@ -7351,6 +7840,89 @@ classes:
                 "refSchool"
             ]
         );
+    }
+
+    /// T-7755: a public Endpoint's plain list with more matches than rows gets a map source of
+    /// its own filter; a person's read, a ranked read, a whole read or a read without a map not.
+    #[test]
+    fn only_a_public_list_with_more_than_its_rows_gets_a_map_source() {
+        let connector = |token: Option<&str>| Connected {
+            titles: Default::default(),
+            endpoint: "bbsk/bbsk-registre".into(),
+            title: None,
+            surface: super::super::mcp::Surface {
+                gateway: "http://gateway".into(),
+                slug: "bbsk-registre".into(),
+                timeout: Duration::from_secs(3),
+                token: token.map(|t| super::super::mcp::PersonToken(t.into())),
+            },
+            tools: Vec::new(),
+            label: None,
+            siblings: Vec::new(),
+            dataset: None,
+        };
+        let wanted = |view| Read {
+            endpoint: "bbsk/bbsk-registre".into(),
+            kind: "Bridge".into(),
+            q: Some("yearBuilt<1900".into()),
+            order: None,
+            view,
+        };
+        let schema = json!({"properties": {"type": {}, "q": {}, "pick": {}, "format": {}, "cursor": {}, "limit": {}}});
+        let table = Table {
+            rows: vec![vec![json!("Most 1")]; READ_ROWS],
+            total: Some(1651),
+            map: Some(json!({"label": "name", "popup": []})),
+            ..Table::default()
+        };
+        let read =
+            map_read(&connector(None), &wanted(View::List), &table, &schema).expect("a source");
+        assert_eq!(
+            (read.slug.as_str(), read.kind.as_str()),
+            ("bbsk-registre", "Bridge")
+        );
+        assert_eq!(
+            read.q.as_deref(),
+            Some("yearBuilt<1900"),
+            "the read's own filter"
+        );
+        assert_eq!(read.fields, vec!["name".to_owned()]);
+        assert_eq!(read.timeout, Duration::from_secs(3));
+        assert_eq!(
+            map_read(
+                &connector(Some("person")),
+                &wanted(View::List),
+                &table,
+                &schema
+            ),
+            None
+        );
+        assert_eq!(
+            map_read(&connector(None), &wanted(View::Top(5)), &table, &schema),
+            None
+        );
+        let whole = Table {
+            total: Some(READ_ROWS as u64),
+            ..table.clone()
+        };
+        assert_eq!(
+            map_read(&connector(None), &wanted(View::List), &whole, &schema),
+            None
+        );
+        let unmapped = Table {
+            map: None,
+            ..table.clone()
+        };
+        assert_eq!(
+            map_read(&connector(None), &wanted(View::List), &unmapped, &schema),
+            None
+        );
+        // Nothing of the source reaches the event or the model.
+        let sent = json!(Table {
+            map_read: Some(read),
+            ..table
+        });
+        assert!(sent.get("map_read").is_none() && sent.get("mapRead").is_none());
     }
 
     /// T-4803: prod's oldest-bridge rows (bbsk-registre, read by yearBuilt) as the answer reads

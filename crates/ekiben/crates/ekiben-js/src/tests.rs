@@ -238,7 +238,8 @@ async fn a_spent_run_budget_runs_no_script() {
 async fn scripts_take_turns_for_a_quarter_of_the_cores() {
     // Twice the slots plus one spins of 50 ms each: run all at once they end in about 50 ms,
     // in turns of `slots` they need three turns.
-    let slots = script_slots().available_permits();
+    // Other tests may hold slots right now: count them from the cores, not what is free.
+    let slots = slots_for(std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
     let p = Arc::new(processor(
         json!({ "code": "while (true) {}", "timeout_ms": 50 }),
     ));
@@ -262,6 +263,204 @@ async fn scripts_take_turns_for_a_quarter_of_the_cores() {
     );
 }
 
+#[tokio::test]
+async fn a_structured_message_reaches_the_script_as_an_object() {
+    let part = Part::from_structured(Value::from_json_value(json!({"a": 1, "b": [true]})));
+    let out = run(
+        "const o = bento.v0_msg_as_structured(); bento.v0_msg_set_string(String(o.a + 1) + o.b.length);",
+        vec![part],
+    )
+    .await;
+    assert_eq!(flag(&out[0]), "");
+    assert_eq!(text(&out[0]), "21");
+}
+
+#[tokio::test]
+async fn thrown_values_name_what_was_thrown() {
+    let cases = [
+        ("throw new Error('bad row');", "javascript: bad row"),
+        (
+            "throw 42;",
+            "javascript: the script threw a value that is not an Error",
+        ),
+        (
+            "throw { code: 1 };",
+            "javascript: the script threw a value that is not an Error",
+        ),
+        (
+            "bento.v0_msg_get_meta('missing');",
+            "javascript: key not found",
+        ),
+        (
+            "const e = new Error('x'); Object.defineProperty(e, 'message', { value: undefined }); throw e;",
+            "javascript: an exception",
+        ),
+    ];
+    for (code, expected) in cases {
+        let out = run(code, vec![Part::from_str("{}")]).await;
+        assert_eq!(flag(&out[0]), expected, "{code}");
+    }
+}
+
+fn limits() -> Limits {
+    Limits {
+        timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+        memory_bytes: usize::try_from(DEFAULT_MEMORY_MB << 20).unwrap_or(usize::MAX),
+    }
+}
+
+#[test]
+fn console_lines_keep_their_level_and_stay_within_their_caps() {
+    let code = "console.warn('w', {a: 1}); console.error('e'); console.info('i'); \
+        console.log('x'.repeat(1023) + 'é' + 'tail'); \
+        for (let i = 0; i < 200; i++) console.log(i);";
+    let (batch, errors, logs) = run_batch(
+        Runtime::new,
+        code,
+        limits(),
+        Duration::from_secs(1),
+        vec![Part::from_str("m")],
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(text(&batch[0]), "m");
+    assert_eq!(
+        logs.len(),
+        MAX_LOG_LINES,
+        "one message writes at most {MAX_LOG_LINES} lines"
+    );
+    assert_eq!(logs[0], ("warn".to_string(), r#"w {"a":1}"#.to_string()));
+    assert_eq!(logs[1], ("error".to_string(), "e".to_string()));
+    assert_eq!(logs[2], ("info".to_string(), "i".to_string()));
+    // 1023 ASCII bytes, then a two-byte char that would cross 1024: the cut falls before it.
+    assert_eq!(logs[3].0, "info");
+    assert_eq!(logs[3].1, "x".repeat(1023));
+    assert_eq!(logs[4].1, "0");
+    assert_eq!(logs[99].1, "95");
+}
+
+#[test]
+fn a_line_of_exactly_the_cap_is_kept_whole() {
+    let (_, errors, logs) = run_batch(
+        Runtime::new,
+        "console.log('y'.repeat(1024)); console.log('z'.repeat(1025));",
+        limits(),
+        Duration::from_secs(1),
+        vec![Part::from_str("m")],
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(logs[0].1.len(), MAX_LOG_LINE);
+    assert_eq!(logs[1].1, "z".repeat(MAX_LOG_LINE));
+}
+
+#[test]
+fn an_engine_that_cannot_start_or_build_a_context_flags_each_message() {
+    let (batch, errors, _) = run_batch(
+        || Err(rquickjs::Error::Allocation),
+        "bento.v0_msg_set_string('never');",
+        limits(),
+        Duration::from_secs(1),
+        vec![Part::from_str("a"), Part::from_str("b")],
+    );
+    let failed = "javascript: starting the engine: Allocation failed while creating object";
+    assert_eq!(errors, [(0, failed.to_string()), (1, failed.to_string())]);
+    assert_eq!(text(&batch[1]), "b", "the message is left as it came");
+    // A memory limit far under what an author may set (1 MiB) leaves no room for a context.
+    let tiny = Limits {
+        timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+        memory_bytes: 1024,
+    };
+    let (batch, errors, _) = run_batch(
+        Runtime::new,
+        "bento.v0_msg_set_string('never');",
+        tiny,
+        Duration::from_secs(1),
+        vec![Part::from_str("a")],
+    );
+    assert_eq!(
+        errors,
+        [(
+            0,
+            "javascript: Allocation failed while creating object".to_string()
+        )]
+    );
+    assert_eq!(text(&batch[0]), "a");
+}
+
+#[test]
+fn reasons_name_the_limit_the_script_crossed() {
+    let l = Limits {
+        timeout: Duration::from_millis(70),
+        memory_bytes: 3 << 20,
+    };
+    assert_eq!(
+        reason("interrupted", l),
+        "javascript: the script ran past its limit of 70 ms"
+    );
+    assert_eq!(
+        reason("out of memory", l),
+        "javascript: the script used more than its limit of 3 MiB"
+    );
+    assert_eq!(
+        reason("x is not defined", l),
+        "javascript: x is not defined"
+    );
+}
+
+#[tokio::test]
+async fn the_registry_builds_and_lints_the_processor() {
+    let registry = Registry::new();
+    register(&registry);
+    assert!(registry.has_processor("javascript"));
+    let conf = |config: JsonValue| ComponentConfig {
+        label: "step".into(),
+        component_type: "javascript".into(),
+        config,
+        processors: Vec::new(),
+    };
+    let built = registry
+        .build_processor(
+            &conf(json!({"code": "bento.v0_msg_set_string('ok');"})),
+            &proc_ctx(),
+            "0",
+        )
+        .expect("builds");
+    let out = built
+        .process_batch(&proc_ctx(), vec![Part::from_str("x")])
+        .await
+        .expect("runs");
+    assert_eq!(text(&out[0][0]), "ok");
+    assert_eq!(
+        registry.lint_component("processor", &conf(json!({"code": 5}))),
+        vec!["processor javascript: field code: expected a string".to_string()]
+    );
+    let e = registry
+        .build_processor(
+            &conf(json!({"code": "1", "timeout_ms": 0})),
+            &proc_ctx(),
+            "0",
+        )
+        .err()
+        .map(|e| e.to_string());
+    assert_eq!(
+        e.as_deref(),
+        Some("configuration error: javascript: field timeout_ms: expected a whole number from 1 to 200")
+    );
+    let p = JavascriptProcessor::from_config(&conf(json!({"code": "1", "memory_mb": 2})))
+        .expect("builds");
+    assert_eq!(p.processor_type(), "javascript");
+    assert_eq!(p.label(), "step");
+    assert_eq!(p.limits.memory_bytes, 2 << 20);
+    assert_eq!(p.limits.timeout, Duration::from_millis(DEFAULT_TIMEOUT_MS));
+}
+
+#[test]
+fn a_quarter_of_the_cores_run_scripts() {
+    assert_eq!(
+        [1, 3, 4, 7, 8, 16, 17].map(slots_for),
+        [1, 1, 1, 1, 2, 4, 4]
+    );
+}
+
 #[test]
 fn lint_names_what_ekiben_refuses() {
     let errs = lint(&json!({"file": "a.js", "global_folders": ["/x"], "timeout_ms": 500}));
@@ -272,4 +471,45 @@ fn lint_names_what_ekiben_refuses() {
     assert!(all.contains("code"), "{all}");
     assert!(lint(&json!({"code": "1", "timeout_ms": 10, "memory_mb": 64})).is_empty());
     assert!(!lint(&json!({"code": "1", "memory_mb": 65})).is_empty());
+}
+
+/// Console errors and warnings reach the stream's log at their own level. (The info line is not
+/// asserted: other tests log it on threads without a subscriber, and tracing caches a callsite's
+/// interest process-wide, so this subscriber can miss it.)
+#[tokio::test]
+async fn console_lines_are_logged_at_their_level() {
+    #[derive(Clone)]
+    struct Buf(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Buf {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("lock").extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let buf = Buf(Arc::default());
+    let writer = buf.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_writer(move || writer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    run(
+        "console.error('red'); console.warn('amber');",
+        vec![Part::from_str("x")],
+    )
+    .await;
+    let logged = String::from_utf8(buf.0.lock().expect("lock").clone()).expect("utf-8");
+    let level = |text: &str| {
+        logged
+            .lines()
+            .find(|l| l.contains(text))
+            .and_then(|l| l.split_whitespace().next())
+            .map(str::to_owned)
+    };
+    assert_eq!(level("red").as_deref(), Some("ERROR"), "{logged}");
+    assert_eq!(level("amber").as_deref(), Some("WARN"), "{logged}");
 }

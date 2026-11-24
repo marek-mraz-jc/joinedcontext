@@ -6,7 +6,7 @@
  * a refusal is shown in words, and a person who does not own the space sees the buttons off.
  */
 // covers (T-2137, the module gate in gate_modules.test.ts): src/pages/spaces/SpacePersonalData.tsx
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
@@ -279,6 +279,181 @@ describe("a person's data in a space (DM-124, DM-126)", () => {
     ]);
     expect(await screen.findByText(T.proposals.empty)).toBeInTheDocument();
     await expectNoAxeViolations(container);
+  });
+
+  it("says a refused export or proposal in words, and a cancelled preview sends nothing", async () => {
+    const refusal = (detail: string) =>
+      json({ type: "about:blank", title: "Conflict", status: 409, detail }, 409);
+    const { sent } = renderSection((url, request) => {
+      if (url.pathname === `${BASE}/subjects/export`) return refusal("the broker did not answer");
+      if (url.pathname === `${BASE}/erasures` && url.searchParams.get("dryRun") === "All")
+        return json({ dryRun: true, entities: 0, groups: [] });
+      if (url.pathname === `${BASE}/erasures` && request.method === "POST")
+        return refusal("an erasure of this person is already proposed");
+      if (url.pathname === `${BASE}/erasures`) return json({ items: [] });
+      return undefined;
+    });
+    const user = await fill("r-42", "Art. 17 request 7");
+    await user.click(screen.getByRole("button", { name: T.export }));
+    expect(await screen.findByText("the broker did not answer")).toBeInTheDocument();
+
+    // a preview that finds nothing says so; closing it proposes nothing
+    await user.click(screen.getByRole("button", { name: T.erase }));
+    let dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(T.nothing)).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(sent.map((s) => s.search)).toEqual(["", "?dryRun=All"]);
+
+    await user.click(screen.getByRole("button", { name: T.erase }));
+    dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: T.confirm }));
+    expect(
+      await screen.findByText("an erasure of this person is already proposed"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    // the refused proposal keeps the subject on screen to correct and retry
+    expect(screen.getByLabelText(new RegExp(T.subject))).toHaveValue("r-42");
+  });
+
+  it("refuses a subject over the server's length before sending", async () => {
+    const { sent } = renderSection(() => undefined);
+    const subject = await screen.findByLabelText(new RegExp(T.subject));
+    // a filled-in value (autofill, script) is not held to maxLength the way typing is
+    fireEvent.change(subject, { target: { value: "r".repeat(257) } });
+    fireEvent.change(screen.getByLabelText(new RegExp(T.reason)), {
+      target: { value: "x".repeat(501) },
+    });
+    await userEvent.setup().click(screen.getByRole("button", { name: T.export }));
+    expect(await screen.findAllByText("Use at most 256 characters.")).toHaveLength(1);
+    expect(screen.getByText("Use at most 500 characters.")).toBeInTheDocument();
+    expect(sent).toHaveLength(0);
+  });
+
+  it("follows a failed erasure store by store, with each store's error", async () => {
+    const FAILED = {
+      id: "er-20261021-ffff",
+      state: "failed",
+      requestedAt: "2026-10-21T08:00:00Z",
+      proposedBy: "user:olli.virtanen",
+      // a stored time the browser cannot read is shown as stored, not as "Invalid Date"
+      expiresAt: "not-a-time",
+      entities: 2,
+      stores: {
+        broker: { state: "done", count: 2 },
+        ckanDatastore: { state: "failed", count: 0, error: "datastore_delete: 502" },
+        archive: { state: "pending", count: 0 },
+      },
+    };
+    renderSection((url, request) => {
+      if (url.pathname === `${BASE}/erasures/${FAILED.id}/approve`) return json(FAILED);
+      if (url.pathname === `${BASE}/erasures/${FAILED.id}`) return json(FAILED);
+      if (url.pathname === `${BASE}/erasures` && request.method === "GET")
+        return json({ items: [{ ...FAILED, state: "proposed" }] });
+      return undefined;
+    });
+    expect(await screen.findByText(/open until not-a-time/)).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: T.proposals.approve }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.type(within(dialog).getByLabelText(new RegExp(T.subject)), "r-42");
+    await user.click(within(dialog).getByRole("button", { name: T.approveConfirm }));
+    expect(await screen.findByText(/Erasure er-20261021-ffff failed in a store/)).toBeInTheDocument();
+    expect(screen.getByText("Current values and history: done, 2 removed")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Open data tables: failed: read the error and retry later, 0 removed datastore_delete: 502",
+      ),
+    ).toBeInTheDocument();
+    // a store or state the page has no words for is named as the server sent it
+    expect(screen.getByText("archive: waiting, 0 removed")).toBeInTheDocument();
+  });
+
+  it("declines a proposal with a reason, and shows a refused decision in the dialog", async () => {
+    const PROPOSED = {
+      id: "er-20261021-0a1b2c3d4e5f",
+      state: "proposed",
+      requestedAt: "2026-10-21T08:00:00Z",
+      proposedBy: "user:olli.virtanen",
+      // an older proposal carries no expiry: the line leaves it out instead of guessing
+      entities: 3,
+      stores: {},
+    };
+    let declined = false;
+    let declines = 0;
+    const { sent, container } = renderSection((url, request) => {
+      if (url.pathname === `${BASE}/erasures/${PROPOSED.id}/approve`)
+        return json(
+          { type: "about:blank", title: "Forbidden", status: 403, detail: "the identifier does not match the proposal" },
+          403,
+        );
+      if (url.pathname === `${BASE}/erasures/${PROPOSED.id}/decline`) {
+        declines += 1;
+        if (declines === 1)
+          return json({ type: "about:blank", title: "Conflict", status: 409, detail: "the proposal was approved meanwhile" }, 409);
+        declined = true;
+        return json({ ...PROPOSED, state: "declined" });
+      }
+      if (url.pathname === `${BASE}/erasures/${PROPOSED.id}`)
+        return json({ ...PROPOSED, state: "declined" });
+      if (url.pathname === `${BASE}/erasures` && request.method === "GET")
+        return json({ items: declined ? [] : [PROPOSED] });
+      return undefined;
+    });
+    const user = userEvent.setup();
+    // a refused approval stays in its dialog, in words; closing it clears what was typed
+    await user.click(await screen.findByRole("button", { name: T.proposals.approve }));
+    let dialog = await screen.findByRole("alertdialog");
+    await user.type(within(dialog).getByLabelText(new RegExp(T.subject)), "r-41");
+    await user.click(within(dialog).getByRole("button", { name: T.approveConfirm }));
+    expect(
+      await within(dialog).findByText("the identifier does not match the proposal"),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await user.click(screen.getByRole("button", { name: T.proposals.approve }));
+    dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByLabelText(new RegExp(T.subject))).toHaveValue("");
+    expect(within(dialog).queryByText("the identifier does not match the proposal")).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+
+    expect(screen.getByText(/open until$/)).toBeInTheDocument();
+    // closing the decline dialog decides nothing
+    await user.click(screen.getByRole("button", { name: T.proposals.decline }));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(sent).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: T.proposals.decline }));
+    dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(`Decline erasure ${PROPOSED.id}?`)).toBeInTheDocument();
+    expect(within(dialog).getByText(T.hint.declineReason)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: T.declineConfirm }));
+    expect(await within(dialog).findByText(T.reasonError.required)).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText(new RegExp(T.reason)), "  not a data subject request  ");
+    await user.click(within(dialog).getByRole("button", { name: T.declineConfirm }));
+    expect(await within(dialog).findByText("the proposal was approved meanwhile")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: T.declineConfirm }));
+    expect(await screen.findByText(T.proposals.empty)).toBeInTheDocument();
+    expect(sent.at(-1)).toEqual({
+      method: "POST",
+      path: `${BASE}/erasures/${PROPOSED.id}/decline`,
+      search: "",
+      body: { reason: "not a data subject request" },
+    });
+    await expectNoAxeViolations(container);
+  });
+
+  it("says a failed proposal list in words when the role is not the cause", async () => {
+    renderSection((url, request) =>
+      url.pathname === `${BASE}/erasures` && request.method === "GET"
+        ? json({ type: "about:blank", title: "Bad Gateway", status: 502, detail: "the erasure store did not answer" }, 502)
+        : undefined,
+    );
+    expect(await screen.findByText("the erasure store did not answer")).toBeInTheDocument();
+    expect(screen.queryByText(T.proposals.empty)).toBeNull();
+    expect(screen.queryByText(T.proposals.ownersOnly)).toBeNull();
   });
 
   it("shows the server's refusal in words and erases nothing", async () => {

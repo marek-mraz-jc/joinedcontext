@@ -2254,6 +2254,34 @@
         "evidence/T-7415/portal-hosts-none-400.png"
       ]
     },
+    "src/pages/portals/PortalAppearance.tsx": {
+      "walkedBy": "worker-t7743",
+      "date": "2026-11-23",
+      "screenshots": [
+        "evidence/T-7744/after/appearance-default-1440.png",
+        "evidence/T-7744/after/appearance-default-400.png",
+        "evidence/T-7744/after/appearance-overridden-1440.png",
+        "evidence/T-7744/after/appearance-overridden-400.png",
+        "evidence/T-7744/after/appearance-reset-1440.png",
+        "evidence/T-7744/after/appearance-reset-400.png",
+        "evidence/T-7744/after/appearance-refusal-1440.png",
+        "evidence/T-7744/after/appearance-refusal-400.png"
+      ]
+    },
+    "src/pages/portals/PortalDisplay.tsx": {
+      "walkedBy": "worker-t7743",
+      "date": "2026-11-23",
+      "screenshots": [
+        "evidence/T-7743/after/display-default-1440.png",
+        "evidence/T-7743/after/display-default-400.png",
+        "evidence/T-7743/after/display-overridden-1440.png",
+        "evidence/T-7743/after/display-overridden-400.png",
+        "evidence/T-7743/after/display-reset-1440.png",
+        "evidence/T-7743/after/display-reset-400.png",
+        "evidence/T-7743/after/display-refusal-1440.png",
+        "evidence/T-7743/after/display-refusal-400.png"
+      ]
+    },
     "src/pages/portals/PortalLayout.tsx": {
       "walkedBy": "worker-t7418",
       "date": "2026-11-20",

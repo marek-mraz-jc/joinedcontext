@@ -35,6 +35,8 @@ import {
   Tabs,
   tabPanelProps,
 } from "../../components/ui";
+import { PortalAppearanceTab } from "./PortalAppearance";
+import { PortalDisplayTab } from "./PortalDisplay";
 import { PortalFilesTab } from "./PortalFiles";
 import { PortalLayoutTab } from "./PortalLayout";
 import { PortalHostsPanel } from "./PortalHosts";
@@ -183,7 +185,6 @@ export function PortalsList(): JSX.Element {
         searchLabel={t("grid.searchIn", { list: t("portals.list.title") })}
         rows={items}
         rowKey={(portal) => portal.metadata.name}
-        query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
         name={{
           id: "title",
           label: t("portals.field.title"),
@@ -390,7 +391,7 @@ export function PortalEditor({ name }: { name: string }): JSX.Element {
   );
 }
 
-type PortalTab = "settings" | "sources" | "datasets" | "layout" | "files";
+type PortalTab = "settings" | "appearance" | "sources" | "datasets" | "layout" | "display" | "files";
 
 /** The views of an existing portal (ODP-15): its settings, its sources and run log, its datasets. */
 function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalManifest; form: JSX.Element }): JSX.Element {
@@ -405,9 +406,11 @@ function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalMa
         onChange={setTab}
         tabs={[
           { value: "settings", label: t("portals.tabs.settings") },
+          { value: "appearance", label: t("portals.tabs.appearance") },
           { value: "sources", label: t("portals.tabs.sources") },
           { value: "datasets", label: t("portals.tabs.datasets") },
           { value: "layout", label: t("portals.tabs.layout") },
+          { value: "display", label: t("portals.tabs.display") },
           { value: "files", label: t("portals.tabs.files") },
         ]}
       />
@@ -418,6 +421,10 @@ function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalMa
           <PortalSourcesTab name={name} spec={manifest.spec} />
         ) : tab === "layout" ? (
           <PortalLayoutTab name={name} spec={manifest.spec} />
+        ) : tab === "appearance" ? (
+          <PortalAppearanceTab name={name} spec={manifest.spec} />
+        ) : tab === "display" ? (
+          <PortalDisplayTab name={name} spec={manifest.spec} />
         ) : tab === "files" ? (
           <PortalFilesTab name={name} spec={manifest.spec} />
         ) : (

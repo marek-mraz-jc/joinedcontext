@@ -169,13 +169,14 @@ impl Outbound {
     }
 }
 
-/// Why one delivery attempt did not land. `timed_out` is the only class the
-/// caller's circuit breaker counts: an endpoint that answers — with any
-/// status — is alive.
+/// Why one delivery attempt did not land. `unreachable` is the only class
+/// the caller's circuit breaker counts: an endpoint that answers, with any
+/// status, is alive.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeliveryError {
-    /// The attempt ran out of time rather than being answered.
-    pub timed_out: bool,
+    /// Nothing answered: the deadline passed, or no connection could be
+    /// made (refused, reset, unresolvable).
+    pub unreachable: bool,
     /// Failure text for the log, the subscription status and the dead
     /// letter. Never carries endpoint credentials.
     pub message: String,
@@ -185,7 +186,7 @@ impl DeliveryError {
     /// The endpoint answered, or refused, within the deadline.
     pub fn failed(message: impl Into<String>) -> Self {
         Self {
-            timed_out: false,
+            unreachable: false,
             message: message.into(),
         }
     }
@@ -193,7 +194,7 @@ impl DeliveryError {
     /// The deadline passed with no answer.
     pub fn timeout(message: impl Into<String>) -> Self {
         Self {
-            timed_out: true,
+            unreachable: true,
             message: message.into(),
         }
     }
@@ -466,6 +467,26 @@ mod tests {
         reg
     }
 
+    /// Delivery goes to the sink the endpoint's scheme names, matched
+    /// case-insensitively; a dropped notification reaches the default `lost`,
+    /// which has no channel to tell anyone and leaves delivery working.
+    #[tokio::test]
+    async fn delivery_dispatches_on_the_endpoint_scheme() {
+        let reg = registry();
+        assert!(reg.sink_for_uri("ftp://h/n").is_none());
+        let sink = reg.sink_for_uri("HTTP://h/n").expect("http is served");
+        assert_eq!(sink.schemes(), &["http", "https"]);
+        sink.lost("http://h/n", "acme", "urn:s:1");
+        let out = Outbound::from_dead_letter(&json!({"uri": "http://h/n", "payload": {},
+            "accept": "application/json", "link": "", "receiverInfo": [], "notifierInfo": []}))
+        .expect("letter");
+        assert_eq!(
+            sink.deliver("http://h/n", &out, Duration::from_secs(1))
+                .await,
+            Ok(())
+        );
+    }
+
     /// 5.8.1.4 + Table 5.5.2-1: an endpoint scheme no sink serves is input
     /// data that does not meet the operation's requirements — BadRequestData
     /// (400), not OperationNotSupported. Create Subscription is supported.
@@ -579,6 +600,19 @@ mod tests {
                 ("MQTT-Version".to_owned(), "mqtt3.1.1".to_owned())
             ]
         );
+
+        // a pre-registry MQTT letter written without its mqtt params or a
+        // Content-Type reads back with the Table 7.2-1 defaults
+        let bare_mqtt = json!({"uri": "mqtt://h/t", "binding": "mqtt",
+            "payload": {"metadata": {}, "body": body}});
+        let o = Outbound::from_dead_letter(&bare_mqtt).expect("bare mqtt shape");
+        assert_eq!(o.accept, "application/json");
+        assert_eq!(o.link, "");
+        assert!(o.notifier_info.is_empty() && o.receiver_info.is_empty());
+
+        let torn = json!({"uri": "http://h/n", "payload": body, "headers": {"Link": link}});
+        let err = Outbound::from_dead_letter(&torn).expect_err("headers must be a pair list");
+        assert!(err.starts_with("dead letter headers unreadable"), "{err}");
 
         assert!(Outbound::from_dead_letter(&json!({"uri": "http://h/n"})).is_err());
     }
@@ -712,6 +746,43 @@ mod policy_tests {
         assert!(
             d <= DeliveryPolicy::MAX_BACKOFF,
             "2^34 backoff must not overflow: {d:?}"
+        );
+    }
+
+    /// `from_env` reads the three documented variables. The process
+    /// environment is shared by every test, so the check runs in a child
+    /// copy of this test binary with the variables set there only.
+    #[test]
+    fn from_env_reads_the_documented_variables() {
+        if std::env::var_os("ANTARES_TEST_NOTIFY_CHILD").is_some() {
+            let p = DeliveryPolicy::from_env().expect("valid values");
+            assert_eq!(p.attempts, 3);
+            assert_eq!(p.backoff, Duration::from_millis(250));
+            assert_eq!(p.max_age, Duration::from_secs(30));
+            return;
+        }
+        let run = |attempts: &str| {
+            std::process::Command::new(std::env::current_exe().expect("test binary"))
+                .args([
+                    "--exact",
+                    "policy_tests::from_env_reads_the_documented_variables",
+                ])
+                .env("ANTARES_TEST_NOTIFY_CHILD", "1")
+                .env("ANTARES_NOTIFY_ATTEMPTS", attempts)
+                .env("ANTARES_NOTIFY_BACKOFF_MS", "250")
+                .env("ANTARES_NOTIFY_MAX_AGE_SECS", "30")
+                .output()
+                .expect("child test run")
+        };
+        let ok = run("3");
+        let said = String::from_utf8_lossy(&ok.stdout);
+        assert!(ok.status.success() && said.contains("1 passed"), "{said}");
+        // a present but invalid value is a startup error, never the default
+        let bad = run("0");
+        assert!(
+            !bad.status.success(),
+            "{}",
+            String::from_utf8_lossy(&bad.stdout)
         );
     }
 

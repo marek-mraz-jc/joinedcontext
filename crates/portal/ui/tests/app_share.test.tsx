@@ -180,6 +180,19 @@ describe("the Share dialog on its own", () => {
     vi.restoreAllMocks();
   });
 
+  it("Cancel on the dialog opened from the catalogue leaves the catalogue as it was, with nothing written", async () => {
+    const user = userEvent.setup();
+    const fetchMock = renderApps([app()]);
+    const dialog = await openShare(user);
+    expect(await within(dialog).findByText("Members of banskabystrica: 7 people")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: en.apps.share.cancel }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("Air quality map")).toBeInTheDocument();
+    expect(screen.queryByText(/stopped/i)).toBeNull();
+    expect(writes(fetchMock)).toEqual([]);
+  });
+
   it("Cancel closes it without a write, and a failed count still lets the person choose", async () => {
     await i18n.changeLanguage("en");
     const user = userEvent.setup();

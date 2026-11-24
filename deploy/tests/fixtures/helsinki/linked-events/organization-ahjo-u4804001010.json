@@ -1,0 +1,25 @@
+{
+  "id": "ahjo:u4804001010",
+  "data_source": "ahjo",
+  "classification": "ahjo:9",
+  "name": "Kaupunginkirjasto",
+  "founding_date": "2017-06-01",
+  "dissolution_date": "2023-01-01",
+  "parent_organization": "https://api.hel.fi/linkedevents/v1/organization/ahjo:u48040010/",
+  "sub_organizations": [
+    "https://api.hel.fi/linkedevents/v1/organization/ahjo:u480400101010/",
+    "https://api.hel.fi/linkedevents/v1/organization/ahjo:u480400101020/",
+    "https://api.hel.fi/linkedevents/v1/organization/ahjo:u480400101040/"
+  ],
+  "affiliated_organizations": [],
+  "created_time": "2018-06-11T10:26:13.414106Z",
+  "last_modified_time": "2024-03-15T14:17:11.870601Z",
+  "is_affiliated": false,
+  "replaced_by": null,
+  "has_regular_users": false,
+  "web_store_merchants": [],
+  "web_store_accounts": [],
+  "@id": "https://api.hel.fi/linkedevents/v1/organization/ahjo:u4804001010/",
+  "@context": "http://schema.org",
+  "@type": "Organization"
+}

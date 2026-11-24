@@ -777,6 +777,309 @@ fn d3_dataset_page_shows_every_block_for_a_platform_dataset() {
     assert!(html.contains("href=\"/m/en/dataset/air/resource/csv\""));
 }
 
+/// T-7743: a display hides sections, orders the rest and the about rows and names a heading
+/// as escaped text; the page with the display removed again (reset) is the built-in page byte
+/// for byte.
+#[test]
+fn a_display_hides_orders_and_renames_dataset_sections_and_resets() {
+    let ds = with_dists(
+        dataset(
+            "air",
+            json!({ "endpointUrl": ep(""), "licenceId": "cc-by", "tags": ["air"],
+                    "extras": { "x_kraj": "Banskobystrický <kraj>" } }),
+        ),
+        vec![dist("csv", &ep("file.csv"), json!({}))],
+    );
+    let page = |branding: Value| {
+        let mut c = cat();
+        c.branding = Some(branding);
+        render_dataset_page_full(
+            &c,
+            None,
+            &ds,
+            None,
+            &[],
+            &[],
+            false,
+            "en",
+            true,
+            "/m",
+            NONCE,
+        )
+    };
+    let built_in = page(json!({ "domain": DOMAIN }));
+    assert!(built_in.contains("class=\"jc-publisher module\""));
+    assert!(built_in.contains("id=\"jc-explorer-title\""));
+    let shown = page(json!({ "domain": DOMAIN, "display": { "dataset": {
+        "sections": [
+            { "name": "resources", "heading": { "en": "Files & \"downloads\"", "sk": "Súbory" } },
+            { "name": "about" },
+        ],
+        "about": ["license", "extras.x_kraj", "publisher"],
+    } } }));
+    assert_safe_page("dataset display", &shown, "en");
+    assert!(
+        shown.contains("Files &amp; &quot;downloads&quot;"),
+        "heading in the page's language, escaped"
+    );
+    assert!(!shown.contains("Súbory"));
+    for hidden in [
+        "jc-explorer-title",
+        "jc-live-title",
+        "jc-mcp-title",
+        "jc-more-title",
+    ] {
+        assert!(
+            !shown.contains(&format!("id=\"{hidden}\"")),
+            "{hidden} hidden"
+        );
+    }
+    assert!(
+        !shown.contains("class=\"jc-publisher module\""),
+        "publisher hidden"
+    );
+    let at = |needle: &str| shown.find(needle).unwrap_or_else(|| panic!("{needle}"));
+    assert!(at("id=\"jc-resources-title\"") < at("id=\"jc-about-title\""));
+    let about = &shown[at("id=\"jc-about-title\"")..];
+    let row = |label: &str| {
+        about
+            .find(&format!(">{label}</dt>"))
+            .unwrap_or_else(|| panic!("{label}"))
+    };
+    // T-7745: the licence and publisher rows keep their look under any portal stylesheet.
+    for kept in [esc_t("licence", "en"), esc_t("publisher", "en")] {
+        assert!(
+            about.contains(&format!("<dt data-jc-keep>{kept}</dt>")),
+            "{kept}"
+        );
+    }
+    assert!(
+        about.contains("<dt>x_kraj</dt>"),
+        "other rows are not pinned"
+    );
+    assert!(row(&esc_t("licence", "en")) < row("x_kraj"));
+    assert!(row("x_kraj") < row(&esc_t("publisher", "en")));
+    assert!(
+        about.contains("Banskobystrický &lt;kraj&gt;"),
+        "an extra shows as text"
+    );
+    assert!(
+        !about.contains(&format!("<dt>{}</dt>", esc_t("keywords", "en"))),
+        "a row left out is hidden"
+    );
+    assert_eq!(
+        page(json!({ "domain": DOMAIN, "display": {} })),
+        built_in,
+        "reset"
+    );
+    // A display jc-core refuses never reaches the page: the built-in page shows.
+    assert_eq!(
+        page(
+            json!({ "domain": DOMAIN, "display": { "dataset": { "sections": [{ "name": "comments" }] } } })
+        ),
+        built_in
+    );
+}
+
+/// T-7744: a portal's style tokens reach every page's `:root` as custom properties the theme
+/// reads; a page without them carries none.
+#[test]
+fn style_tokens_reach_the_page_root() {
+    let ds = dataset("air", json!({}));
+    let mut block = BrandingBlock::default();
+    block.layout.tokens = dataroom_core::branding::BrandingTokens {
+        link: Some("#1d4ed8".into()),
+        header_background: Some("#0b5394".into()),
+        header_text: Some("#ffffff".into()),
+        footer_background: Some("#0f172a".into()),
+        footer_text: Some("#ffffff".into()),
+        font_size_px: Some(17),
+        width: Some(jc_core::kinds::ContentWidth::Wide),
+        button_outline: true,
+        card_flat: true,
+    };
+    let page = |b: Option<&BrandingBlock>| {
+        render_dataset_page_full(
+            &cat(),
+            b,
+            &ds,
+            None,
+            &[],
+            &[],
+            false,
+            "en",
+            true,
+            "/m",
+            NONCE,
+        )
+    };
+    let styled = page(Some(&block));
+    assert_safe_page("dataset tokens", &styled, "en");
+    for prop in [
+        "--jc-link: #1d4ed8;",
+        "--jc-header-bg: #0b5394;",
+        "--jc-header-fg: #ffffff;",
+        "--jc-footer-bg: #0f172a;",
+        "--jc-footer-fg: #ffffff;",
+        "--jc-font-size: 17px;",
+        "--jc-content-max: 90rem;",
+        "--jc-btn-bg: transparent;",
+        "--jc-shadow-1: none;",
+    ] {
+        assert!(styled.contains(prop), "{prop}");
+    }
+    let plain = page(Some(&BrandingBlock::default()));
+    assert!(!plain.contains("--jc-header-bg"), "no tokens, none set");
+}
+
+/// T-7746: the Organization's own dataset fields show after the built-in about rows under their
+/// label in the page's language, a url field as a link, a value its type refuses nowhere; a
+/// portal whose display lists its rows without them (doprava) hides them, one listing a field
+/// shows it in that place.
+#[test]
+fn organization_dataset_fields_show_in_the_about_table_per_portal_display() {
+    let ds = with_dists(
+        dataset(
+            "air",
+            json!({ "endpointUrl": ep(""), "licenceId": "cc-by",
+                    "extras": { "x_funding": "eu", "x_reviewed": "2026-11-23",
+                                "x_page": "https://bbsk.sk/report?a=1&b=2",
+                                "x_bad_url": "javascript:alert(2)",
+                                "x_budget": "<script>alert(1)</script>" } }),
+        ),
+        vec![dist("csv", &ep("file.csv"), json!({}))],
+    );
+    let block = BrandingBlock {
+        dataset_fields: dataroom_core::branding::BrandingDatasetFields {
+            organization: "bbsk".into(),
+            namespace: "https://bbsk.sk/ns/dataset-fields/bbsk/".into(),
+            fields: serde_json::from_value(json!([
+                { "name": "funding", "label": { "en": "Funding", "sk": "Financovanie" },
+                  "type": "enum", "values": ["eu", "city"] },
+                { "name": "reviewed", "label": { "sk": "Revízia" }, "type": "date" },
+                { "name": "page", "label": { "en": "Report" }, "type": "url" },
+                { "name": "budget", "label": { "en": "Budget" }, "type": "number" }
+            ]))
+            .expect("definitions"),
+        },
+        ..BrandingBlock::default()
+    };
+    let page = |block: &BrandingBlock| {
+        render_dataset_page_full(
+            &cat(),
+            Some(block),
+            &ds,
+            None,
+            &[],
+            &[],
+            false,
+            "en",
+            true,
+            "/m",
+            NONCE,
+        )
+    };
+    let about = |html: &str| -> String {
+        let start = html
+            .find("<dl class=\"jc-about-list\">")
+            .expect("the about table");
+        let end = start + html[start..].find("</dl>").expect("its end");
+        html[start..end]
+            .split("<dt>")
+            .skip(1)
+            .map(|row| row.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let shown = page(&block);
+    assert_safe_page("dataset fields", &shown, "en");
+    let rows = about(&shown);
+    let fields: Vec<&str> = rows
+        .lines()
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            "Funding</dt> <dd>eu</dd>",
+            "Revízia</dt> <dd>2026-11-23</dd>",
+            "Report</dt> <dd><a href=\"https://bbsk.sk/report?a=1&amp;b=2\" rel=\"noopener\">https://bbsk.sk/report?a=1&amp;b=2</a></dd>",
+        ],
+        "after the built-in rows, in the definitions' order: {rows}"
+    );
+    assert!(
+        !shown.contains("alert(1)"),
+        "a value its type refuses shows nowhere"
+    );
+    assert!(
+        !shown.contains("javascript:alert(2)"),
+        "an undefined extra shows nowhere"
+    );
+
+    // doprava: its display lists the licence only, so no field shows.
+    let mut doprava = block.clone();
+    doprava.display =
+        serde_json::from_value(json!({ "dataset": { "about": ["license"] } })).expect("display");
+    let hidden = about(&page(&doprava));
+    assert!(
+        !hidden.contains("Funding") && !hidden.contains("2026-11-23"),
+        "{hidden}"
+    );
+    assert!(
+        !page(&doprava).contains(">x_funding<"),
+        "nor under More details"
+    );
+    // A display listing a field shows it, labelled, where it is listed.
+    let mut listed = block.clone();
+    listed.display =
+        serde_json::from_value(json!({ "dataset": { "about": ["extras.x_funding", "license"] } }))
+            .expect("display");
+    assert!(about(&page(&listed)).starts_with("Funding</dt> <dd>eu</dd>"));
+}
+
+/// T-7743: the dataset list shows the fields a display lists, in its order.
+#[test]
+fn a_display_picks_the_dataset_list_fields() {
+    let dss = [dataset("a", json!({})), dataset("b", json!({}))];
+    let list = |branding: Value| {
+        let mut c = cat();
+        c.branding = Some(branding);
+        render_dataset_list_page(
+            &c,
+            None,
+            &dss,
+            &[],
+            &SearchFacets::default(),
+            2,
+            1,
+            "",
+            "",
+            &BTreeMap::new(),
+            "en",
+            false,
+            "/data",
+            NONCE,
+        )
+    };
+    let built_in = list(json!({}));
+    assert!(built_in.contains("<div>About the data</div>"));
+    let shown = list(json!({ "display": { "datasetList": { "fields": ["modified"] } } }));
+    assert_safe_page("list display", &shown, "en");
+    assert!(
+        !shown.contains("<div>About the data</div>"),
+        "notes left out"
+    );
+    assert!(shown.contains(&format!(
+        "<span class=\"jc-item-facts\">{} ",
+        esc_t("updated", "en")
+    )));
+    assert_eq!(list(json!({ "display": {} })), built_in, "reset");
+}
+
 #[test]
 fn d3_dataset_page_builds_a_calendar_from_choices_on_its_own_endpoints_output() {
     let mut c = cat();

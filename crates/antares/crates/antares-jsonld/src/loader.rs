@@ -1382,26 +1382,23 @@ impl Loader {
         }
         let err = |m: String| NgsiError::LdContextNotAvailable(m);
         let mut stale_value: Option<Arc<Value>> = None;
-        let found = self.fetched.get(url);
-        CACHE_STATS.fetched.count(
-            found
-                .as_ref()
-                .is_some_and(|h| h.serves(tenant) && !h.is_stale()),
-        );
-        if let Some(hit) = found {
+        // a hit is a fresh copy this Tenant may read, counted where it is served
+        if let Some(hit) = self.fetched.get(url) {
             if !hit.serves(tenant) {
+                CACHE_STATS.fetched.count(false);
                 // 5.5.10 + 5.13.1: this URL names an @context another Tenant
                 // stored locally, so for this Tenant it does not exist — and
                 // fetching it would only reach the same entry back through
                 // the broker's own (Tenant-gated) serve endpoint.
                 return Err(err(format!("@context {url} is not available")));
             }
-            if hit.is_stale() {
-                stale_value = Some(Arc::clone(&hit.value));
-            } else {
+            if !hit.is_stale() {
+                CACHE_STATS.fetched.count(true);
                 return Ok(hit.value);
             }
+            stale_value = Some(Arc::clone(&hit.value));
         }
+        CACHE_STATS.fetched.count(false);
         // A URL this broker hosts is served from its row, never fetched:
         // the warm copy is only a cache (see `set_local_lookup`).
         let lookup = self
@@ -2492,10 +2489,10 @@ mod tests {
                 .await;
         }
         let list = loader.usage_list().await;
-        assert!(
-            list.len() <= 4096,
-            "usage registry must stay bounded, got {} entries",
-            list.len()
+        assert_eq!(
+            list.len(),
+            4096,
+            "usage registry must fill to its bound and stay there"
         );
         // eviction must sacrifice old entries, never the one just added
         assert!(
@@ -2635,6 +2632,315 @@ mod tests {
             .await
             .expect("resolve");
         assert_eq!(loader.cache_stats()["merged"].as_u64().expect("count"), 1);
+        // and one of a few KiB, inside the key bound, is cached too
+        let mid: serde_json::Map<String, Value> = (0..100)
+            .map(|i| {
+                (
+                    format!("term{i:06}"),
+                    Value::String(format!("https://ex.example/{i:06}")),
+                )
+            })
+            .collect();
+        let mid = Value::Object(mid);
+        assert!((2048..MAX_MERGED_KEY_BYTES).contains(&mid.to_string().len()));
+        loader.resolve(&mid).await.expect("resolve");
+        assert_eq!(loader.cache_stats()["merged"].as_u64().expect("count"), 2);
+    }
+
+    /// The loader's nesting bound admits eight levels of @context arrays and
+    /// refuses the ninth, as the pinned-only resolver does.
+    #[tokio::test]
+    async fn the_loader_resolves_eight_nested_context_arrays_and_refuses_nine() {
+        let loader = Loader::with_policy(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        });
+        let nest = |n: usize| (0..n).fold(serde_json::json!({}), |v, _| serde_json::json!([v]));
+        loader.resolve(&nest(8)).await.expect("eight levels");
+        assert!(matches!(
+            loader.resolve(&nest(9)).await,
+            Err(NgsiError::BadRequestData(m)) if m.contains("too deep")
+        ));
+    }
+
+    /// Each merged-cache lookup of a cacheable @context is counted (T-5895).
+    /// The counters are process-wide and only grow, so the test reads a delta.
+    #[tokio::test]
+    async fn merged_lookups_of_a_cacheable_context_are_counted() {
+        let loader = Loader::with_policy(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        });
+        let total = || {
+            let m = &CACHE_STATS.snapshot()["merged"];
+            m["hits"].as_u64().unwrap_or(0) + m["misses"].as_u64().unwrap_or(0)
+        };
+        let before = total();
+        for _ in 0..3 {
+            loader
+                .resolve(&serde_json::json!({"counted": "https://ex.example/counted"}))
+                .await
+                .expect("resolve");
+        }
+        assert!(total() >= before + 3);
+    }
+
+    /// 5.5.7: a document the loader fetches from a URL that is not a pinned
+    /// core is the user's, so a scoped context inside it is refused.
+    #[tokio::test]
+    async fn a_fetched_user_document_with_a_scoped_context_is_refused() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                let b = r#"{"@context":{"Vehicle":{"@id":"https://a.example/Vehicle","@context":{"speed":"https://a.example/hidden"}}}}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nContent-Length: {}\r\n\r\n{b}",
+                    b.len()
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            }
+        });
+        let loader = Loader::with_policy(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        });
+        let got = loader
+            .resolve(&Value::String(format!("http://{addr}/scoped.jsonld")))
+            .await;
+        assert!(matches!(got, Err(NgsiError::BadRequestData(_))), "{got:?}");
+    }
+
+    /// A loopback server answering each request with what `respond` returns
+    /// for the request count so far (one request per connection).
+    async fn serve_each(
+        respond: impl Fn(usize) -> Vec<u8> + Send + Sync + 'static,
+    ) -> (std::net::SocketAddr, Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&hits);
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut req = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match sock.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => req.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let n = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = sock.write_all(&respond(n)).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        (addr, hits)
+    }
+
+    fn ld_response(body: &str, cache_control: &str) -> Vec<u8> {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nCache-Control: {cache_control}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
+    }
+
+    fn loopback_loader() -> Loader {
+        Loader::with_policy(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        })
+    }
+
+    /// A document of exactly the size ceiling is read; the ceiling holds for
+    /// the declared length, the streamed body and the whole read alike.
+    #[tokio::test]
+    async fn a_context_document_of_exactly_the_ceiling_is_read() {
+        let head = r#"{"@context":{"edge":"https://a.example/edge"},"pad":""#;
+        let pad = "x".repeat(MAX_CONTEXT_BYTES - head.len() - 2);
+        let body = format!("{head}{pad}\"}}");
+        assert_eq!(body.len(), MAX_CONTEXT_BYTES);
+        let (addr, _) = serve_each(move |_| ld_response(&body, "no-store")).await;
+        let ctx = loopback_loader()
+            .resolve(&Value::String(format!("http://{addr}/edge.jsonld")))
+            .await
+            .expect("exactly the ceiling");
+        assert_eq!(ctx.expand_key("edge"), "https://a.example/edge");
+    }
+
+    /// The redirect cap is an answer in itself: the loader does not repeat
+    /// the whole chain after it.
+    #[tokio::test]
+    async fn a_redirect_loop_is_not_retried() {
+        let (addr, hits) = serve_each(|_| {
+            b"HTTP/1.1 302 Found\r\nLocation: /loop\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                .to_vec()
+        })
+        .await;
+        let got = loopback_loader()
+            .resolve(&Value::String(format!("http://{addr}/loop")))
+            .await;
+        assert!(
+            matches!(got, Err(NgsiError::LdContextNotAvailable(_))),
+            "{got:?}"
+        );
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            MAX_REDIRECTS + 1
+        );
+    }
+
+    /// A stale copy refreshed with other content invalidates every merged
+    /// context built on it, not only the one being resolved.
+    #[tokio::test]
+    async fn refreshed_content_invalidates_the_merged_contexts_built_on_it() {
+        let (addr, _) = serve_each(|n| {
+            if n == 0 {
+                ld_response(r#"{"@context":{"t":"https://a.example/old"}}"#, "max-age=0")
+            } else {
+                ld_response(
+                    r#"{"@context":{"t":"https://a.example/new"}}"#,
+                    "max-age=3600",
+                )
+            }
+        })
+        .await;
+        let loader = loopback_loader();
+        let url = format!("http://{addr}/ctx.jsonld");
+        let wide = serde_json::json!([url.clone(), {"w": "https://a.example/w"}]);
+        let first = loader.resolve(&wide).await.expect("first");
+        assert_eq!(first.expand_key("t"), "https://a.example/old");
+        loader
+            .resolve(&serde_json::json!([url.clone()]))
+            .await
+            .expect("refresh");
+        let again = loader.resolve(&wide).await.expect("again");
+        assert_eq!(again.expand_key("t"), "https://a.example/new");
+    }
+
+    /// A non-http(s) @context URL is refused by name before any lookup.
+    #[tokio::test]
+    async fn an_unsupported_scheme_is_named() {
+        let got = loopback_loader()
+            .resolve(&Value::String("ftp://a.example/ctx.jsonld".into()))
+            .await;
+        assert!(
+            matches!(&got, Err(NgsiError::LdContextNotAvailable(m)) if m.contains("unsupported @context URL")),
+            "{got:?}"
+        );
+    }
+
+    /// A locally hosted @context resolves with no network round-trip.
+    #[tokio::test]
+    async fn a_locally_put_context_resolves_without_a_fetch() {
+        let loader = loopback_loader();
+        let url = "http://127.0.0.1:9/hosted.jsonld".to_owned();
+        loader
+            .put_local(url.clone(), serde_json::json!({"h": "https://a.example/h"}))
+            .await;
+        let ctx = loader.resolve(&Value::String(url)).await.expect("hosted");
+        assert_eq!(ctx.expand_key("h"), "https://a.example/h");
+    }
+
+    /// A loader built around a caller's client keeps the caller's policy:
+    /// a loopback destination stays refused under allow_private false.
+    #[tokio::test]
+    async fn with_client_keeps_the_given_policy() {
+        let (addr, hits) =
+            serve_each(|_| ld_response(r#"{"@context":{"p":"https://a.example/p"}}"#, "no-store"))
+                .await;
+        let policy = EgressPolicy {
+            allow_private: false,
+            private_hosts: &[],
+        };
+        let client = client_builder(policy).build().expect("client");
+        let got = Loader::with_client(policy, client)
+            .resolve(&Value::String(format!("http://{addr}/p.jsonld")))
+            .await;
+        assert!(got.is_err(), "{got:?}");
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// The quiet resolutions (notification building, federation) resolve the
+    /// same @context as a counted one.
+    #[tokio::test]
+    async fn quiet_resolutions_resolve_the_context() {
+        let loader = Loader::with_policy(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        });
+        let user = serde_json::json!({"a": "https://ex.example/a"});
+        let quiet = loader.resolve_quiet(&user).await.expect("resolve");
+        assert_eq!(quiet.expand_key("a"), "https://ex.example/a");
+        let tenant = TenantId::new("quiet").expect("tenant");
+        let quiet = loader
+            .resolve_quiet_for(&tenant, &user)
+            .await
+            .expect("resolve");
+        assert_eq!(quiet.expand_key("a"), "https://ex.example/a");
+    }
+
+    /// The fetched-document cache charges each entry at least its share of
+    /// the budget, so a flood of tiny documents holds 256 entries at most.
+    #[test]
+    fn the_fetched_cache_holds_at_most_its_entry_share_of_tiny_documents() {
+        let cache = fetched_cache();
+        for i in 0..300 {
+            cache.insert(
+                format!("https://ctx.example/{i}"),
+                FetchedDoc {
+                    value: Arc::new(serde_json::json!({})),
+                    stale_at: None,
+                    owner: None,
+                },
+            );
+        }
+        cache.run_pending_tasks();
+        assert!(
+            cache.entry_count() <= MAX_FETCHED_ENTRIES,
+            "{}",
+            cache.entry_count()
+        );
+    }
+
+    /// A client built with timeouts keeps the rest of its builder, and the
+    /// wrapper sends with that very client: its default header arrives.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn a_wrapped_client_with_timeouts_keeps_its_builder() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.expect("accept");
+            let mut buf = vec![0u8; 4096];
+            let n = sock.read(&mut buf).await.expect("read");
+            let _ = sock
+                .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                .await;
+            String::from_utf8_lossy(&buf[..n]).to_lowercase()
+        });
+        install_crypto_provider();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-kept", reqwest::header::HeaderValue::from_static("yes"));
+        let builder = with_timeouts(
+            reqwest::Client::builder().default_headers(headers),
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(10),
+        );
+        let client = wrap_client(builder.build().expect("client"));
+        let _ = client.get(format!("http://{addr}/")).send().await;
+        let request = server.await.expect("server");
+        assert!(request.contains("x-kept: yes"), "{request}");
     }
 
     /// The doc comment on `ip_is_metadata` promises the metadata range is
@@ -2750,10 +3056,26 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn set_shares_reach_the_next_loader_and_lookups_are_counted() {
+        // the shares of the broker's 200 MiB default memory budget (T-5895)
+        assert_eq!(
+            (DEFAULT_MERGED_CACHE_BYTES, DEFAULT_FETCHED_CACHE_BYTES),
+            (44 << 20, 8 << 20)
+        );
+        set_cache_bytes(
+            DEFAULT_MERGED_CACHE_BYTES + 1,
+            DEFAULT_FETCHED_CACHE_BYTES + 1,
+        );
+        let set = (
+            MERGED_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed),
+            FETCHED_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed),
+        );
         set_cache_bytes(DEFAULT_MERGED_CACHE_BYTES, DEFAULT_FETCHED_CACHE_BYTES);
         assert_eq!(
-            MERGED_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed),
-            DEFAULT_MERGED_CACHE_BYTES
+            set,
+            (
+                DEFAULT_MERGED_CACHE_BYTES + 1,
+                DEFAULT_FETCHED_CACHE_BYTES + 1
+            )
         );
         let stats = CacheStats::default();
         stats.merged.count(true);
@@ -2957,6 +3279,18 @@ mod tests {
             EgressPolicy::allow_private_from(None),
             "unset means allowed"
         );
+    }
+
+    /// The programmatic grant (the wasm constructor's and a test's switch)
+    /// wins over a host default that arms the private-range wall. The grant
+    /// stays on afterwards, as every test that grants itself loopback leaves it.
+    #[test]
+    fn the_programmatic_grant_wins_over_a_denying_host_default() {
+        super::allow_private_egress(true);
+        super::private_egress_default("false");
+        let granted = EgressPolicy::from_env().allow_private;
+        super::private_egress_default("true");
+        assert!(granted);
     }
 
     /// The published posture is part of the switch. SECURITY.md told a reader

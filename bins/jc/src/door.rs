@@ -83,19 +83,26 @@ pub fn is_credential(module: Module, got: &HeaderValue, value: &str) -> bool {
 
 /// The verifier of a module container's door ([`jc_door::Verifier`] over `[door]`).
 #[derive(Debug)]
-pub struct Door(jc_door::Verifier);
+pub struct Door(Arc<jc_door::Verifier>);
 
 impl Door {
     /// `jwks_url` is fetched by `jc` itself, so it may name a listener on loopback or the
     /// cluster network.
     pub fn new(cfg: &crate::config::DoorSection) -> Result<Self, String> {
-        jc_door::Verifier::new(&cfg.issuer, &cfg.jwks_url, &cfg.clients).map(Self)
+        jc_door::Verifier::new(&cfg.issuer, &cfg.jwks_url, &cfg.clients).map(|v| Self(Arc::new(v)))
     }
 
     /// Whether `token` is a valid token of an admitted client for `audience`.
     #[must_use]
     pub fn verify(&self, token: &str, audience: &str) -> bool {
         self.0.verify(token, audience)
+    }
+
+    /// The verifier itself, for a module that names its callers by their tokens (dataroom's
+    /// publisher, S11-23).
+    #[must_use]
+    pub fn verifier(&self) -> Arc<jc_door::Verifier> {
+        Arc::clone(&self.0)
     }
 
     /// `router` behind the door: a verified token of `module`'s audience becomes the module's
@@ -268,3 +275,48 @@ impl Remote {
         }
     }
 }
+
+/// The client the Portal publishes into a jc catalogue as (S11-23): kaisatsu's client in a role
+/// split names its own id (`[remote] client_id`); all in one, jc's in-process issuer names this.
+pub const PUBLISHER_CLIENT: &str = "portal-publisher";
+
+/// How long a token the in-process issuer signs is valid.
+const LOCAL_TOKEN_SECONDS: i64 = 300;
+
+/// The process's one in-process issuer of publisher tokens (all in one: the Portal and dataroom
+/// beside each other), started on first use; a failed start is retried on the next.
+pub fn local_issuer() -> Result<Arc<jc_door::issuer::LocalIssuer>, String> {
+    static ISSUER: Mutex<Option<Arc<jc_door::issuer::LocalIssuer>>> = Mutex::new(None);
+    let mut held = ISSUER.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(issuer) = held.as_ref() {
+        return Ok(Arc::clone(issuer));
+    }
+    let issuer = Arc::new(jc_door::issuer::LocalIssuer::start("", "jc-publisher")?);
+    *held = Some(Arc::clone(&issuer));
+    Ok(issuer)
+}
+
+/// A token of [`PUBLISHER_CLIENT`] for dataroom from the in-process issuer.
+pub fn local_publisher_token() -> Result<jc_secret::Secret, String> {
+    local_issuer()?
+        .token(
+            PUBLISHER_CLIENT,
+            Module::Dataroom.name(),
+            LOCAL_TOKEN_SECONDS,
+        )
+        .map(jc_secret::Secret::new)
+}
+
+/// The verifier of the in-process issuer's publisher tokens.
+pub fn local_verifier() -> Result<jc_door::Verifier, String> {
+    let issuer = local_issuer()?;
+    jc_door::Verifier::new(
+        issuer.issuer(),
+        issuer.jwks_url(),
+        &[PUBLISHER_CLIENT.to_owned()],
+    )
+}
+
+/// The Portal container's [`Remote`], set when it starts the forwarders (role split): the
+/// Portal takes its publisher tokens for a dataroom in another container from it.
+pub static REMOTE: std::sync::OnceLock<Arc<Remote>> = std::sync::OnceLock::new();

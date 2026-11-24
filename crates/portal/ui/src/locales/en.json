@@ -719,6 +719,7 @@
       "proposeAll": "Propose all",
       "open": "Open",
       "noDrafts": "No drafts completed yet.",
+      "unreadable": "The service answered something that is not a completion. Try again; if it repeats, tell your administrator.",
       "needInput": "Give an endpoint URL or add a file first.",
       "filesHint": "A sample of the data as CSV, Excel (.xlsx), JSON or GeoJSON, with any manifests, README or .env that describe the source; up to 10 MB together. Example: stations.xlsx.",
       "review": {
@@ -7676,7 +7677,6 @@
     "file": "Archive or manifests",
     "fileHelp": "A ZIP an export produced, or a YAML stream or JSON manifest.",
     "fileMissing": "Choose a file first.",
-    "noFile": "Choose a file first.",
     "noUrl": "Upload the bundle as a file; the Portal does not fetch one from an address.",
     "pastedSecret": "This bundle writes a credential in the open ({keys}). Replace it with a secretRef and choose the file again; the import refuses it either way.",
     "namespace": "Project to import into",
@@ -9920,7 +9920,15 @@
         "contactBoth": "Give the contact's name and e-mail together, or neither.",
         "email": "Enter an e-mail address such as opendata@example.org.",
         "period": "The end of the period cannot be before its start. Pick an end date after the start.",
-        "title": "Give the dataset a title."
+        "title": "Give the dataset a title.",
+        "fieldRequired": "Your organization requires this field. Fill it in.",
+        "field": {
+          "text": "Enter one line of text.",
+          "number": "Enter a number.",
+          "date": "Pick a date.",
+          "url": "Enter an https:// address.",
+          "enum": "Pick one of the listed values."
+        }
       },
       "datasetTitle": "Dataset title",
       "datasetTitleHelp": "The name the catalogue lists, in the language {language}.",
@@ -9948,7 +9956,17 @@
         "dcat": "DCAT-AP record (JSON-LD)"
       },
       "inCatalogue": "Already in the catalogue",
-      "typeNew": "None in the catalogue matches: type a new one and pick “New”."
+      "typeNew": "None in the catalogue matches: type a new one and pick “New”.",
+      "orgFields": "Your organization's fields",
+      "orgFieldsHelp": "Extra details your organization asks for on every dataset. The open data portal shows them in the dataset's About table.",
+      "fieldHint": {
+        "text": "One line of text, for example: Funded by the city",
+        "number": "A number, for example: 12.5",
+        "date": "A date, for example: 2026-11-23",
+        "url": "An https:// address, for example: https://example.org/report",
+        "enum": "Pick one of the values your organization set."
+      },
+      "fieldRefused": "Your organization refused the field “{field}” ({reason}). Go back, correct it and propose again."
     },
     "licence": {
       "CC_BY_4_0": "Creative Commons Attribution 4.0",
@@ -12207,7 +12225,7 @@
     "lastCall": "Last call",
     "setupTitle": "Add it to your AI client",
     "activityLoading": "Loading the calls",
-    "noCalls": "No calls through this connector in the last 30 days.",
+    "noCalls": "No calls through this connector are kept. Each call it makes appears here.",
     "activityOf": "Calls through {name}",
     "noProjects": "You read no project and nothing is shared with you yet, so a connector has nothing to reach. Ask a project owner or your organization's administrator for access.",
     "accessOf": "Access for {what}",
@@ -13365,10 +13383,12 @@
     "tabs": {
       "label": "Portal views",
       "settings": "Settings",
+      "appearance": "Appearance",
       "sources": "Sources",
       "datasets": "Datasets",
       "files": "Files",
-      "layout": "Layout"
+      "layout": "Layout",
+      "display": "Display"
     },
     "sources": {
       "empty": "No source yet",
@@ -13746,6 +13766,205 @@
       "refused": "{profile} was not saved. {reason}",
       "unknownTitle": "The served profiles could not be read",
       "retry": "Read again"
+    },
+    "display": {
+      "heading": "What the open data portal shows",
+      "lead": "Choose which sections of the dataset page show and in which order, the rows of its About table and what the dataset list shows. Each list comes from the Organization or the built-in page until this portal sets its own. Publishing proposes a Change for an approver.",
+      "refused": "The display was refused",
+      "refusedHint": "Fix the named field, then publish again. A heading the server refused opens below.",
+      "reset": "Reset to inherited",
+      "list": {
+        "sections": "Dataset page sections",
+        "about": "About table rows",
+        "fields": "Dataset list fields"
+      },
+      "from": {
+        "portal": "Set on this portal",
+        "organization": "Inherited from the Organization",
+        "builtIn": "Inherited from the installation default"
+      },
+      "hint": {
+        "sections": "Tick the sections that show and move them with the arrows, e.g. About before Resources. Publisher and Subscribe keep their place at the top and only show or hide.",
+        "about": "Tick the rows the About table shows, in order, e.g. Licence first. Add a dataset extra by its key to show it as a row.",
+        "fields": "Tick what each dataset in the list shows after its title, e.g. Format and Updated.",
+        "heading": "Leave empty for the built-in heading, e.g. O dátach. Plain text, at most 120 characters.",
+        "extra": "The key of a dataset extra, lowercase letters, digits, _ or -, e.g. x_kraj."
+      },
+      "why": {
+        "inherited": "This list is inherited already.",
+        "first": "Already first.",
+        "last": "Already last.",
+        "extra": "Type a new extra key such as x_kraj first.",
+        "nothing": "Nothing changed yet."
+      },
+      "up": "Move {name} up",
+      "down": "Move {name} down",
+      "headingIn": "Heading ({lang})",
+      "headingToggle": "Change the heading",
+      "extra": "Dataset extra key",
+      "addExtra": "Add row",
+      "extraRow": "Extra: {key}",
+      "fault": {
+        "empty": "Show at least one, or reset the list to inherited.",
+        "extra": "An extra key is 1 to 64 lowercase letters, digits, _ or -, e.g. x_kraj.",
+        "heading": "A heading is plain text of at most 120 characters without < or >."
+      },
+      "unpublished": "Unpublished changes: publish to propose them for approval.",
+      "published": "The display shows as published.",
+      "discard": "Discard",
+      "publish": "Publish",
+      "sections": {
+        "publisher": "Publisher",
+        "subscribe": "Subscribe",
+        "explorer": "Data explorer",
+        "map": "Map",
+        "visualizations": "Visualizations",
+        "dashboards": "Dashboards",
+        "about": "About",
+        "live": "Live data API",
+        "mcp": "Assistant connector (MCP)",
+        "resources": "Resources",
+        "additional-info": "Additional info",
+        "shacl": "SHACL validation (editors only)"
+      },
+      "about": {
+        "publisher": "Publisher",
+        "license": "Licence",
+        "rights": "Attribution",
+        "source": "Source",
+        "keyword": "Keywords",
+        "accrualPeriodicity": "Update frequency",
+        "issued": "Created",
+        "modified": "Last update",
+        "nextUpdate": "Next update",
+        "spatial": "Coverage",
+        "temporal": "Period",
+        "contactPoint": "Contact",
+        "identifier": "Identifier",
+        "conformsTo": "Conforms to"
+      },
+      "fields": {
+        "notes": "Description",
+        "format": "Format",
+        "publisher": "Publisher",
+        "modified": "Updated"
+      }
+    },
+    "appearance": {
+      "heading": "How the open data portal looks",
+      "lead": "Names, colours, fonts and layout of this portal. A field left empty shows the Organization's value, then the installation's default; Reset brings a field back to that. Publishing proposes a Change for an approver.",
+      "refused": "The appearance was refused",
+      "refusedHint": "Fix the named field, then publish again.",
+      "fix": "Some fields need a fix",
+      "fixHint": "Fix the marked fields ({count}), then publish again.",
+      "reset": "Reset",
+      "resetField": "Reset {field} to inherited",
+      "inheritOption": "Inherited ({value})",
+      "default": "default",
+      "why": "Nothing changed yet.",
+      "unpublished": "Unpublished changes: publish to propose them for approval.",
+      "published": "The appearance shows as published.",
+      "discard": "Discard",
+      "publish": "Publish",
+      "group": {
+        "names": "Names and contact",
+        "colours": "Colours",
+        "type": "Type and layout"
+      },
+      "from": {
+        "portal": "Set on this portal",
+        "organization": "From the Organization",
+        "builtIn": "Installation default"
+      },
+      "field": {
+        "instanceName": "Full name",
+        "shortName": "Short name",
+        "city": "City or region",
+        "publisher": "Publisher",
+        "contactEmail": "Contact e-mail",
+        "licenseDefault": "Default licence",
+        "colours": {
+          "primary": "Primary colour",
+          "secondary": "Secondary colour",
+          "accent": "Accent colour",
+          "background": "Background",
+          "text": "Text colour",
+          "link": "Link colour",
+          "headerBackground": "Header background",
+          "headerText": "Header text",
+          "footerBackground": "Footer background",
+          "footerText": "Footer text"
+        },
+        "headingFont": "Heading font",
+        "bodyFont": "Body font",
+        "fontSize": "Text size (px)",
+        "width": "Content width",
+        "radius": "Corner radius (px)",
+        "buttonStyle": "Buttons",
+        "cardShadow": "Card shadow",
+        "datasetList": "Dataset list"
+      },
+      "hint": {
+        "instanceName": "Shown on page titles, e.g. Mesto Banská Bystrica.",
+        "shortName": "Shown in tabs, e.g. BB.",
+        "city": "The area the portal serves, e.g. Banská Bystrica.",
+        "publisher": "The legal publisher in the footer, e.g. Mesto Banská Bystrica.",
+        "contactEmail": "Where readers write, e.g. opendata@banskabystrica.sk.",
+        "licenseDefault": "An SPDX identifier, e.g. CC-BY-4.0.",
+        "colours_primary": "Buttons and active tabs, e.g. #0b5394.",
+        "colours_secondary": "Secondary accents, e.g. #0f766e.",
+        "colours_accent": "Highlights, e.g. #f59e0b.",
+        "colours_background": "The page background, e.g. #ffffff.",
+        "colours_text": "Body text, at least 4.5:1 on the background, e.g. #0f172a.",
+        "colours_link": "Links, at least 4.5:1 on the background, e.g. #1d4ed8.",
+        "colours_headerBackground": "The top bar, e.g. #0b5394.",
+        "colours_headerText": "Text in the top bar, at least 4.5:1 on its background, e.g. #ffffff.",
+        "colours_footerBackground": "The page footer, e.g. #0f172a.",
+        "colours_footerText": "Text in the footer, at least 4.5:1 on its background, e.g. #ffffff.",
+        "headingFont": "Headings, a system font so nothing loads from elsewhere, e.g. Serif.",
+        "bodyFont": "Body text, e.g. System.",
+        "fontSize": "14 to 18, e.g. 16.",
+        "width": "How wide the content runs, e.g. Normal.",
+        "radius": "0 to 24, e.g. 8.",
+        "buttonStyle": "Filled or outlined, e.g. Filled.",
+        "cardShadow": "Cards with or without a shadow, e.g. Soft.",
+        "datasetList": "Cards with descriptions or a compact table, e.g. Table."
+      },
+      "choice": {
+        "system": "System",
+        "humanist": "Humanist",
+        "serif": "Serif",
+        "mono": "Monospace",
+        "narrow": "Narrow",
+        "normal": "Normal",
+        "wide": "Wide",
+        "filled": "Filled",
+        "outline": "Outline",
+        "none": "None",
+        "soft": "Soft",
+        "cards": "Cards",
+        "table": "Table"
+      },
+      "fault": {
+        "text": "Plain text of 1 to 120 characters without < or >.",
+        "email": "An e-mail address such as opendata@city.sk.",
+        "licence": "An SPDX identifier such as CC-BY-4.0.",
+        "colour": "A hex colour such as #0b5394.",
+        "choice": "Pick one of the listed values.",
+        "number": "A whole number in the stated range.",
+        "contrast": "Too little contrast: pick a colour of at least 4.5:1 on its background (WCAG AA)."
+      },
+      "css": {
+        "heading": "Own stylesheet",
+        "lead": "CSS for this portal's pages alone, at most 32 KiB. Each rule applies only on this portal; the licence and publisher lines always stay visible.",
+        "label": "Stylesheet",
+        "hint": "Style rules and @media only, e.g. {example}. Images: {file} as the Files tab lists them. Refused: @import, @font-face, content, position, z-index, display: none, {important}, :has() and attribute matches such as [href^=…].",
+        "none": "None: the theme alone",
+        "fault": {
+          "size": "At most 32 KiB.",
+          "markup": "Remove </: a stylesheet holds no markup."
+        }
+      }
     }
   },
   "assistantGuides": {

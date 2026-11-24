@@ -406,10 +406,6 @@ impl MemoryStore {
     pub fn table_info(&self, set_name: &str) -> Option<TableInfo> {
         self.service.info(self.csdl_model.clone(), set_name)
     }
-
-    pub fn csdl_model(&self) -> Arc<odata_csdl::Model> {
-        self.csdl_model.clone()
-    }
 }
 
 use odata_table::Service;
@@ -2253,14 +2249,31 @@ impl Store for MemoryStore {
             let removed = st.sso_sessions.remove(pos);
             st.client_sessions
                 .retain(|cs| !(cs.realm_id == realm_id && cs.sso_session_id == session_id));
-            for rf in st
-                .refresh_families
-                .iter_mut()
-                .filter(|rf| rf.realm_id == realm_id && rf.sso_session_id == session_id)
-            {
+            // An offline family outlives the SSO session it began in (S3-22).
+            for rf in st.refresh_families.iter_mut().filter(|rf| {
+                rf.realm_id == realm_id && rf.sso_session_id == session_id && !rf.offline
+            }) {
                 rf.revoked = true;
             }
             Ok(Some(removed))
+        })
+    }
+
+    fn revoke_offline_families_for_user<'a>(
+        &'a self,
+        realm_id: &'a str,
+        user_id: &'a str,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            for rf in st
+                .refresh_families
+                .iter_mut()
+                .filter(|rf| rf.realm_id == realm_id && rf.user_id == user_id && rf.offline)
+            {
+                rf.revoked = true;
+            }
+            Ok(())
         })
     }
 
@@ -2806,6 +2819,8 @@ impl Store for MemoryStore {
         &'a self,
         realm_id: &'a str,
         limit: usize,
+        lease: std::time::Duration,
+        max_attempts: u32,
     ) -> StoreFuture<'a, Vec<EmailOutboxRecord>> {
         Box::pin(async move {
             let cap = limit.clamp(1, 50);
@@ -2816,11 +2831,22 @@ impl Store for MemoryStore {
                 if claimed.len() >= cap {
                     break;
                 }
-                if row.realm_id == realm_id && row.status == "pending" && row.next_attempt_at <= now
-                {
-                    row.status = "sending".into();
-                    row.attempts = row.attempts.saturating_add(1);
-                    claimed.push(row.clone());
+                if row.realm_id != realm_id || row.next_attempt_at > now {
+                    continue;
+                }
+                match row.status.as_str() {
+                    "sending" if row.attempts >= max_attempts => {
+                        row.status = "failed".into();
+                        row.last_error = Some(OUTBOX_LEASE_LAPSED.into());
+                    }
+                    "pending" | "sending" => {
+                        row.status = "sending".into();
+                        row.attempts = row.attempts.saturating_add(1);
+                        row.next_attempt_at =
+                            now + SignedDuration::try_from(lease).unwrap_or(SignedDuration::MAX);
+                        claimed.push(row.clone());
+                    }
+                    _ => {}
                 }
             }
             Ok(claimed)
@@ -2829,36 +2855,37 @@ impl Store for MemoryStore {
 
     fn complete_outbox_row<'a>(
         &'a self,
-        realm_id: &'a str,
-        id: &'a str,
+        claimed: &'a EmailOutboxRecord,
         sent: bool,
         error: Option<String>,
         next_attempt_at: Option<jc_time::TimestampTz>,
         max_attempts: u32,
-    ) -> StoreFuture<'a, ()> {
+    ) -> StoreFuture<'a, bool> {
         Box::pin(async move {
             let mut st = self.inner.write();
-            if let Some(row) = st
-                .email_outbox
-                .iter_mut()
-                .find(|r| r.realm_id == realm_id && r.id == id)
-            {
-                if sent {
-                    row.status = "sent".into();
-                    row.sent_at = Some(TimestampTz::now());
-                    row.last_error = None;
+            let Some(row) = st.email_outbox.iter_mut().find(|r| {
+                r.realm_id == claimed.realm_id
+                    && r.id == claimed.id
+                    && r.status == "sending"
+                    && r.attempts == claimed.attempts
+            }) else {
+                return Ok(false);
+            };
+            if sent {
+                row.status = "sent".into();
+                row.sent_at = Some(TimestampTz::now());
+                row.last_error = None;
+            } else {
+                row.last_error = error;
+                if row.attempts >= max_attempts {
+                    row.status = "failed".into();
                 } else {
-                    row.last_error = error;
-                    if row.attempts >= max_attempts {
-                        row.status = "failed".into();
-                    } else {
-                        row.status = "pending".into();
-                        row.next_attempt_at = next_attempt_at
-                            .unwrap_or_else(|| TimestampTz::now() + SignedDuration::from_secs(5));
-                    }
+                    row.status = "pending".into();
+                    row.next_attempt_at = next_attempt_at
+                        .unwrap_or_else(|| TimestampTz::now() + SignedDuration::from_secs(5));
                 }
             }
-            Ok(())
+            Ok(true)
         })
     }
 
@@ -2993,5 +3020,206 @@ impl Store for MemoryStore {
             let _ = SignedDuration::from_secs(0);
             Ok(removed)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const R: &str = "r";
+
+    fn user(id: &str) -> UserRepresentation {
+        UserRepresentation {
+            id: id.into(),
+            realm_id: R.into(),
+            username: id.into(),
+            ..Default::default()
+        }
+    }
+
+    fn group(name: &str, org_id: Option<&str>, path: &str) -> GroupRepresentation {
+        GroupRepresentation {
+            realm_id: R.into(),
+            name: name.into(),
+            org_id: org_id.map(str::to_owned),
+            path: path.into(),
+            ..Default::default()
+        }
+    }
+
+    /// An organization admin sees a person through a group of the organization: one the group
+    /// names as its own, or one under the organization's path.
+    #[tokio::test]
+    async fn a_group_of_the_organization_makes_its_member_visible() {
+        let store = MemoryStore::default();
+        let hel: &[String] = &["hel".to_owned()];
+        for (id, g) in [
+            ("owned", group("a", Some("hel"), "/a")),
+            ("pathed", group("b", Some("other"), "/hel/b")),
+            ("outside", group("c", Some("other"), "/other/c")),
+        ] {
+            store.create_user(user(id)).await.expect("user");
+            let g = store.upsert_group(g).await.expect("group");
+            store.add_user_to_group(R, id, &g.id).await.expect("member");
+        }
+        store.create_user(user("alone")).await.expect("user");
+        for (id, visible) in [
+            ("owned", true),
+            ("pathed", true),
+            ("outside", false),
+            ("alone", false),
+        ] {
+            let got = store.get_user_by_id(R, Some(hel), id).await.expect("read");
+            assert_eq!(got.is_some(), visible, "{id}");
+            assert!(
+                store
+                    .get_user_by_id(R, None, id)
+                    .await
+                    .expect("read")
+                    .is_some()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn deleting_a_group_drops_its_role_mappings_and_keeps_the_others() {
+        let store = MemoryStore::default();
+        let (kept, gone) = (
+            store
+                .upsert_group(group("kept", None, ""))
+                .await
+                .expect("group"),
+            store
+                .upsert_group(group("gone", None, ""))
+                .await
+                .expect("group"),
+        );
+        let role = store
+            .upsert_role(RoleRepresentation {
+                realm_id: R.into(),
+                name: "viewer".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("role");
+        for g in [&kept, &gone] {
+            store
+                .add_role_mapping(RoleMappingRecord {
+                    id: String::new(),
+                    realm_id: R.into(),
+                    org_id: None,
+                    principal_kind: "group".into(),
+                    principal_id: g.id.clone(),
+                    role_id: role.id.clone(),
+                    role_name: role.name.clone(),
+                    client_uuid: None,
+                })
+                .await
+                .expect("mapping");
+        }
+        assert!(store.delete_group(R, None, &gone.id).await.expect("delete"));
+        let mappings = |id: String| {
+            let store = &store;
+            async move {
+                store
+                    .list_role_mappings_for_principal(R, "group", &id, None)
+                    .await
+                    .expect("mappings")
+                    .len()
+            }
+        };
+        assert_eq!(mappings(gone.id.clone()).await, 0);
+        assert_eq!(mappings(kept.id.clone()).await, 1);
+        assert!(!store.delete_group(R, None, &gone.id).await.expect("again"));
+    }
+
+    fn client(client_id: &str) -> ClientRepresentation {
+        ClientRepresentation {
+            realm_id: R.into(),
+            client_id: client_id.into(),
+            ..Default::default()
+        }
+    }
+
+    fn consent(user_id: &str, client_id: &str) -> ConsentRecord {
+        ConsentRecord {
+            id: String::new(),
+            realm_id: R.into(),
+            org_id: None,
+            user_id: user_id.into(),
+            client_id: client_id.into(),
+            granted_client_scopes: vec!["profile".into()],
+            created_date: 1,
+            last_updated_date: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn renaming_a_client_drops_the_consents_given_to_its_old_id() {
+        let store = MemoryStore::default();
+        let mut app = store.upsert_client(client("app")).await.expect("client");
+        store.upsert_client(client("other")).await.expect("client");
+        store.create_user(user("u1")).await.expect("user");
+        for c in ["app", "other"] {
+            store
+                .upsert_consent(consent("u1", c))
+                .await
+                .expect("consent");
+        }
+        app.client_id = "app2".into();
+        let renamed = store.upsert_client(app).await.expect("renamed");
+        assert_eq!(renamed.client_id, "app2");
+        let left: Vec<String> = store
+            .list_consents(R, "u1")
+            .await
+            .expect("consents")
+            .into_iter()
+            .map(|c| c.client_id)
+            .collect();
+        assert_eq!(left, ["other"]);
+    }
+
+    #[tokio::test]
+    async fn deleting_a_client_drops_its_role_mappings_only() {
+        let store = MemoryStore::default();
+        let (app, other) = (
+            store.upsert_client(client("app")).await.expect("client"),
+            store.upsert_client(client("other")).await.expect("client"),
+        );
+        store.create_user(user("u1")).await.expect("user");
+        for c in [&app, &other] {
+            let role = store
+                .upsert_role(RoleRepresentation {
+                    realm_id: R.into(),
+                    name: "reader".into(),
+                    client_role: true,
+                    container_id: Some(c.id.clone()),
+                    ..Default::default()
+                })
+                .await
+                .expect("role");
+            store
+                .add_role_mapping(RoleMappingRecord {
+                    id: String::new(),
+                    realm_id: R.into(),
+                    org_id: None,
+                    principal_kind: "user".into(),
+                    principal_id: "u1".into(),
+                    role_id: role.id.clone(),
+                    role_name: role.name.clone(),
+                    client_uuid: Some(c.id.clone()),
+                })
+                .await
+                .expect("mapping");
+        }
+        assert!(store.delete_client(R, None, &app.id).await.expect("delete"));
+        for (c, left) in [(&app, 0), (&other, 1)] {
+            let mappings = store
+                .list_role_mappings_for_principal(R, "user", "u1", Some(&c.id))
+                .await
+                .expect("mappings");
+            assert_eq!(mappings.len(), left, "{}", c.client_id);
+        }
     }
 }

@@ -319,6 +319,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_process_engine_is_one_and_the_surface_names_its_routes() {
+        let engine = JoinedcontextPolicy::process();
+        assert!(Arc::ptr_eq(&engine, &JoinedcontextPolicy::process()));
+        let access = Access::new(engine);
+        assert_eq!((access.name(), access.prefix()), ("access", "/x/views"));
+        let info = access.version_info();
+        assert_eq!(
+            info.get("routes").and_then(Value::as_array).map(Vec::len),
+            Some(4),
+            "{info}"
+        );
+        assert!(
+            info.to_string().contains("/x/views/{view}/access/check"),
+            "{info}"
+        );
+    }
+
+    #[test]
+    fn a_notification_names_each_type_of_its_entities_once() {
+        let ctx = crate::document::context();
+        let notification = serde_json::json!({"data": [
+            {"type": ["Car", "Bus"]}, {"type": "Car"}, {"type": 7}, {"id": "urn:x"}
+        ]});
+        let mut want = vec![ctx.expand_key("Bus"), ctx.expand_key("Car")];
+        want.sort();
+        assert_eq!(
+            JoinedcontextPolicy::notified_types(&notification, ctx),
+            want
+        );
+    }
+
+    #[test]
     fn the_first_served_representation_wins_and_anything_else_is_authzen() {
         for (accept, want) in [
             (None, Representation::AuthZen),

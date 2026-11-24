@@ -238,6 +238,7 @@ async fn app(test: &str) -> (axum::Router, MockServer, MockServer, Database) {
         organization: "banskabystrica".into(),
         contexts: Default::default(),
         turns: Default::default(),
+        map_sources: Default::default(),
     });
     let base = url::Url::parse(&format!("{}/", gateway.uri())).ok();
     assistant::chat::context::count(Arc::clone(&state), state.http.clone(), base).await;

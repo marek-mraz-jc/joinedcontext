@@ -170,7 +170,8 @@ async fn publishing_names_the_sources_that_are_not_endpoints() {
         "panels": [{ "id": 10, "type": "table", "gridPos": { "x": 0, "y": 9, "w": 12, "h": 8 },
                      "targets": [entities("open"), { "refId": "B", "datasource": { "uid": "sql" } },
                                  { "refId": "C", "type": "math", "expression": "1",
-                                   "datasource": { "type": "__expr__", "uid": "__expr__" } }] }]
+                                   "datasource": { "type": "__expr__", "uid": "__expr__" } },
+                                 { "refId": "D", "datasource": { "type": "datasource", "uid": "-- Mixed --" } }] }]
     }));
     w.add_dashboard(board, None).await;
     let path = "/api/dashboards/uid/mixed/public-dashboards";
@@ -188,6 +189,8 @@ async fn publishing_names_the_sources_that_are_not_endpoints() {
         text.contains("isEnabled") && text.contains("prom, sql"),
         "{text}"
     );
+    // The routing uid of a mixed panel is no source to change.
+    assert!(!text.contains("Mixed"), "{text}");
     let (st, _) = w.call("GET", path, Some("admin"), None).await;
     assert_eq!(st, StatusCode::NOT_FOUND, "nothing was published");
     // A draft that is not enabled reads nothing for anyone and may be saved.

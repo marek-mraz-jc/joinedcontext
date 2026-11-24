@@ -297,6 +297,43 @@ const KNOWN_REALM_FIELDS: &[&str] = &[
     "organizations",
 ];
 
+/// Known realm settings kaisatsu has no counterpart for: present in a file, each one is named in
+/// a warning, since the apply drops it (S3-39).
+const NOT_APPLIED_SETTINGS: &[&str] = &[
+    "clientSessionIdleTimeout",
+    "clientSessionMaxLifespan",
+    "clientOfflineSessionIdleTimeout",
+    "clientOfflineSessionMaxLifespan",
+    "requiredCredentials",
+    "webAuthnPolicyAttestationConveyancePreference",
+    "webAuthnPolicyAuthenticatorAttachment",
+    "webAuthnPolicyRequireResidentKey",
+    "webAuthnPolicyUserVerificationRequirement",
+    "webAuthnPolicyCreateTimeout",
+    "webAuthnPolicyAvoidSameAuthenticatorRegister",
+    "webAuthnPolicyAcceptableAaguids",
+    "webAuthnPolicyPasswordlessAttestationConveyancePreference",
+    "webAuthnPolicyPasswordlessAuthenticatorAttachment",
+    "webAuthnPolicyPasswordlessRequireResidentKey",
+    "webAuthnPolicyPasswordlessUserVerificationRequirement",
+    "webAuthnPolicyPasswordlessCreateTimeout",
+    "webAuthnPolicyPasswordlessAvoidSameAuthenticatorRegister",
+    "webAuthnPolicyPasswordlessAcceptableAaguids",
+    "browserSecurityHeaders",
+    "registrationFlow",
+    "clientAuthenticationFlow",
+    "dockerAuthenticationFlow",
+    "userManagedAccessAllowed",
+];
+
+/// Component providers of a Keycloak export kaisatsu replaces with its own: present in a file,
+/// they are named in a warning, never applied.
+const IGNORED_COMPONENTS: &[&str] = &[
+    "org.keycloak.keys.KeyProvider",
+    "org.keycloak.userprofile.UserProfileProvider",
+    "org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy",
+];
+
 /// Known authenticator execution kinds from RI's `authenticationFlows`. Any unknown authenticator
 /// or unmappable flow fails validation (W1, W1b).
 pub const KNOWN_AUTHENTICATORS: &[&str] = &[
@@ -551,7 +588,66 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
     for k in obj.keys() {
         if !KNOWN_REALM_FIELDS.contains(&k.as_str()) {
             warnings.push(format!("unknown field $.{k}"));
+        } else if NOT_APPLIED_SETTINGS.contains(&k.as_str()) {
+            warnings.push(format!(
+                "$.{k} is not applied: kaisatsu has no such setting, remove it from the file"
+            ));
         }
+    }
+    // A section kaisatsu cannot store is refused, never accepted and dropped (S3-39). Every
+    // Keycloak export carries its signing keys and user profile as components: those are named
+    // in a warning (never their configuration, which holds private keys); user federation and
+    // every other provider are refused.
+    for (provider, entries) in obj
+        .get("components")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        if is_blank(Some(entries)) {
+            continue;
+        }
+        if IGNORED_COMPONENTS.contains(&provider.as_str()) {
+            warnings.push(format!(
+                "$.components[\"{provider}\"] is not applied: kaisatsu makes its own signing keys \
+                 and user profile"
+            ));
+        } else {
+            return Err(KaisatsuError::BadRequest(format!(
+                "$.components[\"{provider}\"]: kaisatsu has no such provider (user federation \
+                 included); remove it from the file"
+            )));
+        }
+    }
+    if !is_blank(obj.get("defaultGroups")) {
+        warnings.push(
+            "$.defaultGroups is stored, but kaisatsu joins no new person to a default group: \
+             name each person's groups in $.users[].groups"
+                .into(),
+        );
+    }
+    for org in obj
+        .get("organizations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|o| !is_blank(o.get("members")))
+    {
+        let name = org
+            .get("alias")
+            .or_else(|| org.get("name"))
+            .and_then(Value::as_str);
+        warnings.push(format!(
+            "$.organizations[{}].members are not imported: add each person in the Portal",
+            name.unwrap_or_default()
+        ));
+    }
+    if let Some(id) = obj.get("id").and_then(Value::as_str)
+        && id != realm_name
+    {
+        warnings.push(format!(
+            "$.id '{id}' is ignored: kaisatsu keys a realm by its name '{realm_name}'"
+        ));
     }
 
     // 1. Collect known scopes (built-in + declared in `clientScopes`)
@@ -633,20 +729,25 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
 
     // 3. Collect known groups (recursively)
     let mut known_group_paths: BTreeSet<String> = BTreeSet::new();
-    fn collect_groups(arr: &[Value], out: &mut BTreeSet<String>) {
+    // A group without a `path` gets its parent's path and its name, as the stores write it.
+    fn collect_groups(arr: &[Value], parent: &str, out: &mut BTreeSet<String>) {
         for g in arr {
-            if let Some(p) = g.get("path").and_then(Value::as_str) {
-                out.insert(p.to_owned());
-            } else if let Some(n) = g.get("name").and_then(Value::as_str) {
-                out.insert(format!("/{n}"));
-            }
+            let path = g.get("path").and_then(Value::as_str).map_or_else(
+                || {
+                    g.get("name")
+                        .and_then(Value::as_str)
+                        .map(|n| format!("{}/{n}", parent.trim_end_matches('/')))
+                },
+                |p| Some(p.to_owned()),
+            );
             if let Some(subs) = g.get("subGroups").and_then(Value::as_array) {
-                collect_groups(subs, out);
+                collect_groups(subs, path.as_deref().unwrap_or(parent), out);
             }
+            out.extend(path);
         }
     }
     if let Some(groups) = obj.get("groups").and_then(Value::as_array) {
-        collect_groups(groups, &mut known_group_paths);
+        collect_groups(groups, "", &mut known_group_paths);
     }
     if let Some(def_groups) = obj.get("defaultGroups").and_then(Value::as_array) {
         for (i, dg) in def_groups.iter().enumerate() {
@@ -1065,6 +1166,300 @@ async fn refuse_unset_secret_variables(
     Ok(())
 }
 
+/// Fields every store writes itself: an object's id, realm and owner mark.
+const STORE_KEYS: &[&str] = &["id", "realmId", "managedBy"];
+
+/// A realm file member that does not parse as its type.
+fn bad_request(e: impl std::fmt::Display) -> KaisatsuError {
+    KaisatsuError::BadRequest(e.to_string())
+}
+
+/// A stored object that does not serialize.
+fn storage(e: serde_json::Error) -> KaisatsuError {
+    KaisatsuError::Storage(e.to_string())
+}
+
+/// Whether a JSON value carries nothing: a missing key, `null`, `""`, `[]` and `{}` all read the
+/// same, since the types skip empty fields when they serialize.
+fn is_blank(v: Option<&Value>) -> bool {
+    match v {
+        None | Some(Value::Null) => true,
+        Some(Value::String(s)) => s.is_empty(),
+        Some(Value::Array(a)) => a.is_empty(),
+        Some(Value::Object(o)) => o.is_empty(),
+        Some(_) => false,
+    }
+}
+
+/// The top-level fields in which `next`, the object an apply writes, differs from `prev`, the
+/// stored one (S3-40). `skip` names the fields the store writes itself (ids, owner marks);
+/// `derived` the ones the store fills when the file leaves them out, compared only when the file
+/// gives one. Secrets are compared by value and reported by field name alone.
+fn changed_fields<T: Serialize>(
+    prev: &T,
+    next: &T,
+    skip: &[&str],
+    derived: &[&str],
+) -> Vec<String> {
+    let as_map = |v: &T| match serde_json::to_value(v) {
+        Ok(Value::Object(m)) => m,
+        _ => Map::new(),
+    };
+    let (prev, next) = (as_map(prev), as_map(next));
+    let keys: BTreeSet<&String> = prev.keys().chain(next.keys()).collect();
+    keys.into_iter()
+        .filter(|k| !skip.contains(&k.as_str()))
+        .filter(|k| !(derived.contains(&k.as_str()) && is_blank(next.get(*k))))
+        .filter(|k| {
+            let (a, b) = (prev.get(*k), next.get(*k));
+            !(a == b || is_blank(a) && is_blank(b))
+        })
+        .cloned()
+        .collect()
+}
+
+/// A stored person as an apply leaves them (S3-38): the fields the file names replace the stored
+/// ones, `attributes` key by key; every other field (required actions, the enabled flag, the
+/// attributes the file leaves out) keeps its value. The grants are the file's roles plus those an
+/// administrator mapped (`admin_grants`), so a role only an earlier file gave ends when the file
+/// drops it, and a role the Portal granted survives.
+fn merged_user(
+    prev: &UserRepresentation,
+    file: &Value,
+    parsed: &UserRepresentation,
+    admin_grants: Grants,
+) -> Result<UserRepresentation> {
+    let mut doc = serde_json::to_value(prev).map_err(storage)?;
+    if let (Value::Object(stored), Some(named)) = (&mut doc, file.as_object()) {
+        for (k, v) in named {
+            match k.as_str() {
+                "id"
+                | "realmId"
+                | "createdTimestamp"
+                | "transient"
+                | "serviceAccountClientId"
+                | "credentials"
+                | "groups"
+                | "realmRoles"
+                | "clientRoles"
+                | "username" => {}
+                // Both are maps: the stored person always carries `attributes`, and the file's
+                // parsed as a map before this merge.
+                "attributes" => {
+                    if let (Some(Value::Object(held)), Value::Object(given)) =
+                        (stored.get_mut("attributes"), v)
+                    {
+                        held.extend(given.clone());
+                    }
+                }
+                _ => {
+                    stored.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    let mut user: UserRepresentation = serde_json::from_value(doc).map_err(bad_request)?;
+    if let (Some(given), Some(held)) = (&user.email, &prev.email)
+        && given.eq_ignore_ascii_case(held)
+    {
+        user.email = prev.email.clone();
+    }
+    user.groups = Vec::new();
+    (user.realm_roles, user.client_roles) =
+        grants_with(admin_grants, &parsed.realm_roles, &parsed.client_roles);
+    Ok(user)
+}
+
+/// A person's role grants: realm role names, and role names by `clientId`.
+pub type Grants = (Vec<String>, HashMap<String, Vec<String>>);
+
+/// The grants `given` names added to an administrator's (`admin_grants`): realm role names, and
+/// role names by `clientId`, each once.
+pub fn grants_with(
+    admin_grants: Grants,
+    realm_roles: &[String],
+    client_roles: &HashMap<String, Vec<String>>,
+) -> Grants {
+    let (mut realm, mut clients) = admin_grants;
+    for role in realm_roles {
+        if !realm.contains(role) {
+            realm.push(role.clone());
+        }
+    }
+    for (client, roles) in client_roles {
+        let held = clients.entry(client.clone()).or_default();
+        for role in roles {
+            if !held.contains(role) {
+                held.push(role.clone());
+            }
+        }
+    }
+    clients.retain(|_, roles| !roles.is_empty());
+    (realm, clients)
+}
+
+/// The roles an administrator mapped to a stored person (their `role_mappings` rows), in the
+/// shape of the person's grants: realm role names, and role names by `clientId`.
+pub async fn admin_grants(
+    store: &Arc<dyn Store>,
+    realm_id: &str,
+    user: &UserRepresentation,
+) -> Result<Grants> {
+    let realm_roles = store
+        .list_role_mappings_for_principal(realm_id, "user", &user.id, None)
+        .await?
+        .into_iter()
+        .map(|m| m.role_name)
+        .collect();
+    let mut client_roles = HashMap::new();
+    for client_id in user.client_roles.keys() {
+        let Some(client) = store.get_client_by_client_id(realm_id, client_id).await? else {
+            continue;
+        };
+        let names: Vec<String> = store
+            .list_role_mappings_for_principal(realm_id, "user", &user.id, Some(&client.id))
+            .await?
+            .into_iter()
+            .map(|m| m.role_name)
+            .collect();
+        if !names.is_empty() {
+            client_roles.insert(client_id.clone(), names);
+        }
+    }
+    Ok((realm_roles, client_roles))
+}
+
+/// An Organization of a realm file (Keycloak's `OrganizationRepresentation`): its alias defaults
+/// to its name, and each domain arrives unverified.
+fn file_organization(realm_id: &str, val: &Value) -> Result<Organization> {
+    let text = |k: &str| {
+        val.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let name = text("name");
+    if name.is_empty() {
+        return Err(KaisatsuError::BadRequest(
+            "$.organizations[].name is required, for example \"Helsinki\"".into(),
+        ));
+    }
+    let alias = Some(text("alias"))
+        .filter(|a| !a.is_empty())
+        .unwrap_or_else(|| name.clone());
+    let attributes = match val.get("attributes") {
+        None | Some(Value::Null) => HashMap::new(),
+        Some(a) => serde_json::from_value(a.clone()).map_err(|e| {
+            KaisatsuError::BadRequest(format!("$.organizations[{alias}].attributes: {e}"))
+        })?,
+    };
+    let domains = val
+        .get("domains")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|d| d.get("name").and_then(Value::as_str))
+        .map(|d| OrganizationDomain {
+            id: format!("{alias}:{d}"),
+            realm_id: realm_id.to_owned(),
+            org_id: alias.clone(),
+            name: d.to_ascii_lowercase(),
+            verified: false,
+            verification_token: None,
+            challenge_hash: None,
+            challenge_expires_at: None,
+        })
+        .collect();
+    Ok(Organization {
+        id: alias.clone(),
+        realm_id: realm_id.to_owned(),
+        description: text("description"),
+        enabled: val.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        name,
+        alias,
+        domains,
+        attributes,
+        managed_by: Some("apply".into()),
+    })
+}
+
+/// A stored Organization as an apply leaves it (as [`merged_user`] does for a person): the keys
+/// the file names replace the stored ones, `attributes` key by key; the enabled flag, the
+/// description and the attributes the file leaves out keep the Portal's values.
+fn merged_organization(prev: &Organization, file: &Value, org: Organization) -> Organization {
+    let named = |k: &str| file.get(k).is_some_and(|v| !v.is_null());
+    let mut attributes = prev.attributes.clone();
+    attributes.extend(org.attributes);
+    Organization {
+        id: prev.id.clone(),
+        enabled: if named("enabled") {
+            org.enabled
+        } else {
+            prev.enabled
+        },
+        description: if named("description") {
+            org.description
+        } else {
+            prev.description.clone()
+        },
+        domains: merged_domains(prev, org.domains),
+        attributes,
+        ..org
+    }
+}
+
+/// The stored domains with the file's new ones added: a domain already held keeps its
+/// verification.
+fn merged_domains(prev: &Organization, file: Vec<OrganizationDomain>) -> Vec<OrganizationDomain> {
+    let mut out = prev.domains.clone();
+    for d in file {
+        if !out.iter().any(|o| o.name == d.name) {
+            out.push(OrganizationDomain {
+                org_id: prev.id.clone(),
+                ..d
+            });
+        }
+    }
+    out
+}
+
+/// Stamps a file's mappers as the store stamps them: each keeps the stored id of the mapper of
+/// its name and carries the realm, so an unchanged file compares equal (and keeps its ids).
+fn stamp_mappers(
+    mappers: &mut [ProtocolMapperRepresentation],
+    held: Option<&[ProtocolMapperRepresentation]>,
+    realm_id: &str,
+) {
+    for m in mappers {
+        m.realm_id = realm_id.to_owned();
+        if let Some(h) = held
+            .filter(|_| m.id.is_empty())
+            .and_then(|h| h.iter().find(|h| h.name == m.name))
+        {
+            m.id = h.id.clone();
+        }
+    }
+}
+
+/// One object's line of the plan: created, updated with the fields that change, or unchanged.
+fn object_change(kind: &str, id: &str, existed: bool, changed: Vec<String>) -> ObjectChange {
+    let action = match (existed, changed.is_empty()) {
+        (false, _) => ChangeAction::Create,
+        (true, true) => ChangeAction::Unchanged,
+        (true, false) => ChangeAction::Update,
+    };
+    ObjectChange {
+        kind: kind.into(),
+        id: id.into(),
+        changed_fields: if action == ChangeAction::Update {
+            changed
+        } else {
+            Vec::new()
+        },
+        action,
+    }
+}
+
 /// Applies `files` (one or more JSON/YAML realm documents for one realm) to `store` (W1b).
 /// Whether every group of the file (nested ones included) is stored and holds at least the realm
 /// and client roles the file gives it (a role the Portal added since stays out of the question).
@@ -1080,10 +1475,7 @@ async fn file_groups_hold(
         .into_iter()
         .flatten()
     {
-        pending.push(
-            serde_json::from_value(g_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?,
-        );
+        pending.push(serde_json::from_value(g_val.clone()).map_err(bad_request)?);
     }
     while let Some(mut grp) = pending.pop() {
         pending.append(&mut grp.sub_groups);
@@ -1113,17 +1505,19 @@ pub async fn apply_realm_files(
     let warnings = check_realm_value(&merged, opts)?;
     let file_checksum = apply_checksum(&merged, opts);
 
-    let obj = merged
-        .as_object()
-        .ok_or_else(|| KaisatsuError::BadRequest("not an object".into()))?;
+    let Some(obj) = merged.as_object() else {
+        return Err(KaisatsuError::BadRequest("not an object".into()));
+    };
     let realm_name = obj["realm"].as_str().unwrap_or("default").to_owned();
-    let realm_id = obj
-        .get("id")
-        .and_then(Value::as_str)
-        .unwrap_or(&realm_name)
-        .to_owned();
+    // A realm's rows are keyed by its name, the key every admin route and token issuer uses: a
+    // Keycloak export's UUID `id` is named in a warning and ignored for a new realm (S3-28).
+    // A realm stored earlier under another id keeps it: moving its rows is a migration, not an
+    // apply.
+    let existing_realm = store.get_realm(&realm_name).await?;
+    let realm_id = existing_realm
+        .as_ref()
+        .map_or_else(|| realm_name.clone(), |r| r.id.clone());
 
-    let existing_realm = store.get_realm(&realm_id).await?;
     if !opts.dry_run {
         refuse_unset_secret_variables(store, &merged, &realm_id, existing_realm.as_ref(), opts)
             .await?;
@@ -1192,23 +1586,14 @@ pub async fn apply_realm_files(
         };
     }
 
-    let realm_action = match &existing_realm {
-        None => ChangeAction::Create,
-        Some(prev)
-            if prev.display_name == realm_cfg.display_name
-                && prev.access_token_lifespan == realm_cfg.access_token_lifespan
-                && prev.password_policy == realm_cfg.password_policy =>
-        {
-            ChangeAction::Unchanged
-        }
-        Some(_) => ChangeAction::Update,
-    };
-    changes.push(ObjectChange {
-        kind: "Realm".into(),
-        id: realm_id.clone(),
-        action: realm_action,
-        changed_fields: Vec::new(),
-    });
+    changes.push(object_change(
+        "Realm",
+        &realm_id,
+        existing_realm.is_some(),
+        existing_realm.as_ref().map_or_else(Vec::new, |prev| {
+            changed_fields(prev, &realm_cfg, &["id", "realm", "applyChecksum"], &[])
+        }),
+    ));
     if !opts.dry_run {
         store.upsert_realm(realm_cfg.clone()).await?;
     }
@@ -1218,25 +1603,23 @@ pub async fn apply_realm_files(
     let mut file_scope_names = BTreeSet::new();
     if let Some(scopes) = obj.get("clientScopes").and_then(Value::as_array) {
         for sc_val in scopes {
-            let mut sc: ClientScopeRepresentation = serde_json::from_value(sc_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let mut sc: ClientScopeRepresentation =
+                serde_json::from_value(sc_val.clone()).map_err(bad_request)?;
             sc.realm_id = realm_id.clone();
             sc.managed_by = Some("apply".into());
             file_scope_names.insert(sc.name.clone());
             let prev = existing_scopes.iter().find(|s| s.name == sc.name);
-            let act = match prev {
-                None => ChangeAction::Create,
-                Some(p) if p.description == sc.description && p.attributes == sc.attributes => {
-                    ChangeAction::Unchanged
-                }
-                Some(_) => ChangeAction::Update,
-            };
-            changes.push(ObjectChange {
-                kind: "ClientScope".into(),
-                id: sc.name.clone(),
-                action: act,
-                changed_fields: Vec::new(),
-            });
+            stamp_mappers(
+                &mut sc.protocol_mappers,
+                prev.map(|p| p.protocol_mappers.as_slice()),
+                &realm_id,
+            );
+            changes.push(object_change(
+                "ClientScope",
+                &sc.name,
+                prev.is_some(),
+                prev.map_or_else(Vec::new, |p| changed_fields(p, &sc, STORE_KEYS, &[])),
+            ));
             if !opts.dry_run {
                 store.upsert_client_scope(sc).await?;
             }
@@ -1267,25 +1650,20 @@ pub async fn apply_realm_files(
         .and_then(Value::as_array)
     {
         for r_val in r_arr {
-            let mut role: RoleRepresentation = serde_json::from_value(r_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let mut role: RoleRepresentation =
+                serde_json::from_value(r_val.clone()).map_err(bad_request)?;
             role.realm_id = realm_id.clone();
             role.managed_by = Some("apply".into());
             file_role_names.insert(role.name.clone());
             let prev = existing_roles.iter().find(|r| r.name == role.name);
-            let act = match prev {
-                None => ChangeAction::Create,
-                Some(p) if p.description == role.description && p.composite == role.composite => {
-                    ChangeAction::Unchanged
-                }
-                Some(_) => ChangeAction::Update,
-            };
-            changes.push(ObjectChange {
-                kind: "Role".into(),
-                id: role.name.clone(),
-                action: act,
-                changed_fields: Vec::new(),
-            });
+            changes.push(object_change(
+                "Role",
+                &role.name,
+                prev.is_some(),
+                prev.map_or_else(Vec::new, |p| {
+                    changed_fields(p, &role, STORE_KEYS, &["containerId"])
+                }),
+            ));
             if !opts.dry_run {
                 store.upsert_role(role).await?;
             }
@@ -1311,8 +1689,8 @@ pub async fn apply_realm_files(
     let mut file_group_paths = BTreeSet::new();
     if let Some(g_arr) = obj.get("groups").and_then(Value::as_array) {
         for g_val in g_arr {
-            let mut grp: GroupRepresentation = serde_json::from_value(g_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let mut grp: GroupRepresentation =
+                serde_json::from_value(g_val.clone()).map_err(bad_request)?;
             grp.realm_id = realm_id.clone();
             grp.managed_by = Some("apply".into());
             for sub in &mut grp.sub_groups {
@@ -1321,17 +1699,20 @@ pub async fn apply_realm_files(
             }
             file_group_paths.insert(grp.path.clone());
             let prev = store.get_group_by_path(&realm_id, None, &grp.path).await?;
-            let act = match prev {
-                None => ChangeAction::Create,
-                Some(p) if p.attributes == grp.attributes => ChangeAction::Unchanged,
-                Some(_) => ChangeAction::Update,
-            };
-            changes.push(ObjectChange {
-                kind: "Group".into(),
-                id: grp.path.clone(),
-                action: act,
-                changed_fields: Vec::new(),
-            });
+            changes.push(object_change(
+                "Group",
+                &grp.path,
+                prev.is_some(),
+                prev.as_ref().map_or_else(Vec::new, |p| {
+                    // Subgroups are rows of their own, so the stored group never lists them.
+                    changed_fields(
+                        p,
+                        &grp,
+                        &["id", "realmId", "managedBy", "subGroups", "subGroupCount"],
+                        &["orgId", "path"],
+                    )
+                }),
+            ));
             if !opts.dry_run {
                 store.upsert_group(grp).await?;
             }
@@ -1342,8 +1723,7 @@ pub async fn apply_realm_files(
     if let Some(idps) = obj.get("identityProviders").and_then(Value::as_array) {
         for idp_val in idps {
             let mut idp: IdentityProviderRepresentation =
-                serde_json::from_value(idp_val.clone())
-                    .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+                serde_json::from_value(idp_val.clone()).map_err(bad_request)?;
             idp.realm_id = realm_id.clone();
             idp.managed_by = Some("apply".into());
             let prev = store.get_idp(&realm_id, &idp.alias).await?;
@@ -1359,19 +1739,14 @@ pub async fn apply_realm_files(
                 };
                 idp.config.insert("clientSecret".into(), value);
             }
-            let act = match prev {
-                None => ChangeAction::Create,
-                Some(p) if p.config == idp.config && p.enabled == idp.enabled => {
-                    ChangeAction::Unchanged
-                }
-                Some(_) => ChangeAction::Update,
-            };
-            changes.push(ObjectChange {
-                kind: "IdentityProvider".into(),
-                id: idp.alias.clone(),
-                action: act,
-                changed_fields: Vec::new(),
-            });
+            changes.push(object_change(
+                "IdentityProvider",
+                &idp.alias,
+                prev.is_some(),
+                prev.as_ref().map_or_else(Vec::new, |p| {
+                    changed_fields(p, &idp, STORE_KEYS, &["internalId"])
+                }),
+            ));
             if !opts.dry_run {
                 store.upsert_idp(idp).await?;
             }
@@ -1383,8 +1758,8 @@ pub async fn apply_realm_files(
     let mut file_client_ids = BTreeSet::new();
     if let Some(c_arr) = obj.get("clients").and_then(Value::as_array) {
         for c_val in c_arr {
-            let mut client: ClientRepresentation = serde_json::from_value(c_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let mut client: ClientRepresentation =
+                serde_json::from_value(c_val.clone()).map_err(bad_request)?;
             client.realm_id = realm_id.clone();
             if client.managed_by.is_none() {
                 client.managed_by = Some("apply".into());
@@ -1399,6 +1774,11 @@ pub async fn apply_realm_files(
             {
                 client.protocol_mappers = p.protocol_mappers.clone();
             }
+            stamp_mappers(
+                &mut client.protocol_mappers,
+                prev.map(|p| p.protocol_mappers.as_slice()),
+                &realm_id,
+            );
             if let Some(raw_sec) = client.secret.clone() {
                 // An unset variable keeps the client's current secret (re-applying an export);
                 // a new client without its variable fails the apply.
@@ -1407,27 +1787,16 @@ pub async fn apply_realm_files(
                     _ => Some(resolve_secret_value(&raw_sec, "client.secret", opts)?),
                 };
             }
-            let act = match prev {
-                None => ChangeAction::Create,
-                Some(p)
-                    if p.redirect_uris == client.redirect_uris
-                        && p.default_client_scopes == client.default_client_scopes
-                        && p.optional_client_scopes == client.optional_client_scopes
-                        && p.attributes == client.attributes
-                        // A changed substituted secret (a rotated file, a realm's derived
-                        // value, T-7288) is a change too; none in the file keeps the stored one.
-                        && (client.secret.is_none() || p.secret == client.secret) =>
-                {
-                    ChangeAction::Unchanged
-                }
-                Some(_) => ChangeAction::Update,
-            };
-            changes.push(ObjectChange {
-                kind: "Client".into(),
-                id: client.client_id.clone(),
-                action: act,
-                changed_fields: Vec::new(),
-            });
+            // A changed substituted secret (a rotated file, a realm's derived value, T-7288) is a
+            // change too; none in the file keeps the stored one.
+            changes.push(object_change(
+                "Client",
+                &client.client_id,
+                prev.is_some(),
+                prev.map_or_else(Vec::new, |p| {
+                    changed_fields(p, &client, STORE_KEYS, &["secret"])
+                }),
+            ));
             if !opts.dry_run {
                 store.upsert_client(client).await?;
             }
@@ -1451,11 +1820,130 @@ pub async fn apply_realm_files(
         }
     }
 
+    // 6b. Client roles (`roles.client`), keyed by each client's stored id (S3-39).
+    if let Some(by_client) = obj
+        .get("roles")
+        .and_then(|r| r.get("client"))
+        .and_then(Value::as_object)
+    {
+        for (client_id, r_arr) in by_client {
+            let container = store.get_client_by_client_id(&realm_id, client_id).await?;
+            if container.is_none() && !(opts.dry_run && file_client_ids.contains(client_id)) {
+                return Err(KaisatsuError::BadRequest(format!(
+                    "$.roles.client.{client_id}: no client '{client_id}' in the realm or the file; \
+                     add it to $.clients"
+                )));
+            }
+            let container_id = container.map(|c| c.id);
+            let existing = match &container_id {
+                Some(cid) => store.list_roles(&realm_id, Some(cid)).await?,
+                None => Vec::new(),
+            };
+            for r_val in r_arr.as_array().into_iter().flatten() {
+                let mut role: RoleRepresentation =
+                    serde_json::from_value(r_val.clone()).map_err(|e| {
+                        KaisatsuError::BadRequest(format!("$.roles.client.{client_id}: {e}"))
+                    })?;
+                role.realm_id = realm_id.clone();
+                role.client_role = true;
+                role.container_id = container_id.clone();
+                role.managed_by = Some("apply".into());
+                let prev = existing.iter().find(|r| r.name == role.name);
+                changes.push(object_change(
+                    "ClientRole",
+                    &format!("{client_id}/{}", role.name),
+                    prev.is_some(),
+                    prev.map_or_else(Vec::new, |p| changed_fields(p, &role, STORE_KEYS, &[])),
+                ));
+                if !opts.dry_run {
+                    store.upsert_role(role).await?;
+                }
+            }
+            if opts.mode == ApplyMode::Full {
+                let named: BTreeSet<&str> = r_arr
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.get("name").and_then(Value::as_str))
+                    .collect();
+                for old in existing.iter().filter(|r| {
+                    r.managed_by.as_deref() == Some("apply") && !named.contains(r.name.as_str())
+                }) {
+                    changes.push(ObjectChange {
+                        kind: "ClientRole".into(),
+                        id: format!("{client_id}/{}", old.name),
+                        action: ChangeAction::Delete,
+                        changed_fields: Vec::new(),
+                    });
+                    if !opts.dry_run {
+                        store
+                            .delete_role(&realm_id, container_id.as_deref(), &old.name)
+                            .await?;
+                    }
+                }
+            }
+        }
+    }
+
+    // 6c. Organizations (S3-39). A domain a file names arrives unverified: only the DNS proof of
+    // the Portal's verification marks it verified, since a verified domain routes sign-ins.
+    for o_val in obj
+        .get("organizations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let org = file_organization(&realm_id, o_val)?;
+        let prev = store.get_organization(&realm_id, &org.alias).await?;
+        let org = match &prev {
+            Some(p) => merged_organization(p, o_val, org),
+            None => org,
+        };
+        changes.push(object_change(
+            "Organization",
+            &org.alias,
+            prev.is_some(),
+            prev.as_ref()
+                .map_or_else(Vec::new, |p| changed_fields(p, &org, STORE_KEYS, &[])),
+        ));
+        if !opts.dry_run {
+            store.upsert_organization(org).await?;
+        }
+    }
+
+    // 6d. Required actions (S3-39).
+    let existing_actions = store.list_required_actions(&realm_id).await?;
+    for ra_val in obj
+        .get("requiredActions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let mut ra: RequiredActionConfig = serde_json::from_value(ra_val.clone())
+            .map_err(|e| KaisatsuError::BadRequest(format!("$.requiredActions: {e}")))?;
+        ra.realm_id = realm_id.clone();
+        let prev = existing_actions.iter().find(|p| p.alias == ra.alias);
+        if let Some(p) = prev {
+            ra.id = p.id.clone();
+        } else if ra.id.is_empty() {
+            ra.id = format!("{realm_id}:{}", ra.alias);
+        }
+        changes.push(object_change(
+            "RequiredAction",
+            &ra.alias,
+            prev.is_some(),
+            prev.map_or_else(Vec::new, |p| changed_fields(p, &ra, STORE_KEYS, &[])),
+        ));
+        if !opts.dry_run {
+            store.upsert_required_action(ra).await?;
+        }
+    }
+
     // 7. Users & Credentials
     if let Some(u_arr) = obj.get("users").and_then(Value::as_array) {
         for u_val in u_arr {
-            let mut user: UserRepresentation = serde_json::from_value(u_val.clone())
-                .map_err(|e| KaisatsuError::BadRequest(e.to_string()))?;
+            let mut user: UserRepresentation =
+                serde_json::from_value(u_val.clone()).map_err(bad_request)?;
             user.realm_id = realm_id.clone();
             if user.managed_by.is_none() {
                 user.managed_by = Some("apply".into());
@@ -1478,33 +1966,30 @@ pub async fn apply_realm_files(
                     .iter()
                     .any(|j| j.trim_start_matches('/') == path.trim_start_matches('/'))
             });
-            let act = match &prev {
-                None => ChangeAction::Create,
-                Some(p)
-                    if p.first_name == user.first_name
-                        && p.last_name == user.last_name
-                        && p.realm_roles == user.realm_roles
-                        && in_every_group =>
-                {
-                    ChangeAction::Unchanged
-                }
-                Some(_) => ChangeAction::Update,
-            };
-            if let Some(p) = &prev
-                && user.id.is_empty()
-            {
-                user.id = p.id.clone();
+            let mut changed = Vec::new();
+            if let Some(p) = &prev {
+                let next = merged_user(p, u_val, &user, admin_grants(store, &realm_id, p).await?)?;
+                changed = changed_fields(
+                    p,
+                    &next,
+                    &["id", "realmId", "createdTimestamp", "groups"],
+                    &[],
+                );
+                user = next;
             }
-            changes.push(ObjectChange {
-                kind: "User".into(),
-                id: user.username.clone(),
-                action: act.clone(),
-                changed_fields: Vec::new(),
-            });
+            if !in_every_group {
+                changed.push("groups".into());
+            }
+            changes.push(object_change(
+                "User",
+                &user.username,
+                prev.is_some(),
+                changed,
+            ));
             if !opts.dry_run {
                 let saved = if prev.is_some() {
                     let saved = store.update_user(user.clone()).await?;
-                    // A profile write keeps the stored grants: the file's are written by name.
+                    // A profile write keeps the stored grants: the merged ones are written by name.
                     store
                         .set_user_grants(
                             &realm_id,
@@ -1519,15 +2004,14 @@ pub async fn apply_realm_files(
                 };
                 // Link groups
                 for gpath in &file_groups {
-                    let grp = store
-                        .get_group_by_path(&realm_id, None, gpath)
-                        .await?
-                        .ok_or_else(|| {
-                            KaisatsuError::NotFound(format!(
-                                "user '{}': group '{gpath}' does not exist",
-                                saved.username
-                            ))
-                        })?;
+                    // The check refused every path the file's groups do not hold, and they
+                    // were written above.
+                    let Some(grp) = store.get_group_by_path(&realm_id, None, gpath).await? else {
+                        return Err(KaisatsuError::NotFound(format!(
+                            "user '{}': group '{gpath}' does not exist",
+                            saved.username
+                        )));
+                    };
                     store
                         .add_user_to_group(&realm_id, &saved.id, &grp.id)
                         .await?;
@@ -1806,8 +2290,7 @@ pub async fn export_realm(
         }
     }
 
-    let mut out =
-        serde_json::to_value(&realm).map_err(|e| KaisatsuError::Storage(e.to_string()))?;
+    let mut out = serde_json::to_value(&realm).map_err(storage)?;
     if let Value::Object(ref mut map) = out {
         map.remove("applyChecksum");
         map.insert(

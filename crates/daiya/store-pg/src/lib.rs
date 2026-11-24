@@ -8,10 +8,11 @@
 //!   `cr_quota` during write transactions (§5.3).
 
 use daiya_model::{
-    ApplyBundle, AuditRecord, CrError, CrResult, DaiyaStore, DashboardRecord,
-    DashboardVersionRecord, DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId,
-    InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgKey, OrgQuotas, OrgRow, PlanRecord,
-    PublicDashboardRecord, RowPage, RowQuery, ShareType, org_state_etag, store::StoreFuture,
+    ApplyBundle, AuditRecord, CrError, CrResult, DASHBOARD_VERSIONS_KEPT, DaiyaStore,
+    DashboardRecord, DashboardVersionRecord, DatasourceRecord, FolderRecord, IMPORT_REPORTS_KEPT,
+    ImportReportRecord, InstallationId, InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId,
+    OrgKey, OrgQuotas, OrgRow, PlanRecord, PublicDashboardRecord, RowPage, RowQuery, ShareType,
+    folder_content_refusal, org_state_etag, store::StoreFuture,
 };
 use serde_json::Value;
 use sqlx::postgres::PgConnectOptions;
@@ -168,22 +169,19 @@ const MIGRATION_LOCK_KEY: i64 = 0x6461_6979_615f_6d67;
 /// (policies, grants) on a live database takes exclusive locks and deadlocks against application
 /// transactions, so a replica that boots next to a serving one must not do it.
 pub async fn migrate(pool: &PgPool) -> CrResult<()> {
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(|e| CrError::MigrationFailed(format!("connect: {e}")))?;
+    let mut conn = pool.acquire().await.map_err(migration("connect"))?;
     sqlx::query("SELECT pg_advisory_lock($1)")
         .bind(MIGRATION_LOCK_KEY)
         .execute(&mut *conn)
         .await
-        .map_err(|e| CrError::MigrationFailed(format!("advisory lock: {e}")))?;
+        .map_err(migration("advisory lock"))?;
     let result = migrate_locked(&mut conn).await;
     let unlock = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(MIGRATION_LOCK_KEY)
         .execute(&mut *conn)
         .await;
     result?;
-    unlock.map_err(|e| CrError::MigrationFailed(format!("advisory unlock: {e}")))?;
+    unlock.map_err(migration("advisory unlock"))?;
     Ok(())
 }
 
@@ -233,6 +231,21 @@ async fn migrate_locked(conn: &mut sqlx::PgConnection) -> CrResult<()> {
     }
     tx.commit().await.map_err(failed)?;
     Ok(())
+}
+
+/// A failed database step as an internal error naming the step (the detail is logged, never answered).
+fn internal(step: &'static str) -> impl FnOnce(sqlx::Error) -> CrError {
+    move |e| CrError::Internal(format!("{step} failed: {e}"))
+}
+
+/// A catalog the boot check could not read: RLS counts as not enforced.
+fn inspect(catalog: &'static str) -> impl FnOnce(sqlx::Error) -> CrError {
+    move |e| CrError::RlsNotEnforced(format!("failed to inspect {catalog}: {e}"))
+}
+
+/// A failed migration step, named.
+fn migration(step: &'static str) -> impl FnOnce(sqlx::Error) -> CrError {
+    move |e| CrError::MigrationFailed(format!("{step}: {e}"))
 }
 
 /// Maps a database error: a unique violation is a 409 conflict, everything else is internal
@@ -337,12 +350,12 @@ impl PgStore {
     async fn begin_org_tx(&self, org_id: OrgId) -> CrResult<jc_audit::Tx> {
         let mut tx = jc_audit::begin(&self.pool)
             .await
-            .map_err(|e| CrError::Internal(format!("begin tx failed: {e}")))?;
+            .map_err(internal("begin tx"))?;
         sqlx::query("SELECT set_config('cr.org', $1, true)")
             .bind(org_id.to_string())
             .execute(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(format!("set_config cr.org failed: {e}")))?;
+            .map_err(internal("set_config cr.org"))?;
         Ok(tx)
     }
 
@@ -352,12 +365,12 @@ impl PgStore {
             .pool
             .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await
-            .map_err(|e| CrError::Internal(format!("begin snapshot failed: {e}")))?;
+            .map_err(internal("begin snapshot"))?;
         sqlx::query("SELECT set_config('cr.org', $1, true)")
             .bind(org_id.to_string())
             .execute(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(format!("set_config cr.org failed: {e}")))?;
+            .map_err(internal("set_config cr.org"))?;
         Ok(tx)
     }
 
@@ -390,7 +403,7 @@ impl PgStore {
         .bind(defaults.min_public_interval_ms)
         .execute(&mut **tx)
         .await
-        .map_err(|e| CrError::Internal(format!("ensure quota row failed: {e}")))?;
+        .map_err(internal("ensure quota row"))?;
 
         let row = sqlx::query(
             "SELECT max_dashboards, max_panels_per_dashboard, max_datasources, max_wasm_plugins,
@@ -401,7 +414,7 @@ impl PgStore {
         .bind(org_id.as_uuid())
         .fetch_one(&mut **tx)
         .await
-        .map_err(|e| CrError::Internal(format!("lock quota row failed: {e}")))?;
+        .map_err(internal("lock quota row"))?;
 
         Ok(OrgQuotas {
             max_dashboards: row.get::<i64, _>("max_dashboards") as u64,
@@ -627,6 +640,17 @@ impl PgStore {
         })
         .bind(&dashboard.data)
         .bind(&dashboard.updated_by)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+
+        // Retention (STO-12): the version just written is the newest, so it always stays.
+        sqlx::query(
+            "DELETE FROM cr_dashboard_version WHERE org_id = $1 AND dashboard_uid = $2 AND version <= $3",
+        )
+        .bind(dashboard.org_id.as_uuid())
+        .bind(&dashboard.uid)
+        .bind(i64::from(dashboard.version).saturating_sub(DASHBOARD_VERSIONS_KEPT))
         .execute(&mut **tx)
         .await
         .map_err(db_err)?;
@@ -857,7 +881,7 @@ impl DaiyaStore for PgStore {
             )
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| CrError::RlsNotEnforced(format!("failed to inspect pg_roles: {e}")))?;
+            .map_err(inspect("pg_roles"))?;
 
             let bypass: bool = role_row.get("rolbypassrls");
             let superuser: bool = role_row.get("rolsuper");
@@ -875,7 +899,7 @@ impl DaiyaStore for PgStore {
             )
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| CrError::RlsNotEnforced(format!("failed to inspect pg_class: {e}")))?;
+            .map_err(inspect("pg_class"))?;
 
             let statuses: Vec<TableRlsStatus> = table_rows
                 .into_iter()
@@ -1010,27 +1034,48 @@ impl DaiyaStore for PgStore {
         let uid = uid.to_owned();
         Box::pin(async move {
             let mut tx = self.begin_org_tx(org_id).await?;
-            // A folder's dashboards leave with their versions and public links, as one
-            // `delete_dashboard` does: a later dashboard of the same uid inherits neither.
-            for sql in [
-                "DELETE FROM cr_dashboard_version WHERE org_id = $1 AND dashboard_uid IN \
-                 (SELECT uid FROM cr_dashboard WHERE org_id = $1 AND folder_uid = $2)",
-                "DELETE FROM cr_public_dashboard WHERE org_id = $1 AND dashboard_uid IN \
-                 (SELECT uid FROM cr_dashboard WHERE org_id = $1 AND folder_uid = $2)",
-            ] {
-                sqlx::query(sql)
-                    .bind(org_id.as_uuid())
-                    .bind(&uid)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(db_err)?;
-            }
-            sqlx::query("DELETE FROM cr_dashboard WHERE org_id = $1 AND folder_uid = $2")
-                .bind(org_id.as_uuid())
-                .bind(&uid)
-                .execute(&mut *tx)
-                .await
-                .map_err(db_err)?;
+            let Some(row) = sqlx::query(
+                "SELECT installation_id, instance_id FROM cr_folder WHERE org_id = $1 AND uid = $2",
+            )
+            .bind(org_id.as_uuid())
+            .bind(&uid)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?
+            else {
+                return Ok(false);
+            };
+            // The organization lock every save of a dashboard, folder or library panel takes:
+            // no content lands in the folder between this check and the delete, on any replica.
+            Self::lock_org_quotas(
+                &mut tx,
+                InstallationId(row.get("installation_id")),
+                org_id,
+                InstanceId(row.get("instance_id")),
+            )
+            .await?;
+            let dashboards = uids_held(
+                &mut tx,
+                "SELECT uid FROM cr_dashboard WHERE org_id = $1 AND folder_uid = $2",
+                org_id,
+                &uid,
+            )
+            .await?;
+            let subfolders = uids_held(
+                &mut tx,
+                "SELECT uid FROM cr_folder WHERE org_id = $1 AND parent_uid = $2",
+                org_id,
+                &uid,
+            )
+            .await?;
+            let panels = uids_held(
+                &mut tx,
+                "SELECT uid FROM cr_library_panel WHERE org_id = $1 AND folder_uid = $2",
+                org_id,
+                &uid,
+            )
+            .await?;
+            folder_content_refusal(&uid, dashboards, subfolders, panels)?;
             let res = sqlx::query("DELETE FROM cr_folder WHERE org_id = $1 AND uid = $2")
                 .bind(org_id.as_uuid())
                 .bind(&uid)
@@ -1284,6 +1329,14 @@ impl DaiyaStore for PgStore {
     ) -> StoreFuture<'_, LibraryPanelRecord> {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(panel.org_id).await?;
+            // The organization lock, so a folder delete never misses a panel saved beside it.
+            Self::lock_org_quotas(
+                &mut tx,
+                panel.installation_id,
+                panel.org_id,
+                panel.instance_id,
+            )
+            .await?;
             let row = sqlx::query(
                 "INSERT INTO cr_library_panel (installation_id, org_id, instance_id, folder_uid, uid, name, panel_type, description, model, version)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1)
@@ -1555,7 +1608,7 @@ impl DaiyaStore for PgStore {
             .bind(row.created_at)
             .execute(&mut *tx)
             .await
-            .map_err(|e| CrError::Internal(format!("audit write failed: {e}")))?;
+            .map_err(internal("audit write"))?;
             jc_audit::commit(tx).await.map_err(db_err)
         })
     }
@@ -1612,6 +1665,16 @@ impl DaiyaStore for PgStore {
             .bind(report.mapped_count)
             .bind(&report.summary)
             .bind(report.created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            // Retention (STO-13): the newest reports of the organization stay.
+            sqlx::query(
+                "DELETE FROM cr_import_report WHERE org_id = $1 AND id NOT IN \
+                 (SELECT id FROM cr_import_report WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2)",
+            )
+            .bind(report.org_id.as_uuid())
+            .bind(IMPORT_REPORTS_KEPT)
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
@@ -1734,6 +1797,21 @@ impl DaiyaStore for PgStore {
             Ok(saved)
         })
     }
+}
+
+/// The uids `sql` (`$1` org, `$2` folder uid) lists as held by folder `folder_uid`.
+async fn uids_held(
+    tx: &mut jc_audit::Tx,
+    sql: &'static str,
+    org_id: OrgId,
+    folder_uid: &str,
+) -> CrResult<Vec<String>> {
+    sqlx::query_scalar::<_, String>(sql)
+        .bind(org_id.as_uuid())
+        .bind(folder_uid)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db_err)
 }
 
 /// Refuses a parent chain that loops back (also to the folder itself) or nests deeper than

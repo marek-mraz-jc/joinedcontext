@@ -19,7 +19,7 @@ The native API of `daiya` is the OData 4.01 service at `/odata/v4` (R10a). The f
 | `GET /api/folders` | Grafana clients | `GET /odata/v4/Folders` |
 | `POST /api/folders` | `provision.sh` | Folder upsert in `Apply` |
 | `GET /api/folders/{uid}` | Grafana clients | `GET /odata/v4/Folders('{uid}')` |
-| `DELETE /api/folders/{uid}` | Grafana clients | Folder delete |
+| `DELETE /api/folders/{uid}` | Grafana clients | Folder delete; unlike Grafana, a folder that holds dashboards, subfolders or library panels answers 409 naming them and nothing is deleted |
 | `POST /api/dashboards/db` | `provision.sh`, `POR src/grafana.rs` | `POST /odata/v4/Import` |
 | `GET /api/dashboards/uid/{uid}` | `POR src/grafana.rs` | `GET /odata/v4/Dashboards('{uid}')` + `Dashboard/Export` |
 | `DELETE /api/dashboards/uid/{uid}` | `POR src/grafana.rs` | Dashboard delete |

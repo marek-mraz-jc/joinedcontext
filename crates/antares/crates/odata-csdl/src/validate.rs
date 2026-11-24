@@ -1237,6 +1237,25 @@ mod tests {
                 "{property} -> {referenced}"
             );
         }
+        // A collection on either side takes none, even where the types pair.
+        assert_eq!(
+            problems(|m| {
+                let ks = Property::new("ks", TypeRef::collection("Edm.Int32"));
+                ty(m, "B").properties.push(ks);
+                let bks = Property::new("bks", TypeRef::collection("Edm.Int32"));
+                constrained(m, bks, "bks", "ks");
+            }),
+            vec![bad]
+        );
+        assert_eq!(
+            problems(|m| {
+                let ak = Property::new("ak", TypeRef::single("Edm.String"));
+                ty(m, "B").properties.push(ak);
+                ty(m, "B").navigation_properties[0].referential_constraints =
+                    vec![ReferentialConstraint::new("ak", "id")];
+            }),
+            vec![bad]
+        );
         // Both sides non-nullable: the dependent may not be nullable either.
         assert_eq!(
             problems(|m| {

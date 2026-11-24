@@ -345,6 +345,33 @@ mod tests {
         assert_eq!(names(&json!({"entities": []})), None);
         assert_eq!(names(&json!({"attributeNames": []})), Some(vec![]));
     }
+    /// A page's Entities carry a placeholder `@context`: the shared one is written in its
+    /// place, `id` and `type` first, the other members in their order, nested objects too.
+    #[test]
+    fn spec_order_with_context_writes_the_shared_context_in_place() {
+        use serde_json::json;
+        // keys inserted in sorted order: the same with and without serde_json's preserve_order
+        let doc = json!({"@context": null, "speed": {"type": "Property", "value": 1},
+                         "type": "Car", "id": "urn:ngsi-ld:Car:1"});
+        let ctx = json!(["https://example.org/ctx.jsonld"]);
+        let out = serde_json::to_string(&super::SpecOrderWithContext {
+            doc: doc.as_object().expect("object"),
+            ctx: &ctx,
+        })
+        .expect("serializes");
+        assert_eq!(
+            out,
+            r#"{"id":"urn:ngsi-ld:Car:1","type":"Car","@context":["https://example.org/ctx.jsonld"],"speed":{"type":"Property","value":1}}"#
+        );
+        let bare = json!({"name": "x"});
+        let out = serde_json::to_string(&super::SpecOrderWithContext {
+            doc: bare.as_object().expect("object"),
+            ctx: &ctx,
+        })
+        .expect("serializes");
+        assert_eq!(out, r#"{"name":"x"}"#);
+    }
+
     #[test]
     fn meta_members_are_the_non_attribute_members_of_an_entity() {
         for k in [
@@ -400,6 +427,13 @@ mod tests {
         assert_eq!((d.hours, d.minutes, d.seconds), (12.0, 30.0, 5.5));
         assert!(!d.whole, "a fractional component is not whole");
         assert!(!d.empty);
+        // one half alone carries something too
+        for half in ["P1D", "PT1H"] {
+            assert!(
+                !super::parse_iso_duration(half).expect(half).empty,
+                "{half}"
+            );
+        }
         // 4.6.3 leaves the fraction separator open
         assert_eq!(
             super::parse_iso_duration("PT0,5S").map(|d| d.seconds),

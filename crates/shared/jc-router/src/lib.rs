@@ -876,12 +876,8 @@ impl JcRouter {
             }
         }
 
-        let mut resp = entry
-            .router
-            .clone()
-            .oneshot(req)
-            .await
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        // An axum Router's error is Infallible: the pattern is irrefutable.
+        let Ok(mut resp) = entry.router.clone().oneshot(req).await;
         if role.is_some_and(HostRole::drops_set_cookie) {
             resp.headers_mut().remove(axum::http::header::SET_COOKIE);
         }
@@ -1123,7 +1119,7 @@ mod tests {
                 .collect();
             format!(
                 "{} {}",
-                client.map_or_else(|| "none".to_owned(), |c| c.0.0.to_string()),
+                client.map_or("none".to_owned(), |c| c.0.0.to_string()),
                 names.join(",")
             )
         }
@@ -1178,6 +1174,68 @@ mod tests {
         assert_eq!(ask(None).await, "10.0.0.5 ");
     }
 
+    /// The edge's X-Forwarded-Proto (its first entry, `http` or `https` only) is the Mount's
+    /// scheme; a request without a Host header takes its URI's host; the axum router form reads
+    /// the peer from ConnectInfo.
+    #[tokio::test]
+    async fn the_scheme_and_host_come_from_the_edge_the_host_header_or_the_uri() {
+        const EDGE: &str = "apisix.jc-prod.serviceaccount.identity.linkerd.cluster.local";
+        let app = JcRouterBuilder::new("https", "city.example")
+            .trust_proxy("10.0.0.0/8".parse().unwrap())
+            .trust_identity(EDGE)
+            .mount(
+                MountSpec {
+                    module: "m".into(),
+                    host: None,
+                    path_prefix: None,
+                },
+                Router::new().route(
+                    "/b",
+                    get(|Extension(mount): Extension<Mount>| async move { mount.public_base() }),
+                ),
+            )
+            .build()
+            .unwrap()
+            .into_axum_router();
+        let ask = |uri: &'static str, headers: &[(&'static str, &'static str)]| {
+            let mut b = Request::builder().uri(uri);
+            for (name, value) in headers {
+                b = b.header(*name, *value);
+            }
+            let mut req = b.body(Body::empty()).unwrap();
+            req.extensions_mut().insert(axum::extract::ConnectInfo(
+                "10.0.0.5:4000".parse::<std::net::SocketAddr>().unwrap(),
+            ));
+            let app = app.clone();
+            async move {
+                let resp = app.oneshot(req).await.unwrap();
+                let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+                String::from_utf8(bytes.to_vec()).unwrap()
+            }
+        };
+        let edge = |proto| {
+            [
+                ("host", "city.example"),
+                (MESH_IDENTITY, EDGE),
+                ("x-forwarded-proto", proto),
+            ]
+        };
+        assert_eq!(ask("/b", &edge("http, https")).await, "http://city.example");
+        assert_eq!(ask("/b", &edge("gopher")).await, "https://city.example");
+        assert_eq!(
+            ask(
+                "/b",
+                &[("host", "city.example"), ("x-forwarded-proto", "http")]
+            )
+            .await,
+            "https://city.example"
+        );
+        assert_eq!(
+            ask("https://uri.example/b", &[(MESH_IDENTITY, EDGE)]).await,
+            "https://uri.example"
+        );
+    }
+
     /// Brief 119: the assistant reads the gateway's host on jc's own listener from loopback. A
     /// loopback request that forges the edge's identity, a client address, a forwarded host and
     /// a gateway client is not the edge even when the edge's network and identity are named:
@@ -1196,7 +1254,7 @@ mod tests {
                 .collect();
             format!(
                 "{} {}",
-                client.map_or_else(|| "none".to_owned(), |c| c.0.0.to_string()),
+                client.map_or("none".to_owned(), |c| c.0.0.to_string()),
                 names.join(",")
             )
         }
@@ -1217,7 +1275,8 @@ mod tests {
                     host: Some("other.smartcity.test".into()),
                     path_prefix: None,
                 },
-                Router::new().fallback(|| async { "other" }),
+                // Never reached: a forwarded host from outside the edge routes nothing.
+                Router::new(),
             )
             .build()
             .unwrap();
@@ -1635,12 +1694,9 @@ mod tests {
         const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
         const FOREIGN: &str = "baaaaaaaaaaaaaaaaaaaaaaaaa";
         const UNKNOWN: &str = "caaaaaaaaaaaaaaaaaaaaaaaaa";
-        let api = Router::new().fallback(|headers: axum::http::HeaderMap| async move {
-            match headers.get(axum::http::header::AUTHORIZATION) {
-                None => StatusCode::UNAUTHORIZED.into_response(),
-                Some(_) => StatusCode::FORBIDDEN.into_response(),
-            }
-        });
+        // The router answers a door call without credentials itself (the challenge); the Portal
+        // refuses one with credentials and no grant.
+        let api = Router::new().fallback(|| async { StatusCode::FORBIDDEN });
         let well_known = Router::new().route(
             "/oauth-protected-resource/api/v1/mcp",
             axum::routing::get(|| async {
@@ -1750,6 +1806,11 @@ mod tests {
         assert_eq!(refused.0, StatusCode::NOT_FOUND);
         assert_eq!(
             call("POST", door(UNKNOWN), Some("Bearer none")).await,
+            refused
+        );
+        // An id address no module serves is the same 404.
+        assert_eq!(
+            call("GET", format!("/bratislava/{ID}/nothing"), None).await,
             refused
         );
     }
@@ -2130,6 +2191,31 @@ mod tests {
             let bytes = resp.into_body().collect().await.unwrap().to_bytes();
             assert_eq!(String::from_utf8(bytes.to_vec()).unwrap(), want, "{uri}");
         }
+        // Two mounts of one prefix on one host overlap.
+        let err = JcRouterBuilder::default()
+            .mount(
+                MountSpec {
+                    module: "a".into(),
+                    host: Some("h.example".into()),
+                    path_prefix: Some("/x".into()),
+                },
+                Router::new(),
+            )
+            .mount(
+                MountSpec {
+                    module: "b".into(),
+                    host: Some("h.example".into()),
+                    path_prefix: Some("/x/".into()),
+                },
+                Router::new(),
+            )
+            .build()
+            .err()
+            .expect("overlap");
+        assert_eq!(
+            err.to_string(),
+            "overlapping mounts between module 'a' and 'b' on host 'h.example' prefix '/x'"
+        );
         // Two root mounts on the same (any) host overlap.
         let err = JcRouterBuilder::default()
             .mount(
@@ -2157,12 +2243,10 @@ mod tests {
         );
     }
 
-    /// Router lookup over jc's whole host-mode table (dev's rows plus the default hosts, 30
-    /// entries) against today's one entry per module (11). Timing only:
-    /// `cargo test -p jc-router --release -- --ignored --nocapture lookup_time`.
+    /// Lookup over jc's whole host-mode table (dev's rows plus the default hosts, 30 entries) and
+    /// over one entry per module (11): the exact host and the longest whole-segment prefix win.
     #[test]
-    #[ignore = "timing, run by hand"]
-    fn lookup_time_over_the_full_table() {
+    fn lookup_over_the_full_table() {
         fn table(specs: &[(&str, &str)]) -> JcRouter {
             let mut b = JcRouterBuilder::new("https", "city.test");
             for (i, (host, prefix)) in specs.iter().enumerate() {
@@ -2226,34 +2310,27 @@ mod tests {
             ("a7.city.test", ""),
             ("a8.city.test", ""),
         ];
-        const N: u32 = 1_000_000;
-        for (name, router) in [("full", table(&full)), ("one per module", table(&one_each))] {
-            for (host, path) in [
-                ("portal.city.test", "/api/endpoint/x/ngsi-ld/v1/entities"),
-                ("nope.city.test", "/api/endpoint/x"),
-            ] {
-                // The fastest of five rounds: the host is shared, so slower rounds are noise.
-                let mut best = u128::MAX;
-                let mut hits = 0u32;
-                for _ in 0..5 {
-                    let start = std::time::Instant::now();
-                    hits = 0;
-                    for _ in 0..N {
-                        let found = std::hint::black_box(&router).find(
-                            std::hint::black_box(host),
-                            host,
-                            std::hint::black_box(path),
-                        );
-                        hits += u32::from(found.is_some());
-                    }
-                    best = best.min(start.elapsed().as_nanos() / u128::from(N));
-                }
-                let ns = best;
-                println!(
-                    "{name} ({} entries) {host}{path}: {ns} ns per lookup, {hits} hits",
-                    router.entries.len()
-                );
-            }
+        let (full, one_each) = (table(&full), table(&one_each));
+        let found = |router: &JcRouter, host: &str, path: &str| {
+            router.find(host, host, path).map(|e| e.module.clone())
+        };
+        assert_eq!((full.entries.len(), one_each.entries.len()), (30, 11));
+        for (router, host, path, want) in [
+            (
+                &full,
+                "portal.city.test",
+                "/api/endpoint/x/ngsi-ld/v1/entities",
+                Some("m13"),
+            ),
+            (&full, "portal.city.test", "/other", Some("m1")),
+            (&full, "city.test", "/catalog.ttl", Some("m11")),
+            (&full, "city.test", "/catalog/x", Some("m9")),
+            (&full, "city.test", "/catalogue", None),
+            (&full, "nope.city.test", "/api/endpoint/x", None),
+            (&one_each, "portal.city.test", "/api/endpoint/x", Some("m6")),
+            (&one_each, "nope.city.test", "/api/endpoint/x", None),
+        ] {
+            assert_eq!(found(router, host, path).as_deref(), want, "{host}{path}");
         }
     }
 

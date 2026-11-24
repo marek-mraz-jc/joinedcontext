@@ -1,0 +1,27 @@
+{# dataset page section `visualizations` (T-7743): included once per place the resolved display lists it #}
+{% if !charts.is_empty() %}
+<section class="jc-visualizations" aria-labelledby="jc-viz-title">
+  <h2 id="jc-viz-title">{% if let Some(h) = sec.heading %}{{ h }}{% else %}{{ labels.visualizations }}{% endif %}</h2>
+  {% for viz in charts %}
+  <figure class="jc-viz" aria-labelledby="jc-viz-{{ viz.id }}-title">
+    <figcaption>
+      <h3 id="jc-viz-{{ viz.id }}-title">{{ viz.title }}</h3>
+      {% if !viz.description.is_empty() %}<p id="jc-viz-{{ viz.id }}-desc">{{ viz.description }}</p>{% endif %}
+    </figcaption>
+    <iframe class="jc-viz-frame" loading="lazy" title="{{ viz.title }}" src="{{ viz.src }}" data-jc-viz="{{ viz.origin }}"
+            referrerpolicy="no-referrer" sandbox="{{ viz.sandbox }}"></iframe>
+    <div class="jc-viz-actions">
+      <a href="{{ viz.package_link }}">{{ labels.viz_table }}</a>
+      <details class="jc-viz-embed">
+        <summary>{{ labels.viz_embed }}</summary>
+        <p>{{ labels.viz_embed_lead }}</p>
+        <div class="jc-copy jc-copy-code">
+          <pre id="jc-viz-{{ viz.id }}-code" tabindex="0"><code>{{ viz.code }}</code></pre>
+          <button type="button" class="btn btn-default" data-jc-copy="jc-viz-{{ viz.id }}-code" data-jc-copied="{{ labels.copied }}" data-jc-select="{{ labels.copy_select }}">{{ labels.copy }}</button>
+        </div>
+      </details>
+    </div>
+  </figure>
+  {% endfor %}
+</section>
+{% endif %}

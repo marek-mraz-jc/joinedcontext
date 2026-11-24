@@ -236,8 +236,47 @@ mod tests {
         }
     }
 
+    /// Each refusal names the construct, so the person writing the pattern knows what to change.
+    #[test]
+    fn a_refusal_names_the_construct() {
+        for (pattern, what) in [
+            (r"a(?=b)", "look-around"),
+            (r"(?<=a)b", "look-around"),
+            (r"(?<!a)b", "look-around"),
+            (r"(?i)a", "a group flag"),
+            (r"(a)\1", "a back-reference"),
+            (r"\k<n>", "a back-reference"),
+            (r"\bword", "a word boundary"),
+            (r"\B", "a word boundary"),
+            (r"a{,3}", "an open lower bound"),
+            (r"[[a]]", "a nested class"),
+            (r"\p{L}", "an escape"),
+        ] {
+            assert_eq!(
+                ecmascript(pattern).err(),
+                Some(Error::Unsupported(format!("{what} in a pattern"))),
+                "{pattern}"
+            );
+        }
+    }
+
+    /// What is special outside a class is a literal inside one, and the other way round.
+    #[test]
+    fn class_context_decides_what_a_character_means() {
+        assert!(matches(r"^\w+$", "aZ9_"));
+        assert!(!matches(r"^[.]$", "x"), "a dot in a class is a dot");
+        assert!(
+            matches(r"^[{,]+$", "{,"),
+            "a brace and comma in a class are literals"
+        );
+        assert!(matches(r"^(a)b$", "ab"), "a plain group");
+        assert!(!matches(r"^(a)b$", "b"));
+    }
+
     #[test]
     fn size_is_bounded_before_and_after_compiling() {
+        assert!(ecmascript(&"a".repeat(MAX_PATTERN_BYTES)).is_ok());
+        assert!(like(&"a".repeat(MAX_PATTERN_BYTES)).is_ok());
         assert_eq!(
             ecmascript(&"a".repeat(MAX_PATTERN_BYTES + 1)).err(),
             Some(Error::TooComplex)

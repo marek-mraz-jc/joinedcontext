@@ -281,11 +281,9 @@ impl Realm {
         };
         let key = email.to_ascii_lowercase();
         if !self.names.contains_key(&key) {
-            if self.admin.is_none() {
-                self.admin = Some(people.admin().await?);
-            }
-            let Some(admin) = self.admin.as_ref() else {
-                return Ok(identity);
+            let admin = match self.admin.as_ref() {
+                Some(admin) => admin,
+                None => &*self.admin.insert(people.admin().await?),
             };
             let users = admin.list(email, 0, 20).await?;
             let names = match users.iter().find(|user| {
@@ -543,6 +541,133 @@ mod tests {
         let client = stub_client(&server);
         let rights = AuthorRights::new("portal-approver".into(), None);
         assert_eq!(judged(&mirror, &rights, &client).await, None);
+    }
+
+    /// A realm `hel` on `server` whose admin client gets token `t`.
+    fn people_on(server: &MockServer) -> Arc<People> {
+        Arc::new(
+            People::new(
+                &format!("{}/realms/hel", server.uri()),
+                "portal".into(),
+                crate::config::ClientAuth::Secret("s".into()),
+            )
+            .expect("a realm URL"),
+        )
+    }
+
+    async fn requests_to(server: &MockServer, wanted: &str) -> usize {
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|request| request.url.path() == wanted)
+            .count()
+    }
+
+    /// PF-50: the realm's groups count. Eva holds no binding but is in the bootstrap group, and
+    /// dev, gone from the realm, keeps what the bindings give: two Pipelines of one run ask the
+    /// realm for one token and each person once.
+    #[tokio::test]
+    async fn the_realm_s_groups_count_and_each_person_is_asked_once_per_run() {
+        let mirror = world();
+        let (_forge, client) = forge(MERGED).await;
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/hel/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+            .expect(1)
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/hel/users"))
+            .and(query_param("search", "eva@hel.fi"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "u-other", "email": "eva@other.fi" },
+                { "id": "u-eva", "email": "EVA@hel.fi" }
+            ])))
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/hel/users"))
+            .and(query_param("search", "dev@hel.fi"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/hel/users/u-eva/groups"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!([{ "path": "/portal-approver" }])),
+            )
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/admin/realms/hel/users/u-eva/role-mappings/realm/composite",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&realm)
+            .await;
+        let rights = AuthorRights::new("portal-approver".into(), Some(people_on(&realm)));
+        let placed = |name: &str| Placed {
+            namespace: "helsinki".into(),
+            name: name.into(),
+            manifest: route(),
+            forge: &client,
+            git_ref: "main",
+            path: "pipelines/route/pipeline.yaml".into(),
+        };
+        let lost = rights
+            .lost(&mirror, vec![placed("route"), placed("route-2")])
+            .await;
+        assert!(lost.is_empty(), "{lost:?}");
+        assert_eq!(requests_to(&realm, "/admin/realms/hel/users").await, 2);
+        assert_eq!(
+            requests_to(&realm, "/admin/realms/hel/users/u-eva/groups").await,
+            1
+        );
+
+        // Without the bootstrap group eva reaches nothing: the realm's answer decided it.
+        let bare = AuthorRights::new("portal-approver".into(), None);
+        assert_eq!(
+            judged(&mirror, &bare, &client).await.as_deref(),
+            Some("author lost access to source Endpoint ep-a, target Endpoint ep-a")
+        );
+    }
+
+    /// A realm that refuses the admin client judges nobody this run, rather than pause a
+    /// Pipeline on the bindings alone.
+    #[tokio::test]
+    async fn a_realm_that_refuses_the_admin_client_pauses_nothing() {
+        let mirror = world();
+        unbind(&mirror, "dev-a");
+        let (_forge, client) = forge(MERGED).await;
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&realm)
+            .await;
+        let rights = AuthorRights::new("portal-approver".into(), Some(people_on(&realm)));
+        assert_eq!(judged(&mirror, &rights, &client).await, None);
+    }
+
+    /// A path whose history is empty names nobody: nothing is judged.
+    #[tokio::test]
+    async fn a_manifest_without_a_commit_in_its_history_names_nobody() {
+        let mirror = world();
+        unbind(&mirror, "dev-a");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/Shako.History(Ref=@r,Path=@p,Top=@n)",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .mount(&server)
+            .await;
+        let client = stub_client(&server);
+        let rights = AuthorRights::new("portal-approver".into(), None);
+        assert_eq!(judged(&mirror, &rights, &client).await, None);
+        assert_eq!(asked(&server).await, 1, "no commit to read the message of");
     }
 
     async fn asked(server: &MockServer) -> usize {

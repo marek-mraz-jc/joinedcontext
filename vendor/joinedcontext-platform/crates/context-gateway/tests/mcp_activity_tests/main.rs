@@ -222,7 +222,7 @@ async fn a_tool_call_reaches_the_collector_as_one_record_without_its_arguments()
         assert_eq!(row["tool"], json!("query_entities"));
         let summary = row["summary"].as_str().unwrap_or_default();
         assert!(
-            summary.starts_with(&format!("user:jana called query_entities on {SLUG}")),
+            summary.starts_with(&format!("user:0f5a called query_entities on {SLUG}")),
             "{summary}"
         );
     }

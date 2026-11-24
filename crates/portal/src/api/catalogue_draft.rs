@@ -63,6 +63,11 @@ pub struct CatalogueDraft {
     pub missing: Vec<String>,
     /// The model's attributes per type, and whether the public dataset can carry each one.
     pub attributes: Vec<DraftAttribute>,
+    /// The project's own Organization's dataset fields (`spec.datasetFields`, T-7746), which the
+    /// form fills into `catalog.fields`; never another Organization's.
+    #[schema(value_type = Vec<std::collections::HashMap<String, serde_json::Value>>)]
+    #[serde(default)]
+    pub dataset_fields: Vec<jc_core::kinds::DatasetField>,
 }
 
 /// Why an attribute stays out of a public dataset.
@@ -295,6 +300,7 @@ pub fn draft(name: &str, known: &Known) -> CatalogueDraft {
             .as_deref()
             .map(|linkml| attributes(linkml, &known.classes, &hidden))
             .unwrap_or_default(),
+        dataset_fields: Vec::new(),
     }
 }
 
@@ -484,7 +490,8 @@ pub async fn draft_publication(
         Some(&serde_json::to_value(&endpoint).unwrap_or(Value::Null)),
     )?;
     let known = known(&state, &project, &endpoint.spec).await;
-    let drafted = draft(name, &known);
+    let mut drafted = draft(name, &known);
+    drafted.dataset_fields = crate::catalog::dataset_fields_of(&state.mirror, &project);
     if drafted.publish.get("ckan").is_none() {
         return Err(ApiError::Conflict(format!(
             "project '{project}' has no CkanInstance to publish to; add one on its Open data page first"

@@ -6,7 +6,7 @@
 
 use clap::Parser;
 use dataroom_core::{CatalogueId, DataroomError, OrgId, RequestCtx, Store, Subject};
-use dataroom_server::{ensure_default_catalogue, import_ckan_json, run_cli, Cli};
+use dataroom_server::{ensure_catalogue, ensure_default_catalogue, import_ckan_json, run_cli, Cli};
 use dataroom_store_memory::MemoryStore;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -188,6 +188,46 @@ async fn serve_answers_on_its_host_and_reports_a_taken_port() {
 }
 
 #[tokio::test]
+async fn ensure_catalogue_creates_keeps_renames_and_moves() {
+    let org = OrgId::from_uuid(Uuid::from_u128(0xc21));
+    let cat = CatalogueId::from_uuid(Uuid::from_u128(0xc22));
+    let store = MemoryStore::new();
+    let made = ensure_catalogue(&store, org, cat, "mesto", "data.mesto.test")
+        .await
+        .unwrap();
+    assert_eq!(
+        (made.name.as_str(), made.host.as_str()),
+        ("mesto", "data.mesto.test")
+    );
+    let pause = || tokio::time::sleep(std::time::Duration::from_millis(5));
+    pause().await;
+    let kept = ensure_catalogue(&store, org, cat, "mesto", "data.mesto.test")
+        .await
+        .unwrap();
+    assert_eq!(
+        kept.modified, made.modified,
+        "the same name and host write nothing"
+    );
+    for (name, host) in [
+        ("mesto", "opendata.mesto.test"),
+        ("kraj", "opendata.mesto.test"),
+    ] {
+        pause().await;
+        let before = store
+            .get_catalogue(org, cat)
+            .await
+            .unwrap()
+            .unwrap()
+            .modified;
+        let moved = ensure_catalogue(&store, org, cat, name, host)
+            .await
+            .unwrap();
+        assert_eq!((moved.name.as_str(), moved.host.as_str()), (name, host));
+        assert_ne!(moved.modified, before, "{name} on {host} is written");
+    }
+}
+
+#[tokio::test]
 async fn import_ckan_json_reads_every_dump_shape() {
     let org = OrgId::from_uuid(Uuid::from_u128(0xc11));
     let cat = CatalogueId::from_uuid(Uuid::from_u128(0xc12));
@@ -230,7 +270,7 @@ async fn import_ckan_json_reads_every_dump_shape() {
         .await
         .unwrap();
     let dump = json!({
-        "organizations": ["mesto", {"name": "kraj", "title": "Kraj", "image_url": "https://example.org/kraj.png"},
+        "organizations": ["mesto", "obec", {"name": "kraj", "title": "Kraj", "image_url": "https://example.org/kraj.png"},
                           {"name": ""}, {"title": "no name"}, 42],
         "hidden": ["skryty"],
         "result": {"results": [{"name": "bez-org", "title": "Bez organizácie"}, package("skryty", "mesto")]}
@@ -238,7 +278,12 @@ async fn import_ckan_json_reads_every_dump_shape() {
     let (pubs, dss) = import_ckan_json(&store, &ctx, &dump.to_string(), "sk")
         .await
         .unwrap();
-    assert_eq!((pubs, dss), (3, 2));
+    assert_eq!((pubs, dss), (4, 2));
+    let obec = store.get_publisher(&ctx, "obec").await.unwrap().unwrap();
+    assert_eq!(
+        obec.title["sk"], "obec",
+        "a bare name is a publisher no package names"
+    );
     let kraj = store.get_publisher(&ctx, "kraj").await.unwrap().unwrap();
     assert_eq!(
         kraj.logo_url.as_deref(),
@@ -406,6 +451,17 @@ async fn postgres_commands_run_as_a_login_role_and_refuse_the_owner() {
     .await
     .unwrap();
     assert!(out.to_string().contains("cli-pg-ovzdusie"), "{out}");
+    // With a publisher and a dataset held, the feed check reads the dataset and finds it valid. Whether the feed
+    // conforms depends on the default catalogue declaring a publisher, which this database may or may not hold.
+    let out = run_cli(pg(&["feed-check"])).await.unwrap();
+    assert_eq!(
+        (
+            out["datasetsChecked"].as_u64(),
+            out["datasetsValid"].as_u64()
+        ),
+        (Some(1), Some(1)),
+        "{out}"
+    );
 
     // A harvest source on loopback is saved, and its run is refused by the outbound guard.
     let looped = json!({"name": "cli-pg-loop2", "kind": "dcat-ap", "url": "https://127.0.0.1/feed.ttl",
@@ -426,6 +482,20 @@ async fn postgres_commands_run_as_a_login_role_and_refuse_the_owner() {
         matches!(err, DataroomError::OutboundRefused(ref m) if m.contains("127.0.0.1")),
         "{err:?}"
     );
+
+    // Started as an operation, the run goes on in a task: the command waits for its end and
+    // prints the finished run, failed by the same guard.
+    let run = run_cli(pg(&[
+        "op",
+        "--name",
+        "harvest_run.start",
+        "--input",
+        r#"{"source": "cli-pg-loop2"}"#,
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(run["state"], "failed", "{run}");
+    assert!(run["error"].to_string().contains("127.0.0.1"), "{run}");
 
     let err = run_cli(pg(&["harvest", "--source", "cli-pg-none"]))
         .await
@@ -456,10 +526,10 @@ fn the_binary_prints_json_and_exits_by_result() {
     assert!(failed.stdout.is_empty());
 }
 
-/// `serve --portal-token-file`: the Portal's token writes through the CKAN Action API, and
-/// without the file every token is refused (PORTAL-CALLS.md).
+/// `serve --issuer --jwks-url --client`: that client's token writes through the CKAN Action
+/// API, and without them every token is refused (PORTAL-CALLS.md).
 #[tokio::test]
-async fn serve_binds_the_portal_publisher_only_from_its_token_file() {
+async fn serve_binds_the_portal_publisher_only_to_the_issuers_tokens() {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
@@ -468,45 +538,40 @@ async fn serve_binds_the_portal_publisher_only_from_its_token_file() {
 
     let org_id = OrgId::from_uuid(Uuid::from_u128(0x5e));
     let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0x5e0));
-    let token = "portal-publisher-token-0123456789abcdef";
-    let file = temp_file(&format!("{token}\n"));
-    let create = |token: &str| {
-        Request::post("/api/3/action/organization_create")
-            .header("Host", "127.0.0.1")
-            .header("Authorization", token)
-            .header("Content-Type", "application/json")
-            .body(Body::from(r#"{"name":"mesto","title":"Mesto"}"#))
-            .unwrap()
+    let issuer = jc_door::testing::Issuer::start("https://id.city.test", "k1").await;
+    let token = issuer.token("portal-publisher", "dataroom", 300);
+    let named = dataroom_server::ServiceTokens {
+        issuer: Some(issuer.issuer.clone()),
+        jwks_url: Some(issuer.jwks_url.clone()),
+        clients: vec!["portal-publisher".into()],
     };
-    let answer = |state| async move {
+    for (tokens, expected) in [
+        (named.clone(), StatusCode::OK),
+        (Default::default(), StatusCode::UNAUTHORIZED),
+    ] {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
         ensure_default_catalogue(store.as_ref(), org_id, cat_id, "opendata.localhost")
             .await
             .unwrap();
-        let state: dataroom_api::DataroomState = state_with(store, state);
-        let res = dataroom_api::router(state)
-            .oneshot(create(token))
-            .await
+        let state = dataroom_server::serve_state(store, org_id, cat_id, &tokens).unwrap();
+        let req = Request::post("/api/3/action/organization_create")
+            .header("Host", "127.0.0.1")
+            .header("Authorization", &token)
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"name":"mesto","title":"Mesto"}"#))
             .unwrap();
+        let res = dataroom_api::router(state).oneshot(req).await.unwrap();
         let status = res.status();
         let body = res.into_body().collect().await.unwrap().to_bytes();
-        (status, serde_json::from_slice::<Value>(&body).unwrap())
-    };
-    fn state_with(store: Arc<dyn Store>, file: Option<PathBuf>) -> dataroom_api::DataroomState {
-        let org_id = OrgId::from_uuid(Uuid::from_u128(0x5e));
-        let cat_id = CatalogueId::from_uuid(Uuid::from_u128(0x5e0));
-        dataroom_server::serve_state(store, org_id, cat_id, file.as_deref()).unwrap()
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(status, expected, "{body}");
+        assert_eq!(body["success"], expected == StatusCode::OK);
     }
 
-    let (status, body) = answer(Some(file.clone())).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["result"]["name"], "mesto");
-    let (status, body) = answer(None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-    assert_eq!(body["success"], false);
-
     let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
-    let missing = std::env::temp_dir().join(format!("dataroom-none-{}", Uuid::new_v4()));
-    assert!(dataroom_server::serve_state(store, org_id, cat_id, Some(&missing)).is_err());
-    std::fs::remove_file(file).unwrap();
+    let half = dataroom_server::ServiceTokens {
+        clients: Vec::new(),
+        ..named
+    };
+    assert!(dataroom_server::serve_state(store, org_id, cat_id, &half).is_err());
 }

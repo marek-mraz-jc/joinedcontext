@@ -153,15 +153,15 @@ export function LoadRows({ project, space, type, source, table, change: proposed
     return toEntities(table, suggestMapping(table.columns, slots), slots, { type, orgDomain, space: segment }, rowIds(table));
   }, [table, slots, type, orgDomain, segment]);
 
-  const write = async () => {
-    if (!checked || !endpoint) return;
-    const total = checked.entities.length;
+  // Only an enabled Write calls it, and Write waits for `live`, which needs the Endpoint.
+  const write = async (rows: NonNullable<typeof checked>, slug: string) => {
+    const total = rows.entities.length;
     setProgress({ sent: 0, total });
     // Upsert: the same file uploaded again writes the same entities, not a second copy.
-    const answer = await createInBatches(originTransport(), segment, checked.entities, (sent) => setProgress({ sent, total }), "upsert", undefined, `/api/endpoint/${encodeURIComponent(endpoint)}`);
+    const answer = await createInBatches(originTransport(), segment, rows.entities, (sent) => setProgress({ sent, total }), "upsert", undefined, `/api/endpoint/${encodeURIComponent(slug)}`);
     setProgress(null);
     // A 401 or 403 stops the write: the person reads who can change it, not "none refused" (JC1-41).
-    setDone({ written: answer.created, rejected: [...checked.rejected, ...answer.rejected].sort((a, b) => a.row - b.row), denied: answer.denied });
+    setDone({ written: answer.created, rejected: [...rows.rejected, ...answer.rejected].sort((a, b) => a.row - b.row), denied: answer.denied });
   };
 
   const whole = done !== null && done.written === checked?.entities.length && done.rejected.length === 0;
@@ -177,7 +177,7 @@ export function LoadRows({ project, space, type, source, table, change: proposed
           {t("spaces.import.writing", progress)}
         </p>
       ) : whole ? null : (
-        <Button className="w-fit" onClick={() => void write()} disabled={!live || !checked || checked.entities.length === 0} disabledReason={t(live ? "spaces.import.nothingToCreate" : "spaces.upload.notLive")}>
+        <Button className="w-fit" onClick={checked && endpoint ? () => void write(checked, endpoint) : undefined} disabled={!live || !checked || checked.entities.length === 0} disabledReason={t(live ? "spaces.import.nothingToCreate" : "spaces.upload.notLive")}>
           {t("spaces.upload.write", { count: checked?.entities.length ?? 0 })}
         </Button>
       )}

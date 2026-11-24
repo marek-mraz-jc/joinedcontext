@@ -109,6 +109,37 @@ pub fn writes_through_processors(bento: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// A panic while the samples were held costs no watch: a poisoned lock still records and
+    /// forgets streams.
+    #[test]
+    fn a_poisoned_watch_still_observes_and_forgets() {
+        let watch = StallWatch::default();
+        std::thread::scope(|scope| {
+            let _ = scope
+                .spawn(|| {
+                    let _held = watch.samples.lock();
+                    panic!("poison the samples");
+                })
+                .join();
+        });
+        let now = Instant::now();
+        assert_eq!(watch.observe("p", "s", &counters(1, 0, 0, 0), now), None);
+        assert_eq!(
+            watch
+                .samples
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .len(),
+            1
+        );
+        watch.retain(&BTreeSet::new());
+        assert!(watch
+            .samples
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_empty());
+    }
+
     fn counters(received: u64, sent: u64, rejected: u64, errors: u64) -> PipelineMetrics {
         PipelineMetrics {
             pipeline: "hsl-hfp-vehicles".to_owned(),
@@ -324,5 +355,21 @@ mod unscheduled_tests {
         assert!(said.changed("zilina", "ovzdusie", Some("pipeline is disabled")));
         assert!(!said.changed("slovensko", "ovzdusie", None));
         assert!(said.changed("slovensko", "ovzdusie", Some("pipeline is disabled")));
+    }
+
+    /// A panic while the memory was held costs no log line: the next sync still compares.
+    #[test]
+    fn a_poisoned_memory_still_says_a_new_reason_once() {
+        let said = Unscheduled::default();
+        std::thread::scope(|scope| {
+            let _ = scope
+                .spawn(|| {
+                    let _held = said.0.lock();
+                    panic!("poison the memory");
+                })
+                .join();
+        });
+        assert!(said.changed("slovensko", "ovzdusie", Some("pipeline is disabled")));
+        assert!(!said.changed("slovensko", "ovzdusie", Some("pipeline is disabled")));
     }
 }

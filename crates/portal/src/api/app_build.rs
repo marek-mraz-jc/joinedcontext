@@ -330,7 +330,7 @@ pub async fn rebuild(
     )
     .await
     .map_err(store)?;
-    tracing::info!(app = %name, project = %project, commit = %head, build = id, by = %user.0.identity.username, "rebuild queued");
+    tracing::info!(app = %name, project = %project, commit = %head, build = id, by = %user.0.identity.subject, "rebuild queued");
     Ok(StatusCode::ACCEPTED.into_response())
 }
 
@@ -600,7 +600,7 @@ pub async fn restore(
         )
         .await
         .map_err(refused)?;
-    tracing::info!(app = %name, project = %project, commit = %commit, by = %user.0.identity.username, "restore proposed");
+    tracing::info!(app = %name, project = %project, commit = %commit, by = %user.0.identity.subject, "restore proposed");
     Ok((
         StatusCode::CREATED,
         Json(Restored {

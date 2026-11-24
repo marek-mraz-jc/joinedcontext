@@ -548,6 +548,60 @@ async fn branch_reports_a_count_mismatch_as_bento_does() {
 }
 
 #[tokio::test]
+async fn branch_flags_what_its_children_and_result_map_refuse() {
+    let e = env();
+    let out = e
+        .run(
+            json!({"branch": {"processors": [{"mapping": "root = deleted()"}]}}),
+            parts(&["a", "b"]),
+        )
+        .await;
+    for p in &out[0] {
+        assert_eq!(err_of(p), "child processors resulted in zero messages");
+    }
+    let out = e
+        .run(
+            json!({"branch": {"processors": [{"mapping": "root = if this.bad { throw(\"boom\") } else { this }"}],
+                "result_map": "root.got = this"}}),
+            parts(&[r#"{"bad":true}"#, r#"{"bad":false}"#]),
+        )
+        .await;
+    assert!(
+        err_of(&out[0][0]).starts_with("processors failed: "),
+        "{}",
+        err_of(&out[0][0])
+    );
+    assert!(err_of(&out[0][0]).contains("boom"));
+    assert!(!out[0][1].is_errored());
+    assert_eq!(flat(&out)[1], r#"{"bad":false,"got":{"bad":false}}"#);
+    // A result_map that deletes keeps the payload; one that throws flags only its message.
+    let out = e
+        .run(
+            json!({"branch": {"processors": [{"noop": {}}],
+                "result_map": "root = if this.n == 1 { deleted() } else if this.n == 2 { throw(\"no\") } else { \"set\" }"}}),
+            parts(&[r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":3}"#]),
+        )
+        .await;
+    assert_eq!(flat(&out)[0], r#"{"n":1}"#);
+    assert!(!out[0][0].is_errored());
+    assert!(
+        err_of(&out[0][1]).starts_with("result mapping failed: "),
+        "{}",
+        err_of(&out[0][1])
+    );
+    assert_eq!(flat(&out)[2], "set");
+    // Without a result_map the children's output is dropped and the payload kept.
+    let out = e
+        .run(
+            json!({"branch": {"request_map": "root = this.n", "processors": [{"mapping": "root = 9"}]}}),
+            parts(&[r#"{"n":1}"#]),
+        )
+        .await;
+    assert_eq!(flat(&out), vec![r#"{"n":1}"#]);
+    assert!(!out[0][0].is_errored());
+}
+
+#[tokio::test]
 async fn switch_flags_a_failing_check_and_keeps_order() {
     let e = env();
     let out = e
@@ -590,6 +644,14 @@ async fn workflow_skips_applied_branches_and_flags_failures() {
     flow.sort();
     assert_eq!(flow, vec!["a", "b"]);
     assert_eq!(w.processor_type(), "workflow");
+    let mut ordered = cfg.clone();
+    ordered["order"] = json!([["b"], ["a"]]);
+    let c =
+        ComponentConfig::from_json_value(&json!({ "workflow": ordered }), "noop", None).unwrap();
+    assert_eq!(
+        WorkflowProcessor::from_config(&c, &e.ctx).unwrap().flow(),
+        [vec!["b".to_string()], vec!["a".to_string()]]
+    );
 
     let p = e.proc(json!({"workflow": cfg})).unwrap();
     // `b` fails its request map; `apply` limits the second message to `b`, `succeeded` skips `a`.
@@ -601,10 +663,29 @@ async fn workflow_skips_applied_branches_and_flags_failures() {
                 r#"{"n":1,"meta":{"workflow":{"apply":["b"]}}}"#,
                 r#"{"n":2,"meta":{"workflow":{"succeeded":["a"]}}}"#,
                 "not json",
+                r#"{"n":3,"meta":{"workflow":{"apply":["zzz",5],"succeeded":[1,"a","zzz"]}}}"#,
+                r#"{"n":4,"meta":{"workflow":{"apply":[]}}}"#,
             ]),
         )
         .await
         .unwrap();
+    // Unknown names and non-text items in apply and succeeded are ignored; an empty apply runs all.
+    let late: Vec<serde_json::Value> = out[0][4..]
+        .iter()
+        .map(|p| p.as_structured_ref().unwrap().to_json_value())
+        .collect();
+    assert!(
+        late[0].get("a").is_none() && late[0].get("b").is_none(),
+        "{}",
+        late[0]
+    );
+    assert!(
+        late[0]["meta"]["workflow"].get("succeeded").is_none(),
+        "{}",
+        late[0]
+    );
+    assert_eq!(late[1]["a"], "A");
+    assert_eq!(late[1]["b"], 4);
     let docs: Vec<serde_json::Value> = out[0][..3]
         .iter()
         .map(|p| p.as_structured_ref().unwrap().to_json_value())
@@ -1029,6 +1110,75 @@ async fn archive_and_unarchive_every_format() {
         .await
         .is_empty());
 
+    // A csv row with too few or too many values, an empty csv and broken JSON documents.
+    for (text, want) in [
+        (
+            "a,b\n1\n",
+            "failed to parse message as csv: row has too few values",
+        ),
+        (
+            "a,b\n1,2,3\n",
+            "failed to parse message as csv: row has too many values",
+        ),
+    ] {
+        let out = e
+            .run(json!({"unarchive": {"format": "csv"}}), parts(&[text]))
+            .await;
+        assert_eq!(err_of(&out[0][0]), want, "{text:?}");
+    }
+    assert!(e
+        .run(json!({"unarchive": {"format": "csv"}}), parts(&[""]))
+        .await
+        .iter()
+        .all(|b| b.is_empty()));
+    let out = e
+        .run(
+            json!({"unarchive": {"format": "csv"}}),
+            vec![Part::new(b"a\n\xff\n".to_vec())],
+        )
+        .await;
+    assert!(
+        err_of(&out[0][0]).starts_with("failed to parse message as csv: "),
+        "{}",
+        err_of(&out[0][0])
+    );
+    // A tar member cut short and a zip member whose local header is damaged are flagged.
+    let mut tw = tar::Builder::new(Vec::new());
+    let mut h = tar::Header::new_gnu();
+    h.set_size(600);
+    h.set_cksum();
+    tw.append_data(&mut h, "big", &[7u8; 600][..]).unwrap();
+    let mut cut = tw.into_inner().unwrap();
+    cut.truncate(512 + 100);
+    let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zw.start_file("a", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    std::io::Write::write_all(&mut zw, b"x").unwrap();
+    let mut damaged = zw.finish().unwrap().into_inner();
+    damaged[2..4].copy_from_slice(b"\0\0");
+    for (fmt, bytes) in [("tar", cut), ("zip", damaged)] {
+        let out = e
+            .run(
+                json!({"unarchive": {"format": fmt}}),
+                vec![Part::new(bytes)],
+            )
+            .await;
+        assert_eq!(out[0].len(), 1, "{fmt}");
+        assert!(!err_of(&out[0][0]).is_empty(), "{fmt}");
+    }
+    let out = e
+        .run(
+            json!({"unarchive": {"format": "json_documents"}}),
+            parts(&["1 {nope"]),
+        )
+        .await;
+    assert_eq!(flat(&out), vec!["1 {nope"]);
+    assert!(
+        err_of(&out[0][0]).starts_with("key must be a string"),
+        "{}",
+        err_of(&out[0][0])
+    );
+
     // A part that is not JSON stops a json_array archive and is flagged.
     let out = e
         .run(
@@ -1192,6 +1342,82 @@ async fn xml_compress_and_decompress() {
         ),
         vec!["d"]
     );
+}
+
+#[tokio::test]
+async fn unarchive_refuses_too_many_members_and_a_zip_bomb() {
+    use std::io::Write;
+    let e = env();
+    let members = ekiben_processors::archive::MAX_ARCHIVE_MEMBERS + 1;
+    let mut tw = tar::Builder::new(Vec::new());
+    for i in 0..members {
+        let mut h = tar::Header::new_gnu();
+        h.set_size(0);
+        h.set_cksum();
+        tw.append_data(&mut h, format!("m{i}"), &b""[..]).unwrap();
+    }
+    let tar_bytes = tw.into_inner().unwrap();
+    let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for i in 0..members {
+        zw.start_file(format!("m{i}"), opts).unwrap();
+    }
+    let many_zip = zw.finish().unwrap().into_inner();
+    let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zw.start_file(
+        "zeros",
+        zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .compression_level(Some(1))
+            .large_file(true),
+    )
+    .unwrap();
+    let chunk = vec![0u8; 1 << 20];
+    for _ in 0..=(ekiben_processors::archive::MAX_ARCHIVE_UNPACKED_BYTES >> 20) {
+        zw.write_all(&chunk).unwrap();
+    }
+    let bomb = zw.finish().unwrap().into_inner();
+    for (fmt, bytes, want) in [
+        (
+            "tar",
+            tar_bytes,
+            "tar archive member count exceeds maximum allowed (10000)",
+        ),
+        (
+            "zip",
+            many_zip,
+            "zip archive member count (10001) exceeds safety limit (10000)",
+        ),
+        (
+            "zip",
+            bomb,
+            "zip bomb detected: unpacked size exceeds safety limit (134217728 bytes)",
+        ),
+    ] {
+        let out = e
+            .run(
+                json!({"unarchive": {"format": fmt}}),
+                vec![Part::new(bytes)],
+            )
+            .await;
+        assert_eq!(out[0].len(), 1, "{want}");
+        assert_eq!(err_of(&out[0][0]), want);
+    }
+}
+
+#[test]
+fn the_registry_builds_both_buffers_and_refuses_a_bad_window() {
+    let e = env();
+    for v in [
+        json!({"memory": {}}),
+        json!({"system_window": {"size": "1s"}}),
+    ] {
+        let c = ComponentConfig::from_json_value(&v, "none", None).unwrap();
+        assert!(e.reg.build_buffer(&c, &e.sctx).unwrap().is_some(), "{v}");
+    }
+    let c = ComponentConfig::from_json_value(&json!({"system_window": {}}), "none", None).unwrap();
+    assert!(e.reg.build_buffer(&c, &e.sctx).is_err());
 }
 
 #[tokio::test]

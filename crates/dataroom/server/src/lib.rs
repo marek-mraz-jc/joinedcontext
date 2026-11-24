@@ -67,10 +67,8 @@ pub enum Command {
         listen: String,
         #[arg(long, env = "DATAROOM_HOST", default_value = "opendata.localhost")]
         host: String,
-        /// The Portal's CKAN publisher token, one line in a secret file (PORTAL-CALLS.md);
-        /// without it nobody may write through the CKAN Action API.
-        #[arg(long, env = "DATAROOM_PORTAL_TOKEN_FILE")]
-        portal_token_file: Option<PathBuf>,
+        #[command(flatten)]
+        tokens: ServiceTokens,
     },
     /// Apply PostgreSQL schema migrations and verify forced Row-Level Security (C1).
     Migrate,
@@ -430,19 +428,15 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
 
     match cli.command {
         Command::Migrate => Ok(serde_json::json!({ "migrated": true, "store": "memory" })),
-        Command::Serve {
-            listen,
-            portal_token_file,
-            ..
-        } => {
-            let state = serve_state(store, org_id, catalogue_id, portal_token_file.as_deref())?;
+        Command::Serve { listen, tokens, .. } => {
+            let state = serve_state(store, org_id, catalogue_id, &tokens)?;
             let app = router(state);
             let listener = tokio::net::TcpListener::bind(&listen)
                 .await
                 .map_err(|e| DataroomError::Storage(format!("bind {listen}: {e}")))?;
-            axum::serve(listener, app)
-                .await
-                .map_err(|e| DataroomError::Storage(format!("serve: {e}")))?;
+            if let Err(e) = axum::serve(listener, app).await {
+                return Err(DataroomError::Storage(format!("serve: {e}")));
+            }
             Ok(serde_json::json!({ "served": listen }))
         }
         Command::Harvest { source } => {
@@ -457,10 +451,9 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
             Ok(serde_json::to_value(run).unwrap_or(Value::Null))
         }
         Command::FeedCheck { profile } => {
-            let cat = store
-                .get_catalogue(org_id, catalogue_id)
-                .await?
-                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let Some(cat) = store.get_catalogue(org_id, catalogue_id).await? else {
+                return Err(DataroomError::NotFound("catalogue not found".into()));
+            };
             let datasets = store.list_datasets(&ctx).await?;
             let publishers = store.list_publishers(&ctx).await?;
             let pub_map: BTreeMap<String, Publisher> = publishers
@@ -516,20 +509,51 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
 }
 
 /// The state `serve` runs: the policy authorizer, holding only the Portal publisher's grant
-/// when a token file is given.
+/// when an issuer of service tokens is named.
 pub fn serve_state(
     store: Arc<dyn Store>,
     org_id: OrgId,
     catalogue_id: CatalogueId,
-    portal_token_file: Option<&std::path::Path>,
+    tokens: &ServiceTokens,
 ) -> Result<DataroomState> {
-    let Some(path) = portal_token_file else {
-        let authz = Arc::new(PolicyAuthorizer::default());
-        return Ok(DataroomState::new(store, authz, org_id, catalogue_id));
+    let (issuer, jwks_url) = match (&tokens.issuer, &tokens.jwks_url) {
+        (Some(issuer), Some(jwks_url)) if !tokens.clients.is_empty() => (issuer, jwks_url),
+        (None, None) if tokens.clients.is_empty() => {
+            let authz = Arc::new(PolicyAuthorizer::default());
+            return Ok(DataroomState::new(store, authz, org_id, catalogue_id));
+        }
+        _ => {
+            return Err(DataroomError::field_error(
+                "issuer",
+                "--issuer, --jwks-url and at least one --client go together",
+            ))
+        }
     };
-    let (binding, grant) = dataroom_api::portal_publisher_from_file(path, org_id, catalogue_id)?;
+    let verifier = match jc_door::Verifier::new(issuer, jwks_url, &tokens.clients) {
+        Ok(verifier) => verifier,
+        Err(e) => return Err(DataroomError::field_error("jwksUrl", e)),
+    };
+    let (subject, grant) = dataroom_api::portal_publisher(org_id, catalogue_id);
     let authz = Arc::new(PolicyAuthorizer::new(vec![grant]));
-    Ok(DataroomState::new(store, authz, org_id, catalogue_id).with_tokens(vec![binding]))
+    Ok(DataroomState::new(store, authz, org_id, catalogue_id)
+        .with_verifier(Arc::new(verifier))
+        .with_publishers([((org_id, catalogue_id), subject)].into()))
+}
+
+/// Who `serve` admits to write: the holders of tokens `issuer` signed for `clients` with the
+/// audience `dataroom` (PORTAL-CALLS.md). Without them nobody may write through the CKAN
+/// Action API.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct ServiceTokens {
+    /// The issuer of the service tokens, as their `iss` names it.
+    #[arg(long, env = "DATAROOM_ISSUER")]
+    pub issuer: Option<String>,
+    /// Where the issuer's signing keys are read.
+    #[arg(long, env = "DATAROOM_JWKS_URL")]
+    pub jwks_url: Option<String>,
+    /// A client admitted to publish; repeat it or separate several with commas.
+    #[arg(long = "client", env = "DATAROOM_CLIENTS", value_delimiter = ',')]
+    pub clients: Vec<String>,
 }
 
 #[cfg(test)]

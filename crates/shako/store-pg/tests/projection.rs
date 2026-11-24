@@ -436,6 +436,225 @@ async fn the_tables_and_a_projected_log_answer_as_the_memory_store() {
     db.drop_it().await;
 }
 
+/// Entries of `n`'s log, all or those of one operation.
+async fn logged(db: &Db, n: &Ids, op: Option<&str>) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM shako.store_log
+         WHERE instance_id = $1 AND org_id = $2 AND ($3::text IS NULL OR op ->> 'op' = $3)",
+    )
+    .bind(n.inst.as_uuid())
+    .bind(n.org.as_uuid())
+    .bind(op)
+    .fetch_one(&db.admin)
+    .await
+    .unwrap()
+}
+
+/// T-7564 (S6-29): the log stops growing. What the tables hold leaves once a rollback can no
+/// longer need it, the request role cannot move that gate, and the store answers the same.
+#[tokio::test]
+async fn the_log_is_trimmed_to_what_a_rollback_can_still_need() {
+    let Some(db) = Db::create("shako_trim_login").await else {
+        return;
+    };
+    let (ids, other) = (Ids::new(), Ids::new());
+    let store = db.store().await;
+    scenario(&store, &ids).await;
+    scenario(&store, &other).await;
+    let backdate = |n: &Ids| {
+        sqlx::query(
+            "UPDATE shako.store_log SET created_at = now() - interval '40 days'
+             WHERE instance_id = $1 AND org_id = $2",
+        )
+        .bind(n.inst.as_uuid())
+        .bind(n.org.as_uuid())
+    };
+    backdate(&ids).execute(&db.admin).await.unwrap();
+    backdate(&other).execute(&db.admin).await.unwrap();
+    assert_eq!(
+        store.trim_log(ids.inst, ids.org).await.unwrap(),
+        0,
+        "projected today: a rollback may still need the whole log"
+    );
+
+    // The request role may neither move its gate nor delete past it.
+    let app = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(db.app.clone())
+        .await
+        .unwrap();
+    let mut tx = app.begin().await.unwrap();
+    sqlx::query("SELECT set_config('shako.instance', $1, true), set_config('shako.org', $2, true)")
+        .bind(ids.inst.to_string())
+        .bind(ids.org.to_string())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let deleted = sqlx::query("DELETE FROM shako.store_log")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(
+        deleted.rows_affected(),
+        0,
+        "deleted inside the rollback window"
+    );
+    let moved = sqlx::query("UPDATE shako.projection SET since = now() - interval '40 days'")
+        .execute(&mut *tx)
+        .await;
+    assert!(moved.is_err(), "the request role moved its own trim gate");
+    drop(tx);
+    app.close().await;
+
+    for n in [&ids, &other] {
+        sqlx::query(
+            "UPDATE shako.projection SET since = now() - interval '40 days'
+             WHERE instance_id = $1 AND org_id = $2",
+        )
+        .bind(n.inst.as_uuid())
+        .bind(n.org.as_uuid())
+        .execute(&db.admin)
+        .await
+        .unwrap();
+    }
+    // Written after the backdating: inside the window, so it stays.
+    store
+        .allocate_pr_number(ids.inst, ids.org, ids.repo)
+        .await
+        .unwrap();
+    let expected = answers(&store, &ids).await;
+    let (all, creates) = (
+        logged(&db, &ids, None).await,
+        logged(&db, &ids, Some("create_repo")).await,
+    );
+    let trimmed = store.trim_log(ids.inst, ids.org).await.unwrap();
+    assert_eq!(i64::try_from(trimmed).unwrap(), all - creates - 1);
+    assert_eq!(
+        logged(&db, &ids, None).await,
+        creates + 1,
+        "create_repo and the new entry stay"
+    );
+    assert!(
+        logged(&db, &other, None).await > creates,
+        "another tenant's log is its own"
+    );
+
+    let restarted = db.store().await;
+    assert_eq!(restarted.hydrate(ids.inst, ids.org).await.unwrap(), 0);
+    assert_eq!(answers(&restarted, &ids).await, expected, "no record lost");
+    assert_eq!(
+        restarted
+            .allocate_pr_number(ids.inst, ids.org, ids.repo)
+            .await
+            .unwrap(),
+        expected_next_pr(&expected),
+    );
+    for s in [store, restarted] {
+        s.pool().close().await;
+    }
+    db.drop_it().await;
+}
+
+/// The pull request number `config` hands out next, as `answers` shows it.
+fn expected_next_pr(answers: &Value) -> u64 {
+    answers["repos"]
+        .as_array()
+        .and_then(|repos| repos.iter().find(|r| r["name"] == "config"))
+        .and_then(|r| r["nextPrNumber"].as_u64())
+        .expect("config's next number")
+}
+
+/// T-7564 (S6-29, false since T-7508): a start reads no more of a projected log as it grows.
+#[tokio::test]
+async fn a_start_reads_a_bounded_log_as_the_log_grows() {
+    let Some(db) = Db::create("shako_replay_login").await else {
+        return;
+    };
+    let ids = Ids::new();
+    let store = db.store().await;
+    scenario(&store, &ids).await;
+    store.pool().close().await;
+    let mut took = Vec::new();
+    for size in [1_000_i64, 100_000] {
+        sqlx::query(
+            "INSERT INTO shako.store_log (instance_id, org_id, op)
+             SELECT $1, $2, $3 FROM generate_series(1, $4)",
+        )
+        .bind(ids.inst.as_uuid())
+        .bind(ids.org.as_uuid())
+        .bind(json!({"op": "adjust_quota_usage", "args": {"repo_delta": 0, "git_bytes_delta": 0, "package_bytes_delta": 0}}))
+        .bind(size)
+        .execute(&db.admin)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE shako.projection SET seq = (SELECT max(seq) FROM shako.store_log)
+             WHERE instance_id = $1 AND org_id = $2",
+        )
+        .bind(ids.inst.as_uuid())
+        .bind(ids.org.as_uuid())
+        .execute(&db.admin)
+        .await
+        .unwrap();
+        let fresh = db.store().await;
+        let started = std::time::Instant::now();
+        assert_eq!(
+            fresh.hydrate(ids.inst, ids.org).await.unwrap(),
+            0,
+            "read past the projection"
+        );
+        took.push(started.elapsed());
+        println!(
+            "log of {} entries: the start read 0 in {:?}",
+            logged(&db, &ids, None).await,
+            took[took.len() - 1]
+        );
+        fresh.pool().close().await;
+    }
+    assert!(
+        took[1] < took[0] * 20 + std::time::Duration::from_millis(500),
+        "start time grew with the log: {took:?}"
+    );
+    db.drop_it().await;
+}
+
+/// S6-29 (false since T-7508): one Organization's writes never wait for another's.
+#[tokio::test]
+async fn two_organizations_write_in_parallel() {
+    let Some(db) = Db::create("shako_parallel_login").await else {
+        return;
+    };
+    let (a, b) = (Ids::new(), Ids::new());
+    let store = db.store().await;
+    // Another replica holds A's writer lock in an open transaction.
+    let mut held = db.admin.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("shako.store:{}:{}", a.inst, a.org))
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let wait = std::time::Duration::from_secs(5);
+    tokio::time::timeout(wait, store.create_repo(b.repo(b.repo, "config")))
+        .await
+        .expect("B waited for A's lock")
+        .unwrap();
+    let a_write = store.create_repo(a.repo(a.repo, "config"));
+    tokio::pin!(a_write);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut a_write)
+            .await
+            .is_err(),
+        "A wrote past its own lock"
+    );
+    held.rollback().await.unwrap();
+    tokio::time::timeout(wait, a_write)
+        .await
+        .expect("A still waits")
+        .unwrap();
+    store.pool().close().await;
+    db.drop_it().await;
+}
+
 /// Two dispatchers, one outbox: each event is one claimant's, oldest first, no other tenant's.
 #[tokio::test]
 async fn two_dispatchers_claim_each_event_once() {
@@ -477,7 +696,7 @@ async fn two_dispatchers_claim_each_event_once() {
         let claimed: Vec<uuid::Uuid> = [a, b, c, d]
             .into_iter()
             .filter_map(|claim| claim.unwrap())
-            .map(|event| event.id)
+            .map(|claim| claim.event.id)
             .collect();
         assert_eq!(claimed, [*id], "one claimant, the oldest event");
         assert!(one.mark_outbox_dispatched(i, o, *id).await.unwrap());
@@ -496,7 +715,55 @@ async fn two_dispatchers_claim_each_event_once() {
     .execute(&db.admin)
     .await
     .unwrap();
-    assert_eq!(two.claim_outbox(i, o).await.unwrap().unwrap().id, id);
+    assert_eq!(two.claim_outbox(i, o).await.unwrap().unwrap().event.id, id);
+
+    // S6-11: a failed event waits for its retry and counts the pass; it holds back its own
+    // repository's later events only, and is claimed again once due.
+    assert!(two.mark_outbox_dispatched(i, o, id).await.unwrap());
+    let (waiting, behind, elsewhere) = (
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+    );
+    one.append_outbox(ids.event(waiting, "wait")).await.unwrap();
+    one.append_outbox(ids.event(behind, "behind"))
+        .await
+        .unwrap();
+    let mut other_repo = ids.event(elsewhere, "elsewhere");
+    other_repo.repo_id = Some(RepoId::new());
+    one.append_outbox(other_repo).await.unwrap();
+    let claim = one.claim_outbox(i, o).await.unwrap().unwrap();
+    assert_eq!((claim.event.id, claim.attempts), (waiting, 0));
+    assert!(
+        one.retry_outbox(i, o, waiting, std::time::Duration::from_secs(60))
+            .await
+            .unwrap()
+    );
+    let next = two.claim_outbox(i, o).await.unwrap().unwrap();
+    assert_eq!(
+        next.event.id, elsewhere,
+        "the waiting event's repository waits"
+    );
+    assert!(two.mark_outbox_dispatched(i, o, elsewhere).await.unwrap());
+    assert!(two.claim_outbox(i, o).await.unwrap().is_none());
+    sqlx::query("UPDATE shako.outbox SET retry_at = now() - interval '1 second' WHERE id = $1")
+        .bind(waiting)
+        .execute(&db.admin)
+        .await
+        .unwrap();
+    let again = two.claim_outbox(i, o).await.unwrap().unwrap();
+    assert_eq!((again.event.id, again.attempts), (waiting, 1));
+    assert!(two.mark_outbox_dispatched(i, o, waiting).await.unwrap());
+    assert!(
+        !two.retry_outbox(i, o, waiting, std::time::Duration::ZERO)
+            .await
+            .unwrap(),
+        "a dispatched event is not given back"
+    );
+    assert_eq!(
+        one.claim_outbox(i, o).await.unwrap().unwrap().event.id,
+        behind
+    );
 
     one.pool().close().await;
     two.pool().close().await;

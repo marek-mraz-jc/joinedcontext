@@ -1,0 +1,23 @@
+# Fuzzing a Portal's own stylesheet check (T-7745) under libFuzzer:
+# `cargo +nightly fuzz run portal_css`. Not a workspace member.
+[package]
+name = "jc-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+jc-core = { path = ".." }
+
+[[bin]]
+name = "portal_css"
+path = "fuzz_targets/portal_css.rs"
+test = false
+doc = false
+bench = false

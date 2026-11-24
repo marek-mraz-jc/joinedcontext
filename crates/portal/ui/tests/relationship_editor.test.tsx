@@ -183,6 +183,35 @@ describe("relationship editor", () => {
     expect(model.slots.find((slot) => slot.name === "users")?.required).toBe(false);
   });
 
+  it("writes the delete rule picked, and forgets a requirement the cardinality no longer stores", async () => {
+    const { source, user, openForm } = renderEditor();
+    const add = within(await openForm());
+    await user.click(add.getByRole("radio", { name: "One to one" }));
+    await user.selectOptions(add.getByLabelText("Target class"), "User");
+    await user.click(add.getByRole("checkbox", { name: "Required on School" }));
+    expect(add.getByRole("checkbox", { name: "Required on School" })).toBeChecked();
+    await user.selectOptions(add.getByLabelText("On delete"), "cascade");
+    // One to many stores the school on each user: the School's requirement goes with the switch.
+    await user.click(add.getByRole("radio", { name: "One to many" }));
+    expect(add.getByRole("checkbox", { name: "Required on School" })).not.toBeChecked();
+    await user.click(add.getByRole("checkbox", { name: "Required on User" }));
+    expect(add.getByRole("checkbox", { name: "Required on User" })).toBeChecked();
+    await user.click(add.getByRole("radio", { name: "One to one" }));
+    expect(add.getByRole("checkbox", { name: "Required on User" })).not.toBeChecked();
+    await user.click(add.getByRole("button", { name: "Add relationship" }));
+    const [relationship] = relationships(parseModel(source()));
+    expect(relationship.onDelete).toBe("cascade");
+  });
+
+  it("spells the plural of a class name the way the model would", () => {
+    expect(suggestedName("Category", true)).toBe("categories");
+    expect(suggestedName("Address", true)).toBe("addresses");
+    expect(suggestedName("Day", true)).toBe("days");
+    expect(suggestedName("Box", true)).toBe("boxes");
+    expect(suggestedName("Church", true)).toBe("churches");
+    expect(suggestedName("Category", false)).toBe("category");
+  });
+
   it("asks before removing, and removes both ends", async () => {
     const { source, user, openForm } = renderEditor();
     const add = within(await openForm());

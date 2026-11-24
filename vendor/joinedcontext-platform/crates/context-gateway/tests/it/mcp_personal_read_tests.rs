@@ -238,12 +238,13 @@ fn assert_line(line: &str, tool: &str, entities: &str) {
     for named in [
         format!("slug={SLUG}"),
         "BikeTrip.rider".to_owned(),
-        "principal=user:jana".to_owned(),
+        "principal=user:0f5a".to_owned(),
         format!("entities={entities}"),
         format!("tool={tool}"),
     ] {
         assert!(line.contains(&named), "{named} missing: {line}");
     }
+    assert!(!line.contains("jana"), "a username reached the log: {line}");
 }
 
 #[tokio::test]

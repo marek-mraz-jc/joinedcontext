@@ -855,6 +855,54 @@ fn an_empty_default_locale_leaves_language_open() {
 
 // --- one table per entity type, its columns from the model (T-3012) --------------------------
 
+/// T-7746: the Organization's own dataset fields of `spec.catalog.fields` reach the CKAN
+/// dataset as the extras `x_<name>`, and the same fields on a second run write nothing.
+#[test]
+fn the_organization_dataset_fields_reach_the_dataset_as_x_extras() {
+    let dir = repo("dataset-fields");
+    common::write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/endpoints/air-public.yaml",
+        &endpoint(
+            "air-public",
+            "zt4qm7ge2xdv6ksb3ncf5arw2y",
+            "[ngsi-ld, csv]",
+            &format!(
+                "{PUBLISHED}  catalog:\n    fields:\n      funding: eu\n      reviewed: \"2026-11-23\"\n"
+            ),
+        ),
+    );
+    let repo = Repository::load(&dir).expect("the repository loads");
+    let target = &targets(&repo, "ovzdusie").expect("the walk")[0];
+    let mut api = InMemoryCkan::new().with_organization("mesto-banska-bystrica");
+    publish_one(&mut api, target, &record("air-public"), None, &settings()).expect("the run");
+    let extras: Vec<(String, String)> = api.package("kvalita-ovzdusia").expect("the dataset")
+        ["extras"]
+        .as_array()
+        .expect("extras")
+        .iter()
+        .filter_map(|extra| {
+            let key = extra["key"].as_str()?;
+            key.starts_with("x_").then(|| {
+                (
+                    key.to_owned(),
+                    extra["value"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+        })
+        .collect();
+    assert_eq!(
+        extras,
+        vec![
+            ("x_funding".to_owned(), "eu".to_owned()),
+            ("x_reviewed".to_owned(), "2026-11-23".to_owned()),
+        ]
+    );
+    let again =
+        publish_one(&mut api, target, &record("air-public"), None, &settings()).expect("again");
+    assert_eq!(again.outcome, Outcome::Unchanged);
+}
+
 /// T-3903, DM-95: the pass rate and the freshness reach the record as W3C DQV measurements and
 /// the CKAN dataset as extras; a measurement not taken adds nothing, and the same measurements
 /// on a second run write nothing.

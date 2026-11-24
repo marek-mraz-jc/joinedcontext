@@ -413,12 +413,12 @@ async fn record(
         source: "portal".to_owned(),
         summary: format!(
             "{} revoked {role} from ServiceAccount {account}",
-            identity.username
+            identity.subject
         ),
         severity: "info".to_owned(),
         correlation_id: None,
         details: json!({
-            "actor": identity.username,
+            "actor": identity.subject,
             "account": account,
             "role": role,
             "change": change.metadata.name,

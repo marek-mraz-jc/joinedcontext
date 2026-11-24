@@ -21,6 +21,13 @@ cache_resources:
     memory:
       default_ttl: 72h
       compaction_interval: 1h
+  # linked-events: the name of each Linked Events publisher id (`ahjo:u42030010` -> its name) the
+  # events pipeline met today, so an event without its own provider still names its organizer
+  # (T-7567). One GET per unseen id; the register lists about 1,550 organisations, which bounds it.
+  - label: helsinki__linked_events_orgs
+    memory:
+      default_ttl: 24h
+      compaction_interval: 1h
 
 rate_limit_resources:
   # The gateway write budget of a stream rendered by a Portal before T-5803. A Portal since then

@@ -122,6 +122,43 @@ async fn test_group_by_errs() {
 }
 
 #[tokio::test]
+async fn group_by_refuses_a_bad_group_and_leaves_a_failing_check_groupless() {
+    let ctx = make_ctx();
+    for (yaml, want) in [
+        ("group_by: 1\n", "group_by: expected an array of groups"),
+        (
+            "group_by:\n  - check: root = (\n",
+            "group '0' parse error: ",
+        ),
+        (
+            "group_by:\n  - check: \"true\"\n    processors: 1\n",
+            "group '0' parse error: field processors must be a list",
+        ),
+    ] {
+        let err = build(&ctx, yaml)
+            .err()
+            .unwrap_or_else(|| panic!("accepted {yaml}"));
+        assert!(err.contains(want), "{yaml}: {err}");
+    }
+    let proc = build(
+        &ctx,
+        "group_by:\n  - check: this.n > 1\n    processors:\n      - mapping: root = \"big\"\n",
+    )
+    .expect("built");
+    assert_eq!(proc.processor_type(), "group_by");
+    let out = run(&ctx, &proc, &[r#"{"n":5}"#, "not json", r#"{"n":0}"#]).await;
+    assert_eq!(
+        bodies(&out),
+        vec![
+            vec!["big".to_string()],
+            vec!["not json".to_string(), r#"{"n":0}"#.to_string()],
+        ]
+    );
+    assert!(out[1].iter().all(|p| !p.is_errored()));
+    proc.close().await.expect("closed");
+}
+
+#[tokio::test]
 async fn test_group_by_value_basic() {
     let ctx = make_ctx();
     let proc = build(&ctx, "group_by_value:\n  value: ${!json(\"foo\")}\n").expect("built");
@@ -275,6 +312,191 @@ async fn test_cached_bad_ttl() {
         err.message,
         r#"failed to parse ttl expression: time: missing unit in duration "4""#
     );
+}
+
+/// A cache whose store is down: every read and write fails with an error other than a miss.
+struct DownCache {
+    get_hits: bool,
+}
+
+#[async_trait::async_trait]
+impl Cache for DownCache {
+    async fn get(&self, key: &str) -> Result<bytes::Bytes, ekiben_core::CoreError> {
+        if self.get_hits {
+            return Err(ekiben_core::CoreError::KeyNotFound(key.into()));
+        }
+        Err(ekiben_core::CoreError::config("cache store is down"))
+    }
+    async fn set(
+        &self,
+        _: &str,
+        _: bytes::Bytes,
+        _: Option<std::time::Duration>,
+    ) -> Result<(), ekiben_core::CoreError> {
+        Err(ekiben_core::CoreError::config("cache store is down"))
+    }
+    async fn add(
+        &self,
+        _: &str,
+        _: bytes::Bytes,
+        _: Option<std::time::Duration>,
+    ) -> Result<(), ekiben_core::CoreError> {
+        Err(ekiben_core::CoreError::config("cache store is down"))
+    }
+    async fn delete(&self, _: &str) -> Result<(), ekiben_core::CoreError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn cached_flags_each_message_it_cannot_key_time_or_read() {
+    let ctx = make_ctx();
+    let foo = add_cache(&ctx, "foo");
+    let proc = build(
+        &ctx,
+        r#"
+cached:
+  key: ${! this.k.string() }
+  ttl: ${! this.ttl.not_null() }
+  cache: foo
+  skip_on: this.n.number() > 1
+  processors:
+    - mapping: root = this
+"#,
+    )
+    .expect("built");
+    assert_eq!(proc.processor_type(), "cached");
+    for (key, stored) in [
+        ("bad", &b"not a batch"[..]),
+        ("bad2", b"\0\0\0\x01"),
+        ("bad3", b"\0\0\0\x01\0\0\0\x01"),
+    ] {
+        foo.set(key, bytes::Bytes::from_static(stored), None)
+            .await
+            .unwrap();
+    }
+    let out = run(
+        &ctx,
+        &proc,
+        &[
+            "not json",
+            r#"{"k":"a"}"#,
+            r#"{"k":"a","ttl":"5x"}"#,
+            r#"{"k":"a","ttl":"soon"}"#,
+            r#"{"k":"bad","ttl":"1s"}"#,
+            r#"{"k":"bad2","ttl":"1s"}"#,
+            r#"{"k":"bad3","ttl":"1s"}"#,
+            r#"{"k":"skip","ttl":"1s","n":"x"}"#,
+            r#"{"k":"skip2","ttl":"1s","n":5}"#,
+        ],
+    )
+    .await;
+    let errs: Vec<String> = out[0]
+        .iter()
+        .map(|p| p.error_get().map(|e| e.message.clone()).unwrap_or_default())
+        .collect();
+    assert!(
+        errs[0].starts_with("failed to interpolate key expression: "),
+        "{}",
+        errs[0]
+    );
+    assert!(
+        errs[1].starts_with("failed to interpolate ttl expression: "),
+        "{}",
+        errs[1]
+    );
+    assert_eq!(
+        errs[2],
+        "failed to parse ttl expression: time: unknown unit \"x\" in duration \"5x\""
+    );
+    assert_eq!(
+        errs[3],
+        r#"failed to parse ttl expression: time: invalid duration "soon""#
+    );
+    assert!(
+        errs[4].starts_with(
+            "failed to parse cached result, this indicates the data was not set by this processor"
+        ),
+        "{}",
+        errs[4]
+    );
+    assert!(
+        errs[5].ends_with("failed to extract batch size: message is too small to extract number"),
+        "{}",
+        errs[5]
+    );
+    assert!(
+        errs[6]
+            .ends_with("failed to extract message 0 size: message is too small to extract number"),
+        "{}",
+        errs[6]
+    );
+    // A skip_on that fails or answers true passes the result on uncached.
+    assert_eq!(&errs[7..], ["", ""]);
+    assert!(foo.get("skip").await.is_err());
+    assert!(foo.get("skip2").await.is_err());
+
+    // A cache store that is down flags the message on read; a failed write still answers.
+    for (get_hits, want) in [
+        (false, "configuration error: cache store is down"),
+        (true, ""),
+    ] {
+        let ctx = make_ctx();
+        ctx.resources
+            .insert_cache(ctx.org_id(), "foo", Arc::new(DownCache { get_hits }));
+        let proc = build(
+            &ctx,
+            "cached:\n  key: k\n  cache: foo\n  processors:\n    - mapping: root = \"done\"\n",
+        )
+        .expect("built");
+        let out = run(&ctx, &proc, &["x"]).await;
+        let err = out[0][0]
+            .error_get()
+            .map(|e| e.message.clone())
+            .unwrap_or_default();
+        assert!(
+            err.contains(want.trim_start_matches("configuration error: ")),
+            "{err}"
+        );
+        assert_eq!(err.is_empty(), want.is_empty(), "{err}");
+        if get_hits {
+            assert_eq!(bodies(&out), vec![vec!["done".to_string()]]);
+        }
+    }
+}
+
+#[test]
+fn cached_refuses_a_config_it_cannot_build() {
+    let ctx = make_ctx();
+    add_cache(&ctx, "foo");
+    for (yaml, want) in [
+        ("cached: 1\n", "cached: expected an object"),
+        (
+            "cached:\n  cache: foo\n  processors: []\n",
+            "field key is required",
+        ),
+        (
+            "cached:\n  cache: foo\n  key: ${! ( }\n  processors: []\n",
+            "",
+        ),
+        (
+            "cached:\n  cache: foo\n  key: k\n  skip_on: root = (\n  processors: []\n",
+            "",
+        ),
+        (
+            "cached:\n  cache: foo\n  key: k\n",
+            "field processors is required",
+        ),
+        (
+            "group_by_value:\n  value: ${! ( }\n",
+            "failed to parse value expression",
+        ),
+    ] {
+        let err = build(&ctx, yaml)
+            .err()
+            .unwrap_or_else(|| panic!("accepted {yaml}"));
+        assert!(err.contains(want), "{yaml}: {err}");
+    }
 }
 
 #[tokio::test]

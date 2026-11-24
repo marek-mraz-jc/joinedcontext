@@ -591,6 +591,438 @@ mod tests {
         }
     }
 
+    fn fields(conf: &JsonValue) -> Fields<'_> {
+        Fields::new(conf, "t", &["a", "b", "headers", "oauth2", "tls"]).expect("fields")
+    }
+
+    /// The error text, or "" for an answer that should have been a refusal.
+    fn err_of<T>(r: Result<T, CoreError>) -> String {
+        r.err().map(|e| e.to_string()).unwrap_or_default()
+    }
+
+    #[test]
+    fn fields_refuse_a_non_object_and_an_unknown_name() {
+        let e = err_of(Fields::new(&serde_json::json!([1]), "t", &["a"]));
+        assert!(e.contains("t: the config must be an object"), "{e}");
+        let e = err_of(Fields::new(
+            &serde_json::json!({"a": 1, "zz": 2}),
+            "t",
+            &["a"],
+        ));
+        assert!(e.contains("t: field zz not recognised"), "{e}");
+        let conf = serde_json::json!({"a": null});
+        let f = fields(&conf);
+        assert_eq!(f.component(), "t");
+        assert!(f.raw("a").is_none(), "null reads as absent");
+    }
+
+    #[test]
+    fn fields_typed_readers_take_defaults_values_and_refuse_wrong_types() {
+        let conf = serde_json::json!({"a": "x", "b": 3});
+        let f = fields(&conf);
+        assert_eq!(f.str("a").expect("str"), Some("x"));
+        assert!(err_of(f.str("b")).contains("field b must be a string"));
+        assert_eq!(f.string_or("headers", "d").expect("default"), "d");
+
+        for (v, want) in [
+            (serde_json::json!(true), true),
+            (serde_json::json!("false"), false),
+        ] {
+            let conf = serde_json::json!({ "a": v });
+            assert_eq!(fields(&conf).bool_or("a", !want).expect("bool"), want);
+        }
+        assert!(fields(&conf).bool_or("headers", true).expect("default"));
+        let bad = serde_json::json!({"a": "yes"});
+        assert!(err_of(fields(&bad).bool_or("a", false)).contains("field a must be a bool"));
+
+        let conf = serde_json::json!({"a": 7, "b": " 9 "});
+        let f = fields(&conf);
+        assert_eq!(f.u64_or("a", 0).expect("n"), 7);
+        assert_eq!(f.u64_or("b", 0).expect("s"), 9);
+        assert_eq!(f.u64_or("headers", 4).expect("default"), 4);
+        for bad in [
+            serde_json::json!(-1),
+            serde_json::json!("x"),
+            serde_json::json!([]),
+        ] {
+            let conf = serde_json::json!({ "a": bad });
+            let e = err_of(fields(&conf).u64_or("a", 0));
+            assert!(e.contains("field a must be a non-negative integer"), "{e}");
+        }
+
+        let conf = serde_json::json!({"a": "2s", "b": "soon"});
+        let f = fields(&conf);
+        assert_eq!(
+            f.duration_or("a", Duration::ZERO).expect("d"),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            f.duration_or("headers", Duration::from_secs(5))
+                .expect("default"),
+            Duration::from_secs(5)
+        );
+        assert!(err_of(f.duration_or("b", Duration::ZERO)).contains("t: field b:"));
+    }
+
+    #[test]
+    fn fields_bytes_codes_strings_and_objects() {
+        let conf = serde_json::json!({"a": 10, "b": "2KiB"});
+        let f = fields(&conf);
+        assert_eq!(f.bytes_or("a", 0).expect("n"), 10);
+        assert_eq!(f.bytes_or("b", 0).expect("s"), 2048);
+        assert_eq!(f.bytes_or("headers", 3).expect("default"), 3);
+        for bad in [
+            serde_json::json!(-1),
+            serde_json::json!("1GiB"),
+            serde_json::json!(true),
+        ] {
+            let conf = serde_json::json!({ "a": bad });
+            let e = err_of(fields(&conf).bytes_or("a", 0));
+            assert!(
+                e.contains("field a must be a byte size such as 1MiB"),
+                "{e}"
+            );
+        }
+
+        let conf = serde_json::json!({"a": [100, 599]});
+        let got = fields(&conf).codes("a", &[]).expect("codes");
+        assert_eq!(got, HashSet::from([100, 599]));
+        assert_eq!(
+            fields(&conf).codes("b", &[429]).expect("default"),
+            HashSet::from([429])
+        );
+        for bad in [
+            serde_json::json!([99]),
+            serde_json::json!([600]),
+            serde_json::json!([70000]),
+            serde_json::json!(["x"]),
+            serde_json::json!(429),
+        ] {
+            let conf = serde_json::json!({ "a": bad });
+            let e = err_of(fields(&conf).codes("a", &[]));
+            assert!(e.contains("field a must list HTTP status codes"), "{e}");
+        }
+
+        let conf = serde_json::json!({"a": " x, ,y ", "b": ["p", "q"]});
+        let f = fields(&conf);
+        assert_eq!(f.strings("a").expect("csv"), vec!["x", "y"]);
+        assert_eq!(f.strings("b").expect("array"), vec!["p", "q"]);
+        assert!(f.strings("headers").expect("absent").is_empty());
+        for bad in [serde_json::json!([1]), serde_json::json!(1)] {
+            let conf = serde_json::json!({ "a": bad });
+            assert!(err_of(fields(&conf).strings("a")).contains("field a must list strings"));
+        }
+
+        let conf = serde_json::json!({"a": {"k": 1}, "b": 1});
+        let f = fields(&conf);
+        assert_eq!(f.object("a").expect("obj").map(Map::len), Some(1));
+        assert!(f.object("headers").expect("absent").is_none());
+        assert!(err_of(f.object("b")).contains("field b must be an object"));
+    }
+
+    #[test]
+    fn byte_size_units() {
+        assert_eq!(parse_byte_size("100B"), Some(100));
+        assert_eq!(parse_byte_size("4MB"), Some(4_000_000));
+        assert_eq!(parse_byte_size(" 2 kib "), Some(2048));
+    }
+
+    #[test]
+    fn broker_url_refusals_name_the_rule() {
+        let e = err_of(BrokerUrl::parse("t", "unix:/ngsi-ld/v1"));
+        assert!(e.contains("must use http or https"), "{e}");
+        let e = err_of(BrokerUrl::parse("t", "http://gw/ngsi-ld/v1#frag"));
+        assert!(e.contains("without a query or fragment"), "{e}");
+        let e = err_of(BrokerUrl::parse("t", "http://u@gw/ngsi-ld/v1"));
+        assert!(e.contains("must not carry credentials"), "{e}");
+        let e = err_of(BrokerUrl::parse("t", "http://gw/v1"));
+        assert!(e.contains("ending /ngsi-ld/v1"), "{e}");
+    }
+
+    #[test]
+    fn broker_url_contains_refuses_credentials_and_takes_the_base_itself() {
+        let b = BrokerUrl::parse("t", "http://GW:8080/ngsi-ld/v1").expect("ok");
+        assert!(b.contains(&Url::parse("http://gw:8080/ngsi-ld/v1").expect("url")));
+        for no in [
+            "http://u@gw:8080/ngsi-ld/v1/entities",
+            "http://:p@gw:8080/ngsi-ld/v1/entities",
+            "file:///ngsi-ld/v1/entities",
+        ] {
+            assert!(!b.contains(&Url::parse(no).expect("url")), "{no}");
+        }
+    }
+
+    #[test]
+    fn headers_pass_extra_and_refuse_owned_auth_and_bad_values() {
+        let conf = serde_json::json!({"headers": {"X-Trace": "1"}});
+        let got = parse_headers(&fields(&conf)).expect("headers");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0.as_str(), "x-trace");
+        assert_eq!(got[0].1, "1");
+        assert!(parse_headers(&fields(&serde_json::json!({})))
+            .expect("none")
+            .is_empty());
+        for (headers, want) in [
+            (
+                serde_json::json!({"Authorization": "Bearer x"}),
+                "may not carry Authorization",
+            ),
+            (
+                serde_json::json!({"Proxy-Authorization": "x"}),
+                "may not carry Authorization",
+            ),
+            (
+                serde_json::json!({"NGSILD-Tenant": "x"}),
+                "headers may not set NGSILD-Tenant",
+            ),
+            (
+                serde_json::json!({"X-JC-Org": "x"}),
+                "headers may not set X-JC-Org",
+            ),
+            (serde_json::json!({"X-A": 1}), "header X-A must be a string"),
+            (serde_json::json!({"bad name": "x"}), "is not valid"),
+            (
+                serde_json::json!({"X-A": "a\nb"}),
+                "has a value HTTP does not allow",
+            ),
+        ] {
+            let conf = serde_json::json!({ "headers": headers });
+            let e = err_of(parse_headers(&fields(&conf)));
+            assert!(e.contains(want), "{e} / {want}");
+            assert!(!e.contains("Bearer x"), "{e}");
+        }
+    }
+
+    #[test]
+    fn oauth2_block_parses_and_refuses() {
+        let none = serde_json::json!({});
+        assert!(parse_oauth2(&fields(&none)).expect("absent").is_none());
+        let off = serde_json::json!({"oauth2": {"enabled": false, "client_key": "k"}});
+        assert!(parse_oauth2(&fields(&off)).expect("off").is_none());
+        let on = serde_json::json!({"oauth2": {
+            "enabled": true, "client_key": "k", "client_secret": "s",
+            "token_url": " https://kc/token ", "scopes": "a,b",
+            "endpoint_params": {"audience": "gw", "resource": ["r1", "r2"]}
+        }});
+        let o = parse_oauth2(&fields(&on)).expect("on").expect("enabled");
+        assert_eq!(o.client_key, "k");
+        assert_eq!(o.token_url, "https://kc/token");
+        assert_eq!(o.scopes, vec!["a", "b"]);
+        assert_eq!(o.endpoint_params["audience"], vec!["gw"]);
+        assert_eq!(o.endpoint_params["resource"], vec!["r1", "r2"]);
+        for (block, want) in [
+            (
+                serde_json::json!({"enabled": true, "zz": 1}),
+                "field zz not recognised",
+            ),
+            (
+                serde_json::json!({"enabled": true, "token_url": "no"}),
+                "is not a URL",
+            ),
+            (
+                serde_json::json!({"enabled": true, "token_url": "ftp://kc/t"}),
+                "must be an http or https URL with a host",
+            ),
+            (
+                serde_json::json!({"enabled": true, "token_url": "http://u:pw@kc/t"}),
+                "oauth2.token_url must not carry credentials",
+            ),
+            (
+                serde_json::json!({"enabled": true, "token_url": "http://u@kc/t"}),
+                "oauth2.token_url must not carry credentials",
+            ),
+            (
+                serde_json::json!({"enabled": true, "token_url": "http://kc/t"}),
+                "oauth2.client_key is required",
+            ),
+            (
+                serde_json::json!({"enabled": true, "token_url": "http://kc/t", "client_key": "k",
+                    "endpoint_params": {"a": [1]}}),
+                "oauth2.endpoint_params.a must list strings",
+            ),
+            (
+                serde_json::json!({"enabled": true, "token_url": "http://kc/t", "client_key": "k",
+                    "endpoint_params": {"a": 1}}),
+                "oauth2.endpoint_params.a must be a string or a list of strings",
+            ),
+        ] {
+            let conf = serde_json::json!({ "oauth2": block });
+            let e = err_of(parse_oauth2(&fields(&conf)));
+            assert!(e.contains(want), "{e} / {want}");
+            assert!(!e.contains("pw@"), "{e}");
+        }
+    }
+
+    #[test]
+    fn tls_block_keeps_verification_on() {
+        assert!(check_tls(&fields(&serde_json::json!({}))).is_ok());
+        let ok = serde_json::json!({"tls": {"enabled": true, "root_cas": "", "client_certs": []}});
+        assert!(check_tls(&fields(&ok)).is_ok());
+        for (block, want) in [
+            (serde_json::json!({"zz": 1}), "field zz not recognised"),
+            (
+                serde_json::json!({"skip_cert_verify": true}),
+                "skip_cert_verify is refused",
+            ),
+            (
+                serde_json::json!({"enable_renegotiation": true}),
+                "not supported",
+            ),
+            (
+                serde_json::json!({"root_cas": "PEM"}),
+                "certificates verify against the system roots",
+            ),
+            (
+                serde_json::json!({"root_cas_file": "/ca"}),
+                "certificates verify against the system roots",
+            ),
+            (
+                serde_json::json!({"client_certs": [{}]}),
+                "certificates verify against the system roots",
+            ),
+        ] {
+            let conf = serde_json::json!({ "tls": block });
+            let e = err_of(check_tls(&fields(&conf)));
+            assert!(e.contains(want), "{e} / {want}");
+        }
+    }
+
+    fn client(conf: JsonValue, url: &str) -> Result<ClientSettings, CoreError> {
+        let f = Fields::new(&conf, "t", CLIENT_FIELDS)?;
+        let url = BrokerUrl::parse("t", url)?;
+        parse_client(&f, &url, Duration::from_secs(7), &[400])
+    }
+
+    const OUTSIDE: &str = "https://b.example/ngsi-ld/v1";
+    const PLATFORM: &str = "http://gw/api/endpoint/x/ngsi-ld/v1";
+
+    #[test]
+    fn client_settings_defaults_and_values() {
+        let c = client(serde_json::json!({}), OUTSIDE).expect("defaults");
+        assert_eq!(c.timeout, Duration::from_secs(7));
+        assert_eq!(c.retry.retries, 3);
+        assert_eq!(c.retry.retry_period, Duration::from_secs(1));
+        assert_eq!(c.retry.max_backoff, Duration::from_secs(300));
+        assert_eq!(c.retry.backoff_on, HashSet::from([429]));
+        assert_eq!(c.retry.drop_on, HashSet::from([400]));
+        assert!(c.retry.successful_on.is_empty());
+        assert_eq!(c.max_response_bytes, DEFAULT_MAX_RESPONSE_BYTES);
+        assert_eq!(DEFAULT_MAX_RESPONSE_BYTES, 67_108_864, "64 MiB");
+        assert!(c.oauth2.is_none() && c.headers.is_empty() && c.rate_limit.is_none());
+        assert!(c.context.is_none() && c.tenant.is_none());
+
+        let c = client(
+            serde_json::json!({"retries": 1000, "timeout": "3s", "rate_limit": "rl",
+                "context": " https://ctx.example/c.jsonld ", "tenant": " t1 ",
+                "max_response_bytes": "1KiB", "successful_on": [409]}),
+            OUTSIDE,
+        )
+        .expect("values");
+        assert_eq!(c.retry.retries, 1000);
+        assert_eq!(c.timeout, Duration::from_secs(3));
+        assert_eq!(c.rate_limit.as_deref(), Some("rl"));
+        assert_eq!(c.context.as_deref(), Some("https://ctx.example/c.jsonld"));
+        assert_eq!(c.tenant.as_ref().map(|t| t.to_str().ok()), Some(Some("t1")));
+        assert_eq!(c.max_response_bytes, 1024);
+        assert_eq!(c.retry.successful_on, HashSet::from([409]));
+
+        for blank in [
+            serde_json::json!({"context": "none", "tenant": "", "rate_limit": ""}),
+            serde_json::json!({"context": " "}),
+        ] {
+            let c = client(blank, PLATFORM).expect("blank is absent");
+            assert!(c.context.is_none() && c.tenant.is_none() && c.rate_limit.is_none());
+        }
+        assert_eq!(
+            client(
+                serde_json::json!({"max_response_bytes": MAX_RESPONSE_BYTES}),
+                OUTSIDE
+            )
+            .expect("ceiling")
+            .max_response_bytes,
+            MAX_RESPONSE_BYTES
+        );
+    }
+
+    #[test]
+    fn client_settings_refusals() {
+        for (conf, url, want) in [
+            (
+                serde_json::json!({"tls": {"skip_cert_verify": true}}),
+                OUTSIDE,
+                "skip_cert_verify",
+            ),
+            (
+                serde_json::json!({"retries": 1001}),
+                OUTSIDE,
+                "retries may be at most 1000",
+            ),
+            (
+                serde_json::json!({"context": "rel/path"}),
+                OUTSIDE,
+                "must be none or a URL",
+            ),
+            (
+                serde_json::json!({"context": "ftp://c/x"}),
+                OUTSIDE,
+                "none or an http(s) URL",
+            ),
+            (
+                serde_json::json!({"context": "http://c/\"x"}),
+                OUTSIDE,
+                "a Link header does not allow",
+            ),
+            (
+                serde_json::json!({"tenant": "a\u{7f}b"}),
+                OUTSIDE,
+                "tenant holds a character",
+            ),
+            (
+                serde_json::json!({"context": "http://c/x"}),
+                PLATFORM,
+                "refused on a gateway Endpoint",
+            ),
+            (
+                serde_json::json!({"tenant": "t1"}),
+                PLATFORM,
+                "refused on a gateway Endpoint",
+            ),
+            (
+                serde_json::json!({"max_response_bytes": 0}),
+                OUTSIDE,
+                "between 1 and",
+            ),
+            (
+                serde_json::json!({"max_response_bytes": MAX_RESPONSE_BYTES + 1}),
+                OUTSIDE,
+                "between 1 and",
+            ),
+            (
+                serde_json::json!({"timeout": "never"}),
+                OUTSIDE,
+                "field timeout",
+            ),
+            (
+                serde_json::json!({"oauth2": {"enabled": true}}),
+                OUTSIDE,
+                "oauth2.token_url",
+            ),
+            (
+                serde_json::json!({"headers": {"Cookie": "c"}}),
+                OUTSIDE,
+                "headers may not set",
+            ),
+            (
+                serde_json::json!({"rate_limit": 1}),
+                OUTSIDE,
+                "field rate_limit must be a string",
+            ),
+        ] {
+            let e = err_of(client(conf, url));
+            assert!(e.contains(want), "{e} / {want}");
+        }
+    }
+
     #[test]
     fn oauth2_debug_redacts_the_secret() {
         let s = OAuth2Settings {
@@ -602,5 +1034,10 @@ mod tests {
         };
         let shown = format!("{s:?}");
         assert!(!shown.contains("hunter2"), "{shown}");
+        assert!(
+            shown.starts_with("OAuth2Settings { client_key: \"k\"")
+                && shown.contains("http://t/token"),
+            "{shown}"
+        );
     }
 }

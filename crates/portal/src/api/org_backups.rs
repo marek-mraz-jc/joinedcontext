@@ -346,7 +346,7 @@ async fn save_of(
     let bucket = org_backup::bucket(state, &target)?;
     org_backup::require_versioning(&state.org_backup_egress.http, &bucket).await?;
     state.org_backups.save(&target).await?;
-    tracing::info!(organization = %organization, kind, by = %identity.username, "backup target saved");
+    tracing::info!(organization = %organization, kind, by = %identity.subject, "backup target saved");
     state
         .org_backups
         .target(&organization, kind)
@@ -381,7 +381,7 @@ async fn saved_target(
     responses(
         (status = 200, description = "The run's log entry", body = LogEntry),
         (status = 403, description = "Not an administrator of the Organization", body = ProblemDetails),
-        (status = 409, description = "No target, or its bucket's versioning is off", body = ProblemDetails),
+        (status = 409, description = "No target, its bucket's versioning is off, or another run of this backup is in progress", body = ProblemDetails),
         (status = 503, description = "The bucket cannot be reached", body = ProblemDetails),
     )
 )]
@@ -399,7 +399,6 @@ async fn run_of(
 ) -> Result<Json<LogEntry>, ApiError> {
     let organization = administered(state, &user.0.identity)?;
     let target = saved_target(state, &organization, kind).await?;
-    state.org_backups.ran_now(&organization, kind).await?;
     org_backup::run(state, &target, &user.0.identity.username)
         .await
         .map(Json)
@@ -1137,7 +1136,7 @@ pub async fn data_save(
     responses(
         (status = 200, description = "The run's log entry", body = LogEntry),
         (status = 403, description = "Not an administrator of the Organization", body = ProblemDetails),
-        (status = 409, description = "No target or recipients, or its bucket's versioning is off", body = ProblemDetails),
+        (status = 409, description = "No target or recipients, its bucket's versioning is off, or another run of this backup is in progress", body = ProblemDetails),
         (status = 503, description = "The bucket or a database cannot be reached", body = ProblemDetails),
     )
 )]

@@ -282,6 +282,192 @@ async fn a_refused_key_is_the_installations_and_ai_off_never_reaches_the_proxy()
     assert!(sent(&off).await.is_empty());
 }
 
+/// [`complete`] with any content type and body.
+async fn post_raw(state: &AppState, content_type: &str, body: &str) -> (StatusCode, String) {
+    let token = common::REALM.person_token(APP, "jana", &[]);
+    let request = Request::post(format!("/apps/{APP}/api/services/ai/complete"))
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from(body.to_owned()))
+        .expect("a request");
+    let response = joinedcontext_portal::server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("a response");
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("a body");
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// API/06 §3: a body that is not JSON, not a completion or refused by its limits is a 415 or 400
+/// naming the problem; an installation without the model service, without the app-builder
+/// profile or whose organization does not allow its model never reaches the proxy.
+#[tokio::test]
+async fn refused_requests_and_installations_never_reach_the_proxy() {
+    let project = project("ai-refused");
+    let proxy = proxy(&project, "x", 200).await;
+    let Some(mut state) = state(&proxy, &project, json!(["ai"])).await else {
+        return;
+    };
+    let (status, text) = post_raw(&state, "text/plain", &ask().to_string()).await;
+    assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE, "{text}");
+    let (status, text) = post_raw(&state, "application/json", "{\"prompt\":\"x\"}").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
+    assert!(text.contains("not a completion request"), "{text}");
+    let (status, _, text) = complete(&state, json!({ "messages": [] })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
+    assert!(text.contains("1 to 50"), "{text}");
+
+    state.mirror.upsert(envelope(
+        "Organization",
+        "helsinki",
+        "org",
+        json!({ "domain": "hel.fi", "locales": ["en"], "defaultLocale": "en",
+                "policies": { "apps": { "services": ["ai"] },
+                              "agents": { "models": ["anthropic/claude-sonnet-5"] } } }),
+    ));
+    let (status, body, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{text}");
+    assert!(
+        body.to_string().contains("deepseek/deepseek-v4.1-flash"),
+        "{text}"
+    );
+
+    state.mirror.upsert(envelope(
+        "AgentProfile",
+        "app-builder",
+        "org",
+        json!({ "role": 7 }),
+    ));
+    let (status, _, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(text.contains("app-builder profile"), "{text}");
+
+    let mut config = (*state.config).clone();
+    config.agent_settings = None;
+    state.config = std::sync::Arc::new(config);
+    let (status, _, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(text.contains("answers no App's ai calls"), "{text}");
+    assert!(sent(&proxy).await.is_empty());
+}
+
+/// A proxy that fails or cannot be reached is a 503 the App can retry, and the tokens held for
+/// the call are given back to the day.
+#[tokio::test]
+async fn a_failing_or_unreachable_proxy_is_a_503_and_holds_no_tokens() {
+    let project = project("ai-down");
+    let failing = proxy(&project, "x", 500).await;
+    let Some(state) = state(&failing, &project, json!(["ai"])).await else {
+        return;
+    };
+    let (status, _, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(text.contains("the model service failed"), "{text}");
+
+    let Some(mut state) = self::state(&failing, &project, json!(["ai"])).await else {
+        return;
+    };
+    // Port 1 on loopback: nothing listens there, so the connection is refused.
+    let mut config = (*state.config).clone();
+    if let Some(agents) = config.agent_settings.as_mut() {
+        agents.proxy_base = "http://127.0.0.1:1".into();
+    }
+    state.config = std::sync::Arc::new(config);
+    let (status, _, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(text.contains("did not answer"), "{text}");
+
+    // A realm that refuses the Portal its own token: nothing to ask the model service with.
+    let refusing = MockServer::start().await;
+    let issuer = format!("{}/realms/banskabystrica", refusing.uri());
+    Mock::given(method("GET"))
+        .and(path(
+            "/realms/banskabystrica/.well-known/openid-configuration",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuer": issuer,
+            "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+            "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+            "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["ES256"]
+        })))
+        .mount(&refusing)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/realms/banskabystrica/protocol/openid-connect/certs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "keys": [] })))
+        .mount(&refusing)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(401).set_body_json(json!({ "error": "unauthorized_client" })),
+        )
+        .mount(&refusing)
+        .await;
+    let Some(mut state) = self::state(&failing, &project, json!(["ai"])).await else {
+        return;
+    };
+    let config = Config::from_vars(|key| match key {
+        "JC_OIDC_ISSUER" => Some(issuer.clone()),
+        "JC_OIDC_CLIENT_ID" => Some("portal-api".to_owned()),
+        "JC_OIDC_CLIENT_SECRET" => Some("secret".to_owned()),
+        "JC_PORTAL_COOKIE_KEY" => {
+            Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001".into())
+        }
+        _ => None,
+    })
+    .expect("config");
+    let oidc = OidcClient::discover(
+        config.oidc.as_ref().expect("a realm"),
+        "https://portal.test/api/v1/auth/callback",
+    )
+    .await
+    .expect("discovery");
+    state.oidc = Some(std::sync::Arc::new(oidc));
+    let (status, _, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(text.contains("no token to ask the model service"), "{text}");
+
+    let unreadable = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "error": "x" })))
+        .mount(&unreadable)
+        .await;
+    let Some(state) = self::state(&unreadable, &project, json!(["ai"])).await else {
+        return;
+    };
+    let (status, _, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(text.contains("could not be read"), "{text}");
+
+    // The calls settled to nothing: the whole 150-token day is still there.
+    let answering = proxy(&project, "Severity 3.", 200).await;
+    let Some(state) = self::state(&answering, &project, json!(["ai"])).await else {
+        return;
+    };
+    let (status, _, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+}
+
+/// A database that stops answering is a server error before the model is asked.
+#[tokio::test]
+async fn a_database_that_stops_answering_never_reaches_the_proxy() {
+    let project = project("ai-db-down");
+    let proxy = proxy(&project, "x", 200).await;
+    let Some(state) = state(&proxy, &project, json!(["ai"])).await else {
+        return;
+    };
+    state.db.as_ref().expect("a database").close().await;
+    let (status, _, text) = complete(&state, ask()).await;
+    assert!(status.is_server_error(), "{status}: {text}");
+    assert!(sent(&proxy).await.is_empty());
+}
+
 /// T-3661: the day is reserved before the call, in the statement that checks it, so calls in
 /// flight together cannot each see the same day left and pass it together.
 #[tokio::test]

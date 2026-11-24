@@ -149,8 +149,7 @@ pub struct Cli {
     /// shako: optional file holding a static service bearer token.
     #[arg(long, env = "JCBIN_SHAKO_TOKEN_FILE")]
     pub shako_token_file: Option<PathBuf>,
-    /// dataroom: file holding the CKAN API token the Portal publishes with (default: made per
-    /// boot, in memory).
+    /// Deprecated and not read (S11-23): the Portal publishes with a short-lived service token.
     #[arg(long, env = "JCBIN_DATAROOM_PORTAL_TOKEN_FILE")]
     pub dataroom_portal_token_file: Option<PathBuf>,
     /// daiya: file holding the password of the Portal's server administrator (default: made per
@@ -335,6 +334,7 @@ pub struct DaiyaSection {
 pub struct DataroomSection {
     pub org_id: String,
     pub catalogue_id: String,
+    /// Deprecated and not read (S11-23): the Portal publishes with a short-lived service token.
     #[serde(default)]
     pub portal_token_file: Option<PathBuf>,
     pub database: Option<DatabaseSection>,
@@ -486,7 +486,7 @@ pub struct OrganizationSection {
     pub same_site_apps: bool,
     /// The dataroom catalogue (a UUID) holding the Organization's datasets.
     pub catalogue_id: String,
-    /// The CKAN API token the Portal publishes into this catalogue with; none, no Portal grant.
+    /// Deprecated and not read (S11-23): the Portal publishes with a short-lived service token.
     #[serde(default)]
     pub portal_token_file: Option<PathBuf>,
     /// The e-mail address of the Organization realm's first administrator (T-7283), e.g.
@@ -1628,18 +1628,18 @@ fn remote_modules(
 #[allow(clippy::disallowed_methods)] // The one reader.
 pub fn process_env() -> BTreeMap<String, String> {
     std::env::vars()
-        .filter(|(k, _)| {
-            k.starts_with("JCBIN_")
+        .filter_map(|(k, v)| {
+            if k == REFUSED_MODEL_KEY {
+                // The proxy's own name for the model key is read only to refuse it: its value is
+                // dropped.
+                Some((k, String::new()))
+            } else if k.starts_with("JCBIN_")
                 || k.starts_with(EKIBEN_VAR_PREFIX)
                 || k.starts_with("DAIYA_VAR_")
-                || k == REFUSED_MODEL_KEY
-        })
-        // The proxy's own name for the model key is read only to refuse it: its value is dropped.
-        .map(|(k, v)| {
-            if k == REFUSED_MODEL_KEY {
-                (k, String::new())
+            {
+                Some((k, v))
             } else {
-                (k, v)
+                None
             }
         })
         .collect()
@@ -1663,7 +1663,10 @@ pub fn assistant_env(key: &str) -> Option<String> {
     if !allowed {
         return None;
     }
-    std::env::var(key).ok().filter(|v| !v.trim().is_empty())
+    match std::env::var(key) {
+        Ok(v) if !v.trim().is_empty() => Some(v),
+        _ => None,
+    }
 }
 
 /// One key of the Portal's or the gateway's own configuration (`JC_*`), as the standalone
@@ -1720,8 +1723,39 @@ pub struct Secrets {
     pub remote_client_secret: Option<Given>,
     /// The model provider's key the assistant's proxy holds (a file only).
     pub model_key: Option<Given>,
-    /// Each `[[organizations]]` entry's Portal publisher token, by Organization name.
-    pub organization_tokens: BTreeMap<String, Given>,
+}
+
+/// The Portal publisher token settings jc no longer reads (S11-23: the Portal publishes with a
+/// service token): each one still set is named in one warning, its file never opened.
+fn unread_publisher_tokens(cfg: &Config, env: &BTreeMap<String, String>) -> Vec<String> {
+    let mut named: Vec<String> = [
+        "JCBIN_DATAROOM_PORTAL_TOKEN",
+        "JCBIN_DATAROOM_PORTAL_TOKEN_FILE",
+    ]
+    .into_iter()
+    .filter(|name| env.contains_key(*name))
+    .map(str::to_owned)
+    .collect();
+    if cfg.dataroom.portal_token_file.is_some() && named.is_empty() {
+        named.push("[dataroom] portal_token_file".to_owned());
+    }
+    named.extend(
+        cfg.organizations
+            .iter()
+            .filter(|org| org.portal_token_file.is_some())
+            .map(|org| format!("[[organizations]] {} portal_token_file", org.name)),
+    );
+    named
+}
+
+fn warn_unread_publisher_tokens(cfg: &Config, env: &BTreeMap<String, String>) {
+    let named = unread_publisher_tokens(cfg, env);
+    if !named.is_empty() {
+        tracing::warn!(
+            settings = %named.join(", "),
+            "deprecated and not read: the Portal publishes with a short-lived service token; remove these settings"
+        );
+    }
 }
 
 impl Secrets {
@@ -1778,11 +1812,6 @@ impl Secrets {
                 cfg.shako.token_file.as_deref(),
             ),
             (
-                S::CatalogueToken,
-                "JCBIN_DATAROOM_PORTAL_TOKEN",
-                cfg.dataroom.portal_token_file.as_deref(),
-            ),
-            (
                 S::DashboardsPassword,
                 "JCBIN_DAIYA_PORTAL_PASSWORD",
                 cfg.daiya.portal_password_file.as_deref(),
@@ -1802,12 +1831,7 @@ impl Secrets {
             }
         }
         out.pipeline_client_secrets = pipeline_client_secrets(&cfg.ekiben)?;
-        for org in &cfg.organizations {
-            let name = format!("[[organizations]] {} portal_token_file", org.name);
-            if let Some(g) = given(&name, org.portal_token_file.as_deref())? {
-                out.organization_tokens.insert(org.name.clone(), g);
-            }
-        }
+        warn_unread_publisher_tokens(cfg, env);
         if env.contains_key("JCBIN_PORTAL_AGE_KEY") {
             return Err(ConfigError::FileOnly("JCBIN_PORTAL_AGE_KEY"));
         }
@@ -2129,11 +2153,8 @@ mod tests {
         for arg in cmd.get_arguments() {
             if let Some(env) = arg.get_env() {
                 let env = env.to_string_lossy();
+                // JCBIN_ never collides with the Portal's JC_* keys.
                 assert!(env.starts_with("JCBIN_"), "{env} must start with JCBIN_");
-                assert!(
-                    !env.starts_with("JC_"),
-                    "{env} collides with the Portal's JC_* keys"
-                );
                 seen += 1;
             }
         }
@@ -2488,7 +2509,7 @@ path_prefix = "/api/endpoint"
     }
 
     /// Every secret `jc` takes from the operator, by its `NAME`, and the flag naming its file.
-    const GIVEN: [(&str, &str); 8] = [
+    const GIVEN: [(&str, &str); 7] = [
         ("JCBIN_ADMIN_TOKEN", "--admin-token-file"),
         ("JCBIN_SHAKO_SIGNING_KEY", "--shako-signing-key-file"),
         ("JCBIN_KAISATSU_KEK", "--kaisatsu-kek-file"),
@@ -2496,14 +2517,42 @@ path_prefix = "/api/endpoint"
         ("JCBIN_ANTARES_ADMIN_TOKEN", "--antares-admin-token-file"),
         ("JCBIN_SHAKO_TOKEN", "--shako-token-file"),
         (
-            "JCBIN_DATAROOM_PORTAL_TOKEN",
-            "--dataroom-portal-token-file",
-        ),
-        (
             "JCBIN_DAIYA_PORTAL_PASSWORD",
             "--daiya-portal-password-file",
         ),
     ];
+
+    /// S11-23: the old publisher token settings still parse, are named as unread and their
+    /// files are never opened (a path that does not exist loads).
+    #[test]
+    fn old_publisher_token_settings_parse_and_are_never_read() {
+        let text = format!(
+            "{}\n[dataroom]\nportal_token_file = \"/nonexistent/catalogue-token\"\n",
+            include_str!("../tests/fixtures/two-orgs.toml")
+        );
+        let mut cfg = Config::merge(
+            cli(&["--role", "portal,dataroom"]),
+            Config::parse_file(Path::new("jc.toml"), &text).expect("parses"),
+        )
+        .expect("config");
+        cfg.organizations[0].portal_token_file = Some("/nonexistent/alpha-token".into());
+        let env = BTreeMap::from([(
+            "JCBIN_DATAROOM_PORTAL_TOKEN".to_owned(),
+            "a-static-token".to_owned(),
+        )]);
+        assert!(Secrets::load_from(&cfg, &env).is_ok(), "no file is opened");
+        assert_eq!(
+            unread_publisher_tokens(&cfg, &env),
+            [
+                "JCBIN_DATAROOM_PORTAL_TOKEN",
+                "[[organizations]] alpha portal_token_file"
+            ]
+        );
+        assert_eq!(
+            unread_publisher_tokens(&cfg, &BTreeMap::new())[0],
+            "[dataroom] portal_token_file"
+        );
+    }
 
     #[test]
     fn every_secret_comes_from_name_or_name_file_and_both_is_refused() {
@@ -2534,14 +2583,18 @@ path_prefix = "/api/endpoint"
                 }
             };
             let from_file = Secrets::load_from(&with_file, &BTreeMap::new()).unwrap();
-            let g = given(&from_file).unwrap_or_else(|| panic!("{name}"));
+            let Some(g) = given(&from_file) else {
+                panic!("{name}")
+            };
             assert_eq!(
                 (g.secret.expose(), g.source),
                 ("from-the-file", jc_secret::Source::File)
             );
             let env_only = Config::merge(cli(&["--role", "all"]), FileConfig::default()).unwrap();
             let from_env = Secrets::load_from(&env_only, &value).unwrap();
-            let g = given(&from_env).unwrap_or_else(|| panic!("{name}"));
+            let Some(g) = given(&from_env) else {
+                panic!("{name}")
+            };
             assert_eq!(
                 (g.secret.expose(), g.source),
                 ("from-the-env", jc_secret::Source::Env)
@@ -2591,6 +2644,28 @@ path_prefix = "/api/endpoint"
         assert_eq!(assistant_env("JC_MODEL_KEY"), None);
         assert_eq!(assistant_env("JC_MODEL_KEY_FILE"), None);
         assert_eq!(assistant_env("JC_OIDC_CLIENT_SECRET"), None);
+        assert_eq!(assistant_env("JC_ASSISTANT_UNSET_IN_TESTS"), None);
+        assert_eq!(antares_env("ANTARES_UNSET_IN_TESTS"), None);
+        assert_eq!(secrets.report(), [("model-key", jc_secret::Source::File)]);
+    }
+
+    /// The process environment hands over only jc's own, ekiben's and daiya's names, and a
+    /// Dataroom alone needs no secret from it.
+    #[test]
+    fn the_process_environment_gives_only_jcs_own_names() {
+        for (k, v) in process_env() {
+            let ours = k.starts_with("JCBIN_")
+                || k.starts_with(EKIBEN_VAR_PREFIX)
+                || k.starts_with("DAIYA_VAR_");
+            assert!(ours || (k == REFUSED_MODEL_KEY && v.is_empty()), "{k}");
+        }
+        let cfg = Config::merge(cli(&["--role", "dataroom"]), FileConfig::default()).unwrap();
+        assert!(
+            Secrets::load(&cfg)
+                .expect("no secret needed")
+                .report()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -2630,6 +2705,15 @@ path_prefix = "/api/endpoint"
             !format!("{secrets:?}").contains("s-zilina"),
             "Debug hides it"
         );
+        assert_eq!(
+            secrets.report(),
+            [("ekiben-pipeline-client-secrets", jc_secret::Source::File)]
+        );
+        let gone = dir.path().join("gone");
+        let err = load(&["--ekiben-client-secrets-dir", gone.to_str().unwrap()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("gone") && err.contains("not found"), "{err}");
         // The default is kaisatsu's import secrets directory, the file a realm file names.
         let shared = load(&["--kaisatsu-import-secrets-dir", dir_arg]).unwrap();
         assert_eq!(shared.pipeline_client_secrets.len(), 2);
@@ -2753,14 +2837,26 @@ path_prefix = "/api/endpoint"
                 "cannot run in another",
             ),
             ("portal", "shako = \"file:///etc\"", "not an http(s) URL"),
+            ("portal", "nosuch = \"https://g\"", "'nosuch' is no module"),
         ] {
             let err = merge(role, modules).unwrap_err().to_string();
             assert!(err.contains(said), "{role} {modules}: {err}");
         }
+        let token_url =
+            parse(&format!("{remote}shako = \"https://g\"").replace("http://id/token", "id/token"));
+        let err = Config::merge(cli(&["--role", "portal"]), token_url).unwrap_err();
+        assert!(
+            err.to_string().contains("token_url must be an http(s) URL"),
+            "{err}"
+        );
         let err = Secrets::load_from(&cfg, &BTreeMap::new()).unwrap_err();
         assert!(err.to_string().contains("no client secret"), "{err}");
         let env = BTreeMap::from([("JCBIN_REMOTE_CLIENT_SECRET".to_owned(), "s3cret".to_owned())]);
         let secrets = Secrets::load_from(&cfg, &env).unwrap();
+        assert_eq!(
+            secrets.report(),
+            [("remote-client-secret", jc_secret::Source::Env)]
+        );
         assert_eq!(
             secrets.remote_client_secret.unwrap().source,
             jc_secret::Source::Env
@@ -3362,7 +3458,7 @@ path_prefix = "/api/endpoint"
         let path = dir.path().join("jc.toml");
         std::fs::write(
             &path,
-            "profile = \"development\"\nrole = \"dataroom\"\nbase_host = \"from.file\"\n",
+            "profile = \"development\"\nrole = \"dataroom\"\nbase_host = \"from.file\"\n[dataroom]\n",
         )
         .unwrap();
         let cfg = Config::resolve(Cli {
@@ -3371,6 +3467,8 @@ path_prefix = "/api/endpoint"
         })
         .unwrap();
         assert_eq!(cfg.base_host, "from.file");
+        // The Dataroom's files are read beside jc.toml.
+        assert_eq!(cfg.dataroom.config_dir.as_deref(), Some(dir.path()));
         let err = Config::resolve(Cli {
             config: Some(dir.path().join("missing.toml")),
             ..Cli::default()

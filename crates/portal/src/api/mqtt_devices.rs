@@ -347,7 +347,7 @@ async fn add(
     let jwks = valid_request(state, project, broker_name, &spec, &request)?;
     let change =
         propose_device(state, identity, project, broker_name, &request, &jwks, env).await?;
-    tracing::info!(project = %project, broker = %broker_name, device = %request.name, by = %identity.username, "MQTT device proposed");
+    tracing::info!(project = %project, broker = %broker_name, device = %request.name, by = %identity.subject, "MQTT device proposed");
     Ok(change)
 }
 

@@ -4,10 +4,12 @@
 //! restricted, a hidden (`jc_hide`), a withdrawn dataset and one of a withdrawn publisher, so each
 //! surface is checked against the rules of `package_show` (C4, C7, C11, D2, G2).
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
 use axum::Router;
-use dataroom_api::{mount, router, DataroomState, TokenBinding};
+use dataroom_api::{mount, router, DataroomState};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
     Action, ActivityRow, BrandingBlock, Catalogue, CatalogueId, CataloguePlugin, DataroomError,
@@ -32,6 +34,10 @@ const HOST: &str = "data.city.test";
 struct FailingStore {
     inner: MemoryStore,
     failing: Mutex<BTreeSet<&'static str>>,
+    /// Methods that answer a write conflict, as a concurrent writer would make them.
+    conflicting: Mutex<BTreeSet<&'static str>>,
+    /// How many conflicts were answered.
+    conflicts: std::sync::atomic::AtomicUsize,
 }
 
 impl FailingStore {
@@ -39,7 +45,16 @@ impl FailingStore {
         Self {
             inner: MemoryStore::new(),
             failing: Mutex::new(BTreeSet::new()),
+            conflicting: Mutex::new(BTreeSet::new()),
+            conflicts: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    fn conflict(&self, methods: &[&'static str]) {
+        self.conflicting
+            .lock()
+            .unwrap()
+            .extend(methods.iter().copied());
     }
 
     fn fail(&self, methods: &[&'static str]) {
@@ -48,6 +63,7 @@ impl FailingStore {
 
     fn heal(&self) {
         self.failing.lock().unwrap().clear();
+        self.conflicting.lock().unwrap().clear();
     }
 
     fn fails(&self, method: &str) -> bool {
@@ -59,6 +75,12 @@ macro_rules! forward {
     ($( $name:ident<$lt:lifetime>($($arg:ident : $ty:ty),*) -> $ret:ty; )*) => {
         $(
             fn $name<$lt>(&$lt self, $($arg: $ty),*) -> BoxFuture<$lt, Result<$ret>> {
+                if self.conflicting.lock().unwrap().contains(stringify!($name)) {
+                    self.conflicts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    return Box::pin(async {
+                        Err(DataroomError::Conflict(concat!(stringify!($name), " conflicted").into()))
+                    });
+                }
                 if self.fails(stringify!($name)) {
                     return Box::pin(async {
                         Err(DataroomError::Storage(concat!(stringify!($name), " failed").into()))
@@ -81,22 +103,25 @@ impl Store for FailingStore {
         list_publishers<'a>(ctx: &'a RequestCtx) -> Vec<Publisher>;
         get_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Publisher>;
         upsert_publisher<'a>(ctx: &'a RequestCtx, publisher: Publisher) -> Publisher;
-        merge_publishers<'a>(ctx: &'a RequestCtx, source: &'a str, target: &'a str) -> Publisher;
-        withdraw_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Publisher;
+        save_publisher<'a>(ctx: &'a RequestCtx, publisher: Publisher, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Publisher;
+        merge_publishers<'a>(ctx: &'a RequestCtx, source: &'a str, target: &'a str, activity: ActivityRow) -> Publisher;
+        withdraw_publisher<'a>(ctx: &'a RequestCtx, id_or_name: &'a str, activity: ActivityRow) -> Publisher;
         list_datasets<'a>(ctx: &'a RequestCtx) -> Vec<Dataset>;
         get_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<Dataset>;
         upsert_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset) -> Dataset;
         save_dataset<'a>(ctx: &'a RequestCtx, dataset: Dataset, expected: Option<jc_time::TimestampTz>, activity: ActivityRow) -> Dataset;
         withdraw_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Dataset;
-        purge_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> ();
+        purge_dataset<'a>(ctx: &'a RequestCtx, id_or_name: &'a str, activity: ActivityRow) -> ();
         get_distribution<'a>(ctx: &'a RequestCtx, id: &'a str) -> Option<(Dataset, Distribution)>;
         list_resource_views<'a>(ctx: &'a RequestCtx, resource_id: &'a str) -> Vec<ResourceView>;
         get_resource_view<'a>(ctx: &'a RequestCtx, view_id: &'a str) -> Option<ResourceView>;
         upsert_resource_view<'a>(ctx: &'a RequestCtx, view: ResourceView) -> ResourceView;
-        delete_resource_view<'a>(ctx: &'a RequestCtx, view_id: &'a str) -> ();
+        save_resource_view<'a>(ctx: &'a RequestCtx, view: ResourceView, activity: ActivityRow) -> ResourceView;
+        delete_resource_view<'a>(ctx: &'a RequestCtx, view_id: &'a str, activity: ActivityRow) -> ();
         list_harvest_sources<'a>(ctx: &'a RequestCtx) -> Vec<HarvestSource>;
         get_harvest_source<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> Option<HarvestSource>;
         upsert_harvest_source<'a>(ctx: &'a RequestCtx, source: HarvestSource) -> HarvestSource;
+        save_harvest_source<'a>(ctx: &'a RequestCtx, source: HarvestSource, activity: ActivityRow) -> HarvestSource;
         delete_harvest_source<'a>(ctx: &'a RequestCtx, id_or_name: &'a str) -> bool;
         list_harvest_runs<'a>(ctx: &'a RequestCtx, source_id: Option<&'a str>) -> Vec<HarvestRun>;
         get_harvest_run<'a>(ctx: &'a RequestCtx, run_id: &'a str) -> Option<HarvestRun>;
@@ -107,10 +132,12 @@ impl Store for FailingStore {
         list_shacl_reports<'a>(ctx: &'a RequestCtx, dataset_id: Option<&'a str>, profile_id: Option<&'a str>) -> Vec<ShaclValidationReport>;
         list_profiles<'a>(ctx: &'a RequestCtx) -> Vec<ProfileRecord>;
         upsert_profile<'a>(ctx: &'a RequestCtx, profile: ProfileRecord) -> ProfileRecord;
+        save_profile<'a>(ctx: &'a RequestCtx, profile: ProfileRecord, activity: ActivityRow) -> ProfileRecord;
         list_pages<'a>(ctx: &'a RequestCtx) -> Vec<StaticPage>;
         upsert_page<'a>(ctx: &'a RequestCtx, page: StaticPage) -> StaticPage;
         list_plugins<'a>(ctx: &'a RequestCtx) -> Vec<CataloguePlugin>;
         upsert_plugin<'a>(ctx: &'a RequestCtx, plugin: CataloguePlugin) -> CataloguePlugin;
+        save_plugin<'a>(ctx: &'a RequestCtx, plugin: CataloguePlugin, activity: ActivityRow) -> CataloguePlugin;
         odata_table<'a>(ctx: &'a RequestCtx, set_name: &'a str) -> Arc<dyn odata_table::Table>;
     }
 }
@@ -202,8 +229,8 @@ fn view(id: &str, resource: &str) -> ResourceView {
     .unwrap()
 }
 
-fn binding(token: &str, actor: &str, org: OrgId, groups: &[&str]) -> TokenBinding {
-    TokenBinding {
+fn binding(token: &str, actor: &str, org: OrgId, groups: &[&str]) -> common::Caller {
+    common::Caller {
         token: token.into(),
         subject: Subject::authenticated(
             actor,
@@ -262,8 +289,14 @@ async fn world_with(build: impl FnOnce(DataroomState) -> Router) -> World {
             .unwrap();
     }
     store.withdraw_dataset(&ctx, "retired").await.unwrap();
-    store.withdraw_publisher(&ctx, "gone").await.unwrap();
-    store.merge_publishers(&ctx, "old", "city").await.unwrap();
+    store
+        .withdraw_publisher(&ctx, "gone", audit("publisher.withdraw"))
+        .await
+        .unwrap();
+    store
+        .merge_publishers(&ctx, "old", "city", audit("publisher.merge"))
+        .await
+        .unwrap();
     for (id, res) in [
         ("view-open", "res-open-0"),
         ("view-secret", "res-secret-0"),
@@ -301,21 +334,24 @@ async fn world_with(build: impl FnOnce(DataroomState) -> Router) -> World {
         b.subject.client_id = Some(client.into());
         b
     };
-    let state = DataroomState::new(store.clone(), Arc::new(authz), org, cat).with_tokens(vec![
-        binding("tok-admin", "admin", org, &[]),
-        instance("tok-alpha", "alpha"),
-        instance("tok-beta", "beta"),
-        binding("tok-editor", "eva", org, &["city-editors"]),
-        binding("tok-member", "mo", org, &[]),
-        binding(
-            "tok-outsider",
-            "otto",
-            OrgId::from_uuid(uuid::Uuid::now_v7()),
-            &[],
-        ),
-        binding("tok-proposer", "pat", org, &[]),
-        reader,
-    ]);
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), Arc::new(authz), org, cat),
+        vec![
+            binding("tok-admin", "admin", org, &[]),
+            instance("tok-alpha", "alpha"),
+            instance("tok-beta", "beta"),
+            binding("tok-editor", "eva", org, &["city-editors"]),
+            binding("tok-member", "mo", org, &[]),
+            binding(
+                "tok-outsider",
+                "otto",
+                OrgId::from_uuid(uuid::Uuid::now_v7()),
+                &[],
+            ),
+            binding("tok-proposer", "pat", org, &[]),
+            reader,
+        ],
+    );
     World {
         store,
         app: build(state),
@@ -879,6 +915,15 @@ async fn ckan_site_and_listing_actions() {
     // An authenticated GET is not publicly cacheable.
     let a = get(app, "/api/3/action/site_read", Some("tok-member")).await;
     assert_eq!(a.header("cache-control"), "private, no-store");
+    // A public dataset is publicly cacheable for anonymous callers alone.
+    for (token, cache) in [
+        (None, "public, max-age=60"),
+        (Some("tok-member"), "private, no-store"),
+    ] {
+        let a = get(app, "/api/3/action/package_show?id=open", token).await;
+        assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+        assert_eq!(a.header("cache-control"), cache, "{token:?}");
+    }
 
     // tag_list: tags of public active datasets only.
     let tags = get(app, "/api/3/action/tag_list", None).await.json()["result"].clone();
@@ -1339,10 +1384,12 @@ async fn ckan_package_show_and_search_hide_what_the_caller_may_not_read() {
         "{names:?}"
     );
     assert!(
-        v["result"]["search_facets"]["organization"].is_object(),
-        "{}",
+        v["result"]["search_facets"]["organization"].is_object()
+            && v["result"]["search_facets"]["license_id"].is_null(),
+        "only the asked facets: {}",
         a.body
     );
+    assert_eq!(a.header("cache-control"), "private, no-store");
     let a = ckan(
         app,
         "package_search",
@@ -1362,10 +1409,19 @@ async fn ckan_package_show_and_search_hide_what_the_caller_may_not_read() {
         "{names:?}"
     );
     assert!(
-        v["result"]["search_facets"]["tags"].is_object(),
-        "{}",
+        v["result"]["search_facets"]["tags"].is_object()
+            && v["result"]["search_facets"]["organization"].is_null(),
+        "only the asked facets: {}",
         a.body
     );
+    // An anonymous search is publicly cacheable unless it asks for private records.
+    for (flags, cache) in [
+        ("", "public, max-age=60"),
+        ("?include_private=true", "private, no-store"),
+    ] {
+        let a = get(app, &format!("/api/3/action/package_search{flags}"), None).await;
+        assert_eq!(a.header("cache-control"), cache, "{flags}");
+    }
     assert_eq!(v["result"]["sort"], "score desc, metadata_modified desc");
     let a = get(
         app,
@@ -1398,6 +1454,15 @@ async fn ckan_dataset_and_resource_writes() {
         "package_create",
         Some("tok-editor"),
         json!({"name": "open"}),
+    )
+    .await;
+    assert_eq!(ckan_error(&a)["name"][0], "That URL is already in use.");
+    // A caller who sees the dataset learns the name is taken, though it may not propose one.
+    let a = ckan(
+        app,
+        "package_create",
+        Some("tok-member"),
+        json!({"name": "open", "owner_org": "city"}),
     )
     .await;
     assert_eq!(ckan_error(&a)["name"][0], "That URL is already in use.");
@@ -1498,17 +1563,24 @@ async fn ckan_dataset_and_resource_writes() {
         .unwrap();
     assert_eq!(ds.title.get("sk").map(String::as_str), Some("Patched"));
     // A patch of `private` alone changes the visibility the stored record carried.
-    for (private, want) in [
-        (false, dataroom_core::Visibility::Public),
-        (true, dataroom_core::Visibility::Internal),
+    // One that agrees with it, or beside an explicit `visibility`, keeps what it names.
+    for (patch, want) in [
+        (json!({"private": false}), dataroom_core::Visibility::Public),
+        (json!({"private": false}), dataroom_core::Visibility::Public),
+        (
+            json!({"private": true}),
+            dataroom_core::Visibility::Internal,
+        ),
+        (
+            json!({"private": true, "visibility": "public"}),
+            dataroom_core::Visibility::Public,
+        ),
+        (json!({"private": "yes"}), dataroom_core::Visibility::Public),
     ] {
-        let a = ckan(
-            app,
-            "package_patch",
-            Some("tok-editor"),
-            json!({"id": "fresh", "private": private}),
-        )
-        .await;
+        let private = patch.clone();
+        let mut body = patch;
+        body["id"] = json!("fresh");
+        let a = ckan(app, "package_patch", Some("tok-editor"), body).await;
         assert_eq!(a.status, StatusCode::OK, "{}", a.body);
         let ds = w
             .store
@@ -2019,7 +2091,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"resource_id": "res-open-0", "view_type": "text_view"}),
         ),
         (
-            &["upsert_resource_view"],
+            &["save_resource_view"],
             "resource_view_create",
             Some("tok-editor"),
             json!({"resource_id": "res-open-0", "view_type": "text_view"}),
@@ -2037,7 +2109,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"id": "view-open"}),
         ),
         (
-            &["upsert_resource_view"],
+            &["save_resource_view"],
             "resource_view_update",
             Some("tok-editor"),
             json!({"id": "view-open", "title": "x"}),
@@ -2062,7 +2134,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"name": "neworg"}),
         ),
         (
-            &["upsert_publisher"],
+            &["save_publisher"],
             "organization_create",
             Some("tok-admin"),
             json!({"name": "neworg"}),
@@ -2074,7 +2146,7 @@ async fn ckan_store_failures_answer_with_a_ckan_error_and_change_nothing() {
             json!({"id": "city"}),
         ),
         (
-            &["upsert_publisher"],
+            &["save_publisher"],
             "organization_patch",
             Some("tok-admin"),
             json!({"id": "city", "title": "x"}),
@@ -2285,6 +2357,19 @@ async fn long_feeds_page_with_next_and_previous_links() {
         .body
         .contains("rel=\"previous\" href=\"https://data.city.test/feeds/dataset.atom?page=1\""));
     assert_eq!(a.body.matches("<entry>").count(), 20);
+    let last = a
+        .body
+        .split("rel=\"last\" href=\"https://data.city.test")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_default()
+        .to_owned();
+    let a = get(app, &last, None).await;
+    assert_eq!(a.status, StatusCode::OK, "{last}");
+    assert!(
+        a.body.contains("rel=\"previous\"") && !a.body.contains("rel=\"next\""),
+        "the last page {last} has no next"
+    );
 }
 
 #[tokio::test]
@@ -2383,15 +2468,44 @@ async fn a_catalogue_serves_the_profiles_it_chose_and_no_other() {
     for n in 0..99 {
         let more = dataset(&format!("more-{n}"), "city", "public", 3);
         w.store.upsert_dataset(&ctx, more).await.unwrap();
+        // Exactly one page of 100 is no paged collection.
+        if n == 97 {
+            let a = get(&w.app, "/profiles/sk/catalog.ttl", None).await;
+            assert!(
+                !a.body.contains("hydra:totalItems"),
+                "{}",
+                a.body.matches("a dcat:Dataset").count()
+            );
+        }
     }
     let a = get(&w.app, "/profiles/sk/catalog.ttl", None).await;
+    // The IRI a page's `hydra:<link>` names, when it has one.
+    let link = |body: &str, name: &str| -> Option<String> {
+        let at = body.find(&format!("hydra:{name} <"))? + name.len() + 8;
+        Some(body[at..at + body[at..].find('>')?].to_owned())
+    };
     assert!(
         a.body.contains("?page=2&_profile=dcat-ap-sk-2.0"),
         "{}",
         &a.body[..900]
     );
+    assert!(
+        link(&a.body, "next").is_some_and(|next| next.ends_with("?page=2&_profile=dcat-ap-sk-2.0"))
+            && link(&a.body, "previous").is_none(),
+        "page 1 links on to page 2 and back nowhere: {:?} {:?}",
+        link(&a.body, "next"),
+        link(&a.body, "previous")
+    );
     let a = get(&w.app, "/catalog.ttl?page=2&_profile=dcat-ap-sk-2.0", None).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(
+        link(&a.body, "previous")
+            .is_some_and(|prev| prev.ends_with("?page=1&_profile=dcat-ap-sk-2.0"))
+            && link(&a.body, "next").is_none(),
+        "the last page links back to page 1 and on nowhere: {:?} {:?}",
+        link(&a.body, "previous"),
+        link(&a.body, "next")
+    );
     assert!(a.header("content-profile").contains("dcat-ap-sk-2.0"));
     let a = get(&w.app, "/catalog.ttl", None).await;
     assert!(!a.body.contains("_profile="), "the default needs no name");
@@ -2601,6 +2715,21 @@ async fn odata_rows_follow_package_show() {
     assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.body);
     let a = get(app, "/odata/v4/Datasets('pkg-open')", None).await;
     assert_eq!(a.json()["name"], "open", "{}", a.body);
+    // The count keeps the filter and its aliases.
+    let a = get(
+        app,
+        "/odata/v4/Datasets/$count?$filter=name%20eq%20'open'",
+        None,
+    )
+    .await;
+    assert_eq!(a.body, "1", "the filter counts one");
+    let a = get(
+        app,
+        "/odata/v4/Datasets/$count?$filter=name%20eq%20@n&@n='open'",
+        None,
+    )
+    .await;
+    assert_eq!(a.body, "1", "an alias fills the filter");
     let a = get(app, "/odata/v4/Distributions/$count", None).await;
     assert_eq!(a.body, "4", "two datasets with two distributions each");
     let a = get(app, "/odata/v4/Datasets?$count=true&$top=1", None).await;
@@ -2627,6 +2756,18 @@ async fn odata_rows_follow_package_show() {
     )
     .await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert_eq!(a.json()["allowed"], true, "{}", a.body);
+    // The key names the entity asked about: one the caller cannot read is refused.
+    let a = get(
+        app,
+        "/odata/v4/Datasets/$allowed?op=read&key=pkg-nope",
+        None,
+    )
+    .await;
+    assert_eq!(a.json()["allowed"], false, "{}", a.body);
+    // An empty query string is no query.
+    let a = get(app, "/odata/v4/Datasets/$export?", None).await;
+    assert_eq!(a.json().as_array().map(Vec::len), Some(2), "{}", a.body);
     let a = get(app, "/odata/v4/Datasets/$allowed?key=pkg-open&x=1", None).await;
     assert_eq!(a.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", a.body);
     assert!(a.body.contains("op is required"));
@@ -2807,6 +2948,11 @@ fn profile(id: &str, version: &str) -> Value {
 async fn profiles_upload_dry_run_and_activation_need_their_rights() {
     let w = world().await;
     let app = &w.app;
+    // The catalogue's own uploads unreadable: an error, never a list without them.
+    w.store.fail(&["list_profiles"]);
+    let a = get(app, "/api/v1/profiles", None).await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
+    w.store.heal();
     let a = get(app, "/api/v1/profiles", None).await;
     assert_eq!(a.status, StatusCode::OK);
     let v = a.json();
@@ -3208,6 +3354,31 @@ async fn branding_logo_and_static_assets() {
         "a logo the catalogue did not keep is not reported as saved: {}",
         a.body
     );
+    // A write that keeps conflicting is read again and tried three times, then answered 409; a
+    // catalogue that cannot be read again between tries is a storage error.
+    w.store.heal();
+    w.store.conflict(&["save_catalogue"]);
+    let logo = || {
+        send(
+            app,
+            Method::POST,
+            "/api/v1/assets/logo",
+            Some("tok-admin"),
+            &[],
+            Body::from(svg),
+        )
+    };
+    let a = logo().await;
+    assert_eq!(a.status, StatusCode::CONFLICT, "{}", a.body);
+    assert_eq!(
+        w.store.conflicts.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "three tries, no fourth"
+    );
+    w.store.fail(&["get_catalogue"]);
+    let a = logo().await;
+    assert_eq!(a.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", a.body);
+    w.store.heal();
     w.store.heal();
 
     for (uri, ct) in [
@@ -3631,6 +3802,11 @@ async fn pages_lists_publishers_static_pages_and_routing() {
     }
     let a = get(app, "/assistants/nope", None).await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
+    assert!(
+        a.body.contains("assistant guide 'nope' not found"),
+        "{}",
+        a.body
+    );
     assert_eq!(
         get(app, "/no/such/page/here", None).await.status,
         StatusCode::NOT_FOUND
@@ -3877,10 +4053,12 @@ async fn the_bearer_scheme_is_case_insensitive() {
 async fn a_host_supplied_identity_comes_first_and_tokens_still_work() {
     let w = world_with(|s| {
         let org = s.default_org_id;
+        let callers = s.subject_resolver.clone();
         router(s.with_subject_resolver(move |h| {
             h.get("x-portal-session")
                 .filter(|v| v.as_bytes() == b"valid")
                 .map(|_| Subject::authenticated("admin", vec![org], Vec::new()))
+                .or_else(|| callers.as_ref().and_then(|known| known(h)))
         }))
     })
     .await;
@@ -4120,14 +4298,18 @@ async fn edge_answers_of_feeds_odata_pages_and_ckan() {
     )
     .await;
     assert_eq!(a.status, StatusCode::OK);
-    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"en\""), "{}", &a.body[..400]);
     // `?lang=` picks an offered language; any other value leaves the default in place.
     let a = get(app, "/about?lang=en", None).await;
-    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"en\""), "{}", &a.body[..400]);
     let a = get(app, "/about?lang=xx%26scheme%3Ddark", None).await;
     assert_eq!(a.status, StatusCode::OK);
-    assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
+    assert!(a.body.contains("<html lang=\"sk\""), "{}", &a.body[..400]);
     assert!(!a.body.contains("xx&"), "the value never reaches the page");
+    // A language in the path outranks `?lang=`.
+    let a = get(app, "/sk/about?lang=en", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    assert!(a.body.contains("<html lang=\"sk\""), "{}", &a.body[..400]);
 }
 
 #[tokio::test]
@@ -4365,6 +4547,33 @@ async fn anonymous_listings_hold_no_draft_hidden_or_withdrawn_dataset() {
         }
     }
 
+    // The flags widen an admin's search, one each: a draft, a withdrawn publisher's dataset.
+    for (flags, draft, orphan) in [
+        ("", false, false),
+        ("&include_drafts=true", true, false),
+        ("&include_private=true", false, true),
+    ] {
+        let a = get(
+            app,
+            &format!("/api/3/action/package_search?rows=50{flags}"),
+            Some("tok-admin"),
+        )
+        .await;
+        let names: Vec<String> = a.json()["result"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            (
+                names.iter().any(|n| n == "draft-one"),
+                names.iter().any(|n| n == "orphan")
+            ),
+            (draft, orphan),
+            "{flags}: {names:?}"
+        );
+    }
     let a = post(app, "/api/v1/ops/dataset.search", None, json!({})).await;
     assert_eq!(a.status, StatusCode::OK, "{}", a.body);
     assert!(!a.body.contains("veiled"), "{}", a.body);
@@ -4463,6 +4672,15 @@ async fn a_huge_page_number_answers_an_empty_page() {
 // ---------------------------------------------------------------------------------------------
 
 #[tokio::test]
+async fn no_aliases_leave_the_router_as_it_is() {
+    let w = world_with(|s| dataroom_api::with_dataset_aliases(router(s), Default::default())).await;
+    let a = get(&w.app, "/api/3/action/package_show?id=open", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    let a = get(&w.app, "/api/3/action/package_show?id=before", None).await;
+    assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.body);
+}
+
+#[tokio::test]
 async fn an_old_dataset_name_answers_every_read_as_its_new_one_and_no_write() {
     let w = world_with(|s| {
         dataroom_api::with_dataset_aliases(
@@ -4506,4 +4724,21 @@ async fn an_old_dataset_name_answers_every_read_as_its_new_one_and_no_write() {
     assert_eq!(ckan_error(&a)["__type"], "Not Found Error", "{}", a.body);
     let a = get(app, "/api/3/action/package_show?id=open", None).await;
     assert_ne!(a.json()["result"]["notes"], "x");
+}
+
+/// An activity row with a fresh id for a store write the test sets up; the store files it under
+/// the write's tenant and names the record it wrote.
+fn audit(operation: &str) -> dataroom_core::ActivityRow {
+    dataroom_core::ActivityRow {
+        org_id: OrgId::from_uuid(Uuid::nil()),
+        catalogue_id: CatalogueId::from_uuid(Uuid::nil()),
+        id: format!("act-{}", Uuid::now_v7()),
+        at: jc_time::TimestampTz::now(),
+        actor: "test".into(),
+        operation: operation.into(),
+        object_type: String::new(),
+        object_id: String::new(),
+        summary: operation.into(),
+        details: serde_json::Value::Null,
+    }
 }

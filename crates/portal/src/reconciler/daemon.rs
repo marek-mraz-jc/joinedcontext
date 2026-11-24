@@ -335,6 +335,8 @@ pub struct Syncer {
     /// Where a run says what it did (OPS-48). `None` leaves the loop silent, which is what a
     /// Portal built without a state does in a unit test.
     activity: Option<ActivityStore>,
+    /// The audit of MCP and connector calls, and the days it is kept (AUD-04).
+    audit: Option<(Arc<crate::connectors::ConnectorStore>, u32)>,
     /// Where this replica fetches the builds the manifests name (AP-102): the run fetches the
     /// missing ones and checks that each named build is actually there (AP-72).
     apps_cache_dir: Option<String>,
@@ -345,6 +347,8 @@ pub struct Syncer {
     /// whose keys name every credential and prefix (T-7210). `None`, or no registry, leaves every
     /// project without a scoped credential and the store untouched (PF-32).
     artifact_store: Option<(Arc<crate::artifact_store::Client>, Option<sqlx::PgPool>)>,
+    /// The project id registry a complete leader run retires deleted projects' ids in (T-7557).
+    project_registry: Option<sqlx::PgPool>,
     /// Projects whose old name-built artifact layout is empty: their reader no longer reads it,
     /// and the converge no longer lists it (TEN-15). The store is the record; this spares listings.
     artifacts_moved: std::sync::Mutex<std::collections::HashSet<jc_types::ProjectKey>>,
@@ -474,9 +478,11 @@ impl Syncer {
             config_mirror: None,
             roles_held: Default::default(),
             activity: None,
+            audit: None,
             apps_cache_dir: None,
             apps_dir: None,
             artifact_store: None,
+            project_registry: None,
             artifacts_moved: Default::default(),
             credentials: None,
             pipeline_secrets: None,
@@ -522,6 +528,13 @@ impl Syncer {
         keys: Option<sqlx::PgPool>,
     ) -> Self {
         self.artifact_store = Some((store, keys));
+        self
+    }
+
+    /// The project id registry: each complete leader run records the projects it found and
+    /// retires the id of each one it saw before and no longer finds (T-7557).
+    pub fn with_project_registry(mut self, pool: Option<sqlx::PgPool>) -> Self {
+        self.project_registry = pool;
         self
     }
 
@@ -637,6 +650,11 @@ impl Syncer {
         mqtt_default: Option<jc_core::kinds::MqttAllowance>,
     ) -> Self {
         self.judge_settings = (bounds, apex, domain, mqtt_default);
+        self
+    }
+
+    pub fn with_audit(mut self, audit: Arc<crate::connectors::ConnectorStore>, days: u32) -> Self {
+        self.audit = Some((audit, days));
         self
     }
 
@@ -1320,11 +1338,11 @@ impl Syncer {
             ),
             severity: "error".to_owned(),
             correlation_id: Some(sha.to_owned()),
+            // The commit names who proposed it by address; the feed keeps the commit (OBS-01).
             details: serde_json::json!({
                 "revision": sha,
                 "path": file,
                 "reason": reason,
-                "proposer": proposer,
             }),
         }])
         .await;
@@ -1728,6 +1746,7 @@ impl Syncer {
         //       ponytail: compares with the last sync of this process; a deletion merged while
         //       the Portal was down leaves its repository open until an operator archives it.
         self.archive_deleted_projects(&fresh_mirror).await;
+        self.retire_deleted_projects(&fresh_mirror).await;
         steps.mark("archive");
         // 5a-rules. Every repository takes this Portal's branch rules once per process: an
         //       existing project repository gets them on the first run after an upgrade, and a
@@ -2423,6 +2442,39 @@ impl Syncer {
                 Err(error) => {
                     tracing::warn!(project = %slug, %repository, %error, "a deleted project's repository did not archive")
                 }
+            }
+        }
+    }
+
+    /// Retires the id of each project the registry saw in a complete run and this run no longer
+    /// finds (T-7557), so the next project of its name gets a fresh one. Only a run that holds no
+    /// removal counts: a project that did not load, a fresh installation's seed or an
+    /// unconfirmed shrink leaves every id as it is.
+    async fn retire_deleted_projects(&self, fresh_mirror: &Mirror) {
+        let Some(pool) = self.project_registry.as_ref() else {
+            return;
+        };
+        if fresh_mirror.removals_held() {
+            return;
+        }
+        let live: Vec<String> = fresh_mirror
+            .list(
+                crate::permissions::ORG_NAMESPACE,
+                "Project",
+                &crate::store::ListOptions::default(),
+            )
+            .items
+            .into_iter()
+            .map(|envelope| envelope.metadata.name)
+            .collect();
+        match crate::project_ids::retire_deleted(pool, &live).await {
+            Ok(retired) => {
+                for project in retired {
+                    tracing::info!(%project, "a deleted project's id is retired");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "deleted projects' ids were not retired; the next run tries again")
             }
         }
     }
@@ -3481,6 +3533,19 @@ impl Syncer {
                         tracing::info!(rows = done.rows, batches = done.batches, "activity trimmed")
                     }
                     Some(Err(err)) => tracing::warn!(error = %err, "the activity trim failed"),
+                    None => {}
+                }
+            });
+        }
+        // 12. Audit retention (AUD-04): the same hour and the same way.
+        if let Some((audit, days)) = self.audit.clone() {
+            tokio::spawn(async move {
+                match audit
+                    .trim_audit_if_due(jc_time::TimestampTz::now(), days)
+                    .await
+                {
+                    Some(Ok(rows)) => tracing::info!(rows, "audit trimmed"),
+                    Some(Err(err)) => tracing::warn!(error = %err, "the audit trim failed"),
                     None => {}
                 }
             });

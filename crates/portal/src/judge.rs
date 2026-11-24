@@ -61,7 +61,7 @@ type Check = fn(&Ground<'_>, &str, &ResourceEnvelope) -> Result<(), ApiError>;
 
 /// Every check, by name, in the order a proposal meets them. A deletion is never judged here:
 /// the propose door checks what a deletion leaves behind itself.
-pub const CHECKS: [(&str, Check); 21] = [
+pub const CHECKS: [(&str, Check); 22] = [
     ("literal-secret", literal_secret),
     ("kind", kind),
     ("organization-name", organization_name),
@@ -81,6 +81,7 @@ pub const CHECKS: [(&str, Check); 21] = [
     ("quota", quota),
     ("mqtt-allowance", mqtt_allowance),
     ("catalogue-publication", catalogue_publication),
+    ("dataset-fields", dataset_fields),
     ("portal", portal),
     ("scripts", crate::scripts::check),
 ];
@@ -490,6 +491,20 @@ fn catalogue_publication(
     crate::catalog::check_publication(&envelope.kind, &envelope.spec)
 }
 
+/// An Endpoint's own dataset fields against its Organization's definitions (T-7746). A load of
+/// `main` keeps a record an Organization's new required field leaves unfilled: the page and the
+/// DCAT feed show only values the definitions admit.
+fn dataset_fields(
+    ground: &Ground<'_>,
+    project: &str,
+    envelope: &ResourceEnvelope,
+) -> Result<(), ApiError> {
+    if ground.load {
+        return Ok(());
+    }
+    crate::catalog::check_fields(ground.mirror, project, &envelope.kind, &envelope.spec)
+}
+
 /// `joinedcontext-portal validate --as-portal` (P-15): what `jcctl validate` finds in an
 /// organization checkout and its projects, and what this judge refuses of it, so a repository
 /// can be judged offline exactly as this Portal's load would judge it on a first run. Each
@@ -883,6 +898,17 @@ mod tests {
                     json!({ "audience": "organization", "publish": { "ckan": { "instanceRef": "opendata" } } }),
                 )),
             ),
+            "dataset-fields" => (
+                vec![
+                    org(json!({ "domain": "hel.fi", "datasetFields": [
+                        { "name": "funding", "label": { "en": "Funding" }, "type": "enum",
+                          "values": ["eu", "city"], "required": true }] })),
+                    project(json!({})),
+                ],
+                air(endpoint(
+                    json!({ "catalog": { "fields": { "funding": "state" } } }),
+                )),
+            ),
             "scripts" => {
                 let code = "bento.v0_msg_set_string('x')";
                 let script = envelope(
@@ -1214,6 +1240,54 @@ mod tests {
 
     /// P-15: `validate --as-portal` finds in a checkout what the Portal would refuse at load,
     /// beside what `jcctl validate` finds, naming the file.
+    #[test]
+    fn the_validate_command_answers_usage_valid_and_refused_by_exit_code() {
+        let dir = std::env::temp_dir().join(format!("jc-judge-cmd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the tree");
+        let org = dir.to_string_lossy().into_owned();
+        let run = |args: &[&str]| {
+            validate_command(&args.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>())
+        };
+        for usage in [
+            &[][..],
+            &["--as-portal"],
+            &["--repo-dir", &org, "--as-portal"],
+            &[
+                "--as-portal",
+                "--repo-dir",
+                &org,
+                "--project-dir",
+                "no-equals-sign",
+            ],
+            &["--as-portal", "--repo-dir", &org, "--colour", "red"],
+            &["--as-portal", "--repo-dir", &org, "--apex"],
+        ] {
+            assert_eq!(run(usage), 2, "{usage:?}");
+        }
+        assert_eq!(
+            run(&[
+                "--as-portal",
+                "--repo-dir",
+                &org,
+                "--apex",
+                "city.example",
+                "--project-dir",
+                "air=/nowhere"
+            ]),
+            0,
+            "nothing to refuse"
+        );
+        let file = dir.join("projects/city/spaces/air/endpoints/air.yaml");
+        std::fs::create_dir_all(file.parent().expect("a parent")).expect("the tree");
+        std::fs::write(&file, "kind: NoSuchKind\nmetadata: { name: air }\n").expect("the manifest");
+        assert_eq!(
+            run(&["--as-portal", "--repo-dir", &org]),
+            1,
+            "a manifest no kind reads"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn an_offline_validation_refuses_what_the_portal_would() {
         let dir = std::env::temp_dir().join(format!("jc-judge-{}", std::process::id()));

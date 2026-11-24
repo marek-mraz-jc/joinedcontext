@@ -154,6 +154,21 @@ function median(work: () => unknown, runs: number): number {
 
 const measured: Record<string, unknown> = {};
 
+describe("the pieces of the edges", () => {
+  it("skips an edge to a box that is not drawn and a loop on one box, and joins the bends of the rest", () => {
+    const boxes = new Map([
+      ["A", { x: 0, y: 0, width: 10, height: 10 }],
+      ["B", { x: 100, y: 0, width: 10, height: 10 }],
+    ]);
+    const edge = (from: string, to: string) => ({ from, to }) as unknown as Parameters<typeof segments>[1][number];
+    const pieces = segments({ boxes, bends: [[], [], [], [{ x: 50, y: 50 }]] }, [edge("A", "Z"), edge("Z", "A"), edge("A", "A"), edge("A", "B")]);
+    expect(pieces).toEqual([
+      [{ x: 5, y: 5 }, { x: 50, y: 50 }],
+      [{ x: 50, y: 50 }, { x: 105, y: 5 }],
+    ]);
+  });
+});
+
 describe("the largest model on dev", () => {
   const { nodes, edges } = graphData(parseModel(helsinki));
 

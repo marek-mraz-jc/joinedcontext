@@ -16,8 +16,9 @@ set -eu
 
 # ci_state <sha> [event branch]: green when a run of ci.yml for that event and branch (default a
 # push to jc-portal-1) in this repository concluded success on that commit, pending while one is
-# queued or running, none without a run, red when all failed. The query's filters are repeated in
-# jq: the API's are not the trust boundary.
+# queued or running, none without a run, cancelled when every run was cancelled (ci.yml's trunk
+# group replaces a pending run with the newer push's, T-7691), red otherwise. The query's filters
+# are repeated in jq: the API's are not the trust boundary.
 ci_state() {
   gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$1&event=${2:-push}&branch=${3:-jc-portal-1}&per_page=50" |
     jq -r --arg repo "$GITHUB_REPOSITORY" --arg sha "$1" --arg ev "${2:-push}" --arg br "${3:-jc-portal-1}" '
@@ -28,7 +29,37 @@ ci_state() {
       | if any(.[]; .status == "completed" and .conclusion == "success") then "green"
         elif any(.[]; .status != "completed") then "pending"
         elif length == 0 then "none"
+        elif all(.[]; .conclusion == "cancelled") then "cancelled"
         else "red" end'
+}
+
+# descendant_state <sha>: the verdict of the nearest descendant of <sha> on jc-portal-1 with a
+# completed, not cancelled push run of ci.yml: green or red (a re-run that went green counts),
+# plus its sha; pending while no descendant has one yet. Its tree contains <sha>, so its gate
+# covers the merge whose own pending run it replaced (T-7691). Runs are tried oldest first, so the
+# first one GitHub's compare calls `ahead` of <sha> is the nearest.
+descendant_state() {
+  for d in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=push&branch=jc-portal-1&status=completed&per_page=50" |
+    jq -r --arg repo "$GITHUB_REPOSITORY" --arg sha "$1" '
+      [.workflow_runs[]
+        | select(.event == "push" and .head_branch == "jc-portal-1" and .head_sha != $sha
+            and .status == "completed" and .conclusion != "cancelled"
+            and .path == ".github/workflows/ci.yml"
+            and .repository.full_name == $repo and .head_repository.full_name == $repo)]
+      | sort_by(.created_at) | map(.head_sha) | reduce .[] as $s ([]; if index([$s]) then . else . + [$s] end) | .[]'); do
+    check_sha "$d" > /dev/null || continue
+    [ "$(gh api "repos/$GITHUB_REPOSITORY/compare/$1...$d" --jq .status)" = ahead ] || continue
+    echo "$(ci_state "$d") $d"; return 0
+  done
+  echo pending
+}
+
+# trunk_state <sha>: ci_state, and for a merge whose own run was cancelled the nearest descendant's
+# verdict, as "<state> [<descendant sha>]". A cancelled run is never red (KNOWLEDGE T-5949).
+trunk_state() {
+  state=$(ci_state "$1")
+  [ "$state" = cancelled ] || { echo "$state"; return 0; }
+  descendant_state "$1"
 }
 
 check_sha() {
@@ -61,13 +92,19 @@ ff() {
   sha=$1 waited=0
   check_sha "$sha" || return 1
   while :; do
-    state=$(ci_state "$sha")
+    read -r state by <<EOF
+$(trunk_state "$sha")
+EOF
     if [ "$state" != pending ] || [ "$waited" -ge "${WAIT:-3600}" ]; then break; fi
     sleep "${POLL:-60}"; waited=$((waited + ${POLL:-60}))
   done
+  of="ci on $sha"; [ -z "$by" ] || of="ci on $sha was cancelled while pending; its descendant $by"
   if [ "$state" != green ]; then
-    say "ff-main: main left as is: ci on $sha is $state (after ${waited}s)"; return 0
+    say "ff-main: main left as is: $of is $state (after ${waited}s)"; return 0
   fi
+  # No deferral to a newer trunk head's smoke run: smoke.yml's one concurrency group keeps that run
+  # pending until this one ends, and every push replaces it, so deferring starved main for 4 h on
+  # 2026-11-23/24 (7aa3713ad green at 02:13Z, main stayed at c126f1ed0). An extra main ci run is cheaper.
   old=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
   if [ "$old" = "$sha" ]; then say "ff-main: main already at $sha"; return 0; fi
   rel=$(gh api "repos/$GITHUB_REPOSITORY/compare/$old...$sha" --jq .status)
@@ -75,7 +112,7 @@ ff() {
     say "ff-main: main left at $old: compare main...$sha is $rel, not a fast-forward"; return 0
   fi
   gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/main" -f sha="$sha" -F force=false > /dev/null
-  say "ff-main: main $old -> $sha"
+  say "ff-main: main $old -> $sha${by:+ (gated by the green ci of its descendant $by)}"
   gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/dispatches" -f ref=main > /dev/null
   say "ff-main: ci.yml dispatched on main (ships $sha)"
   gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/deploy-pin.yml/dispatches" -f ref=main -f "inputs[sha]=$sha" > /dev/null
@@ -124,6 +161,48 @@ if [ "${1:-}" = --selftest ]; then
   want "a fork's green run does not count" "$(case_ "$(run completed '"success"' push jc-portal-1 fork/r)" $M ahead)" 0
   want "a pull_request run does not count" "$(case_ "$(run completed '"success"' pull_request jc-portal-1 o/r)" $M ahead)" 0
   want "another branch's run does not count" "$(case_ "$(run completed '"success"' push agent/x o/r)" $M ahead)" 0
+  # descendant rule (T-7691): A's own trunk run was cancelled while pending; P is an older commit
+  # (compare says behind), D and E newer ones (ahead), D the nearest.
+  P=pppppppppppppppppppppppppppppppppppppppp D=dddddddddddddddddddddddddddddddddddddddd E=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  trun() { # sha conclusion created_at
+    printf '{"status":"completed","conclusion":"%s","event":"push","head_sha":"%s","head_branch":"jc-portal-1","created_at":"%s","path":".github/workflows/ci.yml","repository":{"full_name":"o/r"},"head_repository":{"full_name":"o/r"}}' \
+      "$2" "$1" "$3"
+  }
+  # desc: <completed trunk runs json>: sets $MOVED (PATCH count) and $OUT (ff's lines)
+  desc() {
+    TRUNK=$1 CALLS=
+    gh() {
+      CALLS="$CALLS|$*"
+      case "$*" in
+        *"/workflows/ci.yml/runs?head_sha=$A&"*) printf '{"workflow_runs":[%s]}' "$(trun $A cancelled 2026-11-23T00:20:00Z)" ;;
+        *"/workflows/ci.yml/runs?event=push&branch=jc-portal-1&status=completed&"*) printf '{"workflow_runs":[%s]}' "$TRUNK" ;;
+        *"/workflows/ci.yml/runs?head_sha="*) h=$*; h=${h#*head_sha=}; h=${h%%&*}
+          printf '[%s]' "$TRUNK" | jq -c --arg h "$h" '{workflow_runs: map(select(.head_sha == $h))}' ;;
+        *"/compare/$A...$P"*) echo behind ;;
+        *"/compare/$A...$D"* | *"/compare/$A...$E"*) echo ahead ;;
+        *"/compare/"*) echo ahead ;;
+        *"git/ref/heads/main --jq"*) echo "$M" ;;
+        "api -X PATCH repos/o/r/git/refs/heads/main -f sha=$A -F force=false") ;;
+        *"/dispatches"*) ;;
+        *) echo "unexpected gh $*" >&2; return 1 ;;
+      esac
+    }
+    OUT=$(ff "$A"; echo "|calls$CALLS")
+    MOVED=$(echo "$OUT" | grep -o 'PATCH' | wc -l | tr -d ' ')
+  }
+  dg=$(trun $D success 2026-11-23T00:21:00Z) dr=$(trun $D failure 2026-11-23T00:21:00Z)
+  eg=$(trun $E success 2026-11-23T00:22:00Z) pg=$(trun $P success 2026-11-23T00:10:00Z)
+  desc "$eg,$dg,$pg"; want "cancelled, green descendant, head has its own smoke run: moves main, no deferral" "$MOVED" 1
+  echo "$OUT" | grep -q "gated by the green ci of its descendant $D" || { echo "FAIL: no-deferral line: $OUT"; exit 1; }
+  desc "$dg,$pg"; want "cancelled, green descendant, head without smoke (docs-only): moves main" "$MOVED" 1
+  echo "$OUT" | grep -q "gated by the green ci of its descendant $D" || { echo "FAIL: move line names no descendant: $OUT"; exit 1; }
+  desc "$eg,$dr,$pg"; want "cancelled, red nearest descendant: main left (red), a later green does not hide it" "$MOVED" 0
+  echo "$OUT" | grep -q "its descendant $D is red" || { echo "FAIL: red line: $OUT"; exit 1; }
+  desc "$pg"; want "cancelled, no descendant run yet (only an ancestor's): waits, then main left" "$MOVED" 0
+  echo "$OUT" | grep -q "is pending" || { echo "FAIL: no-descendant line: $OUT"; exit 1; }
+  desc "$eg,$(trun $D cancelled 2026-11-23T00:21:00Z)"; want "cancelled, a cancelled descendant is skipped for the next completed one" "$MOVED" 1
+  echo "$OUT" | grep -q "gated by the green ci of its descendant $E" || { echo "FAIL: skip cancelled descendant: $OUT"; exit 1; }
+  want "cancelled and failed runs on the commit read red, not cancelled" "$(case_ "$(run completed '"cancelled"' push jc-portal-1 o/r),$red" $M ahead)" 0
   if ff "not-a-sha" > /dev/null 2>&1; then echo "FAIL: a bad sha passed"; exit 1; fi
   # await: <runs json> -> the ok= line deploy-pin's pin job reads
   await() {

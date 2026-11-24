@@ -182,7 +182,8 @@ impl Processor for JqProcessor {
             .map_err(|e| CoreError::other(format!("jq: cannot start its thread: {e}")))?;
         let results = rx
             .await
-            .map_err(|_| CoreError::other("jq: its thread ended without a result"))?;
+            .ok()
+            .ok_or(CoreError::other("jq: its thread ended without a result"))?;
         let mut out = Batch::new();
         for (mut part, r) in results {
             match r {
@@ -210,7 +211,7 @@ pub fn compile(query: &str) -> Result<JqFilter, String> {
         ));
     }
     let extra = jaq_core::load::parse(GOJQ_DEFS, |p| p.defs())
-        .ok_or_else(|| "error compiling jq query: built-in definitions".to_string())?;
+        .ok_or("error compiling jq query: built-in definitions")?;
     let defs = jaq_core::defs()
         .chain(jaq_std::defs())
         .chain(jaq_json::defs())

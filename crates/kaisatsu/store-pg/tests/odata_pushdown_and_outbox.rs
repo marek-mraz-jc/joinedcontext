@@ -14,6 +14,8 @@ use odata_table::{MemoryTable, query};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+const LEASE: std::time::Duration = std::time::Duration::from_secs(90);
+
 mod common;
 
 async fn seed_store(store: &Arc<dyn Store>) {
@@ -62,6 +64,39 @@ async fn seed_store(store: &Arc<dyn Store>) {
             .await
             .unwrap();
     }
+
+    // protocol mappers live inside their application or client scope: the keyset fallback
+    // reads them out of both
+    let mapper = |id: &str, name: &str| ProtocolMapperRepresentation {
+        id: id.into(),
+        realm_id: "dev".into(),
+        org_id: None,
+        name: name.into(),
+        protocol: "openid-connect".into(),
+        protocol_mapper: "oidc-usermodel-attribute-mapper".into(),
+        consent_required: false,
+        config: Default::default(),
+    };
+    store
+        .upsert_client(ClientRepresentation {
+            id: "c-portal".into(),
+            client_id: "portal".into(),
+            realm_id: "dev".into(),
+            protocol_mappers: vec![mapper("pm-b", "department"), mapper("pm-a", "locale")],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    store
+        .upsert_client_scope(ClientScopeRepresentation {
+            id: "cs-profile".into(),
+            name: "profile".into(),
+            realm_id: "dev".into(),
+            protocol_mappers: vec![mapper("pm-c", "nickname")],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
 
     store
         .create_user(UserRepresentation {
@@ -167,27 +202,27 @@ async fn assert_outbox_and_webauthn_contract(store: Arc<dyn Store>) {
     let s1 = store.clone();
     let s2 = store.clone();
     let (b1, b2) = tokio::join!(
-        s1.claim_outbox_batch("dev", 10),
-        s2.claim_outbox_batch("dev", 10)
+        s1.claim_outbox_batch("dev", 10, LEASE, 5),
+        s2.claim_outbox_batch("dev", 10, LEASE, 5)
     );
-    let mut claimed_ids: Vec<String> = b1
-        .unwrap()
-        .into_iter()
-        .chain(b2.unwrap())
-        .map(|r| r.id)
-        .collect();
-    claimed_ids.sort();
-    assert_eq!(claimed_ids, vec!["ob-1".to_owned(), "ob-2".to_owned()]);
+    let mut claimed: Vec<EmailOutboxRecord> = b1.unwrap().into_iter().chain(b2.unwrap()).collect();
+    claimed.sort_by(|a, b| a.id.cmp(&b.id));
+    let claimed_ids: Vec<&str> = claimed.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(claimed_ids, ["ob-1", "ob-2"]);
 
     // Mark ob-1 sent and ob-2 failed after max_attempts=1, then retry ob-2.
-    store
-        .complete_outbox_row("dev", "ob-1", true, None, None, 3)
-        .await
-        .unwrap();
-    store
-        .complete_outbox_row("dev", "ob-2", false, Some("SMTP timeout".into()), None, 1)
-        .await
-        .unwrap();
+    assert!(
+        store
+            .complete_outbox_row(&claimed[0], true, None, None, 3)
+            .await
+            .unwrap()
+    );
+    assert!(
+        store
+            .complete_outbox_row(&claimed[1], false, Some("SMTP timeout".into()), None, 1)
+            .await
+            .unwrap()
+    );
     let rows = store.list_outbox_rows("dev", None).await.unwrap();
     let r2 = rows.iter().find(|r| r.id == "ob-2").unwrap();
     assert_eq!(r2.status, "failed");
@@ -240,6 +275,15 @@ async fn assert_outbox_and_webauthn_contract(store: Arc<dyn Store>) {
         .unwrap()
         .unwrap();
     assert_eq!(fetched.public_key_cose_json, cred.public_key_cose_json);
+    // a credential written without an id gets one
+    let mut unnamed = cred.clone();
+    unnamed.id = String::new();
+    unnamed.credential_id = "cred-id-def".into();
+    let stored = store
+        .insert_webauthn_credential(unnamed)
+        .await
+        .expect("insert");
+    assert!(!stored.id.is_empty() && stored.id != cred.id);
 }
 
 #[tokio::test]
@@ -286,6 +330,20 @@ async fn pg_scoped_table_matches_memory_table_and_binds_filter_values() {
     )
     .with_org("helsinki");
 
+    // a person without any role reads no entity set: both stores refuse with the same answer
+    let nobody_ctx = RequestCtx::new(
+        "dev",
+        Principal {
+            subject: Some("u-1".into()),
+            client_id: None,
+            realm_roles: Vec::new(),
+            client_roles: HashMap::new(),
+            organizations: Vec::new(),
+            org_roles: HashMap::new(),
+            second_factor: false,
+        },
+    );
+
     let service = kaisatsu_odata_service();
     let csdl = Arc::new(service.model());
     let edm = odata_url::EdmModel(&csdl);
@@ -297,6 +355,17 @@ async fn pg_scoped_table_matches_memory_table_and_binds_filter_values() {
         "People?$filter=firstName%20eq%20'Clara''%20OR%201%3D1;--'&$count=true",
         "People?$filter=firstName%20eq%20'nonexistent'';%20DROP%20TABLE%20kaisatsu.people;--'",
         "People?$select=id,username,enabled&$orderby=username",
+        "People?$filter=lastName%20eq%20null&$count=true",
+        "People?$filter=lastName%20ne%20null&$count=true",
+        "People?$filter=createdTimestamp%20gt%201700000000000%20and%20createdTimestamp%20le%201700000002000&$count=true",
+        "People?$filter=createdTimestamp%20ge%201700000001000%20and%20createdTimestamp%20lt%201700000003000&$count=true",
+        "People?$filter=username%20ne%20'anna@hel.fi'%20or%20enabled%20eq%20false&$count=true",
+        "People?$filter=lastName%20gt%20null&$count=true",
+        "People?$filter=contains(firstName,'%5C')&$count=true",
+        "People?$filter=false&$count=true",
+        "ProtocolMappers?$count=true&$orderby=id",
+        "ProtocolMappers?$filter=name%20ne%20'locale'&$orderby=id%20desc",
+        "ProtocolMappers?$orderby=id&$top=1",
     ];
 
     for uri_str in cases {
@@ -304,15 +373,25 @@ async fn pg_scoped_table_matches_memory_table_and_binds_filter_values() {
         let odata_url::ODataUri::Resource { options, .. } = parsed else {
             panic!("not a resource");
         };
-        for ctx in [&admin_ctx, &hel_ctx] {
+        for ctx in [&admin_ctx, &hel_ctx, &nobody_ctx] {
+            let set = uri_str.split('?').next().unwrap_or_default();
             let pg_ans = pg
-                .query_entity_set(ctx, &authorizer, "People", &options, 100)
-                .await
-                .expect(uri_str);
+                .query_entity_set(ctx, &authorizer, set, &options, 100)
+                .await;
             let mem_ans = mem
-                .query_entity_set(ctx, &authorizer, "People", &options, 100)
-                .await
-                .expect(uri_str);
+                .query_entity_set(ctx, &authorizer, set, &options, 100)
+                .await;
+            let (pg_ans, mem_ans) = match (pg_ans, mem_ans) {
+                (Ok(p), Ok(m)) => (p, m),
+                (Err(p), Err(m)) => {
+                    assert_eq!(p.to_string(), m.to_string(), "{uri_str}");
+                    continue;
+                }
+                (p, m) => panic!("{uri_str}: pg {p:?} memory {m:?}"),
+            };
+            if set == "ProtocolMappers" && std::ptr::eq(ctx, &admin_ctx) {
+                assert!(!pg_ans.rows.is_empty(), "{uri_str} found no mapper");
+            }
             assert_eq!(pg_ans.count, mem_ans.count, "count mismatch on {uri_str}");
             assert_eq!(pg_ans.rows, mem_ans.rows, "rows mismatch on {uri_str}");
             // Other realm's rows never appear.
@@ -410,7 +489,7 @@ async fn pg_outbox_claim_skips_rows_another_dispatcher_holds() {
         .unwrap();
     let claimed = tokio::time::timeout(
         std::time::Duration::from_secs(3),
-        store.claim_outbox_batch("dev", 10),
+        store.claim_outbox_batch("dev", 10, LEASE, 5),
     )
     .await
     .expect("the claim does not wait for the held row")
@@ -418,6 +497,79 @@ async fn pg_outbox_claim_skips_rows_another_dispatcher_holds() {
     let ids: Vec<_> = claimed.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(ids, ["ob-free"]);
     holder.rollback().await.unwrap();
+    db.drop_db().await;
+}
+
+/// A record written without an id gets one; a replay guard for no realm or every realm is
+/// refused; a realm whose ES256 key went passive gets a new active one on the next listing.
+#[tokio::test]
+async fn pg_store_mints_missing_ids_refuses_a_wildcard_realm_and_renews_keys() {
+    let Some(db) = common::test_db("pg_store_mints_missing_ids").await else {
+        return;
+    };
+    let store: Arc<dyn Store> = Arc::new(db.store(Kek::generate_for_tests()).await);
+    seed_store(&store).await;
+    let mut queued = outbox_record();
+    queued.id = String::new();
+    store.enqueue_outbox(queued).await.expect("enqueue");
+    let mut with_user = outbox_record();
+    with_user.id = String::new();
+    with_user.action_jti = "jti-with-user".into();
+    let user = store
+        .get_user_by_id("dev", None, "u-0")
+        .await
+        .expect("get")
+        .expect("u-0");
+    store
+        .update_user_with_outbox(user, with_user)
+        .await
+        .expect("update with outbox");
+    let rows = store.list_outbox_rows("dev", None).await.expect("rows");
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|r| !r.id.is_empty()), "{rows:?}");
+    assert_ne!(rows[0].id, rows[1].id);
+
+    // PostgreSQL text holds no NUL: the write is refused as a storage error, nothing stored
+    let mut nul = store
+        .get_user_by_id("dev", None, "u-1")
+        .await
+        .expect("get")
+        .expect("u-1");
+    nul.first_name = Some("Bo\0ris".into());
+    let refused = store.update_user(nul).await;
+    assert!(
+        matches!(&refused, Err(KaisatsuError::Storage(m)) if m.starts_with("postgres: ")),
+        "{refused:?}"
+    );
+    for realm in ["", "*"] {
+        let refused = store
+            .mark_token_revoked(RevokedTokenRecord {
+                jti_hash: "h".into(),
+                realm_id: realm.into(),
+                expires_at: TimestampTz::now(),
+            })
+            .await;
+        assert!(
+            matches!(refused, Err(KaisatsuError::NotFound(_))),
+            "{realm:?}: {refused:?}"
+        );
+    }
+
+    let keys = store.list_signing_keys("dev").await.expect("keys");
+    let mut es = keys
+        .iter()
+        .find(|k| k.algorithm == "ES256" && k.status == "ACTIVE")
+        .expect("es256")
+        .clone();
+    let old_kid = es.kid.clone();
+    es.status = "PASSIVE".into();
+    store.upsert_signing_key(es).await.expect("passive");
+    let renewed = store.list_signing_keys("dev").await.expect("keys");
+    let active = renewed
+        .iter()
+        .find(|k| k.algorithm == "ES256" && k.status == "ACTIVE")
+        .expect("a new active ES256 key");
+    assert_ne!(active.kid, old_kid);
     db.drop_db().await;
 }
 

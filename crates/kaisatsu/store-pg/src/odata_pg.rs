@@ -38,6 +38,11 @@ pub struct PgScopedTable<'a> {
     allowed_orgs: Option<Vec<String>>,
 }
 
+/// A database or store failure under a table read, as the OData layer reports it.
+fn source(e: impl ToString) -> TableError {
+    TableError::Source(e.to_string())
+}
+
 impl<'a> PgScopedTable<'a> {
     #[must_use]
     pub fn new(
@@ -554,14 +559,13 @@ impl<'a> PgScopedTable<'a> {
         plan: &Plan,
         scope: &Scope,
     ) -> Result<Fetched, TableError> {
-        let failed = |e: sqlx::Error| TableError::Source(e.to_string());
         if self.info.set == "SigningKeys" {
             self.store
                 .ensure_realm_keys(&self.realm_id)
                 .await
-                .map_err(|e| TableError::Source(e.to_string()))?;
+                .map_err(source)?;
         }
-        let mut tx = jc_audit::begin(&self.store.pool).await.map_err(failed)?;
+        let mut tx = jc_audit::begin(&self.store.pool).await.map_err(source)?;
         let rls_realm = if self.info.set == "Realms" {
             "*"
         } else {
@@ -569,7 +573,7 @@ impl<'a> PgScopedTable<'a> {
         };
         set_scope(&mut tx, rls_realm, self.allowed_orgs.as_deref())
             .await
-            .map_err(|e| TableError::Source(e.to_string()))?;
+            .map_err(source)?;
 
         let scope_cond = scope.cond();
         let mut qb = QueryBuilder::<Postgres>::new("SELECT r.row_json FROM ");
@@ -603,7 +607,7 @@ impl<'a> PgScopedTable<'a> {
             .build_query_scalar()
             .fetch_all(&mut *tx)
             .await
-            .map_err(failed)?;
+            .map_err(source)?;
 
         let count = if plan.count {
             let mut cqb = QueryBuilder::<Postgres>::new("SELECT count(*) FROM ");
@@ -616,13 +620,13 @@ impl<'a> PgScopedTable<'a> {
                 .build_query_scalar()
                 .fetch_one(&mut *tx)
                 .await
-                .map_err(failed)?;
+                .map_err(source)?;
             Some(u64::try_from(n).unwrap_or(0))
         } else {
             None
         };
 
-        jc_audit::commit(tx).await.map_err(failed)?;
+        jc_audit::commit(tx).await.map_err(source)?;
         let _ = subquery;
         Ok(Fetched {
             rows: rows.into_iter().map(|Json(v)| v).collect(),
@@ -647,11 +651,10 @@ impl<'a> PgScopedTable<'a> {
     /// Keyset-paged fallback inside the RLS transaction for composite sets (`OrganizationDomains`,
     /// `ProtocolMappers`) so we never load more than `MAX_FALLBACK_SCAN_ROWS` rows.
     async fn run_keyset_fallback(&self, plan: &Plan, scope: &Scope) -> Result<Fetched, TableError> {
-        let failed = |e: sqlx::Error| TableError::Source(e.to_string());
-        let mut tx = jc_audit::begin(&self.store.pool).await.map_err(failed)?;
+        let mut tx = jc_audit::begin(&self.store.pool).await.map_err(source)?;
         set_scope(&mut tx, &self.realm_id, self.allowed_orgs.as_deref())
             .await
-            .map_err(|e| TableError::Source(e.to_string()))?;
+            .map_err(source)?;
 
         let page_step = i64::try_from(plan.fetch.clamp(50, 500)).unwrap_or(100);
         let mut last_seq = 0i64;
@@ -674,7 +677,7 @@ impl<'a> PgScopedTable<'a> {
                     .bind(page_step)
                     .fetch_all(&mut *tx)
                     .await
-                    .map_err(failed)?;
+                    .map_err(source)?;
                     let mut out = Vec::new();
                     for (seq, doc) in rows {
                         last_seq = seq;
@@ -699,7 +702,7 @@ impl<'a> PgScopedTable<'a> {
                     .bind(page_step)
                     .fetch_all(&mut *tx)
                     .await
-                    .map_err(failed)?;
+                    .map_err(source)?;
                     let s_rows: Vec<(i64, Value)> = if last_seq == 0 {
                         sqlx::query_as(
                             "SELECT seq, doc FROM kaisatsu.client_scopes
@@ -709,7 +712,7 @@ impl<'a> PgScopedTable<'a> {
                         .bind(page_step)
                         .fetch_all(&mut *tx)
                         .await
-                        .map_err(failed)?
+                        .map_err(source)?
                     } else {
                         Vec::new()
                     };
@@ -760,7 +763,7 @@ impl<'a> PgScopedTable<'a> {
             }
         }
 
-        jc_audit::commit(tx).await.map_err(failed)?;
+        jc_audit::commit(tx).await.map_err(source)?;
 
         kept.sort_by(|a, b| {
             plan.order
@@ -873,6 +876,51 @@ mod tests {
         };
         PgScopedTable::push_order(info, &mut qb, &key, true).expect("order");
         qb.sql().as_str().to_owned()
+    }
+
+    /// Every plain set pushes its query down to its own table, scoped to the bound realm; the
+    /// keyset fallback returns the same rows but stops at `MAX_FALLBACK_SCAN_ROWS`, so a set
+    /// that lost its subquery would silently cut a large realm short.
+    #[test]
+    fn plain_sets_push_down_to_their_own_table_in_the_bound_realm() {
+        let sets = [
+            ("Realms", "realms"),
+            ("Organizations", "organizations"),
+            ("People", "people"),
+            ("Memberships", "memberships"),
+            ("Groups", "groups"),
+            ("GroupMembers", "group_members"),
+            ("Roles", "roles"),
+            ("RoleMappings", "role_mappings"),
+            ("Applications", "applications"),
+            ("ClientScopes", "client_scopes"),
+            ("IdentityProviders", "identity_providers"),
+            ("Credentials", "credentials"),
+            ("Sessions", "sso_session"),
+            ("ClientSessions", "client_session"),
+            ("OfflineSessions", "offline_session"),
+            ("Consents", "consent"),
+            ("Events", "events"),
+            ("AdminEvents", "admin_events"),
+            ("SigningKeys", "signing_keys"),
+            ("RequiredActions", "required_actions"),
+            ("BrandingBlocks", "branding_blocks"),
+            ("WebAuthnCredentials", "webauthn_credential"),
+            ("EmailOutbox", "email_outbox"),
+            ("IdentityProviderLinks", "idp_links"),
+        ];
+        for (set, table) in sets {
+            let query = PgScopedTable::relation_subquery(set)
+                .unwrap_or_else(|| panic!("{set} has no pushed-down query"));
+            assert!(query.contains(&format!("FROM kaisatsu.{table}")), "{set}");
+            assert!(
+                query.contains("$1"),
+                "{set} is not scoped to the bound realm"
+            );
+        }
+        for set in ["OrganizationDomains", "ProtocolMappers", "Unknown"] {
+            assert!(PgScopedTable::relation_subquery(set).is_none(), "{set}");
+        }
     }
 
     /// A key lookup and the default key order read the key column, which the primary key

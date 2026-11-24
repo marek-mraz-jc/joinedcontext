@@ -168,7 +168,8 @@ const CHANGE = {
 };
 
 /** The `bento.yaml` the editor loads (T-4818): its text, the status the read fails with, or none. */
-function renderPipelines(pipelines: Manifest[] = [EXISTING], bento?: string | number) {
+/// `failing` names list paths that answer 503 while they stay in the set, as a down list does.
+function renderPipelines(pipelines: Manifest[] = [EXISTING], bento?: string | number, failing = new Set<string>(), templates: unknown[] = []) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const request = input as Request;
     // The client sends Requests; the pipeline test posts a plain URL string.
@@ -181,6 +182,10 @@ function renderPipelines(pipelines: Manifest[] = [EXISTING], bento?: string | nu
           headers: { "Content-Type": "application/json" },
         }),
       );
+    const down = [...failing].find((suffix) => path.endsWith(suffix));
+    if (down) {
+      return json({ title: "Service Unavailable", status: 503, detail: `${down} is down` }, 503);
+    }
 
     if (path.endsWith("/auth/me")) {
       return json(IDENTITY);
@@ -207,6 +212,9 @@ function renderPipelines(pipelines: Manifest[] = [EXISTING], bento?: string | nu
     }
     if (path.startsWith("/api/endpoint/")) {
       return json(SAMPLE);
+    }
+    if (path.endsWith("/pipelinetemplates")) {
+      return json({ items: templates });
     }
     if (path.endsWith("/pipelines")) {
       return json(list(pipelines));
@@ -820,6 +828,44 @@ it("tells a feed from a space and reads the attributes of a class from an inline
     expect((firstShape(body.spec).compute as { bloblang: string }).bloblang).toContain("pm10Sum");
   });
 
+  it("forgets the sample on another Endpoint or type and says why a sample could not be read", async () => {
+    renderPipelines([EXISTING], undefined, new Set(["/ngsi-ld/v1/entities"]));
+    const dialog = await openNew();
+    const studio = within(dialog).getByTestId("pipeline-studio");
+    const source = section(studio, "studio-source");
+    await user.selectOptions(within(source).getByLabelText(en.pipelines.studio.sourceKind), "space");
+    await user.selectOptions(within(source).getByLabelText(en.pipelines.studio.space), "ovzdusie");
+    const readThrough = within(source).getByLabelText(en.pipelines.studio.readThrough);
+    await user.selectOptions(readThrough, "");
+    expect(readThrough).toHaveValue("");
+    await user.selectOptions(readThrough, "public-air");
+    const entities = () => section(studio, "studio-entities");
+    await user.selectOptions(within(entities()).getByLabelText(en.entities.type), "AirQualityObserved");
+    await user.selectOptions(within(entities()).getByLabelText(en.entities.type), "");
+    expect(within(entities()).getByLabelText(en.entities.type)).toHaveValue("");
+    await user.selectOptions(within(entities()).getByLabelText(en.entities.type), "AirQualityObserved");
+    await user.click(within(entities()).getByRole("button", { name: en.pipelines.studio.loadSample }));
+    const alerts = await within(entities()).findAllByRole("alert");
+    // The gateway answers the sample read with a bare status; the studio says it as it came.
+    expect(alerts.map((a) => a.textContent)).toContainEqual(expect.stringContaining("HTTP 503"));
+  });
+
+  it("ticks and unticks an entity of the sample", async () => {
+    renderPipelines();
+    const dialog = await openNew();
+    const studio = within(dialog).getByTestId("pipeline-studio");
+    await user.selectOptions(within(section(studio, "studio-source")).getByLabelText(en.pipelines.studio.sourceKind), "space");
+    await user.selectOptions(within(section(studio, "studio-source")).getByLabelText(en.pipelines.studio.space), "ovzdusie");
+    await user.selectOptions(within(section(studio, "studio-entities")).getByLabelText(en.entities.type), "AirQualityObserved");
+    await user.click(within(section(studio, "studio-entities")).getByRole("button", { name: en.pipelines.studio.loadSample }));
+    const first = await within(section(studio, "studio-entities")).findByLabelText(SAMPLE[0].id);
+    await user.click(first);
+    expect(within(studio).getByText(/1 entit(y|ies) ticked/)).toBeInTheDocument();
+    await user.click(first);
+    expect(first).not.toBeChecked();
+    expect(within(studio).queryByText(/entit(y|ies) ticked/)).toBeNull();
+  });
+
   it("shows only the fields of the chosen source, compute and execution (T-2754)", async () => {
     renderPipelines();
     const dialog = await openNew();
@@ -1146,7 +1192,7 @@ describe("the pipeline editor against the UI contract", () => {
 
   it("names a mapping file the forge did not answer as failed, never as an empty mapping", async () => {
     const { compute: _dropped, ...spec } = EXISTING.spec as Record<string, unknown>;
-    renderPipelines([{ ...EXISTING, spec } as Manifest], 503);
+    const fetchMock = renderPipelines([{ ...EXISTING, spec } as Manifest], 503);
     const row = (await screen.findByText("aq-mqtt-ingest")).closest("tr") as HTMLElement;
     await user.click(within(row).getByRole("button", { name: /More actions/ }));
     await user.click(await screen.findByRole("menuitem", { name: en.resourceEdit.button }));
@@ -1158,6 +1204,68 @@ describe("the pipeline editor against the UI contract", () => {
     expect(edit).toHaveAccessibleDescription(`${en.pipelines.workbench.mapping.fileEditHint} ${en.pipelines.workbench.mapping.fileEditDisabled}`);
     await user.click(edit);
     expect(edit).not.toBeChecked();
+    const reads = () => fetchMock.mock.calls.filter((call) => String((call[0] as Request).url ?? call[0]).endsWith("/bento")).length;
+    const before = reads();
+    await user.click(within(file).getByRole("button", { name: /retry|try again/i }));
+    await waitFor(() => expect(reads()).toBe(before + 1));
+  });
+
+  it("says which list did not load and reads it again on retry", async () => {
+    const failing = new Set(["/datasources", "/endpoints"]);
+    renderPipelines([EXISTING], undefined, failing);
+    const add = await screen.findByRole("button", { name: en.pipelines.add });
+    await waitFor(() => expect(add).not.toHaveAttribute("aria-disabled"));
+    await user.click(add);
+    const dialog = await findFormPage();
+    expect(await within(dialog).findByText(new RegExp(`${en.nav.datasources}:.*/datasources is down`))).toBeInTheDocument();
+    expect(within(dialog).getByText(new RegExp(`${en.nav.endpoints}:.*/endpoints is down`))).toBeInTheDocument();
+    failing.clear();
+    const retryOf = (what: string) =>
+      within(within(dialog).getByText(new RegExp(`${what}:.*is down`))).getByRole("button", { name: en.form.listRetry });
+    await user.click(retryOf(en.nav.endpoints));
+    await user.click(retryOf(en.nav.datasources));
+    await within(targetPick(dialog)).findByRole("option", { name: "public-air" });
+    expect(within(dialog).queryByText(/is down/)).toBeNull();
+  });
+
+  it("fills the new pipeline from one of the project's templates", async () => {
+    const fetchMock = renderPipelines([EXISTING], undefined, new Set(), [
+      {
+        id: "tpl-0a1b2c3d",
+        title: "Air feed",
+        createdBy: "olli",
+        spec: { class: "scheduled", schedule: "0 5 * * *", outputs: [{ type: "AirQualityObserved", mode: "upsert" }] },
+      },
+    ]);
+    const dialog = await openNew();
+    const template = await within(dialog).findByTestId("pipeline-template");
+    await user.click(within(template).getByRole("button", { name: en.pipelines.templates.use }));
+    await user.click(yamlTab(dialog));
+    const yaml = await editor(dialog);
+    await waitFor(() => expect(yaml.value).toContain("0 5 * * *"));
+
+    // The draft saves back as a template of its own, the manifest the editor holds.
+    await user.click(formTab(dialog));
+    await user.click(within(dialog).getByRole("button", { name: en.pipelines.templates.save }));
+    await user.type(labelled(dialog, new RegExp(en.pipelines.templates.titleField)), "Air feed at five");
+    await user.click(within(dialog).getByRole("button", { name: en.pipelines.templates.saveIt }));
+    await waitFor(() => expect(writes(fetchMock).some((request) => request.url.endsWith("/pipelinetemplates"))).toBe(true));
+    const saved = writes(fetchMock).find((request) => request.url.endsWith("/pipelinetemplates")) as Request;
+    const body = (await saved.clone().json()) as { title: string; manifest: Manifest };
+    expect(body.title).toBe("Air feed at five");
+    expect(body.manifest.kind).toBe("Pipeline");
+    expect(JSON.stringify(body.manifest.spec)).toContain("0 5 * * *");
+  });
+
+  it("fills the new pipeline from a recipe", async () => {
+    renderPipelines();
+    const dialog = await openNew();
+    const recipes = within(dialog).getByTestId("pipeline-recipes");
+    await user.click(within(recipes).getByRole("button", { name: new RegExp(en.pipelines.recipe.csv.title) }));
+    await user.selectOptions(within(recipes).getByLabelText(new RegExp(en.pipelines.recipe.csv.source)), "mqtt-mesto");
+    await user.selectOptions(within(recipes).getByLabelText(new RegExp(en.pipelines.recipe.target)), "urn:ngsi-ld:Endpoint:banskabystrica.sk:ovzdusie:public-air");
+    await user.click(within(recipes).getByRole("button", { name: en.pipelines.recipe.use }));
+    await waitFor(() => expect(labelled(dialog, /^Name/)).toHaveValue("mqtt-mesto-to-public-air"));
   });
 
   it("asks for no bento.yaml for a pipeline that maps in its own compute step", async () => {

@@ -81,6 +81,10 @@ describe("the workbench's When it runs step", () => {
     await user.type(cron, "30 4 * * *");
     expect(how).toHaveValue("daily");
     expect(screen.getByLabelText(en.pipelines.schedule.atTime)).toHaveValue("04:30");
+    // Leaving the field keeps what was typed.
+    await user.tab();
+    expect(cron).toHaveValue("30 4 * * *");
+    expect(seen.at(-1)).toMatchObject({ schedule: "30 4 * * *" });
     const found = await axe.run(container, { rules: { region: { enabled: false } } });
     expect(found.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)).toEqual([]);
     await user.click(screen.getByRole("button", { name: w.remove }));

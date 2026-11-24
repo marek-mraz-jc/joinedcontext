@@ -27,6 +27,9 @@ env:
   DAIYA_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/daiya
   SHAKO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/shako
   JC_TIME_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+  JC_AUDIT_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+  # jc-pool's release rule (T-7538) ends a session on the same server.
+  JC_POOL_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
   ANTARES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/antares
   JC_PORTAL_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/portal
   JC_APPS_DB_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
@@ -101,10 +104,15 @@ jobs:
         with: { tool: cargo-mutants@27.1.0 }
       - name: mutate the changed functions
         timeout-minutes: 50
+        # platform: lib and bin tests, as ci.yml platform-test; jc-core's `it` reads the platform repository's
+        # examples, which are not vendored, so building it failed every baseline touching jc-core (T-7764).
+        env: { LIB_BINS_ONLY: "${{ matrix.ws == 'platform' && '1' || '' }}" }
         run: |
           start=$(date +%s); status=0
-          timeout 45m cargo mutants --workspace --in-diff "$RUNNER_TEMP/diffs/${{ matrix.ws }}.diff" \
-            --config "$GITHUB_WORKSPACE/.github/mutants.toml" --output "$RUNNER_TEMP" || status=$?
+          # --in-place: a copied tree loses the path dependencies outside the workspace (antares reads
+          # ../../shared/jc-time), so the baseline build failed; the checkout is throwaway.
+          timeout 45m cargo mutants --workspace --in-place --in-diff "$RUNNER_TEMP/diffs/${{ matrix.ws }}.diff" \
+            --config "$GITHUB_WORKSPACE/.github/mutants.toml" --output "$RUNNER_TEMP" ${LIB_BINS_ONLY:+--cargo-arg=--lib --cargo-arg=--bins} || status=$?
           echo "${{ matrix.ws }}: $(( $(date +%s) - start )) s, exit $status" >> "$GITHUB_STEP_SUMMARY"
           [ -f "$RUNNER_TEMP/mutants.out/missed.txt" ] && { echo "Missed:"; cat "$RUNNER_TEMP/mutants.out/missed.txt"; } >> "$GITHUB_STEP_SUMMARY"
           [ "$status" = 124 ] && echo "::warning::${{ matrix.ws }}: the 45 min bound ended the run; outcomes.json counts what ran"

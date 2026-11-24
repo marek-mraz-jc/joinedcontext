@@ -132,6 +132,120 @@ async fn a_space_names_the_entities_it_holds() {
     );
 }
 
+/// R20 (T-7657): a remover bound to another space of the project finds the Endpoint not there,
+/// the same 404 as a name nobody holds, and nothing is written.
+#[tokio::test]
+async fn a_remover_of_another_space_finds_no_resource_to_remove() {
+    let (shako, broker) = (forge().await, MockServer::start().await);
+    let state = world(&shako, &broker).await;
+    state.mirror.upsert(envelope(
+        "ContextSpace",
+        "water",
+        PROJECT,
+        json!({ "isSandbox": false }),
+    ));
+    state.mirror.upsert(envelope(
+        "Role",
+        "endpoint-remover",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read", "delete"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "water-removers",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "walter@hel.fi" }], "role": "endpoint-remover", "scope": { "contextSpace": "water" } }),
+    ));
+    for name in ["public-air", "nope"] {
+        let answer = send(
+            &state,
+            person("walter"),
+            "DELETE",
+            &format!("/api/v1/projects/{PROJECT}/endpoints/{name}?dryRun=All"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            answer.status,
+            StatusCode::NOT_FOUND,
+            "{name}: {}",
+            answer.text
+        );
+        assert!(
+            answer
+                .text
+                .contains(&format!("resource '{name}' not found")),
+            "{}",
+            answer.text
+        );
+    }
+}
+
+/// A space whose tenant holds nothing takes nothing with it, and says so by saying nothing.
+#[tokio::test]
+async fn an_empty_space_takes_nothing() {
+    let (shako, broker) = (forge().await, MockServer::start().await);
+    let state = world(&shako, &broker).await;
+    tenant_count("ovzdusie-empty", 0).mount(&broker).await;
+    state.mirror.upsert(envelope(
+        "ContextSpace",
+        "empty",
+        PROJECT,
+        json!({ "isSandbox": false }),
+    ));
+    let (status, body) = dry_run(&state, "spaces", "empty").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.get("goesWith").is_none(), "{body}");
+}
+
+/// T-2632, T-7657: an App's removal names the Endpoint and Policies the Portal generated for it,
+/// which leave in the same Change.
+#[tokio::test]
+async fn an_app_names_the_grants_generated_for_it() {
+    let (shako, broker) = (forge().await, MockServer::start().await);
+    let state = world(&shako, &broker).await;
+    state
+        .mirror
+        .upsert(envelope("App", "air-map", PROJECT, json!({})));
+    state.mirror.upsert(envelope(
+        "Role",
+        "app-remover",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["App"], "verbs": ["read", "delete"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "app-removers",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "remover@hel.fi" }], "role": "app-remover", "scope": { "project": PROJECT } }),
+    ));
+    let (status, body) = dry_run(&state, "apps", "air-map").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body.get("goesWith").is_none(),
+        "no grant generated yet: {body}"
+    );
+
+    let mut endpoint = envelope(
+        "Endpoint",
+        "app-air-map",
+        PROJECT,
+        json!({ "contextSpaceRef": { "name": "air" }, "slug": "app-air-map" }),
+    );
+    endpoint.metadata.annotations.insert(
+        "joinedcontext.com/generated-by".to_owned(),
+        "portal/app-reconciler".to_owned(),
+    );
+    state.mirror.upsert(endpoint);
+    let (status, body) = dry_run(&state, "apps", "air-map").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["goesWith"],
+        json!([{ "what": "grants", "count": 1, "names": ["Endpoint/app-air-map"] }]),
+        "{body}"
+    );
+}
+
 #[tokio::test]
 async fn a_pipeline_names_its_refused_records_and_its_runs() {
     let (shako, broker) = (forge().await, MockServer::start().await);

@@ -93,7 +93,7 @@ impl NotificationSink for HttpSink {
                         r.status().as_u16()
                     ))),
                     Some(Err(e)) => Err(DeliveryError {
-                        timed_out: e.is_timeout(),
+                        unreachable: e.is_timeout() || e.is_connect(),
                         message: crate::redact_userinfo(&e.to_string()),
                     }),
                     None => Err(DeliveryError::timeout("timeout")),
@@ -348,6 +348,86 @@ mod tests {
         let text = format!("{err}");
         assert!(!text.contains("hunter2"), "{text}");
         assert!(text.contains("example.org"), "{text}");
+    }
+
+    /// 6.3.8: a 2xx answer is a delivery: the notification is POSTed with
+    /// the accept type as its Content-Type.
+    #[tokio::test]
+    async fn a_success_status_is_a_delivery() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let asked = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).await.expect("read");
+            let _ = s
+                .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                .await;
+            String::from_utf8_lossy(&buf[..n]).into_owned()
+        });
+        sink()
+            .deliver(
+                &format!("http://127.0.0.1:{port}/notify"),
+                &out("application/ld+json", &[]),
+                Duration::from_secs(5),
+            )
+            .await
+            .expect("204 delivers");
+        let head = asked.await.expect("request").to_ascii_lowercase();
+        assert!(head.starts_with("post /notify "), "{head}");
+        assert!(head.contains("content-type: application/ld+json"), "{head}");
+    }
+
+    /// 6.3.8: an endpoint that answers with a non-2xx status took the
+    /// notification and refused it: a failed attempt naming the status, not
+    /// a timeout (the circuit breaker counts only silence).
+    #[tokio::test]
+    async fn a_non_success_status_fails_the_attempt_with_the_status() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf).await;
+            let _ = s
+                .write_all(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n")
+                .await;
+        });
+        let err = sink()
+            .deliver(
+                &format!("http://127.0.0.1:{port}/notify"),
+                &out("application/json", &[]),
+                Duration::from_secs(5),
+            )
+            .await
+            .expect_err("503 is not a delivery");
+        assert_eq!(err, DeliveryError::failed("HTTP 503"));
+
+        // nothing listening: no connection could be made, which counts as
+        // unreachable for the breaker, and the endpoint's credentials stay out
+        // of the message
+        let closed = tokio::net::TcpSocket::new_v4().expect("socket");
+        closed
+            .bind("127.0.0.1:0".parse().expect("addr"))
+            .expect("bind");
+        let port = closed.local_addr().expect("addr").port();
+        let err = sink()
+            .deliver(
+                &format!("http://alice:s3cret@127.0.0.1:{port}/notify"),
+                &out("application/json", &[]),
+                Duration::from_secs(5),
+            )
+            .await
+            .expect_err("refused");
+        drop(closed);
+        assert!(err.unreachable, "{err:?}");
+        assert!(!err.message.contains("s3cret"), "{err:?}");
     }
 
     #[test]

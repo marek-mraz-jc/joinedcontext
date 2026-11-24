@@ -19,7 +19,7 @@ use joinedcontext_portal::config::ClientAuth;
 use std::sync::Arc;
 
 use joinedcontext_portal::reconciler::app_clients::{
-    audience_mapper, desired, groups_mapper, organization_mappers, record, AppClientSync,
+    audience_mapper, desired, groups_mapper, organization_mappers, record, AppClientSync, ClientRun,
 };
 use joinedcontext_portal::reconciler::groups::{MANAGED_BY, MANAGED_VALUE};
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -386,6 +386,263 @@ async fn a_managed_client_whose_app_is_gone_is_deleted_and_a_draft_gets_none() {
     // AP-114: the unmanaged `app-*` client is what the write doors refuse a new App for.
     assert!(foreign.has_client("app-theirs"));
     assert!(!foreign.has_client("app-old") && !foreign.has_client("edge"));
+}
+
+/// A realm where App `bikes`'s client `uuid-bikes` holds no role, mapper or scope yet and every
+/// write succeeds; a test mounts its refusal over it (priority 1).
+async fn bikes_realm(held: Value) -> MockServer {
+    let keycloak = realm().await;
+    client_lookup(&keycloak, "app-bikes", held).await;
+    app_client_list(&keycloak, json!([])).await;
+    secret_of(&keycloak, "uuid-bikes", "generated-by-keycloak").await;
+    Mock::given(method("GET"))
+        .and(path_regex(format!(
+            "^{REALM}/clients/uuid-bikes/(roles|protocol-mappers/models)$"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REALM}/clients")))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(format!("{REALM}/clients/uuid-bikes")))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&keycloak)
+        .await;
+    writes_succeed(&keycloak).await;
+    keycloak
+}
+
+async fn refuse(keycloak: &MockServer, verb: &str, at: &str, status: u16) {
+    Mock::given(method(verb))
+        .and(path(format!("{REALM}{at}")))
+        .respond_with(ResponseTemplate::new(status))
+        .with_priority(1)
+        .mount(keycloak)
+        .await;
+}
+
+async fn bikes_run(keycloak: &MockServer) -> ClientRun {
+    sync(keycloak)
+        .converge(&mirror_with(vec![app("helsinki", "bikes", "published")]))
+        .await
+}
+
+/// Each refusal on the way to an App's client is that App's error, and no secret is handed on.
+#[tokio::test]
+async fn a_refused_lookup_write_back_create_or_secret_fails_the_app_without_a_secret() {
+    // The lookup refused.
+    let keycloak = bikes_realm(json!([])).await;
+    refuse(&keycloak, "GET", "/clients", 500).await;
+    let run = bikes_run(&keycloak).await;
+    assert_eq!(
+        run.outcomes[0].error.as_deref(),
+        Some("GET /clients: 500 Internal Server Error"),
+        "{:?}",
+        run.outcomes
+    );
+    assert!(run.secrets.is_empty());
+
+    // A managed client the realm answers without an id.
+    let mut no_id = managed_client("x", "helsinki", "bikes");
+    no_id.as_object_mut().expect("object").remove("id");
+    let keycloak = bikes_realm(json!([no_id])).await;
+    let run = bikes_run(&keycloak).await;
+    assert_eq!(
+        run.outcomes[0].error.as_deref(),
+        Some("the realm answered app-bikes without an id")
+    );
+    assert!(run.secrets.is_empty());
+
+    // A drifted client whose write-back is refused.
+    let mut changed = managed_client("uuid-bikes", "helsinki", "bikes");
+    changed["directAccessGrantsEnabled"] = json!(true);
+    let keycloak = bikes_realm(json!([changed])).await;
+    refuse(&keycloak, "PUT", "/clients/uuid-bikes", 409).await;
+    let run = bikes_run(&keycloak).await;
+    assert_eq!(
+        run.outcomes[0].error.as_deref(),
+        Some("PUT /clients/uuid-bikes: 409 Conflict")
+    );
+    assert!(run.outcomes[0].drift.is_empty());
+    assert!(run.secrets.is_empty());
+
+    // A refused create.
+    let keycloak = bikes_realm(json!([])).await;
+    refuse(&keycloak, "POST", "/clients", 403).await;
+    let run = bikes_run(&keycloak).await;
+    assert_eq!(
+        run.outcomes[0].error.as_deref(),
+        Some("POST /clients: 403 Forbidden")
+    );
+    assert!(run.secrets.is_empty());
+
+    // The secret refused, or answered empty: the client stays, its secret is not handed on.
+    for (status, body, want) in [
+        (
+            500,
+            json!({}),
+            "GET /clients/uuid-bikes/client-secret: 500 Internal Server Error",
+        ),
+        (
+            200,
+            json!({ "type": "secret", "value": "" }),
+            "the realm answered no secret for the client",
+        ),
+    ] {
+        let keycloak =
+            bikes_realm(json!([managed_client("uuid-bikes", "helsinki", "bikes")])).await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REALM}/clients/uuid-bikes/client-secret")))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .with_priority(1)
+            .mount(&keycloak)
+            .await;
+        let run = bikes_run(&keycloak).await;
+        assert_eq!(run.outcomes[0].error.as_deref(), Some(want));
+        assert!(run.secrets.is_empty(), "{want}");
+    }
+}
+
+/// A created client is read back for its uuid: missing, without an id or refused, the App fails
+/// with that reason and nothing more is written to it.
+#[tokio::test]
+async fn a_created_app_client_that_cannot_be_read_back_fails_with_the_reason() {
+    for (read_back, status, want) in [
+        (
+            json!([]),
+            200,
+            "app-bikes was created and cannot be read back",
+        ),
+        (
+            json!([{ "clientId": "app-bikes" }]),
+            200,
+            "the realm answered app-bikes without an id",
+        ),
+        (json!([]), 502, "GET /clients: 502 Bad Gateway"),
+    ] {
+        let keycloak = bikes_realm(json!([])).await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REALM}/clients")))
+            .and(query_param("clientId", "app-bikes"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&keycloak)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REALM}/clients")))
+            .and(query_param("clientId", "app-bikes"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(read_back))
+            .with_priority(2)
+            .mount(&keycloak)
+            .await;
+        let run = bikes_run(&keycloak).await;
+        assert_eq!(run.outcomes[0].error.as_deref(), Some(want));
+        assert_eq!(
+            wrote(&keycloak).await,
+            vec![format!("POST {REALM}/clients")],
+            "{want}"
+        );
+        assert!(run.secrets.is_empty());
+    }
+}
+
+/// Roles, audiences and scopes are each tried; every refusal is named in one error, and the
+/// secret is still handed on, so the App keeps signing in.
+#[tokio::test]
+async fn refused_roles_audiences_and_scopes_are_all_named_and_the_secret_kept() {
+    let keycloak = bikes_realm(json!([managed_client("uuid-bikes", "helsinki", "bikes")])).await;
+    refuse(&keycloak, "GET", "/clients/uuid-bikes/roles", 500).await;
+    refuse(
+        &keycloak,
+        "GET",
+        "/clients/uuid-bikes/protocol-mappers/models",
+        502,
+    )
+    .await;
+    refuse(
+        &keycloak,
+        "GET",
+        "/clients/uuid-bikes/optional-client-scopes",
+        503,
+    )
+    .await;
+    let run = bikes_run(&keycloak).await;
+    let error = run.outcomes[0].error.as_deref().unwrap_or_default();
+    for part in [
+        "roles of app-bikes: ",
+        "audiences of app-bikes: GET /clients/uuid-bikes/protocol-mappers/models: 502 Bad Gateway",
+        "scopes of app-bikes: GET /clients/uuid-bikes/optional-client-scopes: 503 Service Unavailable",
+    ] {
+        assert!(error.contains(part), "{part} in {error}");
+    }
+    assert_eq!(error.matches("; ").count(), 2, "{error}");
+    assert_eq!(run.secrets.len(), 1, "{:?}", run.outcomes);
+}
+
+/// A refused token or client listing is one `*` failure; a stale client whose delete is refused,
+/// or that the realm lists without an id, is reported under its App, and a listed entry without
+/// a clientId is skipped.
+#[tokio::test]
+async fn refused_token_listing_and_stale_deletes_are_reported() {
+    let keycloak = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/bb/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&keycloak)
+        .await;
+    let run = bikes_run(&keycloak).await;
+    assert_eq!(run.outcomes.len(), 1);
+    assert_eq!(run.outcomes[0].app, "*");
+    assert_eq!(
+        run.outcomes[0].error.as_deref(),
+        Some("the realm refused the reconciler's client portal-api: 401 Unauthorized")
+    );
+
+    let keycloak = realm().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients")))
+        .and(query_param("search", "true"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&keycloak)
+        .await;
+    let run = sync(&keycloak).converge(&mirror_with(vec![])).await;
+    assert_eq!(run.outcomes.len(), 1);
+    assert_eq!(run.outcomes[0].app, "*");
+    assert_eq!(
+        run.outcomes[0].error.as_deref(),
+        Some("listing the app clients: GET /clients: 503 Service Unavailable")
+    );
+
+    let mut nameless = managed_client("x", "helsinki", "nameless");
+    nameless.as_object_mut().expect("object").remove("id");
+    let keycloak = realm().await;
+    app_client_list(
+        &keycloak,
+        json!([managed_client("uuid-old", "helsinki", "old"), nameless, { "id": "uuid-anon" }]),
+    )
+    .await;
+    refuse(&keycloak, "DELETE", "/clients/uuid-old", 500).await;
+    let run = sync(&keycloak).converge(&mirror_with(vec![])).await;
+    let errors: Vec<(&str, Option<&str>)> = run
+        .outcomes
+        .iter()
+        .map(|o| (o.app.as_str(), o.error.as_deref()))
+        .collect();
+    assert_eq!(
+        errors,
+        vec![
+            (
+                "old",
+                Some("DELETE /clients/uuid-old: 500 Internal Server Error")
+            ),
+            ("nameless", Some("the realm listed a client without an id")),
+        ]
+    );
 }
 
 /// hel (the installation's Organization) owns `helsinki` and its App `bikes`; ba, with a realm of

@@ -3,7 +3,7 @@
 //! shape go-faker gives; the numbers come from Go's math/rand algorithm seeded from the OS, so no two
 //! runs repeat, as in Bento.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use jiff::Timestamp;
 
@@ -97,9 +97,8 @@ fn faker() -> &'static Mutex<Faker> {
 /// go-faker's default 25-letter string. An unknown name is Bento's error.
 pub fn fake(name: &str) -> Result<Value, String> {
     let key = name.to_lowercase();
-    let mut guard = faker()
-        .lock()
-        .map_err(|_| "faker state poisoned".to_string())?;
+    // The state is an RNG and a cached card index: a panic elsewhere leaves it valid.
+    let mut guard = faker().lock().unwrap_or_else(PoisonError::into_inner);
     guard
         .generate(&key)
         .ok_or_else(|| format!("invalid faker function: {name}"))
@@ -176,10 +175,8 @@ impl Faker {
         for (i, w) in words.iter().enumerate() {
             if i == 0 {
                 let mut c = w.chars();
-                if let Some(f) = c.next() {
-                    out.extend(f.to_uppercase());
-                    out.push_str(c.as_str());
-                }
+                out.extend(c.next().into_iter().flat_map(char::to_uppercase));
+                out.push_str(c.as_str());
             } else {
                 out.push(' ');
                 out.push_str(w);
@@ -341,10 +338,9 @@ mod tests {
     use regex::Regex;
 
     fn s(name: &str) -> String {
-        match fake(name) {
-            Ok(Value::String(s)) => s,
-            other => panic!("{name}: {other:?}"),
-        }
+        let v = fake(name);
+        assert!(matches!(v, Ok(Value::String(_))), "{name}: {v:?}");
+        v.map(|v| v.to_string_coerced()).unwrap_or_default()
     }
 
     /// The shape of each go-faker field, read from Bento 1.22's own output
@@ -436,14 +432,23 @@ mod tests {
             }
         }
         for _ in 0..50 {
-            match (fake("latitude"), fake("longitude"), fake("unix_time")) {
-                (Ok(Value::Float(lat)), Ok(Value::Float(lon)), Ok(Value::Int(t))) => {
-                    assert!((-90.0..90.0).contains(&lat), "{lat}");
-                    assert!((-180.0..180.0).contains(&lon), "{lon}");
-                    assert!((0..Timestamp::now().as_second()).contains(&t), "{t}");
-                }
-                other => panic!("{other:?}"),
-            }
+            let drawn = (fake("latitude"), fake("longitude"), fake("unix_time"));
+            assert!(
+                matches!(
+                    drawn,
+                    (Ok(Value::Float(_)), Ok(Value::Float(_)), Ok(Value::Int(_)))
+                ),
+                "{drawn:?}"
+            );
+            let num =
+                |v: Result<Value, String>| v.ok().and_then(|v| v.as_f64()).unwrap_or(f64::NAN);
+            let (lat, lon, t) = (num(drawn.0), num(drawn.1), num(drawn.2));
+            assert!((-90.0..90.0).contains(&lat), "{lat}");
+            assert!((-180.0..180.0).contains(&lon), "{lon}");
+            assert!(
+                (0.0..Timestamp::now().as_second() as f64).contains(&t),
+                "{t}"
+            );
         }
     }
 
@@ -459,6 +464,17 @@ mod tests {
             fake("russian_first_name_male").unwrap_err(),
             "invalid faker function: russian_first_name_male"
         );
+    }
+
+    #[test]
+    fn a_panic_while_the_faker_is_held_does_not_break_later_calls() {
+        let poisoner = std::thread::spawn(|| {
+            let _held = faker().lock();
+            panic!("poison the faker");
+        });
+        assert!(poisoner.join().is_err());
+        assert!(faker().is_poisoned());
+        assert!(s("email").contains('@'));
     }
 
     #[test]

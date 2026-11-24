@@ -353,3 +353,18 @@ impl Table for PgTable {
         Box::pin(self.write(batch))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::identifier;
+
+    #[test]
+    fn an_identifier_is_a_plain_sql_name_of_at_most_63_bytes() {
+        assert_eq!(identifier("_x1").as_deref(), Some("\"_x1\""));
+        assert_eq!(identifier("org").as_deref(), Some("\"org\""));
+        assert!(identifier(&"a".repeat(63)).is_some());
+        for bad in ["", "1x", "a-b", "a\"b", "é", &"a".repeat(64)] {
+            assert_eq!(identifier(bad), None, "{bad}");
+        }
+    }
+}

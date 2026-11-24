@@ -140,36 +140,11 @@ impl Broker {
     /// would make that a wasm-bindgen recursive-borrow error. Router clone is
     /// a cheap Arc bump and shares all state.
     pub async fn handle(&self, req: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
-        let (mut parts, body) = req.into_parts();
-        // The native binary routes under NormalizePathLayer::trim_trailing_slash
-        // (6.3 URLs arrive both with and without a trailing '/'); this seam is
-        // the wasm equivalent — same trim, applied before the router sees it.
-        if let Some(pq) = parts.uri.path_and_query() {
-            let path = pq.path();
-            let trimmed = path.trim_end_matches('/');
-            if trimmed.len() != path.len() && !trimmed.is_empty() {
-                let new = match pq.query() {
-                    Some(q) => format!("{trimmed}?{q}"),
-                    None => trimmed.to_owned(),
-                };
-                if let Ok(uri) = new.parse() {
-                    parts.uri = uri;
-                }
-            }
-        }
-        let req = http::Request::from_parts(parts, Body::from(body));
+        // antares_api::router trims a trailing '/' for every host (T-3701), this one included.
+        let req = req.map(Body::from);
         let mut router = self.router.clone();
-        let resp = match router.call(req).await {
-            Ok(r) => r,
-            // The router is Infallible; keep the arm honest rather than
-            // unwrapping (workspace lints deny unwrap outside tests).
-            Err(_) => {
-                return http::Response::builder()
-                    .status(500)
-                    .body(Vec::new())
-                    .unwrap_or_default()
-            }
-        };
+        // The router's error type is Infallible: the pattern is irrefutable.
+        let Ok(resp) = router.call(req).await;
         let (parts, body) = resp.into_parts();
         let bytes = body
             .collect()

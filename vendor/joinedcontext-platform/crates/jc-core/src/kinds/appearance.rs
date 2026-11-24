@@ -2,12 +2,14 @@
 //! show of it (UIX-16, T-6772).
 //!
 //! Every member is optional and overrides the installation's branding file field by field; a
-//! member left out shows the installation's value. Each one is a validated value, never raw CSS
-//! or HTML: a colour is a hex triplet or sextet, a name is one line of plain text, a logo is an
-//! SVG without script, event handler, external reference or entity.
+//! member left out shows the installation's value. Each one is a validated value, never raw HTML:
+//! a colour is a hex triplet or sextet, a name is one line of plain text, a logo is an SVG without
+//! script, event handler, external reference or entity, and a Portal's own stylesheet (`css`) is
+//! tokenized and rewritten by [`super::stylesheet`].
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::error::{Error, Result};
 
@@ -64,10 +66,35 @@ pub struct OrganizationAppearance {
     /// Markdown (T-7031); a page or language left out shows the built-in text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pages: Vec<AppearancePage>,
+    /// A `kind: Portal`'s own stylesheet for its open data portal, at most 32 KiB (T-7745): style
+    /// rules and `@media` alone, every selector scoped to that portal's pages, properties from a
+    /// fixed list without `content`, positioning, `z-index` or hiding, `url()` only of
+    /// `/files/{sha256}/{name}` of the portal's files; e.g. `.site-header { background: navy }`.
+    /// An Organization's appearance refuses it: each portal carries its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub css: Option<String>,
     /// The open data portal's typeface, one of a fixed set of system font stacks, so no font is
     /// fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font: Option<AppearanceFont>,
+    /// The headings' typeface over `font`, from the same fixed set, e.g. `serif` (T-7744).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_font: Option<AppearanceFont>,
+    /// The body text's typeface over `font`, from the same fixed set, e.g. `system`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_font: Option<AppearanceFont>,
+    /// The base text size in pixels, 14 to 18, e.g. `16`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<u8>,
+    /// How wide the content runs: `narrow`, `normal` (the default) or `wide`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<ContentWidth>,
+    /// How buttons look: `filled` (the default) or `outline`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub button_style: Option<ButtonStyle>,
+    /// Whether cards carry a shadow: `soft` (the default) or `none`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_shadow: Option<CardShadow>,
     /// The corner radius of cards, buttons and fields in pixels, 0 to 24, e.g. `8`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub radius: Option<u8>,
@@ -84,6 +111,211 @@ pub struct OrganizationAppearance {
     /// Links the open data portal's footer adds after its own, under the same rules.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub footer_links: Vec<AppearanceLink>,
+    /// Which parts of the open data portal's dataset and dataset list pages show, in which
+    /// order and under which heading (T-7743); a page left out shows the level above's.
+    #[serde(default, skip_serializing_if = "AppearanceDisplay::is_unset")]
+    pub display: AppearanceDisplay,
+}
+
+/// The sections of the open data portal's dataset page, in their built-in order. `publisher`
+/// and `subscribe` keep their place above the page and only show or hide; the rest show in the
+/// order a display lists them.
+pub const DATASET_SECTIONS: [&str; 12] = [
+    "publisher",
+    "subscribe",
+    "explorer",
+    "map",
+    "visualizations",
+    "dashboards",
+    "about",
+    "live",
+    "mcp",
+    "resources",
+    "additional-info",
+    "shacl",
+];
+
+/// The rows of the dataset page's about table by their DCAT field name, in their built-in
+/// order; a display may also list a dataset extra as `extras.<key>`.
+pub const ABOUT_FIELDS: [&str; 14] = [
+    "publisher",
+    "license",
+    "rights",
+    "source",
+    "keyword",
+    "accrualPeriodicity",
+    "issued",
+    "modified",
+    "nextUpdate",
+    "spatial",
+    "temporal",
+    "contactPoint",
+    "identifier",
+    "conformsTo",
+];
+
+/// What the dataset list shows of each dataset after its title, in the built-in order.
+pub const DATASET_LIST_FIELDS: [&str; 4] = ["notes", "format", "publisher", "modified"];
+
+/// `spec.appearance.display` (T-7743): data only, every name one of a fixed list.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AppearanceDisplay {
+    /// The dataset page.
+    #[serde(default, skip_serializing_if = "DatasetDisplay::is_unset")]
+    pub dataset: DatasetDisplay,
+    /// The dataset list.
+    #[serde(default, skip_serializing_if = "DatasetListDisplay::is_unset")]
+    pub dataset_list: DatasetListDisplay,
+}
+
+/// `spec.appearance.display.dataset`: each list left empty shows the level above's.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DatasetDisplay {
+    /// The sections that show, in order, each at most once; a section left out is hidden.
+    /// One of `publisher`, `subscribe`, `explorer`, `map`, `visualizations`, `dashboards`,
+    /// `about`, `live`, `mcp`, `resources`, `additional-info`, `shacl`, e.g.
+    /// `[{name: about}, {name: resources}]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<DisplaySection>,
+    /// The about table's rows in order, each at most once; a row left out is hidden. A DCAT
+    /// field name (`publisher`, `license`, `rights`, `source`, `keyword`, `accrualPeriodicity`,
+    /// `issued`, `modified`, `nextUpdate`, `spatial`, `temporal`, `contactPoint`, `identifier`,
+    /// `conformsTo`) or a dataset extra as `extras.<key>`, e.g. `[license, publisher, modified]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub about: Vec<String>,
+}
+
+/// `spec.appearance.display.dataset.sections[]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DisplaySection {
+    /// The section, e.g. `about`.
+    pub name: String,
+    /// Its heading per language in place of the built-in one, plain text, e.g.
+    /// `{sk: O dátach, en: About the data}`; a Portal's languages are those of `spec.languages`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub heading: BTreeMap<String, String>,
+}
+
+/// `spec.appearance.display.datasetList`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct DatasetListDisplay {
+    /// What each dataset shows after its title, in order, as a table column or a card line:
+    /// `notes`, `format`, `publisher`, `modified`, e.g. `[format, modified]`; empty shows the
+    /// level above's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+}
+
+impl DatasetDisplay {
+    /// Whether neither list is set.
+    pub fn is_unset(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl DatasetListDisplay {
+    /// Whether no field is set.
+    pub fn is_unset(&self) -> bool {
+        self.fields.is_empty()
+    }
+}
+
+impl AppearanceDisplay {
+    /// Whether nothing is set, so the level above's display shows.
+    pub fn is_unset(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// `self` over `under` list by list: a list `self` leaves empty is `under`'s.
+    pub fn over(&self, under: &Self) -> Self {
+        fn list<T: Clone>(top: &[T], below: &[T]) -> Vec<T> {
+            if top.is_empty() { below } else { top }.to_vec()
+        }
+        Self {
+            dataset: DatasetDisplay {
+                sections: list(&self.dataset.sections, &under.dataset.sections),
+                about: list(&self.dataset.about, &under.dataset.about),
+            },
+            dataset_list: DatasetListDisplay {
+                fields: list(&self.dataset_list.fields, &under.dataset_list.fields),
+            },
+        }
+    }
+
+    /// Refuses a name no list knows, a name twice, or a heading that is not one line of plain
+    /// text in a two-letter language, with the member's path under `at`. `languages`, when not
+    /// empty, are the only heading languages allowed (a Portal's `spec.languages`).
+    pub fn validate(&self, at: &str, languages: &[String]) -> Result<()> {
+        let mut seen = Vec::new();
+        for (i, section) in self.dataset.sections.iter().enumerate() {
+            let field = format!("{at}.dataset.sections[{i}]");
+            if !DATASET_SECTIONS.contains(&section.name.as_str()) {
+                return Err(invalid(
+                    &format!("{field}.name"),
+                    "one of publisher, subscribe, explorer, map, visualizations, dashboards, about, live, mcp, resources, additional-info, shacl",
+                ));
+            }
+            if seen.contains(&section.name.as_str()) {
+                return Err(invalid(&format!("{field}.name"), "listed once"));
+            }
+            seen.push(section.name.as_str());
+            for (lang, text) in &section.heading {
+                let member = format!("{field}.heading.{lang}");
+                if lang.len() != 2 || !lang.bytes().all(|b| b.is_ascii_lowercase()) {
+                    return Err(invalid(
+                        &member,
+                        "keyed by a two-letter language such as sk",
+                    ));
+                }
+                if !languages.is_empty() && !languages.contains(lang) {
+                    return Err(invalid(
+                        &member,
+                        "in a language of the Portal's spec.languages",
+                    ));
+                }
+                plain_text(&member, text)?;
+            }
+        }
+        let mut seen = Vec::new();
+        for (i, name) in self.dataset.about.iter().enumerate() {
+            let field = format!("{at}.dataset.about[{i}]");
+            let extra = name.strip_prefix("extras.").is_some_and(is_extra_key);
+            if !extra && !ABOUT_FIELDS.contains(&name.as_str()) {
+                return Err(invalid(
+                    &field,
+                    "a DCAT field such as license or modified, or extras.<key> with a key of 1 to 64 a-z, 0-9, _ or -",
+                ));
+            }
+            if seen.contains(&name) {
+                return Err(invalid(&field, "listed once"));
+            }
+            seen.push(name);
+        }
+        let mut seen = Vec::new();
+        for (i, name) in self.dataset_list.fields.iter().enumerate() {
+            let field = format!("{at}.datasetList.fields[{i}]");
+            if !DATASET_LIST_FIELDS.contains(&name.as_str()) {
+                return Err(invalid(&field, "one of notes, format, publisher, modified"));
+            }
+            if seen.contains(&name) {
+                return Err(invalid(&field, "listed once"));
+            }
+            seen.push(name);
+        }
+        Ok(())
+    }
+}
+
+/// A dataset extra's key a display may name: 1 to 64 of `a-z`, `0-9`, `_` and `-`.
+pub fn is_extra_key(key: &str) -> bool {
+    (1..=64).contains(&key.len())
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_-".contains(&b))
 }
 
 /// The most header or footer links an appearance adds.
@@ -127,6 +359,54 @@ impl AppearanceFont {
             Self::Mono => "ui-monospace, \"Cascadia Code\", Menlo, Consolas, monospace",
         }
     }
+}
+
+/// The smallest and largest base text size in pixels (T-7744).
+pub const MIN_FONT_SIZE: u8 = 14;
+/// See [`MIN_FONT_SIZE`].
+pub const MAX_FONT_SIZE: u8 = 18;
+
+/// `spec.appearance.width`: how wide the open data portal's content runs (T-7744).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentWidth {
+    /// About 60 rem, for reading.
+    Narrow,
+    /// About 76 rem, the built-in width.
+    Normal,
+    /// About 90 rem, for wide tables.
+    Wide,
+}
+
+impl ContentWidth {
+    /// The CSS length of the content's largest width.
+    pub fn css(self) -> &'static str {
+        match self {
+            Self::Narrow => "60rem",
+            Self::Normal => "76rem",
+            Self::Wide => "90rem",
+        }
+    }
+}
+
+/// `spec.appearance.buttonStyle` (T-7744).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ButtonStyle {
+    /// The primary colour filled in.
+    Filled,
+    /// The primary colour as border and text.
+    Outline,
+}
+
+/// `spec.appearance.cardShadow` (T-7744).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CardShadow {
+    /// Flat cards with a border only.
+    None,
+    /// A soft shadow under each card.
+    Soft,
 }
 
 /// `spec.appearance.datasetList`.
@@ -205,6 +485,21 @@ pub struct AppearanceColours {
     /// Body text, e.g. `#0f172a`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Links in the page, at least 4.5:1 on the background, six hex digits after a hash, such as 1d4ed8 (T-7744).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+    /// The open data portal's header bar, six hex digits after a hash, such as 0b5394.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_background: Option<String>,
+    /// Text and links in the header bar, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_text: Option<String>,
+    /// The page footer, six hex digits after a hash, such as 0f172a.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer_background: Option<String>,
+    /// Text and links in the footer, at least 4.5:1 on its background, six hex digits after a hash, such as ffffff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer_text: Option<String>,
 }
 
 impl AppearanceColours {
@@ -213,13 +508,48 @@ impl AppearanceColours {
         *self == Self::default()
     }
 
-    fn named(&self) -> [(&'static str, &Option<String>); 5] {
+    fn named(&self) -> [(&'static str, &Option<String>); 10] {
         [
             ("spec.appearance.colours.primary", &self.primary),
             ("spec.appearance.colours.secondary", &self.secondary),
             ("spec.appearance.colours.accent", &self.accent),
             ("spec.appearance.colours.background", &self.background),
             ("spec.appearance.colours.text", &self.text),
+            ("spec.appearance.colours.link", &self.link),
+            (
+                "spec.appearance.colours.headerBackground",
+                &self.header_background,
+            ),
+            ("spec.appearance.colours.headerText", &self.header_text),
+            (
+                "spec.appearance.colours.footerBackground",
+                &self.footer_background,
+            ),
+            ("spec.appearance.colours.footerText", &self.footer_text),
+        ]
+    }
+
+    /// Each foreground colour with the background it is read on, both as set (T-7744): text,
+    /// primary and link on the page background, header and footer text on their own.
+    pub fn pairs(&self) -> [(&'static str, &Option<String>, &Option<String>); 5] {
+        [
+            ("spec.appearance.colours.text", &self.text, &self.background),
+            (
+                "spec.appearance.colours.primary",
+                &self.primary,
+                &self.background,
+            ),
+            ("spec.appearance.colours.link", &self.link, &self.background),
+            (
+                "spec.appearance.colours.headerText",
+                &self.header_text,
+                &self.header_background,
+            ),
+            (
+                "spec.appearance.colours.footerText",
+                &self.footer_text,
+                &self.footer_background,
+            ),
         ]
     }
 }
@@ -295,6 +625,12 @@ impl OrganizationAppearance {
         if self.radius.is_some_and(|r| r > MAX_APPEARANCE_RADIUS) {
             return Err(invalid("spec.appearance.radius", "0 to 24 pixels"));
         }
+        if self
+            .font_size
+            .is_some_and(|s| !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&s))
+        {
+            return Err(invalid("spec.appearance.fontSize", "14 to 18 pixels"));
+        }
         if let Some(title) = &self.hero.title {
             plain_text("spec.appearance.hero.title", title)?;
         }
@@ -312,27 +648,29 @@ impl OrganizationAppearance {
             }
         }
         links("spec.appearance.navLinks", &self.nav_links)?;
-        links("spec.appearance.footerLinks", &self.footer_links)
+        links("spec.appearance.footerLinks", &self.footer_links)?;
+        if let Some(css) = &self.css {
+            crate::kinds::stylesheet::scoped_stylesheet(
+                css,
+                crate::kinds::stylesheet::CHECK_CLASS,
+            )?;
+        }
+        self.display.validate("spec.appearance.display", &[])
     }
 
     /// Refuses text or primary colour below [`MIN_CONTRAST`] on the background when the
     /// appearance sets both of the pair; a pair with one member set is checked where it meets
     /// the installation's colour, by the page that draws it.
     fn contrast(&self) -> Result<()> {
-        let Some(background) = &self.colours.background else {
-            return Ok(());
-        };
-        for (field, colour) in [
-            ("spec.appearance.colours.text", &self.colours.text),
-            ("spec.appearance.colours.primary", &self.colours.primary),
-        ] {
+        for (field, colour, background) in self.colours.pairs() {
             let ratio = colour
                 .as_deref()
-                .and_then(|c| contrast_ratio(c, background));
+                .zip(background.as_deref())
+                .and_then(|(c, b)| contrast_ratio(c, b));
             if ratio.is_some_and(|r| r < MIN_CONTRAST) {
                 return Err(invalid(
                     field,
-                    "a colour with a contrast of at least 4.5:1 on the background (WCAG AA)",
+                    "a colour with a contrast of at least 4.5:1 on its background (WCAG AA)",
                 ));
             }
         }
@@ -362,13 +700,26 @@ impl OrganizationAppearance {
                 accent: pick(&c.accent, &u.accent),
                 background: pick(&c.background, &u.background),
                 text: pick(&c.text, &u.text),
+                link: pick(&c.link, &u.link),
+                header_background: pick(&c.header_background, &u.header_background),
+                header_text: pick(&c.header_text, &u.header_text),
+                footer_background: pick(&c.footer_background, &u.footer_background),
+                footer_text: pick(&c.footer_text, &u.footer_text),
             },
             logo_svg: pick(&self.logo_svg, &under.logo_svg),
             favicon_svg: pick(&self.favicon_svg, &under.favicon_svg),
             home_widgets: list(&self.home_widgets, &under.home_widgets),
             opendata_widgets: list(&self.opendata_widgets, &under.opendata_widgets),
             pages: list(&self.pages, &under.pages),
+            // A stylesheet is the portal's own and never comes from the level under it (T-7745).
+            css: self.css.clone(),
             font: self.font.or(under.font),
+            heading_font: self.heading_font.or(under.heading_font),
+            body_font: self.body_font.or(under.body_font),
+            font_size: self.font_size.or(under.font_size),
+            width: self.width.or(under.width),
+            button_style: self.button_style.or(under.button_style),
+            card_shadow: self.card_shadow.or(under.card_shadow),
             radius: self.radius.or(under.radius),
             hero: AppearanceHero {
                 title: pick(&self.hero.title, &under.hero.title),
@@ -377,6 +728,7 @@ impl OrganizationAppearance {
             dataset_list: self.dataset_list.or(under.dataset_list),
             nav_links: list(&self.nav_links, &under.nav_links),
             footer_links: list(&self.footer_links, &under.footer_links),
+            display: self.display.over(&under.display),
         }
     }
 }
@@ -626,6 +978,170 @@ mod tests {
             .validate()
     }
 
+    /// T-7744: each style token is refused by its own path: a colour not hex, a text size out
+    /// of 14 to 18, a pair below WCAG AA; an unknown enum value does not parse.
+    #[test]
+    fn style_tokens_are_refused_by_their_path() {
+        let fine = json!({
+            "colours": { "link": "#1d4ed8", "headerBackground": "#0b5394", "headerText": "#ffffff",
+                         "footerBackground": "#0f172a", "footerText": "#ffffff" },
+            "headingFont": "serif", "bodyFont": "system", "fontSize": 16, "width": "wide",
+            "buttonStyle": "outline", "cardShadow": "none",
+        });
+        assert!(checked(fine.clone()).is_ok(), "{:?}", checked(fine));
+        for (look, field) in [
+            (
+                json!({ "colours": { "link": "blue" } }),
+                "spec.appearance.colours.link",
+            ),
+            (
+                json!({ "colours": { "headerBackground": "#12" } }),
+                "spec.appearance.colours.headerBackground",
+            ),
+            (
+                json!({ "colours": { "footerText": "#fff;}" } }),
+                "spec.appearance.colours.footerText",
+            ),
+            (json!({ "fontSize": 13 }), "spec.appearance.fontSize"),
+            (json!({ "fontSize": 19 }), "spec.appearance.fontSize"),
+            (
+                json!({ "colours": { "headerText": "#777777", "headerBackground": "#888888" } }),
+                "spec.appearance.colours.headerText",
+            ),
+            (
+                json!({ "colours": { "footerText": "#0f172a", "footerBackground": "#000000" } }),
+                "spec.appearance.colours.footerText",
+            ),
+            (
+                json!({ "colours": { "link": "#eeeeee", "background": "#ffffff" } }),
+                "spec.appearance.colours.link",
+            ),
+        ] {
+            match checked(look.clone()) {
+                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field, "{look}"),
+                other => panic!("{look}: {other:?}"),
+            }
+        }
+        for look in [
+            json!({ "width": "huge" }),
+            json!({ "buttonStyle": "ghost" }),
+            json!({ "cardShadow": "hard" }),
+            json!({ "headingFont": "comic" }),
+        ] {
+            assert!(
+                serde_json::from_value::<OrganizationAppearance>(look.clone()).is_err(),
+                "{look}"
+            );
+        }
+    }
+
+    /// T-7744: a Portal's token goes over its Organization's one by one; removing it (reset)
+    /// shows the Organization's again.
+    #[test]
+    fn style_tokens_cascade_and_reset() {
+        let look = |v: serde_json::Value| {
+            serde_json::from_value::<OrganizationAppearance>(v).expect("parses")
+        };
+        let org =
+            look(json!({ "colours": { "link": "#1d4ed8" }, "width": "wide", "fontSize": 15 }));
+        let portal = look(
+            json!({ "colours": { "headerBackground": "#0b5394" }, "fontSize": 17, "buttonStyle": "outline" }),
+        );
+        let shown = portal.over(&org);
+        assert_eq!(shown.colours.link.as_deref(), Some("#1d4ed8"));
+        assert_eq!(shown.colours.header_background.as_deref(), Some("#0b5394"));
+        assert_eq!(
+            (shown.font_size, shown.width, shown.button_style),
+            (
+                Some(17),
+                Some(ContentWidth::Wide),
+                Some(ButtonStyle::Outline)
+            )
+        );
+        assert_eq!(OrganizationAppearance::default().over(&org), org);
+    }
+
+    /// T-7743: a display names only known sections, about rows and list fields, each once,
+    /// with headings of plain text; each refusal names the member's path.
+    #[test]
+    fn display_refuses_unknown_names_with_their_path() {
+        let fine = json!({ "display": {
+            "dataset": {
+                "sections": [{ "name": "about", "heading": { "sk": "O dátach" } }, { "name": "resources" }],
+                "about": ["license", "publisher", "extras.x_kraj"],
+            },
+            "datasetList": { "fields": ["format", "modified"] },
+        }});
+        assert!(checked(fine.clone()).is_ok(), "{:?}", checked(fine));
+        for (display, field) in [
+            (
+                json!({ "dataset": { "sections": [{ "name": "comments" }] } }),
+                "spec.appearance.display.dataset.sections[0].name",
+            ),
+            (
+                json!({ "dataset": { "sections": [{ "name": "map" }, { "name": "map" }] } }),
+                "spec.appearance.display.dataset.sections[1].name",
+            ),
+            (
+                json!({ "dataset": { "sections": [{ "name": "map", "heading": { "SK": "x" } }] } }),
+                "spec.appearance.display.dataset.sections[0].heading.SK",
+            ),
+            (
+                json!({ "dataset": { "sections": [{ "name": "map", "heading": { "sk": "<b>x</b>" } }] } }),
+                "spec.appearance.display.dataset.sections[0].heading.sk",
+            ),
+            (
+                json!({ "dataset": { "about": ["licence"] } }),
+                "spec.appearance.display.dataset.about[0]",
+            ),
+            (
+                json!({ "dataset": { "about": ["extras.Bad Key"] } }),
+                "spec.appearance.display.dataset.about[0]",
+            ),
+            (
+                json!({ "dataset": { "about": ["issued", "issued"] } }),
+                "spec.appearance.display.dataset.about[1]",
+            ),
+            (
+                json!({ "datasetList": { "fields": ["score"] } }),
+                "spec.appearance.display.datasetList.fields[0]",
+            ),
+        ] {
+            match checked(json!({ "display": display })) {
+                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field),
+                other => panic!("{display}: {other:?}"),
+            }
+        }
+        assert!(
+            serde_json::from_value::<OrganizationAppearance>(
+                json!({ "display": { "dataset": { "order": [] } } })
+            )
+            .is_err(),
+            "an unknown member is refused"
+        );
+    }
+
+    /// T-7743: a display list left empty is the level below's; a set list replaces it whole,
+    /// and removing it again (reset) shows the level below's once more.
+    #[test]
+    fn display_cascades_list_by_list_and_resets() {
+        let display =
+            |v: serde_json::Value| serde_json::from_value::<AppearanceDisplay>(v).expect("parses");
+        let org = display(
+            json!({ "dataset": { "sections": [{ "name": "about" }, { "name": "map" }], "about": ["license"] } }),
+        );
+        let portal = display(json!({ "dataset": { "sections": [{ "name": "resources" }] } }));
+        let shown = portal.over(&org);
+        assert_eq!(shown.dataset.sections, portal.dataset.sections);
+        assert_eq!(shown.dataset.about, org.dataset.about);
+        assert!(shown.dataset_list.fields.is_empty());
+        assert_eq!(
+            AppearanceDisplay::default().over(&org),
+            org,
+            "reset shows the level below"
+        );
+    }
+
     /// T-7031: page texts name a page and a language once, within the size cap.
     #[test]
     fn page_texts_name_a_page_and_language_once_within_the_cap() {
@@ -747,7 +1263,6 @@ mod tests {
             json!({ "datasetList": "grid" }),
             json!({ "hero": { "title": "x", "css": "x" } }),
             json!({ "navLinks": [{ "label": "x", "url": "/", "target": "_blank" }] }),
-            json!({ "css": "body{}" }),
         ] {
             assert!(
                 serde_json::from_value::<OrganizationAppearance>(unknown.clone()).is_err(),
@@ -884,10 +1399,12 @@ mod tests {
             let refusal = checked(appearance.clone()).expect_err(field).to_string();
             assert!(refusal.contains(field), "{appearance}: {refusal}");
         }
-        assert!(
-            serde_json::from_value::<OrganizationAppearance>(json!({ "css": "body{}" })).is_err(),
-            "raw CSS has no member"
-        );
+        // T-7745: a stylesheet is a member of its own, checked construct by construct.
+        let refusal = checked(json!({ "css": "@import \"/x.css\";" }))
+            .expect_err("@import")
+            .to_string();
+        assert!(refusal.contains("spec.appearance.css"), "{refusal}");
+        assert!(checked(json!({ "css": ".site-header { color: #ffffff }" })).is_ok());
     }
 
     /// Words that merely contain `on` or `href` are no handler and no reference.

@@ -481,7 +481,7 @@ async fn the_callers_limits_hold_on_every_request() -> Result<(), String> {
         assert_eq!(answer.status, StatusCode::INTERNAL_SERVER_ERROR, "{format}");
         assert_eq!(
             answer.body,
-            r#"{"error":{"code":"InternalError","message":"the service model could not be written"}}"#
+            r#"{"error":{"code":"InternalError","message":"the answer could not be written"}}"#
         );
     }
     Ok(())

@@ -22,15 +22,17 @@
     --jc-text: {{ chrome.branding.colours.text }};
     --jc-font-heading: {{ chrome.branding.fonts.heading }};
     --jc-font-body: {{ chrome.branding.fonts.body }};
-    {{ chrome.branding.layout.radius_css() }}
+    {{ chrome.branding.layout.tokens_css() }}
   }
 </style>
 <link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
+{%- if let Some(sheet) = chrome.branding.layout.stylesheet %}
+<link rel="stylesheet" href="{{ chrome.mount_prefix }}/portal-css/{{ sheet.hash }}.css">{% endif %}
   <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-dock.js"></script>
   <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-copy.js" defer></script>
   <script nonce="{{ chrome.csp_nonce }}" src="{{ chrome.mount_prefix }}/jc-forms.js" defer></script>
   </head>
-  <body data-site-root="{{ chrome.site_root }}" data-locale-root="{{ chrome.locale_root }}">
+  <body{% if let Some(sheet) = chrome.branding.layout.stylesheet %} class="jc-portal-css {{ sheet.class }}"{% endif %} data-site-root="{{ chrome.site_root }}" data-locale-root="{{ chrome.locale_root }}">
     <div class="visually-hidden-focusable"><a href="#content">{{ labels.skip_to_content }}</a></div>
 {% if !chrome.branding.ribbon.is_empty() %}
 <div class="jc-ribbon" role="note">{{ chrome.branding.ribbon }}</div>

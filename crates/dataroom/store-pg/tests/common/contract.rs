@@ -2,7 +2,7 @@
 //! Postgres store on the request role must answer every method the same way (C1, C14).
 
 use super::*;
-use dataroom_core::{DataroomError, RecordState, Store};
+use dataroom_core::{DataroomError, RecordState, RequestCtx, Store};
 use odata_table::{query, QueryOptions, Scope};
 
 fn names<T>(items: &[T], f: impl Fn(&T) -> String) -> Vec<String> {
@@ -182,7 +182,10 @@ pub async fn publishers(store: &dyn Store) {
     let err = store.upsert_publisher(&ctx, dup).await.unwrap_err();
     assert!(matches!(err, DataroomError::Conflict(_)), "{err:?}");
 
-    let withdrawn = store.withdraw_publisher(&ctx, "dept").await.unwrap();
+    let withdrawn = store
+        .withdraw_publisher(&ctx, "dept", audit("publisher.withdraw"))
+        .await
+        .unwrap();
     assert_eq!(withdrawn.state, RecordState::Withdrawn);
     assert_eq!(
         store
@@ -194,7 +197,9 @@ pub async fn publishers(store: &dyn Store) {
         RecordState::Withdrawn
     );
     assert!(matches!(
-        store.withdraw_publisher(&ctx, "nobody").await,
+        store
+            .withdraw_publisher(&ctx, "nobody", audit("publisher.withdraw"))
+            .await,
         Err(DataroomError::NotFound(_))
     ));
 
@@ -212,7 +217,7 @@ pub async fn publishers(store: &dyn Store) {
         .await
         .unwrap();
     let target = store
-        .merge_publishers(&ctx, "region", "city")
+        .merge_publishers(&ctx, "region", "city", audit("publisher.merge"))
         .await
         .unwrap();
     assert_eq!(target.name, "city");
@@ -239,7 +244,10 @@ pub async fn publishers(store: &dyn Store) {
     assert_eq!(source.merged_into.as_deref(), Some("city"));
     assert_eq!(source.state, RecordState::Withdrawn);
     // Withdrawing the merged name touches that record, never the target it redirects to.
-    let w = store.withdraw_publisher(&ctx, "region").await.unwrap();
+    let w = store
+        .withdraw_publisher(&ctx, "region", audit("publisher.withdraw"))
+        .await
+        .unwrap();
     assert_eq!(w.name, "region");
     let city = store.get_publisher(&ctx, "city").await.unwrap().unwrap();
     assert_eq!(
@@ -250,17 +258,17 @@ pub async fn publishers(store: &dyn Store) {
 
     // Merging a publisher into itself, or an unknown one, is refused.
     let err = store
-        .merge_publishers(&ctx, "city", "city")
+        .merge_publishers(&ctx, "city", "city", audit("publisher.merge"))
         .await
         .unwrap_err();
     assert!(matches!(err, DataroomError::Validation { .. }), "{err:?}");
     let err = store
-        .merge_publishers(&ctx, "ghost", "city")
+        .merge_publishers(&ctx, "ghost", "city", audit("publisher.merge"))
         .await
         .unwrap_err();
     assert!(matches!(err, DataroomError::NotFound(_)), "{err:?}");
     let err = store
-        .merge_publishers(&ctx, "city", "ghost")
+        .merge_publishers(&ctx, "city", "ghost", audit("publisher.merge"))
         .await
         .unwrap_err();
     assert!(matches!(err, DataroomError::NotFound(_)), "{err:?}");
@@ -271,7 +279,7 @@ pub async fn publishers(store: &dyn Store) {
         .await
         .unwrap();
     store
-        .merge_publishers(&ctx, "region", "third")
+        .merge_publishers(&ctx, "region", "third", audit("publisher.merge"))
         .await
         .unwrap();
     for ds in store.list_datasets(&ctx).await.unwrap() {
@@ -409,10 +417,15 @@ pub async fn datasets(store: &dyn Store) {
             .title,
         "View v1"
     );
-    store.delete_resource_view(&ctx, "v2").await.unwrap();
+    store
+        .delete_resource_view(&ctx, "v2", audit("resource_view.delete"))
+        .await
+        .unwrap();
     assert!(store.get_resource_view(&ctx, "v2").await.unwrap().is_none());
     assert!(matches!(
-        store.delete_resource_view(&ctx, "v2").await,
+        store
+            .delete_resource_view(&ctx, "v2", audit("resource_view.delete"))
+            .await,
         Err(DataroomError::NotFound(_))
     ));
 
@@ -431,7 +444,10 @@ pub async fn datasets(store: &dyn Store) {
         .upsert_shacl_report(&ctx, shacl_report("pkg-air", "dcat-ap-3.0.1", false))
         .await
         .unwrap();
-    store.purge_dataset(&ctx, "air").await.unwrap();
+    store
+        .purge_dataset(&ctx, "air", audit("dataset.purge"))
+        .await
+        .unwrap();
     assert!(store.get_dataset(&ctx, "air").await.unwrap().is_none());
     assert!(
         store
@@ -453,7 +469,9 @@ pub async fn datasets(store: &dyn Store) {
         .is_empty());
     assert!(store.get_resource_view(&ctx, "v1").await.unwrap().is_none());
     assert!(matches!(
-        store.purge_dataset(&ctx, "air").await,
+        store
+            .purge_dataset(&ctx, "air", audit("dataset.purge"))
+            .await,
         Err(DataroomError::NotFound(_))
     ));
 }
@@ -516,6 +534,404 @@ pub async fn harvest_lock(store: &dyn Store) {
     let c = store.get_harvest_run(&ctx, "run-c").await.unwrap().unwrap();
     assert_eq!(c.state, dataroom_core::HarvestRunState::Failed);
     assert!(c.error.unwrap().contains("abandoned"));
+}
+
+/// The answers no other case reaches: an unknown catalogue or source, a refused save that
+/// records no activity, a stale save of a dataset named only by its slug, a merge redirect to
+/// a publisher that is not there, and a report keeping the id it came with.
+pub async fn edges(store: &dyn Store) {
+    let (org, cat) = tenant();
+    assert!(!store.delete_catalogue(org, cat).await.unwrap());
+    let host = unique_host("edges");
+    store
+        .upsert_catalogue(catalogue(org, cat, "edges", &host))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+
+    // Another catalogue's host: refused, and no activity row is left behind.
+    let (org2, cat2) = tenant();
+    let taken = store
+        .save_catalogue(
+            catalogue(org2, cat2, "thief", &host),
+            None,
+            activity("act-cat", "", "2026-11-09T10:00:00Z"),
+        )
+        .await;
+    assert!(
+        matches!(taken, Err(DataroomError::Conflict(_))),
+        "{taken:?}"
+    );
+    assert!(store
+        .list_activity(&member_ctx(org2, cat2), None, 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    store
+        .upsert_publisher(&ctx, publisher("city"))
+        .await
+        .unwrap();
+    store
+        .upsert_dataset(&ctx, dataset("air", "city", "public"))
+        .await
+        .unwrap();
+    // A dataset named only by its slug and read at another time: changed since read.
+    let mut stale = dataset("air", "city", "public");
+    stale.id.clear();
+    let refused = store
+        .save_dataset(
+            &ctx,
+            stale,
+            Some(ts("2020-01-01T00:00:00Z")),
+            activity("act-1", "", "2026-11-09T10:00:00Z"),
+        )
+        .await;
+    assert!(
+        matches!(&refused, Err(DataroomError::Conflict(m)) if m.contains("'air' was changed")),
+        "{refused:?}"
+    );
+    // A second dataset under a slug in use: refused, no activity row.
+    let mut twin = dataset("air", "city", "public");
+    twin.id = "pkg-twin".into();
+    let refused = store
+        .save_dataset(
+            &ctx,
+            twin,
+            None,
+            activity("act-2", "", "2026-11-09T10:00:00Z"),
+        )
+        .await;
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(store
+        .list_activity(&ctx, None, 10)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // A redirect to a publisher that is not there answers the publisher itself.
+    let mut moved = publisher("moved");
+    moved.merged_into = Some("pub-ghost".into());
+    store.upsert_publisher(&ctx, moved).await.unwrap();
+    let got = store.get_publisher(&ctx, "moved").await.unwrap().unwrap();
+    assert_eq!(
+        (got.name.as_str(), got.merged_into.as_deref()),
+        ("moved", Some("pub-ghost"))
+    );
+
+    // A merge into a publisher merged before lands on the one it was merged into.
+    for name in ["old", "new", "late"] {
+        store.upsert_publisher(&ctx, publisher(name)).await.unwrap();
+    }
+    store
+        .upsert_dataset(&ctx, dataset("noise", "late", "public"))
+        .await
+        .unwrap();
+    store
+        .merge_publishers(&ctx, "old", "new", audit("publisher.merge"))
+        .await
+        .unwrap();
+    let target = store
+        .merge_publishers(&ctx, "late", "old", audit("publisher.merge"))
+        .await
+        .unwrap();
+    assert_eq!(target.name, "new");
+    let late = store
+        .list_publishers(&ctx)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|p| p.name == "late")
+        .unwrap();
+    assert_eq!(late.merged_into.as_deref(), Some("new"));
+    let noise = store.get_dataset(&ctx, "noise").await.unwrap().unwrap();
+    assert_eq!(noise.publisher_id, "new");
+
+    // A save naming its own activity object keeps it.
+    let saved = store
+        .save_dataset(
+            &ctx,
+            dataset("water", "city", "public"),
+            None,
+            activity("act-water", "water-object", "2026-11-09T10:00:00Z"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.id, "pkg-water");
+    let held = store.get_catalogue(org, cat).await.unwrap().unwrap();
+    store
+        .save_catalogue(
+            held.clone(),
+            Some(held.modified),
+            activity("act-cat", "catalogue-object", "2026-11-09T10:00:00Z"),
+        )
+        .await
+        .unwrap();
+    for object in ["water-object", "catalogue-object"] {
+        let rows = store.list_activity(&ctx, Some(object), 10).await.unwrap();
+        assert_eq!(rows.len(), 1, "{object}");
+    }
+
+    // A resource id another dataset holds: refused.
+    let mut copy = dataset("copy", "city", "public");
+    copy.distributions[0].id = saved.distributions[0].id.clone();
+    let refused = store.upsert_dataset(&ctx, copy).await;
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(store.get_dataset(&ctx, "copy").await.unwrap().is_none());
+
+    let mut report = shacl_report("pkg-air", "dcat-ap-3.0.1", true);
+    report.id = "report-kept".into();
+    let stored = store.upsert_shacl_report(&ctx, report).await.unwrap();
+    assert_eq!(stored.id, "report-kept");
+
+    // A harvest source goes with its runs; another source's runs stay; a second delete finds
+    // nothing.
+    store
+        .upsert_harvest_source(&ctx, harvest_source("nkod"))
+        .await
+        .unwrap();
+    store
+        .upsert_harvest_source(&ctx, harvest_source("arcgis"))
+        .await
+        .unwrap();
+    for (id, source) in [("run-n", "hs-nkod"), ("run-a", "hs-arcgis")] {
+        store
+            .upsert_harvest_run(&ctx, harvest_run(id, source, "2026-11-09T03:00:00Z"))
+            .await
+            .unwrap();
+    }
+    assert!(!store.delete_harvest_source(&ctx, "nobody").await.unwrap());
+    assert!(store.delete_harvest_source(&ctx, "nkod").await.unwrap());
+    assert!(store
+        .get_harvest_source(&ctx, "hs-nkod")
+        .await
+        .unwrap()
+        .is_none());
+    let runs = store.list_harvest_runs(&ctx, None).await.unwrap();
+    assert_eq!(names(&runs, |r| r.id.clone()), ["run-a"]);
+    assert!(!store.delete_harvest_source(&ctx, "hs-nkod").await.unwrap());
+    assert!(store
+        .get_harvest_source(&ctx, "arcgis")
+        .await
+        .unwrap()
+        .is_some());
+
+    // Deleting the catalogue empties every kind of row it held and no other catalogue's.
+    let (_, cat_b) = tenant();
+    store
+        .upsert_catalogue(catalogue(org, cat_b, "edges-b", &unique_host("edges-b")))
+        .await
+        .unwrap();
+    let ctx_b = member_ctx(org, cat_b);
+    store
+        .upsert_publisher(&ctx_b, publisher("kept"))
+        .await
+        .unwrap();
+    // The other catalogue holds a row of every kind, and its host is its own in the
+    // Organization too.
+    let b = store
+        .upsert_dataset(&ctx_b, dataset("b-data", "kept", "public"))
+        .await
+        .unwrap();
+    let b_resource = b.distributions[0].id.clone();
+    store
+        .upsert_resource_view(&ctx_b, view("view-b", &b_resource, 1))
+        .await
+        .unwrap();
+    store
+        .upsert_harvest_source(&ctx_b, harvest_source("b-src"))
+        .await
+        .unwrap();
+    store
+        .record_activity(
+            &ctx_b,
+            activity("act-b", "b-object", "2026-11-09T10:00:00Z"),
+        )
+        .await
+        .unwrap();
+    store
+        .upsert_shacl_report(&ctx_b, shacl_report("pkg-b-data", "eu", true))
+        .await
+        .unwrap();
+    store
+        .upsert_profile(&ctx_b, profile("b-profile", "1.0"))
+        .await
+        .unwrap();
+    store
+        .upsert_page(&ctx_b, page("b-about", "sk"))
+        .await
+        .unwrap();
+    store.upsert_plugin(&ctx_b, plugin("b-map")).await.unwrap();
+    let b_host = store.get_catalogue(org, cat_b).await.unwrap().unwrap().host;
+    let (_, cat_c) = tenant();
+    let same_host = store
+        .upsert_catalogue(catalogue(org, cat_c, "edges-c", &b_host))
+        .await;
+    assert!(
+        matches!(same_host, Err(DataroomError::Conflict(_))),
+        "{same_host:?}"
+    );
+    let resource = saved.distributions[0].id.clone();
+    store
+        .upsert_resource_view(&ctx, view("view-1", &resource, 1))
+        .await
+        .unwrap();
+    store
+        .upsert_profile(&ctx, profile("local", "1.0"))
+        .await
+        .unwrap();
+    store.upsert_page(&ctx, page("about", "sk")).await.unwrap();
+    store.upsert_plugin(&ctx, plugin("map")).await.unwrap();
+    assert!(store.delete_catalogue(org, cat).await.unwrap());
+    let gone = store.get_catalogue(org, cat).await.unwrap().unwrap();
+    assert!(gone.deleted.is_some());
+    assert_eq!(
+        names(&store.list_publishers(&ctx_b).await.unwrap(), |p| p
+            .name
+            .clone()),
+        ["kept"]
+    );
+    assert!(store.list_publishers(&ctx).await.unwrap().is_empty());
+    assert!(store
+        .list_harvest_runs(&ctx, None)
+        .await
+        .unwrap()
+        .is_empty());
+    let profiles = store.list_profiles(&ctx_b).await.unwrap();
+    let kept = [
+        store
+            .list_resource_views(&ctx_b, &b_resource)
+            .await
+            .unwrap()
+            .len(),
+        store.list_harvest_sources(&ctx_b).await.unwrap().len(),
+        store
+            .list_activity(&ctx_b, Some("b-object"), 10)
+            .await
+            .unwrap()
+            .len(),
+        store
+            .list_shacl_reports(&ctx_b, None, None)
+            .await
+            .unwrap()
+            .len(),
+        profiles.iter().filter(|p| p.id == "b-profile").count(),
+        store.list_pages(&ctx_b).await.unwrap().len(),
+        store.list_plugins(&ctx_b).await.unwrap().len(),
+    ];
+    assert_eq!(
+        kept, [1; 7],
+        "views, sources, activity, reports, profiles, pages, plugins"
+    );
+}
+
+/// Two catalogues of one Organization holding the same dataset slug, distribution id, view
+/// and report: every read and the purge stay inside the catalogue asked.
+pub async fn twin_catalogues(store: &dyn Store) {
+    let (org, cat_a) = tenant();
+    let (_, cat_b) = tenant();
+    let mut ctxs = Vec::new();
+    for (cat, name) in [(cat_a, "twin-a"), (cat_b, "twin-b")] {
+        store
+            .upsert_catalogue(catalogue(org, cat, name, &unique_host(name)))
+            .await
+            .unwrap();
+        let ctx = member_ctx(org, cat);
+        store
+            .upsert_publisher(&ctx, publisher("city"))
+            .await
+            .unwrap();
+        let mut twin = dataset("twin", "city", "public");
+        twin.title = [("sk".to_owned(), name.to_owned())].into();
+        let twin = store.upsert_dataset(&ctx, twin).await.unwrap();
+        let resource = twin.distributions[0].id.clone();
+        store
+            .upsert_resource_view(&ctx, view(&format!("view-{name}"), &resource, 1))
+            .await
+            .unwrap();
+        store
+            .upsert_shacl_report(&ctx, shacl_report(&twin.id, "eu", true))
+            .await
+            .unwrap();
+        store
+            .upsert_profile(&ctx, profile("local", "1.0"))
+            .await
+            .unwrap();
+        store.upsert_page(&ctx, page("about", "sk")).await.unwrap();
+        store.upsert_plugin(&ctx, plugin("map")).await.unwrap();
+        ctxs.push((ctx, resource));
+    }
+    let [(a, resource), (b, _)] = <[_; 2]>::try_from(ctxs).unwrap();
+    let datasets = store.list_datasets(&a).await.unwrap();
+    assert_eq!(names(&datasets, |d| d.title["sk"].clone()), ["twin-a"]);
+    let (ds, _) = store
+        .get_distribution(&a, &resource)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ds.title["sk"], "twin-a");
+    let (ds, _) = store
+        .get_distribution(&b, &resource)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ds.title["sk"], "twin-b");
+    let views = store.list_resource_views(&a, &resource).await.unwrap();
+    assert_eq!(names(&views, |v| v.id.clone()), ["view-twin-a"]);
+
+    let local = store.list_profiles(&a).await.unwrap();
+    assert_eq!(local.iter().filter(|p| p.id == "local").count(), 1);
+    assert_eq!(store.list_pages(&a).await.unwrap().len(), 1);
+    assert_eq!(store.list_plugins(&a).await.unwrap().len(), 1);
+
+    // Another catalogue's running harvest of the same source holds nothing here; a run started
+    // at the deadline itself is not stale yet.
+    let running = |id: &str, started: &str| {
+        let mut r = harvest_run(id, "hs-x", started);
+        r.state = dataroom_core::HarvestRunState::Running;
+        r.finished_at = None;
+        r
+    };
+    let (started, earlier) = ("2026-11-09T03:00:00Z", ts("2026-11-09T02:00:00Z"));
+    for (ctx, id) in [(&b, "run-b"), (&a, "run-a")] {
+        let claimed = store
+            .claim_harvest_run(ctx, running(id, started), earlier)
+            .await;
+        assert!(claimed.unwrap(), "{id}");
+    }
+    let at_deadline = store
+        .claim_harvest_run(&a, running("run-a2", "2026-11-09T04:00:00Z"), ts(started))
+        .await;
+    assert!(
+        !at_deadline.unwrap(),
+        "run-a started at the deadline still holds"
+    );
+
+    store
+        .purge_dataset(&a, "twin", audit("dataset.purge"))
+        .await
+        .unwrap();
+    assert!(store
+        .list_resource_views(&a, &resource)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .list_shacl_reports(&a, None, None)
+        .await
+        .unwrap()
+        .is_empty());
+    let views = store.list_resource_views(&b, &resource).await.unwrap();
+    assert_eq!(names(&views, |v| v.id.clone()), ["view-twin-b"]);
+    assert_eq!(
+        store
+            .list_shacl_reports(&b, None, None)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(store.get_dataset(&b, "twin").await.unwrap().is_some());
 }
 
 pub async fn records(store: &dyn Store) {
@@ -880,9 +1296,18 @@ pub async fn isolation(store: &dyn Store) {
     let mut ds_b = store.get_dataset(&b, "air").await.unwrap().unwrap();
     ds_b.title.insert("sk".into(), "B only".into());
     store.upsert_dataset(&b, ds_b).await.unwrap();
-    store.withdraw_publisher(&b, "city").await.unwrap();
-    store.delete_resource_view(&b, "v1").await.unwrap();
-    store.purge_dataset(&b, "air").await.unwrap();
+    store
+        .withdraw_publisher(&b, "city", audit("publisher.withdraw"))
+        .await
+        .unwrap();
+    store
+        .delete_resource_view(&b, "v1", audit("resource_view.delete"))
+        .await
+        .unwrap();
+    store
+        .purge_dataset(&b, "air", audit("dataset.purge"))
+        .await
+        .unwrap();
 
     let ds_a = store.get_dataset(&a, "air").await.unwrap().unwrap();
     assert_eq!(ds_a.title["sk"], "Dataset air");
@@ -908,7 +1333,11 @@ pub async fn isolation(store: &dyn Store) {
         assert_eq!(store.list_publishers(c).await.unwrap().len(), 1);
         assert_eq!(store.list_harvest_sources(c).await.unwrap().len(), 1);
         assert_eq!(store.list_harvest_runs(c, None).await.unwrap().len(), 1);
-        assert_eq!(store.list_activity(c, None, 100).await.unwrap().len(), 1);
+        // b's three audited writes above added their rows to b's log alone.
+        assert_eq!(
+            store.list_activity(c, None, 100).await.unwrap().len(),
+            1 + 3 * usize::from(std::ptr::eq(c, &b))
+        );
         // b's report was of the dataset b purged.
         assert_eq!(
             store.list_shacl_reports(c, None, None).await.unwrap().len(),
@@ -1184,4 +1613,214 @@ pub async fn guarded_writes(store: &dyn Store) {
         .await
         .unwrap();
     assert_eq!(names(&rows, |r| r.id.clone()), ["act-c1"]);
+}
+
+/// The audited writes of every other record kind: each commits with its activity row or not at
+/// all (AUD-02, S11-13). A taken activity id refuses the write and leaves the record as it was;
+/// an accepted write leaves one row naming its record.
+pub async fn audited_writes(store: &dyn Store) {
+    let (org, cat) = tenant();
+    store
+        .upsert_catalogue(catalogue(org, cat, "aw", &unique_host("aw")))
+        .await
+        .unwrap();
+    let ctx = member_ctx(org, cat);
+    store
+        .record_activity(&ctx, audit_row("act-taken", "taken"))
+        .await
+        .unwrap();
+    let taken = || audit_row("act-taken", "taken");
+    fn refused<T: std::fmt::Debug>(what: &str, answer: Result<T, DataroomError>) {
+        assert!(
+            matches!(answer, Err(DataroomError::Conflict(_))),
+            "{what}: {answer:?}"
+        );
+    }
+
+    // Publisher: the propose write, guarded on the version it was decided on (S11-25).
+    let city = store
+        .save_publisher(&ctx, publisher("city"), None, audit("publisher.propose"))
+        .await
+        .unwrap();
+    let mut edit = city.clone();
+    edit.uri = "https://example.org/publisher/lost".into();
+    refused(
+        "save_publisher",
+        store
+            .save_publisher(&ctx, edit.clone(), Some(city.modified), taken())
+            .await,
+    );
+    refused(
+        "save_publisher on a stale read",
+        store
+            .save_publisher(
+                &ctx,
+                edit.clone(),
+                Some(ts("2000-01-01T00:00:00Z")),
+                audit("publisher.propose"),
+            )
+            .await,
+    );
+    assert_eq!(
+        store.get_publisher(&ctx, "city").await.unwrap(),
+        Some(city.clone())
+    );
+    let city = store
+        .save_publisher(&ctx, edit, Some(city.modified), audit("publisher.propose"))
+        .await
+        .unwrap();
+    // A version with nanoseconds (TimestampTz::now()) guards the next write as read back.
+    let mut town = publisher("town");
+    town.modified = ts("2026-11-01T10:00:00.123456789Z");
+    store
+        .save_publisher(&ctx, town, None, audit("publisher.propose"))
+        .await
+        .unwrap();
+    let read = store.get_publisher(&ctx, "town").await.unwrap().unwrap();
+    store
+        .save_publisher(
+            &ctx,
+            read.clone(),
+            Some(read.modified),
+            audit("publisher.propose"),
+        )
+        .await
+        .expect("a guarded write on the version just read");
+    store
+        .save_publisher(&ctx, publisher("region"), None, audit("publisher.propose"))
+        .await
+        .unwrap();
+    store
+        .upsert_dataset(&ctx, dataset("bus", "region", "public"))
+        .await
+        .unwrap();
+
+    // Withdraw and merge: neither the publisher nor its datasets move without the row.
+    refused(
+        "withdraw_publisher",
+        store.withdraw_publisher(&ctx, "region", taken()).await,
+    );
+    refused(
+        "merge_publishers",
+        store
+            .merge_publishers(&ctx, "region", "city", taken())
+            .await,
+    );
+    let region = store.get_publisher(&ctx, "region").await.unwrap().unwrap();
+    assert_eq!(
+        (region.state, region.merged_into),
+        (RecordState::Active, None)
+    );
+    let bus = store.get_dataset(&ctx, "bus").await.unwrap().unwrap();
+    assert_eq!(bus.publisher_id, "region");
+
+    // Harvest source, plugin, view, profile and purge.
+    refused(
+        "save_harvest_source",
+        store
+            .save_harvest_source(&ctx, harvest_source("feed"), taken())
+            .await,
+    );
+    assert_eq!(store.get_harvest_source(&ctx, "feed").await.unwrap(), None);
+    refused(
+        "save_plugin",
+        store.save_plugin(&ctx, plugin("viz"), taken()).await,
+    );
+    assert!(store.list_plugins(&ctx).await.unwrap().is_empty());
+    refused(
+        "save_resource_view",
+        store
+            .save_resource_view(&ctx, view("v1", "res-1", 1), taken())
+            .await,
+    );
+    assert_eq!(store.get_resource_view(&ctx, "v1").await.unwrap(), None);
+    refused(
+        "save_profile",
+        store
+            .save_profile(&ctx, profile("local", "1.0"), taken())
+            .await,
+    );
+    assert!(store.list_profiles(&ctx).await.unwrap().is_empty());
+    refused(
+        "purge_dataset",
+        store.purge_dataset(&ctx, "bus", taken()).await,
+    );
+    assert!(store.get_dataset(&ctx, "bus").await.unwrap().is_some());
+    let unchanged = store.list_activity(&ctx, None, 50).await.unwrap();
+
+    // The same writes with a fresh row go through, each with one row naming its record.
+    let feed = store
+        .save_harvest_source(
+            &ctx,
+            harvest_source("feed"),
+            audit("harvest_source.propose"),
+        )
+        .await
+        .unwrap();
+    store
+        .save_plugin(&ctx, plugin("viz"), audit("plugin.propose"))
+        .await
+        .unwrap();
+    store
+        .save_resource_view(&ctx, view("v1", "res-1", 1), audit("resource_view.propose"))
+        .await
+        .unwrap();
+    refused(
+        "delete_resource_view",
+        store.delete_resource_view(&ctx, "v1", taken()).await,
+    );
+    assert!(store.get_resource_view(&ctx, "v1").await.unwrap().is_some());
+    store
+        .delete_resource_view(&ctx, "v1", audit("resource_view.delete"))
+        .await
+        .unwrap();
+    store
+        .save_profile(&ctx, profile("local", "1.0"), audit("profile.propose"))
+        .await
+        .unwrap();
+    refused(
+        "save_profile of a stored version",
+        store
+            .save_profile(&ctx, profile("local", "1.0"), audit("profile.propose"))
+            .await,
+    );
+    let merged = store
+        .merge_publishers(&ctx, "region", "city", audit("publisher.merge"))
+        .await
+        .unwrap();
+    assert_eq!(merged.id, city.id);
+    let withdrawn = store
+        .withdraw_publisher(&ctx, "region", audit("publisher.withdraw"))
+        .await
+        .unwrap();
+    assert_eq!(withdrawn.state, RecordState::Withdrawn);
+    store
+        .purge_dataset(&ctx, "pkg-bus", audit("dataset.purge"))
+        .await
+        .unwrap();
+    assert_eq!(store.get_dataset(&ctx, "bus").await.unwrap(), None);
+
+    let rows = store.list_activity(&ctx, None, 50).await.unwrap();
+    let mut written: Vec<String> = rows
+        .iter()
+        .filter(|r| !unchanged.contains(r))
+        .map(|r| format!("{} {}", r.operation, r.object_id))
+        .collect();
+    written.sort();
+    assert_eq!(
+        written,
+        [
+            "dataset.purge pkg-bus".to_owned(),
+            format!("harvest_source.propose {}", feed.id),
+            "plugin.propose viz".into(),
+            "profile.propose local:1.0".into(),
+            format!("publisher.merge {}", city.id),
+            "publisher.withdraw pub-region".into(),
+            "resource_view.delete v1".into(),
+            "resource_view.propose v1".into(),
+        ]
+    );
+    assert!(rows
+        .iter()
+        .all(|r| (r.org_id, r.catalogue_id) == (org, cat)));
 }

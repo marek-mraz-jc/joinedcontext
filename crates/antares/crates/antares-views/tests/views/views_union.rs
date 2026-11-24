@@ -161,6 +161,36 @@ async fn the_order_and_the_cursor_are_stable_across_views() -> Result<(), String
     assert_eq!(paged, whole);
     let again = pairs(&union(&f.app, "views=fleet,cars,history&type=Car,Person").await);
     assert_eq!(again, whole, "the same read answers the same order");
+    // one view holding more than a page: a full page is not its end
+    let first = union(&f.app, "views=cars&type=Car&limit=1").await;
+    assert_eq!(first.ids().len(), 1, "{}", first.text);
+    let next = first
+        .link("next")
+        .ok_or("a full page of one view links the next")?;
+    let second = send(&f.app, Method::GET, &next, &[LD], None).await;
+    assert_eq!(second.ids().len(), 1, "{}", second.text);
+    assert_ne!(second.ids(), first.ids());
+    Ok(())
+}
+
+/// Each view is read with the request's headers: a mapped view, which takes
+/// no Link @context, refuses a union read that names one, and answers the
+/// same read without it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_request_headers_reach_every_view() -> Result<(), String> {
+    let f = crate::views_mapped::vehicles().await?;
+    let plain = union(&f.app, "views=vehicles&type=Vehicle").await;
+    assert_eq!(plain.status, StatusCode::OK, "{}", plain.text);
+    let link = "<https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"";
+    let a = send(
+        &f.app,
+        Method::GET,
+        &format!("{UNION}?views=vehicles&type=Vehicle"),
+        &[("Link", link)],
+        None,
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::BAD_REQUEST, "{}", a.text);
     Ok(())
 }
 
@@ -405,6 +435,38 @@ async fn view_pages_past_the_answer_budget_together_are_413() -> Result<(), Stri
     .await;
     assert_eq!(many.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", many.text);
     assert!(many.text.contains("max_answer_bytes"), "{}", many.text);
+    Ok(())
+}
+
+/// A view page of more than a mebibyte is well under the 32 MiB one view may
+/// answer a read across views.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_view_page_over_a_mebibyte_is_read() -> Result<(), String> {
+    let f = fixture().await?;
+    put_view(
+        &f.app,
+        &json!({"id": "blobs", "tenant": "city", "selector": ["Blob"],
+                "rules": [{"types": ["Blob"], "attributes": ["data"]}], "operations": READS}),
+    )
+    .await?;
+    let data = "x".repeat(400 * 1024);
+    for i in 0..3 {
+        let entity = json!({"id": format!("urn:ngsi-ld:Blob:{i}"), "type": "Blob",
+                            "data": {"type": "Property", "value": data}});
+        let a = send(
+            &f.app,
+            Method::POST,
+            "/ngsi-ld/v1/entities",
+            &[("NGSILD-Tenant", "city")],
+            Some(&entity),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::CREATED, "{}", a.text);
+    }
+    let a = union(&f.app, "views=blobs&type=Blob").await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+    assert_eq!(a.ids().len(), 3);
+    assert!(a.text.len() > 1024 * 1024 + 32, "{}", a.text.len());
     Ok(())
 }
 

@@ -373,17 +373,33 @@ pub trait Store: Send + Sync {
         org_id: OrgId,
         event_id: uuid::Uuid,
     ) -> StoreFuture<'_, bool>;
-    /// The oldest undispatched event, held for the caller to send and mark. A store replicas
-    /// share leases it, so one of them sends it; the default fits a store of one process, whose
-    /// dispatcher holds a lock.
+    /// The oldest undispatched event not waiting for a retry, held for the caller to send and
+    /// then mark or give back with [`Store::retry_outbox`]. A store replicas share leases it, so
+    /// one of them sends it; the default fits a store of one process, whose dispatcher holds a
+    /// lock, and knows no retries.
     fn claim_outbox(
         &self,
         instance_id: InstanceId,
         org_id: OrgId,
-    ) -> StoreFuture<'_, Option<OutboxEvent>> {
+    ) -> StoreFuture<'_, Option<OutboxClaim>> {
         let pending = self.list_undispatched_outbox(instance_id, org_id);
-        Box::pin(async move { Ok(pending.await?.into_iter().next()) })
+        Box::pin(async move {
+            Ok(pending
+                .await?
+                .into_iter()
+                .next()
+                .map(|event| OutboxClaim { event, attempts: 0 }))
+        })
     }
+    /// Gives a claimed event back after a failed delivery: claimable again `after` from now,
+    /// with one attempt more. `false` when the event is unknown or dispatched.
+    fn retry_outbox(
+        &self,
+        instance_id: InstanceId,
+        org_id: OrgId,
+        event_id: uuid::Uuid,
+        after: std::time::Duration,
+    ) -> StoreFuture<'_, bool>;
     fn list_outbox_events(
         &self,
         instance_id: InstanceId,

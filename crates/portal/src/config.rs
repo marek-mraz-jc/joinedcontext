@@ -60,6 +60,9 @@ pub struct Config {
     /// Branch projects (TEN-12, CHG-15): live branches per project and a new one's lifetime in
     /// days (`JC_PORTAL_BRANCHES_PER_PROJECT`, `JC_PORTAL_BRANCH_LIFETIME_DAYS`).
     pub branches: crate::api::branches::BranchSettings,
+    /// How many days the audit of MCP and connector calls is kept
+    /// (`JC_PORTAL_AUDIT_RETENTION_DAYS`, 30 to 3650, default 400; AUD-04).
+    pub audit_retention_days: u32,
     /// Each Organization's own catalogue (`JC_PORTAL_ORGANIZATION_CATALOGUES`, a JSON array of
     /// `{organization, url, api?, reach?, dataHost?, tokenFile}`; jc fills it from its
     /// `[[organizations]]`): every Endpoint of that Organization's projects publishes there,
@@ -2207,6 +2210,19 @@ impl Config {
         )
         .map_err(|(var, reason)| ConfigError::Invalid { var, reason })?;
 
+        let audit_retention_days = match lookup("JC_PORTAL_AUDIT_RETENTION_DAYS") {
+            None => crate::connectors::AUDIT_RETENTION_DAYS,
+            Some(value) => value
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|days| (30..=3650).contains(days))
+                .ok_or_else(|| ConfigError::Invalid {
+                    var: "JC_PORTAL_AUDIT_RETENTION_DAYS",
+                    reason: format!("'{value}' is not a whole number from 30 to 3650"),
+                })?,
+        };
+
         let organization_addresses = crate::organization_host::parse_addresses(
             &lookup("JC_PORTAL_ORGANIZATION_ADDRESSES").unwrap_or_default(),
         )
@@ -2469,6 +2485,7 @@ impl Config {
             organization_realms,
             portal_settings,
             branches,
+            audit_retention_days,
             organization_catalogues,
             organization_addresses,
             oidc,
@@ -2577,6 +2594,7 @@ impl Config {
             organization_realms: Vec::new(),
             portal_settings: crate::portals::PortalSettings::default(),
             branches: crate::api::branches::BranchSettings::default(),
+            audit_retention_days: crate::connectors::AUDIT_RETENTION_DAYS,
             organization_catalogues: Vec::new(),
             organization_addresses: Vec::new(),
             oidc: None,
@@ -2729,6 +2747,22 @@ mod tests {
 
     fn one(var: &'static str, value: &'static str) -> impl Fn(&str) -> Option<String> {
         move |name: &str| (name == var).then(|| value.to_owned())
+    }
+
+    /// T-7542: the audit is kept 400 days unless the installation says 30 to 3650 (AUD-04).
+    #[test]
+    fn the_audit_retention_is_the_installations() {
+        let var = "JC_PORTAL_AUDIT_RETENTION_DAYS";
+        let days = |value: &'static str| Config::from_vars(one(var, value));
+        let unset = Config::from_vars(|_| None).expect("defaults parse");
+        assert_eq!(unset.audit_retention_days, 400);
+        assert_eq!(days("30").expect("30").audit_retention_days, 30);
+        for refused in ["29", "3651", "a month"] {
+            assert!(
+                matches!(days(refused), Err(ConfigError::Invalid { var: named, .. }) if named == var),
+                "{refused}"
+            );
+        }
     }
 
     /// A host value fills a forge variable the environment leaves unset; `from_vars` starts with

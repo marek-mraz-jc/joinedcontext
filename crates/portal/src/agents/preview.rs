@@ -272,16 +272,12 @@ mod tests {
             "src/App.tsx".to_owned(),
             "import lodash from \"lodash\";\nexport default () => lodash;\n".to_owned(),
         );
-        match document(&files, "bikes", &config(), None) {
-            Err(Refusal::Problems(problems)) => {
-                assert_eq!(problems.len(), 1, "{problems:?}");
-                assert_eq!(
-                    (problems[0].file.as_str(), problems[0].line),
-                    ("src/App.tsx", 1)
-                );
-            }
-            _ => panic!("a refused import built a document"),
-        }
+        let built = document(&files, "bikes", &config(), None);
+        assert!(
+            matches!(&built, Err(Refusal::Problems(problems))
+                if problems.len() == 1 && (problems[0].file.as_str(), problems[0].line) == ("src/App.tsx", 1)),
+            "a refused import built a document: {built:?}"
+        );
     }
 
     /// With the runtime built: the template is one document whose import map names every
@@ -290,18 +286,16 @@ mod tests {
     #[test]
     fn the_template_is_one_document_with_its_import_map_and_policy() {
         let files = template_files();
-        let doc = match document(
+        let built = document(
             &files,
             "bikes <demo>",
             &config(),
             Some("https://portal.example/api/v1/projects/p/basemap/"),
-        ) {
-            Ok(doc) => doc,
-            Err(Refusal::NoRuntime) => return,
-            Err(Refusal::Problems(problems)) => {
-                panic!("the template does not build: {problems:#?}")
-            }
-        };
+        );
+        if matches!(built, Err(Refusal::NoRuntime)) {
+            return;
+        }
+        let doc = built.expect("the template builds");
         let html = &doc.html;
         let map_json = html
             .split("<script type=\"importmap\">")
@@ -314,9 +308,7 @@ mod tests {
             "@app/src/App.tsx",
             "@app/src/design-tokens.json",
         ]) {
-            let url = map["imports"][name]
-                .as_str()
-                .unwrap_or_else(|| panic!("{name} is not in the import map"));
+            let url = map["imports"][name].as_str().expect(name);
             assert!(url.starts_with("data:text/javascript,"), "{name}");
         }
         assert!(
@@ -355,5 +347,19 @@ mod tests {
             std::fs::write(format!("{dir}/template.html"), html).unwrap();
             std::fs::write(format!("{dir}/template.csp"), &doc.csp).unwrap();
         }
+    }
+
+    /// The embeds answer through the `RustEmbed` trait as they do directly: the template holds
+    /// the entry the Portal owns, the wasm additions their server crate, and the runtime's
+    /// manifest is either built or absent, never something else.
+    #[test]
+    fn the_embedded_folders_answer_through_their_trait() {
+        let main = <Template as rust_embed::RustEmbed>::get(MAIN).expect("the template's entry");
+        assert_eq!(main.data, Template::get(MAIN).expect("the entry").data);
+        assert!(<TemplateWasm as rust_embed::RustEmbed>::get("server/Cargo.toml").is_some());
+        assert_eq!(
+            <Runtime as rust_embed::RustEmbed>::get("runtime.json").is_some(),
+            Runtime::iter().any(|name| name == "runtime.json")
+        );
     }
 }

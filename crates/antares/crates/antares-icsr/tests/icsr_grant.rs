@@ -217,10 +217,28 @@ async fn the_grant_routes_check_what_they_store() {
             "/q/grants/b/a",
             json!({"target": "b", "source": "a", "view": "No View"}),
         ),
+        (
+            "/q/grants/b/a",
+            json!({"target": "b", "source": "a", "subject": {"x-subject": "line\nbreak"}}),
+        ),
     ] {
         let a = send(&app, "PUT", path, None, None, Some(doc.clone())).await;
         assert_eq!(a.status, 400, "{doc}: {}", a.body);
     }
+    let a = send(
+        &app,
+        "PUT",
+        "/q/grants/b/a",
+        None,
+        None,
+        Some(json!({"target": "b", "source": "a", "subject": {"x-subject": "a\u{7f}"}})),
+    )
+    .await;
+    assert!(
+        a.body.to_string().contains("no header can carry"),
+        "{}",
+        a.body
+    );
     assert_eq!(
         send(&app, "GET", "/q/grants/b/a", None, None, None)
             .await
@@ -282,6 +300,19 @@ async fn icsr_a_stored_document_that_is_no_grant_of_its_pair_grants_nothing() {
         ("b~d", json!({"target": "b", "source": "a"})),
     ] {
         assert_eq!(ops.put_grant_doc(key, doc).await, Ok(false));
+    }
+    // a stored pair with an internal Tenant on either side is no grant (C8)
+    for (target, source) in [("antares-views", "a"), ("a", "antares-views")] {
+        let doc = json!({"target": target, "source": source});
+        assert_eq!(
+            ops.put_grant_doc(&format!("{target}~{source}"), doc).await,
+            Ok(false)
+        );
+        let held = antares_icsr::held(&ops, target, source).await;
+        assert_eq!(held.map(|g| g.is_some()), Ok(false), "{target}~{source}");
+        let path = format!("/q/grants/{target}/{source}");
+        let gone = send(&app, "DELETE", &path, None, None, None).await;
+        assert_eq!(gone.status, 404, "{path}: {}", gone.body);
     }
     for path in ["/q/grants/b/a", "/q/grants/b/c", "/q/grants/b/d"] {
         let a = send(&app, "GET", path, None, None, None).await;
@@ -526,6 +557,16 @@ async fn icsr_a_grant_naming_its_caller_decides_a_forward_across_organizations_a
         register(&app, c, "r1", Some(a), json!({})).await.status,
         403
     );
+    // only a self URL may name another Organization's Tenant: a socket forward has no grant check
+    let foreign = register(
+        &app,
+        b,
+        "r2",
+        Some(a),
+        json!({"endpoint": "http://broker.example.org"}),
+    )
+    .await;
+    assert_eq!(foreign.status, 400, "{}", foreign.body);
     assert_eq!(
         ids(&cars(&app, c, Some("carol")).await.body),
         Vec::<String>::new()

@@ -75,7 +75,8 @@ export interface ManifestGridProps<T> {
   rows: T[];
   rowKey: (row: T) => string;
   /** The list's read, for the skeleton, the failure panel and its retry. */
-  query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
+  /** The list's read; absent for rows the page already holds. A read that cannot fail gives no `refetch`. */
+  query?: { isPending: boolean; isError: boolean; error: unknown; refetch?: () => unknown };
   /** The first column, the row's name: a link to the object, never hidden. */
   name: GridColumn<T>;
   columns: GridColumn<T>[];
@@ -166,8 +167,12 @@ export function valueCounts<T>(rows: T[], column: GridColumn<T>): [string, numbe
   return [...counts.keys()].sort().map((value) => [value, counts.get(value) ?? 0]);
 }
 
+/** Rows the page already holds: nothing to wait for and nothing that failed. */
+const HELD: NonNullable<ManifestGridProps<unknown>["query"]> = { isPending: false, isError: false, error: null };
+
 export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
-  const { caption, storageKey, rows, rowKey, query, name, columns, actions, empty, edit, searchLabel } = props;
+  const { caption, storageKey, rows, rowKey, query = HELD, name, columns, actions, empty, edit, searchLabel } = props;
+  const { refetch } = query;
   const { t } = useTranslation();
   const [ownSearch, setOwnSearch] = useState("");
   const search = props.search ?? ownSearch;
@@ -222,7 +227,8 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
       {
         key: "actions",
         label: t("approvals.actions"),
-        text: () => "",
+        // The SDK never reads an actions column as text (no search, sort or filter); the type wants one.
+        text: name.text,
         actions: true,
         align: "right" as const,
         // One menu ends the row, Details first (owner 2026-10-31: no pinned column, no second button).
@@ -265,7 +271,7 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
     const failed = (
       <PageFailed
         error={query.error}
-        onRetry={() => void query.refetch()}
+        onRetry={refetch ? () => void refetch() : undefined}
         back={
           <Link to="/" className={buttonClass("secondary", "sm")}>
             {t("app.notFound.home")}
@@ -341,7 +347,6 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
           kept={rows.length}
           total={server.total ?? props.total ?? rows.length}
           step={step}
-          onMore={() => undefined}
           onMoreFromServer={
             server.hasMore
               ? () => {
@@ -460,7 +465,7 @@ export function GridFooter({
   kept: number;
   total: number;
   step: number;
-  onMore: () => void;
+  onMore?: () => void;
   /** Reads the next page from the server, once every row read so far is shown. */
   onMoreFromServer?: () => void;
 }): JSX.Element | null {

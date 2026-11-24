@@ -20,14 +20,14 @@ use dataroom_core::{
 };
 use dataroom_search::SearchFacets;
 use helpers::{
-    html_escape, jc_about, jc_assistant_guide, jc_developer_page, jc_examples, jc_explorer,
-    jc_format_chips, jc_is_source, jc_kind, jc_live, jc_map_config, jc_mcp_install, jc_model,
-    jc_more_rows, jc_page, jc_plain_glyphs, jc_preview, jc_resource_format_chip, jc_resource_label,
-    jc_resource_sections, jc_schema_org_script, jc_standard, jc_subscriptions, jc_try_prompt,
-    jc_visualizations, jc_what, publisher_card_info, render_breakable_html, AboutRow,
-    AssistantGuideView, ChartView, ExplorerView, LiveEndpointBox, McpInstallView, ResourceExample,
-    ResourcePreviewConfig, ResourceSectionView, StaticPageView, SubscriptionsView, GUIDE_IDS,
-    STATIC_PAGE_NAMES,
+    dataset_sections, displayed_about, html_escape, jc_about, jc_assistant_guide,
+    jc_developer_page, jc_examples, jc_explorer, jc_format_chips, jc_is_source, jc_kind, jc_live,
+    jc_map_config, jc_mcp_install, jc_model, jc_more_rows, jc_page, jc_plain_glyphs, jc_preview,
+    jc_resource_format_chip, jc_resource_label, jc_resource_sections, jc_schema_org_script,
+    jc_standard, jc_subscriptions, jc_try_prompt, jc_visualizations, jc_what, publisher_card_info,
+    render_breakable_html, AboutRow, AssistantGuideView, ChartView, ExplorerView, LiveEndpointBox,
+    McpInstallView, ResourceExample, ResourcePreviewConfig, ResourceSectionView, SectionView,
+    StaticPageView, SubscriptionsView, GUIDE_IDS, STATIC_PAGE_NAMES,
 };
 use i18n::{
     available_languages, format_ts_localized, jc_number, jc_rows, jc_t, language_display_name,
@@ -113,6 +113,7 @@ pub struct UiLabels {
     pub col_publisher: String,
     pub col_formats: String,
     pub col_modified: String,
+    pub col_description: String,
     pub publisher: String,
     pub topic: String,
     pub keywords: String,
@@ -289,6 +290,7 @@ impl UiLabels {
             col_publisher: t("publisher"),
             col_formats: t("format"),
             col_modified: t("updated"),
+            col_description: t("col_description"),
             publisher: t("publisher"),
             topic: t("topic"),
             keywords: t("keywords"),
@@ -792,6 +794,12 @@ pub struct DatasetListPageTemplate {
     pub remove_label: String,
     /// The active filters, carried as hidden fields so a new search or sort keeps them.
     pub hidden_params: Vec<(String, String)>,
+    /// What each dataset shows after its title, in the display's order (T-7743).
+    pub list_fields: Vec<String>,
+    /// Of those, the facts a card joins on one line: `publisher` and `modified`.
+    pub card_facts: Vec<String>,
+    /// Whether a card shows its format chips.
+    pub card_chips: bool,
 }
 
 /// Dataset detail page Askama template (`templates/dataset.html`, D3).
@@ -818,6 +826,9 @@ pub struct DatasetPageTemplate {
     pub map_config_json: Option<String>,
     pub map_embed_url: String,
     pub subscriptions: SubscriptionsView,
+    pub sections: Vec<SectionView>,
+    pub show_publisher: bool,
+    pub show_subscribe: bool,
     pub about_rows: Vec<AboutRow>,
     pub source_rows: Vec<AboutRow>,
     pub fold_sources: bool,
@@ -1261,7 +1272,16 @@ pub fn render_dataset_list_page(
     );
 
     let hidden_params = hidden_filter_params(active_params);
+    let list_fields = helpers::dataset_list_fields(&chrome.branding.display.dataset_list);
+    let card_facts = list_fields
+        .iter()
+        .filter(|f| matches!(**f, "publisher" | "modified"))
+        .map(|f| (*f).to_owned())
+        .collect();
     let tpl = DatasetListPageTemplate {
+        card_chips: list_fields.contains(&"format"),
+        list_fields: list_fields.iter().map(|f| (*f).to_owned()).collect(),
+        card_facts,
         found_heading: found_heading(total, query, &chrome.lang),
         remove_label: jc_t("remove", &chrome.lang),
         chrome,
@@ -1600,12 +1620,22 @@ pub fn render_dataset_page_linked(
     let map_config_json = map_cfg.map(|m| m.to_string());
     let subscriptions = jc_subscriptions(dataset, &chrome.lang, &catalogue.default_language);
 
-    let all_about = jc_about(
+    let all_about = displayed_about(
+        jc_about(
+            dataset,
+            publisher,
+            &chrome.lang,
+            &catalogue.default_language,
+        ),
         dataset,
-        publisher,
+        &chrome.branding.display.dataset.about,
+        &chrome.branding.dataset_fields,
         &chrome.lang,
         &catalogue.default_language,
     );
+    let sections = dataset_sections(&chrome.branding.display.dataset, &chrome.lang);
+    let show_publisher = sections.iter().any(|s| s.name == "publisher");
+    let show_subscribe = sections.iter().any(|s| s.name == "subscribe");
     let src_label = jc_t("source", &chrome.lang);
     let source_rows: Vec<AboutRow> = all_about
         .iter()
@@ -1710,6 +1740,9 @@ pub fn render_dataset_page_linked(
         map_config_json,
         map_embed_url,
         subscriptions,
+        sections,
+        show_publisher,
+        show_subscribe,
         about_rows,
         source_rows,
         fold_sources,

@@ -118,13 +118,18 @@ pub(crate) fn collect_all_objects_from_tips(
         .rev_walk(tips.iter().copied())
         .all()
         .map_err(|e| ShakoError::Git(format!("bundle rev_walk failed: {e}")))?;
-    for item in walk.flatten() {
+    // Strict: compaction deletes what this misses, so an object it cannot read stops it.
+    let unreadable =
+        |e: &dyn std::fmt::Display| ShakoError::Git(format!("object walk failed: {e}"));
+    for item in walk {
+        let item = item.map_err(|e| unreadable(&e))?;
         set.insert(item.id);
-        if let Ok(commit) = item.object()
-            && let Ok(tree) = commit.tree()
-        {
-            collect_all_tree_objects(repo, &tree, &mut set)?;
-        }
+        let tree = item
+            .object()
+            .map_err(|e| unreadable(&e))?
+            .tree()
+            .map_err(|e| unreadable(&e))?;
+        collect_all_tree_objects(repo, &tree, &mut set)?;
     }
     Ok(set.into_iter().collect())
 }

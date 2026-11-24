@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
-use dataroom_api::{router, DataroomState, TokenBinding};
+use dataroom_api::{router, DataroomState};
 use dataroom_core::ops::{all_operations, execute_operation};
 use dataroom_core::{
     Action, Catalogue, CatalogueId, ContactKind, ContactPoint, Dataset, Distribution, GrantRule,
@@ -152,11 +154,13 @@ async fn ckan_action_api_answers_all_19_calls_with_jcctl_field_set() {
         publisher_id: None,
     }]));
 
-    let state =
-        DataroomState::new(store.clone(), authz, org_id, cat_id).with_tokens(vec![TokenBinding {
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), authz, org_id, cat_id),
+        vec![common::Caller {
             token: "secret-jcctl-token".into(),
             subject: Subject::authenticated("jcctl-publisher", vec![org_id], Vec::new()),
-        }]);
+        }],
+    );
     let app = router(state);
     let host = "opendata.city.example";
     let tok = Some("secret-jcctl-token");
@@ -669,16 +673,19 @@ async fn two_publishers_in_one_catalogue_with_separate_editor_grants_and_merge()
         .unwrap();
 
     let authz = Arc::new(PolicyAuthorizer::default());
-    let state = DataroomState::new(store.clone(), authz, org_id, cat_id).with_tokens(vec![
-        TokenBinding {
-            token: "tok-mesto".into(),
-            subject: Subject::authenticated("editor_mesto", vec![org_id], Vec::new()),
-        },
-        TokenBinding {
-            token: "tok-dp".into(),
-            subject: Subject::authenticated("editor_dp", vec![org_id], Vec::new()),
-        },
-    ]);
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), authz, org_id, cat_id),
+        vec![
+            common::Caller {
+                token: "tok-mesto".into(),
+                subject: Subject::authenticated("editor_mesto", vec![org_id], Vec::new()),
+            },
+            common::Caller {
+                token: "tok-dp".into(),
+                subject: Subject::authenticated("editor_dp", vec![org_id], Vec::new()),
+            },
+        ],
+    );
     let app = router(state);
 
     // 1. editor_mesto can publish under mesto-bb
@@ -755,7 +762,12 @@ async fn two_publishers_in_one_catalogue_with_separate_editor_grants_and_merge()
 
     // 4. Merge dopravny-podnik into mesto-bb: datasets move and old publisher feed redirects (C16)
     store
-        .merge_publishers(&ctx_admin, "dopravny-podnik", "mesto-bb")
+        .merge_publishers(
+            &ctx_admin,
+            "dopravny-podnik",
+            "mesto-bb",
+            audit("publisher.merge"),
+        )
         .await
         .unwrap();
     let moved = store
@@ -1258,12 +1270,13 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
 
     let fetcher = MapFetcher::new();
     let engine = Arc::new(HarvestEngine::new(Arc::new(fetcher)).with_dns_resolution(false));
-    let state = DataroomState::new(store.clone(), authz, org_a, cat_a)
-        .with_harvester(engine)
-        .with_tokens(vec![TokenBinding {
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), authz, org_a, cat_a).with_harvester(engine),
+        vec![common::Caller {
             token: "tok-alice".into(),
             subject: ctx_a.subject.clone(),
-        }]);
+        }],
+    );
     let op_ctx = state.op_context();
 
     // Walk every registered operation in the operation registry as org A (`ctx_a`) and verify:
@@ -1363,10 +1376,8 @@ async fn the_portal_publisher_of_this_catalogue_alone_declares_a_publisher_iri()
         CatalogueId::from_uuid(Uuid::now_v7()),
     );
     let other = CatalogueId::from_uuid(Uuid::now_v7());
-    let token = "x".repeat(48);
-    let token = token.as_str();
-    let (binding, grant) = dataroom_api::portal_publisher_on(token, org, id, "city").unwrap();
-    let (stranger, _) = dataroom_api::portal_publisher_on(token, org, other, "city").unwrap();
+    let (own_subject, grant) = dataroom_api::portal_publisher_on(org, id, "city");
+    let (stranger, _) = dataroom_api::portal_publisher_on(org, other, "city");
     let mut strangers_grant = grant.clone();
     strangers_grant.principal = format!("{}:{other}", dataroom_api::PORTAL_PUBLISHER);
     let admin = GrantRule {
@@ -1396,16 +1407,168 @@ async fn the_portal_publisher_of_this_catalogue_alone_declares_a_publisher_iri()
                "extras": [{"key": "publisher_uri",
                            "value": "https://data.gov.sk/id/legal-subject/00151866"}]})
     };
-    let own = as_subject(binding.subject);
+    let own = as_subject(own_subject);
     execute_operation(&ops, &own, "dataset.propose", package("air"))
         .await
         .expect("this catalogue's Portal declares it");
-    let foreign = as_subject(stranger.subject);
+    let foreign = as_subject(stranger);
     let refused = execute_operation(&ops, &foreign, "dataset.propose", package("water")).await;
     assert!(
         matches!(refused, Err(dataroom_core::DataroomError::Forbidden(_))),
         "{refused:?}"
     );
+}
+
+/// The admin report (T-7520): per dataset, each profile of its catalogue whose feed it is absent
+/// from, with the fields that keep it out; a profile the build lacks is named as not installed and
+/// a dataset outside the public feeds has no gaps whatever it declares.
+#[test]
+fn profile_gaps_name_each_missing_profile_once_and_skip_what_no_public_feed_carries() {
+    let (org, id) = (
+        OrgId::from_uuid(Uuid::now_v7()),
+        CatalogueId::from_uuid(Uuid::now_v7()),
+    );
+    let mut cat = make_catalogue(org, id, "gaps", "gaps.example");
+    cat.main_profile = "dcat-ap-cz".into();
+    cat.active_profiles = vec![
+        ProfilePin {
+            profile_id: dataroom_api::BASE_PROFILE.into(),
+            version: String::new(),
+        },
+        ProfilePin {
+            profile_id: "dcat-ap-sk-2.0".into(),
+            version: String::new(),
+        },
+        ProfilePin {
+            profile_id: "no-such-profile".into(),
+            version: "1".into(),
+        },
+    ];
+    let state = DataroomState::new(
+        Arc::new(MemoryStore::new()),
+        Arc::new(PolicyAuthorizer::default()),
+        org,
+        id,
+    );
+    let dataset = |name: &str, visibility: &str, state: &str| -> Dataset {
+        serde_json::from_value(json!({
+            "orgId": org, "catalogueId": id, "id": format!("id-{name}"), "name": name,
+            "title": {"sk": name}, "description": {}, "publisherId": "nobody",
+            "visibility": visibility, "state": state,
+            "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
+        }))
+        .expect("dataset")
+    };
+    let datasets = [
+        dataset("bare", "public", "active"),
+        dataset("inner", "internal", "active"),
+        dataset("old", "public", "withdrawn"),
+    ];
+    let gaps = dataroom_api::feeds::profile_gaps(&state, &cat, &datasets, &BTreeMap::new());
+    assert_eq!(gaps.len(), 3);
+    assert!(gaps[1].is_empty() && gaps[2].is_empty(), "{gaps:?}");
+    let ids: Vec<&str> = gaps[0].iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(
+        ids.iter()
+            .filter(|id| **id == dataroom_api::BASE_PROFILE)
+            .count(),
+        ids.contains(&dataroom_api::BASE_PROFILE) as usize,
+        "the base profile once: {ids:?}"
+    );
+    let missing = |want: &str| {
+        gaps[0]
+            .iter()
+            .find(|(id, _)| id == want)
+            .map(|(_, fields)| fields.to_vec())
+    };
+    assert_eq!(
+        missing("no-such-profile"),
+        Some(vec!["profile no-such-profile is not installed".to_owned()])
+    );
+    let sk = missing("dcat-ap-sk-2.0").expect("a bare dataset misses the Slovak profile's fields");
+    assert!(!sk.is_empty() && sk.iter().all(|f| !f.is_empty()), "{sk:?}");
+    assert!(
+        missing("dcat-ap-cz").is_some(),
+        "the main profile is judged too: {ids:?}"
+    );
+    // A second report reads the cached verdicts and answers the same.
+    assert_eq!(
+        dataroom_api::feeds::profile_gaps(&state, &cat, &datasets, &BTreeMap::new()),
+        gaps
+    );
+    // A main profile among the active ones is judged once.
+    cat.main_profile = "dcat-ap-sk-2.0".into();
+    let gaps = dataroom_api::feeds::profile_gaps(&state, &cat, &datasets, &BTreeMap::new());
+    let sk = gaps[0]
+        .iter()
+        .filter(|(id, _)| id == "dcat-ap-sk-2.0")
+        .count();
+    assert_eq!(sk, 1, "{gaps:?}");
+    assert!(gaps[0].iter().all(|(id, _)| id != "dcat-ap-cz"), "{gaps:?}");
+}
+
+/// A dataset asked for in a profile whose feed it is absent from is not found, naming what keeps it
+/// out; a deleted catalogue answers 410; a host no catalogue holds still gets the lockup logo.
+#[tokio::test]
+async fn a_dataset_outside_a_profiles_feed_and_a_deleted_catalogue_are_refused() {
+    let (org, id) = (
+        OrgId::from_uuid(Uuid::now_v7()),
+        CatalogueId::from_uuid(Uuid::now_v7()),
+    );
+    let store = Arc::new(MemoryStore::new());
+    let mut cat = make_catalogue(org, id, "bare", "bare.example");
+    store.upsert_catalogue(cat.clone()).await.unwrap();
+    let ctx = RequestCtx::new(
+        org,
+        id,
+        Subject::authenticated("seed", vec![org], Vec::new()),
+    );
+    let ds: Dataset = serde_json::from_value(json!({
+        "orgId": org, "catalogueId": id, "id": "id-bare", "name": "bare",
+        "title": {"sk": "bare"}, "description": {}, "publisherId": "nobody",
+        "visibility": "public", "state": "active",
+        "issued": "2026-01-02T08:00:00Z", "modified": "2026-11-05T10:30:00Z",
+    }))
+    .expect("dataset");
+    store.upsert_dataset(&ctx, ds).await.unwrap();
+    let app = router(DataroomState::new(
+        store.clone(),
+        Arc::new(PolicyAuthorizer::default()),
+        org,
+        id,
+    ));
+    let get = |uri: &'static str, host: &'static str| {
+        send_json(&app, Method::GET, uri, host, None, None, None)
+    };
+    let (status, _, body) = get("/dataset/bare.ttl?_profile=dcat-ap-sk-2.0", "bare.example").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(
+        body.contains("is not in the dcat-ap-sk-2.0 feed; missing or not valid:"),
+        "{body}"
+    );
+    let (status, _, body) = get("/dataset/bare.ttl", "bare.example").await;
+    assert_eq!(status, StatusCode::OK, "the base feed carries it: {body}");
+    let (status, headers, body) = get("/logo.svg", "nobody.example").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers[header::CONTENT_TYPE]
+        .to_str()
+        .unwrap()
+        .starts_with("image/svg+xml"));
+    assert!(body.contains("<svg"), "{body}");
+    cat.deleted = Some(TimestampTz::now());
+    store.upsert_catalogue(cat).await.unwrap();
+    let (status, _, body) = get("/", "bare.example").await;
+    assert_eq!(status, StatusCode::GONE, "{body}");
+}
+
+#[test]
+fn the_registry_dataroom_answers_is_every_operation() {
+    let names = |ops: Vec<dataroom_core::ops::OperationDef>| -> Vec<String> {
+        ops.into_iter().map(|op| op.name.to_string()).collect()
+    };
+    let listed = names(dataroom_api::operations());
+    assert!(listed.iter().any(|n| n == "dataset.propose"), "{listed:?}");
+    assert_eq!(listed, names(all_operations()));
 }
 
 #[tokio::test]
@@ -1612,9 +1775,29 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
             nav_links: vec![("https://www.banskabystrica.sk".into(), "Mesto BB".into())],
             footer_links: vec![("/about#api".into(), "API mesta".into())],
             pages: Vec::new(),
+            tokens: dataroom_core::branding::BrandingTokens::default(),
+            stylesheet: Some(
+                dataroom_core::branding::PortalStylesheet::checked(
+                    &cat_a.to_string(),
+                    ".site-header { background: #123456 }",
+                )
+                .expect("a stylesheet jc-core accepts"),
+            ),
         },
         ..dataroom_core::branding::BrandingBlock::default()
     };
+    let sheet = look_a.layout.stylesheet.clone().expect("set above");
+    let mut plain_a = look_a.clone();
+    plain_a.layout.stylesheet = None;
+    let plain = router(
+        DataroomState::new(
+            store.clone(),
+            Arc::new(PolicyAuthorizer::default()),
+            org_a,
+            cat_a,
+        )
+        .with_catalogue_branding(BTreeMap::from([(cat_a, plain_a)])),
+    );
     let app = router(
         DataroomState::new(store, Arc::new(PolicyAuthorizer::default()), org_a, cat_a)
             .with_catalogue_branding(BTreeMap::from([(cat_a, look_a)])),
@@ -1645,6 +1828,78 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     );
     assert!(html_a.contains(">Mesto BB</a></li>"), "its header link");
     assert!(html_a.contains(">API mesta</a></li>"), "its footer link");
+    // T-7745: host A's pages link its own stylesheet and carry its body class; the file is the
+    // scoped text, on host A alone.
+    let link = format!("href=\"/portal-css/{}.css\"", sheet.hash);
+    assert!(html_a.contains(&link), "its stylesheet link");
+    assert!(html_a.contains(&format!("class=\"jc-portal-css {}\"", sheet.class)));
+    let css_path = format!("/portal-css/{}.css", sheet.hash);
+    let (st, headers, css) = send_json(
+        &app,
+        Method::GET,
+        &css_path,
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "text/css; charset=utf-8");
+    assert_eq!(
+        css,
+        format!(
+            "body.{} .site-header {{\n  background: #123456;\n}}\n",
+            sheet.class
+        )
+    );
+    let (st, _, _) = send_json(
+        &app,
+        Method::GET,
+        "/portal-css/0000000000000000.css",
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "another hash");
+    // T-7745: the stylesheet changes no byte of the page's CSP but its per-request nonce.
+    let csp_of = |headers: &axum::http::HeaderMap| {
+        let csp = headers[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let nonce = csp
+            .split("'nonce-")
+            .nth(1)
+            .and_then(|rest| rest.split('\'').next())
+            .unwrap()
+            .to_owned();
+        csp.replace(&nonce, "N")
+    };
+    let (_, with_sheet, _) = send_json(
+        &app,
+        Method::GET,
+        "/",
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
+    let (_, without, html) = send_json(
+        &plain,
+        Method::GET,
+        "/",
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert!(!html.contains("/portal-css/"), "no stylesheet, no link");
+    assert_eq!(csp_of(&with_sheet), csp_of(&without));
     let (st, _, list_a) = send_json(
         &app,
         Method::GET,
@@ -1701,6 +1956,27 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     ] {
         assert!(!html_b.contains(theirs), "host A's {theirs} on host B");
     }
+    // T-7745: the shared server never links or serves host A's stylesheet on host B.
+    assert!(
+        !html_b.contains("/portal-css/"),
+        "host A's stylesheet on host B"
+    );
+    assert!(!html_b.contains("jc-portal-css"));
+    let (st, _, _) = send_json(
+        &app,
+        Method::GET,
+        &css_path,
+        "demo.joinedcontext.com",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::NOT_FOUND,
+        "host A's stylesheet served on host B"
+    );
 
     let (_, _, robots_b) = send_json(
         &app,
@@ -1746,12 +2022,14 @@ async fn t6790_dashboards_are_listed_drawn_kept_out_of_dataset_search_and_linked
     let branding = dataroom_core::BrandingBlock::from_yaml_lossy(include_str!(
         "../../core/tests/fixtures/branding/dev-branding.yaml"
     ));
-    let state = DataroomState::new(store.clone(), authz, org_id, cat_id)
-        .with_tokens(vec![TokenBinding {
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), authz, org_id, cat_id),
+        vec![common::Caller {
             token: "secret-jcctl-token".into(),
             subject: Subject::authenticated("jcctl-publisher", vec![org_id], Vec::new()),
-        }])
-        .with_installation_branding(branding);
+        }],
+    )
+    .with_installation_branding(branding);
     let app = router(state);
     let tok = Some("secret-jcctl-token");
     let slug = "scsd2eehkx42n53z2zyd6vshfh7s7irf";
@@ -2510,11 +2788,13 @@ async fn f1_f2_f3_operation_registry_surfaces_allowed_parity_and_admin_audit_row
         publisher_id: None,
     }]));
 
-    let state =
-        DataroomState::new(store.clone(), authz, org_a, cat_a).with_tokens(vec![TokenBinding {
+    let state = common::with_callers(
+        DataroomState::new(store.clone(), authz, org_a, cat_a),
+        vec![common::Caller {
             token: "tok-alice".into(),
             subject: Subject::authenticated("alice-admin", vec![org_a], Vec::new()),
-        }]);
+        }],
+    );
     let app = router(state.clone());
     let host = "f1a.example.org";
 
@@ -2703,11 +2983,12 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
     ));
 
     // G1: Mount `dataroom_api::router(state)` under `/catalogue` beside another router in one Axum app
-    let dr_state = DataroomState::new(store.clone(), authz.clone(), org_id, cat_id)
-        .with_installation_branding(portal_branding.clone())
-        .with_mount_prefix("/catalogue")
-        .with_tokens(vec![
-            TokenBinding {
+    let dr_state = common::with_callers(
+        DataroomState::new(store.clone(), authz.clone(), org_id, cat_id)
+            .with_installation_branding(portal_branding.clone())
+            .with_mount_prefix("/catalogue"),
+        vec![
+            common::Caller {
                 token: "tok-inst-1".into(),
                 subject: Subject {
                     actor_id: Some("portal-sync".into()),
@@ -2717,7 +2998,7 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
                     read_only: false,
                 },
             },
-            TokenBinding {
+            common::Caller {
                 token: "tok-inst-2".into(),
                 subject: Subject {
                     actor_id: Some("portal-sync".into()),
@@ -2727,7 +3008,8 @@ async fn g1_g2_g3_g4_mountable_router_portal_and_jcctl_parity() {
                     read_only: false,
                 },
             },
-        ]);
+        ],
+    );
 
     let host_app = axum::Router::new()
         .route(
@@ -3002,10 +3284,13 @@ async fn b3_logo_upload_refuses_scripted_svg_and_serves_content_hashed_asset() {
         actions: vec![Action::Admin],
         publisher_id: None,
     }]));
-    let state = DataroomState::new(store, authz, org, cat).with_tokens(vec![TokenBinding {
-        token: "tok-brand".into(),
-        subject: Subject::authenticated("brand-admin", vec![org], Vec::new()),
-    }]);
+    let state = common::with_callers(
+        DataroomState::new(store, authz, org, cat),
+        vec![common::Caller {
+            token: "tok-brand".into(),
+            subject: Subject::authenticated("brand-admin", vec![org], Vec::new()),
+        }],
+    );
     let app = router(state);
 
     let upload = |svg: &'static str, token: Option<&'static str>| {
@@ -3082,7 +3367,7 @@ async fn c2_language_switch_redirect_stays_on_this_site_and_never_panics() {
         .await
         .unwrap();
     let app = router(DataroomState::new(
-        store,
+        store.clone(),
         Arc::new(PolicyAuthorizer::default()),
         org,
         cat,
@@ -3124,4 +3409,63 @@ async fn c2_language_switch_redirect_stays_on_this_site_and_never_panics() {
     // A two-letter segment that is not a language code never reaches the cookie.
     let resp = post("url=%2F%3B%20%2Fdataset").await;
     assert!(resp.headers().get(header::SET_COOKIE).is_none());
+
+    // Under a mount prefix the cookie is scoped to it; a prefix no cookie can carry is refused
+    // rather than sent without its scope.
+    for (prefix, form, want) in [
+        (
+            "/open/",
+            "url=%2Fopen%2Fen%2Fdataset",
+            Some("ckan_lang=en; Path=/open;"),
+        ),
+        ("/op\u{1}en", "url=%2Fen%2Fdataset", None),
+    ] {
+        let state = DataroomState::new(
+            store.clone(),
+            Arc::new(PolicyAuthorizer::default()),
+            org,
+            cat,
+        )
+        .with_mount_prefix(prefix);
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/util/redirect")
+            .header(header::HOST, host)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(form))
+            .unwrap();
+        let resp = router(state).oneshot(req).await.unwrap();
+        match want {
+            Some(want) => {
+                assert_eq!(resp.status(), StatusCode::SEE_OTHER, "{prefix:?}");
+                let cookie = resp.headers()[header::SET_COOKIE].to_str().unwrap();
+                assert!(cookie.starts_with(want), "{cookie}");
+            }
+            None => {
+                assert_eq!(
+                    resp.status(),
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "{prefix:?}"
+                );
+                assert!(resp.headers().get(header::SET_COOKIE).is_none());
+            }
+        }
+    }
+}
+
+/// An activity row with a fresh id for a store write the test sets up; the store files it under
+/// the write's tenant and names the record it wrote.
+fn audit(operation: &str) -> dataroom_core::ActivityRow {
+    dataroom_core::ActivityRow {
+        org_id: OrgId::from_uuid(Uuid::nil()),
+        catalogue_id: CatalogueId::from_uuid(Uuid::nil()),
+        id: format!("act-{}", Uuid::now_v7()),
+        at: jc_time::TimestampTz::now(),
+        actor: "test".into(),
+        operation: operation.into(),
+        object_type: String::new(),
+        object_id: String::new(),
+        summary: operation.into(),
+        details: serde_json::Value::Null,
+    }
 }

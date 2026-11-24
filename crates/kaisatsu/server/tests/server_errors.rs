@@ -102,7 +102,12 @@ fn dangling_symlinks_and_missing_directories_are_refused() {
     let clean = TempDir::new();
     clean.file("notes.txt", "ignored");
     clean.file("README", "ignored");
+    std::fs::create_dir(clean.0.join("sub.json")).expect("mkdir");
     let empty = compute_import_dir_digest(&clean.0).unwrap();
+    assert!(
+        load_realm_files_from_path(&clean.0).unwrap().is_empty(),
+        "a directory named .json and files of other kinds are no realm files"
+    );
     clean.file("a.json", r#"{"realm":"x"}"#);
     let one = compute_import_dir_digest(&clean.0).unwrap();
     assert_ne!(empty, one);

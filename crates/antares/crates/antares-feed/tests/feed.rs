@@ -234,6 +234,14 @@ async fn three_formats_list_the_same_entries_newest_first_without_what_the_view_
         (feed["title"].as_str(), feed["language"].as_str()),
         (Some("Everything"), Some("en"))
     );
+    // e1 names an organizer and a category; a1's author is hidden and it has no category
+    let items = &feed["items"];
+    assert_eq!(items[1]["authors"], json!([{"name": "Divadlo"}]), "{json}");
+    assert_eq!(items[1]["tags"], json!(["kultúra"]), "{json}");
+    assert!(
+        items[2].get("authors").is_none() && items[2].get("tags").is_none(),
+        "{json}"
+    );
     let (status, body) = send(&app, "HEAD", &format!("{ALL}/atom.xml"), "").await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, ""));
     let info = antares_feed::Feed.version_info();
@@ -351,6 +359,11 @@ async fn pages_link_each_other_and_bad_parameters_are_400() {
         "{first}"
     );
     assert!(!first.contains("rel=\"previous\""), "{first}");
+    // offset 1 has a previous page; offset + limit at exactly the last entry has no next
+    let (_, middle) = send(&app, "GET", &format!("{ALL}/atom.xml?limit=2&offset=1"), "").await;
+    assert_eq!(ids("atom.xml", &middle).len(), 2, "{middle}");
+    assert!(middle.contains("rel=\"previous\""), "{middle}");
+    assert!(!middle.contains("rel=\"next\""), "{middle}");
     let (_, second) = send(
         &app,
         "GET",
@@ -449,6 +462,8 @@ async fn a_conditional_get_of_an_unchanged_feed_is_304() {
     for stale in [
         ("If-None-Match", "\"other\""),
         ("If-Modified-Since", "Fri, 02 Oct 2026 10:00:00 GMT"),
+        // one second before the newest entry's 10:00:00: changed since then
+        ("If-Modified-Since", "Sat, 03 Oct 2026 09:59:59 GMT"),
     ] {
         let (status, _, _) = call(&app, "GET", &uri, "", &[stale]).await;
         assert_eq!(status, StatusCode::OK, "{stale:?}");
@@ -508,14 +523,15 @@ async fn a_request_naming_another_tenant_is_refused() {
 async fn a_list_of_more_than_twenty_outputs_or_a_repeated_name_serves_nobody() {
     let app = fixture().await;
     let one = json!({"name": "x", "sources": [{"type": "Event", "preset": "event"}]});
-    let many: Vec<Value> = (0..21)
-        .map(
-            |i| json!({"name": format!("o{i}"), "sources": [{"type": "Event", "preset": "event"}]}),
-        )
-        .collect();
+    let list = |n: usize| -> Vec<Value> {
+        (0..n)
+            .map(|i| json!({"name": format!("o{i}"), "sources": [{"type": "Event", "preset": "event"}]}))
+            .collect()
+    };
     let broken = json!([{"name": "zle", "sources": [{"type": "Event", "unknown": 1}]}, one]);
     for (id, feed) in [
-        ("many", json!(many)),
+        ("many", json!(list(21))),
+        ("twenty", json!(list(20))),
         ("twice", json!([one, one])),
         ("broken", broken),
     ] {
@@ -536,11 +552,33 @@ async fn a_list_of_more_than_twenty_outputs_or_a_repeated_name_serves_nobody() {
             "the reason is the gateway's to tell: {body}"
         );
     }
+    // e1 and e2 are created back to back, so their modifiedAt can tie: touch e2 to make it newer
+    let touch = json!({"name": {"type": "Property", "value": "Futbal"}});
+    let (status, body) = send(
+        &app,
+        "PATCH",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Event:e2/attrs",
+        &touch.to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     let (status, body) = send(&app, "GET", "/x/views/broken/feed/v1/x/atom.xml", "").await;
     assert_eq!(
         status,
         StatusCode::OK,
         "a broken sibling does not stop this output: {body}"
+    );
+    // the event preset dates an entry by its modifiedAt, a system attribute the read asks for
+    assert_eq!(
+        ids("atom.xml", &body),
+        ["urn:ngsi-ld:Event:e2", "urn:ngsi-ld:Event:e1"],
+        "{body}"
+    );
+    let (status, body) = send(&app, "GET", "/x/views/twenty/feed/v1/o19/atom.xml", "").await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "twenty outputs is the limit, not over it: {body}"
     );
 }
 

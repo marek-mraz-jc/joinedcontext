@@ -187,4 +187,47 @@ mod tests {
             assert!(intersect(projection, own).is_err(), "{projection} {own:?}");
         }
     }
+
+    /// Hours, minutes and seconds count as the engine counts them, a window with only an end
+    /// stays `before`, and a duration past what the engine holds is refused, not wrapped.
+    #[test]
+    fn time_units_an_end_alone_and_an_overlong_duration() {
+        assert_eq!(
+            ago("PT-2H30M15S"),
+            Some(jiff::SignedDuration::from_secs(2 * 3_600 + 30 * 60 + 15))
+        );
+        assert_eq!(ago("-P1W"), Some(jiff::SignedDuration::from_secs(604_800)));
+        assert_eq!(ago("-PT0S"), None, "zero is not before now");
+        assert_eq!(ago("-PT1H5"), None, "digits without a unit");
+        assert_eq!(ago("-P1H"), None, "an hour is no date unit");
+        assert_eq!(ago("--P1D"), None, "two signs read as none");
+        let edge = i64::MAX / 1000;
+        assert_eq!(
+            ago(&format!("-PT{edge}S")),
+            Some(jiff::SignedDuration::from_secs(edge))
+        );
+        assert_eq!(ago(&format!("-PT{}S", edge + 1)), None);
+        assert_eq!(
+            ago(&format!("-P{}W", i64::MAX)),
+            None,
+            "the product overflows"
+        );
+        assert_eq!(
+            intersect(
+                "timerel=before;timeAt=PT-1H",
+                Some("timerel=before;timeAt=PT-30M")
+            )
+            .as_deref(),
+            Ok("timerel=before;timeAt=PT-1H"),
+            "the earlier end"
+        );
+        assert_eq!(
+            intersect(" timerel = before & timeAt = 2025-01-01T00:00:00Z ", None).as_deref(),
+            Ok("timerel=before;timeAt=2025-01-01T00:00:00Z"),
+            "& separates as ; does, around blanks"
+        );
+        assert!(intersect("timerel=before", None).is_err(), "no timeAt");
+        assert!(intersect("timerel=after;timeAt=yesterday", None).is_err());
+        assert!(intersect("timerel=after;endTimeAt=nope;timeAt=P-1D", None).is_err());
+    }
 }

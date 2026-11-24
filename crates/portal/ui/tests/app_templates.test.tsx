@@ -78,6 +78,22 @@ describe("the App templates (T-3263)", () => {
     expect(within(dialog).getByLabelText(new RegExp(en.apps.generate.prompt))).toHaveValue(templatePrompt(KPI));
   });
 
+  it("closes the builder and the use-as-is dialog of a template without choosing anything", async () => {
+    show(true);
+    await userEvent.click(await screen.findByText(en.apps.templates.title));
+    const card = screen.getByRole("heading", { name: "KPI dashboard" }).closest("li") as HTMLElement;
+
+    await userEvent.click(within(card).getByRole("button", { name: en.apps.templates.create }));
+    const create = await screen.findByRole("dialog", { name: "Create from KPI dashboard" });
+    await userEvent.click(within(create).getByRole("button", { name: en.app.close }));
+    expect(screen.queryByRole("dialog", { name: "Create from KPI dashboard" })).toBeNull();
+
+    await userEvent.click(within(card).getByRole("button", { name: en.apps.templates.useAsIs }));
+    const use = await screen.findByRole("dialog", { name: "Use KPI dashboard as is" });
+    await userEvent.click(within(use).getByRole("button", { name: en.app.close }));
+    expect(screen.queryByRole("dialog", { name: "Use KPI dashboard as is" })).toBeNull();
+  });
+
   it("drops a template's picture its server cannot answer, so no empty frame shows its alt text", async () => {
     show(true);
     await userEvent.click(await screen.findByText(en.apps.templates.title));

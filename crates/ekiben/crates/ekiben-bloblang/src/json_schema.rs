@@ -255,17 +255,22 @@ impl<'s> Validator<'s> {
             }
         }
         let props = s.get("properties").and_then(Json::as_object);
-        let patterns = s.get("patternProperties").and_then(Json::as_object);
+        let patterns = s
+            .get("patternProperties")
+            .and_then(Json::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(p, sub)| {
+                regex::Regex::new(p)
+                    .map(|re| (re, sub))
+                    .map_err(|e| format!("failed to parse json schema definition: {e}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         // gojsonschema reports unknown keys before it walks the property schemas.
         let mut extra = Vec::new();
         for key in obj.keys() {
             let named = props.is_some_and(|p| p.contains_key(key));
-            let mut patterned = false;
-            for pattern in patterns.into_iter().flatten().map(|(p, _)| p) {
-                let re = regex::Regex::new(pattern)
-                    .map_err(|e| format!("failed to parse json schema definition: {e}"))?;
-                patterned |= re.is_match(key);
-            }
+            let patterned = patterns.iter().any(|(re, _)| re.is_match(key));
             if !named && !patterned {
                 extra.push(key);
             }
@@ -283,9 +288,7 @@ impl<'s> Validator<'s> {
             if let Some(sub) = props.and_then(|p| p.get(key)) {
                 self.validate(sub, val, &child(field, key), depth + 1)?;
             }
-            for (pattern, sub) in patterns.into_iter().flatten() {
-                let re = regex::Regex::new(pattern)
-                    .map_err(|e| format!("failed to parse json schema definition: {e}"))?;
+            for (re, sub) in &patterns {
                 if re.is_match(key) {
                     self.validate(sub, val, &child(field, key), depth + 1)?;
                 }
@@ -439,6 +442,314 @@ mod tests {
             Err("(root) Name is required\n(root) xadditional property x is not allowed\nage must be greater than or equal to 0".into())
         );
         assert_eq!(run(s, serde_json::json!({"Name": "a", "age": 3})), Ok(()));
+    }
+
+    fn err(schema: &str, doc: serde_json::Value) -> String {
+        run(schema, doc).expect_err("the document must be refused")
+    }
+
+    #[test]
+    fn schema_text_must_parse_and_be_an_object_or_a_boolean() {
+        assert!(
+            err("{", serde_json::json!(1)).starts_with("failed to parse json schema definition: ")
+        );
+        assert_eq!(
+            err("[1]", serde_json::json!(1)),
+            "failed to parse json schema definition: Invalid type. Expected: object"
+        );
+        assert_eq!(run("true", serde_json::json!({"a": 1})), Ok(()));
+        assert_eq!(
+            err("false", serde_json::json!(1)),
+            "(root) false always fails validation"
+        );
+        // A subschema that is neither object nor boolean constrains nothing.
+        assert_eq!(
+            run(r#"{"properties":{"a":7}}"#, serde_json::json!({"a": 1})),
+            Ok(())
+        );
+    }
+
+    /// A chain of `levels` definitions, each wrapping a `$ref` to the next in `key` (or a bare
+    /// `$ref`), and a document nested as deep where the chain walks properties. Each `$ref` and each
+    /// wrapper is one level, so serde_json's own nesting limit is never what refuses it.
+    fn chain(key: &str, levels: usize) -> (String, serde_json::Value) {
+        let mut defs = serde_json::Map::new();
+        for i in 0..levels {
+            let r = serde_json::json!({ "$ref": format!("#/definitions/d{}", i + 1) });
+            let d = match key {
+                "$ref" => r,
+                "properties" => serde_json::json!({ "properties": { "a": r } }),
+                other => serde_json::json!({ other: [r] }),
+            };
+            defs.insert(format!("d{i}"), d);
+        }
+        defs.insert(format!("d{levels}"), serde_json::json!({}));
+        let schema = serde_json::json!({ "definitions": defs, "$ref": "#/definitions/d0" });
+        let doc = (0..levels).fold(serde_json::json!(1), |d, _| serde_json::json!({ "a": d }));
+        (schema.to_string(), doc)
+    }
+
+    #[test]
+    fn nesting_is_allowed_to_the_limit_and_refused_past_it() {
+        let over = Err("json schema: exceeded maximum nesting".to_string());
+        // The root `$ref` is one level: MAX_DEPTH - 1 more reach the limit exactly.
+        let (ok, doc) = chain("$ref", MAX_DEPTH - 1);
+        assert_eq!(run(&ok, doc), Ok(()));
+        let (deep, doc) = chain("$ref", MAX_DEPTH);
+        assert_eq!(run(&deep, doc), over);
+        // A wrapper and its `$ref` are two levels each.
+        for key in ["properties", "allOf", "anyOf"] {
+            let (ok, doc) = chain(key, (MAX_DEPTH - 1) / 2);
+            assert_eq!(run(&ok, doc), Ok(()), "{key}");
+            let (deep, doc) = chain(key, MAX_DEPTH / 2);
+            assert_eq!(run(&deep, doc), over, "{key}");
+        }
+    }
+
+    #[test]
+    fn refs_resolve_locally_and_a_cycle_or_missing_key_is_an_error() {
+        assert_eq!(
+            err(r##"{"$ref":"#"}"##, serde_json::json!(1)),
+            "json schema: exceeded maximum nesting"
+        );
+        assert_eq!(
+            err(r##"{"$ref":"#/definitions/none"}"##, serde_json::json!(1)),
+            "failed to parse json schema definition: Object has no key '#/definitions/none'"
+        );
+        let defs = r##"{"$defs":{"n":{"type":"integer"}},"items":{"$ref":"#/$defs/n"}}"##;
+        assert_eq!(run(defs, serde_json::json!([1, 2])), Ok(()));
+        assert_eq!(
+            err(defs, serde_json::json!([1, "x"])),
+            "1 invalid type. expected: integer, given: string"
+        );
+    }
+
+    #[test]
+    fn type_accepts_a_list_and_integers_count_as_numbers() {
+        let nullable = r#"{"type":["string","null"]}"#;
+        assert_eq!(run(nullable, serde_json::json!(null)), Ok(()));
+        assert_eq!(run(nullable, serde_json::json!("a")), Ok(()));
+        assert_eq!(
+            err(nullable, serde_json::json!(true)),
+            "(root) invalid type. expected: string,null, given: boolean"
+        );
+        assert_eq!(run(r#"{"type":"number"}"#, serde_json::json!(3)), Ok(()));
+        assert_eq!(run(r#"{"type":"integer"}"#, serde_json::json!(2.0)), Ok(()));
+        assert_eq!(
+            err(r#"{"type":"integer"}"#, serde_json::json!(1.5)),
+            "(root) invalid type. expected: integer, given: number"
+        );
+        assert_eq!(
+            err(r#"{"type":"array"}"#, serde_json::json!({})),
+            "(root) invalid type. expected: array, given: object"
+        );
+        assert_eq!(
+            err(r#"{"type":"object"}"#, serde_json::json!([1])),
+            "(root) invalid type. expected: object, given: array"
+        );
+        // A type keyword that names no type constrains nothing.
+        assert_eq!(run(r#"{"type":5}"#, serde_json::json!("x")), Ok(()));
+        assert_eq!(run(r#"{"type":[5]}"#, serde_json::json!("x")), Ok(()));
+    }
+
+    #[test]
+    fn enum_and_const_compare_whole_values() {
+        let e = r#"{"enum":["a",1]}"#;
+        assert_eq!(run(e, serde_json::json!(1)), Ok(()));
+        assert_eq!(
+            err(e, serde_json::json!("b")),
+            r#"(root) (root) must be one of the following: "a", 1"#
+        );
+        let c = r#"{"properties":{"k":{"const":{"x":1}}}}"#;
+        assert_eq!(run(c, serde_json::json!({"k": {"x": 1}})), Ok(()));
+        assert_eq!(
+            err(c, serde_json::json!({"k": {"x": 2}})),
+            r#"k k does not match: {"x":1}"#
+        );
+    }
+
+    #[test]
+    fn combinators_count_the_branches_that_pass() {
+        let all = r#"{"allOf":[{"type":"integer"},{"minimum":5}]}"#;
+        assert_eq!(run(all, serde_json::json!(5)), Ok(()));
+        assert_eq!(
+            err(all, serde_json::json!(4)),
+            "(root) must be greater than or equal to 5\n(root) must validate all the schemas (allof)"
+        );
+        let any = r#"{"anyOf":[{"type":"string"},{"minimum":5}]}"#;
+        assert_eq!(run(any, serde_json::json!("x")), Ok(()));
+        assert_eq!(run(any, serde_json::json!(9)), Ok(()));
+        assert_eq!(
+            err(any, serde_json::json!(1)),
+            "(root) must validate at least one schema (anyof)"
+        );
+        let one = r#"{"oneOf":[{"type":"integer"},{"minimum":5}]}"#;
+        assert_eq!(run(one, serde_json::json!(1)), Ok(()));
+        assert_eq!(run(one, serde_json::json!(5.5)), Ok(()));
+        let one_msg = "(root) must validate one and only one schema (oneof)";
+        assert_eq!(err(one, serde_json::json!(7)), one_msg);
+        assert_eq!(err(one, serde_json::json!(2.5)), one_msg);
+        let not = r#"{"not":{"type":"string"}}"#;
+        assert_eq!(run(not, serde_json::json!(1)), Ok(()));
+        assert_eq!(
+            err(not, serde_json::json!("s")),
+            "(root) must not validate the schema (not)"
+        );
+    }
+
+    #[test]
+    fn object_counts_patterns_and_additional_properties() {
+        let counts = r#"{"minProperties":1,"maxProperties":2}"#;
+        assert_eq!(run(counts, serde_json::json!({"a": 1})), Ok(()));
+        assert_eq!(run(counts, serde_json::json!({"a": 1, "b": 2})), Ok(()));
+        assert_eq!(
+            err(counts, serde_json::json!({})),
+            "(root) must have at least 1 properties"
+        );
+        assert_eq!(
+            err(counts, serde_json::json!({"a": 1, "b": 2, "c": 3})),
+            "(root) must have at most 2 properties"
+        );
+        let pat = r#"{"properties":{"id":{"type":"string"}},"patternProperties":{"^n_":{"type":"integer"}},"additionalProperties":{"type":"boolean"}}"#;
+        assert_eq!(
+            run(pat, serde_json::json!({"id": "a", "n_x": 1, "flag": true})),
+            Ok(())
+        );
+        assert_eq!(
+            err(pat, serde_json::json!({"id": 1, "n_x": "a", "flag": 1})),
+            "flag invalid type. expected: boolean, given: integer\nid invalid type. expected: string, given: integer\nn_x invalid type. expected: integer, given: string"
+        );
+        let closed = r#"{"patternProperties":{"^n_":{}},"additionalProperties":false}"#;
+        assert_eq!(run(closed, serde_json::json!({"n_a": 1})), Ok(()));
+        assert_eq!(
+            err(closed, serde_json::json!({"n_a": 1, "o": 2})),
+            "(root) oadditional property o is not allowed"
+        );
+        assert!(err(
+            r#"{"patternProperties":{"(":{}}}"#,
+            serde_json::json!({"a": 1})
+        )
+        .starts_with("failed to parse json schema definition: "));
+        let nested = r#"{"properties":{"a":{"properties":{"b":{"type":"string"}}}}}"#;
+        assert_eq!(
+            err(nested, serde_json::json!({"a": {"b": 1}})),
+            "a.b invalid type. expected: string, given: integer"
+        );
+    }
+
+    #[test]
+    fn array_items_tuple_bounds_and_uniqueness() {
+        let tuple = r#"{"items":[{"type":"string"},{"type":"integer"}]}"#;
+        assert_eq!(run(tuple, serde_json::json!(["a", 1, true])), Ok(()));
+        assert_eq!(
+            err(tuple, serde_json::json!([1])),
+            "0 invalid type. expected: string, given: integer"
+        );
+        let bounds = r#"{"minItems":1,"maxItems":2}"#;
+        assert_eq!(run(bounds, serde_json::json!([1])), Ok(()));
+        assert_eq!(run(bounds, serde_json::json!([1, 2])), Ok(()));
+        assert_eq!(
+            err(bounds, serde_json::json!([])),
+            "(root) array must have at least 1 items"
+        );
+        assert_eq!(
+            err(bounds, serde_json::json!([1, 2, 3])),
+            "(root) array must have at most 2 items"
+        );
+        let unique = r#"{"uniqueItems":true}"#;
+        assert_eq!(run(unique, serde_json::json!([1, 2, 3])), Ok(()));
+        assert_eq!(
+            err(unique, serde_json::json!([1, 2, 1, 2])),
+            "(root) array items[0,2] must be unique"
+        );
+        assert_eq!(
+            err(unique, serde_json::json!([3, 1, 1])),
+            "(root) array items[1,2] must be unique"
+        );
+        assert_eq!(
+            run(r#"{"uniqueItems":false}"#, serde_json::json!([1, 1])),
+            Ok(())
+        );
+        let in_obj = r#"{"properties":{"l":{"items":{"type":"string"}}}}"#;
+        assert_eq!(
+            err(in_obj, serde_json::json!({"l": ["a", 2]})),
+            "l.1 invalid type. expected: string, given: integer"
+        );
+    }
+
+    #[test]
+    fn string_lengths_count_characters_and_patterns_must_match() {
+        let len = r#"{"minLength":2,"maxLength":3}"#;
+        assert_eq!(run(len, serde_json::json!("éé")), Ok(()));
+        assert_eq!(run(len, serde_json::json!("ééé")), Ok(()));
+        assert_eq!(
+            err(len, serde_json::json!("é")),
+            "(root) string length must be greater than or equal to 2"
+        );
+        assert_eq!(
+            err(len, serde_json::json!("éééé")),
+            "(root) string length must be less than or equal to 3"
+        );
+        let pat = r#"{"pattern":"^[a-z]+$"}"#;
+        assert_eq!(run(pat, serde_json::json!("abc")), Ok(()));
+        assert_eq!(
+            err(pat, serde_json::json!("Abc")),
+            "(root) does not match pattern '^[a-z]+$'"
+        );
+        assert!(err(r#"{"pattern":"("}"#, serde_json::json!("a"))
+            .starts_with("failed to parse json schema definition: "));
+    }
+
+    #[test]
+    fn number_bounds_in_draft_4_and_draft_6_spelling() {
+        let incl = r#"{"minimum":1,"maximum":3}"#;
+        assert_eq!(run(incl, serde_json::json!(1)), Ok(()));
+        assert_eq!(run(incl, serde_json::json!(3)), Ok(()));
+        assert_eq!(
+            err(incl, serde_json::json!(0.5)),
+            "(root) must be greater than or equal to 1"
+        );
+        assert_eq!(
+            err(incl, serde_json::json!(3.5)),
+            "(root) must be less than or equal to 3"
+        );
+        let d4 = r#"{"minimum":1,"exclusiveMinimum":true,"maximum":3,"exclusiveMaximum":true}"#;
+        assert_eq!(run(d4, serde_json::json!(2)), Ok(()));
+        assert_eq!(
+            err(d4, serde_json::json!(1)),
+            "(root) must be greater than 1"
+        );
+        assert_eq!(err(d4, serde_json::json!(3)), "(root) must be less than 3");
+        assert_eq!(
+            err(d4, serde_json::json!(0)),
+            "(root) must be greater than 1"
+        );
+        let d4_off =
+            r#"{"minimum":1,"exclusiveMinimum":false,"maximum":3,"exclusiveMaximum":false}"#;
+        assert_eq!(run(d4_off, serde_json::json!(1)), Ok(()));
+        assert_eq!(run(d4_off, serde_json::json!(3)), Ok(()));
+        let d6 = r#"{"exclusiveMinimum":1,"exclusiveMaximum":3}"#;
+        assert_eq!(run(d6, serde_json::json!(2)), Ok(()));
+        assert_eq!(run(d6, serde_json::json!(1.5)), Ok(()));
+        assert_eq!(
+            err(d6, serde_json::json!(1)),
+            "(root) must be greater than 1"
+        );
+        assert_eq!(err(d6, serde_json::json!(3)), "(root) must be less than 3");
+        let mult = r#"{"multipleOf":0.1}"#;
+        assert_eq!(run(mult, serde_json::json!(0.3)), Ok(()));
+        assert_eq!(
+            err(mult, serde_json::json!(0.35)),
+            "(root) must be a multiple of 0.1"
+        );
+        assert_eq!(
+            err(r#"{"multipleOf":2}"#, serde_json::json!(3)),
+            "(root) must be a multiple of 2"
+        );
+        assert_eq!(run(r#"{"multipleOf":0}"#, serde_json::json!(3)), Ok(()));
+        assert_eq!(run(r#"{"multipleOf":-2}"#, serde_json::json!(3)), Ok(()));
+        // Bounds only constrain numbers.
+        assert_eq!(run(incl, serde_json::json!("9")), Ok(()));
     }
 
     #[test]

@@ -238,11 +238,11 @@ async fn record(
         source: "portal".to_owned(),
         summary: format!(
             "{} looked at what {named} can access: {reached} Endpoints",
-            identity.username
+            identity.subject
         ),
         severity: "info".to_owned(),
         correlation_id: None,
-        details: json!({ "actor": identity.username, "subject": subject, "endpoints": reached }),
+        details: json!({ "actor": identity.subject, "subject": subject.on_record(), "endpoints": reached }),
     };
     if let Err(err) = state.activity.append(&[event]).await {
         tracing::warn!(error = %err, "the access explore was not recorded");

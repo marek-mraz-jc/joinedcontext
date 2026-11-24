@@ -392,9 +392,9 @@ async fn every_question_is_recorded_with_both_subjects() {
     };
     assert_eq!(
         event.summary,
-        "anna tried jana-id on air: deleteEntity refused"
+        "sub-anna tried jana-id on air: deleteEntity refused"
     );
-    assert_eq!(event.details["actor"], "anna");
+    assert_eq!(event.details["actor"], "sub-anna");
     assert_eq!(event.details["subject"]["user"], "jana-id");
     assert_eq!(event.details["endpoint"], "air");
     assert_eq!(event.details["decision"], false);

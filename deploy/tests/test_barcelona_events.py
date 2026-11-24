@@ -98,6 +98,35 @@ def test_the_recorded_rows_map_to_valid_events_and_each_bad_row_is_dropped_by_re
     assert "endDate" not in by_id[URN.format("2042164840")]
 
 
+#: Rows of the live bcn-agenda answer on 2026-11-23: the three of 7,105 that name an organizer
+#: (`institution_name`), all three a venue of the sports agenda without a start day, and one
+#: activity that names none.
+ORGANIZER_ROWS = Path(__file__).resolve().parent / "fixtures/barcelona/agenda/agenda-organizer-rows.json"
+
+
+@requires_docker
+def test_the_agendas_organizer_is_kept_where_it_names_one_and_never_made_up():
+    """T-7567: the agenda's own `institution_name` becomes the `organizer` every events space
+    writes; a row without one keeps none (the Ajuntament publishes the agenda, it runs none of
+    them). Today's three named rows have no start day, so the plausibility check drops them; the
+    same row with a day is written with its organizer."""
+    rows = json.loads(ORGANIZER_ROWS.read_text())
+    events, log, code = run(answer(records=copy.deepcopy(rows)))
+    assert code == 0, log
+    assert [e["id"] for e in events] == [URN.format("1303141315")] and "organizer" not in events[0]
+    assert '\\"start day missing or before 2000\\":3' in log, log
+    dated = copy.deepcopy(rows)
+    dated[0].update(starts="2026-12-05", ends="2026-12-05")
+    dated[3]["org"] = "   "
+    events, log, code = run(answer(records=dated))
+    assert code == 0, log
+    by_id = {e["id"]: e for e in events}
+    assert by_id[URN.format("92086001980")]["organizer"] == {"type": "Property", "value": {"name": "Futbol Club Barcelona"}}
+    assert "organizer" not in by_id[URN.format("1303141315")], "a blank organizer is none"
+    for entity in events:
+        assert not open_data.schema_errors(BARCELONA / "barcelona.v1.schema.json", entity), entity
+
+
 @requires_docker
 @pytest.mark.parametrize("doc, message", [
     (answer(records=[]), "the Barcelona agendas list no current activity"),
@@ -135,6 +164,8 @@ def test_the_datasource_reads_the_three_agendas_in_one_query_from_open_data_bcn(
                      "ab2d47b7-8493-4ed5-9f63-49ed116135f9"):
         assert f'"{resource}"' in sql
     assert sql.startswith("SELECT DISTINCT ON (id) ") and "end_date >= now() - interval '1 day'" in sql
+    # Each agenda's organizer, NULL when blank (T-7567).
+    assert sql.count("NULLIF(trim(institution_name), '') AS org") == 3 and ", org, src FROM (" in sql
     # Read only: one SELECT, no statement after it.
     assert ";" not in sql and not any(w in sql.upper() for w in ("INSERT ", "UPDATE ", "DELETE ", "DROP "))
 

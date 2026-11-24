@@ -72,7 +72,7 @@ impl Kek {
                 let mut bytes = [0u8; 32];
                 for i in 0..32 {
                     bytes[i] = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16)
-                        .map_err(|_| KaisatsuError::Crypto("invalid hex in KEK".into()))?;
+                        .map_err(crate::crypto_err("invalid hex in KEK"))?;
                 }
                 return Ok(Self { bytes });
             }
@@ -131,16 +131,16 @@ impl Kek {
     /// Encrypts `plaintext` with AES-256-GCM using `aad` (e.g. `realm_id:kid`), returning `nonce || ciphertext || tag`.
     pub fn encrypt(&self, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
         let unbound = UnboundKey::new(&AES_256_GCM, &self.bytes)
-            .map_err(|_| KaisatsuError::Crypto("failed to init AES-256-GCM key".into()))?;
+            .map_err(crate::crypto_err("failed to init AES-256-GCM key"))?;
         let key = LessSafeKey::new(unbound);
         let mut nonce_bytes = [0u8; 12];
-        lc_fill(&mut nonce_bytes).map_err(|_| KaisatsuError::Crypto("CSPRNG failure".into()))?;
+        lc_fill(&mut nonce_bytes).map_err(crate::crypto_err("CSPRNG failure"))?;
         let nonce = Nonce::assume_unique_for_key(nonce_bytes);
         let mut buf = Vec::with_capacity(12 + plaintext.len() + 16);
         buf.extend_from_slice(&nonce_bytes);
         let mut in_out = plaintext.to_vec();
         key.seal_in_place_append_tag(nonce, Aad::from(aad), &mut in_out)
-            .map_err(|_| KaisatsuError::Crypto("AES-256-GCM seal failed".into()))?;
+            .map_err(crate::crypto_err("AES-256-GCM seal failed"))?;
         buf.extend_from_slice(&in_out);
         Ok(buf)
     }
@@ -151,7 +151,7 @@ impl Kek {
             return Err(KaisatsuError::Crypto("ciphertext too short".into()));
         }
         let unbound = UnboundKey::new(&AES_256_GCM, &self.bytes)
-            .map_err(|_| KaisatsuError::Crypto("failed to init AES-256-GCM key".into()))?;
+            .map_err(crate::crypto_err("failed to init AES-256-GCM key"))?;
         let key = LessSafeKey::new(unbound);
         let mut nonce_bytes = [0u8; 12];
         nonce_bytes.copy_from_slice(&ciphertext[..12]);
@@ -204,9 +204,9 @@ impl KeyManager {
     ) -> Result<SigningKeyRecord> {
         let rng = SystemRandom::new();
         let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
-            .map_err(|_| KaisatsuError::Crypto("ECDSA P-256 generation failed".into()))?;
+            .map_err(crate::crypto_err("ECDSA P-256 generation failed"))?;
         let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref())
-            .map_err(|_| KaisatsuError::Crypto("ECDSA P-256 parse failed".into()))?;
+            .map_err(crate::crypto_err("ECDSA P-256 parse failed"))?;
         let pub_bytes = pair.public_key().as_ref();
         // Uncompressed P-256 point: 0x04 || X (32 bytes) || Y (32 bytes)
         if pub_bytes.len() != 65 || pub_bytes[0] != 0x04 {
@@ -237,8 +237,7 @@ impl KeyManager {
             algorithm: "ES256".into(),
             status: status.to_owned(),
             priority,
-            public_jwk_json: serde_json::to_string(&jwk)
-                .map_err(|e| KaisatsuError::Crypto(e.to_string()))?,
+            public_jwk_json: serde_json::to_string(&jwk).map_err(crate::crypto_display)?,
             encrypted_private_key: encrypted,
             created_at: TimestampTz::now(),
             activate_at: None,
@@ -254,9 +253,9 @@ impl KeyManager {
         status: &str,
     ) -> Result<SigningKeyRecord> {
         let priv_key = RsaKeyPair::generate(KeySize::Rsa2048)
-            .map_err(|_| KaisatsuError::Crypto("RSA key generation failed".into()))?;
+            .map_err(crate::crypto_err("RSA key generation failed"))?;
         let pkcs8_der = AsDer::<aws_lc_rs::encoding::Pkcs8V1Der<'static>>::as_der(&priv_key)
-            .map_err(|_| KaisatsuError::Crypto("RSA PKCS#8 DER encode failed".into()))?;
+            .map_err(crate::crypto_err("RSA PKCS#8 DER encode failed"))?;
         let pub_key = priv_key.public_key();
         let n = URL_SAFE_NO_PAD.encode(pub_key.modulus().big_endian_without_leading_zero());
         let e = URL_SAFE_NO_PAD.encode(pub_key.exponent().big_endian_without_leading_zero());
@@ -281,8 +280,7 @@ impl KeyManager {
             algorithm: "RS256".into(),
             status: status.to_owned(),
             priority,
-            public_jwk_json: serde_json::to_string(&jwk)
-                .map_err(|err| KaisatsuError::Crypto(err.to_string()))?,
+            public_jwk_json: serde_json::to_string(&jwk).map_err(crate::crypto_display)?,
             encrypted_private_key: encrypted,
             created_at: TimestampTz::now(),
             activate_at: None,
@@ -298,9 +296,9 @@ impl KeyManager {
         status: &str,
     ) -> Result<SigningKeyRecord> {
         let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
-            .map_err(|_| KaisatsuError::Crypto("Ed25519 key generation failed".into()))?;
+            .map_err(crate::crypto_err("Ed25519 key generation failed"))?;
         let pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
-            .map_err(|_| KaisatsuError::Crypto("Ed25519 parse failed".into()))?;
+            .map_err(crate::crypto_err("Ed25519 parse failed"))?;
         let x = URL_SAFE_NO_PAD.encode(pair.public_key().as_ref());
         let kid = format!("eddsa-{}", &crate::sha256_hex(&x)[..16]);
         let jwk = PublicJwk {
@@ -323,8 +321,7 @@ impl KeyManager {
             algorithm: "EdDSA".into(),
             status: status.to_owned(),
             priority,
-            public_jwk_json: serde_json::to_string(&jwk)
-                .map_err(|err| KaisatsuError::Crypto(err.to_string()))?,
+            public_jwk_json: serde_json::to_string(&jwk).map_err(crate::crypto_display)?,
             encrypted_private_key: encrypted,
             created_at: TimestampTz::now(),
             activate_at: None,

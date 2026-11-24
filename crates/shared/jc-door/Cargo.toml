@@ -7,8 +7,10 @@ publish = false
 description = "kaisatsu client-credentials on both sides: the JWKS verifier of a service's door and the token fetch of its caller"
 
 [features]
-# A signing issuer with its own JWKS listener, for tests of a service behind a door.
-testing = ["dep:aws-lc-rs", "dep:axum", "dep:base64", "dep:tokio"]
+# An issuer of service tokens held in one process, its JWKS on a loopback listener.
+issuer = ["dep:aws-lc-rs", "dep:axum", "dep:base64", "dep:tokio"]
+# The issuer with its fields at hand, for tests of a service behind a door.
+testing = ["issuer"]
 
 [dependencies]
 jc-secret = { path = "../jc-secret" }

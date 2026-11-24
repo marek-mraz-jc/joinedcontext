@@ -526,6 +526,27 @@ mod tests {
     }
 
     #[test]
+    fn a_grant_of_one_entity_names_its_id() -> Result<(), String> {
+        let t = compile(&json!({"policies": [
+            {"id": "one", "assignee": {"kind": "role", "id": "public"}, "operations": ["5.7.1"],
+             "information": [{"entities": [{"id": "urn:ngsi-ld:Air:1", "type": "Air"}]}]}
+        ]}))?;
+        let public = caller(&[("x-jc-roles", "")]);
+        let doc = authzen(
+            &public,
+            "air",
+            &Grants::of(Some(&t), &public, Timestamp::now()),
+            &every,
+        );
+        assert_eq!(
+            at(&doc, "/permissions/0/resource/id"),
+            "urn:ngsi-ld:Air:1",
+            "{doc}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn the_document_lists_the_callers_grants_and_nothing_of_anyone_else() -> Result<(), String> {
         let t = table()?;
         let public = caller(&[("x-jc-roles", "")]);
@@ -638,6 +659,56 @@ mod tests {
             json!([]),
             "a Tenant without a document"
         );
+        Ok(())
+    }
+
+    /// F-13: through a view, `*` becomes each type the view shows, a permission keeps only the
+    /// Attributes the view shows and is gone without one, a prohibition naming only hidden
+    /// Attributes is gone, and a prohibition of the whole Entity stays whole.
+    #[test]
+    fn a_view_narrows_each_selector_to_what_it_shows() -> Result<(), String> {
+        let t = compile(&json!({"policies": [
+            {"id": "all", "assignee": {"kind": "role", "id": "public"}, "operations": ["5.7.2"]},
+            {"id": "car", "assignee": {"kind": "role", "id": "public"}, "operations": ["5.7.2"],
+             "information": [{"entities": [{"type": "Car"}], "propertyNames": ["speed", "vin"]}]},
+            {"id": "hidden", "assignee": {"kind": "role", "id": "public"}, "operations": ["5.7.2"],
+             "information": [{"entities": [{"type": "Car"}], "propertyNames": ["vin"]}]},
+            {"id": "no-vin", "effect": "prohibit", "assignee": {"kind": "role", "id": "public"},
+             "operations": ["5.7.2"],
+             "information": [{"entities": [{"type": "Car"}], "propertyNames": ["vin"]}]},
+            {"id": "no-bus", "effect": "prohibit", "assignee": {"kind": "role", "id": "public"},
+             "operations": ["5.7.2"], "information": [{"entities": [{"type": "Bus"}]}]}
+        ]}))?;
+        let ctx = context();
+        let iri = |n: &str| ctx.expand_key(n);
+        let shown = BTreeMap::from([
+            (iri("Car"), BTreeSet::from([iri("speed")])),
+            (iri("Bus"), BTreeSet::new()),
+        ]);
+        let public = caller(&[("x-jc-roles", "")]);
+        let grants = Grants::of(Some(&t), &public, Timestamp::now()).through(Some(shown));
+        let of = |id: &str| -> Result<Vec<(String, Vec<String>)>, String> {
+            let p = grants
+                .permissions
+                .iter()
+                .chain(&grants.prohibitions)
+                .find(|p| p.id == id)
+                .ok_or(format!("no policy {id}"))?;
+            Ok(grants
+                .selectors(p)
+                .into_iter()
+                .map(|s| (s.entity_type, s.attributes))
+                .collect())
+        };
+        assert_eq!(
+            of("all")?,
+            vec![("Car".into(), vec!["speed".into()])],
+            "`*` is each type the view shows an Attribute of"
+        );
+        assert_eq!(of("car")?, vec![("Car".into(), vec!["speed".into()])]);
+        assert_eq!(of("hidden")?, vec![], "no Attribute left, no permission");
+        assert_eq!(of("no-vin")?, vec![], "a hidden Attribute's prohibition");
+        assert_eq!(of("no-bus")?, vec![("Bus".into(), vec![])], "stays whole");
         Ok(())
     }
 

@@ -122,18 +122,19 @@ async fn owned_request(
 
 /// Records one step of a request in the activity of both projects.
 async fn record(state: &AppState, user: &CurrentUser, request: &AccessRequest, what: &str) {
-    let actor = &user.0.identity.username;
+    let actor = &user.0.identity.subject;
     let details = json!({
         "actor": actor,
         "action": what,
         "request": request.id,
         "pipeline": request.pipeline().map(|name| json!({ "project": request.project, "name": name })),
-        "person": matches!(request.requester, Requester::Person(_)).then(|| request.account()),
+        "person": matches!(request.requester, Requester::Person(_)),
         "endpoint": { "project": request.endpoint_project, "name": request.endpoint },
     });
     let asker = match &request.requester {
         Requester::Pipeline(pipeline) => format!("pipeline {}/{pipeline}", request.project),
-        Requester::Person(person) => format!("person {person}"),
+        // The request stores who asked; the feed names the request alone (OBS-01).
+        Requester::Person(_) => format!("a person's request {}", request.id),
     };
     let event = |project: &str, space: Option<&str>| crate::activity::ActivityEvent {
         time: jc_time::TimestampTz::now(),

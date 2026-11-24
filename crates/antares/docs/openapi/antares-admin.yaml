@@ -364,17 +364,24 @@ paths:
             type: string
         - name: limit
           in: query
-          description: Page size, a positive integer.
+          description: Page size, a positive integer; values above 1000 read 1000.
           schema:
             type: integer
             minimum: 1
             default: 100
+        - name: offset
+          in: query
+          description: Letters to skip before the page, newest first.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
       security: [{}, {adminToken: []}]
       responses:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '200':
-          description: The letters.
+          description: The letters, each with `payloadBytes` instead of the payload.
           content:
             application/json:
               schema:
@@ -392,6 +399,27 @@ paths:
     parameters:
       - $ref: '#/components/parameters/deadLetterId'
       - $ref: '#/components/parameters/tenantQuery'
+    get:
+      tags: [Dead letters]
+      summary: One dead letter, payload included
+      operationId: getDeadLetter
+      description: |
+        The listing carries `payloadBytes` only; this route returns the
+        whole letter. Credentials are blanked as in the listing.
+      security: [{}, {adminToken: []}]
+      responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '200':
+          description: The letter.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeadLetter'
+        '400':
+          $ref: '#/components/responses/BadTenant'
+        '404':
+          $ref: '#/components/responses/NotFound'
     delete:
       tags: [Dead letters]
       summary: Drop a dead letter

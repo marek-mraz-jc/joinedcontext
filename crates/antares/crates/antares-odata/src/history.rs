@@ -284,12 +284,16 @@ fn plan<'s>(
         .with_version(version));
     }
     let mut filter = match &options.filter {
-        Some(f) => {
-            residual_whole(f, set, &options.aliases).map_err(|r| refusal(r, "$filter", version))?
-        }
+        Some(f) => match residual_whole(f, set, &options.aliases) {
+            Ok(filter) => filter,
+            Err(r) => return Err(refusal(r, "$filter", version)),
+        },
         None => Translated::default(),
     };
-    let program = program(&filter, now()).map_err(|r| refusal(r, "$filter", version))?;
+    let program = match program(&filter, now()) {
+        Ok(program) => program,
+        Err(r) => return Err(refusal(r, "$filter", version)),
+    };
     let terms: Vec<(&str, &Member, String)> = set
         .members
         .iter()
@@ -968,10 +972,14 @@ fn elements(
     answer: Option<&HeldAnswer>,
     version: ODataVersion,
 ) -> Result<Vec<&RawValue>, ODataErrorResponse> {
-    answer.map_or(Ok(Vec::new()), |bytes| {
-        serde_json::from_slice(bytes)
-            .map_err(|_| refused(StatusCode::INTERNAL_SERVER_ERROR, version))
-    })
+    let Some(bytes) = answer else {
+        return Ok(Vec::new());
+    };
+    // the store answered this JSON itself
+    let Ok(elements) = serde_json::from_slice(bytes) else {
+        return Err(refused(StatusCode::INTERNAL_SERVER_ERROR, version));
+    };
+    Ok(elements)
 }
 
 fn id_of(entity: &RawValue) -> Option<String> {
@@ -1048,12 +1056,21 @@ impl<'a> Axis<'a> {
         entity: &'a Found<'a>,
         version: ODataVersion,
     ) -> Result<Self, ODataErrorResponse> {
-        let members = |raw: &'a RawValue| {
-            serde_json::from_str::<HashMap<String, &'a RawValue>>(raw.get())
-                .map_err(|_| refused(StatusCode::INTERNAL_SERVER_ERROR, version))
+        // the members of the store's own answer
+        fn members(
+            raw: &RawValue,
+            version: ODataVersion,
+        ) -> Result<HashMap<String, &RawValue>, ODataErrorResponse> {
+            let Ok(members) = serde_json::from_str(raw.get()) else {
+                return Err(refused(StatusCode::INTERNAL_SERVER_ERROR, version));
+            };
+            Ok(members)
+        }
+        let window = members(entity.window, version)?;
+        let earlier = match entity.earlier {
+            Some(raw) => members(raw, version)?,
+            None => HashMap::new(),
         };
-        let window = members(entity.window)?;
-        let earlier = entity.earlier.map(members).transpose()?.unwrap_or_default();
         let mut times: Vec<Timed<'a>> = Vec::new();
         for (slot, term) in plan.attrs.iter().enumerate() {
             for list in [window.get(term), earlier.get(term)].into_iter().flatten() {
@@ -1115,8 +1132,10 @@ impl<'a> Axis<'a> {
             if parsed.is_some_and(|held| std::ptr::eq(held, instance)) {
                 continue;
             }
-            let value: Value = serde_json::from_str(instance.get())
-                .map_err(|_| refused(StatusCode::INTERNAL_SERVER_ERROR, version))?;
+            // an instance of the store's own answer
+            let Ok(value) = serde_json::from_str::<Value>(instance.get()) else {
+                return Err(refused(StatusCode::INTERNAL_SERVER_ERROR, version));
+            };
             self.doc.insert(term.clone(), value);
             *parsed = Some(instance);
         }

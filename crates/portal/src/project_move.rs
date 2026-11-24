@@ -75,7 +75,7 @@ async fn recorded(pool: &PgPool, project: &str) -> Result<Option<Recorded>, sqlx
     let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT p.id::text, p.organization, o.key::text FROM project_ids p \
          LEFT JOIN organizations o ON o.name = p.organization \
-         WHERE p.parent IS NULL AND NOT p.reserved AND p.name = $1",
+         WHERE p.parent IS NULL AND NOT p.reserved AND p.deleted_at IS NULL AND p.name = $1",
     )
     .bind(project)
     .fetch_optional(pool)
@@ -588,7 +588,7 @@ pub async fn apply(
     let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT p.id::text, p.organization, o.key::text FROM project_ids p \
          LEFT JOIN organizations o ON o.name = p.organization \
-         WHERE p.parent IS NULL AND NOT p.reserved AND p.name = $1 FOR UPDATE OF p",
+         WHERE p.parent IS NULL AND NOT p.reserved AND p.deleted_at IS NULL AND p.name = $1 FOR UPDATE OF p",
     )
     .bind(project)
     .fetch_optional(&mut *tx)

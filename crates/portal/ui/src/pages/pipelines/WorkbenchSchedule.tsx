@@ -82,7 +82,6 @@ export function WorkbenchSchedule({ project, draft, onChange }: WorkbenchSchedul
     value: draft?.schedule,
     onChange: (value: unknown) => onChange(scheduled(draft, typeof value === "string" && value !== "" ? value : undefined)),
     onBlur: () => undefined,
-    onFocus: () => undefined,
     rawErrors: below ? [t("pipelines.workbench.schedule.belowFloor", { gap: clockWords(gap ?? 0, t), floor: clockWords(Number(floor), t) })] : undefined,
   } as unknown as WidgetProps;
   return (

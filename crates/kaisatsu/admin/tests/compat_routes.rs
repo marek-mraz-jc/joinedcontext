@@ -662,6 +662,173 @@ async fn unknown_ids_answer_404_to_a_realm_admin() {
     );
 }
 
+/// Roles named both in the token and on the stored person, and an Organization named both in
+/// `jc_org` and by a membership, count once; a client entry without roles grants nothing.
+#[tokio::test]
+async fn token_and_stored_rights_merge_without_duplicates() {
+    let f = fixture().await;
+    f.store
+        .create_user(UserRepresentation {
+            id: "dup-admin".into(),
+            realm_id: "dev".into(),
+            username: "dup-admin".into(),
+            enabled: true,
+            realm_roles: vec!["realm-admin".into()],
+            client_roles: HashMap::from([("realm-management".into(), vec!["view-users".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .upsert_membership(Membership {
+            id: "m-dup".into(),
+            realm_id: "dev".into(),
+            org_id: "helsinki".into(),
+            person_id: "dup-admin".into(),
+            org_roles: Vec::new(),
+            created_at: TimestampTz::now(),
+        })
+        .await
+        .unwrap();
+    let keys = f.store.list_signing_keys("dev").await.unwrap();
+    let t = token(
+        f.store.kek(),
+        &keys[0],
+        claims(
+            "dup-admin",
+            json!({
+                "realm_access": { "roles": ["realm-admin"] },
+                "resource_access": { "realm-management": { "roles": ["view-users"] }, "account": {} },
+                "jc_org": ["helsinki"],
+            }),
+        ),
+    );
+    let (st, _, ans) = call(&f.app, &Method::GET, &format!("{R}/users"), Some(&t), None).await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    assert!(
+        ans.as_array()
+            .unwrap()
+            .iter()
+            .any(|u| u["id"] == "esp-user"),
+        "{ans}"
+    );
+}
+
+/// An Organization admin adds people to its groups and maps their client roles, unless a group
+/// (or one of its ancestors) or the person carries realm-wide rights.
+#[tokio::test]
+async fn an_org_admin_stops_at_realm_wide_groups_and_people() {
+    let f = fixture().await;
+    let group =
+        |id: &str, parent: Option<&str>, client_roles: &[(&str, &str)]| GroupRepresentation {
+            id: id.into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            parent_id: parent.map(str::to_owned),
+            name: id.into(),
+            path: format!("/{id}"),
+            client_roles: client_roles
+                .iter()
+                .map(|(c, r)| ((*c).to_owned(), vec![(*r).to_owned()]))
+                .collect(),
+            ..Default::default()
+        };
+    for g in [
+        group("hel-root", None, &[]),
+        group("hel-team", Some("hel-root"), &[("portal-api", "reader")]),
+        group("hel-admins", None, &[("realm-management", "manage-users")]),
+    ] {
+        f.store.upsert_group(g).await.unwrap();
+    }
+    let hel = Some(f.hel_admin.as_str());
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/users/hel-user/groups/hel-team"),
+        hel,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{ans}");
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/users/hel-user/groups/hel-admins"),
+        hel,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{ans}");
+    assert!(ans.to_string().contains("realm-wide roles"), "{ans}");
+    // In an ordinary group the person passes the ceiling; the unknown client is the refusal.
+    let map = format!("{R}/users/hel-user/role-mappings/clients/no-client");
+    let roles = json!([{ "id": "r", "name": "r" }]);
+    let (st, _, ans) = call(&f.app, &Method::POST, &map, hel, Some(&roles)).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{ans}");
+    // A member of a realm-management group is beyond an Organization admin.
+    f.store
+        .add_user_to_group("dev", "hel-user", "hel-admins")
+        .await
+        .unwrap();
+    let (st, _, ans) = call(&f.app, &Method::POST, &map, hel, Some(&roles)).await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{ans}");
+    assert!(ans.to_string().contains("realm-wide rights"), "{ans}");
+}
+
+/// Bodies the realm, client and import routes cannot read, and names they cannot find, are refused
+/// with the reason and write nothing.
+#[tokio::test]
+async fn malformed_bodies_and_unknown_names_are_refused() {
+    let f = fixture().await;
+    let a = Some(f.admin.as_str());
+    let cases = [
+        // An existing person, an unknown client: 404 before any mapping is written.
+        (
+            Method::POST,
+            format!("{R}/users/hel-user/role-mappings/clients/no-client"),
+            json!([{ "id": "r", "name": "r" }]),
+            StatusCode::NOT_FOUND,
+            "client not found",
+        ),
+        (
+            Method::PUT,
+            "/admin/realms/dev".to_owned(),
+            json!(["not", "an", "object"]),
+            StatusCode::BAD_REQUEST,
+            "JSON object",
+        ),
+        (
+            Method::PUT,
+            "/admin/realms/dev".to_owned(),
+            json!({ "accessTokenLifespan": "an hour" }),
+            StatusCode::BAD_REQUEST,
+            "realm body",
+        ),
+        (
+            Method::POST,
+            format!("{R}/clients"),
+            json!({ "clientId": 42 }),
+            StatusCode::BAD_REQUEST,
+            "invalid client",
+        ),
+        (
+            Method::POST,
+            format!("{R}/partialImport"),
+            json!({ "ifResourceExists": "SKIP",
+                    "users": [{ "id": "pi-nogroup", "username": "pi.nogroup", "groups": ["/no-such-group"] }] }),
+            StatusCode::BAD_REQUEST,
+            "group /no-such-group does not exist",
+        ),
+    ];
+    for (method, uri, body, status, needle) in cases {
+        let (st, _, ans) = call(&f.app, &method, &uri, a, Some(&body)).await;
+        assert_eq!(st, status, "{method} {uri}: {ans}");
+        assert!(ans.to_string().contains(needle), "{method} {uri}: {ans}");
+    }
+    let dev = f.store.get_realm("dev").await.unwrap().unwrap();
+    assert_eq!(dev.realm, "dev");
+}
+
 #[tokio::test]
 async fn another_organizations_objects_are_404_to_an_org_admin() {
     let f = fixture().await;
@@ -1793,7 +1960,8 @@ async fn realm_partial_import_and_native_routes() {
         &Method::POST,
         "/admin/realms",
         Some(&master),
-        Some(&json!({ "realm": "stage2", "displayName": "Stage 2" })),
+        // A Keycloak export's UUID id is ignored: the admin routes key the realm by its name.
+        Some(&json!({ "realm": "stage2", "id": "0b1c2d3e-export-uuid", "displayName": "Stage 2" })),
     )
     .await;
     assert_eq!(st, StatusCode::CREATED, "{ans}");
@@ -1804,6 +1972,15 @@ async fn realm_partial_import_and_native_routes() {
         .unwrap()
         .expect("realm stage2");
     assert_eq!(stage.id, "stage2");
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::GET,
+        "/admin/realms/stage2/users",
+        Some(&master),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
     assert!(f.store.get_realm("joinedcontext").await.unwrap().is_none());
     for bad in [json!({ "displayName": "no name" }), json!({ "realm": 7 })] {
         let (st, _, _) = call(
@@ -1815,6 +1992,67 @@ async fn realm_partial_import_and_native_routes() {
         )
         .await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    // A master `admin` administers master itself as its realm administrator.
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::GET,
+        "/admin/realms/master",
+        Some(&master),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    // A grant for a realm that does not exist: the update answers 404.
+    f.store
+        .create_user(UserRepresentation {
+            id: "ghost-op".into(),
+            realm_id: "master".into(),
+            username: "ghost-op".into(),
+            enabled: true,
+            client_roles: HashMap::from([("ghost-realm".into(), vec!["realm-admin".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut ghost_claims = claims("ghost-op", json!({ "acr": "mfa" }));
+    ghost_claims["iss"] = json!("https://idm.localhost/realms/master");
+    let ghost_op = token(f.store.kek(), &master_keys[0], ghost_claims);
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::PUT,
+        "/admin/realms/ghost",
+        Some(&ghost_op),
+        Some(&json!({ "displayName": "Ghost" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{ans}");
+    assert!(f.store.get_realm("ghost").await.unwrap().is_none());
+    // A master token naming nobody, or a disabled holder, administers no other realm.
+    f.store
+        .create_user(UserRepresentation {
+            id: "root-off".into(),
+            realm_id: "master".into(),
+            username: "root-off".into(),
+            enabled: false,
+            client_roles: HashMap::from([("dev-realm".into(), vec!["realm-admin".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let mut nobody = claims("x", json!({ "acr": "mfa" }));
+    nobody.as_object_mut().unwrap().remove("sub");
+    let mut off = claims("root-off", json!({ "acr": "mfa" }));
+    for c in [&mut nobody, &mut off] {
+        c["iss"] = json!("https://idm.localhost/realms/master");
+    }
+    for (c, status) in [
+        (nobody, StatusCode::FORBIDDEN),
+        (off, StatusCode::UNAUTHORIZED),
+    ] {
+        let t = token(f.store.kek(), &master_keys[0], c);
+        let (st, _, ans) = call(&f.app, &Method::GET, &format!("{R}/users"), Some(&t), None).await;
+        assert_eq!(st, status, "{ans}");
     }
 
     let users = json!([
@@ -1973,6 +2211,370 @@ async fn realm_partial_import_and_native_routes() {
     )
     .await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "no symmetric token keys");
+}
+
+/// partialImport applies `ifResourceExists` to groups and clients as to people, and OVERWRITE of
+/// a person keeps their password, passkeys and grants, under the same id or a new fixed one (S3-27).
+#[tokio::test]
+async fn partial_import_follows_if_resource_exists_for_every_resource() {
+    let f = fixture().await;
+    let a = Some(f.admin.as_str());
+    f.store
+        .upsert_group(GroupRepresentation {
+            id: "pi-g".into(),
+            realm_id: "dev".into(),
+            name: "pi-g".into(),
+            path: "/pi-g".into(),
+            attributes: HashMap::from([("unit".into(), vec!["old".into()])]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .upsert_client(ClientRepresentation {
+            id: "pi-app-uuid".into(),
+            realm_id: "dev".into(),
+            client_id: "pi-app".into(),
+            redirect_uris: vec!["https://old.example/cb".into()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .create_user(UserRepresentation {
+            id: "pi-2".into(),
+            realm_id: "dev".into(),
+            username: "pi.two".into(),
+            realm_roles: vec!["auditor".into()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .upsert_credential(CredentialRecord {
+            id: "pi-2-pw".into(),
+            realm_id: "dev".into(),
+            user_id: "pi-2".into(),
+            credential_type: "password".into(),
+            user_label: None,
+            created_date: 1,
+            secret_data: "stored-hash".into(),
+            credential_data: String::new(),
+            temporary: false,
+        })
+        .await
+        .unwrap();
+    f.store
+        .insert_webauthn_credential(passkey("pi-2-key", "pi-2", None))
+        .await
+        .unwrap();
+    let group =
+        json!({ "id": "pi-g", "name": "pi-g", "path": "/pi-g", "attributes": { "unit": ["new"] } });
+    let client = json!({ "clientId": "pi-app", "redirectUris": ["https://new.example/cb"] });
+    let import = |mode: &str, body: Value| {
+        let mut body = body;
+        body["ifResourceExists"] = json!(mode);
+        body
+    };
+
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import("FAIL", json!({ "clients": [client] }))),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{ans}");
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "FAIL",
+            json!({ "groups": [group], "clients": [client] }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{ans}");
+    assert!(
+        ans.to_string().contains("group pi-g already exists"),
+        "{ans}"
+    );
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import("FAIL", json!({ "users": "pi.two" }))),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{ans}");
+    assert!(ans.to_string().contains("partialImport:"), "{ans}");
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "SKIP",
+            json!({ "groups": [group], "clients": [client] }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    assert_eq!(
+        (ans["added"].as_u64(), ans["skipped"].as_u64()),
+        (Some(0), Some(2))
+    );
+    let stored = f
+        .store
+        .get_group("dev", None, "pi-g")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.attributes["unit"], ["old"], "SKIP leaves the group");
+    let stored = f
+        .store
+        .get_client_by_client_id("dev", "pi-app")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.redirect_uris,
+        ["https://old.example/cb"],
+        "SKIP leaves the client"
+    );
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "OVERWRITE",
+            json!({ "groups": [group], "clients": [client] }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    assert_eq!(
+        (ans["added"].as_u64(), ans["overwritten"].as_u64()),
+        (Some(0), Some(2))
+    );
+    let stored = f
+        .store
+        .get_client_by_client_id("dev", "pi-app")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.redirect_uris, ["https://new.example/cb"]);
+
+    // OVERWRITE of the same person keeps what the representation cannot carry.
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "OVERWRITE",
+            json!({ "users": [{ "id": "pi-2", "username": "pi.two", "firstName": "Pia" }] }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    let pia = f
+        .store
+        .get_user_by_id("dev", None, "pi-2")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pia.first_name.as_deref(), Some("Pia"));
+    assert_eq!(pia.realm_roles, ["auditor"]);
+    assert_eq!(
+        f.store.list_credentials("dev", "pi-2").await.unwrap().len(),
+        1
+    );
+    assert_eq!(
+        f.store
+            .list_webauthn_credentials("dev", "pi-2")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // OVERWRITE sets the roles the payload names: an empty list revokes, a list grants.
+    for (roles, expect) in [(json!([]), vec![]), (json!(["auditor"]), vec!["auditor"])] {
+        let (st, _, ans) = call(
+            &f.app,
+            &Method::POST,
+            &format!("{R}/partialImport"),
+            a,
+            Some(&import(
+                "OVERWRITE",
+                json!({ "users": [{ "id": "pi-2", "username": "pi.two", "realmRoles": roles }] }),
+            )),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{ans}");
+        let pia = f
+            .store
+            .get_user_by_id("dev", None, "pi-2")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(pia.realm_roles, expect);
+    }
+
+    // OVERWRITE under a new fixed id moves the person's credentials, passkeys and grants, and
+    // the groups, client role mappings and Organization memberships keyed by the old id.
+    let app = f
+        .store
+        .get_client_by_client_id("dev", "pi-app")
+        .await
+        .unwrap()
+        .unwrap();
+    f.store
+        .set_user_grants(
+            "dev",
+            "pi-2",
+            &["auditor".into()],
+            &HashMap::from([("pi-app".to_string(), vec!["viewer".to_string()])]),
+        )
+        .await
+        .unwrap();
+    f.store
+        .add_role_mapping(RoleMappingRecord {
+            id: "pi-2-viewer".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            principal_kind: "user".into(),
+            principal_id: "pi-2".into(),
+            role_id: "pi-app-viewer".into(),
+            role_name: "viewer".into(),
+            client_uuid: Some(app.id.clone()),
+        })
+        .await
+        .unwrap();
+    f.store
+        .add_user_to_group("dev", "pi-2", "pi-g")
+        .await
+        .unwrap();
+    f.store
+        .upsert_membership(Membership {
+            id: "pi-2-org".into(),
+            realm_id: "dev".into(),
+            org_id: "org-pi".into(),
+            person_id: "pi-2".into(),
+            org_roles: vec!["member".into()],
+            created_at: TimestampTz::now(),
+        })
+        .await
+        .unwrap();
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "OVERWRITE",
+            json!({ "users": [{ "id": "pi-3", "username": "pi.two" }] }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    assert!(
+        f.store
+            .get_user_by_id("dev", None, "pi-2")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let moved = f
+        .store
+        .get_user_by_id("dev", None, "pi-3")
+        .await
+        .unwrap()
+        .expect("pi-3");
+    assert_eq!(moved.realm_roles, ["auditor"]);
+    let creds = f.store.list_credentials("dev", "pi-3").await.unwrap();
+    assert_eq!(
+        creds
+            .iter()
+            .map(|c| c.secret_data.as_str())
+            .collect::<Vec<_>>(),
+        ["stored-hash"]
+    );
+    assert_eq!(
+        f.store
+            .list_webauthn_credentials("dev", "pi-3")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(moved.client_roles["pi-app"], ["viewer"]);
+    let groups = f.store.list_user_groups("dev", "pi-3").await.unwrap();
+    assert_eq!(
+        groups.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),
+        ["pi-g"]
+    );
+    let mapped = f
+        .store
+        .list_role_mappings_for_principal("dev", "user", "pi-3", Some(&app.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        mapped
+            .iter()
+            .map(|m| m.role_name.as_str())
+            .collect::<Vec<_>>(),
+        ["viewer"]
+    );
+    let memberships = f
+        .store
+        .list_memberships_for_person("dev", "pi-3")
+        .await
+        .unwrap();
+    assert_eq!(
+        memberships
+            .iter()
+            .map(|m| (m.org_id.as_str(), m.org_roles.clone()))
+            .collect::<Vec<_>>(),
+        [("org-pi", vec!["member".to_string()])]
+    );
+
+    // An id that names another person than the username is refused before any write.
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&import(
+            "OVERWRITE",
+            json!({
+                "groups": [{ "name": "never-written", "path": "/never-written" }],
+                "users": [{ "id": "pi-3", "username": "hel-user" }]
+            }),
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT, "{ans}");
+    assert!(
+        f.store
+            .get_group_by_path("dev", None, "/never-written")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        f.store
+            .get_user_by_id("dev", None, "pi-3")
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[tokio::test]

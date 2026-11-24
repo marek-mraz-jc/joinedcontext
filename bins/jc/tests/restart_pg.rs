@@ -244,7 +244,6 @@ fn start_once(config: &Path, state: &Path, port: u16) -> Option<Jc> {
     for (name, flag) in [
         ("shako-token", "--shako-token-file"),
         ("ekiben-token", "--ekiben-token-file"),
-        ("catalogue-token", "--dataroom-portal-token-file"),
         ("dashboards-password", "--daiya-portal-password-file"),
     ] {
         let file = given.join(name);
@@ -359,7 +358,7 @@ async fn kaisatsu_token(jc: &Jc) -> String {
 }
 
 /// One write through each public mount.
-async fn write_everything(jc: &Jc) {
+async fn write_everything(jc: &Jc, publisher: &str) {
     let http = Client::new();
     let shako = format!("token {}", jc.secret("shako-token"));
     ok(
@@ -391,7 +390,7 @@ async fn write_everything(jc: &Jc) {
     )
     .await;
 
-    let catalogue = jc.secret("catalogue-token");
+    let catalogue = format!("Bearer {publisher}");
     ok(
         "dataroom organization",
         http.post(jc.url("/opendata/api/3/action/organization_create"))
@@ -571,9 +570,19 @@ async fn every_module_keeps_its_writes_across_a_restart_on_postgres() {
     let _serial = PG_SERIAL.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let config = prepare(dir.path(), &admin_url, &[]).await;
+    // dataroom names its publisher by a service token (S11-23): `[door]`'s issuer signs it here.
+    let issuer = jc_door::testing::Issuer::start("https://id.restart.test/realms/jc", "k1").await;
+    let mut toml = std::fs::read_to_string(&config).unwrap();
+    writeln!(
+        toml,
+        "[door]\nissuer = \"{}\"\njwks_url = \"{}\"\nclients = [\"jc-portal\"]",
+        issuer.issuer, issuer.jwks_url
+    )
+    .unwrap();
+    std::fs::write(&config, toml).unwrap();
     let state = dir.path().join("state");
     let (first, port) = first_start(&config, &state);
-    write_everything(&first).await;
+    write_everything(&first, &issuer.token("jc-portal", "dataroom", 600)).await;
     // Every pool is capped at `max_connections = 3`; kaisatsu adds one LISTEN connection.
     let held = connections_per_role(&admin_url).await;
     println!("connections per role after the writes: {held:?}");

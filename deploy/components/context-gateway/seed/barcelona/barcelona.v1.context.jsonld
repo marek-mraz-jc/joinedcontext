@@ -592,6 +592,12 @@
     "xsd": "http://www.w3.org/2001/XMLSchema#",
     "zoneCode": {
       "@id": "jc:zoneCode"
+    },
+    "Organizer": {
+      "@id": "schema:Organization"
+    },
+    "organizer": {
+      "@id": "schema:organizer"
     }
   },
   "x-generator-version": "linkml-1.12.0"

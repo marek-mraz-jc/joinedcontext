@@ -134,7 +134,7 @@ async fn the_audit_line_names_the_endpoint_the_tool_and_the_subject() {
     for field in [
         format!("slug={SLUG}"),
         "tool=query_entities".to_owned(),
-        "principal=user:jana".to_owned(),
+        "principal=user:0f5a".to_owned(),
         "door=\"hub\"".to_owned(),
     ] {
         assert!(line.contains(&field), "{field} missing from: {line}");
@@ -146,6 +146,7 @@ async fn the_audit_line_names_the_endpoint_the_tool_and_the_subject() {
         "{log}"
     );
     assert!(!log.contains(&token), "a token reached the log");
+    assert!(!log.contains("jana"), "a username reached the log: {log}");
     // ADR-N-043 §2.8: a named server's member call writes the same line, with the server beside it.
     let fanned = Request::builder()
         .method(Method::POST)
@@ -170,7 +171,7 @@ async fn the_audit_line_names_the_endpoint_the_tool_and_the_subject() {
     for field in [
         format!("slug={SLUG}"),
         "tool=query_entities".to_owned(),
-        "principal=user:jana".to_owned(),
+        "principal=user:0f5a".to_owned(),
         "server=\"/api/mcp/ovzdusie/air\"".to_owned(),
     ] {
         assert!(line.contains(&field), "{field} missing from: {line}");
