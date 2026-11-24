@@ -478,11 +478,8 @@ fn simplify(v: &Value) -> Value {
             // A multi-attribute: one simplified value per datasetId.
             let mut dataset = BTreeMap::new();
             for item in items.iter() {
-                let key = match item {
-                    Value::Object(m) => match m.get("datasetId") {
-                        Some(Value::String(d)) => d.clone(),
-                        _ => "@none".to_string(),
-                    },
+                let key = match item.get_path(&["datasetId".to_string()]) {
+                    Value::String(d) => d,
                     _ => "@none".to_string(),
                 };
                 dataset.insert(key, simplify(item));
@@ -877,6 +874,18 @@ mod tests {
         assert_eq!(nss_encode("100%"), "100%25");
         assert_eq!(nss_encode("a b#c?d"), "a%20b%23c%3Fd");
         assert_eq!(nss_encode("é"), "%C3%A9");
+    }
+
+    #[test]
+    fn numbers_read_every_numeric_kind_and_refuse_text_and_infinity() {
+        assert_eq!(number(&Value::Int(-3)), Some(-3.0));
+        assert_eq!(number(&Value::Uint(4)), Some(4.0));
+        assert_eq!(number(&Value::Float(0.5)), Some(0.5));
+        assert_eq!(number(&Value::Number("1E2".into())), Some(100.0));
+        assert_eq!(number(&Value::Number("not a number".into())), None);
+        assert_eq!(number(&Value::Number("1e999".into())), None);
+        assert_eq!(number(&Value::Float(f64::NAN)), None);
+        assert_eq!(number(&Value::String("1".into())), None);
     }
 
     #[test]

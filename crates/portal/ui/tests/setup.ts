@@ -36,6 +36,12 @@ if (typeof window !== "undefined" && !window.matchMedia) {
   });
 }
 
+// jsdom logs "Not implemented" for window.scrollTo, which the router's scroll restoration calls on
+// every navigation.
+if (typeof window !== "undefined") window.scrollTo = () => {};
+// jsdom answers getContext with null and logs "Not implemented" each time (axe's contrast check asks).
+if (typeof HTMLCanvasElement !== "undefined") HTMLCanvasElement.prototype.getContext = () => null;
+
 // jsdom has <dialog> without its modal methods; the grid's row dialog opens with showModal (T-4828).
 if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.showModal) {
   HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {

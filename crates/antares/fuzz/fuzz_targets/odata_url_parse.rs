@@ -17,12 +17,26 @@ impl Model for Service {
 
     fn member(&self, _ty: &str, name: &str) -> Option<Member<'_>> {
         Some(match name {
-            "ID" | "Name" | "Price" | "Age" | "BirthDate" | "Location" => Member::Primitive { collection: false },
+            "ID" | "Name" | "Price" | "Age" | "BirthDate" | "Location" => {
+                Member::Primitive { collection: false }
+            }
             "Names" | "EmailAddresses" => Member::Primitive { collection: true },
-            "Address" => Member::Complex { ty: "Any", collection: false },
-            "Addresses" => Member::Complex { ty: "Any", collection: true },
-            "Customer" | "Product" | "Supplier" => Member::Navigation { ty: "Any", collection: false },
-            "Items" | "Orders" | "Products" => Member::Navigation { ty: "Any", collection: true },
+            "Address" => Member::Complex {
+                ty: "Any",
+                collection: false,
+            },
+            "Addresses" => Member::Complex {
+                ty: "Any",
+                collection: true,
+            },
+            "Customer" | "Product" | "Supplier" => Member::Navigation {
+                ty: "Any",
+                collection: false,
+            },
+            "Items" | "Orders" | "Products" => Member::Navigation {
+                ty: "Any",
+                collection: true,
+            },
             _ => return None,
         })
     }
@@ -40,6 +54,9 @@ fuzz_target!(|data: &[u8]| {
     match parse(&canonical, &Service, &limits) {
         Ok(again) => assert_eq!(again, uri, "{text:?} wrote {canonical:?}"),
         // The canonical form spells spaces `%20` and may outgrow a length limit.
-        Err(e) => assert!(matches!(e.kind, UrlErrorKind::LimitExceeded { .. }), "{text:?} wrote {canonical:?}: {e}"),
+        Err(e) => assert!(
+            matches!(e.kind, UrlErrorKind::LimitExceeded { .. }),
+            "{text:?} wrote {canonical:?}: {e}"
+        ),
     }
 });

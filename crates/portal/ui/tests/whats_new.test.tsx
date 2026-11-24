@@ -4,12 +4,12 @@
  */
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import sk from "../src/locales/sk.json";
 import { HelpMenu } from "../src/components/HelpMenu";
-import { WHATS_NEW, isUnread } from "../src/whatsNew";
+import { WHATS_NEW, isUnread, lastSeen, markSeen } from "../src/whatsNew";
 import { expectNoViolations } from "./checks";
 import { renderPage } from "./page_contract";
 
@@ -49,6 +49,26 @@ describe("what's new (T-3271)", () => {
     await userEvent.keyboard("{Escape}");
     expect(await screen.findByRole("button", { name: "Help" })).toBeInTheDocument();
     expect(localStorage.getItem("jc.whatsNewSeen")).toBe(first.date);
+  });
+
+  it("a browser that keeps nothing still opens the list and shows every change as new", async () => {
+    const refuse = () => {
+      throw new DOMException("storage is off", "SecurityError");
+    };
+    const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(refuse);
+    const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(refuse);
+    try {
+      expect(lastSeen()).toBeUndefined();
+      expect(() => markSeen()).not.toThrow();
+      expect(set).toHaveBeenCalledWith("jc.whatsNewSeen", WHATS_NEW[0].date);
+      show();
+      await userEvent.click(await screen.findByRole("button", { name: `Help, ${WHATS_NEW.length} new changes` }));
+      await userEvent.click(await screen.findByRole("menuitem", { name: `What's new (${WHATS_NEW.length} new)` }));
+      expect(await screen.findByRole("dialog", { name: en.whatsNew.title })).toBeInTheDocument();
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
   });
 
   it("an entry is new only when it is newer than the last one read", () => {

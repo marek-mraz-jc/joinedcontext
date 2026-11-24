@@ -1,0 +1,3 @@
+metrics.prometheus.use_histogram_timing=true
+metrics.mapping=root = this
+metrics.max_series=100

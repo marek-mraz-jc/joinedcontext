@@ -21,8 +21,31 @@ pub struct ConfigDir {
     quota_orgs: Vec<String>,
 }
 
-/// Parses `quotas.yaml`: `{<org id>: {<OrgQuotas field>: value}}`. An unknown field or a limit
-/// below 1 refuses the whole file, so a typo never applies half a change.
+/// One organization's quotas from a map of [`OrgQuotas`] fields (a missing field keeps its
+/// default). Refused: anything but a map (serde would take an array by position), an unknown
+/// field (a typo never silently keeps a default), a bad value (named by its field) and a limit
+/// below 1.
+pub fn quotas_from_map(value: &serde_json::Value) -> Result<OrgQuotas, String> {
+    let map = value.as_object().ok_or("expected a map of quota fields")?;
+    let defaults =
+        serde_json::to_value(OrgQuotas::default()).map_err(crate::api::json_error_text)?;
+    for (k, v) in map {
+        if defaults.get(k).is_none() {
+            return Err(format!("unknown field `{k}`"));
+        }
+        serde_json::from_value::<OrgQuotas>(serde_json::json!({ k: v }))
+            .map_err(|e| format!("field `{k}`: {e}"))?;
+    }
+    let quotas: OrgQuotas =
+        serde_json::from_value(value.clone()).map_err(crate::api::json_error_text)?;
+    quotas
+        .validate()
+        .map_err(|field| format!("{field} must be at least 1"))?;
+    Ok(quotas)
+}
+
+/// Parses `quotas.yaml`: `{<org id>: {<OrgQuotas field>: value}}`. Any refusal of
+/// [`quotas_from_map`] refuses the whole file, so a typo never applies half a change.
 pub fn parse_quotas_file(text: &str) -> Result<BTreeMap<String, OrgQuotas>, String> {
     let value: serde_norway::Value = serde_norway::from_str(text).map_err(|e| e.to_string())?;
     if value.is_null() {
@@ -31,28 +54,15 @@ pub fn parse_quotas_file(text: &str) -> Result<BTreeMap<String, OrgQuotas>, Stri
     let map = value
         .as_mapping()
         .ok_or("quotas.yaml must map organization ids to quotas")?;
-    let known: Vec<String> = serde_json::to_value(OrgQuotas::default())
-        .ok()
-        .and_then(|v| v.as_object().map(|m| m.keys().cloned().collect()))
-        .unwrap_or_default();
     let mut out = BTreeMap::new();
     for (org, q) in map {
         let org = org.as_str().ok_or("an organization id must be a string")?;
         crate::api::validate_stream_id(org)
             .map_err(|m| format!("{org}: {}", m.replace("stream id", "organization id")))?;
-        if let Some(fields) = q.as_mapping() {
-            for key in fields.keys() {
-                let name = key.as_str().unwrap_or_default();
-                if !known.iter().any(|k| k == name) {
-                    return Err(format!("{org}: unknown field `{name}`"));
-                }
-            }
-        }
-        let quotas: OrgQuotas =
-            serde_norway::from_value(q.clone()).map_err(|e| format!("{org}: {e}"))?;
-        quotas
-            .validate()
-            .map_err(|field| format!("{org}: {field} must be at least 1"))?;
+        let quotas = serde_json::to_value(q)
+            .map_err(|e| e.to_string())
+            .and_then(|q| quotas_from_map(&q))
+            .map_err(|e| format!("{org}: {e}"))?;
         out.insert(org.to_string(), quotas);
     }
     Ok(out)
@@ -61,8 +71,10 @@ pub fn parse_quotas_file(text: &str) -> Result<BTreeMap<String, OrgQuotas>, Stri
 fn yaml_files(dir: &Path) -> std::io::Result<BTreeMap<String, String>> {
     let mut out = BTreeMap::new();
     for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
             continue;
         };
         // ConfigMap mounts hold `..data` and `..<timestamp>` entries beside the keys.

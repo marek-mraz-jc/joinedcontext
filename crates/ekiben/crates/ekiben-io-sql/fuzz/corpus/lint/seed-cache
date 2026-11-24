@@ -1,0 +1,1 @@
+{"driver":"sqlite","dsn":":memory:","table":"kv","key_column":"k","value_column":"v","set_suffix":"x"}

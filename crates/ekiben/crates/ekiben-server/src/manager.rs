@@ -82,13 +82,6 @@ impl ManagedStream {
         self.handle.as_ref().is_some_and(|h| h.is_running())
     }
 
-    pub fn is_ready(&self) -> bool {
-        match &self.handle {
-            Some(h) if h.is_running() => h.is_ready(),
-            _ => true,
-        }
-    }
-
     /// Returns the stream's uptime in seconds and Go-formatted duration string.
     /// When a stream finishes (e.g. a finite `generate` or `file` input or `run: once`),
     /// its uptime freezes at the duration of that run and resets on `PUT /streams/{id}` (`PART B [T-6140]`).
@@ -96,8 +89,8 @@ impl ManagedStream {
         if let Some(ref h) = self.handle {
             return h.uptime();
         }
-        self.frozen_uptime
-            .unwrap_or_else(|| self.created_at.elapsed())
+        // A stream without a handle is a finished run, whose uptime froze.
+        self.frozen_uptime.unwrap_or_default()
     }
 
     pub fn current_last_run(&self) -> Option<RunSummary> {
@@ -744,15 +737,15 @@ impl StreamManager {
         let key = stream_key(caller_org, id);
         let mut removed = {
             let mut guard = self.streams.write().await;
-            if !guard.contains_key(&key) {
+            let Entry::Occupied(slot) = guard.entry(key.clone()) else {
                 return Err(not_found(id));
-            }
+            };
             if let Some(p) = &self.persistence {
                 p.deleted(&key.0, id)
                     .await
                     .map_err(|e| CoreError::other(format!("stream '{id}' was not removed: {e}")))?;
             }
-            guard.remove(&key).ok_or_else(|| not_found(id))?
+            slot.remove()
         };
 
         let handle = removed.handle.take();
@@ -770,7 +763,11 @@ impl StreamManager {
         let guard = self.streams.read().await;
         let mut not_ready = Vec::new();
         for ((org, id), strm) in guard.iter() {
-            if strm.is_active() && !strm.is_ready() {
+            if strm
+                .handle
+                .as_ref()
+                .is_some_and(|h| h.is_running() && !h.is_ready())
+            {
                 not_ready.push((org.clone(), id.clone()));
             }
         }

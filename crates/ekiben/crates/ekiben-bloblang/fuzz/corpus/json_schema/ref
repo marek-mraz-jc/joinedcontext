@@ -1,0 +1,1 @@
+{"$ref":"#/$defs/x","$defs":{"x":{"enum":[1,2],"minimum":0}}}

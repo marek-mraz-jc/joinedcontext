@@ -478,6 +478,104 @@ mod tests {
     }
 
     #[test]
+    fn a_fresh_faker_draws_its_card_type_and_unix_times_from_its_stream() {
+        let fresh = |seed: i64| Faker {
+            rng: GoRand::new(seed),
+            card: None,
+        };
+        let cards: std::collections::HashSet<usize> =
+            (0..20).map(|seed| fresh(seed).card()).collect();
+        assert!(cards.len() > 2, "{cards:?}");
+        let mut f = fresh(7);
+        let first = f.card();
+        assert!((0..5).all(|_| f.card() == first));
+        let now = Timestamp::now().as_second();
+        let times: std::collections::HashSet<i64> = (0..10).map(|_| f.unix_time()).collect();
+        assert!(
+            times.len() > 5 && times.iter().all(|t| (0..now).contains(t)),
+            "{times:?}"
+        );
+    }
+
+    #[test]
+    fn a_name_takes_the_female_lists_exactly_when_the_draw_is_over_50() {
+        let mut boundary = 0;
+        for seed in 0..1000 {
+            let mut probe = GoRand::new(seed);
+            let draw = probe.int63n(100);
+            boundary += usize::from(draw == 50);
+            let title_list = if draw > 50 {
+                TITLES_FEMALE
+            } else {
+                TITLES_MALE
+            };
+            let title = title_list[probe.int63n(title_list.len() as i64) as usize];
+            let mut f = Faker {
+                rng: GoRand::new(seed),
+                card: None,
+            };
+            let name = f
+                .generate("name")
+                .map(|v| v.to_string_coerced())
+                .unwrap_or_default();
+            assert!(
+                name.starts_with(&format!("{title} ")),
+                "seed {seed} draw {draw}: {name}"
+            );
+        }
+        // Draws of exactly 50 (male) tell `>` from `>=`.
+        assert!(boundary > 0);
+    }
+
+    #[test]
+    fn first_names_and_names_draw_from_both_lists() {
+        let firsts: Vec<String> = (0..300).map(|_| s("first_name")).collect();
+        assert!(firsts
+            .iter()
+            .any(|n| FIRST_NAMES_MALE.contains(&n.as_str())));
+        assert!(firsts
+            .iter()
+            .any(|n| FIRST_NAMES_FEMALE.contains(&n.as_str())));
+        let female: std::collections::HashSet<&String> = firsts
+            .iter()
+            .filter(|n| FIRST_NAMES_FEMALE.contains(&n.as_str()))
+            .collect();
+        assert!(female.len() > 5, "{female:?}");
+        // go-faker picks the female title and name list when intn(100) > 50: about half the time.
+        let only_female =
+            |w: &str| FIRST_NAMES_FEMALE.contains(&w) && !FIRST_NAMES_MALE.contains(&w);
+        let share = (0..400)
+            .filter(|_| s("name").split(' ').nth(1).is_some_and(only_female))
+            .count();
+        assert!((100..300).contains(&share), "{share} of 400");
+    }
+
+    #[test]
+    fn coordinates_and_amounts_are_uniform_fractions_scaled_into_range() {
+        // A refusal or a non-number reads as NaN, which the range checks below refuse.
+        let num = |name: &str| fake(name).ok().and_then(|v| v.as_f64()).unwrap_or(f64::NAN);
+        let lat: Vec<f64> = (0..40).map(|_| num("latitude")).collect();
+        let lon: Vec<f64> = (0..40).map(|_| num("longitude")).collect();
+        assert!(lat.iter().all(|v| (-90.0..90.0).contains(v)), "{lat:?}");
+        assert!(lon.iter().all(|v| (-180.0..180.0).contains(v)), "{lon:?}");
+        assert!(lat.iter().any(|v| *v != lat[0]) && lon.iter().any(|v| *v != lon[0]));
+        assert!(lat.iter().any(|v| *v < 0.0) && lon.iter().any(|v| *v < 0.0));
+        // float64() * 10^0..7, cut to one or two decimals: below 10^7 and seldom a whole number.
+        let amounts: Vec<f64> = (0..60)
+            .map(|_| {
+                let text = s("amount_with_currency");
+                let (_, amount) = text.split_once(' ').expect("currency then amount");
+                amount.parse::<f64>().expect("a number")
+            })
+            .collect();
+        assert!(
+            amounts.iter().all(|a| (0.0..1e7).contains(a)),
+            "{amounts:?}"
+        );
+        assert!(amounts.iter().any(|a| a.fract() != 0.0), "{amounts:?}");
+    }
+
+    #[test]
     fn values_vary_and_the_card_type_sticks_as_go_fakers_cache_does() {
         let a: std::collections::HashSet<String> = (0..20).map(|_| s("email")).collect();
         assert!(a.len() > 15);

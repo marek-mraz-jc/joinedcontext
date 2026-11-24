@@ -194,9 +194,6 @@ function AllEndpoints(): JSX.Element {
   );
 }
 
-/** The grid's data is already in: the panel around it drew the wait and the failure. */
-const LOADED = { isPending: false, isError: false, error: null, refetch: () => undefined };
-
 /** What a cell says as text, for the grid's search, sort and filter. */
 function cellText(cell: AccessCell | undefined, t: (key: string) => string): string {
   if (!cell) return "";
@@ -240,7 +237,6 @@ export function MatrixTable({ data }: { data: DataAccess }): JSX.Element {
     <>
       <Unanswered count={data.unanswered} />
       <AdminGrid<AccessRow>
-        query={LOADED}
         caption={t("dataAccess.title")}
         storageKey="organization:data-access"
         rows={data.rows}

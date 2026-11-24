@@ -152,6 +152,25 @@ describe("approving a public endpoint", () => {
     expect(approvalStanding(publisher, "mayor@hel.fi", publicEndpointChange("someone@hel.fi")).block).toBeNull();
     expect(approvalStanding(admin, "admin@hel.fi", publicEndpointChange("someone@hel.fi")).block).toBeNull();
   });
+
+  it("reads equals, other fields, a rule for another kind or verb, and leaves an unread grant set to the API", () => {
+    const grant = (rule: Record<string, unknown>) => ({ role: "r", binding: "b", rule: { kinds: ["Endpoint"], verbs: ["approve"], ...rule } });
+    const standing = (grants: unknown[]) =>
+      approvalStanding(withGrants(grants), "lead@hel.fi", publicEndpointChange("someone@hel.fi")).block;
+    expect(standing([grant({ constraints: [{ field: "spec.audience", equals: "public" }] })])).toBeNull();
+    expect(standing([grant({ constraints: [{ field: "spec.audience", equals: "organization" }] })])).toBe("needsPublisher");
+    // A constraint on another field, or one with no operator, says nothing about the audience.
+    expect(standing([grant({ constraints: [{ field: "spec.contextSpaceRef", in: ["air"] }] })])).toBeNull();
+    expect(standing([grant({ constraints: [{ field: "spec.audience" }] })])).toBeNull();
+    // Approve on Pipelines or propose on Endpoints does not publish an Endpoint.
+    expect(standing([grant({ kinds: ["Pipeline"] }), grant({ verbs: ["propose"] })])).toBe("needsPublisher");
+    expect(standing([grant({ kinds: undefined })])).toBe("needsPublisher");
+    // No grant list read yet, or the bootstrap group: the page does not guess; the API decides.
+    const unread = { data: undefined, can: () => true };
+    expect(approvalStanding(unread, "lead@hel.fi", publicEndpointChange("someone@hel.fi")).block).toBeNull();
+    const bootstrap = { data: { project: "helsinki", bootstrap: true, grants: [] } as never, can: () => true };
+    expect(approvalStanding(bootstrap, "lead@hel.fi", publicEndpointChange("someone@hel.fi")).block).toBeNull();
+  });
 });
 
 // PF-58: a change to access or a data model waits for a second person, the administrator's own too.

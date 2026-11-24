@@ -60,10 +60,8 @@ fn put_str(doc: &mut Doc, k: &str, v: Option<String>) {
     }
 }
 
-fn put_num(doc: &mut Doc, k: &str, v: Option<u8>) {
-    if let Some(v) = v {
-        doc.insert(k.to_string(), Value::Int(i64::from(v)));
-    }
+fn put_num(doc: &mut Doc, k: &str, v: u8) {
+    doc.insert(k.to_string(), Value::Int(i64::from(v)));
 }
 
 impl ParseLogProcessor {
@@ -134,11 +132,7 @@ impl ParseLogProcessor {
         let mut doc = Doc::new();
         match &self.format {
             Format::Rfc5424 { best_effort } => {
-                let res = match rfc5424::parse(body, *best_effort) {
-                    (_, Some(e)) => return Err(e),
-                    (None, None) => return Err(no_message()),
-                    (Some(r), None) => r,
-                };
+                let res = message(rfc5424::parse(body, *best_effort))?;
                 put_str(&mut doc, "message", res.message);
                 put_str(
                     &mut doc,
@@ -148,9 +142,8 @@ impl ParseLogProcessor {
                 put_num(&mut doc, "facility", res.facility);
                 put_num(&mut doc, "severity", res.severity);
                 put_num(&mut doc, "priority", res.priority);
-                if res.version != 0 {
-                    doc.insert("version".into(), Value::Int(i64::from(res.version)));
-                }
+                // a message comes only from a parse that read its version (1 to 999)
+                doc.insert("version".into(), Value::Int(i64::from(res.version)));
                 put_str(&mut doc, "hostname", res.hostname);
                 put_str(&mut doc, "procid", res.proc_id);
                 put_str(&mut doc, "appname", res.appname);
@@ -168,11 +161,7 @@ impl ParseLogProcessor {
                 }
             }
             Format::Rfc3164(opts) => {
-                let res = match rfc3164::parse(body, opts) {
-                    (_, Some(e)) => return Err(e),
-                    (None, None) => return Err(no_message()),
-                    (Some(r), None) => r,
-                };
+                let res = message(rfc3164::parse(body, opts))?;
                 put_str(&mut doc, "message", res.message);
                 put_str(
                     &mut doc,
@@ -200,8 +189,14 @@ impl ParseLogProcessor {
 /// go-syslog returns neither message nor error when the input stops inside a field that has no
 /// end-of-input action and best effort cannot export it; Bento then dereferences a nil message and
 /// panics. ekiben fails the message instead.
-fn no_message() -> String {
-    "parsing error: incomplete syslog message".to_string()
+/// go-syslog's answer as Bento reads it: an error wins over a partial message, and neither is an
+/// incomplete message (RFC 3164 answers so for `<34>Oct 11 22:14:15`).
+fn message<T>(parsed: (Option<T>, Option<String>)) -> Result<T, String> {
+    match parsed {
+        (_, Some(e)) => Err(e),
+        (None, None) => Err("parsing error: incomplete syslog message".to_string()),
+        (Some(r), None) => Ok(r),
+    }
 }
 
 /// `strconv.Atoi`'s accepted syntax and error text.

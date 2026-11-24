@@ -233,7 +233,7 @@ pub(crate) fn eval_number_family(
         })()),
         "parse_bytes" => Some((|| {
             let s = target_val.get_string()?;
-            parse_human_bytes(&s).map(Value::Int)
+            parse_human_bytes(&s)
         })()),
         "parse_big_decimal" => Some((|| {
             let scale_expr = get_first_arg(args, "scale")?;
@@ -273,7 +273,8 @@ pub(crate) fn eval_number_family(
     }
 }
 
-fn parse_human_bytes(s: &str) -> Result<i64, String> {
+/// go-humanize ParseBytes: a uint64, refused past its range.
+fn parse_human_bytes(s: &str) -> Result<Value, String> {
     let trimmed = s.trim();
     let num_end = trimmed
         .bytes()
@@ -296,9 +297,13 @@ fn parse_human_bytes(s: &str) -> Result<i64, String> {
         "gib" | "gi" => 1_073_741_824.0,
         "tb" | "t" => 1_000_000_000_000.0,
         "tib" | "ti" => 1_099_511_627_776.0,
-        _ => return Err(format!("unrecognized byte unit in '{s}'")),
+        _ => return Err(format!("unhandled size name: {unit}")),
     };
-    Ok((num * mult).round() as i64)
+    let n = (num * mult).round();
+    if n >= 18_446_744_073_709_551_616.0 {
+        return Err(format!("too large: {s}"));
+    }
+    Ok(i64::try_from(n as u64).map_or(Value::Uint(n as u64), Value::Int))
 }
 
 fn finite(name: &str, x: f64, y: f64) -> Result<Value, String> {

@@ -201,6 +201,62 @@ def runs(vals):
     return out
 
 
+BYTES = frozenset(range(256))
+BYTE_TEST = re.compile(r"(\d+) <= m\.c\(\)|m\.c\(\) (==|<=|>=|<|>) (\d+)|\((\d+)\.\.=(\d+)\)\.contains\(&m\.c\(\)\)")
+
+
+def byte_test(cond):
+    """The bytes for which `cond` holds, or None when it is not a plain test of the current byte."""
+    m = BYTE_TEST.fullmatch(cond)
+    if not m:
+        return None
+    lo, op, n, a, b = m.groups()
+    if lo:
+        return frozenset(range(int(lo), 256))
+    if a:
+        return frozenset(range(int(a), int(b) + 1))
+    n = int(n)
+    return frozenset(v for v in BYTES if {"==": v == n, "<=": v <= n, ">=": v >= n, "<": v < n, ">": v > n}[op])
+
+
+def case_bytes(subj, vals):
+    """The bytes a `case` of a switch on the current byte takes (every byte for another subject)."""
+    if subj != "m.c()":
+        return BYTES
+    return frozenset(int(v) for v in vals.split(",") if v.strip().isdigit()) | (
+        BYTES if not all(v.strip().isdigit() for v in vals.split(",")) else frozenset())
+
+
+def after(st, known):
+    """`known` past a statement that did not jump: a byte test or a switch on the byte whose taken
+    side always jumps leaves only the bytes of the side that falls through; moving `m.p` forgets."""
+    k = st[0]
+    if k == "raw" and "m.p" in st[1]:
+        return BYTES
+    if k == "if" and not st[4] and byte_test(st[1]) is not None:
+        held, then, els = byte_test(st[1]), st[2], st[3]
+        if then and terminates(then[-1]) and not els:
+            return known - held
+        return known
+    if k == "switch" and not st[1].strip():
+        for cond, body in st[2]:
+            held = BYTES if cond is None else byte_test(expr(cond))
+            if held is None or not (body and terminates(body[-1])):
+                return known
+            known = known - held
+        return known
+    if k == "switch" and st[1].strip() and expr(st[1]) == "m.c()":
+        for vals, body in st[2]:
+            if vals is None or not (body and terminates(body[-1])):
+                return known
+            known = known - case_bytes("m.c()", vals)
+        return known
+    if k in ("seq", "block"):
+        for s in st[1]:
+            known = after(s, known)
+    return known
+
+
 class E:
     def __init__(self, labels):
         self.labels = labels
@@ -208,15 +264,25 @@ class E:
     def goto(self, name):
         return f"lbl = {self.labels[name]}; continue;"
 
-    def seq(self, sts, ind):
-        out = []
-        for st in sts:
-            out += self.st(st, ind)
+    def seq(self, sts, ind, known=BYTES):
+        """`known` is the set of values the current byte can still have here: Ragel's binary search
+        over a byte repeats the tests an earlier `switch` already settled, and a test whose answer
+        is fixed would leave a branch nothing can take, so it is emitted as its one live side."""
+        out, todo = [], list(sts)
+        while todo:
+            st = todo.pop(0)
+            if st[0] == "if" and not st[4] and byte_test(st[1]) is not None:
+                held = byte_test(st[1])
+                if known <= held or not known & held:
+                    todo[:0] = st[2] if known <= held else st[3] or []
+                    continue
+            out += self.st(st, ind, known)
             if terminates(st):
                 break
+            known = after(st, known)
         return out
 
-    def st(self, st, ind):
+    def st(self, st, ind, known=BYTES):
         p = "    " * ind
         k = st[0]
         if k == "raw":
@@ -224,13 +290,18 @@ class E:
         if k == "goto":
             return [p + self.goto(st[1])]
         if k == "seq":
-            return self.seq(st[1], ind)
+            return self.seq(st[1], ind, known)
         if k == "block":
             if not st[1]:
                 return []
-            return [p + "{"] + self.seq(st[1], ind + 1) + [p + "}"]
+            return [p + "{"] + self.seq(st[1], ind + 1, known) + [p + "}"]
         if k == "if":
             _, cond, then, els, parse = st
+            held = byte_test(cond)
+            if held is None:
+                yes = no = BYTES
+            else:
+                yes, no = known & held, known - held
             if parse:
                 return ([p + f"match {parse} {{", p + "    Err(e) => {"] + self.seq(then, ind + 2)
                         + [p + "    }", p + "    Ok(t) => {"] + self.seq(els or [], ind + 2) + [p + "    }", p + "}"])
@@ -238,31 +309,43 @@ class E:
                 # Ragel's condition on a flag fixed for the whole run, in states only that flag
                 # value reaches: as an expression it has no branch whose other side is dead.
                 return [p + "widec += 256 * i16::from(m.rfc3339);"]
-            o = [p + f"if {cond} {{"] + self.seq(then, ind + 1)
+            o = [p + f"if {cond} {{"] + self.seq(then, ind + 1, yes)
             if els:
-                o += [p + "} else {"] + self.seq(els, ind + 1)
+                o += [p + "} else {"] + self.seq(els, ind + 1, no)
             return o + [p + "}"]
         if k == "switch":
             _, subj, cases = st
             if subj == "":
-                o = []
-                for n, (cond, body) in enumerate(cases):
-                    if cond is None:
-                        o += [p + "} else {"] + self.seq(body, ind + 1)
+                o, rest = [], known
+                for cond, body in cases:
+                    held = BYTES if cond is None else byte_test(expr(cond))
+                    if held is not None and not rest & held:
                         continue
-                    kw = "if" if n == 0 else "} else if"
-                    o += [p + f"{kw} {expr(cond)} {{"] + self.seq(body, ind + 1)
-                return o + [p + "}"]
+                    if held is not None and rest <= held:
+                        # the last live side: an `else`, or the whole chain when it is the only one
+                        if not o:
+                            return self.seq(body, ind, rest)
+                        return o + [p + "} else {"] + self.seq(body, ind + 1, rest) + [p + "}"]
+                    kw = "if" if not o else "} else if"
+                    here = rest & held if held is not None else rest
+                    o += [p + f"{kw} {expr(cond)} {{"] + self.seq(body, ind + 1, here)
+                    if held is None:
+                        rest = BYTES
+                    else:
+                        rest = rest - held
+                return o + [p + "}"] if o else []
             subj = {"m.cs": "m.cs"}.get(subj) or expr(subj)
             o = [p + f"match {subj} {{"]
-            default = []
+            default, rest = [], known if subj == "m.c()" else BYTES
             for vals, body in cases:
                 if vals is None:
                     default = body
                     continue
                 pat = " | ".join(runs([v.strip() for v in vals.split(",")]))
-                o += [p + f"    {pat} => {{"] + self.seq(body, ind + 2) + [p + "    }"]
-            o += [p + "    _ => {"] + self.seq(default, ind + 2) + [p + "    }"]
+                here = case_bytes(subj, vals)
+                rest = rest - here
+                o += [p + f"    {pat} => {{"] + self.seq(body, ind + 2, known & here) + [p + "    }"]
+            o += [p + "    _ => {"] + self.seq(default, ind + 2, rest) + [p + "    }"]
             return o + [p + "}"]
         raise SystemExit(f"cannot emit {k}")
 

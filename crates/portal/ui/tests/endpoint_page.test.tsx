@@ -824,6 +824,31 @@ describe("the endpoint's own settings page", () => {
     expect(remove).toHaveAttribute("title", expect.stringContaining("delete"));
   });
 
+  it("copies the address and opens and closes each dialog the menu and the header offer", async () => {
+    renderPage();
+    const user = userEvent.setup();
+    // After setup: user-event installs a clipboard of its own.
+    const writeText = vi.fn(() => Promise.reject(new DOMException("denied", "NotAllowedError")));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const more = await screen.findByRole("button", { name: /More actions for/ });
+    // A refused clipboard is not an error the page shows; the address was offered.
+    await user.click(more);
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: en.endpoints.copyUrl }));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(SLUG));
+    expect(screen.queryByRole("alert")).toBeNull();
+    for (const action of [en.saveAs.button, en.workspaces.open.action, en.resourceDelete.button]) {
+      await user.click(more);
+      const item = within(await screen.findByRole("menu")).getByRole("menuitem", { name: new RegExp(`^${action}`) });
+      await waitFor(() => expect(item).not.toHaveAttribute("aria-disabled", "true"));
+      await user.click(item);
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    }
+    await user.click(screen.getByRole("button", { name: en.catalogue.publish.open }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
   it("says an endpoint stops by being deleted and opens that deletion (EP-89)", async () => {
     renderPage();
     const user = userEvent.setup();

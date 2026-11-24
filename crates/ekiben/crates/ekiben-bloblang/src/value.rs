@@ -896,15 +896,11 @@ pub fn format_go_v(v: &Value) -> String {
             "[{}]",
             b.iter().map(u8::to_string).collect::<Vec<_>>().join(" ")
         ),
-        // ponytail: Go trims the fraction to its last non-zero digit; this prints 3, 6 or 9 digits
-        // as the chrono build did (`%.f`).
+        // Go's Time.String: the fraction trimmed to its last non-zero digit.
         Value::Timestamp(ts) => {
-            let nanos = ts.subsec_nanosecond();
-            let frac = match nanos {
+            let frac = match ts.subsec_nanosecond() {
                 0 => String::new(),
-                n if n % 1_000_000 == 0 => format!(".{:03}", n / 1_000_000),
-                n if n % 1_000 == 0 => format!(".{:06}", n / 1_000),
-                n => format!(".{n:09}"),
+                n => format!(".{n:09}").trim_end_matches('0').to_string(),
             };
             let zone = match ts.offset().seconds() {
                 0 => "+0000 UTC".to_string(),

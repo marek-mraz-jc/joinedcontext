@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+# `ekiben_io_sql::fuzzing`: the parsers of outside input, for fuzz/ (cargo fuzz).
+[features]
+fuzzing = []
+
 [dependencies]
 ekiben-bloblang = { workspace = true }
 ekiben-core = { workspace = true }

@@ -1,7 +1,7 @@
 // covers (T-2137, the module gate in gate_modules.test.ts): the cases in this file drive
 // src/pages/access/ServiceAccounts.tsx through the page they belong to; each was confirmed by
 // making the module throw and watching this file go red.
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
@@ -11,7 +11,16 @@ import en from "../src/locales/en.json";
 import { findFormPage } from "./formPage";
 import { App } from "../src/App";
 import { ServiceAccounts } from "../src/pages/access/ServiceAccounts";
-import { expectNoAxeViolations, json, list, problem, renderPart } from "./page_contract";
+import { expectNoAxeViolations, json, list, problem, renderPage, renderPart } from "./page_contract";
+import { answeringChecks, checksSoFar } from "./checks";
+
+// Monaco draws on a canvas and starts a worker, neither of which exists in jsdom; a textarea with
+// the same contract stands in, so the YAML view's own work is what runs here.
+vi.mock("../src/pages/models/MonacoSourceView", () => ({
+  default: ({ value, onChange }: { value: string; onChange?: (value: string) => void }) => (
+    <textarea aria-label="YAML" value={value} onChange={(event) => onChange?.(event.target.value)} />
+  ),
+}));
 
 const IDENTITY = {
   subject: "b7c1e0f4",
@@ -231,6 +240,91 @@ describe("the service accounts panel, mounted on its own", () => {
     expect(
       await screen.findByText("space-reader in helsinki, space-reader in helsinki-kpi"),
     ).toBeInTheDocument();
+  });
+
+  // T-7588: the create journey of the panel mounted on its own, where the change it opened is
+  // shown on the panel rather than handed to a routed list.
+  const proposing = (status: 202 | 422) => {
+    const posted: unknown[] = [];
+    renderPage(<ServiceAccounts project="helsinki" />, {
+      path: "/projects/helsinki/settings/accounts",
+      answer: async (url, request) => {
+        if (url.pathname === "/api/v1/projects/helsinki/drafts/ServiceAccount/vendor-push" && request.method === "PUT") {
+          const draft = (await request.clone().json()) as { manifest?: unknown };
+          return json({ project: "helsinki", kind: "ServiceAccount", name: "vendor-push", manifest: draft.manifest ?? draft, touchedBy: "jana.kovacova", touchedKind: "person", version: 1, updatedAt: "2026-11-23T08:00:00Z" });
+        }
+        if (url.pathname.endsWith("/permissions/me")) {
+          return json({ project: "helsinki", bootstrap: false, grants: [{ rule: { kinds: ["ServiceAccount", "MqttBroker"], verbs: ["read", "propose"] } }] });
+        }
+        if (url.pathname === "/api/v1/projects/helsinki/serviceaccounts" && request?.method === "POST") {
+          posted.push(await request.clone().json());
+          return status === 202
+            ? json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "Change", metadata: { name: "chg-0000004d", namespace: "helsinki" }, status: { lane: "red", phase: "PendingApproval" } }, 202)
+            : problem(422, "spec.owner: the owner must be a person of this organization");
+        }
+        if (url.pathname.endsWith("/serviceaccounts")) return json(list([]));
+        if (url.pathname.endsWith("/mqttbrokers")) {
+          return json(list([{ apiVersion: "joinedcontext.com/v1alpha1", kind: "MqttBroker", metadata: { name: "city-mqtt", namespace: "helsinki" }, spec: { roles: [{ name: "publisher" }, { name: "" }] } }]));
+        }
+        return undefined;
+      },
+    });
+    vi.stubGlobal("fetch", answeringChecks(globalThis.fetch));
+    return posted;
+  };
+
+  async function proposeFromYaml(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+    const add = () => screen.getAllByRole("button", { name: en.access.accounts.add }).at(-1) as HTMLElement;
+    await screen.findByText(en.access.accounts.empty);
+    await waitFor(() => expect(add()).not.toHaveAttribute("aria-disabled"));
+    await user.click(add());
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("tab", { name: en.form.view.yaml }));
+    fireEvent.change(await within(dialog).findByRole("textbox", { name: "YAML" }), {
+      target: {
+        value: [
+          "apiVersion: joinedcontext.com/v1alpha1",
+          "kind: ServiceAccount",
+          "metadata:",
+          "  name: vendor-push",
+          "  namespace: helsinki",
+          "spec:",
+          "  owner:",
+          "    user: b7c1e0f4",
+          "  purpose: VendorX pushes ParkingSpot updates",
+          "  roles:",
+          "    - role: viewer",
+          "      scope:",
+          "        project: helsinki",
+          "  credentials:",
+          "    - kind: oauth-client",
+          "      name: main",
+        ].join("\n"),
+      },
+    });
+    await user.click(within(dialog).getByRole("tab", { name: en.form.view.form }));
+    await user.click(within(dialog).getByRole("button", { name: en.form.check }));
+    await waitFor(() => expect(checksSoFar()).toContain("POST /api/v1/projects/helsinki/serviceaccounts"));
+    await user.click(within(dialog).getByRole("button", { name: en.access.accounts.propose }));
+    return dialog;
+  }
+
+  it("proposes a new account and shows the change it opened", async () => {
+    const user = userEvent.setup();
+    const posted = proposing(202);
+    await proposeFromYaml(user);
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).toMatchObject({ kind: "ServiceAccount", metadata: { name: "vendor-push", namespace: "helsinki" } });
+    expect(await screen.findByText(/chg-0000004d/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps the form open with the API's reason when the proposal is refused", async () => {
+    const user = userEvent.setup();
+    const posted = proposing(422);
+    const dialog = await proposeFromYaml(user);
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(await within(dialog).findByText(/the owner must be a person of this organization/)).toBeInTheDocument();
   });
 
   it("has no axe violation", async () => {

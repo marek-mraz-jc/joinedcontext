@@ -16,6 +16,22 @@ mod tls;
 use ekiben_core::Registry;
 
 pub use ftp::FtpInput;
+
+/// The config readers and the mail parser, for fuzz/ (cargo fuzz): any text a config holds and any
+/// bytes a mail server sends are read or refused, never a panic; an attachment keeps a bare name.
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing {
+    /// The address, path, sender and mailbox readers of both inputs over one text.
+    pub fn names(text: &str) {
+        crate::ftp::fuzz_names(text);
+        crate::imap::fuzz_names(text);
+    }
+
+    /// The attachments one raw mail queues.
+    pub fn mail(raw: &[u8]) -> usize {
+        crate::imap::fuzz_mail(raw)
+    }
+}
 pub use imap::ImapInput;
 
 /// Registers the `ftp` and `imap` inputs.
