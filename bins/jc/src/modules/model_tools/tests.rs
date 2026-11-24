@@ -1088,6 +1088,7 @@ fn a_type_with_neither_uri_nor_parent_or_a_type_cycle_is_named() {
 fn more_document_shapes_are_refused_in_plain_words() {
     assert_eq!(first_error("true\n"), "the schema document must be a mapping of LinkML fields, not a boolean");
     assert_eq!(first_error("3\n"), "the schema document must be a mapping of LinkML fields, not a number");
+    assert!(first_error("~\n").starts_with("the schema document must be a mapping of LinkML fields, not "));
     let head = "id: https://x.example/m\nname: m\nimports:\n  - linkml:types\n";
     for (body, expected) in [
         ("prefixes:\n  p:\n    prefix_prefix: p\n", "Prefix.prefix_reference must be supplied"),

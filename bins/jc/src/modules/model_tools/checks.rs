@@ -884,4 +884,12 @@ slots:
         assert!(has(&e, "is a measure without a unit"), "{e:?}");
         assert_eq!(errors(&CUBE.replace("      ucum_code: m\n", "      descriptive_name: metre\n")), Vec::<String>::new());
     }
+
+    #[test]
+    fn a_relationship_to_a_name_the_model_lacks_is_named() {
+        let e = errors(
+            "classes:\n  A:\n    is_a: Entity\n    slots: [to]\nslots:\n  to:\n    range: Nowhere\n    annotations:\n      ngsi_ld_kind: Relationship\n",
+        );
+        assert!(e.iter().any(|m| m.contains("Nowhere")), "{e:?}");
+    }
 }
