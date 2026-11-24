@@ -1143,17 +1143,15 @@ async fn an_empty_body_asks_for_the_source() {
     );
 }
 
-fn body_of(resp: Response) -> impl std::future::Future<Output = (StatusCode, Value)> {
-    async move {
-        let status = resp.status();
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap_or_default();
-        (
-            status,
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
-        )
-    }
+async fn body_of(resp: Response) -> (StatusCode, Value) {
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 #[tokio::test]
