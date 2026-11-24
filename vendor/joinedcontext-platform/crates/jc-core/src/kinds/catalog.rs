@@ -957,3 +957,119 @@ mod declared_iri_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn licence_methods_cover_all_variants() {
+        for licence in Licence::ALL {
+            assert!(!licence.code().is_empty());
+            assert!(!licence.title().is_empty());
+            assert!(!licence.ckan_id().is_empty());
+            assert!(licence.iri().contains(licence.code()));
+        }
+        assert_eq!(Licence::CcBy4.code(), "CC_BY_4_0");
+        assert_eq!(Licence::OdcBy.code(), "ODC_BY");
+        assert_eq!(Licence::OdcOdbl.code(), "ODC_ODBL");
+        assert_eq!(Licence::OdcPddl.code(), "ODC_PDDL");
+
+        assert_eq!(Licence::Cc0.title(), "Creative Commons Zero 1.0");
+        assert_eq!(Licence::CcBy4.title(), "Creative Commons Attribution 4.0");
+        assert_eq!(
+            Licence::CcBySa4.title(),
+            "Creative Commons Attribution-ShareAlike 4.0"
+        );
+        assert_eq!(
+            Licence::OdcBy.title(),
+            "Open Data Commons Attribution License"
+        );
+        assert_eq!(
+            Licence::OdcOdbl.title(),
+            "Open Data Commons Open Database License"
+        );
+        assert_eq!(
+            Licence::OdcPddl.title(),
+            "Open Data Commons Public Domain Dedication and License"
+        );
+
+        assert_eq!(Licence::Cc0.ckan_id(), "cc-zero");
+        assert_eq!(Licence::CcBy4.ckan_id(), "cc-by");
+        assert_eq!(Licence::CcBySa4.ckan_id(), "cc-by-sa");
+        assert_eq!(Licence::OdcBy.ckan_id(), "odc-by");
+        assert_eq!(Licence::OdcOdbl.ckan_id(), "odc-odbl");
+        assert_eq!(Licence::OdcPddl.ckan_id(), "odc-pddl");
+    }
+
+    #[test]
+    fn frequency_methods_cover_all_variants() {
+        let freqs = [
+            (Frequency::Cont, "CONT"),
+            (Frequency::Hourly, "HOURLY"),
+            (Frequency::Daily, "DAILY"),
+            (Frequency::Weekly, "WEEKLY"),
+            (Frequency::Monthly, "MONTHLY"),
+            (Frequency::Quarterly, "QUARTERLY"),
+            (Frequency::Annual, "ANNUAL"),
+            (Frequency::Irreg, "IRREG"),
+            (Frequency::Never, "NEVER"),
+            (Frequency::Unknown, "UNKNOWN"),
+        ];
+        for (freq, code) in freqs {
+            assert_eq!(freq.code(), code);
+            assert_eq!(
+                freq.iri(),
+                format!("http://publications.europa.eu/resource/authority/frequency/{code}")
+            );
+        }
+    }
+
+    #[test]
+    fn unharvested_catalog_must_not_declare_datasets() {
+        let mut catalog = Catalog {
+            harvest: Some(false),
+            ..Default::default()
+        };
+        catalog
+            .datasets
+            .push(crate::kinds::catalog_datasets::CatalogDataset {
+                name: "my-dataset".into(),
+                title: BTreeMap::from([("en".into(), "Title".into())]),
+                description: BTreeMap::from([("en".into(), "Desc".into())]),
+                types: vec!["School".into()],
+                q: None,
+                keywords: BTreeMap::new(),
+                license: None,
+            });
+        let err = catalog
+            .validate()
+            .expect_err("unharvested catalog with datasets rejected");
+        assert!(err.to_string().contains("spec.catalog.harvest"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("a door the feeds leave out has no catalogue datasets"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn project_catalog_requires_publisher_uri() {
+        let pc = ProjectCatalog {
+            publisher: Publisher {
+                name: BTreeMap::from([("en".into(), "Publisher".into())]),
+                uri: None,
+            },
+            contact_point: None,
+        };
+        let err = pc.validate().expect_err("publisher without uri rejected");
+        assert!(
+            err.to_string().contains("spec.catalog.publisher.uri"),
+            "{err}"
+        );
+        assert!(
+            err.to_string().contains("name the body's registry IRI"),
+            "{err}"
+        );
+    }
+}

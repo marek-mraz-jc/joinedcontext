@@ -1001,3 +1001,183 @@ mod tests {
             .expect("under the raised ceiling");
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn entry_constructor_assigns_fields() {
+        let e = entry(
+            "spec.test",
+            Section::Edge,
+            Some(10),
+            1,
+            Some(20),
+            BoundKind::Number,
+        );
+        assert_eq!(e.path, "spec.test");
+        assert_eq!(e.section, Section::Edge);
+        assert_eq!(e.default, Some(10));
+        assert_eq!(e.min, 1);
+        assert_eq!(e.max, Some(20));
+        assert_eq!(e.kind, BoundKind::Number);
+    }
+
+    #[test]
+    fn bounds_refuse_min_larger_than_max() {
+        let bounds = OrganizationBounds(BTreeMap::from([(
+            "spec.projects.quota.contextSpaces".to_string(),
+            Bound {
+                min: Some(20),
+                max: Some(10),
+            },
+        )]));
+        let err = bounds.validate().unwrap_err();
+        assert!(err.to_string().contains("min is larger than max"), "{err}");
+    }
+
+    #[test]
+    fn security_bound_refuses_loosened_ranges() {
+        let looser_min = OrganizationBounds(BTreeMap::from([(
+            "spec.limits.signIn.sessionIdleMinutes".to_string(),
+            Bound {
+                min: Some(1),
+                max: None,
+            },
+        )]));
+        let err = looser_min.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("only tighten the built-in range"),
+            "{err}"
+        );
+
+        let looser_max = OrganizationBounds(BTreeMap::from([(
+            "spec.limits.signIn.sessionIdleMinutes".to_string(),
+            Bound {
+                min: None,
+                max: Some(500),
+            },
+        )]));
+        let err = looser_max.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("only tighten the built-in range"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn check_mqtt_validates_allowances_and_bounds() {
+        let bounds = OrganizationBounds(BTreeMap::from([(
+            "spec.limits.mqtt.brokers".to_string(),
+            Bound {
+                min: Some(5),
+                max: None,
+            },
+        )]));
+        let mut allowance = crate::kinds::MqttAllowance {
+            brokers: Some(2),
+            ..Default::default()
+        };
+        let err = bounds
+            .check_mqtt(&allowance, "spec.limits.mqtt")
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("2 is outside the bound, 5"),
+            "{err}"
+        );
+
+        allowance.brokers = Some(10);
+        assert!(bounds.check_mqtt(&allowance, "spec.limits.mqtt").is_ok());
+
+        let empty_allowance = crate::kinds::MqttAllowance::default();
+        assert!(bounds
+            .check_mqtt(&empty_allowance, "spec.limits.mqtt")
+            .is_ok());
+    }
+
+    /// An Organization spec with `extra` merged over its required members.
+    fn org(extra: serde_json::Value) -> OrganizationSpec {
+        let mut spec =
+            serde_json::json!({"domain": "hel.fi", "locales": ["fi"], "defaultLocale": "fi"});
+        if let (Some(spec), Some(extra)) = (spec.as_object_mut(), extra.as_object()) {
+            spec.extend(extra.clone());
+        }
+        serde_json::from_value(spec).expect("an Organization spec")
+    }
+
+    #[test]
+    fn setting_returns_none_for_unknown_path() {
+        assert_eq!(
+            org(serde_json::json!({})).setting("spec.unknown.setting"),
+            None
+        );
+    }
+
+    #[test]
+    fn limits_exceeding_edge_body_are_refused() {
+        let spec = org(serde_json::json!({"limits": {
+            "edge": {"maxRequestBodyMegabytes": 16},
+            "gateway": {"maxRequestBodyMegabytes": 32}
+        }}));
+        let err = spec
+            .check_limits(&OrganizationBounds::safety())
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("more than the edge's 16 MiB"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn session_idle_longer_than_session_max_hours_is_refused() {
+        let spec = org(serde_json::json!({"limits": {
+            "signIn": {"sessionIdleMinutes": 120, "sessionMaxHours": 1}
+        }}));
+        let err = spec
+            .check_limits(&OrganizationBounds::safety())
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("longer than the session lives"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn check_limits_refuses_custom_hostnames_client_ca_and_empty_models() {
+        let bounds = OrganizationBounds::safety();
+        let mut spec = org(serde_json::json!({}));
+        spec.limits.mqtt.custom_hostnames =
+            vec![
+                serde_json::from_value(serde_json::json!({"name": "mqtt.city.sk"}))
+                    .expect("a hostname"),
+            ];
+        let err = spec.check_limits(&bounds).unwrap_err();
+        assert!(
+            err.to_string().contains("spec.limits.mqtt.customHostnames"),
+            "{err}"
+        );
+
+        let mut spec = org(serde_json::json!({}));
+        spec.limits.mqtt.device_auth = Some(vec![crate::kinds::MqttDeviceAuth::ClientCertificate]);
+        spec.limits.mqtt.client_ca_ref = Some(crate::envelope::SecretRef {
+            name: "ca".to_string(),
+            key: None,
+            env_var: None,
+        });
+        let err = spec.check_limits(&bounds).unwrap_err();
+        assert!(
+            err.to_string().contains("spec.limits.mqtt.clientCaRef"),
+            "{err}"
+        );
+
+        let mut spec = org(serde_json::json!({}));
+        spec.policies.agents.models = Some(vec!["   ".to_string()]);
+        let err = spec.check_limits(&bounds).unwrap_err();
+        assert!(
+            err.to_string().contains("spec.policies.agents.models"),
+            "{err}"
+        );
+    }
+}

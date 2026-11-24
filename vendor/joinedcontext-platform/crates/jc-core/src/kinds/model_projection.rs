@@ -353,3 +353,146 @@ pub fn linkml_measurements(linkml: &str) -> std::result::Result<Vec<(String, Str
     }
     Ok(found)
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn projection_filter_is_empty_and_intersect_identical() {
+        let filter_empty = ProjectionFilter::default();
+        assert!(filter_empty.is_empty());
+
+        let filter_a = ProjectionFilter {
+            q: Some("type==School".into()),
+            scope_q: None,
+            geo_q: None,
+            temporal_q: None,
+        };
+        assert!(!filter_a.is_empty());
+
+        let intersected = filter_a.intersect(&filter_a);
+        assert_eq!(intersected.q.as_deref(), Some("type==School"));
+    }
+
+    #[test]
+    fn model_projection_spec_context_space_and_intersect() {
+        let spec_a = ModelProjectionSpec {
+            context_space_ref: "education".into(),
+            data_model_ref: DataModelRef::new("school-model", "1"),
+            classes: vec![ProjectedClass {
+                name: "School".into(),
+                slots: vec!["name".into(), "address".into()],
+            }],
+            filter: Some(ProjectionFilter {
+                q: Some("active==true".into()),
+                scope_q: None,
+                geo_q: None,
+                temporal_q: None,
+            }),
+        };
+        assert_eq!(Kind::context_space(&spec_a), Some("education"));
+        assert_eq!(spec_a.attributes_of("Unknown"), None);
+        assert!(spec_a.attributes_of("School").unwrap().contains("name"));
+
+        let spec_b = ModelProjectionSpec {
+            context_space_ref: "education".into(),
+            data_model_ref: DataModelRef::new("school-model", "1"),
+            classes: vec![ProjectedClass {
+                name: "School".into(),
+                slots: vec!["name".into()],
+            }],
+            filter: Some(ProjectionFilter {
+                q: Some("active==true".into()),
+                scope_q: None,
+                geo_q: None,
+                temporal_q: None,
+            }),
+        };
+        let combined = spec_a.intersect(&spec_b);
+        assert_eq!(combined.classes[0].slots, vec!["name"]);
+        assert_eq!(
+            combined.filter.as_ref().unwrap().q.as_deref(),
+            Some("active==true")
+        );
+    }
+
+    #[test]
+    fn model_projection_validation_errors() {
+        let mut spec = ModelProjectionSpec {
+            context_space_ref: "education".into(),
+            data_model_ref: DataModelRef::new("school-model", "1"),
+            classes: vec![ProjectedClass {
+                name: "not_pascal_case".into(),
+                slots: vec!["name".into()],
+            }],
+            filter: None,
+        };
+        let err = spec.validate().expect_err("invalid entity type rejected");
+        assert!(err.to_string().contains("entityType"), "{err}");
+
+        spec.classes[0].name = "School".into();
+        spec.classes[0].slots = vec!["bad-slot-with-hyphen".into()];
+        let err = spec.validate().expect_err("invalid slot name rejected");
+        assert!(
+            err.to_string()
+                .contains("a slot is a LinkML slot name (letters, digits, underscore)"),
+            "{err}"
+        );
+
+        spec.classes[0].slots = vec!["name".into(), "name".into()];
+        let err = spec.validate().expect_err("duplicate slot rejected");
+        assert!(err.to_string().contains("a slot is listed once"), "{err}");
+
+        spec.classes[0].slots = vec!["name".into()];
+        spec.filter = Some(ProjectionFilter::default());
+        let err = spec.validate().expect_err("empty filter rejected");
+        assert!(
+            err.to_string()
+                .contains("a filter carries at least one of q, scopeQ, geoQ, temporalQ"),
+            "{err}"
+        );
+
+        spec.filter = Some(ProjectionFilter {
+            q: Some("   ".into()),
+            scope_q: None,
+            geo_q: None,
+            temporal_q: None,
+        });
+        let err = spec.validate().expect_err("whitespace filter rejected");
+        assert!(
+            err.to_string()
+                .contains("an empty query string filters nothing; leave the member out"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn linkml_classes_and_measurements_edges() {
+        let no_classes = "name: test\n";
+        let res = linkml_classes(no_classes).expect("parses with no classes");
+        assert!(res.is_empty());
+
+        let with_slots_and_attrs = r#"
+name: test
+classes:
+  Building:
+    slots:
+      - height
+    attributes:
+      area:
+        range: float
+"#;
+        let res = linkml_classes(with_slots_and_attrs).expect("classes parse");
+        let building_slots = res.get("Building").expect("Building class");
+        assert!(building_slots.contains("height"));
+        assert!(building_slots.contains("area"));
+        assert!(building_slots.contains("id"));
+        assert!(building_slots.contains("type"));
+
+        let no_classes_meas = "name: test\n";
+        let found =
+            linkml_measurements(no_classes_meas).expect("measurements parse with no classes");
+        assert!(found.is_empty());
+    }
+}

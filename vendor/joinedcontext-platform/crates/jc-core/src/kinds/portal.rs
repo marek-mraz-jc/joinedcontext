@@ -630,3 +630,235 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn portal_is_default_and_title_locale() {
+        let mut portal = PortalSpec {
+            organization_ref: "org".into(),
+            path: DEFAULT_PORTAL.into(),
+            title: BTreeMap::new(),
+            languages: Vec::new(),
+            host: None,
+            slug: SlugAddress::Redirect,
+            appearance: None,
+            profiles: None,
+            sources: Vec::new(),
+            hidden: Vec::new(),
+            pages: Vec::new(),
+        };
+        assert!(portal.is_default());
+        portal.path = "custom".into();
+        assert!(!portal.is_default());
+
+        portal.title.insert("INVALID_LOCALE".into(), "Title".into());
+        let err = portal.validate().expect_err("bad locale in title rejected");
+        assert!(matches!(err, Error::Locale(ref l) if l == "INVALID_LOCALE"));
+    }
+
+    #[test]
+    fn portal_hidden_and_source_count_bounds() {
+        let mut portal = PortalSpec {
+            organization_ref: "org".into(),
+            path: "mobility".into(),
+            title: BTreeMap::new(),
+            languages: Vec::new(),
+            host: None,
+            slug: SlugAddress::Redirect,
+            appearance: None,
+            profiles: None,
+            sources: Vec::new(),
+            hidden: vec!["".into()],
+            pages: Vec::new(),
+        };
+        let err = portal
+            .validate()
+            .expect_err("empty hidden dataset name rejected");
+        assert!(
+            err.to_string()
+                .contains("a dataset name of 1 to 100 characters"),
+            "{err}"
+        );
+
+        portal.hidden = vec!["a".repeat(101)];
+        let err = portal
+            .validate()
+            .expect_err("long hidden dataset name rejected");
+        assert!(
+            err.to_string()
+                .contains("a dataset name of 1 to 100 characters"),
+            "{err}"
+        );
+
+        portal.hidden.clear();
+        for i in 0..=MAX_PORTAL_SOURCES {
+            portal.sources.push(PortalSource {
+                name: format!("src{i}"),
+                kind: PortalSourceType::Endpoints,
+                projects: Vec::new(),
+                spaces: Vec::new(),
+                tags: Vec::new(),
+                names: Vec::new(),
+                url: None,
+                schedule: None,
+                allowed_hosts: Vec::new(),
+                budget: None,
+                publisher: None,
+                publisher_title: None,
+                publisher_uri: None,
+                publisher_description: None,
+                spatial_uri: None,
+                name_prefix: None,
+                rewrite_hosts: BTreeMap::new(),
+                skip: BTreeMap::new(),
+                titles: BTreeMap::new(),
+                spelling: BTreeMap::new(),
+                require_column: BTreeMap::new(),
+                gateway: None,
+                converted_file: None,
+                datasets_base: None,
+                enabled: true,
+            });
+        }
+        let err = portal.validate().expect_err("too many sources rejected");
+        assert!(err.to_string().contains("at most 32 sources"), "{err}");
+    }
+
+    #[test]
+    fn portal_source_type_and_url_rules() {
+        let mut source = PortalSource {
+            name: "endpoints-source".into(),
+            kind: PortalSourceType::Endpoints,
+            projects: Vec::new(),
+            spaces: Vec::new(),
+            tags: Vec::new(),
+            names: Vec::new(),
+            url: Some("https://example.com/feed".into()),
+            schedule: None,
+            allowed_hosts: Vec::new(),
+            budget: None,
+            publisher: None,
+            publisher_title: None,
+            publisher_uri: None,
+            publisher_description: None,
+            spatial_uri: None,
+            name_prefix: None,
+            rewrite_hosts: BTreeMap::new(),
+            skip: BTreeMap::new(),
+            titles: BTreeMap::new(),
+            spelling: BTreeMap::new(),
+            require_column: BTreeMap::new(),
+            gateway: None,
+            converted_file: None,
+            datasets_base: None,
+            enabled: true,
+        };
+        let err = source
+            .validate(0)
+            .expect_err("endpoints source with url rejected");
+        assert!(
+            err.to_string().contains(
+                "an `endpoints` source lists this Organization's Endpoints and reads no URL"
+            ),
+            "{err}"
+        );
+
+        source.url = None;
+        source.kind = PortalSourceType::DcatAp;
+        source.projects = vec!["proj".into()];
+        let err = source
+            .validate(0)
+            .expect_err("harvested source with projects rejected");
+        assert!(
+            err.to_string()
+                .contains("projects, spaces, tags and names narrow an `endpoints` source only"),
+            "{err}"
+        );
+
+        source.projects.clear();
+        let err = source
+            .validate(0)
+            .expect_err("harvested source without url rejected");
+        assert!(
+            err.to_string().contains(
+                "a harvested source names its catalogue, e.g. https://data.kosice.sk/catalog.ttl"
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn portal_source_hosts_schedule_gateway_and_budget() {
+        let mut source = PortalSource {
+            name: "harvested".into(),
+            kind: PortalSourceType::DcatAp,
+            projects: Vec::new(),
+            spaces: Vec::new(),
+            tags: Vec::new(),
+            names: Vec::new(),
+            url: Some("https://data.kosice.sk/catalog.ttl".into()),
+            schedule: Some("invalid cron".into()),
+            allowed_hosts: vec!["data.kosice.sk".into(), "bad host!".into()],
+            budget: None,
+            publisher: None,
+            publisher_title: None,
+            publisher_uri: None,
+            publisher_description: None,
+            spatial_uri: None,
+            name_prefix: None,
+            rewrite_hosts: BTreeMap::new(),
+            skip: BTreeMap::new(),
+            titles: BTreeMap::new(),
+            spelling: BTreeMap::new(),
+            require_column: BTreeMap::new(),
+            gateway: None,
+            converted_file: None,
+            datasets_base: None,
+            enabled: true,
+        };
+        let err = source.validate(0).expect_err("invalid host rejected");
+        assert!(err.to_string().contains("is not a host name"), "{err}");
+
+        source.allowed_hosts = vec!["data.kosice.sk".into()];
+        let err = source.validate(0).expect_err("invalid schedule rejected");
+        assert!(
+            err.to_string()
+                .contains("five cron fields, UTC, e.g. `23 3 * * *`"),
+            "{err}"
+        );
+
+        source.schedule = Some("0 3 * * *".into());
+        source.gateway = Some("not an http url".into());
+        let err = source.validate(0).expect_err("invalid gateway rejected");
+        assert!(
+            err.to_string().contains("an https:// or http:// address"),
+            "{err}"
+        );
+
+        source.gateway = None;
+        source.budget = Some(HarvestBudget {
+            records: 0,
+            bytes: 100,
+        });
+        let err = source
+            .validate(0)
+            .expect_err("zero records budget rejected");
+        assert!(
+            err.to_string().contains("records and bytes above 0"),
+            "{err}"
+        );
+
+        source.budget = Some(HarvestBudget {
+            records: 100,
+            bytes: 0,
+        });
+        let err = source.validate(0).expect_err("zero bytes budget rejected");
+        assert!(
+            err.to_string().contains("records and bytes above 0"),
+            "{err}"
+        );
+    }
+}

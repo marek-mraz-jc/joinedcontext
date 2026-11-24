@@ -2686,3 +2686,136 @@ mod deployment_spec_tests {
         assert!(unknown.is_err(), "privacy refuses an unknown field");
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn negative_question_folds_diacritic_characters() {
+        assert!(negative_question("havarijný stav podlahy"));
+        assert!(negative_question("kto je vinník nehody"));
+        assert!(negative_question("škôdy spôsobené vetrom"));
+        assert!(negative_question("sú cesty v zlom stave"));
+        assert!(negative_question("nejhorší zřícení mostu"));
+        assert!(negative_question("kto je viníkem úrazu"));
+        assert!(negative_question("počet obetí neštěstí"));
+        assert!(negative_question("chatrný stav budovy"));
+    }
+
+    #[test]
+    fn knowledge_source_patterns_length_bounded() {
+        let many_patterns: Vec<String> = (0..=MAX_PATTERNS).map(|i| format!("/path{i}")).collect();
+        let spec_include = KnowledgeSourceSpec {
+            source: SourceType::Website,
+            start_urls: vec!["https://example.com/".into()],
+            ckan_instance_ref: None,
+            context_spaces: Vec::new(),
+            organizations: Vec::new(),
+            upload: None,
+            sitemap: true,
+            wordpress_types: Vec::new(),
+            include: many_patterns.clone(),
+            exclude: Vec::new(),
+            max_depth: 3,
+            max_pages: 1000,
+            pdf: PdfPolicy::default(),
+            off_domain_documents: false,
+            schedule: None,
+            languages: vec!["sk".into()],
+            visibility: Visibility::Public,
+            categories: Vec::new(),
+        };
+        let err = spec_include
+            .validate()
+            .expect_err("too many include patterns rejected");
+        assert!(err.to_string().contains("at most 50 patterns"), "{err}");
+
+        let mut spec_exclude = spec_include;
+        spec_exclude.include.clear();
+        spec_exclude.exclude = many_patterns;
+        let err = spec_exclude
+            .validate()
+            .expect_err("too many exclude patterns rejected");
+        assert!(err.to_string().contains("at most 50 patterns"), "{err}");
+    }
+
+    #[test]
+    fn channel_as_str_variants() {
+        assert_eq!(Channel::Public.as_str(), "public");
+        assert_eq!(Channel::Internal.as_str(), "internal");
+        assert_eq!(Channel::Ckan.as_str(), "ckan");
+        assert_eq!(Channel::Iframe.as_str(), "iframe");
+    }
+
+    #[test]
+    fn reasoning_effort_allowances_and_openrouter_payload() {
+        assert_eq!(ReasoningEffort::None.allowance(), 0);
+        assert_eq!(ReasoningEffort::Minimal.allowance(), 512);
+        assert_eq!(ReasoningEffort::Low.allowance(), 1024);
+        assert_eq!(ReasoningEffort::Medium.allowance(), 4096);
+        assert_eq!(ReasoningEffort::High.allowance(), 8192);
+
+        assert_eq!(
+            ReasoningEffort::None.openrouter(),
+            serde_json::json!({ "enabled": false })
+        );
+        assert_eq!(
+            ReasoningEffort::Low.openrouter(),
+            serde_json::json!({ "effort": "low" })
+        );
+    }
+
+    #[test]
+    fn theme_fields_reject_credential_in_visible_text() {
+        // assembled here, so no token-shaped literal sits in the source
+        let cred_token = format!("ghp_{}", "0123456789abcdef".repeat(3)[..36].to_owned());
+        let mut deployment: AssistantDeploymentSpec = serde_json::from_value(serde_json::json!({
+            "publicId": "test-assistant",
+            "channel": "internal",
+            "sources": ["my-source"],
+            "theme": {
+                "title": format!("Assistant {cred_token}")
+            }
+        }))
+        .expect("parses");
+
+        let err = deployment
+            .validate()
+            .expect_err("credential in title rejected");
+        assert!(
+            err.to_string().contains(
+                "carries the shape of a credential; a key or token never goes into the text"
+            ),
+            "{err}"
+        );
+
+        deployment.theme = Some(Theme {
+            greeting: Some(Localised::Text(format!("Hello {cred_token}"))),
+            ..Default::default()
+        });
+        let err = deployment
+            .validate()
+            .expect_err("credential in greeting rejected");
+        assert!(
+            err.to_string().contains(
+                "carries the shape of a credential; a key or token never goes into the text"
+            ),
+            "{err}"
+        );
+
+        deployment.theme = Some(Theme {
+            subtitle: Some(Localised::Text(format!("Sub {cred_token}"))),
+            ..Default::default()
+        });
+        let err = deployment
+            .validate()
+            .expect_err("credential in subtitle rejected");
+        assert!(
+            err.to_string().contains(
+                "carries the shape of a credential; a key or token never goes into the text"
+            ),
+            "{err}"
+        );
+    }
+}

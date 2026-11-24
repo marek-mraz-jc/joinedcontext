@@ -1076,3 +1076,54 @@ mod edge_tests {
         assert_eq!(format("- 1\n- 2\n").expect("formats"), "- 1\n- 2\n");
     }
 }
+
+#[cfg(test)]
+mod remainder_tests {
+    use super::*;
+
+    #[test]
+    fn format_formats_explicit_block_and_quoted_keys() {
+        let res = format("a: |2\n  content\n").expect("formats explicit indentation block");
+        assert!(res.contains("content"));
+
+        let res = format("\"quoted:key\": value\n").expect("formats quoted key");
+        assert!(res.contains("value"));
+
+        let res = format("scalar_root\n").expect("formats scalar root");
+        assert_eq!(res, "scalar_root\n");
+
+        let res = format("a: {}\nb: []\nc:\n").expect("formats empty map and list and null");
+        assert!(res.contains("a: {}"));
+        assert!(res.contains("b: []"));
+        assert!(res.contains("c:"));
+    }
+
+    #[test]
+    fn format_handles_sequences_nested_under_keys_and_items() {
+        let same_indent_seq = "key:\n- item1\n- item2\n";
+        let res = format(same_indent_seq).expect("formats sequence at key indent");
+        assert!(res.contains("key:"));
+        assert!(res.contains("- item1"));
+
+        let nested_seq = "-\n  - inner1\n  - inner2\n";
+        let res = format(nested_seq).expect("formats sequence item containing sequence");
+        assert!(res.contains("inner1"));
+    }
+
+    #[test]
+    fn manifest_reordering_sorts_metadata_fields_and_preserves_lead_comments() {
+        let manifest = r#"# Top-level comment
+spec:
+  field: val
+apiVersion: joinedcontext.com/v1alpha1
+kind: Project
+metadata:
+  description: Project description
+  labels:
+    env: prod
+  name: my-project
+"#;
+        let res = format(manifest).expect("formats manifest");
+        assert!(res.starts_with("# Top-level comment\napiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: my-project"));
+    }
+}

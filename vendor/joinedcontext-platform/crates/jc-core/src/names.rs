@@ -875,3 +875,48 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn organization_id_parses_via_from_str() {
+        let org: OrganizationId = "sk_bbsk".parse().expect("valid id");
+        assert_eq!(org.as_str(), "sk_bbsk");
+        assert!("invalid".parse::<OrganizationId>().is_err());
+    }
+
+    #[test]
+    fn tenant_name_display_formats_as_string() {
+        let tenant = TenantName::parse("sk_bbsk__mobility").expect("valid tenant");
+        assert_eq!(format!("{tenant}"), "sk_bbsk__mobility");
+    }
+
+    #[test]
+    fn rename_keeps_non_name_error_variants() {
+        let err_invalid = Error::Invalid {
+            field: "orig".to_string(),
+            reason: "some reason".to_string(),
+        };
+        let renamed = rename(err_invalid.clone(), "new_field");
+        assert_eq!(renamed, err_invalid);
+
+        let err_api = Error::ApiVersion("joinedcontext.com/v1".to_string());
+        let renamed_api = rename(err_api.clone(), "new_field");
+        assert_eq!(renamed_api, err_api);
+    }
+
+    #[test]
+    fn tenant_name_of_space_validates_label_format() {
+        let key = jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint());
+        let err = TenantName::of_space(key, "Invalid_Space").expect_err("not a label");
+        assert!(
+            err.to_string().contains("must be lower-case letters"),
+            "{err}"
+        );
+
+        let err_empty = TenantName::of_space(key, "").expect_err("empty space name");
+        assert!(err_empty.to_string().contains("space"), "{err_empty}");
+    }
+}

@@ -225,3 +225,104 @@ mod tests {
         assert_eq!(newest, again);
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn to_latest_handles_non_object_spec_and_minimal_pipeline() {
+        let mut non_obj = serde_json::json!({
+            "apiVersion": API_VERSION,
+            "kind": "Pipeline",
+            "spec": null
+        });
+        to_latest(&mut non_obj);
+        assert_eq!(non_obj["spec"], serde_json::Value::Null);
+
+        let mut minimal = serde_json::json!({
+            "apiVersion": API_VERSION,
+            "kind": "Pipeline",
+            "metadata": { "name": "air", "namespace": "ovzdusie" },
+            "spec": {
+                "class": "resident",
+                "source": { "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } },
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air"
+            }
+        });
+        to_latest(&mut minimal);
+        assert_eq!(minimal["apiVersion"], API_VERSION_V1ALPHA2);
+        assert_eq!(minimal["spec"]["sources"].as_array().unwrap().len(), 1);
+        assert!(minimal["spec"].get("steps").is_none());
+        assert_eq!(
+            minimal["spec"]["outputs"][0]["targetEndpoint"],
+            "urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air"
+        );
+        assert!(minimal["spec"]["outputs"][0].get("type").is_none());
+    }
+
+    #[test]
+    fn to_v1alpha1_refuses_non_object_spec_and_invalid_outputs() {
+        let mut no_spec = serde_json::json!({
+            "apiVersion": API_VERSION_V1ALPHA2,
+            "kind": "Pipeline",
+            "spec": null
+        });
+        let err = to_v1alpha1(&mut no_spec).unwrap_err();
+        assert!(err.to_string().contains("no spec"), "{err}");
+
+        let mut non_obj_output = serde_json::json!({
+            "apiVersion": API_VERSION_V1ALPHA2,
+            "kind": "Pipeline",
+            "metadata": { "name": "air", "namespace": "ovzdusie" },
+            "spec": {
+                "class": "resident",
+                "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } }],
+                "outputs": ["not-an-object"]
+            }
+        });
+        let err = to_v1alpha1(&mut non_obj_output).unwrap_err();
+        assert!(
+            err.to_string().contains("an output that is no object"),
+            "{err}"
+        );
+
+        let mut missing_target = serde_json::json!({
+            "apiVersion": API_VERSION_V1ALPHA2,
+            "kind": "Pipeline",
+            "metadata": { "name": "air", "namespace": "ovzdusie" },
+            "spec": {
+                "class": "resident",
+                "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } }],
+                "outputs": [{ "type": "AirQualityObserved" }]
+            }
+        });
+        let err = to_v1alpha1(&mut missing_target).unwrap_err();
+        assert!(
+            err.to_string().contains("an output without targetEndpoint"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn to_v1alpha1_converts_pipeline_without_steps_or_extra_output_fields() {
+        let mut body = serde_json::json!({
+            "apiVersion": API_VERSION_V1ALPHA2,
+            "kind": "Pipeline",
+            "metadata": { "name": "air", "namespace": "ovzdusie" },
+            "spec": {
+                "class": "resident",
+                "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "mqtt" } }],
+                "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air" }]
+            }
+        });
+        to_v1alpha1(&mut body).unwrap();
+        assert_eq!(body["apiVersion"], API_VERSION);
+        assert!(body["spec"].get("compute").is_none());
+        assert!(body["spec"].get("output").is_none());
+        assert_eq!(
+            body["spec"]["targetEndpoint"],
+            "urn:ngsi-ld:Endpoint:bb.sk:ovzdusie:air"
+        );
+    }
+}

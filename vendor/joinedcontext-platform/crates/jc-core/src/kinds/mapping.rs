@@ -371,3 +371,104 @@ impl MappingSpec {
         !self.native.is_empty()
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn data_model_ref_validates_kind_and_name() {
+        let bad_kind = DataModelRef {
+            kind: Some("WrongKind".into()),
+            name: "model".into(),
+            version: "1".into(),
+        };
+        let err = bad_kind
+            .validate("spec.source.name")
+            .expect_err("wrong kind rejected");
+        assert!(
+            err.to_string()
+                .contains("kind must be `DataModel`, got `WrongKind`"),
+            "{err}"
+        );
+
+        let bad_name = DataModelRef {
+            kind: Some("DataModel".into()),
+            name: "BAD_NAME".into(),
+            version: "1".into(),
+        };
+        let err = bad_name
+            .validate("spec.source.name")
+            .expect_err("bad name rejected");
+        assert!(err.to_string().contains("spec.source.name"), "{err}");
+    }
+
+    #[test]
+    fn native_block_target_slot_and_language() {
+        let block = NativeBlock::new("bad-slot!", NativeLanguage::Bloblang, "root = this");
+        let err = block.validate().expect_err("invalid target slot rejected");
+        assert!(err.to_string().contains("targetSlot must be a non-empty identifier matching ^[A-Za-z_][A-Za-z0-9_]*$ (DM-38)"), "{err}");
+
+        assert_eq!(NativeLanguage::Bloblang.as_str(), "bloblang");
+        assert_eq!(format!("{}", NativeLanguage::Bloblang), "bloblang");
+    }
+
+    #[test]
+    fn mapping_artifacts_validation() {
+        let bad_bloblang = MappingArtifacts {
+            bloblang: Some("/abs/path.blobl".into()),
+            gateway_ir: None,
+        };
+        let err = bad_bloblang
+            .validate()
+            .expect_err("absolute bloblang rejected");
+        assert!(err.to_string().contains("spec.artifacts.bloblang"), "{err}");
+
+        let bad_ir = MappingArtifacts {
+            bloblang: None,
+            gateway_ir: Some("../escape.json".into()),
+        };
+        let err = bad_ir.validate().expect_err("escaping gateway ir rejected");
+        assert!(
+            err.to_string().contains("spec.artifacts.gatewayIr"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn mapping_spec_constructor_and_validation() {
+        let spec = MappingSpec::new(
+            "my-space",
+            DataModelRef::new("src-model", "1"),
+            DataModelRef::new("tgt-model", "1"),
+            serde_json::json!({
+                "class_derivations": {
+                    "School": {}
+                }
+            }),
+            vec![MappingTest::new("tests/in.json", "tests/out.json")],
+        );
+        assert!(!spec.requires_elevated_lane());
+        assert!(spec.validate().is_ok());
+
+        let mut bad_space = spec.clone();
+        bad_space.context_space_ref = "INVALID SPACE".into();
+        let err = bad_space
+            .validate()
+            .expect_err("invalid context space rejected");
+        assert!(err.to_string().contains("spec.contextSpaceRef"), "{err}");
+
+        let mut bad_sssom = spec.clone();
+        bad_sssom.vocabulary_alignment = Some(VocabularyAlignment {
+            sssom_ref: TypedRef {
+                kind: "Mapping".into(),
+                name: "BAD SSSOM NAME".into(),
+                namespace: None,
+            },
+        });
+        let err = bad_sssom
+            .validate()
+            .expect_err("bad sssom ref name rejected");
+        assert!(err.to_string().contains("metadata.name"), "{err}");
+    }
+}

@@ -239,3 +239,44 @@ mod tests {
         assert!(!matches("air/x", "air/x/y", "cam-1"));
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn overlaps_finds_when_first_role_covers_second() {
+        let role_a = MqttRole {
+            name: "wide".into(),
+            service_accounts: Vec::new(),
+            publish: vec!["air/${clientid}/#".into()],
+            subscribe: Vec::new(),
+            shared_topics: false,
+            reason: None,
+        };
+        let role_b = MqttRole {
+            name: "narrow".into(),
+            service_accounts: Vec::new(),
+            publish: vec!["air/${clientid}/pm10".into()],
+            subscribe: Vec::new(),
+            shared_topics: false,
+            reason: None,
+        };
+        let found = overlaps(&[role_a, role_b]);
+        assert_eq!(
+            found,
+            vec!["role `wide` publish `air/${clientid}/#` covers role `narrow` `air/${clientid}/pm10`"]
+        );
+    }
+
+    #[test]
+    fn covers_returns_false_when_wide_has_more_levels_than_narrow() {
+        assert!(!covers("air/status/temp", "air/status"));
+    }
+
+    #[test]
+    fn matches_handles_level_mismatch_and_plus_wildcard() {
+        assert!(!matches("air/temp/celsius", "air/temp", "client1"));
+        assert!(matches("air/+/temp", "air/sensor1/temp", "client1"));
+    }
+}

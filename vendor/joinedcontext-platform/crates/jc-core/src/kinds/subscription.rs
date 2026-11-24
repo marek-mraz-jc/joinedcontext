@@ -400,3 +400,89 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn subscription_refuses_throttling_zero() {
+        let spec = SubscriptionSpec {
+            context_space_ref: Ref::Name("space".to_string()),
+            entities: vec![WatchedEntity {
+                r#type: Some("Vehicle".to_string()),
+                id: None,
+                id_pattern: None,
+            }],
+            watched_attributes: Vec::new(),
+            q: None,
+            geo_q: None,
+            notification: Notification {
+                endpoint: NotificationEndpoint {
+                    uri: "https://example.com/notify".to_string(),
+                    accept: None,
+                    receiver_info: Vec::new(),
+                    secret_ref: None,
+                },
+                attributes: Vec::new(),
+                format: None,
+            },
+            throttling: Some(0),
+            expires_at: None,
+            is_active: true,
+            subscription_name: None,
+            description: None,
+        };
+        let err = spec.validate().expect_err("throttling 0 must fail");
+        assert!(err.to_string().contains("spec.throttling"), "{err}");
+
+        let mut spec_ok = spec;
+        spec_ok.throttling = Some(10);
+        assert!(spec_ok.validate().is_ok());
+    }
+
+    #[test]
+    fn subscription_secret_refs_accessor() {
+        let sec = SecretRef {
+            name: "my-secret".to_string(),
+            key: None,
+            env_var: None,
+        };
+        let spec = SubscriptionSpec {
+            context_space_ref: Ref::Name("space".to_string()),
+            entities: vec![WatchedEntity {
+                r#type: Some("Vehicle".to_string()),
+                id: None,
+                id_pattern: None,
+            }],
+            watched_attributes: Vec::new(),
+            q: None,
+            geo_q: None,
+            notification: Notification {
+                endpoint: NotificationEndpoint {
+                    uri: "https://example.com/notify".to_string(),
+                    accept: None,
+                    receiver_info: Vec::new(),
+                    secret_ref: Some(sec.clone()),
+                },
+                attributes: Vec::new(),
+                format: None,
+            },
+            throttling: None,
+            expires_at: None,
+            is_active: true,
+            subscription_name: None,
+            description: None,
+        };
+        assert_eq!(spec.secret_refs(), vec![&sec]);
+
+        let mut spec_none = spec;
+        spec_none.notification.endpoint.secret_ref = None;
+        assert!(spec_none.secret_refs().is_empty());
+    }
+
+    #[test]
+    fn redacted_handles_uri_without_scheme_separator() {
+        assert_eq!(redacted("invalid-uri-without-scheme"), "…");
+    }
+}

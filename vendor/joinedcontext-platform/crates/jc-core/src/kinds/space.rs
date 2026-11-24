@@ -979,3 +979,161 @@ mod urn_owner_tests {
         assert!(error.contains("spec.urnOwner"), "{error}");
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn project_spec_refuses_reserved_mcp_names() {
+        let spec = ProjectSpec {
+            organization_ref: Ref::Name("bbsk".to_string()),
+            domain: None,
+            urn_owner: None,
+            catalog: None,
+            quotas: None,
+            repository: None,
+            git_ref: None,
+            version: None,
+            parameters: BTreeMap::new(),
+            apps: None,
+            visibility: None,
+        };
+        let meta_d = ObjectMeta {
+            name: "d".to_string(),
+            namespace: Some("org".to_string()),
+            ..Default::default()
+        };
+        let err_d = spec.validate_spec(&meta_d).expect_err("d is reserved");
+        assert!(
+            err_d.to_string().contains("`d` and `me` are MCP addresses"),
+            "{err_d}"
+        );
+
+        let meta_me = ObjectMeta {
+            name: "me".to_string(),
+            namespace: Some("org".to_string()),
+            ..Default::default()
+        };
+        let err_me = spec.validate_spec(&meta_me).expect_err("me is reserved");
+        assert!(
+            err_me
+                .to_string()
+                .contains("`d` and `me` are MCP addresses"),
+            "{err_me}"
+        );
+
+        let meta_ok = ObjectMeta {
+            name: "valid-project".to_string(),
+            namespace: Some("org".to_string()),
+            ..Default::default()
+        };
+        assert!(spec.validate_spec(&meta_ok).is_ok());
+    }
+
+    #[test]
+    fn quotas_capped_caps_all_dimensions() {
+        let q = Quotas {
+            context_spaces: Some(10),
+            resident_pipelines: Some(10),
+            public_endpoints: Some(10),
+            ingest_events_per_second: Some(10),
+            apps: Some(10),
+            agent_runs_per_day: Some(10),
+            entities_per_space: Some(10),
+            requests_per_minute: Some(10),
+            mqtt: None,
+            min_pipeline_period_seconds: None,
+        };
+        let ceiling = Quotas {
+            context_spaces: Some(5),
+            resident_pipelines: Some(5),
+            public_endpoints: Some(5),
+            ingest_events_per_second: Some(5),
+            apps: Some(5),
+            agent_runs_per_day: Some(5),
+            entities_per_space: Some(5),
+            requests_per_minute: Some(5),
+            mqtt: None,
+            min_pipeline_period_seconds: None,
+        };
+        let capped = q.capped(&ceiling);
+        assert_eq!(capped.ingest_events_per_second, Some(5));
+        assert_eq!(capped.entities_per_space, Some(5));
+    }
+
+    #[test]
+    fn quality_rule_refuses_min_greater_than_max() {
+        let rule = QualityRule {
+            name: "range-check".to_string(),
+            entity_type: "Vehicle".to_string(),
+            kind: QualityKind::Range,
+            attribute: "speed".to_string(),
+            min: Some(serde_json::Number::from(50)),
+            max: Some(serde_json::Number::from(10)),
+            bbox: None,
+            max_ahead: None,
+            max_age: None,
+            outcome: None,
+        };
+        let err = rule.validate().expect_err("min > max should be refused");
+        assert!(err.to_string().contains("min is at most max"), "{err}");
+    }
+
+    #[test]
+    fn duration_seconds_handles_invalid_durations() {
+        assert_eq!(duration_seconds("PfooD"), None);
+        assert_eq!(duration_seconds("P"), None);
+        assert_eq!(duration_seconds("PT"), None);
+        assert_eq!(duration_seconds("P99999D"), None);
+    }
+
+    #[test]
+    fn context_space_spec_refuses_invalid_data_model_ref_kind() {
+        let spec = ContextSpaceSpec {
+            data_model_ref: Some(Ref::Typed(crate::envelope::TypedRef {
+                kind: "Endpoint".to_string(),
+                name: "dm".to_string(),
+                namespace: None,
+            })),
+            ..Default::default()
+        };
+        let err = spec.validate().expect_err("kind must be DataModel");
+        assert!(
+            err.to_string().contains("kind must be `DataModel`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn context_space_validate_with_meta_checks_model_namespace_and_urn_segment() {
+        let spec = ContextSpaceSpec {
+            data_model_ref: Some(Ref::Typed(crate::envelope::TypedRef {
+                kind: "DataModel".to_string(),
+                name: "dm".to_string(),
+                namespace: Some("other-project".to_string()),
+            })),
+            ..Default::default()
+        };
+        let meta = ObjectMeta {
+            name: "space1".to_string(),
+            namespace: Some("this-project".to_string()),
+            ..Default::default()
+        };
+        let err = spec
+            .validate_with_meta(&meta)
+            .expect_err("owner != project");
+        assert!(
+            err.to_string().contains("spec.dataModelRef.namespace"),
+            "{err}"
+        );
+
+        let spec_no_dm = ContextSpaceSpec::default();
+        let meta_no_ns = ObjectMeta {
+            name: "space1".to_string(),
+            namespace: None,
+            ..Default::default()
+        };
+        assert!(spec_no_dm.validate_with_meta(&meta_no_ns).is_ok());
+    }
+}
