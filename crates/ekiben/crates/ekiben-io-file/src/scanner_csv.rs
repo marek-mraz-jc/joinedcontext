@@ -227,6 +227,14 @@ mod tests {
             let e = rows(conf.clone(), "a\n").expect_err("refused");
             assert!(e.to_string().contains(want), "{conf}: {e}");
         }
+        assert_eq!(
+            rows(
+                serde_json::json!({"custom_delimiter": ";", "parse_header_row": false}),
+                "a;b,c\n"
+            )
+            .expect("rows"),
+            [r#"["a","b,c"]"#]
+        );
         // an empty delimiter is the comma
         assert_eq!(
             rows(

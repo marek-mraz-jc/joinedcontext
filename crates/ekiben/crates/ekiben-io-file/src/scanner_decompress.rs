@@ -110,6 +110,17 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_of_a_few_mebibytes_reads_under_the_cap() {
+        let body = vec![0u8; 3 << 20];
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&body).expect("gz");
+        let out = Algorithm::Gzip
+            .decompress(&gz.finish().expect("gz"))
+            .expect("under the cap");
+        assert_eq!(out.len(), 3 << 20);
+    }
+
+    #[test]
     fn every_algorithm_reads_its_own_stream() {
         let body = b"hello world".repeat(100);
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());

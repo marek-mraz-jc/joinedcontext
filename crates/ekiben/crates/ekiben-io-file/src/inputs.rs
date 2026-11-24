@@ -826,7 +826,7 @@ impl BrokerInput {
         let batcher = match obj.get("batching") {
             Some(b_val) => {
                 let pol = BatchPolicyConfig::from_json_value(b_val)?;
-                if pol.is_noop() && pol.processors.is_empty() && pol.count <= 1 {
+                if pol.is_noop() {
                     None
                 } else {
                     let pctx =
@@ -884,7 +884,7 @@ impl Input for BrokerInput {
             let idx = self.cursor % self.inputs.len();
             match self.inputs[idx].read_batch(ctx).await {
                 Ok((batch, ack)) => {
-                    self.cursor = (idx + 1) % self.inputs.len();
+                    self.cursor = idx + 1;
                     if let Some(ref mut batcher) = self.batcher {
                         self.pending_acks.push(ack);
                         let mut should_flush = false;
@@ -914,9 +914,6 @@ impl Input for BrokerInput {
                 Err(CoreError::EndOfInput) => {
                     let mut finished = self.inputs.remove(idx);
                     let _ = finished.close().await;
-                    if self.cursor >= self.inputs.len() && !self.inputs.is_empty() {
-                        self.cursor = 0;
-                    }
                 }
                 Err(e) => return Err(e),
             }

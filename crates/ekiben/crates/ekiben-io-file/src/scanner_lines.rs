@@ -80,23 +80,20 @@ impl LinesScanner {
         let last = delim[delim.len() - 1];
         let mut line = Vec::new();
         loop {
-            let (found, used) = {
+            let used = {
                 let buf = r.fill_buf().map_err(read_err)?;
                 if buf.is_empty() {
                     break;
                 }
-                let (found, used) = match memchr(last, buf) {
-                    Some(i) => (true, i + 1),
-                    None => (false, buf.len()),
-                };
+                let used = memchr(last, buf).map_or(buf.len(), |i| i + 1);
                 if line.len() + used > self.max_buffer_size {
                     return Err(CoreError::other("bufio.Scanner: token too long"));
                 }
                 line.extend_from_slice(&buf[..used]);
-                (found, used)
+                used
             };
             r.consume(used);
-            if found && line.ends_with(delim) {
+            if line.ends_with(delim) {
                 line.truncate(line.len() - delim.len());
                 if self.delimiter.is_none() && line.last() == Some(&b'\r') {
                     line.pop();
@@ -196,6 +193,20 @@ mod tests {
         let got =
             lines(serde_json::json!({"custom_delimiter": "<>"}), b"x<y<>z<><>").expect("lines");
         assert_eq!(got, ["x<y", "z", ""]);
+    }
+
+    #[test]
+    fn the_default_max_buffer_size_is_64_kib() {
+        let mut fits = vec![b'x'; 64 * 1024 - 1];
+        fits.push(b'\n');
+        assert_eq!(
+            lines(serde_json::json!({}), &fits).expect("fits")[0].len(),
+            64 * 1024 - 1
+        );
+        let mut long = vec![b'x'; 64 * 1024];
+        long.push(b'\n');
+        let err = lines(serde_json::json!({}), &long).expect_err("too long");
+        assert_eq!(err.to_string().trim(), "bufio.Scanner: token too long");
     }
 
     #[test]
