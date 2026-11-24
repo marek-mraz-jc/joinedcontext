@@ -354,6 +354,32 @@ async fn import_ckan_json_reads_every_dump_shape() {
 }
 
 /// The test database as `user` with `password` instead of the migration owner.
+#[tokio::test]
+async fn a_second_import_reuses_its_publishers_and_a_hidden_list_needs_a_catalogue() {
+    let org = OrgId::from_uuid(Uuid::from_u128(0xc21));
+    let cat = CatalogueId::from_uuid(Uuid::from_u128(0xc22));
+    let ctx = RequestCtx::new(org, cat, Subject::authenticated("admin", vec![org], Vec::new()));
+    let store = MemoryStore::new();
+    ensure_default_catalogue(&store, org, cat, "import.example.org")
+        .await
+        .unwrap();
+    let dump = json!([package("b1", "o1")]).to_string();
+    assert_eq!(import_ckan_json(&store, &ctx, &dump, "sk").await.unwrap(), (1, 1));
+    let again = json!([package("b2", "o1")]).to_string();
+    assert_eq!(
+        import_ckan_json(&store, &ctx, &again, "sk").await.unwrap(),
+        (0, 1),
+        "o1 is held: no second publisher"
+    );
+    assert_eq!(store.list_publishers(&ctx).await.unwrap().len(), 1);
+
+    // without a catalogue the hidden list has nowhere to go and creates none
+    let bare = MemoryStore::new();
+    let hidden = json!({"hidden": {"b1": "duplicate"}, "packages": []}).to_string();
+    assert_eq!(import_ckan_json(&bare, &ctx, &hidden, "sk").await.unwrap(), (0, 0));
+    assert!(bare.get_catalogue(org, cat).await.unwrap().is_none());
+}
+
 fn url_as(base: &str, user: &str, password: &str) -> String {
     let (scheme, rest) = base.split_once("://").expect("url scheme");
     let host_part = rest.rsplit_once('@').map(|(_, h)| h).unwrap_or(rest);

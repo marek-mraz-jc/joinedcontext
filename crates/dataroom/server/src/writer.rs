@@ -409,15 +409,11 @@ impl CatalogueWriter {
         }
         let state = self.state.clone();
         // SHACL over up to a page of records for each profile: off the async workers.
-        let datasets = tokio::task::spawn_blocking(move || {
+        let datasets = blocking(move || {
             let gaps = dataroom_api::feeds::profile_gaps(&state, &cat, &page, &publishers);
-            page.into_iter().zip(gaps).collect()
+            Ok(page.into_iter().zip(gaps).collect())
         })
-        .await;
-        let datasets = match datasets {
-            Ok(datasets) => datasets,
-            Err(e) => return Err(DataroomError::Storage(format!("profile report: {e}"))),
-        };
+        .await?;
         Ok(CatalogueReport {
             total,
             missing_publisher,
@@ -640,14 +636,12 @@ pub enum FileWrite {
     Delete { id: String },
 }
 
-/// Runs a file store call off the async workers.
+/// Runs a file store call or a SHACL pass off the async workers.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
     match tokio::task::spawn_blocking(f).await {
         Ok(answer) => answer,
-        // Only a file store call that panicked ends here.
-        Err(e) => Err(DataroomError::Storage(format!(
-            "file store call stopped: {e}"
-        ))),
+        // Only a call that panicked ends here.
+        Err(e) => Err(DataroomError::Storage(format!("blocking call stopped: {e}"))),
     }
 }
 
@@ -1336,6 +1330,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_blocking_call_that_panics_is_a_storage_error() {
+        let err = blocking::<()>(|| panic!("a SHACL pass gave up"))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, DataroomError::Storage(m) if m.starts_with("blocking call stopped")),
+            "{err:?}"
+        );
+        assert_eq!(blocking(|| Ok(7)).await.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn a_report_of_a_served_catalogue_the_store_lost_is_not_found() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (state, _) = started(store);
+        let spec = mobility(None);
+        let served = Arc::new(RwLock::new(vec![(spec.org_id, spec.id)]));
+        let writer = CatalogueWriter::new(state, Arc::new(LiveAuthorizer::new(Vec::new())), served);
+        let err = writer.report(spec.org_id, spec.id, 0, 20).await.err();
+        assert!(
+            matches!(&err, Some(DataroomError::NotFound(m)) if m == "catalogue not found"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_host_already_listed_as_left_is_listed_once() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let spec = mobility(Some("old.city.test"));
+        let mut held = writer.upsert(spec.clone()).await.expect("served");
+        held.left_hosts = vec!["old.city.test".into()];
+        store.upsert_catalogue(held).await.expect("a row that lists its own host");
+        let moved = writer
+            .upsert(mobility(Some("new.city.test")))
+            .await
+            .expect("moved");
+        assert_eq!(moved.left_hosts, ["old.city.test"]);
+    }
+
+    #[tokio::test]
+    async fn list_from_reuses_a_publisher_the_target_holds() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let (_, writer) = started(store.clone());
+        let (from, to) = (mobility(None), transit());
+        let org = from.org_id;
+        writer.upsert(from.clone()).await.expect("from served");
+        writer.upsert(to.clone()).await.expect("to served");
+        let source = RequestCtx::new(org, from.id, Subject::anonymous());
+        let target = RequestCtx::new(org, to.id, Subject::anonymous());
+        store
+            .upsert_dataset(&source, dataset(org, from.id, "bus", json!({})))
+            .await
+            .expect("stored");
+        let before = store.list_publishers(&target).await.expect("publishers");
+        let listed = writer
+            .list_from(org, (from.id, "https://data.city.test/-/mobility"), to.id, "endpoints:bus", |_| true)
+            .await
+            .expect("listed");
+        assert_eq!(listed, ["bus"]);
+        let copy = store.get_dataset(&target, "bus").await.expect("read").expect("copied");
+        assert_eq!(copy.generated_by.as_deref(), Some("endpoints:bus"));
+        assert_eq!(store.list_publishers(&target).await.expect("publishers"), before, "no second city");
+    }
+
+    #[tokio::test]
     async fn list_from_copies_selected_records_keeps_foreign_names_and_withdraws_dropped_copies() {
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
         let (_, writer) = started(store.clone());
@@ -1505,9 +1565,7 @@ mod tests {
         let (state, writer) = started(store);
         let redirect = |host: Option<&str>, redirect: bool| {
             let mut spec = mobility(host);
-            if let Some(route) = spec.portal.as_mut() {
-                route.redirect = redirect;
-            }
+            spec.portal.as_mut().expect("a portal route").redirect = redirect;
             spec
         };
         let slug = || {
