@@ -1072,4 +1072,54 @@ mod tests {
         let zero = [json!({"id": "c1", "count": 0})];
         assert_eq!(kpi_value(&zero, &params(kpi::Agg::Sum)).ok(), Some(0.0));
     }
+
+    /// T-3250: an address to infer a model from is judged before any fetch: an address at all,
+    /// http or https, no credential in it, the caller's right to propose a DataSource, and a
+    /// public host; each refusal names `/url` (or the missing right) and never repeats a secret.
+    #[tokio::test]
+    async fn an_address_to_infer_from_is_refused_before_anything_fetches_it() {
+        let state = crate::ops::testkit::state();
+        let admin = crate::ops::testkit::admin(&state).identity;
+        for (url, says) in [
+            ("not a url", "not an address"),
+            ("ftp://data.hel.fi/a.json", "http or https"),
+            (
+                "https://jana:s3cret-pw@data.hel.fi/a.json",
+                "carries a user name",
+            ),
+            (
+                "https://data.hel.fi/a.json?apiKey=k-123456",
+                "carries a user name",
+            ),
+            ("http://gitea/a.json", "inside the cluster"),
+            ("http://127.0.0.1:9/a.json", ""),
+        ] {
+            match infer_from_url(&admin, &state, "helsinki", None, url).await {
+                Err(OpError::InvalidInput { path, message }) => {
+                    assert_eq!(path, "/url", "{url}");
+                    assert!(message.contains(says), "{url}: {message}");
+                    assert!(
+                        !message.contains("s3cret-pw") && !message.contains("k-123456"),
+                        "{message}"
+                    );
+                }
+                other => panic!("{url}: a 422, got {other:?}"),
+            }
+        }
+        let stranger = crate::ops::testkit::person("mallory", &[]);
+        match infer_from_url(
+            &stranger,
+            &state,
+            "helsinki",
+            None,
+            "https://data.hel.fi/a.json",
+        )
+        .await
+        {
+            Err(OpError::Api(ApiError::Denied(why))) => {
+                assert!(why.contains("DataSource"), "{why}")
+            }
+            other => panic!("a 403, got {other:?}"),
+        }
+    }
 }

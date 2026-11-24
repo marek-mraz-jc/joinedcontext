@@ -343,14 +343,19 @@ fn until_midnight(now: time::OffsetDateTime) -> u64 {
 }
 
 /// A capped question's whole stream (T-4671): its one `error` event, then `done` with nothing
-/// spent; no answer, no citation, no card and no follow-up.
-fn capped(refusal: &Event, anonymous: bool) -> Response {
+/// spent; no answer, no citation, no card and no follow-up. `Retry-After` says when the limit
+/// resets, so the chat names the time in the reader's language (T-7790).
+fn capped(refusal: &Event, anonymous: bool, retry: Option<u64>) -> Response {
     let events = [
         sse(refusal, anonymous),
         sse(&Event::Done(Spent::default(), 0), anonymous),
     ]
     .map(Ok::<_, Infallible>);
-    Sse::new(futures_util::stream::iter(events)).into_response()
+    let mut response = Sse::new(futures_util::stream::iter(events)).into_response();
+    if let Some(value) = retry.and_then(|r| HeaderValue::from_str(&r.to_string()).ok()) {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+    response
 }
 
 /// The request body (API/05 §1.1).
@@ -428,6 +433,10 @@ pub fn router(state: Arc<ChatState>) -> Router {
         .route(
             "/api/v1/d/{public_id}/turns/{turn}/resume",
             get(resume).options(preflight),
+        )
+        .route(
+            "/api/v1/d/{public_id}/turns/{turn}/cancel",
+            post(cancel).options(preflight),
         )
         .route(
             "/api/v1/d/{public_id}/map/{id}",
@@ -562,6 +571,11 @@ fn with_cors(mut response: Response, origin: Option<HeaderValue>) -> Response {
         let headers = response.headers_mut();
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
         headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+        // The widget names when a limit resets from Retry-After (T-7790).
+        headers.insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static("Retry-After"),
+        );
     }
     response
 }
@@ -1582,14 +1596,38 @@ async fn resume(
     with_cors(response, origin)
 }
 
-async fn replay(
+/// `POST /api/v1/d/{publicId}/turns/{turn}/cancel` (T-7790, API/05 §1.6.2): the visitor's Stop.
+/// The held turn's model loop ends, what it spent is recorded and its stream slot is freed. Bound
+/// to the visitor's address and deployment as a resume is; a finished turn answers 204 as well.
+async fn cancel(
+    State(state): State<Arc<ChatState>>,
+    Path((public_id, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let (deployment, origin) = match placed(&state, &public_id, &headers) {
+        Ok(placed) => placed,
+        Err(refused) => return *refused,
+    };
+    let response = match held_turn(&state, &deployment, &public_id, &id, &headers, "cancel").await {
+        Ok(turn) => {
+            turn.cancel();
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(refused) => *refused,
+    };
+    with_cors(response, origin)
+}
+
+/// The visitor's own held turn `id`: a current visitor token, the same address and deployment,
+/// within `RESUMES_PER_MINUTE` per address and `purpose` (resume or cancel).
+async fn held_turn(
     state: &ChatState,
     deployment: &Deployment,
     public_id: &str,
     id: &str,
-    after: usize,
     headers: &HeaderMap,
-) -> Response {
+    purpose: &str,
+) -> Result<Arc<resume::Turn>, Box<Response>> {
     let token = headers
         .get(VISITOR_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -1600,14 +1638,14 @@ async fn replay(
         .visitor(public_id, token, unix_now())
         .is_none()
     {
-        return problem(
+        return Err(Box::new(problem(
             401,
             "Overenie prehliadača vypršalo. Obnovte stránku a skúste to znova.",
-        );
+        )));
     }
     let visitor = limits.visitor(&client_of(headers), today());
     let key = format!(
-        "{}/{}\u{0}{visitor}\u{0}resume",
+        "{}/{}\u{0}{visitor}\u{0}{purpose}",
         deployment.project, deployment.name
     );
     let admitted = limits.admit(
@@ -1616,17 +1654,32 @@ async fn replay(
     );
     drop(limits);
     if let Err(retry) = admitted {
-        return too_many(
+        return Err(Box::new(too_many(
             retry,
             "Z tejto siete prišlo veľa obnovení za krátky čas. Počkajte chvíľu a skúste to znova.",
-        );
+        )));
     }
-    let turn = match state.turns.find(public_id, &visitor, id, Instant::now()) {
-        resume::Found::Live(turn) => turn,
-        resume::Found::Gone => {
-            return problem(410, "This answer can no longer be resumed; ask again.")
-        }
-        resume::Found::Missing => return problem(404, "No such answer of this visitor."),
+    match state.turns.find(public_id, &visitor, id, Instant::now()) {
+        resume::Found::Live(turn) => Ok(turn),
+        resume::Found::Gone => Err(Box::new(problem(
+            410,
+            "This answer can no longer be resumed; ask again.",
+        ))),
+        resume::Found::Missing => Err(Box::new(problem(404, "No such answer of this visitor."))),
+    }
+}
+
+async fn replay(
+    state: &ChatState,
+    deployment: &Deployment,
+    public_id: &str,
+    id: &str,
+    after: usize,
+    headers: &HeaderMap,
+) -> Response {
+    let turn = match held_turn(state, deployment, public_id, id, headers, "resume").await {
+        Ok(turn) => turn,
+        Err(refused) => return *refused,
     };
     let anonymous = deployment.spec.channel.is_anonymous();
     let stream = futures_util::StreamExt::map(turn.events_from(after), move |(index, event)| {
@@ -2162,7 +2215,8 @@ async fn ask(
         }
         tracing::info!(deployment = %key, cap = cap.name(), "a question was refused at its cap");
         let zone = clock::Zone::of(&deployment.spec.languages);
-        return capped(&cap.event(time::OffsetDateTime::now_utc(), zone), anonymous);
+        let now = time::OffsetDateTime::now_utc();
+        return capped(&cap.event(now, zone), anonymous, cap.retry_after(now));
     }
     let (tokens_per_day, tokens_per_conversation) =
         (budget.tokens_per_day, budget.tokens_per_conversation);
@@ -2331,14 +2385,21 @@ async fn ask(
         let (inner, mut passing) = tokio::sync::mpsc::channel::<Event>(32);
         let answering = async {
             // A raised data loop keeps its answer call's time after its last tool (T-4294).
-            let answered = tokio::time::timeout(
+            let running = tokio::time::timeout(
                 ANSWER_TIMEOUT.max(ask.data_time + DATA_ANSWER),
                 agent::SPENT_SO_FAR.scope(
                     Arc::clone(&so_far),
                     agent::answer(&ask, &question.history, &question.message, &inner),
                 ),
-            )
-            .await;
+            );
+            // The visitor's Stop drops the model loop, its call in flight included (T-7790).
+            let answered = match &held {
+                Some(turn) => tokio::select! {
+                    answered = running => Some(answered),
+                    () = turn.cancelled() => None,
+                },
+                None => Some(running.await),
+            };
             drop(inner);
             answered
         };
@@ -2369,10 +2430,16 @@ async fn ask(
             seen
         };
         let (answered, mut seen) = tokio::join!(answering, forwarding);
-        let timed_out = answered.is_err();
+        let timed_out = matches!(answered, Some(Err(_)));
         let spent = match answered {
-            Ok(spent) => spent,
-            Err(_) => {
+            Some(Ok(spent)) => spent,
+            None => {
+                // The calls made before the Stop, so the day's cost holds them.
+                let spent = so_far.lock().map(|s| s.clone()).unwrap_or_default();
+                tracing::info!(deployment = %name, model_calls = spent.calls, "the visitor stopped the answer");
+                spent
+            }
+            Some(Err(_)) => {
                 let cut = Event::Error {
                     status: 504,
                     title: "Answer Took Too Long",

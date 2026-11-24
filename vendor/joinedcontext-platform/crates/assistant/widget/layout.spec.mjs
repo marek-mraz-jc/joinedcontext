@@ -504,7 +504,7 @@ test("the pending answer shows each real step as it happens, then gives way to t
   await expect(page.locator(".jc-progress")).toHaveCount(0);
   // One announcement per step, none twice and never a second.
   const said = await page.evaluate(() => window.said);
-  expect(said).toEqual(["Looking it up…", "Reading your question…", "Searching 412 sources for „oldest bridges region“…",
+  expect(said).toEqual(["Reading your question…", "Searching 412 sources for „oldest bridges region“…",
     "Reading BBSK bridge register: Bridges, Year built < 1950…", "Reading BBSK bridge register: Bridges, Year built < 1950 · 1,651 rows, 0.8 s",
     "Checking 6 passages…", "Checked 6 passages: they answer the question", "Writing the answer from 2 sources…"]);
 });
@@ -1204,3 +1204,62 @@ test.describe("docked beside the catalogue (T-4685)", () => {
     await expect(page.frameLocator("#jc").locator(".jc-dock")).toHaveCount(0);
   });
 });
+
+// T-7790: the widget's states beside the Portal chat's (crates/portal/ui/e2e/knowledge.spec.ts):
+// the same answers, read by the same render core, each at a desktop and a phone. With $JC_SHOTS
+// set, each is kept as widget-<state>-<width>.png, the phone shot with its phone report.
+const SSE = (...events) => events.map(([name, data]) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`).join("");
+const CITED = [{ n: 1, url: "https://www.hel.fi/en/culture/libraries/oodi", title: "Oodi Central Library" }];
+const HOURS = { type: "Opening hours", total: 3, columns: ["day", "opens", "closes"], rows: [["Monday", "08:00", "22:00"], ["Saturday", "10:00", "20:00"], ["Sunday", "10:00", "20:00"]] };
+const OODI = "Oodi is open **08:00–22:00** on weekdays and 10:00–20:00 at the weekend [1].\n\n- The makerspace closes an hour earlier.\n- Holidays follow the weekend hours.";
+const CONV_ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
+const TURN_ID = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+const STATES = [
+  ["progress", SSE(["conversation", { id: CONV_ID, turn: TURN_ID }], ["stage", { stage: "searching", topic: "Oodi opening hours", count: 6 }], ["stage", { stage: "checking", count: 6 }]), /Checking 6 passages/, true],
+  ["streamed", SSE(["conversation", { id: CONV_ID, turn: TURN_ID }], ["delta", { text: "Oodi is open **08:00–22:00** on weekdays and 10:00–20:00 at the wee" }]), /at the wee/, true],
+  ["table", SSE(["data", HOURS], ["answer", { text: "The library's hours, by day." }], ["citations", []], ["done", {}]), /The library's hours, by day/],
+  ["chart", SSE(["data", { type: "AirQualityObserved", total: 5, columns: ["dateObserved", "pm10"], units: [null, "µg/m³"], rows: [["2026-11-14T06:00:00Z", 12.5], ["2026-11-14T07:00:00Z", 18.25], ["2026-11-14T08:00:00Z", 24], ["2026-11-14T09:00:00Z", 21.5], ["2026-11-14T10:00:00Z", 16]] }], ["answer", { text: "PM10 rose to 24 µg/m³ at 08:00." }], ["citations", []], ["done", {}]), /PM10 rose to 24/],
+  ["sources", SSE(["answer", { text: OODI }], ["citations", CITED], ["done", { stagesMs: { route: 420, search: 900, answer: 1300 } }]), /Oodi is open/],
+  ["followups", SSE(["answer", { text: OODI }], ["citations", CITED], ["followups", { questions: ["Is Oodi open on Easter Monday?", "Where is the makerspace?"] }], ["done", {}]), /Easter Monday/],
+  ["limit", SSE(["error", { status: 429, title: "Daily Limit Reached", detail: "Asistent dnes dosiahol denný limit." }], ["done", {}]), /has reached its limit\. Try again after/],
+  ["error", SSE(["citations", CITED], ["error", { status: 503, title: "Model Unavailable", detail: "Model asistenta neodpovedal." }], ["done", {}]), /cannot reach its model/],
+  ["stopped", SSE(["conversation", { id: CONV_ID, turn: TURN_ID }], ["delta", { text: "Oodi is open **08:00–22:00** on weekdays" }]), /You stopped the answer/, true],
+];
+// A stream that stays open: its events, then nothing until the reader goes.
+let held;
+let heldBase;
+test.beforeAll(async () => {
+  held = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store" });
+    res.write(decodeURIComponent(new URL(req.url, "http://x").searchParams.get("body") || ""));
+  });
+  await new Promise((done) => held.listen(0, "127.0.0.1", done));
+  heldBase = `http://127.0.0.1:${held.address().port}`;
+});
+test.afterAll(() => { held.closeAllConnections(); held.close(); });
+for (const [width, height] of [[1440, 900], [400, 860]]) {
+  test.describe(`the widget's states at ${width} px (T-7790)`, () => {
+    test.use(width === 400 ? { hasTouch: true, isMobile: true } : {});
+    for (const [state, body, see, open] of STATES) {
+      test(`${state} at ${width} px`, async ({ page }) => {
+        await page.setViewportSize({ width, height });
+        let cancels = 0;
+        await page.route("**/api/v1/d/bb/turns/*/cancel", (route) => { cancels += 1; return route.fulfill({ status: 204 }); });
+        // An answer still under way keeps its stream open until Stop; the rest arrive whole.
+        await page.route("**/api/v1/d/bb/chat", (route) => (open
+          ? route.continue({ url: `${heldBase}/?body=${encodeURIComponent(body)}` })
+          : route.fulfill({ status: 200, contentType: "text/event-stream", headers: state === "limit" ? { "Retry-After": "5400" } : {}, body })));
+        await page.goto(`${base}/d/bb?lang=en`);
+        await page.locator("#jc-question").fill("When is Oodi open?");
+        await page.locator(".jc-form .jc-submit").click();
+        if (state === "stopped") {
+          await expect(page.locator(".jc-streaming")).toContainText("on weekdays");
+          await page.locator(".jc-stop").click();
+          await expect.poll(() => cancels).toBe(1);
+        }
+        await expect(page.locator(".jc-log").getByText(see).first()).toBeVisible();
+        await shoot(page, `widget-${state}`, width);
+      });
+    }
+  });
+}
