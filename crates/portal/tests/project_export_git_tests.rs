@@ -299,6 +299,78 @@ async fn a_repository_that_moved_during_the_export_is_not_exported() {
     assert!(answer.text.contains("export again"), "{}", answer.text);
 }
 
+/// MF-45: an App building from a repository outside this forge's applications organization
+/// would import with no source, so the git export refuses by the App's name.
+#[tokio::test]
+async fn an_app_building_from_outside_the_forge_is_not_exported() {
+    let (_server, state) = world(HEAD).await;
+    state.mirror.upsert(envelope(
+        "App",
+        "outside",
+        "ovzdusie",
+        json!({ "source": { "git": { "url": "https://github.com/someone/outside.git", "ref": "main" } } }),
+    ));
+    let answer = export(&state, steward(), "?format=git").await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(answer.text.contains("the App 'outside'"), "{}", answer.text);
+    assert!(
+        answer.text.contains("organization 'test-owner'"),
+        "{}",
+        answer.text
+    );
+}
+
+/// What the forge hands back as a bundle but is none is an internal error, never a zip that
+/// an import would refuse later.
+#[tokio::test]
+async fn a_bundle_that_is_no_git_bundle_is_not_exported() {
+    let (server, state) = world(HEAD).await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/api/v1/repos/test-owner/ovzdusie/archive/main.bundle",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"PACK\0\0".to_vec()))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = export(&state, steward(), "?format=git").await;
+    assert_eq!(
+        answer.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        answer.text
+    );
+}
+
+/// An App named like its project gives two repositories one name in the index, which the target
+/// cannot tell apart: refused before any zip is written.
+#[tokio::test]
+async fn an_app_named_like_its_project_is_not_exported() {
+    let (server, state) = world(HEAD).await;
+    repository(
+        &server,
+        "ovzdusie_ovzdusie",
+        APP_HEAD,
+        APP_HEAD,
+        &[],
+        json!([]),
+    )
+    .await;
+    state.mirror.upsert(envelope(
+        "App",
+        "ovzdusie",
+        "ovzdusie",
+        json!({ "source": { "git": { "url": "https://forge.example/test-owner/ovzdusie_ovzdusie.git", "ref": "main" } } }),
+    ));
+    let answer = export(&state, steward(), "?format=git").await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(
+        answer.text.contains("cannot be exported as git"),
+        "{}",
+        answer.text
+    );
+}
+
 /// MF-18: a bundle leaves nothing out, so a caller who may read one space of the project and
 /// not the other gets no bundle; the zip export still answers, without the other space.
 #[tokio::test]

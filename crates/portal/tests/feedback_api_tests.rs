@@ -128,6 +128,34 @@ async fn a_feedback_arrives_scrubbed_without_its_author_and_an_administrator_rea
     );
 }
 
+/// A feedback store that does not answer is a 500 on every route, never an empty list or a 202
+/// for a feedback that was not kept, and the answer names no database address.
+#[tokio::test]
+async fn a_feedback_store_that_is_down_says_so_on_every_route() {
+    // port 1 is privileged and nothing in a test container listens there
+    let down = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy("postgres://portal:portal@127.0.0.1:1/portal")
+        .expect("a lazy pool");
+    let state = world().with_db(down);
+    let (status, body) = post(&state, "jana", json!({ "text": "x", "page": "/" })).await;
+    // the store's error stays in the log; the person reads the generic internal error
+    assert_eq!(status, 500, "{body}");
+    assert_eq!(body["detail"], "Unexpected internal error", "{body}");
+    for path in [
+        "/api/v1/organization/feedback",
+        "/api/v1/organization/feedback/1/screenshot",
+    ] {
+        let answer = send(&state, person("admin"), "GET", path, None).await;
+        assert_eq!(answer.status.as_u16(), 500, "{path}: {}", answer.text);
+        assert!(
+            !answer.text.contains("127.0.0.1"),
+            "{path}: {}",
+            answer.text
+        );
+    }
+}
+
 #[tokio::test]
 async fn only_an_administrator_reads_feedback() {
     let state = world();

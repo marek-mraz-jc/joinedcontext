@@ -389,3 +389,105 @@ fn health(status: &Option<crate::resource::Status>) -> NodeHealth {
         _ => NodeHealth::Unknown,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn put(state: &AppState, manifest: Value) {
+        let env: ResourceEnvelope = serde_json::from_value(manifest).expect("a manifest");
+        state.mirror.upsert(env);
+    }
+
+    fn manifest(kind: &str, name: &str, spec: Value) -> Value {
+        json!({ "apiVersion": crate::resource::API_VERSION, "kind": kind,
+                "metadata": { "name": name, "namespace": "city" }, "spec": spec })
+    }
+
+    fn everything() -> crate::permissions::Effective {
+        crate::permissions::Effective {
+            project: "city".into(),
+            bootstrap: true,
+            grants: Vec::new(),
+            projects: None,
+        }
+    }
+
+    /// UI-27: a manifest that names no space, no catalogue, no target or no need still is a node
+    /// of its own, with no edge drawn for what it does not name; a registration without
+    /// `federation` authenticates as its ServiceAccount, and a localized title keeps every locale.
+    #[test]
+    fn what_a_manifest_does_not_name_draws_no_edge() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut space = manifest("ContextSpace", "air", json!({}));
+        space["metadata"]["title"] = json!({ "en": "Air", "sk": "Ovzdušie" });
+        space["status"] = json!({ "phase": "Live" });
+        put(&state, space);
+        put(&state, manifest("Endpoint", "loose", json!({})));
+        put(&state, manifest("Pipeline", "idle", json!({})));
+        put(
+            &state,
+            manifest(
+                "App",
+                "map",
+                json!({ "dataNeeds": [{ "purpose": "a map" }] }),
+            ),
+        );
+        let mut csr = manifest("ContextSourceRegistration", "far", json!({}));
+        csr["status"] = json!({ "phase": "Error" });
+        put(&state, csr);
+
+        let graph = graph_of(&state, "city", &everything());
+        let kinds: Vec<(&str, &str)> = graph
+            .nodes
+            .iter()
+            .map(|n| (n.kind.as_str(), n.name.as_str()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("App", "map"),
+                ("ContextSourceRegistration", "far"),
+                ("ContextSpace", "air"),
+                ("Endpoint", "loose"),
+                ("ExternalSource", "far"),
+                ("Pipeline", "idle"),
+            ]
+        );
+        // the registration's only edge is to the source outside the platform named after it
+        assert_eq!(
+            graph.edges,
+            [Edge {
+                from: "ContextSourceRegistration/far".into(),
+                to: "ExternalSource/far".into(),
+                kind: EdgeKind::Registers,
+                manifest: "ContextSourceRegistration/far".into(),
+            }]
+        );
+        let node = |id: &str| graph.nodes.iter().find(|n| n.id == id).expect(id);
+        let card = node("ContextSourceRegistration/far")
+            .registration
+            .clone()
+            .expect("a card");
+        assert_eq!(
+            card,
+            RegistrationCard {
+                mode: "inclusive".into(),
+                identity: "serviceAccount".into(),
+                types: Vec::new(),
+                external: true,
+            }
+        );
+        assert_eq!(
+            node("ContextSourceRegistration/far").health,
+            NodeHealth::Degraded
+        );
+        let air = node("ContextSpace/air");
+        assert_eq!(air.health, NodeHealth::Ok);
+        assert_eq!(air.phase.as_deref(), Some("Live"));
+        assert_eq!(air.title.get("sk").map(String::as_str), Some("Ovzdušie"));
+        assert_eq!(air.title.len(), 2);
+        assert_eq!(node("Pipeline/idle").health, NodeHealth::Unknown);
+    }
+}

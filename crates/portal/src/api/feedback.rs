@@ -305,6 +305,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_written_number_of_fewer_than_nine_digits_stays() {
+        // "\+?\d[\d ().-]{7,}\d" matches these; the digit count keeps them
+        for text in ["room 1 2 3 4 5", "build 1.2.3.4-5", "(12) 34-56"] {
+            assert_eq!(scrub(text), text);
+        }
+        assert_eq!(scrub("call 0900 123 456"), "call [removed]");
+    }
+
+    #[test]
     fn personal_data_and_credentials_leave_the_text() {
         // The token is put together here so the repository holds no token-shaped literal for
         // a secret scanner to report (trivy, gitleaks).

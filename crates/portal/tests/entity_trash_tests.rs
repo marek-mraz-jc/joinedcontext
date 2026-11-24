@@ -268,6 +268,84 @@ async fn a_copy_is_an_ngsi_ld_entity_of_its_own_type_and_no_larger_than_the_limi
     assert!(status.is_client_error(), "an unknown key is refused");
 }
 
+/// A trash whose database does not answer is a 503 on every route, and nothing pretends the
+/// copy was kept, listed or forgotten.
+#[tokio::test]
+async fn a_trash_whose_database_is_down_is_a_503_on_every_route() {
+    // port 1 is privileged and nothing in a test container listens there
+    let down = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy("postgres://portal:portal@127.0.0.1:1/portal")
+        .expect("a lazy pool");
+    let state = world().with_db(down);
+    // a project of the registry, so its key is read from the database that is down
+    state.mirror.upsert(envelope(
+        "Project",
+        "helsinki",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "hel" }),
+    ));
+    for (verb, uri, body) in [
+        ("GET", TRASH.to_owned(), None),
+        (
+            "POST",
+            TRASH.to_owned(),
+            Some(json!({ "entity": station(1) })),
+        ),
+        ("DELETE", format!("{TRASH}/1"), None),
+    ] {
+        let (status, problem) = call(&state, READER, verb, &uri, body).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{verb} {uri}: {problem}"
+        );
+        assert!(
+            problem["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("could not be read or written"),
+            "{problem}"
+        );
+    }
+}
+
+/// A project no active Organization of the registry holds keeps no trash (T-7200): the copy is
+/// a 404 that names the Organizations page, and nothing is written.
+#[tokio::test]
+async fn a_project_of_no_registered_organization_keeps_no_copy() {
+    let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+    else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("the test database answers and migrates");
+    let state = world().with_db(pool);
+    let (status, problem) = call(
+        &state,
+        READER,
+        "POST",
+        TRASH,
+        Some(json!({ "entity": station(1) })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Organizations page"),
+        "{problem}"
+    );
+    let (status, listed) = call(&state, READER, "GET", TRASH, None).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed, json!([]));
+}
+
 #[tokio::test]
 async fn a_space_the_caller_may_not_read_is_a_404_on_every_trash_route() {
     let state = world();

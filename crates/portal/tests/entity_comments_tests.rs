@@ -429,6 +429,87 @@ async fn a_comment_needs_a_urn_and_a_text_of_its_size_and_a_readable_space() {
 
 /// T-3284: an entity the caller's Policy hides has no comments for them, read or written, and
 /// the gateway was asked with their own token; a cookie session, which carries none, is told why.
+/// The gateway's answer to the person's read decides the comment routes: a 2xx that is no JSON,
+/// a 5xx and a gateway that is not there are 503s that say what to do; nothing is listed.
+#[tokio::test]
+async fn a_gateway_that_answers_badly_or_not_at_all_is_a_503() {
+    let world = world().await;
+    let garbled = "urn:ngsi-ld:AirQualityObserved:hel.fi:air:2";
+    let failing = "urn:ngsi-ld:AirQualityObserved:hel.fi:air:3";
+    Mock::given(method("GET"))
+        .and(path(format!("/cs/air/ngsi-ld/v1/entities/{garbled}")))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<html>"))
+        .mount(&world.gateway)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/cs/air/ngsi-ld/v1/entities/{failing}")))
+        .respond_with(ResponseTemplate::new(502))
+        .mount(&world.gateway)
+        .await;
+    for (urn, says) in [(garbled, "not JSON"), (failing, "answered 502")] {
+        let (status, problem) = call(&world.state, READER, "GET", &listed(urn), None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+        assert!(
+            problem["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(says),
+            "{problem}"
+        );
+    }
+
+    // No gateway address, one that is no URL, one no request can be built on, one that is down.
+    for (gateway, says) in [
+        (None, "no gateway address"),
+        (Some("::not a url"), "not a URL"),
+        (Some("mailto:gateway@hel.fi"), "not a URL"),
+        // port 1 is privileged and nothing in a test container listens there: a refused connect
+        (Some("http://127.0.0.1:1"), "did not answer"),
+    ] {
+        let mut state = world.state.clone();
+        let mut config = (*state.config).clone();
+        config.gateway_url = gateway.map(str::to_owned);
+        state.config = std::sync::Arc::new(config);
+        let (status, problem) = call(&state, READER, "GET", &listed(URN), None).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{gateway:?}: {problem}"
+        );
+        assert!(
+            problem["detail"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(says),
+            "{gateway:?}: {problem}"
+        );
+    }
+}
+
+/// Comments whose database does not answer are a 503 for reading and writing; the entity read
+/// went through, so the refusal names the comments, not the entity.
+#[tokio::test]
+async fn comments_whose_database_is_down_are_a_503() {
+    let world = world().await;
+    // port 1 is privileged and nothing in a test container listens there
+    let down = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy("postgres://portal:portal@127.0.0.1:1/portal")
+        .expect("a lazy pool");
+    let state = world.state.clone().with_db(down);
+    // a project of the registry, so its key is read from the database that is down
+    state.mirror.upsert(envelope(
+        "Project",
+        "helsinki",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "hel" }),
+    ));
+    let (status, problem) = call(&state, READER, "GET", &listed(URN), None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    let (status, problem) = call(&state, READER, "GET", "/api/v1/notifications", None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+}
+
 #[tokio::test]
 async fn the_comments_of_an_entity_follow_the_callers_read_of_that_entity() {
     let world = world().await;

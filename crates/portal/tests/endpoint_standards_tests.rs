@@ -319,6 +319,70 @@ async fn an_endpoint_that_is_not_public_or_unknown_is_a_404() {
     );
 }
 
+/// The entity reads answer but the OGC and OData doors refuse (500) or do not serve the type:
+/// those two standards list no fields and no examples, and NGSI-LD and STA still carry theirs.
+#[tokio::test]
+async fn a_door_that_refuses_or_lacks_the_type_shows_no_examples_for_it() {
+    for (slug, collections, service) in [
+        (
+            "standards-doors-refuse",
+            ResponseTemplate::new(500),
+            ResponseTemplate::new(500),
+        ),
+        (
+            "standards-doors-lack-type",
+            ResponseTemplate::new(200).set_body_json(json!({"collections": [{"id": "Other"}]})),
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"value": [{"name": "Other", "url": "Other"}]})),
+        ),
+    ] {
+        let server = MockServer::start().await;
+        let at = |rest: &str| format!("/api/endpoint/{slug}/{rest}");
+        let entity = json!({ "id": "urn:ngsi-ld:AirQualityObserved:zv1",
+                             "type": "AirQualityObserved", "name": "Zvolen" });
+        for mock in [
+            Mock::given(method("GET"))
+                .and(path(at("ngsi-ld/v1/entities")))
+                .and(query_param("type", "EmptyType"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([]))),
+            Mock::given(method("GET"))
+                .and(path(at("ngsi-ld/v1/entities")))
+                .and(query_param("type", "AirQualityObserved"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([entity]))),
+            Mock::given(method("GET"))
+                .and(path(at("ogc/features/collections")))
+                .respond_with(collections),
+            Mock::given(method("GET"))
+                .and(path(at("odata/v4/")))
+                .respond_with(service),
+        ] {
+            mock.mount(&server).await;
+        }
+        let (status, _, answer) = get(
+            state(&server, mirror(slug, "public")),
+            &format!("/api/v1/catalogue/endpoints/{slug}/standards"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{slug}: {answer}");
+        assert_eq!(
+            answer["entityType"], "AirQualityObserved",
+            "{slug}: {answer}"
+        );
+        for name in ["ogc-features", "odata"] {
+            assert!(
+                examples(&answer, name).is_empty(),
+                "{slug} {name}: {answer}"
+            );
+            assert_eq!(
+                standard(&answer, name)["fields"],
+                json!([]),
+                "{slug} {name}"
+            );
+        }
+        assert!(!examples(&answer, "ngsi-ld").is_empty(), "{slug}: {answer}");
+    }
+}
+
 #[tokio::test]
 async fn an_endpoint_whose_gateway_is_down_lists_its_standards_without_examples() {
     let slug = "standards-gateway-down";
