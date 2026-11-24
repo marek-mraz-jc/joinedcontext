@@ -1086,11 +1086,16 @@ async fn archive_and_unarchive_every_format() {
         "{}",
         &err[err.len().saturating_sub(120)..]
     );
-    // A path that does not resolve names the member part_<index>, as Bento does.
-    for fmt in ["tar", "zip"] {
+    // A path that does not resolve, or an empty one, names the member part_<index>, as Bento does.
+    for (fmt, path) in [
+        ("tar", "${! this.n.number() }"),
+        ("zip", "${! this.n.number() }"),
+        ("tar", ""),
+        ("zip", ""),
+    ] {
         let out = e
             .run(
-                json!({"archive": {"format": fmt, "path": "${! this.n.number() }"}}),
+                json!({"archive": {"format": fmt, "path": path}}),
                 parts(&["x"]),
             )
             .await;

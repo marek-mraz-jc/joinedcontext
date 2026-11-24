@@ -1508,6 +1508,10 @@ mod tests {
             ("uri", "urn:ngsi-ld:X:1", true),
             ("uri", "no scheme", false),
             ("uri", "https://www.facebook.com/pages/Ko%C5%BEn%C3%", false),
+            // Each of an escape's two digits must be hex.
+            ("uri", "https://example.org/a%4z", false),
+            ("uri", "https://example.org/a%z4", false),
+            ("uri", "https://example.org/a%4A", true),
             ("uri", "https://a/b%2", false),
             ("uri", "https://a/b%zz", false),
             ("uri", "https://a/b c", true),
