@@ -8,8 +8,9 @@
  * gone, is a failure of its own, and the number of entries is held against what was measured on
  * 2026-09-20.
  *
- * Two modules are excepted by name, not by the list: `src/main.tsx` is the bundle entry and
- * `src/api/schema.d.ts` is generated from the Portal's OpenAPI document.
+ * Three modules are excepted by name, not by the list: `src/main.tsx` is the bundle entry,
+ * `src/api/schema.d.ts` is generated from the Portal's OpenAPI document and
+ * `src/generated/assistantRender.d.ts` types the generated render core, whose tests import its .js.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -20,7 +21,7 @@ import { isBarrel, modulesNamedByTests, resolveSpecifier, verdict, type Tree } f
 const ui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Modules that are not a unit anybody can test: the entry point and the generated types. */
-const EXCEPTED = ["src/main.tsx", "src/api/schema.d.ts"];
+const EXCEPTED = ["src/main.tsx", "src/api/schema.d.ts", "src/generated/assistantRender.d.ts"];
 
 /** What was missing when this gate was written. The list may shrink; it may never grow. */
 const ALLOWED_ON_2026_09_20 = 1;

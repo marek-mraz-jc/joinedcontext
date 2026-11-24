@@ -6,8 +6,8 @@
  * and the input, so it becomes a named regression test.
  */
 import { describe, expect, it } from "vitest";
-import { markdown } from "../src/pages/knowledge/answerFormat";
-import type { Block, Inline } from "../src/pages/knowledge/answerFormat";
+import JCRender from "../src/generated/assistantRender";
+import type { Block, Inline } from "../src/generated/assistantRender";
 import { topicProblem } from "../src/pages/mqttbrokers/brokerDraft";
 import { parsePublicKey } from "../src/pages/mqttbrokers/devices";
 
@@ -55,7 +55,10 @@ function inlineProblem(node: Inline, known: (n: number) => boolean): string | un
 
 function blockProblem(block: Block, known: (n: number) => boolean): string | undefined {
   if (!BLOCK_TAGS.has(block.tag)) return `block tag ${block.tag}`;
-  if (block.tag === "pre") return typeof block.text === "string" ? undefined : "pre without text";
+  if (block.tag === "pre") {
+    const code = block.children[0];
+    return block.children.length === 1 && code.tag === "code" && code.children.every((c) => typeof c === "string") ? undefined : "pre without text";
+  }
   const inlines: Inline[] =
     block.tag === "p"
       ? block.children
@@ -76,7 +79,7 @@ describe("fuzz: the answer's Markdown", () => {
     for (let run = 0; run < RUNS; run += 1) {
       const input = text(next, MARKDOWN, 60);
       let blocks: Block[] = [];
-      expect(() => (blocks = markdown(input, known)), `seed ${SEED} run ${run}: ${JSON.stringify(input)}`).not.toThrow();
+      expect(() => (blocks = JCRender.markdown(input, known, () => true)), `seed ${SEED} run ${run}: ${JSON.stringify(input)}`).not.toThrow();
       for (const block of blocks) {
         expect(blockProblem(block, known), `seed ${SEED} run ${run}: ${JSON.stringify(input)}`).toBeUndefined();
       }

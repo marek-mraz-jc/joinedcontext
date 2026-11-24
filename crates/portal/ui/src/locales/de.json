@@ -10367,7 +10367,6 @@
       "question": "Ihre Frage",
       "send": "Senden",
       "failed": "Die Antwort konnte nicht geladen werden. Bitte erneut versuchen.",
-      "modelUnavailable": "Das Modell des Assistenten hat nicht geantwortet. Ihre Frage bleibt im Feld: versuchen Sie es in einer Minute erneut.",
       "liveData": "Live-Daten",
       "sourceNumber": "Quelle {n}",
       "data": "Gelesene Daten der Antwort",
@@ -10375,7 +10374,27 @@
       "dataset": "Datensatz öffnen",
       "download": "Daten herunterladen",
       "again": "Erneut versuchen",
-      "closest": "Die Quellen, die am besten zu Ihrer Frage passen"
+      "closest": "Die Quellen, die am besten zu Ihrer Frage passen",
+      "stop": "Stopp",
+      "stopped": "Sie haben die Antwort gestoppt. Was angekommen ist, bleibt.",
+      "followups": "Sie können auch fragen",
+      "csv": "CSV herunterladen",
+      "empty": "Fragen Sie nach den Quellen und Daten dieses Projekts. Die Antwort nennt ihre Quellen.",
+      "questionHint": "Zum Beispiel: Welche Stationen haben heute PM10 über 40 gemessen? Enter sendet, Umschalt+Enter beginnt eine neue Zeile.",
+      "trouble": {
+        "failed": "Die Antwort konnte nicht geladen werden. Versuchen Sie es erneut.",
+        "offline": "Der Dienst ist nicht erreichbar. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut.",
+        "busy": "Viele Fragen auf einmal. Warten Sie kurz und versuchen Sie es erneut.",
+        "busyAt": "Viele Fragen auf einmal. Versuchen Sie es nach {time} erneut.",
+        "paused": "Der Assistent antwortet gerade nicht. Versuchen Sie es später.",
+        "limit": "Der Assistent hat sein Limit erreicht. Versuchen Sie es später erneut.",
+        "limitAt": "Der Assistent hat sein Limit erreicht. Versuchen Sie es nach {time} erneut.",
+        "full": "Dieses Gespräch ist schon lang. Schließen Sie den Dialog und fragen Sie in einem neuen.",
+        "unreachable": "Das Modell des Assistenten hat nicht geantwortet. Ihre Frage bleibt: versuchen Sie es in einer Minute erneut.",
+        "unanswered": "Der Assistent konnte keine Antwort zusammenstellen. Fragen Sie mit anderen Worten.",
+        "slow": "Die Antwort hat zu lange gedauert. Stellen Sie eine kürzere oder andere Frage.",
+        "declined": "Auf diese Frage antwortet der Assistent nicht."
+      }
     },
     "embed": {
       "title": "Einbetten",

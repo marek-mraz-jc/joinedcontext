@@ -10367,7 +10367,6 @@
       "question": "Your question",
       "send": "Send",
       "failed": "The answer could not be loaded. Try again.",
-      "modelUnavailable": "The assistant's model did not answer. Your question is kept: try again in a minute.",
       "liveData": "Live data",
       "sourceNumber": "Source {n}",
       "data": "Data the answer read",
@@ -10375,7 +10374,27 @@
       "dataset": "Open the dataset",
       "download": "Download the data",
       "again": "Try again",
-      "closest": "The sources that match your question best"
+      "closest": "The sources that match your question best",
+      "stop": "Stop",
+      "stopped": "You stopped the answer. What arrived stays.",
+      "followups": "You can also ask",
+      "csv": "Download CSV",
+      "empty": "Ask a question about this project's sources and data. The answer shows its sources.",
+      "questionHint": "For example: Which stations measured PM10 above 40 today? Enter sends, Shift+Enter starts a new line.",
+      "trouble": {
+        "failed": "The answer could not be loaded. Try again.",
+        "offline": "The service could not be reached. Check your connection and try again.",
+        "busy": "Many questions at once. Wait a moment and try again.",
+        "busyAt": "Many questions at once. Try again after {time}.",
+        "paused": "The assistant is not answering right now. Try again later.",
+        "limit": "The assistant has reached its limit. Try again later.",
+        "limitAt": "The assistant has reached its limit. Try again after {time}.",
+        "full": "This conversation is already long. Close the dialog and ask in a new one.",
+        "unreachable": "The assistant's model did not answer. Your question is kept: try again in a minute.",
+        "unanswered": "The assistant could not put an answer together. Try asking in other words.",
+        "slow": "The answer took too long. Try a shorter or different question.",
+        "declined": "The assistant does not answer this question."
+      }
     },
     "embed": {
       "title": "Embed",
