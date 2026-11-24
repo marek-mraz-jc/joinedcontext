@@ -1123,6 +1123,8 @@ async fn the_passes_back_off_while_the_cluster_refuses_and_then_run() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
+    // One more pass after the first that ran: a pass that follows a good one says nothing new.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     passes.abort();
     assert!(
         build_records::known(&db, PROJECT, "trams", COMMIT)
