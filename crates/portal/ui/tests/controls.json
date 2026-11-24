@@ -954,6 +954,7 @@
       },
       "tests": [
         "access_forms.test.tsx",
+        "access_more.test.tsx",
         "edit_keeps_stored_metadata.test.ts"
       ]
     },
@@ -980,6 +981,7 @@
       },
       "tests": [
         "access_forms.test.tsx",
+        "access_more.test.tsx",
         "edit_keeps_stored_metadata.test.ts",
         "organization_roles.test.tsx",
         "project_settings.test.tsx"
@@ -990,6 +992,7 @@
         "Button": 1
       },
       "tests": [
+        "access_more.test.tsx",
         "agent_access_matrix.test.tsx",
         "mqtt_broker_access.test.tsx",
         "organization_agents.test.tsx",
@@ -1986,7 +1989,8 @@
         "Button": 5
       },
       "tests": [
-        "organization_agent_activity.test.tsx"
+        "organization_agent_activity.test.tsx",
+        "organization_cov_agent_activity.test.tsx"
       ]
     },
     "src/pages/organization/Agents.tsx": {
@@ -1995,7 +1999,8 @@
       },
       "tests": [
         "admin_grid_organization.test.tsx",
-        "organization_agents.test.tsx"
+        "organization_agents.test.tsx",
+        "organization_cov_agents.test.tsx"
       ]
     },
     "src/pages/organization/Backups.tsx": {
@@ -2004,7 +2009,8 @@
         "Switch": 1
       },
       "tests": [
-        "organization_backups.test.tsx"
+        "organization_backups.test.tsx",
+        "organization_backups_actions.test.tsx"
       ]
     },
     "src/pages/organization/Repositories.tsx": {
@@ -2012,6 +2018,7 @@
         "Button": 1
       },
       "tests": [
+        "organization_cov_repositories.test.tsx",
         "organization_repositories.test.tsx"
       ]
     },
@@ -2021,7 +2028,8 @@
       },
       "tests": [
         "admin_grid_organization.test.tsx",
-        "organization_costs.test.tsx"
+        "organization_costs.test.tsx",
+        "organization_cov_costs.test.tsx"
       ]
     },
     "src/pages/organization/OpendataAppearance.tsx": {
@@ -2029,7 +2037,8 @@
         "Button": 4
       },
       "tests": [
-        "opendata_appearance.test.tsx"
+        "opendata_appearance.test.tsx",
+        "organization_cov_opendata_appearance.test.tsx"
       ]
     },
     "src/pages/organization/OpendataPages.tsx": {
@@ -2037,7 +2046,8 @@
         "Button": 5
       },
       "tests": [
-        "opendata_pages.test.tsx"
+        "opendata_pages.test.tsx",
+        "organization_cov_opendata_pages.test.tsx"
       ]
     },
     "src/pages/organization/OrganizationApplications.tsx": {
@@ -2055,7 +2065,8 @@
         "Checkbox": 1
       },
       "tests": [
-        "organization_connectors.test.tsx"
+        "organization_connectors.test.tsx",
+        "organization_cov_connectors.test.tsx"
       ]
     },
     "src/pages/organization/OrganizationPage.tsx": {
@@ -2070,9 +2081,11 @@
         "organization_brokers.test.tsx",
         "organization_connectors.test.tsx",
         "organization_costs.test.tsx",
+        "organization_cov_setup.test.tsx",
         "organization_health.test.tsx",
         "organization_limits.test.tsx",
         "organization_page.test.tsx",
+        "organization_page_more.test.tsx",
         "organization_route.test.tsx",
         "organization_setup.test.tsx",
         "page_all_endpoints_page.test.tsx"
@@ -2087,6 +2100,7 @@
       "tests": [
         "data_access.test.tsx",
         "people_invite.test.tsx",
+        "people_more.test.tsx",
         "people_page.test.tsx"
       ]
     },
@@ -2103,7 +2117,8 @@
         "Button": 1
       },
       "tests": [
-        "mqtt_allowance_ui.test.tsx"
+        "mqtt_allowance_ui.test.tsx",
+        "organization_cov_project_mqtt.test.tsx"
       ]
     },
     "src/pages/pipelines/AccessRequests.tsx": {
@@ -2597,7 +2612,8 @@
         "Button": 1
       },
       "tests": [
-        "page_all_endpoints_page.test.tsx"
+        "page_all_endpoints_page.test.tsx",
+        "routes_cov_all_endpoints.test.tsx"
       ]
     },
     "src/routes/ApprovalDetailPage.tsx": {
@@ -2665,7 +2681,8 @@
       "tests": [
         "assistant_ui_actions.test.tsx",
         "pipeline_overview.test.tsx",
-        "pipelines_view.test.tsx"
+        "pipelines_view.test.tsx",
+        "routes_cov_pipelines.test.tsx"
       ]
     },
     "src/routes/PoliciesPage.tsx": {
@@ -2677,7 +2694,8 @@
         "edit_prefill.test.tsx",
         "form_required_reference_check.test.tsx",
         "policy_attribute_capabilities.test.tsx",
-        "policy_form.test.tsx"
+        "policy_form.test.tsx",
+        "routes_cov_policies.test.tsx"
       ]
     },
     "src/routes/RegistrationPage.tsx": {
@@ -2685,7 +2703,8 @@
         "Button": 1
       },
       "tests": [
-        "context_sources_ui.test.tsx"
+        "context_sources_ui.test.tsx",
+        "routes_cov_registrations.test.tsx"
       ]
     },
     "src/routes/RegistrationsPage.tsx": {
@@ -2694,7 +2713,8 @@
         "RadioGroup": 1
       },
       "tests": [
-        "contextsourceregistration_form.test.tsx"
+        "contextsourceregistration_form.test.tsx",
+        "routes_cov_registrations.test.tsx"
       ]
     },
     "src/routes/ResourceListPage.tsx": {
@@ -2712,6 +2732,7 @@
         "mapping_form.test.tsx",
         "modelprojection_form.test.tsx",
         "resource_list_page.test.tsx",
+        "routes_cov_resource_list.test.tsx",
         "scopedefinition_form.test.tsx"
       ]
     },
@@ -2731,6 +2752,7 @@
       },
       "tests": [
         "form_required_reference_check.test.tsx",
+        "routes_cov_subscriptions.test.tsx",
         "subscription_deliveries.test.tsx",
         "subscription_form.test.tsx"
       ]
@@ -2740,6 +2762,7 @@
         "Button": 2
       },
       "tests": [
+        "routes_cov_workspaces.test.tsx",
         "workspaces_ui.test.tsx"
       ]
     },
