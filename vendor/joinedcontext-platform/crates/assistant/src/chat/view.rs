@@ -1324,6 +1324,56 @@ mod tests {
     }
 
     #[test]
+    fn a_category_reads_a_scalar_a_language_s_text_or_an_address_s_town() {
+        assert_eq!(category(&json!(3)), Some(json!(3)));
+        assert_eq!(category(&json!({"value": true})), Some(json!("true")));
+        assert_eq!(category(&json!({"value": "  Park  "})), Some(json!("Park")));
+        assert_eq!(category(&json!("   ")), None);
+        assert_eq!(
+            category(&json!({"languageMap": {"en": "Bridge", "sk": "Most"}})),
+            Some(json!("Most"))
+        );
+        assert_eq!(
+            category(&json!({"languageMap": {"en": "Bridge", "de": "Brücke"}})),
+            Some(json!("Bridge"))
+        );
+        assert_eq!(
+            category(&json!({"languageMap": {"hu": "Híd"}})),
+            Some(json!("Híd"))
+        );
+        assert_eq!(
+            category(&json!({"value": {"addressLocality": "Zvolen"}})),
+            Some(json!("Zvolen"))
+        );
+        assert_eq!(category(&json!({"value": {"street": "Hlavná"}})), None);
+        assert_eq!(category(&json!([1, 2])), None);
+        assert_eq!(category(&Value::Null), None);
+    }
+
+    #[test]
+    fn a_history_reads_instances_and_any_aggregation_method() {
+        let instances = json!({"id": "urn:ngsi-ld:AirQualityObserved:a", "type": "AirQualityObserved",
+            "pm10": [{"type": "Property", "value": 12.0, "observedAt": "2026-10-01T08:00:00Z"},
+                     {"type": "Property", "value": 14.0, "observedAt": "2026-10-02T08:00:00Z"},
+                     {"type": "Property", "value": "n/a"}]});
+        let read = history(&instances.to_string(), &json!({"attrs": ["pm10"]})).expect("a history");
+        assert_eq!(read.ids, ["urn:ngsi-ld:AirQualityObserved:a"]);
+        assert_eq!(read.rows.len(), 2);
+        let one = json!({"id": "urn:ngsi-ld:AirQualityObserved:b", "type": "AirQualityObserved",
+            "pm10": {"type": "Property", "value": 9.0, "observedAt": "2026-10-01T08:00:00Z"}});
+        assert_eq!(
+            history(&one.to_string(), &json!({})).expect("a history").rows.len(),
+            1
+        );
+        let maxed = json!({"entities": [{"id": "urn:ngsi-ld:AirQualityObserved:c", "type": "AirQualityObserved",
+            "pm10": {"type": "Property", "max": [[30, "2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"]]}}]});
+        let read = history(&maxed.to_string(), &json!({"attrs": ["pm10"]})).expect("a history");
+        assert_eq!(read.made.method, "max");
+        assert!(history("not json", &json!({})).is_none());
+        assert!(history(&json!({"entities": []}).to_string(), &json!({})).is_none());
+    }
+
+    #[test]
     fn thirty_days_of_hours_become_daily_points_with_the_method_named() {
         let start = time::macros::datetime!(2026-10-01 00:00 UTC);
         let values: Vec<Value> = (0..720)

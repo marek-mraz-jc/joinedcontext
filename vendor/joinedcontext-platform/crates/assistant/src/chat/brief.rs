@@ -409,4 +409,53 @@ mod tests {
         assert!(reply(Brief::Clarify, "en", true).ends_with("questions below."));
         assert!(reply(Brief::HowAreYou, "xx", false).starts_with("Mám sa dobre"));
     }
+
+    #[test]
+    fn every_language_has_its_own_line_for_every_kind() {
+        let kinds = [
+            Brief::HowAreYou,
+            Brief::Greeting,
+            Brief::Thanks,
+            Brief::Closing,
+            Brief::Clarify,
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for lang in ["sk", "en", "cs", "de", "hu", "uk"] {
+            for kind in kinds {
+                let line = reply(kind, lang, false);
+                assert!(!line.is_empty(), "{lang} {kind:?}");
+                assert!(seen.insert(line), "{lang} {kind:?} repeats another line");
+            }
+            let offered = reply(Brief::Clarify, lang, true);
+            assert!(offered.starts_with(&reply(Brief::Clarify, lang, false)), "{lang}");
+            assert!(offered.len() > reply(Brief::Clarify, lang, false).len(), "{lang}");
+        }
+        assert_eq!(reply(Brief::Greeting, "pl", false), reply(Brief::Greeting, "sk", false));
+    }
+
+    #[test]
+    fn the_stronger_kind_wins_whichever_comes_first() {
+        assert_eq!(stronger(Brief::Closing, Brief::Greeting), Brief::Greeting);
+        assert_eq!(stronger(Brief::Greeting, Brief::Closing), Brief::Greeting);
+        assert_eq!(stronger(Brief::Thanks, Brief::HowAreYou), Brief::HowAreYou);
+    }
+
+    #[test]
+    fn folding_drops_the_diacritics_of_the_six_languages() {
+        assert_eq!(fold("ĹĽŇÓÔÖŐŔŘ"), "llnoooorr");
+        assert_eq!(fold("Ú Ů Ü Ű Ý Ž ß Ä Ď Ě Í Ť"), "u u u u y z s a d e i t");
+        assert_eq!(fold("it\u{2019}s ok"), "it s ok");
+    }
+
+    #[test]
+    fn chips_fall_back_to_the_first_language_and_drop_blank_ones() {
+        let suggestions = std::collections::BTreeMap::from([
+            ("sk".to_owned(), vec![" Kde parkovať? ".to_owned(), "  ".to_owned()]),
+            ("en".to_owned(), vec!["Where to park?".to_owned()]),
+        ]);
+        assert_eq!(chips(&suggestions, Brief::Clarify, "en", "sk"), ["Where to park?"]);
+        assert_eq!(chips(&suggestions, Brief::Clarify, "de", "sk"), ["Kde parkovať?"]);
+        assert!(chips(&suggestions, Brief::Clarify, "de", "hu").is_empty());
+        assert!(chips(&suggestions, Brief::Greeting, "en", "sk").is_empty());
+    }
 }

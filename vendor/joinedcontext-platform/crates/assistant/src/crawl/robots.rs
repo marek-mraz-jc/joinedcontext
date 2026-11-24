@@ -96,24 +96,71 @@ pub async fn fetch_robots(
     .await;
 
     match outcome {
-        FetchOutcome::Success { status, body, .. } => {
-            if status.is_success() {
-                let text = String::from_utf8_lossy(&body);
-                let sitemaps = extract_sitemaps(&text);
-                // A robots.txt that cannot be read at all is treated as a refusal: the site
-                // said something, and guessing it meant "everything" is not ours to do.
-                match texting_robots::Robot::new(USER_AGENT_TOKEN, &body) {
-                    Ok(robot) => (Robots::Rules(robot), sitemaps),
-                    Err(_) => (Robots::DisallowAll, Vec::new()),
-                }
-            } else if status.is_client_error() {
-                (Robots::AllowAll, Vec::new())
-            } else {
-                (Robots::DisallowAll, Vec::new())
+        // `fetch_url` answers `Success` for a 2xx alone; any other status is `Status`.
+        FetchOutcome::Success { body, .. } => {
+            let text = String::from_utf8_lossy(&body);
+            let sitemaps = extract_sitemaps(&text);
+            // A robots.txt that cannot be read at all is treated as a refusal: the site
+            // said something, and guessing it meant "everything" is not ours to do.
+            match texting_robots::Robot::new(USER_AGENT_TOKEN, &body) {
+                Ok(robot) => (Robots::Rules(robot), sitemaps),
+                Err(_) => (Robots::DisallowAll, Vec::new()),
             }
         }
         // RFC 9309 §2.3.1.3: a 4xx means there are no rules for this host.
         FetchOutcome::Status(status) if status.is_client_error() => (Robots::AllowAll, Vec::new()),
         _ => (Robots::DisallowAll, Vec::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rules(text: &str) -> Robots {
+        Robots::Rules(texting_robots::Robot::new(USER_AGENT_TOKEN, text.as_bytes()).expect("rules"))
+    }
+
+    #[test]
+    fn allow_all_and_disallow_all_answer_without_rules() {
+        assert!(Robots::AllowAll.is_allowed("https://a.example/x"));
+        assert!(!Robots::DisallowAll.is_allowed("https://a.example/x"));
+    }
+
+    #[test]
+    fn a_disallowed_path_is_refused_with_or_without_its_query() {
+        let robots = rules("User-agent: jc-assistant\nDisallow: /private\nDisallow: /*?print=\n");
+        assert!(robots.is_allowed("https://a.example/public/page"));
+        assert!(!robots.is_allowed("https://a.example/private/page"));
+        assert!(!robots.is_allowed("https://a.example/page?print=1"));
+        assert!(robots.is_allowed("https://a.example/page?view=1"));
+    }
+
+    #[test]
+    fn a_bare_path_is_judged_as_a_path() {
+        let robots = rules("User-agent: *\nDisallow: /admin\n");
+        assert!(!robots.is_allowed("/admin/users"));
+        assert!(robots.is_allowed("/news"));
+    }
+
+    #[test]
+    fn sitemap_lines_are_read_case_blind_and_empty_ones_dropped() {
+        let text = "User-agent: *\nSitemap: https://a.example/s1.xml\n  sitemap:https://a.example/s2.xml \nSITEMAP:   \nSitemaps: no\nčččččččččč\n";
+        assert_eq!(
+            extract_sitemaps(text),
+            vec!["https://a.example/s1.xml", "https://a.example/s2.xml"]
+        );
+        assert!(extract_sitemaps("").is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unparsable_or_plain_http_robots_address_refuses_everything() {
+        let client = reqwest::Client::new();
+        let policy = CrawlPolicy::default();
+        let (robots, maps) = fetch_robots(&client, &policy, "a.example", "not a url").await;
+        assert!(matches!(robots, Robots::DisallowAll) && maps.is_empty());
+        let (robots, maps) =
+            fetch_robots(&client, &policy, "a.example", "http://a.example/robots.txt").await;
+        assert!(matches!(robots, Robots::DisallowAll) && maps.is_empty());
     }
 }

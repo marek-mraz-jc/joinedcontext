@@ -335,4 +335,15 @@ mod tests {
         };
         assert_eq!(routed(direct.clone(), Some(read)), direct);
     }
+
+    #[test]
+    fn an_empty_catalogue_answer_is_written_in_the_asker_s_language() {
+        use super::none;
+        assert_eq!(none("sk", "Organization"), "Katalóg nezverejňuje žiadne organizácie.");
+        assert_eq!(none("sk", "Dataset"), "Katalóg neuvádza od tohto vydavateľa žiadne datasety.");
+        assert_eq!(none("cs", "Organization"), "Katalog nezveřejňuje žádné organizace.");
+        assert_eq!(none("cs", "Dataset"), "Katalog neuvádí od tohoto vydavatele žádné datové sady.");
+        assert_eq!(none("de", "Organization"), "The catalogue lists no organizations.");
+        assert_eq!(none("en", "Dataset"), "The catalogue lists no datasets of this publisher.");
+    }
 }

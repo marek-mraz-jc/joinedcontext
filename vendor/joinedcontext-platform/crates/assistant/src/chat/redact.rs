@@ -291,4 +291,35 @@ mod tests {
             "Som Ján, [e-mail], [telefón]. Kedy je odvoz?"
         );
     }
+
+    #[test]
+    fn a_birth_number_needs_a_real_month_and_day_and_its_check_digit() {
+        use super::birth_number;
+        // A woman's month plus 50, and since 2004 plus 20 or 70; three digits before 1954.
+        assert!(birth_number("535231", "123"));
+        assert!(birth_number("042215", "123"));
+        assert!(birth_number("047215", "123"));
+        assert!(!birth_number("041315", "123"), "month 13");
+        assert!(!birth_number("044015", "123"), "month 40");
+        assert!(!birth_number("040100", "123"), "day 0");
+        assert!(!birth_number("040132", "123"), "day 32");
+        assert!(!birth_number("04ab15", "123"), "letters");
+        // Ten digits divisible by 11, or the head leaving 10 and a last digit of 0.
+        assert!(birth_number("900101", "0007"));
+        assert!(!birth_number("900101", "0008"));
+        assert!(birth_number("000101", "0010"));
+    }
+
+    #[test]
+    fn an_iban_and_a_card_need_their_length_and_their_check() {
+        use super::{iban, luhn};
+        assert!(iban("SK31 1200 0000 1987 4263 7541"));
+        assert!(!iban("SK31 1200"), "too short");
+        assert!(!iban("SK31 1200 0000 1987 4263 754!"), "not a letter or digit");
+        assert!(!iban("SK32 1200 0000 1987 4263 7541"), "check digits");
+        assert!(luhn("4111 1111 1111 1111"));
+        assert!(!luhn("4111 1111 1111 1112"));
+        assert!(!luhn("4111 1111"), "too short");
+        assert!(!luhn("4111 1111 1111 1111 1111"), "too long");
+    }
 }

@@ -642,4 +642,115 @@ mod tests {
         );
         assert!(snapshot.deployments[1].spec.allowed_origins.is_empty());
     }
+
+    #[test]
+    fn the_checkout_needs_the_repo_and_defaults_the_assembly_to_temp() {
+        assert!(checkout(env(&[])).is_none());
+        let only_repo = checkout(env(&[("JC_ASSISTANT_REPO_DIR", "/repo")])).expect("a checkout");
+        assert_eq!(only_repo.organization, PathBuf::from("/repo"));
+        assert_eq!(only_repo.projects, None);
+        assert_eq!(
+            only_repo.assembly,
+            std::env::temp_dir().join("jc-assistant-assembly")
+        );
+        let all = checkout(env(&[
+            ("JC_ASSISTANT_REPO_DIR", "/repo"),
+            ("JC_ASSISTANT_PROJECTS_DIR", "/projects"),
+            ("JC_ASSISTANT_ASSEMBLY_DIR", "/assembly"),
+        ]))
+        .expect("a checkout");
+        assert_eq!(all.projects, Some(PathBuf::from("/projects")));
+        assert_eq!(all.assembly, PathBuf::from("/assembly"));
+    }
+
+    #[test]
+    fn each_unusable_address_is_named_by_its_key_and_what_it_breaks() {
+        for (key, value, what) in [
+            ("JC_ASSISTANT_FUNCTIONS_URL", "http://fn/x", "the sandbox address is not usable"),
+            ("JC_ASSISTANT_ENDPOINT_URL", "https://data/x", "the public Endpoint address is not usable"),
+            ("JC_ASSISTANT_PORTAL_URL", "https://portal/x", "the Portal address is not usable"),
+            ("JC_ASSISTANT_VIZ_URL", "https://charts.city.test", "the chart renderer's address is not usable"),
+            ("JC_ASSISTANT_REACH", "10.0.0.1:80", "the gateway's reach is not usable"),
+            ("JC_ASSISTANT_GATEWAY_URL", "http://gw/mcp", "the chat is not configured"),
+            ("JC_ASSISTANT_PROXY_URL", "not a url", "the chat is not configured"),
+        ] {
+            let Err((refused, why)) = config(&env(&chat_env(&[(key, value)]))) else {
+                panic!("{key} is refused");
+            };
+            assert_eq!(refused, what, "{key}");
+            assert!(why.starts_with(key), "{key}: {why}");
+        }
+        let missing: Vec<_> = chat_env(&[])
+            .into_iter()
+            .filter(|(key, _)| *key != "JC_ASSISTANT_LLM")
+            .collect();
+        assert_eq!(
+            config(&env(&missing)).err(),
+            Some(("the chat is not configured", "JC_ASSISTANT_LLM is required".into()))
+        );
+    }
+
+    #[test]
+    fn the_pool_keeps_ten_connections_and_lets_idle_ones_go() {
+        let options = pool_options();
+        assert_eq!(options.get_max_connections(), 10);
+        assert_eq!(options.get_min_connections(), 0);
+        assert_eq!(options.get_idle_timeout(), Some(Duration::from_secs(60)));
+    }
+
+    async fn status(router: &axum::Router, path: &str) -> (axum::http::StatusCode, String) {
+        use tower::ServiceExt;
+        let answer = router
+            .clone()
+            .oneshot(
+                axum::http::Request::get(path)
+                    .body(axum::body::Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        let status = answer.status();
+        let body = axum::body::to_bytes(answer.into_body(), 1024)
+            .await
+            .expect("a body");
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    #[tokio::test]
+    async fn readiness_waits_for_the_first_minute_and_health_answers_at_once() {
+        let config = config(&env(&chat_env(&[]))).expect("a config");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        let embedder = Embedder::remote(jc_embedder::client::RemoteConfig {
+            url: "http://embedder.invalid".into(),
+            token_url: "http://idm.invalid/token".into(),
+            client_id: "jc-assistant".into(),
+            client_secret: "not-a-secret".into(),
+        })
+        .expect("a remote embedder");
+        let (chat_state, reader) =
+            service::chat_state(config, &pool, &embedder, "hronov").expect("a state");
+        assert_eq!(chat_state.organization, "hronov");
+        assert_eq!(
+            reader.gateway.map(String::from).as_deref(),
+            Some("http://gateway:8080/")
+        );
+        assert_eq!(chat_state.gateway, "http://gateway:8080");
+        let ready = Arc::new(AtomicBool::new(false));
+        let router = probe(chat_state, Arc::clone(&ready));
+        assert_eq!(
+            status(&router, "/healthz").await,
+            (axum::http::StatusCode::OK, "ok".into())
+        );
+        assert_eq!(
+            status(&router, "/readyz").await,
+            (axum::http::StatusCode::SERVICE_UNAVAILABLE, "starting".into())
+        );
+        ready.store(true, Ordering::Relaxed);
+        assert_eq!(
+            status(&router, "/readyz").await,
+            (axum::http::StatusCode::OK, "ready".into())
+        );
+    }
 }

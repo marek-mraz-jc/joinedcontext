@@ -603,6 +603,119 @@ async fn crawl_recrawl_change_detection() {
     drop_database(admin, pool, &db_name).await;
 }
 
+/// A page and a document the site answers 304 for are kept as they are: the page's stored links
+/// are walked again (its document asked once more, with its own validators), nothing is emitted.
+#[tokio::test]
+async fn a_page_and_a_document_not_modified_are_kept_and_the_page_s_links_walked_again() {
+    let (admin, pool, db_name) = database("notmodified").await;
+    let server = MockServer::start().await;
+    let port = server.address().port();
+    let crawler = test_crawler(FixtureResolver::new(&[("www.city.test", port)]), None);
+    let mut spec = test_spec(&format!("http://www.city.test:{port}/"));
+    spec.sitemap = false;
+    Mock::given(method("GET"))
+        .and(path("/robots.txt"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("User-agent: *\nAllow: /\n"))
+        .mount(&server)
+        .await;
+    for (p, kind, body) in [
+        ("/", "text/html; charset=utf-8", r#"<html lang="en"><body><a href="/doc.pdf">Doc</a><a href="/next">Next</a></body></html>"#),
+        ("/next", "text/html; charset=utf-8", "<html><body>Next</body></html>"),
+        ("/doc.pdf", "application/pdf", "%PDF-1.4 one"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(p))
+            .and(wiremock::matchers::header("if-none-match", "\"v1\""))
+            .respond_with(ResponseTemplate::new(304))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(p))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", kind)
+                    .insert_header("etag", "\"v1\"")
+                    .set_body_string(body),
+            )
+            .mount(&server)
+            .await;
+    }
+    let mut sink = RecordingSink::default();
+    // A sink is also taken by reference, as the worker hands its own on.
+    let mut by_ref = &mut sink;
+    let first = crawl_site(&pool, &crawler, "hel", "helsinki", "nm", &spec, &mut by_ref)
+        .await
+        .expect("first crawl");
+    assert_eq!((first.pages_fetched, first.documents_fetched), (2, 1), "{first:?}");
+    assert_eq!((sink.pages.len(), sink.documents.len()), (2, 1));
+
+    let mut again = RecordingSink::default();
+    let second = crawl_site(&pool, &crawler, "hel", "helsinki", "nm", &spec, &mut again)
+        .await
+        .expect("second crawl");
+    assert_eq!(second.pages_fetched, 0, "{second:?}");
+    assert_eq!(second.pages_unchanged, 2, "{second:?}");
+    assert_eq!(second.documents_unchanged, 1, "{second:?}");
+    assert!(again.pages.is_empty() && again.documents.is_empty());
+    let mut tx = project_scope(&pool, "helsinki").await.expect("scope");
+    let fetched: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM pages WHERE status = 'fetched') \
+         + (SELECT count(*) FROM documents WHERE status = 'fetched')",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .expect("count");
+    tx.commit().await.expect("commit");
+    assert_eq!(fetched, 3);
+    drop_database(admin, pool, &db_name).await;
+}
+
+/// A document that fails is recorded with why, one row each: an error status, a redirect off the
+/// site and a host that does not answer; none of them is emitted.
+#[tokio::test]
+async fn each_failed_document_is_recorded_with_its_reason() {
+    let (admin, pool, db_name) = database("docfail").await;
+    let server = MockServer::start().await;
+    let port = server.address().port();
+    let crawler = test_crawler(FixtureResolver::new(&[("www.city.test", port)]), None);
+    let mut spec = test_spec(&format!("http://www.city.test:{port}/"));
+    spec.sitemap = false;
+    // Port 1 on loopback: privileged, nothing listens there.
+    let dead = "http://www.city.test:1/dead.pdf".to_owned();
+    mount_site(&server, 200, &["/fail.pdf", "/away.pdf", &dead], &[("/fail.pdf", 503)]).await;
+    Mock::given(method("GET"))
+        .and(path("/away.pdf"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "https://elsewhere.test/x.pdf"))
+        .mount(&server)
+        .await;
+    let mut sink = RecordingSink::default();
+    let report = crawl_site(&pool, &crawler, "bb", "bbsk", "web", &spec, &mut sink)
+        .await
+        .expect("crawl");
+    assert!(sink.documents.is_empty());
+    let mut tx = project_scope(&pool, "bbsk").await.expect("scope");
+    let errors: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT regexp_replace(url, '^http://[^/]+', ''), error FROM documents ORDER BY 1",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .expect("rows");
+    tx.commit().await.expect("commit");
+    let reason = |p: &str| {
+        errors
+            .iter()
+            .find(|(u, _)| u == p)
+            .and_then(|(_, e)| e.clone())
+            .unwrap_or_default()
+    };
+    assert_eq!(reason("/fail.pdf"), "HTTP 503", "{errors:?}");
+    assert_eq!(reason("/away.pdf"), "a redirect left the site", "{errors:?}");
+    assert!(!reason("/dead.pdf").is_empty(), "{errors:?}");
+    assert_eq!(report.failed, 3, "{report:?}");
+    drop_database(admin, pool, &db_name).await;
+}
+
 /// T-5699, F-PLT1-014: one page linking 50 PDFs, under `maxPages` 5, fetches 5 of them.
 #[tokio::test]
 async fn crawl_reads_no_more_documents_than_max_pages() {

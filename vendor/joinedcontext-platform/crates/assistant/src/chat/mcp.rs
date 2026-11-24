@@ -447,4 +447,58 @@ mod tests {
         );
         assert_eq!(unfenced(&format!("{p}\n``json\n[]\n``")), None);
     }
+
+    #[test]
+    fn a_person_s_token_is_never_printed() {
+        let token = super::PersonToken("eyJ.secret.token".into());
+        assert_eq!(format!("{token:?}"), "PersonToken(..)");
+    }
+
+    async fn server_answering(status: u16, body: serde_json::Value) -> (wiremock::MockServer, super::Server) {
+        use wiremock::matchers::{header, method, path};
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("POST"))
+            .and(path("/api/mcp/hronov/data"))
+            .and(header("authorization", "Bearer person"))
+            .respond_with(wiremock::ResponseTemplate::new(status).set_body_json(body))
+            .mount(&mock)
+            .await;
+        let server = super::Server {
+            gateway: mock.uri(),
+            server: "hronov/data".into(),
+            timeout: std::time::Duration::from_secs(5),
+            token: Some(super::PersonToken("person".into())),
+        };
+        (mock, server)
+    }
+
+    #[tokio::test]
+    async fn each_failed_listing_says_why() {
+        let http = reqwest::Client::new();
+        for (status, body, why) in [
+            (500, json!({}), "the Endpoint answered 500 Internal Server Error"),
+            (200, json!({"error": {"message": "unknown tool"}}), "the Endpoint refused: unknown tool"),
+            (200, json!({"error": {}}), "the Endpoint refused: an error"),
+            (200, json!({"jsonrpc": "2.0"}), "the Endpoint's answer has no result"),
+            (200, json!({"result": {"isError": true}}), "the server refused to list its Endpoints"),
+        ] {
+            let (_mock, server) = server_answering(status, body).await;
+            assert_eq!(server.endpoints(&http).await, Err(why.to_owned()));
+        }
+        let (_mock, server) = server_answering(200, json!({"result": {"structuredContent": {"endpoints": [{"slug": "air"}]}}})).await;
+        let lent = server.endpoints(&http).await.expect("listed");
+        assert_eq!(lent.iter().map(|l| l.slug.as_str()).collect::<Vec<_>>(), ["air"]);
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_server_is_said_without_its_address() {
+        let server = super::Server {
+            gateway: "http://gateway.invalid".into(),
+            server: "hronov/data".into(),
+            timeout: std::time::Duration::from_secs(5),
+            token: None,
+        };
+        let err = server.endpoints(&reqwest::Client::new()).await.expect_err("unreachable");
+        assert!(!err.contains("gateway.invalid"), "{err}");
+    }
 }
