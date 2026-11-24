@@ -2,7 +2,7 @@
 # its line. `.github/scripts/coverage-ratchet.py update EXPORT.json` raises them; a branch that raises a
 # crate commits the new line with it. Lowering a floor is a hand edit with its reason in the commit.
 [crates]
-"antares-bus" = { lines = 99.22, functions = 100.00 }
+"antares-bus" = { lines = 99.69, functions = 100.00 }
 "antares-export" = { lines = 100.00, functions = 100.00 }
 "antares-feed" = { lines = 99.80, functions = 99.37 }
 "antares-gbfs" = { lines = 100.00, functions = 100.00 }
@@ -14,7 +14,7 @@
 "antares-linkml" = { lines = 99.80, functions = 100.00 }
 "antares-mcp" = { lines = 99.36, functions = 99.56 }
 "antares-notifier" = { lines = 99.05, functions = 99.14 }
-"antares-odata" = { lines = 99.53, functions = 99.12 }
+"antares-odata" = { lines = 99.58, functions = 99.12 }
 "antares-ogc" = { lines = 99.76, functions = 99.52 }
 "antares-ops" = { lines = 99.00, functions = 99.00 }
 "antares-sta" = { lines = 100.00, functions = 100.00 }
