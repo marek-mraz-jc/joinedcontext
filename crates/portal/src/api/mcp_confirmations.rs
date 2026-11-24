@@ -172,8 +172,13 @@ async fn ask(
     })
 }
 
-/// The broker holding question `id` and the question, when `subject` asked it.
-async fn find(state: &AppState, id: &str, subject: &str) -> Result<(String, Asked), ApiError> {
+/// The broker holding question `id`, the question when `subject` asked it, and the admin token
+/// that read it.
+async fn find(
+    state: &AppState,
+    id: &str,
+    subject: &str,
+) -> Result<(String, Asked, String), ApiError> {
     if !well_formed(id) {
         return Err(not_open(id));
     }
@@ -190,7 +195,7 @@ async fn find(state: &AppState, id: &str, subject: &str) -> Result<(String, Aske
         match ask(state, &token, Method::GET, &broker, id, None).await {
             Ok(Some(asked)) => {
                 return match asked.id == id && asked.asked_by(subject) {
-                    true => Ok((broker, asked)),
+                    true => Ok((broker, asked, token)),
                     false => Err(not_open(id)),
                 };
             }
@@ -222,7 +227,7 @@ pub(crate) async fn get_confirmation(
     Path(id): Path<String>,
 ) -> Result<Json<Confirmation>, ApiError> {
     refuse_bearer(&user)?;
-    let (_, asked) = find(&state, &id, &user.0.identity.subject).await?;
+    let (_, asked, _) = find(&state, &id, &user.0.identity.subject).await?;
     Ok(Json(asked.shown()))
 }
 
@@ -252,8 +257,7 @@ pub(crate) async fn decide_confirmation(
     refuse_bearer(&user)?;
     let Json(request) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
     let subject = &user.0.identity.subject;
-    let (broker, _) = find(&state, &id, subject).await?;
-    let token = state.space_usage.token().map_err(|_| unreachable())?;
+    let (broker, _, token) = find(&state, &id, subject).await?;
     let body = json!({ "decision": request.decision, "subject": { SUBJECT: subject } });
     match ask(&state, &token, Method::PUT, &broker, &id, Some(&body)).await {
         Ok(Some(asked)) => Ok(Json(asked.shown())),
@@ -274,6 +278,20 @@ pub fn router() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_clients_token_neither_reads_nor_decides_a_brokers_question() {
+        use super::super::mcp_elicitations::tests::client_session;
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let id = || Path("0a1b2c3d4e5f60718293a4b5c6d7e8f9".to_owned());
+        let read = get_confirmation(client_session(), State(state.clone()), id()).await;
+        assert!(matches!(read, Err(ApiError::Denied(_))), "{read:?}");
+        let body = Ok(Json(DecisionRequest {
+            decision: ElicitationDecision::Accept,
+        }));
+        let decided = decide_confirmation(client_session(), State(state), id(), body).await;
+        assert!(matches!(decided, Err(ApiError::Denied(_))), "{decided:?}");
+    }
 
     #[test]
     fn only_a_uuid_hex_id_is_asked() {

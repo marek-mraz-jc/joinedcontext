@@ -335,6 +335,31 @@ mod tests {
         );
     }
 
+    /// The in-cluster read goes to `<release>.<namespace>.svc.cluster.local`; a release nothing
+    /// resolves is not measured with the reason, and no namespace says which setting is missing.
+    #[tokio::test]
+    async fn the_cluster_read_names_its_namespace_or_says_it_has_none() {
+        let mut config = crate::config::Config::for_tests();
+        config.mqtt_namespace = None;
+        let state = crate::state::AppState::new(config.clone(), None);
+        let none = measured_now(&state, "helsinki", &spec(), "air").await;
+        assert!(!none.measured);
+        assert!(none
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("JC_PORTAL_MQTT_NAMESPACE"));
+
+        config.mqtt_namespace = Some("jc-mqtt-absent".to_owned());
+        let state = crate::state::AppState::new(config, None);
+        let unreached = measured_now(&state, "helsinki", &spec(), "no-such-release").await;
+        assert!(!unreached.measured);
+        assert_eq!(
+            unreached.reason.as_deref(),
+            Some("the broker did not answer; try again in a minute")
+        );
+    }
+
     fn spec() -> MqttBrokerSpec {
         serde_json::from_value(serde_json::json!({
             "roles": [
@@ -440,6 +465,8 @@ mod tests {
             client("pipeline-runner", true, "2026-10-12 08:00:00"),
             client("undefined", true, "2026-10-12 08:00:00"),
             client("helsinkicam-west", true, "2026-10-12 08:00:00"),
+            // This project's prefix on an account no role of the broker names.
+            client("helsinki-stranger", true, "2026-10-12 08:00:00"),
         ];
         let (accounts, publishers) = tally("helsinki", &spec(), &clients);
         let names: Vec<&str> = accounts

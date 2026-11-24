@@ -166,4 +166,14 @@ async fn only_a_reader_of_the_brokers_learns_of_one() {
         (StatusCode::NOT_FOUND, StatusCode::NOT_FOUND)
     );
     assert_eq!(refused["status"], absent["status"]);
+
+    // A broker whose manifest does not read is measured as no broker at all.
+    state.mirror.upsert(envelope(
+        "MqttBroker",
+        "broken",
+        "helsinki",
+        json!({ "roles": "camera" }),
+    ));
+    let (broken, _) = get(&state, "jana", "broken").await;
+    assert_eq!(broken, StatusCode::NOT_FOUND);
 }
