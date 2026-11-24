@@ -1,0 +1,56 @@
+# Fuzzing the Portal's outside-input parsers (T-7698, T-7699): the list query string and its
+# cursor, a device's JSON Web Key Set, and an MQTT test-publish body with its topic filters.
+# Run with `cargo +nightly fuzz run <target>` from crates/portal. Not a workspace member.
+[package]
+name = "joinedcontext-portal-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+joinedcontext-portal = { path = ".." }
+jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
+
+[workspace]
+
+# The Portal's own patches, one directory further down (../Cargo.toml).
+[patch."https://github.com/marek-mraz-jc/joinedcontext-platform.git"]
+jc-core = { path = "../../../vendor/joinedcontext-platform/crates/jc-core" }
+jcctl = { path = "../../../vendor/joinedcontext-platform/crates/jcctl" }
+context-gateway = { path = "../../../vendor/joinedcontext-platform/crates/context-gateway" }
+
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../../vendor/ngsild/crates/antares-ql" }
+ngsild-jsonld = { path = "../../../vendor/ngsild/crates/antares-jsonld" }
+ngsild-matcher = { path = "../../../vendor/ngsild/crates/antares-matcher" }
+ngsild-model = { path = "../../../vendor/ngsild/crates/antares-model" }
+
+[patch.crates-io]
+rstar = { path = "../../antares/vendor/rstar" }
+geo-types = { path = "../../antares/vendor/geo-types" }
+
+[[bin]]
+name = "list_query"
+path = "fuzz_targets/list_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "device_jwks"
+path = "fuzz_targets/device_jwks.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "test_publish"
+path = "fuzz_targets/test_publish.rs"
+test = false
+doc = false
+bench = false
