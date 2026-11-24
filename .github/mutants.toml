@@ -94,6 +94,9 @@ exclude_re = [
   # T-7576 go_fmt format_float %g: p == dp takes p = nd, and nd <= p (digits are rounded to p), so (p - dp).max(0)
   # is 0 either way.
   'ekiben-bloblang/src/go_fmt\.rs:\d+:\d+: replace > with >= in format_float',
+  # T-7576 json_schema number: multipleOf 0 gives q = n / 0, an infinity or NaN whose `q - q.round()` is NaN and
+  # never > 1e-9, so admitting 0 refuses nothing; and a quotient exactly 1e-9 off a whole number does not occur.
+  'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace > with >= in Validator<.*>::number',
   # T-7748 executor: EmptyBatch::part_bytes answers an empty slice, borrowed or owned alike.
   'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace <impl MessageBatch for EmptyBatch>::part_bytes -> Cow<.*> with Cow::(Borrowed|Owned)\(Vec::leak\(Vec::new\(\)\).*',
   # T-7748 executor: the parser builds every Executor with an empty annotation.

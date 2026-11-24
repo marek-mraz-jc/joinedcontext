@@ -144,6 +144,14 @@ fn an_arc_through_three_points_stays_on_its_circle() {
         let (x, y) = xy(p);
         assert!((x.hypot(y) - 10.0).abs() < 1e-9 && y >= -1e-9, "{x} {y}");
     }
+    // An end off the start's axis: both coordinates of each offset count toward the centre.
+    let h = 50f64.sqrt();
+    let tilted = format!("<gml:Curve><gml:segments><gml:ArcString><gml:posList>10 0 0 10 {} {h}</gml:posList></gml:ArcString></gml:segments></gml:Curve>", -h);
+    let g = parse_gml(&text(&tilted), None, None).unwrap();
+    for p in items(coords(&g)) {
+        let (x, y) = xy(p);
+        assert!((x.hypot(y) - 10.0).abs() < 1e-9, "{x} {y}");
+    }
     // A clockwise arc sweeps the other way, below the x axis.
     let g = parse_gml(&text(r#"<gml:Curve><gml:segments><gml:Arc><gml:posList>10 0 0 -10 -10 0</gml:posList></gml:Arc></gml:segments></gml:Curve>"#), None, None).unwrap();
     assert!(items(coords(&g)).iter().all(|p| xy(p).1 <= 1e-9));
