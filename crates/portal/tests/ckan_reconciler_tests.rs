@@ -17,8 +17,8 @@ use jcctl::loader::{RawManifest, RawMetadata, ResourceId};
 use jcctl::publish::ckan::{InMemoryCkan, Outcome, Settings};
 use joinedcontext_portal::reconciler::ckan::{
     catalogue_gap, claimed_twice, fingerprint, publish_with, publish_without_models, read_gap,
-    sweep_with, wave, withdrawn, CkanSync, Organizations, Paced, Pacing, Publication, Report,
-    CALL_GAP, MODELS_READS, MOST_BACKOFF, PUBLISH_CONCURRENCY, RECORD_READS, REFRESH,
+    sweep_with, wave, withdraw_one, withdrawn, CkanSync, Organizations, Paced, Pacing, Publication,
+    Report, CALL_GAP, MODELS_READS, MOST_BACKOFF, PUBLISH_CONCURRENCY, RECORD_READS, REFRESH,
 };
 use joinedcontext_portal::resource::ResourceEnvelope;
 use joinedcontext_portal::store::Mirror;
@@ -1750,6 +1750,620 @@ async fn a_moved_projects_datasets_follow_its_organization() {
     }
 }
 
+/// A CKAN Action API over the publisher's in-memory double, answering as CKAN does: the
+/// envelope, a `404` for what a `*_show` did not find, and `package_search` over `searched`.
+struct ActionApi {
+    ckan: Arc<Mutex<InMemoryCkan>>,
+    searched: Vec<&'static str>,
+}
+
+impl wiremock::Respond for ActionApi {
+    fn respond(&self, request: &wiremock::Request) -> wiremock::ResponseTemplate {
+        use jcctl::publish::ckan::CkanApi;
+        let action = request.url.path().rsplit('/').next().unwrap_or_default();
+        let mut ckan = self.ckan.lock().expect("the catalogue");
+        let answer = if request.method.as_str() == "GET" {
+            let id = request
+                .url
+                .query_pairs()
+                .find(|(key, _)| key == "id")
+                .map(|(_, value)| value.into_owned())
+                .unwrap_or_default();
+            ckan.show(action, &id)
+        } else if action == "package_search" {
+            let results: Vec<Value> = self
+                .searched
+                .iter()
+                .filter_map(|name| ckan.package(name))
+                .filter(|package| package["state"] != "deleted")
+                .map(|package| {
+                    let mut package = package.clone();
+                    package["organization"] = json!({ "name": "hel" });
+                    package
+                })
+                .collect();
+            Ok(Some(json!({ "count": results.len(), "results": results })))
+        } else {
+            let payload: Value = serde_json::from_slice(&request.body).unwrap_or_default();
+            ckan.action(action, &payload).map(Some)
+        };
+        match answer {
+            Ok(Some(result)) => wiremock::ResponseTemplate::new(200)
+                .set_body_json(json!({ "success": true, "result": result })),
+            Ok(None) => wiremock::ResponseTemplate::new(404)
+                .set_body_json(json!({ "success": false, "error": { "message": "Not found" } })),
+            Err(err) => wiremock::ResponseTemplate::new(409).set_body_json(
+                json!({ "success": false, "error": { "message": err.to_string() } }),
+            ),
+        }
+    }
+}
+
+/// A catalogue at `server` over `ckan`.
+async fn catalogue_at(
+    server: &wiremock::MockServer,
+    ckan: InMemoryCkan,
+    searched: Vec<&'static str>,
+) -> Arc<Mutex<InMemoryCkan>> {
+    let ckan = Arc::new(Mutex::new(ckan));
+    wiremock::Mock::given(wiremock::matchers::path_regex("^/api/3/action/"))
+        .respond_with(ActionApi {
+            ckan: ckan.clone(),
+            searched,
+        })
+        .mount(server)
+        .await;
+    ckan
+}
+
+const SLUG: &str = "scsd2eehkx42n53z2zyd6vshfh7s7irf";
+
+/// The gateway at `server`: the Endpoint's record, and its model schema when `models` holds.
+async fn gateway_at(server: &wiremock::MockServer, models: bool) {
+    use wiremock::matchers::{method, path};
+    wiremock::Mock::given(method("GET"))
+        .and(path(format!("/api/endpoint/{SLUG}/")))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(record()))
+        .mount(server)
+        .await;
+    if models {
+        wiremock::Mock::given(method("GET"))
+            .and(path(format!(
+                "/api/endpoint/{SLUG}/schema/v1/model.schema.json"
+            )))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(server)
+            .await;
+    }
+}
+
+/// A publisher token source that always mints `token`.
+fn minting(token: &'static str) -> joinedcontext_portal::organization_host::PublisherToken {
+    use joinedcontext_portal::organization_host::{Minted, PublisherToken};
+    PublisherToken(Arc::new(move || -> Minted {
+        Box::pin(async move { Ok(jcctl::secrets::SecretValue::minted(token.to_owned())) })
+    }))
+}
+
+fn org_manifest(kind: &str, name: &str, spec: Value) -> String {
+    serde_norway::to_string(&json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": kind,
+        "metadata": { "name": name, "namespace": "org", "title": "Helsinki" },
+        "spec": spec,
+    }))
+    .expect("yaml")
+}
+
+fn charted_dashboard(endpoint: &str) -> Value {
+    json!({
+        "title": "Bikes",
+        "visibility": "public",
+        "pages": [{ "widgets": [{
+            "widgetType": "vega-lite", "endpointRef": endpoint,
+            "data": { "source": "csv", "type": "BikeHireDockingStation" },
+            "spec": { "mark": "bar", "data": { "name": "source" } },
+        }] }],
+    })
+}
+
+/// One pass of hel's projects into hel's own catalogue at a mock CKAN, its records read from a
+/// mock gateway; `reach_old` routes the declared catalogue to a second mock CKAN with the
+/// installation's token, else the declared catalogue has no token to withdraw with. Answers the
+/// reports, the org catalogue and the requests the declared catalogue saw.
+async fn pass_into_hel(reach_old: bool) -> (Vec<Report>, Arc<Mutex<InMemoryCkan>>, usize) {
+    let hel = wiremock::MockServer::start().await;
+    gateway_at(&hel, true).await;
+    let mut seeded = InMemoryCkan::new().with_organization("hel");
+    jcctl::publish::ckan::CkanApi::action(
+        &mut seeded,
+        "package_create",
+        &json!({ "name": "old-ds", "owner_org": "hel",
+                 "extras": [{ "key": "generated_by", "value": jcctl::publish::ckan::GENERATOR }] }),
+    )
+    .expect("a stray dataset of an Endpoint gone while the Portal was down");
+    let ckan = catalogue_at(
+        &hel,
+        seeded,
+        vec!["old-ds", "bikes", "helsinki-board", "helsinki-ukazovatele"],
+    )
+    .await;
+    let old = wiremock::MockServer::start().await;
+    catalogue_at(&old, InMemoryCkan::new(), Vec::new()).await;
+
+    let repository = std::env::temp_dir().join(format!(
+        "jc-ckan-hel-pass-{reach_old}-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&repository).expect("a scratch directory");
+    let mut declared = instance();
+    declared["apiTokenRef"]["envVar"] = json!("CKAN_T7643_UNSET");
+    std::fs::write(
+        repository.join("helsinki.yaml"),
+        [
+            org_manifest("Organization", "hel", json!({ "installation": true })),
+            manifest_in(PROJECT, "CkanInstance", "hel-fi", declared),
+            manifest_in(
+                PROJECT,
+                "Endpoint",
+                "bikes",
+                endpoint("bikes", "public", Some(dataset_only())),
+            ),
+            manifest_in(
+                PROJECT,
+                "Endpoint",
+                "helsinki-board",
+                endpoint("helsinki-board", "public", Some(dataset_only())),
+            ),
+            manifest_in(
+                PROJECT,
+                "Dashboard",
+                "ukazovatele",
+                charted_dashboard("bikes"),
+            ),
+            manifest_in(PROJECT, "Dashboard", "board", charted_dashboard("bikes")),
+        ]
+        .join("---\n"),
+    )
+    .expect("the project");
+    let repo = jcctl::loader::Repository::load(&repository).expect("the repository loads");
+    let catalogue = joinedcontext_portal::organization_host::OrganizationCatalogue {
+        organization: "hel".to_owned(),
+        url: "http://opendata.hel.localhost".parse().expect("a url"),
+        api: Some(hel.uri().parse().expect("a url")),
+        reach: None,
+        data_host: Some(hel.uri()),
+        token_file: None,
+        token: Some(minting("hel-service-token")),
+    };
+    let mut sync = CkanSync::new(HOST).for_organizations(
+        joinedcontext_portal::organization_host::OrganizationCatalogues::new(vec![catalogue]),
+    );
+    if reach_old {
+        let _ = joinedcontext_portal::organization_host::INSTALLATION_PUBLISHER
+            .set(minting("installation-token"));
+        sync = sync
+            .reaching("https://data.example.fi", &old.uri())
+            .reached_at(Some(*old.address()));
+    }
+    let reports = sync.converge(&repo, &Mirror::new(), &repository).await;
+    std::fs::remove_dir_all(&repository).expect("cleaned up");
+    let asked = old.received_requests().await.expect("recorded").len();
+    (reports, ckan, asked)
+}
+
+fn outcome_of<'a>(reports: &'a [Report], endpoint: &str) -> &'a Publication {
+    &reports
+        .iter()
+        .find(|r| r.endpoint == endpoint)
+        .expect("a report of that endpoint")
+        .publication
+}
+
+/// T-6790, T-7020, T-4461 over HTTP: hel's Endpoints and public dashboard are published into
+/// hel's own catalogue, a dashboard whose name a dataset holds is refused, the stray dataset of
+/// a gone Endpoint is swept, and each moved dataset leaves the catalogue it was declared in.
+#[tokio::test]
+async fn a_pass_publishes_into_the_organizations_catalogue_and_leaves_the_declared_one() {
+    let (reports, ckan, asked) = pass_into_hel(true).await;
+    assert!(
+        matches!(
+            outcome_of(&reports, "bikes"),
+            Publication::Published {
+                outcome: Outcome::Created,
+                ..
+            }
+        ),
+        "{reports:?}"
+    );
+    assert!(
+        matches!(
+            outcome_of(&reports, "ukazovatele"),
+            Publication::Published {
+                outcome: Outcome::Created,
+                ..
+            }
+        ),
+        "{reports:?}"
+    );
+    let Publication::Failed(clash) = outcome_of(&reports, "board") else {
+        panic!("the clashing dashboard was published: {reports:?}");
+    };
+    assert!(clash.contains("is a dataset's already"), "{clash}");
+    assert_eq!(
+        outcome_of(&reports, "old-ds"),
+        &Publication::Withdrawn {
+            dataset: "old-ds".to_owned()
+        }
+    );
+    let held = ckan.lock().expect("the catalogue");
+    let dashboard = held
+        .package("helsinki-ukazovatele")
+        .expect("the dashboard package");
+    assert_eq!(dashboard["type"], "dashboard");
+    assert!(
+        asked >= 2,
+        "each moved dataset is looked up where it was declared: {asked}"
+    );
+}
+
+/// A moved dataset whose declared catalogue cannot be reached stays there for now; its copy
+/// in the Organization's catalogue is published all the same.
+#[tokio::test]
+async fn a_moved_dataset_whose_old_catalogue_has_no_token_stays_there_for_now() {
+    let (reports, _, asked) = pass_into_hel(false).await;
+    assert!(
+        matches!(outcome_of(&reports, "bikes"), Publication::Published { .. }),
+        "{reports:?}"
+    );
+    assert_eq!(asked, 0);
+}
+
+/// An Organization catalogue with neither a token source nor a token file takes no
+/// publication and says so; a project of an Organization without a catalogue of its own on a
+/// repository of two still files under its Organization's name, and an Endpoint of no
+/// Organization publishing under no organization is no sweep's.
+#[tokio::test]
+async fn a_catalogue_without_a_token_says_so_and_each_project_keeps_its_organization() {
+    let repository = std::env::temp_dir().join(format!("jc-ckan-no-token-{}", std::process::id()));
+    std::fs::create_dir_all(&repository).expect("a scratch directory");
+    let mut declared = instance();
+    declared["apiTokenRef"]["envVar"] = json!("CKAN_T7643_UNSET");
+    let mut bare = declared.clone();
+    bare.as_object_mut()
+        .expect("an object")
+        .remove("organizationDefault");
+    std::fs::write(
+        repository.join("all.yaml"),
+        [
+            org_manifest("Organization", "hel", json!({ "domain": "hel.fi" })),
+            org_manifest("Organization", "esp", json!({ "domain": "espoo.fi" })),
+            org_manifest("Project", PROJECT, json!({ "organizationRef": "hel" })),
+            org_manifest("Project", "espoo", json!({ "organizationRef": "esp" })),
+            manifest_in(PROJECT, "CkanInstance", "hel-fi", declared.clone()),
+            manifest_in(
+                PROJECT,
+                "Endpoint",
+                "bikes",
+                endpoint("bikes", "public", Some(dataset_only())),
+            ),
+            manifest_in("espoo", "CkanInstance", "hel-fi", declared.clone()),
+            manifest_in(
+                "espoo",
+                "Endpoint",
+                "trams",
+                endpoint("trams", "public", Some(dataset_only())),
+            ),
+            manifest_in("plain", "CkanInstance", "hel-fi", bare),
+            manifest_in(
+                "plain",
+                "Endpoint",
+                "ferries",
+                endpoint("ferries", "public", Some(dataset_only())),
+            ),
+            manifest_in(
+                "plain",
+                "Dashboard",
+                "harbour",
+                charted_dashboard("ferries"),
+            ),
+            org_manifest("Organization", "vnt", json!({ "domain": "vantaa.fi" })),
+            org_manifest("Project", "vantaa", json!({ "organizationRef": "vnt" })),
+            manifest_in("vantaa", "CkanInstance", "hel-fi", declared),
+            manifest_in(
+                "vantaa",
+                "Endpoint",
+                "buses",
+                endpoint("buses", "public", Some(dataset_only())),
+            ),
+        ]
+        .join("---\n"),
+    )
+    .expect("the projects");
+    let repo = jcctl::loader::Repository::load(&repository).expect("the repository loads");
+    let catalogue = joinedcontext_portal::organization_host::OrganizationCatalogue {
+        organization: "hel".to_owned(),
+        url: "http://opendata.hel.localhost:9".parse().expect("a url"),
+        api: None,
+        reach: Some("127.0.0.1:9".parse().expect("an address")),
+        data_host: None,
+        token_file: None,
+        token: None,
+    };
+    let vantaa = joinedcontext_portal::organization_host::OrganizationCatalogue {
+        organization: "vnt".to_owned(),
+        url: "http://opendata.vnt.localhost:9".parse().expect("a url"),
+        token: Some(minting("")),
+        ..catalogue.clone()
+    };
+    // The installation's catalogue is called at an address that is no http(s) URL.
+    let _ = joinedcontext_portal::organization_host::INSTALLATION_PUBLISHER
+        .set(minting("installation-token"));
+    let sync = CkanSync::new(HOST)
+        .for_organizations(
+            joinedcontext_portal::organization_host::OrganizationCatalogues::new(vec![
+                catalogue, vantaa,
+            ]),
+        )
+        .reaching("https://data.example.fi", "ftp://catalogue.example");
+    let reports = sync.converge(&repo, &Mirror::new(), &repository).await;
+    // No Endpoint or dashboard is due again on the next pass: each failure backs off.
+    let again = sync.converge(&repo, &Mirror::new(), &repository).await;
+    std::fs::remove_dir_all(&repository).expect("cleaned up");
+    let paced = ["bikes", "trams", "buses", "ferries", "harbour"];
+    assert!(
+        !again.iter().any(|r| paced.contains(&r.endpoint.as_str())),
+        "{again:?}"
+    );
+    let Publication::Failed(reason) = outcome_of(&reports, "bikes") else {
+        panic!("published without a token: {reports:?}");
+    };
+    assert!(
+        reason.contains("hel's catalogue takes no publication"),
+        "{reason}"
+    );
+    let Publication::Failed(reason) = outcome_of(&reports, "trams") else {
+        panic!("published at no URL: {reports:?}");
+    };
+    assert!(reason.contains("not an http(s) URL"), "{reason}");
+    let Publication::Failed(reason) = outcome_of(&reports, "buses") else {
+        panic!("published with an empty token: {reports:?}");
+    };
+    assert!(reason.contains("token is empty"), "{reason}");
+    assert!(
+        matches!(outcome_of(&reports, "harbour"), Publication::Failed(_)),
+        "{reports:?}"
+    );
+}
+
+/// A catalogue that answers anything with what it was sent.
+struct Echo;
+
+impl jcctl::publish::ckan::CkanApi for Echo {
+    fn show(&self, _: &str, name: &str) -> Result<Option<Value>, jcctl::publish::ckan::CkanError> {
+        Ok(Some(json!({ "name": name })))
+    }
+
+    fn action(
+        &mut self,
+        _: &str,
+        payload: &Value,
+    ) -> Result<Value, jcctl::publish::ckan::CkanError> {
+        Ok(payload.clone())
+    }
+}
+
+/// A pace that remembers nothing still answers; a turn whose gap has passed waits for nothing;
+/// an organization written without a name is not remembered.
+#[test]
+fn a_pace_without_memory_or_a_passed_turn_answers_at_once() {
+    use jcctl::publish::ckan::CkanApi;
+    let last = Arc::new(Mutex::new(None));
+    let mut paced = Paced::new(Echo, last.clone(), Duration::from_millis(1));
+    assert_eq!(
+        paced.show("organization_show", "hel"),
+        Ok(Some(json!({ "name": "hel" })))
+    );
+    std::thread::sleep(Duration::from_millis(5));
+    let before = Instant::now();
+    assert!(paced.show("package_show", "bikes").is_ok());
+    assert!(before.elapsed() < Duration::from_millis(500));
+    let known = Organizations::default();
+    let mut paced = Paced::new(Echo, last, Duration::ZERO)
+        .remembering("https://data.example.fi", known.clone());
+    let unnamed = json!({ "title": "Helsinki" });
+    assert_eq!(paced.action("organization_create", &unnamed), Ok(unnamed));
+    assert!(known.lock().expect("known").is_empty());
+}
+
+/// A search answered a page at a time, whose withdrawal the catalogue may refuse.
+struct Paged {
+    refuse_delete: bool,
+}
+
+impl jcctl::publish::ckan::CkanApi for Paged {
+    fn show(&self, _: &str, name: &str) -> Result<Option<Value>, jcctl::publish::ckan::CkanError> {
+        Ok(Some(dataset(name, Some(jcctl::publish::ckan::GENERATOR))))
+    }
+
+    fn action(
+        &mut self,
+        action: &str,
+        payload: &Value,
+    ) -> Result<Value, jcctl::publish::ckan::CkanError> {
+        match (action, payload["start"].as_u64()) {
+            ("package_search", Some(0)) => Ok(
+                json!({ "count": 2, "results": [dataset("one", Some(jcctl::publish::ckan::GENERATOR))] }),
+            ),
+            ("package_search", _) => Ok(
+                json!({ "count": 2, "results": [dataset("two", Some(jcctl::publish::ckan::GENERATOR))] }),
+            ),
+            _ if self.refuse_delete => Err(jcctl::publish::ckan::CkanError::Unavailable(
+                "the catalogue is read-only".to_owned(),
+            )),
+            _ => Ok(Value::Null),
+        }
+    }
+}
+
+/// The sweep reads every page of the search, and a withdrawal the catalogue refuses is the
+/// sweep's error.
+#[test]
+fn a_sweep_reads_every_page_and_says_when_a_withdrawal_is_refused() {
+    let kept = BTreeSet::new();
+    let swept = sweep_with(
+        &mut Paged {
+            refuse_delete: false,
+        },
+        "susr",
+        &kept,
+    )
+    .expect("swept");
+    let names: Vec<&str> = swept.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["one", "two"]);
+    let refused = sweep_with(
+        &mut Paged {
+            refuse_delete: true,
+        },
+        "susr",
+        &kept,
+    )
+    .expect_err("refused");
+    assert!(refused.contains("read-only"), "{refused}");
+}
+
+/// A catalogue manifest or an Endpoint of the previous run that no longer reads withdraws
+/// nothing.
+#[test]
+fn a_previous_manifest_that_does_not_read_withdraws_nothing() {
+    let previous = Mirror::new();
+    previous.upsert(envelope("CkanInstance", "hel-fi", json!({ "url": 5 })));
+    previous.upsert(envelope("Endpoint", "bikes", json!({ "audience": 7 })));
+    assert!(withdrawn(&previous, &BTreeSet::new(), None).is_empty());
+}
+
+/// An Endpoint that names no context space is published without measurements.
+#[test]
+fn an_endpoint_without_a_space_has_no_measurements() {
+    use joinedcontext_portal::quality::Store;
+    use joinedcontext_portal::quality_checks::Readings;
+    let sync =
+        CkanSync::new(HOST).with_quality(Arc::new(Store::default()), Arc::new(Readings::new(None)));
+    let repository = std::env::temp_dir().join("jc-ckan-reconciler-spaceless");
+    std::fs::create_dir_all(&repository).expect("a scratch directory");
+    let repo = jcctl::loader::Repository::load(&repository).expect("an empty repository");
+    let mut spaceless = target("helsinki-bikes", "public", dataset_only());
+    spaceless
+        .manifest
+        .spec
+        .as_object_mut()
+        .expect("a spec")
+        .remove("contextSpaceRef");
+    let measured = sync.measured(&repo, &spaceless);
+    assert_eq!(measured.pass_rate, None);
+    assert_eq!(measured.freshness_seconds, None);
+}
+
+/// A gateway that serves the record but not the models still brings the dataset to its
+/// record, and the publication says its charts were not refreshed.
+#[tokio::test]
+async fn a_gateway_without_models_still_publishes_the_record() {
+    let gateway = wiremock::MockServer::start().await;
+    gateway_at(&gateway, false).await;
+    let host = gateway.uri();
+    let failed = tokio::task::spawn_blocking(move || {
+        let last = Arc::new(Mutex::new(None));
+        let mut api = Paced::new(
+            InMemoryCkan::new().with_organization("hel-fi"),
+            last,
+            Duration::ZERO,
+        );
+        let target = target("helsinki-bikes", "public", dataset_only());
+        joinedcontext_portal::reconciler::ckan::publish_one(
+            &mut api,
+            &target,
+            &Settings::new(host),
+            &Default::default(),
+        )
+    })
+    .await
+    .expect("the publication finished")
+    .expect_err("the charts were not refreshed");
+    assert!(
+        failed.starts_with("the dataset is created, its charts were not refreshed: "),
+        "{failed}"
+    );
+}
+
+/// A catalogue that refuses every call.
+struct Refusing;
+
+impl jcctl::publish::ckan::CkanApi for Refusing {
+    fn show(&self, _: &str, _: &str) -> Result<Option<Value>, jcctl::publish::ckan::CkanError> {
+        Err(jcctl::publish::ckan::CkanError::Unavailable(
+            "connection refused".to_owned(),
+        ))
+    }
+
+    fn action(&mut self, _: &str, _: &Value) -> Result<Value, jcctl::publish::ckan::CkanError> {
+        Err(jcctl::publish::ckan::CkanError::Unavailable(
+            "connection refused".to_owned(),
+        ))
+    }
+}
+
+/// A catalogue that refuses the publication is the Endpoint's failure, with the reason.
+#[test]
+fn a_refused_publication_names_the_reason() {
+    let target = target("helsinki-bikes", "public", dataset_only());
+    let refused =
+        publish_with(&mut Refusing, &target, &record(), None, &settings()).expect_err("refused");
+    assert!(refused.contains("connection refused"), "{refused}");
+    let refused = publish_without_models(&mut Refusing, &target, &record(), "x", &settings())
+        .expect_err("refused");
+    assert!(refused.contains("connection refused"), "{refused}");
+    let refused = withdraw_one(&mut Refusing, &target).expect_err("refused");
+    assert!(refused.contains("connection refused"), "{refused}");
+}
+
+/// Every write is logged with its word: a creation, a withdrawal, and a dataset the
+/// publisher did not publish.
+#[test]
+fn every_outcome_has_its_word_in_the_log() {
+    let sync = CkanSync::new(HOST);
+    let report = |endpoint: &str, publication: Publication| Report {
+        project: PROJECT.to_owned(),
+        endpoint: endpoint.to_owned(),
+        dataset: endpoint.to_owned(),
+        publication,
+    };
+    let published = |outcome| Publication::Published {
+        dataset: "d".to_owned(),
+        outcome,
+        no_linkml: false,
+    };
+    let logged = sync.log(&[
+        report("a", published(Outcome::Created)),
+        report("b", published(Outcome::NotPublished)),
+        report("c", published(Outcome::Withdrawn)),
+        report(
+            "d",
+            Publication::Withdrawn {
+                dataset: "d".to_owned(),
+            },
+        ),
+    ]);
+    assert_eq!(
+        logged,
+        [
+            "helsinki/a: created",
+            "helsinki/b: not published",
+            "helsinki/c: withdrawn",
+            "helsinki/d: withdrawn",
+        ]
+    );
+}
+
 #[tokio::test]
 async fn an_endpoint_the_pass_cannot_place_keeps_its_dataset() {
     let previous = Mirror::new();
@@ -1780,10 +2394,12 @@ async fn an_endpoint_the_pass_cannot_place_keeps_its_dataset() {
     )
     .expect("the project");
     let repo = jcctl::loader::Repository::load(&repository).expect("the repository loads");
-    let reports = CkanSync::new(HOST)
-        .converge(&repo, &previous, &repository)
-        .await;
+    let sync = CkanSync::new(HOST);
+    let reports = sync.converge(&repo, &previous, &repository).await;
+    // The next pass says it again only after the back-off: the reason is unchanged.
+    let again = sync.converge(&repo, &previous, &repository).await;
     std::fs::remove_dir_all(&repository).expect("cleaned up");
+    assert!(!again.iter().any(|r| r.endpoint == "bikes"), "{again:?}");
 
     assert!(
         reports.iter().any(|r| r.endpoint == "bikes"

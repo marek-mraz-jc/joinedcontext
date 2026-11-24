@@ -177,3 +177,10 @@ path = "fuzz_targets/kube_objects.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "dashboard_answers"
+path = "fuzz_targets/dashboard_answers.rs"
+test = false
+doc = false
+bench = false
