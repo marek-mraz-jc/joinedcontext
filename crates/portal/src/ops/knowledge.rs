@@ -146,7 +146,9 @@ async fn status(
     let proposes = crate::permissions::for_request(state, &caller.identity, project)
         .check("KnowledgeSource", Verb::Propose, None)
         .is_ok();
-    if proposes && answer["items"][0]["state"] != "not-crawled" {
+    // A source never crawled, or one no assistant holds, has no failed reads to ask for.
+    let state_of = &answer["items"][0]["state"];
+    if proposes && state_of != "not-crawled" && state_of != crate::api::knowledge::NO_ASSISTANT {
         let Json(errors) = crate::api::knowledge::list_errors(
             as_user(caller),
             State(state.clone()),
