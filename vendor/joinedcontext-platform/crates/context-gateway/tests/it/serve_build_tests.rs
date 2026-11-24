@@ -170,8 +170,7 @@ fn the_broker_hop_trusts_the_image_roots_or_the_named_bundle() {
         "JC_GATEWAY_EGRESS_CA_BUNDLE",
         "/nonexistent/bundle.pem".to_owned(),
     )]))
-    .err()
-    .expect("no bundle");
+    .expect_err("no bundle");
     assert!(refused.starts_with("/nonexistent/bundle.pem"), "{refused}");
     let dir = scratch("bundle");
     let empty = dir.join("empty.pem");
@@ -180,8 +179,7 @@ fn the_broker_hop_trusts_the_image_roots_or_the_named_bundle() {
         "JC_GATEWAY_EGRESS_CA_BUNDLE",
         empty.display().to_string(),
     )]))
-    .err()
-    .expect("an empty bundle");
+    .expect_err("an empty bundle");
     assert!(refused.contains("empty.pem"), "{refused}");
     let _ = std::fs::remove_dir_all(dir);
 }
