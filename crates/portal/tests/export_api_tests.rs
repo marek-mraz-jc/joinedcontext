@@ -1185,6 +1185,56 @@ async fn a_branch_named_as_the_revision_is_written_as_its_commit() {
     );
 }
 
+/// The default branch's head is the commit the export reads and names: the forge is asked for it
+/// once, never asked again with the head as a branch name (a forge whose heads are not hex, as the
+/// scenario lane's, would answer that second question with an empty tree).
+#[tokio::test]
+async fn the_default_branch_head_is_resolved_once() {
+    let server = forge().await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Branches('main')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head-main" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/odata/Repositories(Owner='bb',Name='org')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"))
+        .and(query_param("@r", "'head-main'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Tree": files()
+                .iter()
+                .map(|(path, _)| json!({ "Path": path, "Type": "blob" }))
+                .collect::<Vec<_>>(),
+            "Truncated": false
+        })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = ask_as(
+        Some(&server),
+        "/api/v1/projects/banskabystrica/export",
+        None,
+        |_| {},
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    assert!(
+        answer.text().contains("name: public-air"),
+        "{}",
+        answer.text()
+    );
+    let lookups = server
+        .received_requests()
+        .await
+        .expect("recorded requests")
+        .iter()
+        .filter(|request| request.url.path().contains("/Branches("))
+        .count();
+    assert_eq!(lookups, 1);
+}
+
 /// An archive whose filters match no manifest carries no index: a Bundle lists at least one
 /// resource (MF-17).
 #[tokio::test]

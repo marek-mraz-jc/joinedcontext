@@ -819,27 +819,28 @@ pub async fn export(
         }
     }
 
-    let revision = match query.revision.as_deref() {
+    // `sourceRevision` of a Bundle is a commit (7 to 40 hex, MF-17), so a branch name given as
+    // `?revision=` is resolved before it is written into the index; the default branch's head is
+    // that commit already and is never resolved twice.
+    let (revision, commit) = match query.revision.as_deref() {
         Some(revision) => {
             if !valid_revision(revision) {
                 return Err(ApiError::BadRequest(
                     "revision must be a commit id or a branch name".into(),
                 ));
             }
-            revision.to_string()
+            let commit = if is_commit(revision) {
+                revision.to_string()
+            } else {
+                shako.branch_head(revision).await?
+            };
+            (revision.to_string(), commit)
         }
         None => {
             let branch = shako.default_branch().await?;
-            shako.branch_head(&branch).await?
+            let head = shako.branch_head(&branch).await?;
+            (head.clone(), head)
         }
-    };
-
-    // `sourceRevision` of a Bundle is a commit (7 to 40 hex, MF-17), so a branch name given as
-    // `?revision=` is resolved before it is written into the index.
-    let commit = if is_commit(&revision) {
-        revision.clone()
-    } else {
-        shako.branch_head(&revision).await?
     };
 
     // Read at the commit the index names, so a branch that moves during the export cannot hand
