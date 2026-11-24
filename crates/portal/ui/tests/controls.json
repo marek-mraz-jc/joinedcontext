@@ -24,6 +24,7 @@
         "assistant_open.test.tsx",
         "assistant_picked.test.tsx",
         "assistant_turns.test.tsx",
+        "cov4_s4_assistant_dock.test.tsx",
         "form_assistant_dock.test.tsx"
       ]
     },
@@ -43,7 +44,8 @@
         "Button": 2
       },
       "tests": [
-        "assistant_full_screen.test.tsx"
+        "assistant_full_screen.test.tsx",
+        "cov4_s4_components_small_units.test.tsx"
       ]
     },
     "src/assistant/EndpointPicker.tsx": {
@@ -54,6 +56,7 @@
         "assistant_capabilities.test.tsx",
         "assistant_endpoints.test.tsx",
         "assistant_open.test.tsx",
+        "cov4_s4_components_small_units.test.tsx",
         "part_endpoint_picker.test.tsx"
       ]
     },
@@ -133,6 +136,7 @@
       "tests": [
         "browser_security.test.tsx",
         "components_root_error_boundary.test.tsx",
+        "cov4_s3_components_error_boundary_paint.test.tsx",
         "error_boundary_chunk.test.tsx",
         "lazy_dialogs.test.tsx"
       ]
@@ -173,6 +177,7 @@
       },
       "tests": [
         "components_root_jobs_menu.test.tsx",
+        "cov4_s4_misc_names_jobs_languages.test.tsx",
         "jobs.test.tsx"
       ]
     },
@@ -319,6 +324,7 @@
       },
       "tests": [
         "components_endpoints_edges.test.tsx",
+        "cov4_s2_components_small_edges.test.tsx",
         "endpoint_grants_words.test.tsx"
       ]
     },
@@ -328,7 +334,8 @@
       },
       "tests": [
         "attribute_history.test.tsx",
-        "components_entities_attribute_history.test.tsx"
+        "components_entities_attribute_history.test.tsx",
+        "cov4_s4_entities_attribute_history_csv.test.tsx"
       ]
     },
     "src/components/entities/AddFieldDialog.tsx": {
@@ -357,6 +364,7 @@
       },
       "tests": [
         "components_entities_endpoint_data_view.test.tsx",
+        "cov4_s4_catalogue_endpoint_dataset.test.tsx",
         "data_toolbar.test.tsx",
         "endpoint_data_view.test.tsx",
         "explorer_mount.test.tsx"
@@ -536,6 +544,7 @@
       },
       "tests": [
         "components_grid_manifest.test.tsx",
+        "cov4_s4_grid_manifest_boolean.test.tsx",
         "manifest_grid.test.tsx"
       ]
     },
@@ -603,6 +612,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "form_contract_self.test.tsx",
@@ -628,6 +638,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -652,6 +663,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -677,6 +689,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -701,6 +714,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -727,6 +741,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -753,6 +768,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -778,6 +794,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -803,6 +820,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -827,6 +845,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -851,6 +870,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -877,6 +897,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -901,6 +922,7 @@
         "contract_card_dialog_menu_table.test.tsx",
         "contract_field.test.tsx",
         "contract_widget_describedby.test.tsx",
+        "cov4_s0_components_ui_record.test.tsx",
         "dialog_focus.test.tsx",
         "edge_card_dialog_menu_table.test.tsx",
         "glossary_page.test.tsx",
@@ -1099,6 +1121,7 @@
       "tests": [
         "assistant_endpoints.test.tsx",
         "assistant_step_states.test.tsx",
+        "cov4_s1_lib_pure_helpers2.test.tsx",
         "model_links.test.tsx",
         "part_query_result_card.test.tsx"
       ]
@@ -1262,7 +1285,8 @@
         "Button": 3
       },
       "tests": [
-        "assistant_access_view.test.tsx"
+        "assistant_access_view.test.tsx",
+        "cov4_s1_assistant_agent_access.test.tsx"
       ]
     },
     "src/pages/assistant/AssistantPage.tsx": {
@@ -1305,7 +1329,8 @@
         "Button": 1
       },
       "tests": [
-        "catalogue_subscribe.test.tsx"
+        "catalogue_subscribe.test.tsx",
+        "cov4_s4_catalogue_subscribe_menu.test.tsx"
       ]
     },
     "src/pages/catalogue/PublishDataset.tsx": {
@@ -1322,7 +1347,8 @@
         "Button": 2
       },
       "tests": [
-        "ckan_access_panel.test.tsx"
+        "ckan_access_panel.test.tsx",
+        "cov4_s4_ckan_access_panel_email.test.tsx"
       ]
     },
     "src/pages/ckan/CkanPage.tsx": {
@@ -1330,6 +1356,7 @@
         "Button": 2
       },
       "tests": [
+        "cov4_s2_components_small_edges.test.tsx",
         "form_ckan_page.test.tsx"
       ]
     },
@@ -1357,6 +1384,7 @@
       },
       "tests": [
         "context_sources_ui.test.tsx",
+        "cov4_s1_datasources_webhook_clipboard.test.tsx",
         "datasource_presets.test.tsx",
         "datasource_webhook_ui.test.tsx"
       ]
@@ -1375,6 +1403,7 @@
       },
       "tests": [
         "admin_grid_brokers.test.tsx",
+        "cov4_s2_datasources_page.test.tsx",
         "datasources_view.test.tsx",
         "mqtt_broker_picker.test.tsx",
         "page_data_sources_page.test.tsx",
@@ -1396,6 +1425,7 @@
         "Checkbox": 2
       },
       "tests": [
+        "cov4_s3_datasources_template_gallery_edges.test.tsx",
         "datasource_templates.test.tsx"
       ]
     },
@@ -1404,6 +1434,7 @@
         "Button": 2
       },
       "tests": [
+        "cov4_s2_endpoints_access_request_edges.test.tsx",
         "endpoint_access_request.test.tsx"
       ]
     },
@@ -1412,6 +1443,7 @@
         "Button": 1
       },
       "tests": [
+        "cov4_s3_endpoints_catalog_section_edges.test.tsx",
         "endpoint_catalog.test.tsx"
       ]
     },
@@ -1420,6 +1452,7 @@
         "Button": 1
       },
       "tests": [
+        "cov4_s2_explore_quality_and_panel.test.tsx",
         "endpoint_developer_page.test.tsx"
       ]
     },
@@ -1429,6 +1462,7 @@
         "Checkbox": 2
       },
       "tests": [
+        "cov4_s1_endpoints_page_proof.test.tsx",
         "endpoint_admission.test.tsx",
         "endpoint_geo_property.test.ts",
         "endpoint_open_data.test.tsx",
@@ -1441,6 +1475,7 @@
         "Button": 3
       },
       "tests": [
+        "cov4_s1_endpoints_page_proof.test.tsx",
         "endpoint_filter_proof.test.tsx"
       ]
     },
@@ -1450,6 +1485,7 @@
         "Checkbox": 4
       },
       "tests": [
+        "cov4_s1_endpoints_model_picker.test.tsx",
         "endpoint_picker_example.test.tsx",
         "part_model_picker.test.tsx"
       ]
@@ -1460,6 +1496,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "cov4_s4_endpoints_schema_projection_panel.test.tsx",
         "endpoint_projection_ui.test.tsx",
         "form_schema_projection.test.tsx"
       ]
@@ -1470,6 +1507,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "cov4_s1_endpoints_share_flow_edges.test.tsx",
         "share_flow.test.tsx"
       ]
     },
@@ -1578,6 +1616,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "cov4_s3_endpoints_visualizations_edges.test.tsx",
         "endpoint_visualizations.test.tsx"
       ]
     },
@@ -1587,6 +1626,7 @@
         "RadioGroup": 1
       },
       "tests": [
+        "cov4_s1_explore_chart_from_view.test.tsx",
         "explore_chart.test.tsx"
       ]
     },
@@ -1595,6 +1635,7 @@
         "Button": 4
       },
       "tests": [
+        "cov4_s4_explore_page.test.tsx",
         "explore_controls.test.tsx",
         "explore_enum_pick.test.tsx",
         "explore_new_user.test.tsx",
@@ -1609,6 +1650,7 @@
         "Button": 4
       },
       "tests": [
+        "cov4_s1_explore_row_actions_copy.test.tsx",
         "explore_row_actions.test.tsx"
       ]
     },
@@ -1689,7 +1731,8 @@
         "Switch": 2
       },
       "tests": [
-        "assistant_conversations.test.tsx"
+        "assistant_conversations.test.tsx",
+        "cov4_s4_knowledge_conversations_page.test.tsx"
       ]
     },
     "src/pages/knowledge/IndexStatus.tsx": {
@@ -1731,7 +1774,8 @@
         "Button": 2
       },
       "tests": [
-        "assistant_conversations.test.tsx"
+        "assistant_conversations.test.tsx",
+        "cov4_s4_knowledge_usage_summary.test.tsx"
       ]
     },
     "src/connectors/PairedTabBar.tsx": {
@@ -1739,6 +1783,7 @@
         "Button": 3
       },
       "tests": [
+        "cov4_s4_components_small_units.test.tsx",
         "paired_tab.test.tsx"
       ]
     },
@@ -1804,6 +1849,8 @@
         "Button": 8
       },
       "tests": [
+        "cov4_s3_models_diagram_editing_escape.test.tsx",
+        "cov4_s4_models_linkml_graph_view.test.tsx",
         "diagram_editing.test.tsx",
         "diagram_layout.test.ts",
         "diagram_notation.test.tsx",
@@ -1868,6 +1915,7 @@
         "FilePicker": 2
       },
       "tests": [
+        "cov4_s4_models_model_file_drop.test.tsx",
         "model_file_drop.test.tsx",
         "part_model_file_drop.test.tsx"
       ]
@@ -1919,6 +1967,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "cov4_s1_models_page_write_throws.test.tsx",
         "diagram_editing.test.tsx",
         "models_page_save.test.tsx"
       ]
@@ -2161,6 +2210,7 @@
         "Button": 2
       },
       "tests": [
+        "cov4_s4_pipelines_debug_panel_rerun.test.tsx",
         "pipeline_debug_view.test.tsx"
       ]
     },
@@ -2205,6 +2255,7 @@
         "Button": 3
       },
       "tests": [
+        "cov4_s3_pipelines_output_mapper_boolean.test.tsx",
         "output_mapper_edges.test.ts",
         "output_mapper_g18_ui.test.tsx",
         "output_mapper_ui.test.tsx"
@@ -2215,6 +2266,9 @@
         "Button": 23
       },
       "tests": [
+        "cov4_s1_pipelines_flow_blocks.test.tsx",
+        "cov4_s1_pipelines_flow_canvas.test.tsx",
+        "cov4_s4_pipelines_debug_panel_rerun.test.tsx",
         "part_pipeline_flow.test.tsx",
         "pipeline_debug.test.ts",
         "pipeline_debug_view.test.tsx",
@@ -2288,6 +2342,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "cov4_s4_pipelines_pipeline_studio.test.tsx",
         "pipeline_editor.test.tsx",
         "pipeline_flow.test.tsx",
         "pipeline_flow_first_nodes.test.tsx",
@@ -2316,6 +2371,7 @@
         "FilePicker": 1
       },
       "tests": [
+        "cov4_s1_pipelines_flow_canvas.test.tsx",
         "part_pipeline_flow.test.tsx",
         "part_pipeline_test.test.tsx",
         "pipeline_debug_view.test.tsx",
@@ -2830,6 +2886,7 @@
       },
       "tests": [
         "components_forms_outputs_more.test.tsx",
+        "cov4_s3_forms_representation_outputs_edges.test.tsx",
         "representation_outputs_field.test.tsx"
       ]
     },
@@ -2857,6 +2914,7 @@
         "Checkbox": 2
       },
       "tests": [
+        "cov4_s2_mqttbrokers_broker_editor.test.tsx",
         "mqtt_broker_draft.test.ts",
         "mqtt_broker_parts.test.tsx"
       ]
@@ -2867,6 +2925,9 @@
       },
       "tests": [
         "admin_grid_brokers.test.tsx",
+        "cov4_s1_mqttbrokers_topics_edges.test.tsx",
+        "cov4_s2_mqttbrokers_test_publish_watch_ends.test.tsx",
+        "cov4_s4_mqttbrokers_broker_page.test.tsx",
         "mqtt_allowance_ui.test.tsx",
         "mqtt_broker_access.test.tsx",
         "mqtt_broker_topics.test.tsx",
@@ -2880,6 +2941,7 @@
         "Switch": 1
       },
       "tests": [
+        "cov4_s2_mqttbrokers_test_publish_watch_ends.test.tsx",
         "mqtt_test_publish.test.tsx"
       ]
     },
