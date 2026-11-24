@@ -106,13 +106,7 @@ impl NatsBus {
         // and MUST stay internal. If the server requires no auth, anything that
         // reaches it can read or forge all-tenant events — warn loudly so an
         // unauthenticated JetStream cluster is not shipped by accident.
-        if !client.server_info().auth_required {
-            tracing::warn!(
-                "connected to a NATS server that requires NO authentication — the \
-                 ANTARES_CHANGES stream exposes all tenants' change events; require \
-                 nkey/creds/mTLS and network-isolate the JetStream cluster in production"
-            );
-        }
+        open_to_anyone(&client.server_info());
         let js = jetstream::new(client.clone());
         let bus = Self {
             js,
@@ -392,10 +386,8 @@ impl NatsBus {
                 )));
             }
         }
-        tracing::info!(
-            durables = ?balanced_durables,
-            "bus topology asserted: balanced durables present on {CHANGES_STREAM}"
-        );
+        let durables = balanced_durables;
+        tracing::info!(?durables, "bus topology asserted on {CHANGES_STREAM}");
         Ok(())
     }
 }
@@ -463,14 +455,24 @@ fn replicas_from(v: Option<&str>) -> Result<usize, BusError> {
 pub fn decode(msg: &async_nats::jetstream::Message) -> Option<ChangeEvent> {
     let ev: ChangeEvent = serde_json::from_slice(&msg.payload).ok()?;
     if !subject_tenant_agrees(msg.subject.as_str(), &ev) {
-        tracing::error!(
-            subject = %msg.subject,
-            tenant = %ev.tenant.as_str(),
-            "dropping change event: subject tenant segment disagrees with body"
-        );
+        let (subject, tenant) = (&msg.subject, ev.tenant.as_str());
+        tracing::error!(%subject, tenant, "dropping change event: subject and body tenants differ");
         return None;
     }
     Some(ev)
+}
+
+/// The warning a server that asks for no authentication gets.
+const OPEN_SERVER: &str = "connected to a NATS server that requires NO authentication — the \
+     ANTARES_CHANGES stream exposes all tenants' change events; require nkey/creds/mTLS and \
+     network-isolate the JetStream cluster in production";
+
+/// Warns when `info` names a server that asks for no authentication, and says so.
+fn open_to_anyone(info: &async_nats::ServerInfo) -> bool {
+    if !info.auth_required {
+        tracing::warn!("{OPEN_SERVER}");
+    }
+    !info.auth_required
 }
 
 /// The tenant-agreement check, unit-testable: `changes.{tenant}.…` must carry the
@@ -657,13 +659,20 @@ mod tests {
     }
 
     #[test]
+    fn only_a_server_without_authentication_is_open_to_anyone() {
+        let mut info = async_nats::ServerInfo::default();
+        assert!(open_to_anyone(&info));
+        info.auth_required = true;
+        assert!(!open_to_anyone(&info));
+    }
+
+    #[test]
     fn replica_count_garbage_is_fatal_not_a_silent_default() {
-        assert_eq!(replicas_from(None).map_err(|e| e.0), Ok(1));
-        assert_eq!(replicas_from(Some("3")).map_err(|e| e.0), Ok(3));
-        assert_eq!(replicas_from(Some(" 3 ")).map_err(|e| e.0), Ok(3));
+        assert_eq!(replicas_from(None).ok(), Some(1));
+        assert_eq!(replicas_from(Some("3")).ok(), Some(3));
+        assert_eq!(replicas_from(Some(" 3 ")).ok(), Some(3));
         for bad in ["three", "", "0", "-1", "1.5", "3 nodes"] {
             let err = replicas_from(Some(bad))
-                .map(|_| ())
                 .expect_err("garbage must be refused")
                 .0;
             assert!(
