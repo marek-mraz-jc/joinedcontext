@@ -304,10 +304,12 @@ fn normalized_from_the_simplified_example() {
     assert_eq!(
         ok(
             "root = this.ngsild_normalized()",
-            json!({"id": "urn:a", "type": "T", "refCode": "ABC", "owner": "urn:ngsi-ld:P:1"})
+            json!({"id": "urn:a", "type": "T", "refCode": "ABC", "refSite": "https://x.example/1", "refBad": "urn:ngsi-ld:P 1", "owner": "urn:ngsi-ld:P:1"})
         ),
         json!({"id": "urn:a", "type": "T",
                "refCode": {"type": "Property", "value": "ABC"},
+               "refSite": {"type": "Property", "value": "https://x.example/1"},
+               "refBad": {"type": "Property", "value": "urn:ngsi-ld:P 1"},
                "owner": {"type": "Property", "value": "urn:ngsi-ld:P:1"}})
     );
 }
