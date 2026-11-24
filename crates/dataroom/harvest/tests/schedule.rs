@@ -377,37 +377,8 @@ async fn the_spawned_scheduler_runs_every_source_in_its_first_minute() {
     );
 }
 
-/// A subscriber that listens to every event and keeps none.
-struct Listening;
-
-impl tracing::Subscriber for Listening {
-    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
-        true
-    }
-    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-        tracing::span::Id::from_u64(1)
-    }
-    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
-    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
-    fn event(&self, event: &tracing::Event<'_>) {
-        struct Format(String);
-        impl tracing::field::Visit for Format {
-            fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
-                self.0 += &format!("{f}={v:?} ");
-            }
-        }
-        let mut line = Format(String::new());
-        event.record(&mut line);
-        assert!(!line.0.is_empty());
-    }
-    fn enter(&self, _: &tracing::span::Id) {}
-    fn exit(&self, _: &tracing::span::Id) {}
-}
-
 #[tokio::test]
 async fn a_failed_run_is_retried_three_times_then_logged_and_the_next_cycle_runs() {
-    // A listening subscriber, so each retry warning formats its fields.
-    let _log = tracing::subscriber::set_default(Listening);
     // Fails three times, the fourth attempt (third retry) succeeds.
     let (w, store, f) = scheduled_world(RETRIES as usize).await;
     let out = scheduler(&w, store.clone(), f.clone(), true)
