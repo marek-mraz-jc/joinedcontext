@@ -717,7 +717,7 @@ mod tests {
             None,
             "over u64 in seconds"
         );
-        assert_eq!(seconds_of("300000000000000h"), None, "over u64 in seconds");
+        assert_eq!(seconds_of("6000000000000000h"), None, "over u64 in seconds");
         let base = json!({ "name": "x", "type": "T", "attribute": "a", "agg": "avg" });
         let mut huge = base.clone();
         huge["every"] = json!("18446744073709551615d");
