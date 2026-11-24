@@ -1701,7 +1701,7 @@ async fn the_rest_surface_refuses_bad_input_and_answers_each_variant() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("{R}"))
+                .uri(R)
                 .header("authorization", "token")
                 .body(Body::empty())
                 .expect("request"),
