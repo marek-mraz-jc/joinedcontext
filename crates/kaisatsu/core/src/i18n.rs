@@ -1548,6 +1548,8 @@ mod tests {
         let portal = sk.get("jcClientPortal");
         assert_ne!(portal, "jcClientPortal", "the key is shipped");
         assert_eq!(sk.translate_client_name("${jcClientPortal}"), portal);
+        assert!(sk.keys().any(|k| k == "jcClientPortal"));
+        assert!(!sk.keys().any(|k| k == "noSuchKeyAnywhere"));
         assert_eq!(sk.translate_client_name("${unknownName}"), "unknownName");
         for raw in ["My app", "${jcClientPortal", "jcClientPortal}", ""] {
             assert_eq!(sk.translate_client_name(raw), raw, "{raw}");
