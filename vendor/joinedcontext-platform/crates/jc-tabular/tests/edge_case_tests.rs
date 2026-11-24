@@ -159,3 +159,40 @@ fn an_unknown_bom_or_delimiter_names_the_parameter_and_an_example() {
         "delimiter must be comma, semicolon or tab, e.g. delimiter=semicolon"
     );
 }
+
+#[test]
+fn a_digit_sorts_before_a_letter_at_the_same_place() {
+    let mut table = Table::default();
+    table.columns = ["zb", "z1"].map(String::from).to_vec();
+    table.settle(&[]);
+    assert_eq!(table.columns, vec!["id", "type", "z1", "zb"]);
+}
+
+#[test]
+fn a_csv_exactly_at_the_byte_ceiling_is_served_and_one_byte_over_is_refused() {
+    let mut table = Table::default();
+    table.append(&json!({"id": "urn:ngsi-ld:T:1", "type": "T"}));
+    let whole = csv(&table, &Limits::DEFAULT, Dialect::default()).unwrap();
+    let exact = Limits {
+        max_rows: 10,
+        max_bytes: whole.len() as u64,
+    };
+    assert_eq!(csv(&table, &exact, Dialect::default()).unwrap(), whole);
+    let under = Limits {
+        max_bytes: whole.len() as u64 - 1,
+        ..exact
+    };
+    assert!(csv(&table, &under, Dialect::default()).is_err());
+}
+
+#[test]
+fn a_cell_with_a_space_at_either_end_is_quoted_so_a_reader_keeps_it() {
+    let mut table = Table::default();
+    table.append(&json!([
+        {"id": "urn:ngsi-ld:T:1", "type": "T", "a": {"type": "Property", "value": " lead"}},
+        {"id": "urn:ngsi-ld:T:2", "type": "T", "a": {"type": "Property", "value": "trail "}}
+    ]));
+    let text = csv(&table, &Limits::DEFAULT, Dialect::default()).unwrap();
+    assert!(text.contains(",\" lead\""), "{text}");
+    assert!(text.contains(",\"trail \""), "{text}");
+}

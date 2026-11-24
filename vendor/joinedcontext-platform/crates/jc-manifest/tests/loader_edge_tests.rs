@@ -117,7 +117,9 @@ fn a_link_out_of_the_repository_is_refused_and_a_dangling_one_skipped() {
     );
     std::os::unix::fs::symlink(outside.join("org.yaml"), dir.join("projects.yaml"))
         .expect("a link out");
-    let refused = Repository::load(&dir).err().expect("refused");
+    let Err(refused) = Repository::load(&dir) else {
+        panic!("a link out of the repository loads");
+    };
     assert!(
         matches!(refused, LoadError::PathEscapesRepository { .. }),
         "{refused:?}"
