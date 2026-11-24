@@ -109,8 +109,8 @@
 "shako-core" = { lines = 95.67, functions = 87.14 }
 "shako-git" = { lines = 69.51, functions = 48.63 }
 "shako-mcp" = { lines = 100.00, functions = 100.00 }
-"shako-registry" = { lines = 98.65, functions = 97.14 }
+"shako-registry" = { lines = 100.00, functions = 100.00 }
 "shako-server" = { lines = 99.54, functions = 100.00 }
 "shako-store-memory" = { lines = 100.00, functions = 100.00 }
 "shako-store-pg" = { lines = 99.19, functions = 96.68 }
-"shako-web" = { lines = 96.69, functions = 87.83 }
+"shako-web" = { lines = 98.06, functions = 89.33 }
