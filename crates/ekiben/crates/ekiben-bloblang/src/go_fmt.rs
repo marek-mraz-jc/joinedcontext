@@ -780,6 +780,22 @@ mod tests {
             ("%*d", vec![st("x"), i(42)], "%!(BADWIDTH)42"),
             ("%*d", vec![i(2_000_000), i(1)], "%!(BADWIDTH)1"),
             ("%*d", vec![Value::Uint(2_000_000), i(1)], "%!(BADWIDTH)1"),
+            // A nil inside a slice or map prints <nil> under any verb, at the top only under %v.
+            (
+                "%d",
+                vec![Value::Array(vec![Value::Null].into())],
+                "[<nil>]",
+            ),
+            (
+                "%d",
+                vec![Value::Object(
+                    [("a".to_string(), Value::Null)]
+                        .into_iter()
+                        .collect::<BTreeMap<_, _>>()
+                        .into(),
+                )],
+                "map[%!d(string=a):<nil>]",
+            ),
             (
                 "%.*f|%.*f",
                 vec![i(2), fl(5.12159), i(-1), fl(1.5)],

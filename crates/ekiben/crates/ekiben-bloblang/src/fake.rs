@@ -498,6 +498,29 @@ mod tests {
     }
 
     #[test]
+    fn first_names_and_names_draw_from_both_lists() {
+        let firsts: Vec<String> = (0..300).map(|_| s("first_name")).collect();
+        assert!(firsts
+            .iter()
+            .any(|n| FIRST_NAMES_MALE.contains(&n.as_str())));
+        assert!(firsts
+            .iter()
+            .any(|n| FIRST_NAMES_FEMALE.contains(&n.as_str())));
+        let female: std::collections::HashSet<&String> = firsts
+            .iter()
+            .filter(|n| FIRST_NAMES_FEMALE.contains(&n.as_str()))
+            .collect();
+        assert!(female.len() > 5, "{female:?}");
+        // go-faker picks the female title and name list when intn(100) > 50: about half the time.
+        let only_female =
+            |w: &str| FIRST_NAMES_FEMALE.contains(&w) && !FIRST_NAMES_MALE.contains(&w);
+        let share = (0..400)
+            .filter(|_| s("name").split(' ').nth(1).is_some_and(only_female))
+            .count();
+        assert!((100..300).contains(&share), "{share} of 400");
+    }
+
+    #[test]
     fn coordinates_and_amounts_are_uniform_fractions_scaled_into_range() {
         let num = |name: &str| match fake(name) {
             Ok(Value::Float(f)) => f,

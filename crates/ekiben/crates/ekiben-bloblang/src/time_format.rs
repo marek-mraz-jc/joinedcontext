@@ -155,28 +155,19 @@ pub fn format_go_layout(dt: &Zoned, layout: &str) -> String {
         } else if rem.starts_with("05") {
             out.push_str(&format!("{:02}", dt.second()));
             i += 2;
-        } else if rem.starts_with(".999999999")
-            || rem.starts_with(".999999")
-            || rem.starts_with(".999")
-        {
+        } else if rem.starts_with(".999") {
             let dots = rem[1..].bytes().take_while(|b| *b == b'9').count();
-            let nanos = dt.subsec_nanosecond() % 1_000_000_000;
-            if nanos > 0 {
-                let s = format!("{:09}", nanos);
-                let trimmed = s[..dots.min(9)].trim_end_matches('0');
-                if !trimmed.is_empty() {
-                    out.push('.');
-                    out.push_str(trimmed);
-                }
+            let s = format!("{:09}", dt.subsec_nanosecond());
+            // A zero fraction trims to nothing and prints no dot, as Go's formatNano.
+            let trimmed = s[..dots.min(9)].trim_end_matches('0');
+            if !trimmed.is_empty() {
+                out.push('.');
+                out.push_str(trimmed);
             }
             i += 1 + dots;
-        } else if rem.starts_with(".000000000")
-            || rem.starts_with(".000000")
-            || rem.starts_with(".000")
-        {
+        } else if rem.starts_with(".000") {
             let zeros = rem[1..].bytes().take_while(|b| *b == b'0').count();
-            let nanos = dt.subsec_nanosecond() % 1_000_000_000;
-            let s = format!("{:09}", nanos);
+            let s = format!("{:09}", dt.subsec_nanosecond());
             out.push('.');
             out.push_str(&s[..zeros.min(9)]);
             i += 1 + zeros;
@@ -1406,6 +1397,29 @@ mod tests {
         assert_eq!(format_go_layout(&dt, "05.999"), "07");
         assert_eq!(format_go_layout(&dt, "05.999999"), "07");
         assert_eq!(format_go_layout(&dt, "05.999999999"), "07.000000005");
+        Ok(())
+    }
+
+    #[test]
+    fn each_zone_and_clock_token_is_followed_by_the_rest_of_the_layout() -> R {
+        let dt = at("2026-11-24T15:04:05.5+01:00")?;
+        for (layout, want) in [
+            ("Z07:00|", "+01:00|"),
+            ("Z0700|", "+0100|"),
+            ("-07:00|", "+01:00|"),
+            ("-0700|", "+0100|"),
+            ("Z07|", "+01|"),
+            ("PM|pm|", "PM|pm|"),
+            ("06|2|1|", "26|24|11|"),
+            ("05.000|05.999|", "05.500|05.5|"),
+        ] {
+            assert_eq!(format_go_layout(&dt, layout), want, "{layout}");
+        }
+        let utc = at("2026-11-24T15:04:05Z")?;
+        assert_eq!(
+            format_go_layout(&utc, "Z07:00|Z0700|Z07|MST|"),
+            "Z|Z|Z|UTC|"
+        );
         Ok(())
     }
 

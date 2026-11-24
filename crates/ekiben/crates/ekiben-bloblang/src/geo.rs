@@ -637,7 +637,19 @@ mod tests {
                 ")".repeat(n)
             )
         };
-        assert!(parse_wkt(&nested(MAX_GEO_DEPTH)).is_ok());
+        let deepest = parse_wkt(&nested(MAX_GEO_DEPTH)).expect("at the limit");
+        let text = format_wkt(&deepest).expect("formats at the limit");
+        assert_eq!(text.matches("GEOMETRYCOLLECTION (").count(), MAX_GEO_DEPTH);
+        let deeper = obj(vec![
+            ("type", Value::String("GeometryCollection".into())),
+            ("geometries", arr(vec![deepest])),
+        ]);
+        assert_eq!(
+            format_wkt(&deeper),
+            Err(format!(
+                "the GeometryCollection nests deeper than {MAX_GEO_DEPTH}"
+            ))
+        );
         let err = parse_wkt(&nested(MAX_GEO_DEPTH + 1))
             .map(|_| ())
             .unwrap_err();
