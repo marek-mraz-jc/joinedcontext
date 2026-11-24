@@ -1,0 +1,10 @@
+# head
+spec: {a: [1, 2]}
+kind: X
+metadata:
+  name: x
+apiVersion: v
+---
+b: |+
+  text
+

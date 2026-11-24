@@ -1,0 +1,2 @@
+h1 { color: #123; }
+@media (max-width: 400px) { .card { background: url("/files/a.png"); } }
