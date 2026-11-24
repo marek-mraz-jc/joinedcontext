@@ -1,6 +1,7 @@
 //! Input: one byte that picks a connector, then its JSON config: the sftp input's lint, the
-//! aws_s3 input's and output's builders. Each must answer a component or errors that name a
-//! field, and never echo a password or secret given in the config.
+//! aws_s3 input's and output's builders, the amqp_0_9 input's builder (T-7800). Each must answer
+//! a component or errors that name a field, and never echo a password or secret given in the
+//! config.
 #![no_main]
 
 use ekiben_core::ComponentConfig;
@@ -15,6 +16,7 @@ fn registry() -> &'static ekiben_core::Registry {
         let r = ekiben_core::Registry::new();
         ekiben_io_sftp::register_all(&r);
         ekiben_io_s3::register_all(&r);
+        ekiben_io_amqp::register_all(&r);
         r
     })
 }
@@ -37,7 +39,7 @@ fuzz_target!(|data: &[u8]| {
             }
         }
     }
-    let errors = match pick % 3 {
+    let errors = match pick % 4 {
         0 => {
             let conf = ComponentConfig {
                 label: String::new(),
@@ -61,6 +63,27 @@ fuzz_target!(|data: &[u8]| {
                 .collect()
             })
             .unwrap_or_default(),
+        2 => {
+            // every URL carries the known password, so an error that repeats a URL is caught
+            if let Some(urls) = config.get_mut("urls").and_then(|u| u.as_array_mut()) {
+                for u in urls.iter_mut() {
+                    if let Some(s) = u.as_str() {
+                        *u = format!("amqp://user:{SECRET}@{s}").into();
+                    }
+                }
+            }
+            let conf = ComponentConfig {
+                label: String::new(),
+                component_type: "amqp_0_9".into(),
+                config,
+                processors: Vec::new(),
+            };
+            let mut errors = registry().lint_component("input", &conf);
+            if let Err(e) = ekiben_io_amqp::AmqpInput::from_config(&conf) {
+                errors.push(e.to_string());
+            }
+            errors
+        }
         _ => Vec::new(),
     };
     for e in errors {
