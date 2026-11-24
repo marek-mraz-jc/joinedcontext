@@ -690,3 +690,79 @@ mod registry_tests {
         assert_eq!(client_account("regtest-c-kpi"), None);
     }
 }
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+    use crate::kinds::ServiceAccount;
+
+    const VALID: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: ServiceAccount
+metadata:
+  name: vendorx-parking-push
+  namespace: bb-doprava
+spec:
+  owner: { user: "jana.k@bb" }
+  purpose: "VendorX cloud pushes ParkingSpot updates every 10 s"
+  roles:
+    - { role: space-writer, scope: { contextSpace: parking }, types: [ParkingSpot], operations: [createEntity, updateAttrs] }
+  credentials:
+    - kind: oauth-client
+      name: main
+  limits: { requestsPerMinute: 1200 }
+"#;
+
+    fn refusal(from: &str, to: &str) -> String {
+        let yaml = VALID.replacen(from, to, 1);
+        assert_ne!(yaml, VALID, "{from}");
+        ServiceAccount::from_yaml(&yaml)
+            .unwrap_or_else(|e| panic!("{yaml}\n{e}"))
+            .validate()
+            .err()
+            .unwrap_or_else(|| panic!("{to} is refused"))
+            .to_string()
+    }
+
+    #[test]
+    fn the_fixture_is_valid_and_its_credential_kind_has_its_wire_name() {
+        ServiceAccount::from_yaml(VALID)
+            .expect("parses")
+            .validate()
+            .expect("valid");
+        assert_eq!(CredentialKind::OauthClient.to_string(), "oauth-client");
+    }
+
+    #[test]
+    fn each_broken_field_is_refused_by_its_name() {
+        for (from, to, said) in [
+            ("user: \"jana.k@bb\"", "user: ' '", "spec.owner.user"),
+            ("purpose: \"VendorX cloud pushes ParkingSpot updates every 10 s\"", "purpose: ''", "spec.purpose"),
+            ("types: [ParkingSpot]", "types: ['bad type']", "bad type"),
+            ("operations: [createEntity, updateAttrs]", "operations: [createEntity, createEntity]", "spec.roles.operations"),
+            (
+                "    - kind: oauth-client\n      name: main\n",
+                "    - kind: oauth-client\n      name: main\n    - kind: oauth-client\n      name: main\n",
+                "spec.credentials.name",
+            ),
+            ("      name: main\n", "      name: Main_1\n", "Main_1"),
+            ("      name: main\n", "      name: main\n      ipAllowList: [10.0.0.0/x]\n", "ipAllowList"),
+            ("      name: main\n", "      name: main\n      ipAllowList: [10.0.0.0/999]\n", "ipAllowList"),
+            ("requestsPerMinute: 1200", "requestsPerMinute: 0", "spec.limits.requestsPerMinute"),
+        ] {
+            let refused = refusal(from, to);
+            assert!(refused.contains(said), "{said}: {refused}");
+        }
+    }
+
+    #[test]
+    fn the_client_registry_answers_recorded_clients_and_derives_the_rest() {
+        assert_eq!(derived_client_id("p", "a"), "p-a");
+        assert_eq!(keycloak_client_id("t7766-p", "a"), "t7766-p-a");
+        record_client("jc-0123", "t7766-p", "b");
+        assert_eq!(keycloak_client_id("t7766-p", "b"), "jc-0123");
+        assert_eq!(
+            client_account("jc-0123"),
+            Some(("t7766-p".to_owned(), "b".to_owned()))
+        );
+    }
+}

@@ -512,3 +512,110 @@ pub fn parse_iso_duration(raw: &str) -> Option<u64> {
         .checked_add(part(2, 60)?)?
         .checked_add(part(3, 1)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::kinds::AgentProfile;
+
+    const VALID: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: AgentProfile
+metadata:
+  name: app-builder
+  namespace: org
+spec:
+  role: builder
+  runtime:
+    image: ghcr.io/marek-mraz/jc-agent-runner
+    digest: sha256:414ba5b2b1163480e9ed4213a989cd798579cfa88582a2359303273009b2b852
+  model:
+    provider: anthropic
+    name: claude-3-7-sonnet
+    maxTokensPerRun: 2000000
+  limits:
+    stepsPerRun: 120
+    wallClock: PT20M
+    concurrentRunsPerOrganization: 2
+    requestsPerMinute: 240
+    maxResponseBytes: 8388608
+  egress:
+    allowedHosts: [static.crates.io]
+  tools: [shell]
+  workspace:
+    cpu: "2"
+    memory: 4Gi
+    ephemeralStorage: 8Gi
+"#;
+
+    /// The refusal of the valid profile with `from` replaced by `to`.
+    fn refusal(from: &str, to: &str) -> String {
+        let yaml = VALID.replacen(from, to, 1);
+        assert_ne!(yaml, VALID, "{from}");
+        let profile = AgentProfile::from_yaml(&yaml).unwrap_or_else(|e| panic!("{yaml}\n{e}"));
+        profile
+            .validate()
+            .err()
+            .unwrap_or_else(|| panic!("{to} is refused"))
+            .to_string()
+    }
+
+    #[test]
+    fn the_fixture_is_valid() {
+        AgentProfile::from_yaml(VALID)
+            .expect("parses")
+            .validate()
+            .expect("valid");
+    }
+
+    #[test]
+    fn an_empty_image_name_or_zero_limit_is_refused_naming_the_field() {
+        for (from, to, field) in [
+            ("image: ghcr.io/marek-mraz/jc-agent-runner", "image: ' '", "runtime.image"),
+            ("name: claude-3-7-sonnet", "name: ' '", "model.name"),
+            ("maxTokensPerRun: 2000000", "maxTokensPerRun: 0", "model.maxTokensPerRun"),
+            ("stepsPerRun: 120", "stepsPerRun: 0", "limits.stepsPerRun"),
+            (
+                "concurrentRunsPerOrganization: 2",
+                "concurrentRunsPerOrganization: 0",
+                "limits.concurrentRunsPerOrganization",
+            ),
+            ("requestsPerMinute: 240", "requestsPerMinute: 0", "limits.requestsPerMinute"),
+            ("maxResponseBytes: 8388608", "maxResponseBytes: 0", "limits.maxResponseBytes"),
+            ("allowedHosts: [static.crates.io]", "allowedHosts: []", "egress.allowedHosts"),
+            ("cpu: \"2\"", "cpu: \" \"", "workspace"),
+            ("memory: 4Gi", "memory: ''", "workspace"),
+        ] {
+            let said = refusal(from, to);
+            assert!(said.contains(field), "{field}: {said}");
+        }
+    }
+
+    #[test]
+    fn routing_belongs_to_an_openai_compatible_provider() {
+        let said = refusal(
+            "maxTokensPerRun: 2000000",
+            "maxTokensPerRun: 2000000\n    routing: { order: [anthropic] }",
+        );
+        assert!(said.contains("model.routing"), "{said}");
+    }
+
+    #[test]
+    fn an_access_block_lists_each_kind_and_endpoint_once_with_a_verb() {
+        let access = |block: &str| refusal("  tools: [shell]\n", &format!("  tools: [shell]\n  access:\n{block}"));
+        for (block, field) in [
+            (
+                "    kinds:\n      - { kind: Endpoint, verbs: [read] }\n      - { kind: Endpoint, verbs: [read] }\n",
+                "a kind is listed once",
+            ),
+            ("    kinds:\n      - { kind: Endpoint, verbs: [] }\n", "access.kinds.verbs"),
+            (
+                "    endpoints:\n      - { name: e, verbs: [read] }\n      - { name: e, verbs: [read] }\n",
+                "an endpoint is listed once",
+            ),
+            ("    endpoints:\n      - { name: e, verbs: [] }\n", "access.endpoints.verbs"),
+            ("    endpoints:\n      - { name: Bad_Name, verbs: [read] }\n", "Bad_Name"),
+        ] {
+            let said = access(block);
+            assert!(said.contains(field), "{field}: {said}");
+        }
+    }
+}
