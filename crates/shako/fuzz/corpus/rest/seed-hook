@@ -1,0 +1,2 @@
+hooks
+{"type":"gitea","config":{"url":"https://example.org/h","content_type":"json"}}

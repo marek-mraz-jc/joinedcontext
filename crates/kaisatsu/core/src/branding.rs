@@ -339,6 +339,16 @@ pub fn compute_primary_foreground(primary: &str) -> &'static str {
 mod tests {
     use super::*;
 
+    /// The word `on` in text or an attribute value is no event handler; only `on<name>=` is.
+    #[test]
+    fn the_word_on_alone_is_no_event_handler() {
+        assert!(is_safe_svg(
+            r#"<svg><text x="1"> on air, "on" time</text></svg>"#
+        ));
+        assert!(is_safe_svg("<svg><title>online on-site</title></svg>"));
+        assert!(!is_safe_svg(r#"<svg><rect onclick ="x"/></svg>"#));
+    }
+
     #[test]
     fn invalid_branding_values_fall_back_to_neutral_defaults() {
         let dirty = BrandingBlock {

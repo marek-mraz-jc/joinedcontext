@@ -392,6 +392,36 @@ mod tests {
         );
     }
 
+    /// Each banner kind has its icon; an `info` banner, and any kind PatternFly does not name,
+    /// shows the info icon.
+    #[test]
+    fn each_banner_kind_shows_its_icon() {
+        assert_eq!(Alert::danger("x").icon(), ICON_ERROR);
+        assert_eq!(Alert::warning("x").icon(), ICON_WARNING);
+        assert_eq!(Alert::success("x").icon(), ICON_SUCCESS);
+        for kind in ["info", "custom"] {
+            let alert = Alert {
+                kind,
+                text: "x".into(),
+            };
+            assert_eq!(alert.icon(), ICON_INFO, "{kind}");
+        }
+    }
+
+    /// A page rendered into a caller's writer is the document `html` answers.
+    #[test]
+    fn a_page_renders_into_a_writer_as_html_answers_it() {
+        let page = Page {
+            lang: "sk".into(),
+            title: "Prihlásenie".into(),
+            ..Default::default()
+        };
+        let mut written = String::new();
+        askama::Template::render_into(&page, &mut written).expect("render");
+        assert_eq!(written, page.html());
+        assert!(written.contains("Prihlásenie"), "{written}");
+    }
+
     #[test]
     fn the_stylesheet_version_is_its_fnv1a_hash() {
         assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
