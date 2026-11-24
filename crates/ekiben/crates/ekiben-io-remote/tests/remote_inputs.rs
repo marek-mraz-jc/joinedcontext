@@ -722,7 +722,7 @@ async fn an_ftps_transfer_cut_mid_file_fails_the_read() {
 }
 
 /// The size caps as documented: the 256 MiB most is accepted and one byte more refused, and a
-/// 2 MiB file reads under the default 32 MiB cap. A `*` path never reads `.`, `..` or a file
+/// file of exactly max_file_bytes (2 MiB) is read whole. A `*` path never reads `.`, `..` or a file
 /// already renamed with the processed suffix.
 #[tokio::test]
 async fn the_size_caps_hold_and_a_star_path_skips_dot_entries_and_processed_files() {
@@ -751,7 +751,8 @@ async fn the_size_caps_hold_and_a_star_path_skips_dot_entries_and_processed_file
 
     let (mut input, ctx, files) = faulty_ftp(
         &[],
-        json!({ "path": "/exports/*", "processed_suffix": ".done" }),
+        // A file of exactly max_file_bytes is read whole.
+        json!({ "path": "/exports/*", "processed_suffix": ".done", "max_file_bytes": 2_097_152 }),
     )
     .await;
     let big = vec![b'x'; 2 * 1024 * 1024];
@@ -769,6 +770,13 @@ async fn the_size_caps_hold_and_a_star_path_skips_dot_entries_and_processed_file
         seen.iter().map(|s| &s.0).collect::<Vec<_>>()
     );
     assert_eq!(seen[0].0, "/exports/big.bin");
+    assert_eq!(seen[0].1, big);
+
+    // The same 2 MiB file reads under the default 32 MiB cap.
+    let (mut input, ctx, files) = faulty_ftp(&[], json!({ "path": "/exports/*.bin" })).await;
+    *files.lock().unwrap() = BTreeMap::from([("/exports/big.bin".to_string(), big.clone())]);
+    let seen = run(&mut input, &ctx, |_| true).await;
+    assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].1, big);
 }
 
