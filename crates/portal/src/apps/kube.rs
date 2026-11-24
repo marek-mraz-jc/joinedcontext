@@ -1738,13 +1738,12 @@ mod tests {
         let addr = listener.local_addr().expect("addr");
         tokio::spawn(async move {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut request = [0u8; 4096];
-                let _ = socket.read(&mut request).await;
-                let _ = socket
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort")
-                    .await;
-            }
+            let (mut socket, _) = listener.accept().await.expect("the client");
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort")
+                .await;
         });
         let client = KubeClient::with_token(&format!("http://{addr}"), "tok").expect("built");
         assert!(matches!(

@@ -3419,13 +3419,14 @@ mod client_tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
-            let mut answers = answers.into_iter();
-            while let Ok((mut socket, _)) = listener.accept().await {
+            // Each answer, then one connection closed unanswered.
+            for answer in answers.into_iter().map(Some).chain([None]) {
+                let (mut socket, _) = listener.accept().await.expect("the client");
                 let mut request = [0u8; 8192];
                 let _ = socket.read(&mut request).await;
-                if let Some(answer) = answers.next() {
-                    let _ = socket.write_all(answer.as_bytes()).await;
-                }
+                let _ = socket
+                    .write_all(answer.as_deref().unwrap_or_default().as_bytes())
+                    .await;
             }
         });
         ShakoClient::new(

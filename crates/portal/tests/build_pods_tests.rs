@@ -1019,11 +1019,17 @@ async fn the_passes_back_off_while_the_cluster_refuses_and_then_run() {
         .respond_with(ResponseTemplate::new(404))
         .mount(&server)
         .await;
+    // trams has a new head: the first pass queues its build behind bikes.
+    app_repo(&server, "trams", COMMIT, Some(NODE_WORKFLOW)).await;
     let state = state(
         &server,
         &db,
         work.path(),
-        &[app_manifest("bikes", None), app_manifest("events", None)],
+        &[
+            app_manifest("bikes", None),
+            app_manifest("events", None),
+            app_manifest("trams", None),
+        ],
     );
     let failed = build_records::enqueue(
         &db,
@@ -1118,6 +1124,12 @@ async fn the_passes_back_off_while_the_cluster_refuses_and_then_run() {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     passes.abort();
+    assert!(
+        build_records::known(&db, PROJECT, "trams", COMMIT)
+            .await
+            .expect("read"),
+        "the trigger pass queued trams' new head"
+    );
     let ended = build_records::get(&db, failed)
         .await
         .expect("read")
