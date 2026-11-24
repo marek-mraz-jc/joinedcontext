@@ -13301,6 +13301,8 @@ export interface components {
             };
             /** @description The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`. */
             contactEmail?: string | null;
+            /** @description A `kind: Portal`'s own stylesheet for its open data portal, at most 32 KiB (T-7745): style rules and `@media` alone, every selector scoped to that portal's pages, properties from a fixed list without `content`, positioning, `z-index` or hiding, `url()` only of `/files/{sha256}/{name}` of the portal's files; e.g. `.site-header { background: navy }`. An Organization's appearance refuses it: each portal carries its own. */
+            css?: string | null;
             /** @description How the open data portal lists datasets: `cards` (the default) or a compact `table`. */
             datasetList?: ("cards" | "table") | null;
             /** @description Which parts of the open data portal's dataset and dataset list pages show, in which order and under which heading (T-7743); a page left out shows the level above's. */

@@ -69,7 +69,7 @@ pub struct OrganizationAppearance {
     /// A `kind: Portal`'s own stylesheet for its open data portal, at most 32 KiB (T-7745): style
     /// rules and `@media` alone, every selector scoped to that portal's pages, properties from a
     /// fixed list without `content`, positioning, `z-index` or hiding, `url()` only of
-    /// `/files/{sha256}/{name}` of the portal's files; e.g. `.site-header { background: #0b5394 }`.
+    /// `/files/{sha256}/{name}` of the portal's files; e.g. `.site-header { background: navy }`.
     /// An Organization's appearance refuses it: each portal carries its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub css: Option<String>,

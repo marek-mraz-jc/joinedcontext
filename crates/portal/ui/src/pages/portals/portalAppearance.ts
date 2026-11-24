@@ -173,7 +173,7 @@ export const CONTRAST_PAIRS: [string, string][] = [
 
 /** The largest stylesheet a portal carries, as jc-core counts it: UTF-8 bytes (T-7745). */
 export const MAX_CSS_BYTES = 32 * 1024;
-export const CSS_EXAMPLE = ".site-header { background: #0b5394; color: #ffffff }";
+export const CSS_EXAMPLE = ".site-header { background: navy; color: white }";
 export const CSS_FILE_EXAMPLE = 'url("/files/{sha256}/{name}")';
 
 /**

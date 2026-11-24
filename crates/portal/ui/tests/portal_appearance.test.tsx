@@ -144,7 +144,7 @@ describe("the appearance tab", () => {
     });
     const sheet = await screen.findByLabelText(/^Stylesheet/);
     expect(sheet).toHaveValue(".hero { color: #ffffff }");
-    expect(screen.getByText(/e\.g\. \.site-header \{ background: #0b5394; color: #ffffff \}/)).toBeInTheDocument();
+    expect(screen.getByText(/e\.g\. \.site-header \{ background: navy; color: white \}/)).toBeInTheDocument();
     await expectAxeClean(container);
     fireEvent.change(sheet, { target: { value: '@import "/x.css";' } });
     await user.click(screen.getByRole("button", { name: "Publish" }));
