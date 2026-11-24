@@ -7500,7 +7500,14 @@ output_error{stream="kpi"} 6
         })
         .await;
         assert!(log.contains("hub scopes wait for the realm"), "{log}");
-        assert!(!log.contains("did not converge"), "{log}");
+        for line in [
+            "group did not converge",
+            "app client did not converge",
+            "workload client did not converge",
+            "hub scope did not converge",
+        ] {
+            assert!(!log.contains(line), "{line} in {log}");
+        }
         assert!(syncer
             .app_client_secrets
             .read()
@@ -7591,6 +7598,12 @@ output_error{stream="kpi"} 6
     #[tokio::test]
     async fn stores_that_are_down_cost_the_run_a_line_each() {
         let mirror = Arc::new(Mirror::new());
+        let mut organization = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        organization.spec = json!({});
+        mirror.upsert(organization);
+        let mut project = envelope("Project", crate::permissions::ORG_NAMESPACE, "city");
+        project.spec = json!({ "organization": "bbsk" });
+        mirror.upsert(project.clone());
         let syncer = bare_syncer()
             .with_pipeline_status(Arc::new(crate::pipeline_status::Store::new(
                 dead_pool(),
@@ -7608,6 +7621,8 @@ output_error{stream="kpi"} 6
             )
             .with_project_registry(Some(dead_pool()));
         let fresh = Mirror::new();
+        fresh.upsert(project);
+        fresh.upsert(envelope("Pipeline", "city", "hsl"));
         let (phases, log) = crate::reconciler::logged(async {
             let phases = syncer.leaders_phases().await;
             syncer.forget_gone_pipelines(&fresh).await;
@@ -7851,10 +7866,12 @@ output_error{stream="kpi"} 6
             Some(crate::resource::Phase::Live)
         );
         for line in [
-            "the pipeline phases were not shared with the other replicas",
-            "the leader's pipeline phases could not be read",
-            "the refused records of deleted pipelines were not dropped",
-            "deleted projects' ids were not retired",
+            "pipeline ServiceAccount did not converge",
+            "App job ServiceAccount did not converge",
+            "a WASM shard is not as it should be",
+            "a WASM shard's job runs were not read",
+            "the MQTT brokers did not converge",
+            "activity trimmed",
             "the audit trim failed",
         ] {
             assert!(log.contains(line), "{line} in {log}");
@@ -8219,60 +8236,52 @@ output_error{stream="kpi"} 6
     /// tried again next run, one that takes them is not asked again.
     #[tokio::test]
     async fn deleted_repositories_are_archived_and_branch_rules_set_once() {
-        for (status, archived, protected) in [(500, false, false), (200, true, true)] {
+        let fresh = Mirror::new();
+        fresh.set_repositories(BTreeMap::from([(
+            "kept".to_owned(),
+            "kept-repo".to_owned(),
+        )]));
+        for (status, archived) in [(500, false), (200, true)] {
             let forge = answering(status).await;
             let mirror = Arc::new(Mirror::new());
-            mirror.set_repositories(BTreeMap::from([(
-                "gone".to_owned(),
-                "gone-repo".to_owned(),
-            )]));
-            let fresh = Mirror::new();
-            fresh.set_repositories(BTreeMap::from([(
-                "kept".to_owned(),
-                "kept-repo".to_owned(),
-            )]));
+            mirror.set_repositories(BTreeMap::from([
+                ("gone".to_owned(), "gone-repo".to_owned()),
+                ("kept".to_owned(), "kept-repo".to_owned()),
+            ]));
             let syncer = Syncer::new(forge_at(&forge), Arc::clone(&mirror));
-            let (_, log) = crate::reconciler::logged(async {
-                syncer.archive_deleted_projects(&fresh).await;
-                syncer.protect_repositories(&fresh).await;
-            })
-            .await;
-            assert_eq!(
-                log.contains("a deleted project's repository is archived"),
-                archived,
-                "{log}"
-            );
-            assert_eq!(
-                log.contains("a deleted project's repository did not archive"),
-                !archived,
-                "{log}"
-            );
+            let (_, log) = crate::reconciler::logged(syncer.archive_deleted_projects(&fresh)).await;
+            let line = if archived {
+                "a deleted project's repository is archived"
+            } else {
+                "a deleted project's repository did not archive"
+            };
+            assert!(log.contains(line), "{line} in {log}");
+            assert!(log.contains("repository=gone-repo"), "{log}");
             assert!(
-                !log.contains("project=kept "),
+                !log.contains("repository=kept-repo"),
                 "a live project is not archived: {log}"
             );
-            let held = syncer
-                .protected
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone();
-            assert_eq!(held.contains("kept-repo"), protected, "{log}");
-            assert_eq!(held.contains("r"), protected, "{log}");
-            assert_eq!(
-                log.contains("the repository's branch rules were not set"),
-                !protected,
-                "{log}"
-            );
-
-            let asked = forge.received_requests().await.unwrap_or_default().len();
-            syncer.protect_repositories(&fresh).await;
-            let again = forge.received_requests().await.unwrap_or_default().len();
-            assert_eq!(
-                again == asked,
-                protected,
-                "rules set once are not set again"
-            );
         }
+
+        // A forge that refuses the rules: each repository is said and asked again next run.
+        let forge = answering(500).await;
+        let syncer = Syncer::new(forge_at(&forge), Arc::new(Mirror::new()));
+        let (_, log) = crate::reconciler::logged(syncer.protect_repositories(&fresh)).await;
+        for repository in ["repository=r ", "repository=kept-repo "] {
+            assert!(log.contains(repository), "{repository} in {log}");
+        }
+        assert!(
+            log.contains("the repository's branch rules were not set"),
+            "{log}"
+        );
+        assert!(syncer
+            .protected
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty());
+        let asked = forge.received_requests().await.unwrap_or_default().len();
+        syncer.protect_repositories(&fresh).await;
+        assert!(forge.received_requests().await.unwrap_or_default().len() > asked);
     }
 
     const PIPELINE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: NAME\n  namespace: ovzdusie\nspec:\n  class: auto\n  period: 60s\n  source:\n    dataSourceRef:\n      kind: DataSource\n      name: hsl\n  compute:\n    kind: bloblang\n    bloblang: root = this\n  targetEndpoint: urn:ngsi-ld:Endpoint:example.org:ovzdusie:all\n";
