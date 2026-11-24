@@ -918,4 +918,35 @@ mod tests {
         }
         assert!(check_geometry(&g, 0).is_err());
     }
+
+    #[test]
+    fn a_collection_nested_to_the_limit_passes() {
+        let mut g = obj(vec![
+            ("type", Value::String("Point".into())),
+            (
+                "coordinates",
+                Value::Array(vec![Value::Int(1), Value::Int(2)].into()),
+            ),
+        ]);
+        for _ in 0..MAX_GEO_DEPTH {
+            g = obj(vec![
+                ("type", Value::String("GeometryCollection".into())),
+                ("geometries", Value::Array(vec![g].into())),
+            ]);
+        }
+        assert_eq!(check_geometry(&g, 0), Ok(()));
+    }
+
+    #[test]
+    fn a_typed_object_with_unsound_coordinates_stays_a_property() {
+        let bad = obj(vec![
+            ("type", Value::String("Point".into())),
+            ("coordinates", Value::String("1,2".into())),
+        ]);
+        let Ok(Value::Object(attr)) = normalize("location", &bad, false) else {
+            panic!("not an attribute");
+        };
+        assert_eq!(attr.get("type"), Some(&Value::String("Property".into())));
+        assert_eq!(attr.get("value"), Some(&bad));
+    }
 }

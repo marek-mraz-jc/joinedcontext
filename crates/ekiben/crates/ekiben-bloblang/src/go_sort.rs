@@ -239,13 +239,11 @@ fn partial_insertion_sort<T, F: FnMut(usize, &T, usize, &T) -> bool>(
                 j -= 1;
             }
         }
-        if b - i >= 2 {
-            for j in i + 1..b {
-                if !d.less(j, j - 1) {
-                    break;
-                }
-                d.swap(j, j - 1);
+        for j in i + 1..b {
+            if !d.less(j, j - 1) {
+                break;
             }
+            d.swap(j, j - 1);
         }
     }
     false
@@ -339,7 +337,7 @@ fn reverse_range<T, F: FnMut(usize, &T, usize, &T) -> bool>(
 
 #[cfg(test)]
 mod tests {
-    use super::{pdqsort, sort_slice, Data};
+    use super::{heap_sort, partial_insertion_sort, pdqsort, sort_slice, Data};
 
     #[test]
     fn equal_keys_land_where_go_puts_them() {
@@ -417,6 +415,42 @@ mod tests {
     }
 
     #[test]
+    fn the_number_of_comparisons_is_pinned_per_input_shape() {
+        // sort_slice_at's less sees places, as Go's less(i, j) does, so the comparison sequence is
+        // observable; a different recursion limit or pivot rule changes these counts.
+        let want = [
+            (100, [632, 605, 677, 630]),
+            (1000, [9819, 5763, 8289, 9690]),
+            (4096, [47656, 21959, 34253, 47165]),
+        ];
+        for (n, counts) in want {
+            for (shape, count) in counts.into_iter().enumerate() {
+                let mut v: Vec<i64> = (0..n as i64)
+                    .map(|i| match shape {
+                        0 => {
+                            if i % 2 == 0 {
+                                i
+                            } else {
+                                n as i64 + i
+                            }
+                        }
+                        1 => i % 17,
+                        2 => (i * 7919) % 101,
+                        _ => i.min(n as i64 - i),
+                    })
+                    .collect();
+                let mut calls = 0;
+                sort_slice(&mut v, |a, b| {
+                    calls += 1;
+                    a < b
+                });
+                assert_eq!(calls, count, "n {n} shape {shape}");
+                assert!(v.windows(2).all(|w| w[0] <= w[1]));
+            }
+        }
+    }
+
+    #[test]
     fn a_spent_recursion_limit_falls_back_to_heap_sort() {
         for n in [13usize, 40, 101] {
             let mut v: Vec<i64> = (0..n as i64).map(|i| (i * 37) % 23).collect();
@@ -430,5 +464,104 @@ mod tests {
             pdqsort(&mut d, 0, n, 0);
             assert_eq!(v, want);
         }
+    }
+
+    #[test]
+    fn sorted_and_descending_inputs_take_their_counted_paths() {
+        // Sorted input ends in partial_insertion_sort; descending input is reversed around its
+        // pivot first. Counts pinned like the shapes above.
+        let mut counts = Vec::new();
+        for n in [100usize, 1000] {
+            for shape in 0..3 {
+                let mut v: Vec<i64> = (0..n as i64)
+                    .map(|i| match shape {
+                        0 => i,
+                        1 => n as i64 - i,
+                        _ => n as i64 - i + if i % 7 == 0 { 3 } else { 0 },
+                    })
+                    .collect();
+                let mut calls = 0usize;
+                sort_slice(&mut v, |a, b| {
+                    calls += 1;
+                    a < b
+                });
+                assert!(v.windows(2).all(|w| w[0] <= w[1]));
+                counts.push(calls);
+            }
+        }
+        assert_eq!(counts, vec![111, 111, 565, 1011, 1011, 9485]);
+    }
+
+    #[test]
+    fn an_unbalanced_partition_spends_the_recursion_limit() {
+        // With limit 1, one unbalanced partition leaves 0 and the next round falls back to
+        // heap_sort, which compares differently from another pdqsort round.
+        let count = |shape: usize, limit: u32| {
+            let n = 400i64;
+            let mut v: Vec<i64> = (0..n)
+                .map(|i| match shape {
+                    0 => (i * 7919) % 401,
+                    1 => i.min(n - i),
+                    2 => {
+                        if i % 50 == 0 {
+                            0
+                        } else {
+                            n - i % 3
+                        }
+                    }
+                    _ => (i * i) % 397,
+                })
+                .collect();
+            let mut calls = 0usize;
+            let mut less = |_: usize, a: &i64, _: usize, b: &i64| {
+                calls += 1;
+                a < b
+            };
+            let mut d = Data {
+                v: &mut v,
+                less: &mut less,
+            };
+            pdqsort(&mut d, 0, n as usize, limit);
+            assert!(v.windows(2).all(|w| w[0] <= w[1]));
+            calls
+        };
+        let probe: Vec<_> = (0..4).map(|s| (count(s, 1), count(s, 64))).collect();
+        assert_eq!(
+            probe,
+            vec![(3618, 3583), (3296, 3282), (3253, 1522), (3437, 3437)]
+        );
+    }
+
+    #[test]
+    fn partial_insertion_sort_shifts_from_fifty_elements_on() {
+        // One swapped pair: 50 elements are short enough to fix in place, 49 give up at once.
+        for (n, fixed) in [(50i64, true), (49, false)] {
+            let mut v: Vec<i64> = (0..n).collect();
+            v.swap(10, 11);
+            let mut less = |_: usize, a: &i64, _: usize, b: &i64| a < b;
+            let mut d = Data {
+                v: &mut v,
+                less: &mut less,
+            };
+            assert_eq!(
+                partial_insertion_sort(&mut d, 0, n as usize),
+                fixed,
+                "n {n}"
+            );
+            assert_eq!(v.windows(2).all(|w| w[0] <= w[1]), fixed, "n {n}");
+        }
+    }
+
+    #[test]
+    fn heap_sort_sorts_only_its_sub_range() {
+        // pdqsort hands heap_sort a sub-range [a, b) once its limit is spent; the ends stay put.
+        let mut v: Vec<i64> = vec![99, 98, 5, 3, 9, 1, 7, 4, -1, -2];
+        let mut less = |_: usize, a: &i64, _: usize, b: &i64| a < b;
+        let mut d = Data {
+            v: &mut v,
+            less: &mut less,
+        };
+        heap_sort(&mut d, 2, 8);
+        assert_eq!(v, vec![99, 98, 1, 3, 4, 5, 7, 9, -1, -2]);
     }
 }

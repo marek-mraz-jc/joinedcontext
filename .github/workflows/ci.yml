@@ -752,15 +752,20 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 24 }
+      # The DOM tests of widget.js and host.js load jsdom from the Portal UI's devDependencies.
+      - run: cd crates/portal/ui && pnpm install --frozen-lockfile
       - working-directory: vendor/joinedcontext-platform/crates/assistant/widget
         run: >-
           node --test --experimental-test-coverage --test-coverage-include=render.js --test-coverage-include=visitor.js
-          --test-coverage-lines=100 --test-coverage-functions=100 render.test.js app/app.test.mjs
+          --test-coverage-include=widget.js --test-coverage-lines=100 --test-coverage-functions=100
+          render.test.js widget.test.js app/app.test.mjs
       - working-directory: vendor/viz
         run: >-
-          node --test --experimental-test-coverage --test-coverage-include=site/refuse.js
+          node --test --experimental-test-coverage --test-coverage-include=site/refuse.js --test-coverage-include=site/host.js
           --test-coverage-lines=100 --test-coverage-functions=100 tests/*.test.mjs
   # The whole UI vitest in four shards (vitest --shard splits the files: every file once, in one
   # of them), as the standalone Portal ran it. The ui job above ran none of it, so a branch went
