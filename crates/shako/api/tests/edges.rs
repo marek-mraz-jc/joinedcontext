@@ -755,13 +755,22 @@ fn world() -> World {
     let seen = deliveries.clone();
     let guard = OutboundGuard::new(OutboundPolicy {
         allowed_hosts: Some(vec!["github.com".into(), "hooks.city.example".into()]),
-        mock_handler: Some(Arc::new(move |method, url, headers, _body| {
+        mock_handler: Some(Arc::new(move |method, url, headers, body| {
+            if url.contains("/broken") {
+                return Some((500, Vec::new()));
+            }
             if method == "GET" && url.ends_with("/info/refs?service=git-receive-pack") {
-                let adv = b"001f# service=git-receive-pack\n000000780000000000000000000000000000000000000000 capabilities^{}\0report-status report-status-v2 delete-refs ofs-delta atomic\n0000";
-                return Some((200, adv.to_vec()));
+                let mut adv = pkt("# service=git-receive-pack\n");
+                adv.extend_from_slice(b"0000");
+                adv.extend(pkt(&format!(
+                    "{} capabilities^{{}}\0report-status delete-refs ofs-delta\n",
+                    "0".repeat(40)
+                )));
+                adv.extend_from_slice(b"0000");
+                return Some((200, adv));
             }
             if method == "POST" && url.ends_with("/git-receive-pack") {
-                return Some((200, b"000eunpack ok\n0017ok refs/heads/main\n0000".to_vec()));
+                return Some((200, report_status(body)));
             }
             if method == "POST" && url.starts_with("https://hooks.city.example/") {
                 seen.lock().push(headers.to_vec());
@@ -1832,6 +1841,29 @@ async fn a_mirror_with_a_legacy_secret_name_still_pushes() {
     assert!(!error.contains("credential"), "{list}");
 }
 
+/// A remote's report-status for every command of a receive-pack request: each ref taken.
+fn report_status(request: &[u8]) -> Vec<u8> {
+    let mut out = pkt("unpack ok\n");
+    let mut rest = request;
+    while rest.len() >= 4 {
+        let len = std::str::from_utf8(&rest[..4])
+            .ok()
+            .and_then(|h| usize::from_str_radix(h, 16).ok())
+            .unwrap_or(0);
+        if len < 4 || len > rest.len() {
+            break;
+        }
+        let line = String::from_utf8_lossy(&rest[4..len]);
+        let command = line.split('\0').next().unwrap_or_default();
+        if let Some(name) = command.split_whitespace().nth(2) {
+            out.extend(pkt(&format!("ok {name}\n")));
+        }
+        rest = &rest[len..];
+    }
+    out.extend_from_slice(b"0000");
+    out
+}
+
 fn pkt(line: &str) -> Vec<u8> {
     let mut out = format!("{:04x}", line.len() + 4).into_bytes();
     out.extend_from_slice(line.as_bytes());
@@ -1898,4 +1930,282 @@ async fn a_push_past_the_push_limit_answers_unpack_error_quota() {
     let (s, answer) = raw(&w.app, receive_pack(b"0000".to_vec(), Some(declared))).await;
     assert_eq!(s, StatusCode::OK);
     assert!(String::from_utf8_lossy(&answer).contains("unpack error quota"));
+}
+
+/// A mirror that syncs on commit is pushed after a write, its result recorded on that mirror
+/// alone: a remote that takes the refs clears the error, one that fails records it. A mirror
+/// that does not sync on commit waits for a sync. One that names a branch pushes only it.
+#[tokio::test]
+async fn mirrors_follow_a_write_each_with_its_own_result() {
+    let w = seeded().await;
+    w.branch_with_commit("dev").await;
+    let add = |remote: &str, on_commit: bool| json!({ "remote_address": format!("https://github.com/joinedcontext-apps/{remote}.git"), "sync_on_commit": on_commit });
+    for (remote, on_commit) in [("site", true), ("broken", true), ("later", false)] {
+        let (s, m) = send(
+            &w.app,
+            "POST",
+            &format!("{R}/push_mirrors"),
+            Some(add(remote, on_commit)),
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{m}");
+    }
+    let (s, m) = send(&w.app, "POST", "/odata/AddPushMirror", Some(json!({ "repo": "joinedcontext/site",
+        "RemoteAddress": "https://github.com/joinedcontext-apps/main-only.git", "Branch": "main", "SyncOnCommit": true }))).await;
+    assert_eq!(s, StatusCode::OK, "{m}");
+    let (s, _) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/a.md"),
+        Some(put("a", "mirrored", "main")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let mut by_remote = std::collections::BTreeMap::new();
+    for _ in 0..50 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let (_, list) = send(&w.app, "GET", &format!("{R}/push_mirrors"), None).await;
+        by_remote = list
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|m| {
+                (
+                    m["remote_address"].as_str().unwrap_or_default().to_owned(),
+                    m.clone(),
+                )
+            })
+            .collect();
+        let settled = |r: &str| {
+            by_remote.iter().any(|(k, m)| {
+                k.contains(r)
+                    && (m["last_update"].is_string()
+                        || !m["last_error"].as_str().unwrap_or_default().is_empty())
+            })
+        };
+        if settled("/site.git") && settled("/broken.git") && settled("/main-only.git") {
+            break;
+        }
+    }
+    let get = |r: &str| {
+        by_remote
+            .iter()
+            .find(|(k, _)| k.contains(r))
+            .map(|(_, m)| m.clone())
+            .unwrap_or_default()
+    };
+    let ok = get("/site.git");
+    assert!(
+        ok["last_update"].is_string() && ok["last_error"] == "",
+        "{ok}"
+    );
+    let main_only = get("/main-only.git");
+    assert!(
+        main_only["last_update"].is_string() && main_only["last_error"] == "",
+        "{main_only}"
+    );
+    let broken = get("/broken.git");
+    assert!(
+        broken["last_update"].is_null() && broken["last_error"] != "",
+        "{broken}"
+    );
+    let later = get("/later.git");
+    assert!(
+        later["last_update"].is_null() && later["last_error"] == "",
+        "{later}"
+    );
+}
+
+/// A hook's shape: `active` defaults to true; a branch filter other than empty or `*`, a type
+/// other than gitea, a content type other than json or a method other than POST are refused;
+/// the native shape takes a secret reference and answers without Gitea's fields.
+#[tokio::test]
+async fn hooks_take_only_the_shapes_the_forge_delivers() {
+    let w = seeded().await;
+    let gitea = |extra: Value| {
+        let mut body = json!({ "type": "gitea",
+            "config": { "url": "https://hooks.city.example/h", "content_type": "json", "secret": "s3cret-value" } });
+        for (k, v) in extra.as_object().expect("object") {
+            if k == "http_method" {
+                body["config"][k] = v.clone();
+            } else {
+                body[k] = v.clone();
+            }
+        }
+        body
+    };
+    let hooks = format!("{R}/hooks");
+    for (extra, want) in [
+        (json!({}), StatusCode::CREATED),
+        (json!({ "branch_filter": "*" }), StatusCode::CREATED),
+        (json!({ "branch_filter": "" }), StatusCode::CREATED),
+        (json!({ "http_method": "post" }), StatusCode::CREATED),
+        (
+            json!({ "branch_filter": "main" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            json!({ "http_method": "GET" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (json!({ "type": "slack" }), StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        let (s, hook) = send(&w.app, "POST", &hooks, Some(gitea(extra.clone()))).await;
+        assert_eq!(s, want, "{extra}: {hook}");
+        if s == StatusCode::CREATED {
+            assert_eq!(hook["active"], true, "{hook}");
+            assert_eq!(hook["type"], "gitea", "{hook}");
+        }
+    }
+    let (s, native) = send(
+        &w.app,
+        "POST",
+        &hooks,
+        Some(json!({ "url": "https://hooks.city.example/n", "secret_ref": "native-hook-key" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{native}");
+    assert!(
+        native.get("type").is_none() && native.get("config").is_none(),
+        "{native}"
+    );
+    let (s, answer) = send(&w.app, "POST", &hooks,
+        Some(json!({ "type": "gitea", "url": "https://hooks.city.example/n", "secret_ref": "native-hook-key" }))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+}
+
+/// A migration from the forge's own loopback address copies the repository.
+#[tokio::test]
+async fn a_migration_from_the_loopback_address_copies() {
+    let w = seeded().await;
+    let (s, copy) = send(&w.app, "POST", "/api/v1/repos/migrate", Some(json!({
+        "clone_addr": "http://127.0.0.1/joinedcontext/site.git", "repo_owner": "joinedcontext", "repo_name": "copy" }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{copy}");
+    let (s, file) = send(
+        &w.app,
+        "GET",
+        "/api/v1/repos/joinedcontext/copy/contents/README.md",
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{file}");
+}
+
+/// A tree lists one level unless asked for every level, a page at a time, and says when more
+/// pages follow.
+#[tokio::test]
+async fn a_tree_pages_and_recurses_only_when_asked() {
+    let w = seeded().await;
+    let (s, _) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/docs/a.md"),
+        Some(put("a", "nested", "main")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let tree = |q: &str| {
+        let uri = format!("{R}/git/trees/main?{q}");
+        let app = w.app.clone();
+        async move { send(&app, "GET", &uri, None).await }
+    };
+    let paths = |t: &Value| -> Vec<String> {
+        t["tree"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e["path"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let (s, flat) = tree("").await;
+    assert_eq!(s, StatusCode::OK, "{flat}");
+    assert_eq!(paths(&flat), ["README.md", "docs"], "{flat}");
+    let (_, deep) = tree("recursive=true").await;
+    assert!(paths(&deep).contains(&"docs/a.md".to_owned()), "{deep}");
+    let (_, deep) = tree("recursive=1").await;
+    assert!(paths(&deep).contains(&"docs/a.md".to_owned()), "{deep}");
+    let (_, other) = tree("recursive=yes").await;
+    assert_eq!(paths(&other), ["README.md", "docs"], "{other}");
+    let (_, first) = tree("per_page=1&page=1").await;
+    assert_eq!(
+        (paths(&first).len(), first["truncated"].clone()),
+        (1, json!(true)),
+        "{first}"
+    );
+    let (_, whole) = tree("per_page=2&page=1").await;
+    assert_eq!(
+        (paths(&whole).len(), whole["truncated"].clone()),
+        (2, json!(false)),
+        "{whole}"
+    );
+    let (_, last) = tree("per_page=1&page=2").await;
+    assert_eq!(
+        (paths(&last).len(), last["truncated"].clone()),
+        (1, json!(false)),
+        "{last}"
+    );
+}
+
+/// A commit status names a full lowercase commit id; anything else is refused.
+#[tokio::test]
+async fn a_commit_status_needs_a_full_lowercase_id() {
+    let w = seeded().await;
+    let sha = w.git("site", &["rev-parse", "main"]).await;
+    for bad in ["g".repeat(40), sha.to_uppercase(), sha[..39].to_owned()] {
+        let (s, answer) = send(
+            &w.app,
+            "POST",
+            &format!("{R}/statuses/{bad}"),
+            Some(json!({ "state": "success", "context": "ci" })),
+        )
+        .await;
+        assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{bad}: {answer}");
+    }
+}
+
+/// A file written with an author names that author on its commit.
+#[tokio::test]
+async fn a_written_file_names_its_author() {
+    let w = seeded().await;
+    let (s, saved) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/b.md"),
+        Some(json!({
+        "content": STANDARD.encode("b"), "message": "by Grace", "branch": "main",
+        "author": { "name": "Grace", "email": "grace@city.example" } })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{saved}");
+    let log = w
+        .git("site", &["log", "-1", "--format=%an <%ae>", "main"])
+        .await;
+    assert_eq!(log, "Grace <grace@city.example>");
+}
+
+/// A pull request's branch update with the `merge` style brings in its base.
+#[tokio::test]
+async fn a_pull_request_branch_updates_with_the_merge_style() {
+    let w = seeded().await;
+    let number = w.open_pull("dev").await;
+    let (s, _) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/c.md"),
+        Some(put("c", "base moves", "main")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let (s, answer) = send(
+        &w.app,
+        "POST",
+        &format!("{R}/pulls/{number}/update?style=merge"),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{answer}");
+    let merged = w
+        .git("site", &["merge-base", "--is-ancestor", "main", "dev"])
+        .await;
+    assert_eq!(merged, "");
 }
