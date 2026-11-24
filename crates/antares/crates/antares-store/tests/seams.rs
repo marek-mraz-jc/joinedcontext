@@ -136,11 +136,19 @@ impl CurrentStateDriver for OneDoc {
     async fn batch_mutate_boxed<'a>(
         &self,
         _t: &TenantId,
-        _ids: &[String],
-        _f: BatchMutateFn<'a>,
+        ids: &[String],
+        mut f: BatchMutateFn<'a>,
     ) -> Result<Vec<Option<Result<(), ()>>>, NgsiError> {
-        // a driver breaking the contract: every id rejected, the closure never called
-        Ok(_ids.iter().map(|_| Some(Err(()))).collect())
+        // with a document, each id gets the closure on a copy of it, as the contract says;
+        // without one, a driver breaking the contract: every id rejected, the closure never called
+        let held = self.0.lock().expect("lock").clone();
+        Ok(ids
+            .iter()
+            .map(|id| match &held {
+                Some(doc) => Some(f(id, &mut doc.clone())),
+                None => Some(Err(())),
+            })
+            .collect())
     }
     async fn tenant_exists(&self, _t: &TenantId) -> Result<bool, NgsiError> {
         Ok(true)
@@ -722,6 +730,55 @@ async fn a_batch_driver_reporting_unraised_rejections_fails_the_batch() {
     assert!(none.is_empty());
 }
 
+/// The typed batch hands each rejection the closure raised back to its own id, in input order,
+/// and an accepted id reads Ok.
+#[tokio::test]
+async fn a_batch_rejection_reaches_the_id_that_raised_it() {
+    let t = tenant();
+    let d = OneDoc(std::sync::Mutex::new(Some(
+        serde_json::json!({"id": "urn:a"}),
+    )));
+    let ids = ["urn:a".to_owned(), "urn:b".to_owned(), "urn:c".to_owned()];
+    let out = d
+        .batch_mutate::<String>(&t, &ids, |id, doc| {
+            assert_eq!(doc["id"], "urn:a");
+            if id == "urn:a" {
+                Ok(())
+            } else {
+                Err(format!("{id} refused"))
+            }
+        })
+        .await
+        .expect("one queued error per rejected id");
+    assert_eq!(
+        out,
+        vec![
+            Some(Ok(())),
+            Some(Err("urn:b refused".to_owned())),
+            Some(Err("urn:c refused".to_owned())),
+        ]
+    );
+}
+
+/// The default `get_entities` reads ids one by one and keys what it found by id; an empty list
+/// reads nothing, and a store holding nothing answers an empty map.
+#[tokio::test]
+async fn get_entities_defaults_to_one_read_per_id() {
+    let t = tenant();
+    let doc = serde_json::json!({"id": "urn:a", "type": "T"});
+    let d = OneDoc(std::sync::Mutex::new(Some(doc.clone())));
+    let found = d.get_entities(&t, &["urn:a", "urn:b"]).await.expect("read");
+    assert_eq!(found.len(), 2);
+    assert_eq!(found.get("urn:b"), Some(&doc));
+    assert!(d.get_entities(&t, &[]).await.expect("read").is_empty());
+    let empty = OneDoc(std::sync::Mutex::new(None));
+    assert!(empty
+        .get_entities(&t, &["urn:a"])
+        .await
+        .expect("read")
+        .is_empty());
+}
+
 /// Without a history store the inventory reads zero and empty, the
 /// retention passes delete nothing, an estimate is not supported, the
 /// writes create nothing, and no q is pushed down.
@@ -874,6 +931,43 @@ fn a_context_row_belongs_to_its_owner_and_a_cached_copy_to_nobody() {
         context_row_usage(&serde_json::json!({})),
         serde_json::json!({"numberOfHits": 0, "lastUsage": null})
     );
+}
+
+/// A named Tenant never reads a Cached copy it did not use (S5-10); once it did, it reads its
+/// own counters, a usage missing `lastUsage` reads null, and the other Tenants' usage never shows.
+#[test]
+fn a_cached_row_shows_a_tenant_only_its_own_usage() {
+    let city = TenantId::new("city").expect("tenant");
+    let row = serde_json::json!({"kind": "Cached", "body": {}, "numberOfHits": 9,
+                                 "usage": {"other": {"numberOfHits": 2, "lastUsage": "t0"}}});
+    assert_eq!(context_row_view(row.clone(), Some(&city), None), None);
+    let used = serde_json::json!({"numberOfHits": 3});
+    let view = context_row_view(row, Some(&city), Some(&used)).expect("used");
+    assert_eq!(view["numberOfHits"], 3);
+    assert_eq!(view["lastUsage"], Value::Null);
+    assert!(view.get("usage").is_none(), "{view}");
+}
+
+/// A put acting for a Tenant stores the shared body, keeps every other Tenant's usage of the row
+/// it replaces and records the view's counters as that Tenant's own; the boot warm (no Tenant)
+/// records none, and a held row without usage starts an empty one.
+#[test]
+fn a_stored_cached_row_keeps_other_tenants_usage() {
+    let city = TenantId::new("city").expect("tenant");
+    let held = serde_json::json!({"kind": "Cached",
+                                  "usage": {"other": {"numberOfHits": 2, "lastUsage": "t0"}}});
+    let view = serde_json::json!({"kind": "Cached", "body": {"@context": "x"},
+                                  "numberOfHits": 5, "lastUsage": "t1"});
+    let stored = context_row_stored(view.clone(), Some(&held), Some(&city));
+    assert_eq!(
+        stored,
+        serde_json::json!({"kind": "Cached", "body": {"@context": "x"}, "usage": {
+            "other": {"numberOfHits": 2, "lastUsage": "t0"},
+            "city": {"numberOfHits": 5, "lastUsage": "t1"}}})
+    );
+    let warm = context_row_stored(view, Some(&serde_json::json!({"kind": "Cached"})), None);
+    assert_eq!(warm["usage"], serde_json::json!({}));
+    assert!(warm.get("numberOfHits").is_none(), "{warm}");
 }
 
 /// The remaining defaults of a driver that overrides nothing: never wedged, no commit queue, no
