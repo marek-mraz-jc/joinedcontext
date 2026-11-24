@@ -3613,6 +3613,7 @@ async fn a_silent_gateway_holds_the_question_one_routing_deadline_at_most() {
     Mock::given(method("POST"))
         .and(path(format!("/api/endpoint/{SLUG}/mcp")))
         .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(30)))
+        .with_priority(1)
         .mount(&w.gateway)
         .await;
     script_routed(
