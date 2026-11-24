@@ -75,6 +75,19 @@ fn reads_only(body: &[u8]) -> bool {
     }
 }
 
+/// The read-only judgement over any MCP body, for the fuzz target `forge_body` (T-7795).
+/// Compiled only with the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    /// A body judged read-only parses as JSON.
+    pub fn reads_only(body: &[u8]) {
+        if super::reads_only(body) {
+            assert!(serde_json::from_slice::<serde_json::Value>(body).is_ok());
+        }
+    }
+}
+
 /// `/v1/data/{*rest}`: the run's primary endpoint.
 pub async fn handler(
     State(state): State<ProxyState>,

@@ -158,6 +158,11 @@ async fn a_path_that_would_leave_the_endpoint_is_refused_however_it_is_spelled()
         "ngsi-ld/v1/../../admin",
         "a//b",
         "./x",
+        // The URL parser drops every tab and line break, so these are `..` once sent (T-7795).
+        ".%09./admin",
+        "%09../admin",
+        ".%0A./admin",
+        "ngsi-ld/.%0D./.%0D./admin",
     ] {
         let proxy = with_gateway(false, &gateway.uri());
         let response = proxy

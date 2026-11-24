@@ -249,6 +249,37 @@ fn is_runs_own_workload(client_id: &str, run_id: &str) -> bool {
             .is_some_and(|account| account == format!("agent-run-{run_id}"))
 }
 
+/// The two credential shapes a request presents, over any header values, for the fuzz target
+/// `credentials` (T-7795). Compiled only with the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::*;
+
+    /// What is read from the headers is never empty and never carries the header's padding.
+    pub fn credentials(headers: &HeaderMap) {
+        if let Some((run, ticket)) = super::credentials(headers) {
+            assert!(!run.is_empty() && !ticket.is_empty());
+            assert_eq!(run.trim(), run);
+        }
+        if let Some((run, secret)) = crate::data_credential::presented(headers) {
+            assert!(!run.is_empty() && !secret.is_empty());
+        }
+    }
+
+    /// A run id the door takes is a name of letters, digits and `-`, never a path or a second
+    /// line; and a workload is the run's own only by its exact client id.
+    pub fn names(run_id: &str, client_id: &str) {
+        if run_id_is_well_formed(run_id) {
+            assert!(run_id.len() <= RUN_ID_MAX);
+            assert!(!run_id.contains(['/', '%', ' ', '\n', '.']));
+        }
+        if is_runs_own_workload(client_id, run_id) {
+            assert!(client_id.contains(run_id));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{is_workload, run_id_is_well_formed};

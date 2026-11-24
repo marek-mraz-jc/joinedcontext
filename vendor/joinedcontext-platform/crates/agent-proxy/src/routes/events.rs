@@ -43,6 +43,20 @@ fn redacted(payload: &serde_json::Value) -> serde_json::Value {
     serde_json::from_str(&scrubbed).unwrap_or(serde_json::Value::String(scrubbed))
 }
 
+/// The payload redaction over any JSON, for the fuzz target `redact` (T-7795). Compiled only
+/// with the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    /// A payload the redaction leaves alone is the payload it was given.
+    pub fn payload(payload: &serde_json::Value) {
+        let out = super::redacted(payload);
+        if crate::routes::diagnostics::redact(&payload.to_string()) == payload.to_string() {
+            assert_eq!(&out, payload);
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub struct EventPayload {
     pub kind: String,

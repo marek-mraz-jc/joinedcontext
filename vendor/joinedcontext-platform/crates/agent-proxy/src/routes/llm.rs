@@ -965,6 +965,68 @@ fn stream_through(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+/// The body rewrites and the stream reader over any bytes, for the fuzz target `llm_body`
+/// (T-7795). Compiled only with the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::*;
+
+    /// Every rewrite of one body, each checked for what it promises.
+    pub fn body(body: &[u8], rest: &str, effort: &str, model: &str, left: u64, routes: bool) {
+        let bytes = Bytes::copy_from_slice(body);
+        let object = matches!(serde_json::from_slice::<Value>(body), Ok(Value::Object(_)));
+        let _ = provider_refusal(&bytes);
+        let sent = routed(bytes.clone(), routes);
+        if !object || routes {
+            assert_eq!(sent, bytes, "only an object loses its provider, and only off OpenRouter");
+        }
+        let sent = with_model(bytes.clone(), model);
+        if object && !model.is_empty() {
+            let named: Value = serde_json::from_slice(&sent).expect("an object stays JSON");
+            assert_eq!(named["model"], json!(model), "the run's model is the one sent");
+        } else {
+            assert_eq!(sent, bytes);
+        }
+        let _ = with_reasoning(&bytes, rest, effort);
+        let capped = within_budget(bytes.clone(), left);
+        if let (true, Ok(Value::Object(map))) = (object, serde_json::from_slice::<Value>(&capped)) {
+            for field in ["max_tokens", "max_completion_tokens"] {
+                if let Some(asked) = map.get(field).and_then(Value::as_u64) {
+                    assert!(asked <= left, "{field} {asked} past the {left} left");
+                }
+            }
+        }
+        let _ = wants_stream(&bytes);
+        let _ = with_stream_usage(&bytes, rest);
+        assert!(uncounted_stream(&bytes) >= bytes.len() as u64 / 4);
+        let _ = effort_of(&bytes);
+        if let Some(model) = model_of(&bytes) {
+            assert!(model.chars().count() <= MODEL_NAME_MAX);
+        }
+    }
+
+    /// A provider's stream fed in chunks of `split` bytes: what it counts never shrinks, and
+    /// no line past the cap is held.
+    pub fn stream(chunks: &[u8], split: usize) {
+        let mut usage = StreamUsage::default();
+        let mut last = (0, 0, 0);
+        for chunk in chunks.chunks(split.max(1)) {
+            usage.feed(chunk);
+            assert!(usage.line.len() <= STREAM_LINE_MAX);
+            let now = (usage.input, usage.output, usage.cached);
+            assert!(now.0 >= last.0 && now.1 >= last.1 && now.2 >= last.2);
+            last = now;
+        }
+        let _ = usage.tokens();
+        let _ = CallUsage {
+            cost: usage.cost,
+            ..CallUsage::default()
+        }
+        .payload();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1205,5 +1267,71 @@ mod tests {
             uncounted_stream(&Bytes::from_static(br#"{"max_tokens":60}"#)),
             60 + 4
         );
+    }
+
+    /// T-7795: a stream whose body asks for every token there is is counted as the most there
+    /// is, never wrapped round to a handful: an assistant's or an App's body reaches this
+    /// uncapped, and its day is counted from it.
+    #[test]
+    fn a_stream_asking_for_every_token_is_counted_as_the_most_there_is() {
+        let body = Bytes::from(format!(r#"{{"stream":true,"max_tokens":{}}}"#, u64::MAX));
+        assert_eq!(uncounted_stream(&body), u64::MAX);
+    }
+
+    /// A messages body that names its own thinking keeps it, whatever the run's effort says.
+    #[test]
+    fn a_messages_body_with_its_own_thinking_is_sent_as_it_came() {
+        let body = Bytes::from_static(
+            br#"{"max_tokens":10,"thinking":{"type":"enabled","budget_tokens":1024}}"#,
+        );
+        assert_eq!(with_reasoning(&body, "v1/messages", "high"), body);
+    }
+
+    /// Off OpenRouter, a body that is not an object, or names no provider, goes byte for byte;
+    /// an object's provider is dropped and the rest kept.
+    #[test]
+    fn only_an_objects_provider_is_dropped_off_openrouter() {
+        for body in ["[1,2]", "not json", r#"{"model":"m"}"#] {
+            let sent = Bytes::from(body.to_owned());
+            assert_eq!(routed(sent.clone(), false), sent, "{body}");
+        }
+        let routed: Value = serde_json::from_slice(&routed(
+            Bytes::from_static(br#"{"model":"m","provider":{"sort":"price"}}"#),
+            false,
+        ))
+        .expect("JSON");
+        assert_eq!(routed, json!({ "model": "m" }));
+    }
+
+    /// A stream body that is not an object, or whose `stream_options` is not one, is sent as it
+    /// came: the proxy asks for usage only where it can add the flag without changing a value.
+    #[test]
+    fn a_stream_body_the_usage_flag_cannot_join_is_sent_as_it_came() {
+        for body in ["[true]", r#"{"stream":true,"stream_options":"yes"}"#] {
+            let sent = Bytes::from(body.to_owned());
+            assert_eq!(with_stream_usage(&sent, "v1/chat/completions"), sent, "{body}");
+        }
+        let asked: Value = serde_json::from_slice(&with_stream_usage(
+            &Bytes::from_static(br#"{"stream":true,"stream_options":{"include_usage":false}}"#),
+            "chat/completions",
+        ))
+        .expect("JSON");
+        assert_eq!(asked["stream_options"]["include_usage"], json!(false));
+    }
+
+    /// A stream line past the cap is dropped unread, and the reader goes on with the next one;
+    /// a provider's `usage.cost` is the call's cost.
+    #[test]
+    fn a_line_past_the_cap_is_dropped_and_the_next_one_is_read() {
+        let mut usage = StreamUsage::default();
+        let mut huge = b"data: {\"usage\":{\"total_tokens\":999999,\"pad\":\"".to_vec();
+        huge.resize(STREAM_LINE_MAX + 64, b'x');
+        huge.extend_from_slice(b"\"}}\n");
+        usage.feed(&huge);
+        assert_eq!(usage.tokens(), None, "the cut line counted nothing");
+        usage.feed(b"data: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"cost\":0.25}}\n");
+        assert_eq!(usage.tokens(), Some(7));
+        assert_eq!(usage.cost, Some(0.25));
+        assert!(usage.line.is_empty());
     }
 }
