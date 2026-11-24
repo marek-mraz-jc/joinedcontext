@@ -153,7 +153,7 @@ describe("copies list, remaining branches", () => {
     const time = mine.querySelector("time");
     expect(time).toHaveAttribute("datetime", "2099-09-25T09:00:00Z");
     expect(time?.textContent).toContain("2099");
-    const others = screen.getByRole("heading", { name: en.workspaces.othersTitle }).closest("section") as HTMLElement;
+    const others = (screen.getByRole("heading", { name: en.workspaces.othersTitle }).closest("section") as HTMLElement).querySelector("tbody") as HTMLElement;
     expect(within(others).getByText("Space mobility")).toBeInTheDocument();
     expect(within(others).getByText("Endpoint/air, Pipeline/feed")).toBeInTheDocument();
     expect(within(others).getByText(en.workspaces.previewStates.running)).toBeInTheDocument();

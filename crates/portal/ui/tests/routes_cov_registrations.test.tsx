@@ -6,6 +6,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { digestOf } from "../src/api/digest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { RegistrationsPage, toRegistrationEnvelope } from "../src/routes/RegistrationsPage";
@@ -22,6 +23,7 @@ const FORM: RegistrationForm = {
   endpointRef: "meteo",
   information: [{ entities: [{ type: "WeatherObserved" }], propertyNames: ["temperature"] }],
   operations: ["retrieveOps"],
+  federation: { identity: "caller" },
 };
 
 const ONE = {
@@ -63,16 +65,17 @@ describe("the registrations list", () => {
     });
     const table = await screen.findByRole("table", { name: en.registrations.title });
     const sorted = await sortEachColumn(user, table);
-    // Space: "air" before "weather"; Source: the address before the endpoint name is not asked, the host reads "ngsi.example.org/air".
-    expect(sorted[en.registrations.field.space][0]).toContain("air");
-    expect(sorted[en.registrations.column.covers][0]).toContain("AirQualityObserved");
-    expect(sorted[en.resourceList.phase][0]).toContain("Error");
-    expect(sorted[en.registrations.column.source][0]).toContain("hub-meteo");
+    expect(sorted[en.registrations.field.name]).toEqual(["air-hub", "hub-meteo"]);
+    expect(sorted[en.registrations.field.space]).toEqual(["air-hub", "hub-meteo"]);
+    expect(sorted[en.registrations.column.covers]).toEqual(["air-hub", "hub-meteo"]);
+    expect(sorted[en.resourceList.phase]).toEqual(["air-hub", "hub-meteo"]);
+    // The endpoint's name ("meteo") sorts before the host of an address ("ngsi.example.org/air").
+    expect(sorted[en.registrations.column.source]).toEqual(["hub-meteo", "air-hub"]);
   });
 
-  it("proposes a registration from a draft and says the Change it opened", async () => {
-    const user = userEvent.setup();
-    const posts: string[] = [];
+  /** The page opened on a draft; the first dry run (Check) is green, what follows is `after`. */
+  function draftPage(after: (dryRun: boolean) => Response) {
+    const sent: { dryRun: boolean }[] = [];
     renderPage(<RegistrationsPage project={PROJECT} />, {
       path: `/projects/${PROJECT}/csrs?draft=hub-meteo`,
       answer: async (url, request) => {
@@ -81,52 +84,64 @@ describe("the registrations list", () => {
           return json({ version: 1, manifest: toRegistrationEnvelope(PROJECT, FORM), verdict: null });
         }
         if (request.method === "POST" && url.pathname.endsWith("/csrs")) {
-          posts.push(url.search);
-          return url.searchParams.has("dryRun")
-            ? json({ valid: true })
-            : json({
-                apiVersion: "joinedcontext.com/v1alpha1",
-                kind: "ChangeProposal",
-                metadata: { name: "chg-5d1e0a77", namespace: PROJECT },
-                summary: { key: "change.summary.create", params: { kind: "ContextSourceRegistration", name: "hub-meteo", fields: 0 } },
-                author: { name: "Jana Kováčová", email: "jana@hel.fi" },
-                createdAt: "2026-10-01T09:00:00Z",
-                status: { lane: "green", phase: "PendingApproval", plan: { create: 1 } },
-              });
+          const dryRun = url.searchParams.get("dryRun") === "All";
+          const body = (await request.json()) as Record<string, unknown>;
+          sent.push({ dryRun });
+          if (sent.length === 1) {
+            const judged = Object.fromEntries(Object.entries(body).filter(([key]) => key !== "draft"));
+            return json({
+              valid: true,
+              verdict: { ok: true, findings: [], checkedAt: new Date().toISOString(), inputDigest: digestOf(judged) },
+            });
+          }
+          return after(dryRun);
         }
         if (url.pathname.endsWith("/csrs")) return json(list([]));
         return undefined;
       },
     });
+    return sent;
+  }
+
+  async function checked() {
+    const user = userEvent.setup();
     const dialog = await screen.findByRole("dialog");
     await waitFor(() => expect(within(dialog).getByDisplayValue("hub-meteo")).toBeInTheDocument());
-    await user.click(within(dialog).getByRole("button", { name: en.registrations.propose }));
+    const propose = within(dialog).getByRole("button", { name: en.registrations.propose });
+    if (propose.getAttribute("aria-disabled") === "true") {
+      await user.click(within(dialog).getByRole("button", { name: en.form.check }));
+      await waitFor(() => expect(propose).not.toHaveAttribute("aria-disabled", "true"));
+    }
+    await user.click(propose);
+    return dialog;
+  }
+
+  it("proposes a registration from a draft, closes the form and names the Change it opened", async () => {
+    const sent = draftPage((dryRun) =>
+      dryRun
+        ? json({ valid: true })
+        : json(
+            {
+              apiVersion: "joinedcontext.com/v1alpha1",
+              kind: "ChangeProposal",
+              metadata: { name: "chg-5d1e0a77", namespace: PROJECT },
+              summary: { key: "change.summary.create", params: { kind: "ContextSourceRegistration", name: "hub-meteo", fields: 0 } },
+              author: { name: "Jana Kováčová", email: "jana@hel.fi" },
+              createdAt: "2026-10-01T09:00:00Z",
+              status: { lane: "green", phase: "PendingApproval", plan: { create: 1 } },
+            },
+            202,
+          ),
+    );
+    await checked();
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(posts.length).toBe(2);
-    expect(posts[0]).toContain("dryRun");
-    expect(posts[1]).not.toContain("dryRun");
-    expect(await screen.findByText(/chg-5d1e0a77|ContextSourceRegistration/)).toBeInTheDocument();
+    expect(sent.at(-1)?.dryRun).toBe(false);
+    expect(await screen.findByRole("link", { name: en.changes.review })).toHaveAttribute("href", `/projects/${PROJECT}/approvals/chg-5d1e0a77`);
   });
 
   it("keeps the dialog open and says why when the check refuses the registration", async () => {
-    const user = userEvent.setup();
-    renderPage(<RegistrationsPage project={PROJECT} />, {
-      path: `/projects/${PROJECT}/csrs?draft=hub-meteo`,
-      answer: (url, request) => {
-        if (url.pathname.endsWith("/permissions/me")) return propose();
-        if (url.pathname.includes("/drafts/ContextSourceRegistration/hub-meteo")) {
-          return json({ version: 1, manifest: toRegistrationEnvelope(PROJECT, FORM), verdict: null });
-        }
-        if (request.method === "POST" && url.pathname.endsWith("/csrs")) {
-          return problem(422, "The Endpoint 'meteo' does not exist in helsinki.");
-        }
-        if (url.pathname.endsWith("/csrs")) return json(list([]));
-        return undefined;
-      },
-    });
-    const dialog = await screen.findByRole("dialog");
-    await waitFor(() => expect(within(dialog).getByDisplayValue("hub-meteo")).toBeInTheDocument());
-    await user.click(within(dialog).getByRole("button", { name: en.registrations.propose }));
+    draftPage(() => problem(422, "The Endpoint 'meteo' does not exist in helsinki."));
+    const dialog = await checked();
     expect(await within(dialog).findByText(/The Endpoint 'meteo' does not exist/)).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
@@ -148,7 +163,7 @@ describe("the registrations list", () => {
     await user.click(await screen.findByRole("menuitem", { name: en.resourceEdit.button }));
     const dialog = await screen.findByRole("dialog");
     await waitFor(() => expect(within(dialog).getByDisplayValue("hub-meteo")).toBeInTheDocument());
-    expect(within(dialog).getByDisplayValue("weather")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("WeatherObserved")).toBeInTheDocument();
   });
 });
 
