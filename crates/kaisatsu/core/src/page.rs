@@ -477,4 +477,203 @@ mod tests {
         assert_eq!(cap_first(""), "");
         assert_eq!(cap_first("účet"), "Účet");
     }
+
+    fn shell<'a>(
+        bundle: &'a Bundle,
+        realm: &'a RealmConfig,
+        branding: &'a crate::branding::BrandingBlock,
+        app: &'a str,
+        locale_base_url: &'a str,
+    ) -> Shell<'a> {
+        Shell {
+            bundle,
+            realm,
+            branding,
+            path_prefix: "/auth",
+            app,
+            locale_base_url,
+        }
+    }
+
+    #[test]
+    fn urls_carry_the_prefix_the_version_and_an_escaped_organization() {
+        assert_eq!(
+            css_url("/auth"),
+            format!("/auth/resources/kaisatsu/{LOGIN_CSS_VERSION:016x}/login.css")
+        );
+        assert_eq!(
+            logo_url("", "city", None),
+            "/realms/city/login-resources/logo.svg"
+        );
+        assert_eq!(
+            logo_url("/auth", "city", Some("a b&c=d")),
+            "/auth/realms/city/login-resources/logo.svg?org=a+b%26c%3Dd"
+        );
+    }
+
+    #[test]
+    fn a_later_heading_retitles_the_tab_and_content_ids_follow_the_page() {
+        let mut page = Page {
+            org: "City".into(),
+            ..Page::default()
+        };
+        page.set_heading("Portal".into());
+        assert_eq!(
+            (page.title.as_str(), page.heading.as_str()),
+            ("Portal · City", "Portal")
+        );
+        for (id, want) in [
+            ("error", "kc-error-message"),
+            ("info", "kc-info-message"),
+            ("account-updated", "kc-info-message"),
+            ("logout-confirm", "kc-logout-confirm"),
+            ("login", ""),
+            ("", ""),
+        ] {
+            page.page_id = id.into();
+            assert_eq!(page.content_id(), want, "{id}");
+        }
+    }
+
+    #[test]
+    fn a_sign_in_page_names_the_app_and_another_page_shows_it_above_the_heading() {
+        let bundle = Bundle::for_locale("en");
+        let realm = RealmConfig {
+            realm: "city".into(),
+            display_name: "City".into(),
+            ..RealmConfig::default()
+        };
+        let branding = crate::branding::BrandingBlock::default();
+        let s = shell(&bundle, &realm, &branding, "the Portal", "");
+        let login = s.page("login", "ignored", "n0nce");
+        assert_eq!(
+            login.title,
+            bundle.format("jcSignInTo", &["the Portal", "City"])
+        );
+        assert_eq!(
+            login.heading,
+            bundle.format("jcSignInToApp", &["the Portal"])
+        );
+        assert!(login.title.contains("the Portal") && login.title.contains("City"));
+        assert!(login.app_context.is_empty());
+        assert_eq!(
+            (login.page_id.as_str(), login.nonce.as_str()),
+            ("login", "n0nce")
+        );
+        assert_eq!(login.lang, "en");
+        assert_eq!(login.css_url, css_url("/auth"));
+        assert_eq!(login.branding_css, branding.css_variables());
+        assert!(login.logo_url.is_empty(), "no logo without an SVG");
+        assert!(login.locales.is_empty(), "no picker without i18n");
+        assert_eq!(login.show_label, bundle.get("showPassword"));
+        assert_eq!(login.hide_label, bundle.get("hidePassword"));
+        assert_eq!(login.languages_label, bundle.get("languages"));
+        assert_eq!(login.webauthn_failed, bundle.get("webauthnFailed"));
+        assert_eq!(
+            login.webauthn_unsupported,
+            bundle.get("webauthnUnsupported")
+        );
+
+        let other = s.page("error", "Something failed", "n");
+        assert_eq!(other.title, "Something failed · City");
+        assert_eq!(other.heading, "Something failed");
+        assert_eq!(other.app_context, "The Portal");
+
+        let no_app = shell(&bundle, &realm, &branding, "", "");
+        let login = no_app.page("login", "Sign in", "n");
+        assert_eq!(
+            (login.title.as_str(), login.heading.as_str()),
+            ("Sign in · City", "Sign in")
+        );
+        assert!(login.app_context.is_empty());
+
+        let logo = crate::branding::BrandingBlock {
+            logo_svg: "<svg/>".into(),
+            org_id: Some("hel".into()),
+            ..Default::default()
+        };
+        let page = shell(&bundle, &realm, &logo, "", "").page("login", "x", "n");
+        assert_eq!(page.logo_url, logo_url("/auth", "city", Some("hel")));
+    }
+
+    #[test]
+    fn the_language_picker_lists_the_realms_bundled_languages_by_label() {
+        let bundle = Bundle::for_locale("de");
+        let mut realm = RealmConfig {
+            internationalization_enabled: true,
+            supported_locales: vec!["sk".into(), "xx".into(), "de".into(), "en".into()],
+            ..RealmConfig::default()
+        };
+        let branding = crate::branding::BrandingBlock::default();
+        let picker = shell(&bundle, &realm, &branding, "", "/auth/login?client_id=x")
+            .page("login", "x", "n")
+            .locales;
+        assert_eq!(picker.len(), 3);
+        let labels: Vec<&str> = picker.iter().map(|l| l.label.as_str()).collect();
+        let mut sorted = labels.clone();
+        sorted.sort_unstable();
+        assert_eq!(labels, sorted, "sorted by label");
+        for l in &picker {
+            let code = l.url.rsplit('=').next().expect("code");
+            assert_eq!(l.url, format!("/auth/login?client_id=x&kc_locale={code}"));
+            assert_eq!(l.label, bundle.get(&format!("locale_{code}")));
+            assert_eq!(l.selected, code == "de", "{code}");
+        }
+        let plain = shell(&bundle, &realm, &branding, "", "/auth/login").page("login", "x", "n");
+        assert!(
+            plain
+                .locales
+                .iter()
+                .all(|l| l.url.starts_with("/auth/login?kc_locale="))
+        );
+        assert!(
+            shell(&bundle, &realm, &branding, "", "")
+                .page("login", "x", "n")
+                .locales
+                .is_empty()
+        );
+        realm.internationalization_enabled = false;
+        assert!(
+            shell(&bundle, &realm, &branding, "", "/l")
+                .page("login", "x", "n")
+                .locales
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn cap_first_capitalises_one_character() {
+        assert_eq!(cap_first(""), "");
+        assert_eq!(cap_first("the Portal"), "The Portal");
+        assert_eq!(cap_first("élan"), "Élan");
+        assert_eq!(cap_first("ß"), "SS");
+        assert_eq!(cap_first("Already"), "Already");
+    }
+
+    #[test]
+    fn every_page_answers_with_a_nonce_csp_no_framing_and_no_cache() {
+        let headers = security_headers("abc", "'self' https://idp.example.org");
+        let get = |name: http::HeaderName| {
+            headers
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| v.as_str())
+                .expect("header")
+        };
+        assert_eq!(get(http::header::CONTENT_TYPE), "text/html; charset=utf-8");
+        let csp = get(http::header::CONTENT_SECURITY_POLICY);
+        assert!(csp.contains("script-src 'nonce-abc';"), "{csp}");
+        assert!(csp.contains("style-src 'self' 'nonce-abc';"), "{csp}");
+        assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+        assert!(
+            csp.ends_with("form-action 'self' https://idp.example.org"),
+            "{csp}"
+        );
+        assert_eq!(get(http::header::X_FRAME_OPTIONS), "DENY");
+        assert_eq!(get(http::header::X_CONTENT_TYPE_OPTIONS), "nosniff");
+        assert_eq!(
+            get(http::header::CACHE_CONTROL),
+            "no-store, no-cache, must-revalidate"
+        );
+    }
 }

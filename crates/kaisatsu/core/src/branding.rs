@@ -376,4 +376,35 @@ mod tests {
         assert!(clean.logo_svg.is_empty());
         assert_eq!(clean.primary_foreground, "#ffffff");
     }
+
+    #[test]
+    fn css_variables_carry_the_sanitised_colours_and_fonts() {
+        let mut b = BrandingBlock::default();
+        b.colours.primary = "#000000".into();
+        b.colours.text = "red;}</style><script>".into();
+        b.fonts.heading = "Georgia, serif".into();
+        let css = b.css_variables();
+        assert!(css.starts_with(":root {\n"), "{css}");
+        assert!(css.contains("  --jc-primary: #000000;\n"), "{css}");
+        assert!(css.contains("  --jc-primary-fg: #ffffff;\n"), "{css}");
+        assert!(css.contains(&format!(
+            "  --jc-secondary: {};\n",
+            Colours::default().secondary
+        )));
+        assert!(css.contains(&format!("  --jc-accent: {};\n", Colours::default().accent)));
+        assert!(css.contains(&format!(
+            "  --jc-background: {};\n",
+            Colours::default().background
+        )));
+        assert!(
+            css.contains(&format!("  --jc-text: {};\n", Colours::default().text)),
+            "{css}"
+        );
+        assert!(
+            css.contains("  --jc-font-heading: Georgia, serif;\n"),
+            "{css}"
+        );
+        assert!(css.contains(&format!("  --jc-font-body: {};\n}}", Fonts::default().body)));
+        assert!(!css.contains("script"), "{css}");
+    }
 }
