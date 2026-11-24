@@ -273,11 +273,17 @@ mod tests {
     fn a_title_is_read_in_the_pages_language_then_english_then_any() {
         let title = |v: serde_json::Value, lang: &str| in_language(Some(&v), lang);
         assert_eq!(in_language(None, "sk"), None);
-        assert_eq!(title(serde_json::json!("Doprava"), "sk").as_deref(), Some("Doprava"));
+        assert_eq!(
+            title(serde_json::json!("Doprava"), "sk").as_deref(),
+            Some("Doprava")
+        );
         let by = serde_json::json!({"en": "Transport", "sk": "Doprava"});
         assert_eq!(title(by.clone(), "sk").as_deref(), Some("Doprava"));
         assert_eq!(title(by, "de").as_deref(), Some("Transport"));
-        assert_eq!(title(serde_json::json!({"cs": "Doprava"}), "de").as_deref(), Some("Doprava"));
+        assert_eq!(
+            title(serde_json::json!({"cs": "Doprava"}), "de").as_deref(),
+            Some("Doprava")
+        );
         assert_eq!(title(serde_json::json!({}), "sk"), None);
         assert_eq!(title(serde_json::json!(7), "sk"), None);
         assert_eq!(title(serde_json::json!({"sk": 7}), "sk"), None);
