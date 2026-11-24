@@ -41,11 +41,18 @@ fn canonical(requests: &[Request]) -> Vec<u8> {
 }
 
 fuzz_target!(|data: &[u8]| {
-    let limits = Limits { max_body_bytes: 8192, max_requests: 16, ..Limits::strict() };
+    let limits = Limits {
+        max_body_bytes: 8192,
+        max_requests: 16,
+        ..Limits::strict()
+    };
     let Ok(batch) = parse_json(data, &limits) else {
         return;
     };
     assert!(batch.requests.len() <= limits.max_requests);
-    let roomy = Limits { max_body_bytes: usize::MAX, ..limits };
+    let roomy = Limits {
+        max_body_bytes: usize::MAX,
+        ..limits
+    };
     assert_eq!(parse_json(&canonical(&batch.requests), &roomy), Ok(batch));
 });

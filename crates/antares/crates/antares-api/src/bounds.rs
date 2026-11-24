@@ -884,7 +884,9 @@ pub(crate) fn count_from(raw: Option<&str>, default: usize, ceiling: usize) -> u
 /// A deployment knob's value: a number above zero, else `None` (unset, not a
 /// number, zero or negative), so a typo keeps the default instead of
 /// disabling the bound.
-pub(crate) fn positive<T: std::str::FromStr + PartialOrd + Default>(raw: Option<&str>) -> Option<T> {
+pub(crate) fn positive<T: std::str::FromStr + PartialOrd + Default>(
+    raw: Option<&str>,
+) -> Option<T> {
     raw.and_then(|v| v.parse().ok())
         .filter(|n| *n > T::default())
 }

@@ -89,7 +89,11 @@ pub fn accept_header(value: &[u8]) -> bool {
 /// its default.
 pub fn body_bounds(data: &[u8]) -> bool {
     let depth = crate::bounds::json_depth(data);
-    assert!(depth <= data.len(), "depth {depth} over {} bytes", data.len());
+    assert!(
+        depth <= data.len(),
+        "depth {depth} over {} bytes",
+        data.len()
+    );
     let text = String::from_utf8_lossy(data);
     let count = crate::bounds::count_from(Some(&text), 7, 64);
     assert!((1..=64).contains(&count), "count {count}");
