@@ -2076,6 +2076,11 @@ fn an_endpoint_path_with_an_empty_type_segment_names_no_type() {
     assert_eq!(t(&ep("ogc/features/collections//items")), None);
     assert_eq!(t(&ep("sta/v1.1/")), None);
     assert_eq!(t(&ep("odata/v4//x")), None);
+    assert_eq!(
+        t("https://jc.example/api/endpoint/air"),
+        None,
+        "a slug alone"
+    );
 }
 
 #[test]

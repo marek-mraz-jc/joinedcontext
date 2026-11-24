@@ -2994,6 +2994,10 @@ mod tests {
         // The address the record was published under, pinned as an address change pins it.
         let mut held = store.list_datasets(&ctx).await.unwrap().remove(0);
         held.uri = Some("https://opendata.bbsk.sk/dataset/pinned".into());
+        held.extras.insert(
+            "uri".into(),
+            "https://opendata.bbsk.sk/dataset/pinned".into(),
+        );
         store.upsert_dataset(&ctx, held.clone()).await.unwrap();
 
         let a = engine.run_source(&ctx, &store, &sources[1]).await.unwrap();
@@ -3027,6 +3031,11 @@ mod tests {
         assert_eq!(active[0].harvest_source_id.as_deref(), Some("a"));
         assert_eq!((&active[0].id, &active[0].name), (&held.id, &held.name));
         assert_eq!(active[0].uri, held.uri, "the IRI does not move");
+        assert_eq!(
+            active[0].extras.get("uri"),
+            held.extras.get("uri"),
+            "the held IRI extra moves with the record"
+        );
     }
 
     #[test]

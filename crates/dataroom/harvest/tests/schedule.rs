@@ -377,8 +377,37 @@ async fn the_spawned_scheduler_runs_every_source_in_its_first_minute() {
     );
 }
 
+/// A subscriber that listens to every event and keeps none.
+struct Listening;
+
+impl tracing::Subscriber for Listening {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        struct Format(String);
+        impl tracing::field::Visit for Format {
+            fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+                self.0 += &format!("{f}={v:?} ");
+            }
+        }
+        let mut line = Format(String::new());
+        event.record(&mut line);
+        assert!(!line.0.is_empty());
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
 #[tokio::test]
 async fn a_failed_run_is_retried_three_times_then_logged_and_the_next_cycle_runs() {
+    // A listening subscriber, so each retry warning formats its fields.
+    let _log = tracing::subscriber::set_default(Listening);
     // Fails three times, the fourth attempt (third retry) succeeds.
     let (w, store, f) = scheduled_world(RETRIES as usize).await;
     let out = scheduler(&w, store.clone(), f.clone(), true)
@@ -771,6 +800,10 @@ async fn a_scheduled_run_that_panics_is_left_out_of_the_outcome_and_frees_its_so
         )
         .await
         .unwrap();
+    let mut earlier = running(&w, "run-earlier", TimestampTz::now());
+    earlier.state = HarvestRunState::Succeeded;
+    earlier.finished_at = Some(TimestampTz::now());
+    w.store.upsert_harvest_run(&w.ctx, earlier).await.unwrap();
     let (_, grant) = harvest_principal(w.org, w.cat);
     let s = HarvestScheduler::new(
         Arc::new(engine_on(Arc::new(Panicky))),
@@ -783,13 +816,19 @@ async fn a_scheduled_run_that_panics_is_left_out_of_the_outcome_and_frees_its_so
     // The panicked run's row is Failed at once, so the next scheduled check is not refused
     // with a conflict until the harvest deadline.
     let runs = w.store.list_harvest_runs(&w.ctx, None).await.unwrap();
-    assert_eq!(runs.len(), 1, "{runs:?}");
-    assert_eq!(runs[0].state, HarvestRunState::Failed);
+    assert_eq!(runs.len(), 2, "{runs:?}");
+    let (earlier, lost): (Vec<_>, Vec<_>) = runs.into_iter().partition(|r| r.id == "run-earlier");
     assert_eq!(
-        runs[0].error.as_deref(),
+        earlier[0].state,
+        HarvestRunState::Succeeded,
+        "a finished run is left as it is"
+    );
+    assert_eq!(lost[0].state, HarvestRunState::Failed);
+    assert_eq!(
+        lost[0].error.as_deref(),
         Some("the run stopped unexpectedly")
     );
-    assert_eq!(runs[0].logs.last().unwrap().fingerprint, "harvest.lost");
+    assert_eq!(lost[0].logs.last().unwrap().fingerprint, "harvest.lost");
 }
 
 /// A catalogue whose sources cannot be listed is skipped; its sources are not run and no run

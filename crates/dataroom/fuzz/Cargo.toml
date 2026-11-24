@@ -21,6 +21,15 @@ tokio = { version = "1", features = ["rt"] }
 dataroom-core = { path = "../core" }
 dataroom-server = { path = "../server" }
 dataroom-store-memory = { path = "../store-memory" }
+dataroom-harvest = { path = "../harvest" }
+dataroom-rdf = { path = "../rdf" }
+dataroom-shacl = { path = "../shacl" }
+dataroom-api = { path = "../api" }
+dataroom-search = { path = "../search" }
+dataroom-web = { path = "../web" }
+axum = "0.8.1"
+tower = { version = "0.5.2", features = ["util"] }
+url = "2"
 
 [[bin]]
 name = "branding"
@@ -75,3 +84,101 @@ jc-core = { path = "../../../vendor/joinedcontext-platform/crates/jc-core" }
 
 [workspace]
 members = ["."]
+
+[[bin]]
+name = "harvest_remote_json"
+path = "fuzz_targets/harvest_remote_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "harvest_dcat_page"
+path = "fuzz_targets/harvest_dcat_page.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "harvest_outbound_url"
+path = "fuzz_targets/harvest_outbound_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_operation"
+path = "fuzz_targets/core_operation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rdf_turtle"
+path = "fuzz_targets/rdf_turtle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rdf_rdfxml"
+path = "fuzz_targets/rdf_rdfxml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rdf_jsonld"
+path = "fuzz_targets/rdf_jsonld.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rdf_dcat"
+path = "fuzz_targets/rdf_dcat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "shacl_validate"
+path = "fuzz_targets/shacl_validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "search_query"
+path = "fuzz_targets/search_query.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "api_ckan_action"
+path = "fuzz_targets/api_ckan_action.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "api_read_routes"
+path = "fuzz_targets/api_read_routes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_language"
+path = "fuzz_targets/web_language.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_links"
+path = "fuzz_targets/web_links.rs"
+test = false
+doc = false
+bench = false

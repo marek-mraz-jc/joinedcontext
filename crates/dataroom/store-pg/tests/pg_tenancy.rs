@@ -862,6 +862,28 @@ async fn a_harvest_source_saved_without_an_id_is_named_and_audited_by_that_name(
         1
     );
 
+    // A source saved with its own id keeps it, and a row naming its object keeps that name.
+    let mut named = harvest_source("mirror");
+    named.id = "hs-own".into();
+    let mut row = audit("harvest_source.create");
+    row.object_id = "hs-own-row".into();
+    let saved = store.save_harvest_source(&ctx, named, row).await.unwrap();
+    assert_eq!(saved.id, "hs-own");
+    assert_eq!(
+        store
+            .list_activity(&ctx, Some("hs-own-row"), 10)
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "the row keeps the object it names"
+    );
+    assert!(store
+        .list_activity(&ctx, Some("hs-own"), 10)
+        .await
+        .unwrap()
+        .is_empty());
+
     // Another Organization naming the same catalogue sees neither the source nor its row.
     let (other, _) = tenant();
     let stray = member_ctx(other, cat);
