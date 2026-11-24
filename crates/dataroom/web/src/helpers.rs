@@ -2718,9 +2718,7 @@ mod tests {
         );
         let mut branding = BrandingBlock::default();
         branding.apply_override_json(&json!({ "domain": "dev.joinedcontext.com" }));
-        let Some(mcp) = jc_mcp_install(&branding) else {
-            panic!("a valid domain gives the MCP panel");
-        };
+        let mcp = jc_mcp_install(&branding).expect("a valid domain gives the MCP panel");
         assert_eq!(mcp.url, "https://api.dev.joinedcontext.com/api/mcp");
         // live/dev-assistants-claude.html: `https://api.dev.joinedcontext.com<wbr>/api<wbr>/mcp`
         assert_eq!(

@@ -362,7 +362,6 @@ async fn broker_endpoint_get(
             &idp.alias,
             &auth_session,
             &existing.username,
-            true,
             false,
         )
         .await;
@@ -489,7 +488,6 @@ async fn broker_endpoint_confirm_post(
                 &auth_session,
                 &existing.username,
                 true,
-                true,
             )
             .await;
         }
@@ -531,7 +529,6 @@ async fn render_broker_link_confirm_page(
     alias: &str,
     auth_session: &AuthSession,
     account_name: &str,
-    needs_password: bool,
     wrong_password: bool,
 ) -> Result<Response> {
     let accept = headers
@@ -567,23 +564,20 @@ async fn render_broker_link_confirm_page(
         "federatedIdentityConfirmLinkMessage",
         &[bundle.get("username"), account_name],
     ));
-    let mut fields = Vec::new();
-    if needs_password {
-        fields.push(page::Field {
-            name: "password".into(),
-            label: bundle.get("password").to_owned(),
-            input_type: "password".into(),
-            autocomplete: "current-password".into(),
-            autofocus: true,
-            required: true,
-            error: if wrong_password {
-                bundle.get("invalidPasswordMessage").to_owned()
-            } else {
-                String::new()
-            },
-            ..page::Field::default()
-        });
-    }
+    let fields = vec![page::Field {
+        name: "password".into(),
+        label: bundle.get("password").to_owned(),
+        input_type: "password".into(),
+        autocomplete: "current-password".into(),
+        autofocus: true,
+        required: true,
+        error: if wrong_password {
+            bundle.get("invalidPasswordMessage").to_owned()
+        } else {
+            String::new()
+        },
+        ..page::Field::default()
+    }];
     tpl.form = Some(page::Form {
         id: "kc-broker-link-form".into(),
         action: format!(

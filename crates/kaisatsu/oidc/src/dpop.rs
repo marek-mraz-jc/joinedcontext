@@ -297,6 +297,12 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "not an OAuth error")]
+    fn the_oauth_error_helper_refuses_an_error_of_another_kind() {
+        oauth_error(KaisatsuError::BadRequest("x".into()));
+    }
+
+    #[test]
     fn rfc7638_thumbprint_vector_and_key_types() {
         let rsa = json!({ "kty": "RSA", "e": "AQAB", "alg": "RS256", "kid": "2011-04-29",
             "n": "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw" });

@@ -76,6 +76,9 @@ pub const GATEWAY_CLIENT: &str = "context-gateway";
 pub const ASSISTANT_CLIENT: &str = "jc-assistant";
 /// The assistant's model proxy's client: it introspects the assistant's tokens.
 pub const PROXY_CLIENT: &str = "agent-proxy";
+/// The script sandbox's audience: `jc-functions` runs a script for a token that names it and was
+/// issued to [`ASSISTANT_CLIENT`] (T-7774, AG-112).
+pub const FUNCTIONS_AUDIENCE: &str = "jc-functions";
 /// The audience the Portal's internal listener admits (`auth::internal::INTERNAL_AUDIENCE`).
 const PORTAL_INTERNAL_AUDIENCE: &str = "portal-internal";
 /// The scope (and audience) the assistant's client asks the shared embedder service with.
@@ -709,13 +712,14 @@ pub fn gateway_realm_file(realm: &Realm) -> (String, Value) {
 
 /// The assistant's two clients, client_credentials only, no realm role, no person's scope:
 /// `jc-assistant`, whose tokens name `agent-proxy` in their audience (the proxy admits a model
-/// call only from this client's service account with that audience, AG-109), and `agent-proxy`,
+/// call only from this client's service account with that audience, AG-109) and `jc-functions`
+/// (the script sandbox runs its scripts only for that audience, T-7774), and `agent-proxy`,
 /// which introspects them and reads a run's context on the Portal's internal listener (audience
 /// `portal-internal`: without it the Portal answered every run lookup 401, T-7149). As on dev (deployment components/assistant/keycloak-clients.yaml).
 #[must_use]
 pub fn assistant_realm_file(realm: &Realm) -> (String, Value) {
-    let client = |id: &str, name: &str, secret: &str, audience: &str, scopes: &[&str]| {
-        let mappers = [audience_mapper(audience)];
+    let client = |id: &str, name: &str, secret: &str, audiences: &[&str], scopes: &[&str]| {
+        let mappers: Vec<Value> = audiences.iter().map(|aud| audience_mapper(aud)).collect();
         json!({
             "clientId": id,
             "name": name,
@@ -749,7 +753,7 @@ pub fn assistant_realm_file(realm: &Realm) -> (String, Value) {
                 ASSISTANT_CLIENT,
                 "Knowledge assistant",
                 "CLIENT_SECRET_JC_ASSISTANT",
-                PROXY_CLIENT,
+                &[PROXY_CLIENT, FUNCTIONS_AUDIENCE],
                 // It asks the shared embedder with scope `embedder` (its audience).
                 &[EMBEDDER_SCOPE],
             ),
@@ -757,7 +761,7 @@ pub fn assistant_realm_file(realm: &Realm) -> (String, Value) {
                 PROXY_CLIENT,
                 "Model proxy",
                 "CLIENT_SECRET_AGENT_PROXY",
-                PORTAL_INTERNAL_AUDIENCE,
+                &[PORTAL_INTERNAL_AUDIENCE],
                 &[],
             ),
         ]
@@ -766,7 +770,7 @@ pub fn assistant_realm_file(realm: &Realm) -> (String, Value) {
 }
 
 /// An access-token audience mapper naming `aud`.
-fn audience_mapper(aud: &str) -> Value {
+pub fn audience_mapper(aud: &str) -> Value {
     json!({
         "name": format!("{aud}-audience"),
         "protocol": "openid-connect",
@@ -844,6 +848,28 @@ mod tests {
             .filter(|m| m["config"]["included.custom.audience"] == ASSISTANT_CLIENT)
             .collect();
         assert_eq!(named.len(), 1, "{portal}");
+        // A Portal client shipped without mappers gets the list; files without it are left.
+        let mut bare = vec![
+            ("a.json".to_owned(), json!({"realm": "x"})),
+            (
+                "b.json".to_owned(),
+                json!({"clients": [{"clientId": PORTAL_CLIENT}]}),
+            ),
+        ];
+        add_assistant_audience(&mut bare);
+        assert_eq!(bare[0].1, json!({"realm": "x"}));
+        let mappers = bare[1].1["clients"][0]["protocolMappers"]
+            .as_array()
+            .unwrap();
+        assert_eq!(mappers.len(), 1);
+        assert_eq!(
+            mappers[0]["config"]["included.custom.audience"],
+            ASSISTANT_CLIENT
+        );
+        // No Portal client at all: nothing changes.
+        let mut other = vec![("c.json".to_owned(), json!({"clients": [{"clientId": "x"}]}))];
+        add_assistant_audience(&mut other);
+        assert_eq!(other[0].1, json!({"clients": [{"clientId": "x"}]}));
     }
 
     #[test]
@@ -889,6 +915,37 @@ mod tests {
 
     fn none() -> BTreeMap<Secret, Given> {
         BTreeMap::new()
+    }
+
+    #[test]
+    fn a_state_dir_that_cannot_be_made_or_a_stale_file_that_cannot_go_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a-file");
+        std::fs::write(&file, "x").unwrap();
+        // A state directory under a regular file cannot be created.
+        let e = private_dir(&file.join("state")).unwrap_err().to_string();
+        assert!(e.contains("cannot create state dir"), "{e}");
+        let e = Setup::prepare(&file.join("state"), &Module::ALL, &BTreeMap::new())
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("a-file"), "{e}");
+        // A directory where an old secret file was is no file to remove: named, not skipped.
+        let stale = dir.path().join("stale");
+        std::fs::create_dir(&stale).unwrap();
+        let e = remove_stale(&stale).unwrap_err().to_string();
+        assert!(e.contains("cannot remove") && e.contains("stale"), "{e}");
+        // A file that is there goes, and a missing one is fine.
+        assert!(remove_stale(&file).is_ok() && !file.exists());
+        assert!(remove_stale(&file).is_ok());
+    }
+
+    #[test]
+    fn the_broker_takes_the_antares_admin_token_as_its_service_credential() {
+        assert_eq!(
+            Secret::service_credential(Module::Antares),
+            Some(Secret::AntaresAdminToken)
+        );
+        assert_eq!(Secret::service_credential(Module::Portal), None);
     }
 
     #[test]

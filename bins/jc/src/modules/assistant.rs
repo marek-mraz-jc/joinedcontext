@@ -53,6 +53,7 @@ const DEFAULT_MODEL_PROVIDER: &str = "openai-compatible";
 /// | `JC_ASSISTANT_REPO_DIR`, `_PROJECTS_DIR`, `_ASSEMBLY_DIR` | the gateway's shako checkout |
 /// | `JC_ASSISTANT_PROXY_URL` | the proxy's loopback listener, when `jc` runs it |
 /// | `JC_ASSISTANT_LLM` | [`DEFAULT_LLM`] |
+/// | `JC_ASSISTANT_FUNCTIONS_URL` | `JC_FUNCTIONS_URL`, the sandbox the Portal calls ([`sandbox`]) |
 #[must_use]
 pub fn vars(
     siblings: &Siblings,
@@ -155,6 +156,14 @@ pub fn vars(
         );
     }
     out
+}
+
+/// The script sandbox (`jc-functions`, T-7774): the one the Portal calls (`JC_FUNCTIONS_URL`, set
+/// by the deployment when `jc.functions` is on) runs a `sandbox: true` deployment's scripts too.
+fn sandbox(filled: &mut BTreeMap<String, String>, env: &impl Fn(&str) -> Option<String>) {
+    if let Some(url) = env("JC_FUNCTIONS_URL").filter(|v| !v.trim().is_empty()) {
+        filled.insert("JC_ASSISTANT_FUNCTIONS_URL".to_owned(), url);
+    }
 }
 
 /// The realm's token endpoint under kaisatsu's base `id`.
@@ -500,6 +509,7 @@ async fn try_start(
         proxy_at,
         cfg.assistant.embedder_url.as_deref(),
     );
+    sandbox(&mut filled, env);
     // An operator's own gateway is dialed where its URL says, never at this jc's listener.
     if env("JC_ASSISTANT_GATEWAY_URL").is_some_and(|v| !v.trim().is_empty()) {
         filled.remove("JC_ASSISTANT_REACH");
@@ -660,6 +670,22 @@ mod tests {
             let got = app.clone().oneshot(req).await.unwrap().status();
             assert_eq!(got, status, "{path}");
         }
+    }
+
+    /// T-7774: the Portal's sandbox runs the assistant's scripts; without it run_script is off.
+    #[test]
+    fn the_portals_sandbox_is_the_assistants() {
+        let mut filled = BTreeMap::new();
+        sandbox(&mut filled, &|_: &str| None);
+        assert!(!filled.contains_key("JC_ASSISTANT_FUNCTIONS_URL"));
+        sandbox(&mut filled, &|key: &str| {
+            (key == "JC_FUNCTIONS_URL")
+                .then(|| "http://jc-functions.jc.svc.cluster.local:8080".to_owned())
+        });
+        assert_eq!(
+            filled.get("JC_ASSISTANT_FUNCTIONS_URL").map(String::as_str),
+            Some("http://jc-functions.jc.svc.cluster.local:8080")
+        );
     }
 
     #[test]

@@ -21,5 +21,6 @@ tokio = { version = "1.44.1", features = ["rt", "time"] }
 tracing = "0.1"
 
 [dev-dependencies]
+odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
 dataroom-store-memory = { path = "../store-memory" }
 tokio = { version = "1.44.1", features = ["io-util", "macros", "net", "rt", "test-util", "time"] }

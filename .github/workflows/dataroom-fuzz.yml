@@ -18,7 +18,10 @@ jobs:
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      matrix: { target: [branding, logo, ckan_payload, text_fields, ckan_import] }
+      matrix:
+        target: [branding, logo, ckan_payload, text_fields, ckan_import, core_operation, harvest_remote_json,
+          harvest_dcat_page, harvest_outbound_url, rdf_turtle, rdf_rdfxml, rdf_jsonld, rdf_dcat, shacl_validate,
+          search_query, api_ckan_action, api_read_routes, web_language, web_links]
     defaults: { run: { working-directory: crates/dataroom } }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

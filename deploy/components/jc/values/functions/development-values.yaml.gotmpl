@@ -1,6 +1,7 @@
 ---
-# Each invocation runs in its own runtime capped at 64 MiB and 5 s, at most 16 at once
-# (components/functions README.md sizing).
+# Each invocation runs in its own runtime capped at 64 MiB and 10 s, at most 16 at once, with a
+# script's data (4 MiB) copied outside the heap: 16 such scripts peak at about 1.3 GiB resident
+# (vendor/joinedcontext-platform/crates/functions tests/memory_tests.rs, T-7774).
 replicaCount: 1
 
 resources:
@@ -9,4 +10,4 @@ resources:
     memory: 96Mi
   limits:
     cpu: '1'
-    memory: 1Gi
+    memory: 1536Mi

@@ -437,6 +437,16 @@ async fn while_loops_until_the_check_fails_and_stops_at_its_limits() {
         .await;
     assert_eq!(flat(&out), vec![r#"{"n":2}"#]);
 
+    // An empty batch is checked as false: no loop runs and it comes back empty.
+    let out = e
+        .run(
+            json!({"while": {"check": "true", "processors": [inc.clone()]}}),
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(out.len(), 1);
+    assert!(out[0].is_empty());
+
     // Children that drop the message end the loop with nothing.
     let out = e
         .run(
@@ -558,6 +568,24 @@ async fn branch_flags_what_its_children_and_result_map_refuse() {
         .await;
     for p in &out[0] {
         assert_eq!(err_of(p), "child processors resulted in zero messages");
+    }
+    // Children that cannot run at all (the stream is shutting down) flag every message.
+    let down = env();
+    let p = down
+        .proc(json!({"branch": {"processors": [{"noop": {}}]}}))
+        .unwrap();
+    down.stop.send(true).unwrap();
+    let out = p
+        .process_batch(&down.ctx, parts(&["a", "b"]))
+        .await
+        .unwrap();
+    assert_eq!(flat(&out), vec!["a", "b"]);
+    for p in &out[0] {
+        assert!(
+            err_of(p).starts_with("child processors failed: "),
+            "{}",
+            err_of(p)
+        );
     }
     let out = e
         .run(
@@ -1043,11 +1071,31 @@ async fn archive_and_unarchive_every_format() {
         err_of(&out[0][0]),
         "zip archive member 'same.txt' failed: the name is used twice in this batch"
     );
-    // A path that does not resolve names the member part_<index>, as Bento does.
-    for fmt in ["tar", "zip"] {
+    // Any other refusal of the zip writer keeps its own text: a name past the 64 KiB header.
+    let long = "n".repeat(70_000);
+    let out = e
+        .run(
+            json!({"archive": {"format": "zip", "path": "${! content() }"}}),
+            parts(&[&long]),
+        )
+        .await;
+    let err = err_of(&out[0][0]);
+    assert!(
+        err.starts_with("zip archive member 'nnn")
+            && err.ends_with("must be less than 64KiB when combined"),
+        "{}",
+        &err[err.len().saturating_sub(120)..]
+    );
+    // A path that does not resolve, or an empty one, names the member part_<index>, as Bento does.
+    for (fmt, path) in [
+        ("tar", "${! this.n.number() }"),
+        ("zip", "${! this.n.number() }"),
+        ("tar", ""),
+        ("zip", ""),
+    ] {
         let out = e
             .run(
-                json!({"archive": {"format": fmt, "path": "${! this.n.number() }"}}),
+                json!({"archive": {"format": fmt, "path": path}}),
                 parts(&["x"]),
             )
             .await;

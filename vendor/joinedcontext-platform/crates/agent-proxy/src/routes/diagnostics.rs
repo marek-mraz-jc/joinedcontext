@@ -195,6 +195,24 @@ pub async fn handler(
     (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
+/// The redaction over any text, for the fuzz target `redact` (T-7795). Compiled only with the
+/// `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::*;
+
+    /// A redacted text cut to a cap fits the cap on a character boundary, and a name is never
+    /// a path.
+    pub fn text(text: &str, max_bytes: u64) {
+        let cut = redacted_within(text, max_bytes);
+        assert!(cut.len() as u64 <= max_bytes);
+        if is_name(text) {
+            assert!(!text.contains(['/', '.', ' ']));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{is_name, redact, redacted_within};

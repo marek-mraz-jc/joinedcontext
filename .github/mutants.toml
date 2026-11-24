@@ -226,6 +226,15 @@ exclude_re = [
   # ekiben-js fuzzing::run is compiled only with the `fuzzing` feature, which no test build turns
   # on; cargo fuzz runs it from crates/ekiben/crates/ekiben-js/fuzz (T-7584).
   'ekiben-js/src/lib\.rs:.*fuzzing::run',
+  # agent-proxy fuzzing modules are compiled only with the `fuzz` feature, which no test build turns
+  # on; cargo fuzz runs them from vendor/joinedcontext-platform/crates/agent-proxy/fuzz (T-7795).
+  'agent-proxy/src/.*:\d+:\d+: .*\bfuzzing::',
+  # agent-proxy expiries: a credential, grant, run record or endpoint token expiring at exactly this
+  # Instant; two reads of the monotonic clock never tie, so `>` and `>=` cannot be told apart (T-7795).
+  'agent-proxy/src/data_credential\.rs:\d+:\d+: replace > with >= in DataCredentials::(mint|verify)',
+  'agent-proxy/src/delegation\.rs:\d+:\d+: replace > with >= in Grants::token',
+  'agent-proxy/src/runs\.rs:\d+:\d+: replace > with >= in RunResolver::resolve',
+  'agent-proxy/src/inject\.rs:\d+:\d+: replace > with >= in CredentialManager::get_endpoint_token',
   # ekiben-io-amqp read_batch: RabbitMQ refuses a message over its max_message_size (16 MiB by
   # default) at publish, so no test broker can deliver one past MAX_MESSAGE_BYTES (64 MiB); the
   # size guard and its reject serve brokers configured above 64 MiB (T-7580).

@@ -2394,3 +2394,332 @@ fn a_publisher_page_pages_its_datasets_and_lists_only_itself_as_publisher() {
     );
     assert!(!one.contains("class=\"pagination"));
 }
+
+/// The shell every template below shares: the test catalogue's chrome and Slovak labels.
+fn shell() -> (PageChrome, UiLabels) {
+    let chrome = PageChrome::build(&cat(), None, "sk", true, "/", None, "", "", NONCE);
+    (chrome, UiLabels::for_lang("sk"))
+}
+
+const HOSTILE: &str = "<img src=x onerror=alert(1)>";
+
+/// `Display` writes the page `render` writes, and `field` (set to [`HOSTILE`]) comes escaped.
+fn same_page_through_display(
+    name: &str,
+    shown: String,
+    rendered: askama::Result<String>,
+    hostile: bool,
+) {
+    let rendered = rendered.unwrap_or_else(|e| panic!("{name}: {e}"));
+    assert_eq!(shown, rendered, "{name}");
+    assert!(shown.contains(NONCE), "{name}: the shell is drawn");
+    assert!(!shown.contains(HOSTILE), "{name}: hostile text unescaped");
+    if hostile {
+        assert!(
+            shown.contains(&esc(HOSTILE)),
+            "{name}: hostile text missing"
+        );
+    }
+}
+
+#[test]
+fn every_page_template_writes_the_same_escaped_html_through_display() {
+    use askama::Template;
+    use dataroom_web::blocks::PortalPageTemplate;
+    use dataroom_web::dashboards::{DashboardListTemplate, DashboardTemplate};
+    use dataroom_web::groups::GroupListPageTemplate;
+    use dataroom_web::helpers::{StaticPageView, SubscriptionsView};
+    let (chrome, labels) = shell();
+    let h = || HOSTILE.to_owned();
+    let s = String::new;
+
+    let t = HomePageTemplate {
+        chrome: chrome.clone(),
+        lang: "sk".into(),
+        title: h(),
+        catalogue_title: h(),
+        catalogue_description: h(),
+        query: h(),
+        total_datasets: 0,
+        total_datasets_formatted: "0".into(),
+        total_publishers_formatted: "0".into(),
+        topic_tiles: Vec::new(),
+        recent_datasets: Vec::new(),
+        dashboards: Vec::new(),
+        datasets: Vec::new(),
+        publishers: Vec::new(),
+        popular_keywords: Vec::new(),
+        dataset_grid_config: "{}".into(),
+        publisher_grid_config: "{}".into(),
+        theme: dataroom_core::ThemeTokens::default(),
+        labels: labels.clone(),
+        csp_nonce: NONCE.into(),
+    };
+    same_page_through_display("home", t.to_string(), t.render(), false);
+
+    let t = DatasetListPageTemplate {
+        chrome: chrome.clone(),
+        labels: labels.clone(),
+        query: s(),
+        sort: s(),
+        total: 0,
+        found_heading: h(),
+        facet_groups: Vec::new(),
+        datasets: Vec::new(),
+        dataset_grid_config: "{}".into(),
+        page: 1,
+        pager: Vec::new(),
+        filter_pills: Vec::new(),
+        remove_label: s(),
+        hidden_params: Vec::new(),
+        list_fields: Vec::new(),
+        card_facts: Vec::new(),
+        card_chips: false,
+    };
+    same_page_through_display("dataset list", t.to_string(), t.render(), true);
+
+    let t = DatasetPageTemplate {
+        chrome: chrome.clone(),
+        dashboards: Vec::new(),
+        dashboards_title: s(),
+        lang: "sk".into(),
+        catalogue_title: s(),
+        dataset_id: "ds".into(),
+        dataset_name: "ds".into(),
+        dataset_title: h(),
+        dataset_description: s(),
+        publisher_slug: s(),
+        publisher_title: s(),
+        publisher_image: s(),
+        publisher_description: s(),
+        licence_title: s(),
+        endpoint_url: s(),
+        explorer: None,
+        charts: Vec::new(),
+        map_config_json: None,
+        map_embed_url: s(),
+        subscriptions: SubscriptionsView::default(),
+        sections: Vec::new(),
+        show_publisher: false,
+        show_subscribe: false,
+        about_rows: Vec::new(),
+        source_rows: Vec::new(),
+        fold_sources: false,
+        sources_all_label: s(),
+        live: None,
+        mcp: None,
+        resource_sections: Vec::new(),
+        more_rows: Vec::new(),
+        distributions: Vec::new(),
+        distributions_grid_config: "{}".into(),
+        show_editor_panel: false,
+        shacl_reports: Vec::new(),
+        shacl_grid_config: "{}".into(),
+        schema_org_jsonld: "{}".into(),
+        theme: dataroom_core::ThemeTokens::default(),
+        labels: labels.clone(),
+        csp_nonce: NONCE.into(),
+    };
+    same_page_through_display("dataset", t.to_string(), t.render(), true);
+
+    let t = ResourcePageTemplate {
+        chrome: chrome.clone(),
+        labels: labels.clone(),
+        resources_heading: s(),
+        dataset_name: "ds".into(),
+        dataset_title: s(),
+        publisher_slug: s(),
+        publisher_title: s(),
+        resource_id: "r".into(),
+        resource_label: h(),
+        format_chip: s(),
+        entity_type: s(),
+        what: s(),
+        description: s(),
+        is_api: false,
+        is_source: false,
+        url: s(),
+        link_url: s(),
+        short_segments: Vec::new(),
+        full_breakable: s(),
+        explorer: None,
+        preview: None,
+        examples: Vec::new(),
+        guide_url: None,
+        developer_page_url: None,
+        dates: Vec::new(),
+        licence_title: s(),
+        licence_url: s(),
+        standard: None,
+        model: None,
+        resource_sections: Vec::new(),
+    };
+    same_page_through_display("resource", t.to_string(), t.render(), true);
+
+    let t = OrganizationListPageTemplate {
+        chrome: chrome.clone(),
+        labels: labels.clone(),
+        query: s(),
+        sort: s(),
+        found_heading: h(),
+        publishers: Vec::new(),
+        publisher_grid_config: "{}".into(),
+    };
+    same_page_through_display("organization list", t.to_string(), t.render(), true);
+
+    let t = OrganizationReadPageTemplate {
+        chrome: chrome.clone(),
+        labels: labels.clone(),
+        publisher: PublisherRowView {
+            name: "city".into(),
+            title: h(),
+            uri: s(),
+            image: s(),
+            description: s(),
+            description_short: s(),
+            count: 0,
+        },
+        query: s(),
+        sort: s(),
+        total: 0,
+        found_heading: h(),
+        facet_groups: Vec::new(),
+        datasets: Vec::new(),
+        dataset_grid_config: "{}".into(),
+        pager: Vec::new(),
+        filter_pills: Vec::new(),
+        remove_label: s(),
+        hidden_params: Vec::new(),
+    };
+    same_page_through_display("organization", t.to_string(), t.render(), true);
+
+    let t = AboutPageTemplate {
+        chrome: chrome.clone(),
+        labels: labels.clone(),
+        intro: h(),
+        api_url: s(),
+        dcat_url: s(),
+        email: s(),
+    };
+    same_page_through_display("about", t.to_string(), t.render(), true);
+
+    let t = StaticPageTemplate {
+        chrome: chrome.clone(),
+        labels: labels.clone(),
+        page: StaticPageView {
+            name: "privacy".into(),
+            title: h(),
+            html: s(),
+            email: s(),
+            other_pages: Vec::new(),
+        },
+        mcp: None,
+        guides: Vec::new(),
+        prompt: h(),
+    };
+    same_page_through_display("static", t.to_string(), t.render(), true);
+
+    let t = MapPageTemplate {
+        chrome: chrome.clone(),
+        labels: labels.clone(),
+        dataset_title: h(),
+        dataset_url: s(),
+        map_config_json: "{}".into(),
+        has_pmtiles: false,
+    };
+    same_page_through_display("map", t.to_string(), t.render(), true);
+
+    let t = PortalPageTemplate {
+        chrome: chrome.clone(),
+        labels: labels.clone(),
+        title: h(),
+        slug: "p".into(),
+        home: false,
+        heading: true,
+        query: s(),
+        rows: Vec::new(),
+        frames: false,
+        updated_label: s(),
+        download_label: s(),
+        gallery_empty: s(),
+        open_dataset: s(),
+    };
+    same_page_through_display("portal page", t.to_string(), t.render(), true);
+
+    let t = DashboardListTemplate {
+        chrome: chrome.clone(),
+        labels: labels.clone(),
+        heading: h(),
+        lead: s(),
+        empty: s(),
+        cards: Vec::new(),
+    };
+    same_page_through_display("dashboard list", t.to_string(), t.render(), true);
+
+    let t = DashboardTemplate {
+        chrome: chrome.clone(),
+        labels: labels.clone(),
+        heading: s(),
+        title: h(),
+        publisher: s(),
+        sections: Vec::new(),
+        data_heading: s(),
+        data: Vec::new(),
+        empty: s(),
+    };
+    same_page_through_display("dashboard", t.to_string(), t.render(), true);
+
+    let t = GroupListPageTemplate {
+        chrome,
+        labels,
+        query: s(),
+        sort: s(),
+        found_heading: h(),
+        search_placeholder: s(),
+        topics_help: s(),
+        empty_topics: s(),
+        topics: Vec::new(),
+    };
+    same_page_through_display("topics", t.to_string(), t.render(), true);
+}
+
+#[test]
+fn a_publisher_page_drops_the_publisher_facet_when_it_names_only_other_publishers() {
+    let c = cat();
+    let p = publisher("city", json!({ "title": { "sk": "Mesto" } }));
+    let none = BTreeMap::new();
+    let page = |publishers: Vec<FacetCount>| {
+        let facets = SearchFacets {
+            publisher: publishers,
+            keyword: vec![facet("ovzdusie", 2)],
+            ..SearchFacets::default()
+        };
+        render_organization_read_page(
+            &c,
+            None,
+            &p,
+            &[],
+            &facets,
+            2,
+            1,
+            "",
+            "",
+            &none,
+            "sk",
+            true,
+            "",
+            NONCE,
+        )
+    };
+    let own = page(vec![facet("city", 2)]);
+    let others = page(vec![facet("town", 4), facet("<b>evil</b>", 1)]);
+    let headings = |html: &str| html.matches("class=\"module-heading\"").count();
+    assert_eq!(headings(&others) + 1, headings(&own));
+    let nav = format!(
+        "<nav aria-label=\"{}\"",
+        esc(&UiLabels::for_lang("sk").nav_publishers)
+    );
+    assert!(own.contains(&nav));
+    assert!(!others.contains(&nav));
+    assert!(!others.contains("town") && !others.contains("<b>evil</b>"));
+}

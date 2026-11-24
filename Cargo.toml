@@ -57,6 +57,9 @@ members = [
   # The knowledge assistant, from joinedcontext-platform (vendor/SOURCES.md); a member here, not of
   # the vendored platform workspace, so jc and its modules link the one copy.
   "vendor/joinedcontext-platform/crates/assistant",
+  # The script sandbox jc-functions (T-7774), from joinedcontext-platform the same way: one ci, one
+  # image and one pin with jc.
+  "vendor/joinedcontext-platform/crates/functions",
 ]
 # Joined repositories keep their own workspace (lockfile, lints, standalone binaries) for now; jc
 # depends on their crates by path. Making them members is a later step (bins/jc/STATUS.md).

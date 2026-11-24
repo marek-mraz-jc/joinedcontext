@@ -26,6 +26,8 @@ mod export;
 mod extent;
 mod features;
 mod filter;
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 mod history;
 mod items;
 mod model;

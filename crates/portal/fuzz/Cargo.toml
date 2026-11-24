@@ -163,3 +163,17 @@ path = "fuzz_targets/auth_realms_parse.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "catalog_answers"
+path = "fuzz_targets/catalog_answers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kube_objects"
+path = "fuzz_targets/kube_objects.rs"
+test = false
+doc = false
+bench = false

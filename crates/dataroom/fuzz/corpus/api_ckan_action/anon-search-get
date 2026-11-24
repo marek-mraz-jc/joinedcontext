@@ -1,0 +1,2 @@
+package_search
+q=voda&fq=organization:mesto&rows=5&start=0&facet.field=["tags"]
