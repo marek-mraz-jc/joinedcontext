@@ -12,7 +12,10 @@ fuzz_target!(|data: &[u8]| {
     let params = query::parse(raw);
     if let Some(reason) = query::malformed(&params) {
         // The reason names the parameter, never echoes the caller's value (AG-21).
-        assert!(reason.starts_with("the type") || reason.starts_with("q "), "{reason}");
+        assert!(
+            reason.starts_with("the type") || reason.starts_with("q "),
+            "{reason}"
+        );
     }
     let _ = query::requested(&params);
     let _ = query::referenced_attributes(&params);

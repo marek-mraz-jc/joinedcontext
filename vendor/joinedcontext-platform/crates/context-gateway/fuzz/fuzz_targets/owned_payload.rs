@@ -23,6 +23,9 @@ fuzz_target!(|data: &[u8]| {
         assert!(!quality::is_owned(&name), "{name} survived");
     }
     if let Some(text) = payload.as_str() {
-        assert_eq!(quality::owned_path(Some(text)).is_some(), quality::is_owned(text));
+        assert_eq!(
+            quality::owned_path(Some(text)).is_some(),
+            quality::is_owned(text)
+        );
     }
 });
