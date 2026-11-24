@@ -695,13 +695,9 @@ fn fmt_f(s: &mut String, digs: &[u8], dp: i64, prec: usize) {
     if prec > 0 {
         s.push('.');
         for i in 1..=prec as i64 {
-            let at = dp + i - 1;
-            let d = if zero || at < 0 {
-                b'0'
-            } else {
-                *digs.get(at as usize).unwrap_or(&b'0')
-            };
-            s.push(char::from(d));
+            // A zero's digits are "0" and a place left of the first digit has no index: both pad '0'.
+            let at = usize::try_from(dp + i - 1).ok();
+            s.push(char::from(*at.and_then(|at| digs.get(at)).unwrap_or(&b'0')));
         }
     }
 }
@@ -770,6 +766,11 @@ mod tests {
                 ]
             ),
             "   ab|ab|int64|%!d(MISSING)"
+        );
+        // A two-digit exponent takes no pad zero.
+        assert_eq!(
+            s("%e|%e", vec![Value::Float(1e10), Value::Float(1e-10)]),
+            "1.000000e+10|1.000000e-10"
         );
         assert_eq!(
             s("%v", vec![Value::Int(1), Value::Int(2)]),

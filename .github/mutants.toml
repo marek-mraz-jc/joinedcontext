@@ -102,6 +102,9 @@ exclude_re = [
   'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace - with \+ in Reader<.*>::len',
   # T-7576 go_sort insertion_sort: starting at i = a runs one iteration whose `j > a` test fails at once.
   'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace \+ with \* in insertion_sort',
+  # T-7786 go_sort heap_sort: a root at or past hi / 2 has no child inside the heap, so sift_down returns at once
+  # without a comparison; starting the build loop at hi * 2 only adds those no-op calls.
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace / with \* in heap_sort',
   # T-7576 go_sort sort_slice_at: a larger recursion limit only matters once pdqsort exhausts bits(n) unbalanced
   # partitions; break_patterns prevents that: 200,000 shaped inputs of 13-132 elements never reached the heap sort
   # fallback (a_spent_recursion_limit_falls_back_to_heap_sort reaches it with limit 0).

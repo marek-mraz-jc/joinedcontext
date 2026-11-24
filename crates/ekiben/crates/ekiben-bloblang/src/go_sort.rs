@@ -467,4 +467,17 @@ mod tests {
             assert_eq!(v, want);
         }
     }
+
+    #[test]
+    fn heap_sort_sorts_only_its_sub_range() {
+        // pdqsort hands heap_sort a sub-range [a, b) once its limit is spent; the ends stay put.
+        let mut v: Vec<i64> = vec![99, 98, 5, 3, 9, 1, 7, 4, -1, -2];
+        let mut less = |_: usize, a: &i64, _: usize, b: &i64| a < b;
+        let mut d = Data {
+            v: &mut v,
+            less: &mut less,
+        };
+        heap_sort(&mut d, 2, 8);
+        assert_eq!(v, vec![99, 98, 1, 3, 4, 5, 7, 9, -1, -2]);
+    }
 }
