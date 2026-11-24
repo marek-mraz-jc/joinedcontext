@@ -105,13 +105,26 @@ pub async fn ensure_default_catalogue(
     catalogue_id: CatalogueId,
     host: &str,
 ) -> Result<()> {
-    if store.get_catalogue(org_id, catalogue_id).await?.is_none() {
-        store
-            .upsert_catalogue(new_catalogue(org_id, catalogue_id, "default", host))
-            .await?;
-    }
+    default_catalogue(store, org_id, catalogue_id, host)
+        .await
+        .map(drop)
+}
 
-    Ok(())
+/// The default catalogue, created as [`ensure_default_catalogue`] does.
+async fn default_catalogue(
+    store: &dyn Store,
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    host: &str,
+) -> Result<Catalogue> {
+    match store.get_catalogue(org_id, catalogue_id).await? {
+        Some(cat) => Ok(cat),
+        None => {
+            store
+                .upsert_catalogue(new_catalogue(org_id, catalogue_id, "default", host))
+                .await
+        }
+    }
 }
 
 /// Holds catalogue `catalogue_id` of `org_id` as `name` on `host`: created as the default one is
@@ -418,7 +431,7 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
         Command::Serve { host, .. } => host.clone(),
         _ => "opendata.localhost".into(),
     };
-    ensure_default_catalogue(store.as_ref(), org_id, catalogue_id, &host).await?;
+    let held = default_catalogue(store.as_ref(), org_id, catalogue_id, &host).await?;
 
     let ctx = RequestCtx::new(
         org_id,
@@ -451,9 +464,7 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
             Ok(serde_json::to_value(run).unwrap_or(Value::Null))
         }
         Command::FeedCheck { profile } => {
-            let Some(cat) = store.get_catalogue(org_id, catalogue_id).await? else {
-                return Err(DataroomError::NotFound("catalogue not found".into()));
-            };
+            let cat = held;
             let datasets = store.list_datasets(&ctx).await?;
             let publishers = store.list_publishers(&ctx).await?;
             let pub_map: BTreeMap<String, Publisher> = publishers

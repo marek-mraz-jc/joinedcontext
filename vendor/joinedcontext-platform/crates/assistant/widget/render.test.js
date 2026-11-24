@@ -830,6 +830,16 @@ test("the footer's count takes each language's plural for 1, 2 and 5 (T-4364)", 
   assert.equal(sourceCount(3, "de"), "3 sources");
 });
 
+test("a runtime without Intl.PluralRules still counts: one for 1, the plural form otherwise", (t) => {
+  const real = Intl.PluralRules;
+  Intl.PluralRules = function () { throw new RangeError("no plural data"); };
+  t.after(() => { Intl.PluralRules = real; });
+  assert.deepEqual([1, 2, 5].map((n) => sourceCount(n, "sk")), ["1 zdroj", "2 zdrojov", "5 zdrojov"]);
+  assert.equal(sourceCount(0, "en"), "0 sources");
+  assert.equal(live({ stage: "searching", topic: "mosty", count: 1 }, "sk"), "Hľadám v 1 zdroji pre „mosty“…");
+  assert.equal(live({ stage: "checking", count: 3 }, "en"), "Checking 3 passages…");
+});
+
 test("the sources show as a page and a table icon, never a letter or a hue per site (T-4740)", () => {
   const { list } = sources([
     { n: 1, url: "https://www.bbsk.sk/a" }, { n: 2, url: "https://zilina.sk/b" },

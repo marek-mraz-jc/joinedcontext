@@ -486,6 +486,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn letters_no_other_language_uses_name_hungarian_and_german() {
+        assert_eq!(language("Hol van a legközelebbi kút?", None, "sk"), "hu");
+        assert_eq!(language("Wo ist die Straße?", None, "sk"), "de");
+        assert_eq!(language("Hány könyvtár őrzi?", None, "en"), "hu");
+        assert_eq!(language("mennyi park", None, "en"), "hu");
+    }
+
+    #[test]
+    fn every_language_refuses_in_its_own_words_with_and_without_a_publisher() {
+        for lang in ["sk", "en", "cs", "hu", "de", "uk"] {
+            let named = refusal(lang, Some(" Mesto Zvolen "), &[]);
+            assert!(named.contains("Mesto Zvolen"), "{lang}: {named}");
+            let unnamed = refusal(lang, Some("  "), &[]);
+            assert!(!unnamed.contains("{publisher}"), "{lang}: {unnamed}");
+            assert_ne!(named, unnamed, "{lang}");
+            let offered = refusal(lang, None, &["Kde parkovať?".to_owned()]);
+            assert!(offered.contains("Kde parkovať?"), "{lang}: {offered}");
+            assert!(removed(lang).starts_with('('), "{lang}");
+        }
+        assert_eq!(removed("pl"), removed("sk"));
+    }
+
+    #[test]
+    fn a_title_is_read_in_the_asked_language_else_unkeyed_or_the_first() {
+        let by = Localised::ByLanguage(std::collections::BTreeMap::from([
+            ("sk".to_owned(), "Mesto".to_owned()),
+            ("en".to_owned(), "City".to_owned()),
+        ]));
+        assert_eq!(publisher(&by, "en", "sk"), Some("City"));
+        assert_eq!(publisher(&by, "de", "sk"), Some("Mesto"));
+        assert_eq!(publisher(&by, "de", "hu"), None);
+        let one = Localised::Text("Obec".to_owned());
+        assert_eq!(publisher(&one, "de", "sk"), Some("Obec"));
+    }
+
+    #[test]
     fn a_bare_sum_is_refused_in_any_wording() {
         for sum in [
             "Koľko je 4+4?",

@@ -1555,6 +1555,401 @@ async fn source_test_needs_the_harvest_right_and_a_runner() {
     assert!(matches!(r, Err(DataroomError::NotSupported(_))), "{r:?}");
 }
 
+/// A runner or validator that leaves a hook out answers 501 naming the hook, never an empty success.
+#[tokio::test]
+async fn a_runner_or_validator_without_the_hook_answers_not_supported() {
+    let w = world().await;
+    let src = json!({"source": {"name": "nkod", "kind": "dcat-ap",
+        "url": "https://nkod.example/feed.ttl", "publisherId": "city",
+        "allowedHosts": ["nkod.example"]}});
+    w.run(&w.admin(), "harvest_source.propose", src)
+        .await
+        .unwrap();
+    let mut ops = w.ops();
+    ops.harvester = Some(Arc::new(Harvester));
+    ops.validator = Some(Arc::new(Validator { conforms: true }));
+    let admin = w.admin();
+    let not_supported = |r: Result<Value>| match r {
+        Err(DataroomError::NotSupported(m)) => m,
+        other => panic!("{other:?}"),
+    };
+    let run = |op: &'static str, input: Value| execute_operation(&ops, &admin, op, input);
+    assert_eq!(
+        not_supported(run("harvest_source.test", json!({"source": "nkod"})).await),
+        "this harvest runner tests no source"
+    );
+    assert_eq!(
+        not_supported(
+            run(
+                "harvest_source.test",
+                json!({"source": "nkod", "preview": true})
+            )
+            .await
+        ),
+        "this harvest runner previews no source"
+    );
+    let profile = json!({"profile": {"id": "city-ext", "version": "1",
+        "uri": "https://example.org/p", "title": {"en": "City"}, "shapesTurtle": "",
+        "builtIn": false}});
+    assert_eq!(
+        not_supported(run("profile.propose", profile).await),
+        "this validator takes no uploaded profile"
+    );
+    assert_eq!(
+        not_supported(
+            run(
+                "profile.activate",
+                json!({"id": "city-ext", "version": "1"})
+            )
+            .await
+        ),
+        "this validator dry-runs no profile"
+    );
+    // without any validator the activation names that, and an unknown member is refused first
+    assert_eq!(
+        not_supported(
+            w.run(
+                &admin,
+                "profile.activate",
+                json!({"id": "x", "version": "1"})
+            )
+            .await
+        ),
+        "no validator holds the profiles here"
+    );
+    let r = w
+        .run(
+            &admin,
+            "profile.activate",
+            json!({"id": "x", "version": "1", "colour": 1}),
+        )
+        .await;
+    assert!(field(&r, "input"), "{r:?}");
+    // a validator without a profile rule takes any profile the catalogue adds
+    let mut cat = run("catalogue.get", json!({})).await.unwrap();
+    cat["activeProfiles"] = json!([{"profileId": "city-ext", "version": "1"}]);
+    let saved = run("catalogue.propose", json!({"catalogue": cat}))
+        .await
+        .unwrap();
+    assert_eq!(saved["activeProfiles"][0]["profileId"], "city-ext");
+    assert!(w.activity_ops().await.contains(&"catalogue.propose".into()));
+}
+
+#[tokio::test]
+async fn an_unknown_operation_name_is_not_found_and_a_read_only_connector_cannot_propose() {
+    let w = world().await;
+    match w.run(&w.admin(), "dataset.explode", json!({})).await {
+        Err(DataroomError::NotFound(m)) => assert_eq!(m, "unknown operation: dataset.explode"),
+        other => panic!("{other:?}"),
+    }
+    let mut connector = w.admin();
+    connector.subject.read_only = true;
+    let r = w
+        .run(
+            &connector,
+            "dataset.propose",
+            json!({"name": "novy", "title": "Nový", "notes": "Popis", "owner_org": "city"}),
+        )
+        .await;
+    assert!(
+        matches!(&r, Err(DataroomError::Forbidden(m)) if m == "connector is read-only"),
+        "{r:?}"
+    );
+    // the same call by the admin itself is a create
+    let made = w
+        .run(
+            &w.admin(),
+            "dataset.propose",
+            json!({"name": "novy", "title": "Nový", "notes": "Popis", "owner_org": "city"}),
+        )
+        .await
+        .unwrap();
+    // proposed again by name without an id, the stored record keeps its id
+    let again = w
+        .run(
+            &w.admin(),
+            "dataset.propose",
+            json!({"name": "novy", "title": "Novší", "notes": "Popis", "owner_org": "city"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(again["id"], made["id"]);
+    assert_eq!(again["title"], "Novší");
+}
+
+#[tokio::test]
+async fn a_resource_or_view_names_its_parent_or_its_own_id() {
+    let w = world().await;
+    for (op, input, why) in [
+        (
+            "resource.propose",
+            json!({"resource": {"name": "CSV"}}),
+            "name either the dataset of a new resource or the id of a stored one",
+        ),
+        (
+            "resource.propose",
+            json!({"dataset": "open", "id": "r-1", "resource": {"name": "CSV"}}),
+            "name either the dataset of a new resource or the id of a stored one",
+        ),
+        (
+            "resource_view.propose",
+            json!({"view": {"title": "Mapa", "view_type": "image_view"}}),
+            "name either the resource of a new view or the id of a stored one",
+        ),
+    ] {
+        match w.run(&w.admin(), op, input).await {
+            Err(DataroomError::Validation { fields, .. }) => {
+                assert_eq!(fields["id"], vec![why.to_string()], "{op}")
+            }
+            other => panic!("{op}: {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn allowed_reads_runs_and_publishers_like_their_calls() {
+    let w = world().await;
+    let ask = |op: &'static str, object: Option<&'static str>| {
+        let w = &w;
+        async move {
+            let mut input = json!({"operation": op});
+            if let Some(o) = object {
+                input["object"] = json!(o);
+            }
+            w.run(&w.admin(), "allowed", input).await.unwrap()
+        }
+    };
+    let gone = ask("harvest_run.get", Some("run-404")).await;
+    assert_eq!(
+        (gone["allowed"].clone(), gone["reason"].clone()),
+        (json!(false), json!("not found"))
+    );
+    assert_eq!(ask("harvest_run.logs", None).await["allowed"], true);
+    let p = ask("publisher.propose", Some("city")).await;
+    assert_eq!(p["allowed"], true, "{p}");
+    let p = ask("publisher.propose", Some("nobody")).await;
+    assert_eq!(p["reason"], "publisher not found", "{p}");
+    // every run of the catalogue lists without naming a source
+    let runs = w
+        .run(&w.admin(), "harvest_run.list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(runs["runs"], json!([]), "{runs}");
+}
+
+#[tokio::test]
+async fn declaring_a_missing_catalogue_answers_none() {
+    let w = world().await;
+    let declared = dataroom_core::CatalogueDeclaration::default();
+    let gone = CatalogueId::from_uuid(Uuid::now_v7());
+    assert!(w
+        .store
+        .declare_catalogue(w.org, gone, &declared)
+        .await
+        .unwrap()
+        .is_none());
+    // the stored one answers as it is when nothing is declared
+    let held = w
+        .store
+        .declare_catalogue(w.org, w.cat, &declared)
+        .await
+        .unwrap();
+    assert_eq!(held.map(|c| c.name), Some("city".to_string()));
+}
+
+/// The OData scope hides what the caller may not read: every dataset row outside the visible
+/// ids, and for an outsider without a list every internal or withdrawn one and every distribution.
+#[tokio::test]
+async fn odata_scopes_follow_dataset_visibility() {
+    use dataroom_core::scope_for_context;
+    let w = world().await;
+    let paths = |scope: &odata_table::Scope| -> Vec<(String, Vec<Value>)> {
+        scope
+            .restrictions
+            .iter()
+            .map(|r| (r.path.join("/"), r.any_of.clone()))
+            .collect()
+    };
+    let outsider = w.outsider();
+    let ds = paths(&scope_for_context(
+        &outsider,
+        w.authz.as_ref(),
+        "Datasets",
+        None,
+    ));
+    assert!(
+        ds.contains(&("visibility".into(), vec![json!("public")])),
+        "{ds:?}"
+    );
+    assert!(
+        ds.contains(&("state".into(), vec![json!("active")])),
+        "{ds:?}"
+    );
+    let dist = paths(&scope_for_context(
+        &outsider,
+        w.authz.as_ref(),
+        "Distributions",
+        None,
+    ));
+    assert!(
+        dist.contains(&("dataset_id".into(), Vec::new())),
+        "{dist:?}"
+    );
+    let listed = paths(&scope_for_context(
+        &w.member(),
+        w.authz.as_ref(),
+        "ShaclResults",
+        Some(vec!["d-1".into()]),
+    ));
+    assert!(
+        listed.contains(&("dataset_id".into(), vec![json!("d-1")])),
+        "{listed:?}"
+    );
+    let ids = paths(&scope_for_context(
+        &w.member(),
+        w.authz.as_ref(),
+        "Datasets",
+        Some(vec!["d-1".into()]),
+    ));
+    assert!(ids.contains(&("id".into(), vec![json!("d-1")])), "{ids:?}");
+    // a member without a list reads every dataset of the catalogue
+    let member = paths(&scope_for_context(
+        &w.member(),
+        w.authz.as_ref(),
+        "Datasets",
+        None,
+    ));
+    assert!(!member.iter().any(|(p, _)| p == "visibility"), "{member:?}");
+}
+
+/// Each OData row carries its record's own fields under the column names the service declares,
+/// and the members-only sets (and harvest state without a Read) answer an outsider empty.
+#[tokio::test]
+async fn odata_rows_carry_their_record_and_members_only_sets_stay_empty() {
+    use dataroom_core::odata_defs::{
+        activity_to_row, catalogue_to_row, dataroom_service, distribution_to_row,
+        harvest_source_to_row, publisher_to_row, set_readable, shacl_report_to_row,
+    };
+    use dataroom_core::scope_for_context;
+    let w = world().await;
+    let admin = w.admin();
+    let cat = w.store.get_catalogue(w.org, w.cat).await.unwrap().unwrap();
+    let row = catalogue_to_row(&cat);
+    assert_eq!(
+        (row["name"].as_str(), row["title"].as_str()),
+        (Some("city"), Some("Mesto"))
+    );
+    assert_eq!(row["host"], "data.city.example");
+    let p = w
+        .store
+        .get_publisher(&admin, "dept")
+        .await
+        .unwrap()
+        .unwrap();
+    let row = publisher_to_row(&p, Some("sk"));
+    assert_eq!(
+        (row["name"].as_str(), row["title"].as_str()),
+        (Some("dept"), Some("Vydavateľ dept"))
+    );
+    assert_eq!(
+        (row["uri"].as_str(), row["state"].as_str()),
+        (Some("https://example.org/dept"), Some("active"))
+    );
+    let ds = w
+        .store
+        .get_dataset(&admin, "dept-air")
+        .await
+        .unwrap()
+        .unwrap();
+    let row = distribution_to_row(w.org, w.cat, &ds.distributions[0], Some("sk"));
+    assert_eq!(
+        (row["name"].as_str(), row["format"].as_str()),
+        (Some("JSON"), Some("JSON"))
+    );
+    assert_eq!(row["dataset_id"], json!(ds.id));
+    assert_eq!(row["catalogue_id"], json!(w.cat.to_string()));
+    let source: dataroom_core::HarvestSource = serde_json::from_value(json!({
+        "orgId": w.org, "catalogueId": w.cat, "id": "hs-1", "name": "feed", "kind": "ckan-action",
+        "url": "https://h.example/api/3", "publisherId": "city", "allowedHosts": [],
+        "enabled": false, "modified": "2026-11-01T10:00:00Z"
+    }))
+    .unwrap();
+    let row = harvest_source_to_row(&source);
+    assert_eq!(
+        (row["kind"].as_str(), row["enabled"].as_bool()),
+        (Some("ckan-action"), Some(false))
+    );
+    assert_eq!(row["publisher_id"], "city");
+    let row = activity_to_row(&audit("dataset.approve"));
+    assert_eq!(
+        (row["operation"].as_str(), row["actor"].as_str()),
+        (Some("dataset.approve"), Some("test"))
+    );
+    let report: ShaclValidationReport = serde_json::from_value(json!({
+        "orgId": w.org, "catalogueId": w.cat, "id": "r-1", "datasetId": "d-1",
+        "profileId": "dcat-ap", "profileVersion": "3.0.1", "conforms": false,
+        "violationCount": 2, "warningCount": 1, "findings": [],
+        "checkedAt": "2026-11-01T10:00:00Z"
+    }))
+    .unwrap();
+    let row = shacl_report_to_row(&report);
+    assert_eq!(
+        (
+            row["violation_count"].as_i64(),
+            row["warning_count"].as_i64()
+        ),
+        (Some(2), Some(1))
+    );
+    assert_eq!(
+        (row["conforms"].as_bool(), row["profile_version"].as_str()),
+        (Some(false), Some("3.0.1"))
+    );
+    // every set reads without a permission and writes only with its own
+    let service = dataroom_service();
+    let catalogues = service.sets.iter().find(|d| d.set == "Catalogues").unwrap();
+    let perm = |op: odata_table::Operation| {
+        catalogues
+            .rules
+            .iter()
+            .find(|r| r.operation == op)
+            .map(|r| r.permission.clone())
+    };
+    assert_eq!(perm(odata_table::Operation::Read), Some(None));
+    assert_eq!(
+        perm(odata_table::Operation::Create),
+        Some(Some("propose:Catalogue".into()))
+    );
+    let outsider = w.outsider();
+    for set in [
+        "HarvestSources",
+        "HarvestRuns",
+        "ActivityRows",
+        "ShaclResults",
+    ] {
+        assert!(
+            !set_readable(&outsider, set) && set_readable(&w.member(), set),
+            "{set}"
+        );
+    }
+    assert!(set_readable(&outsider, "Datasets"));
+    let emptied = |ctx: &RequestCtx, set: &str| {
+        scope_for_context(ctx, w.authz.as_ref(), set, None)
+            .restrictions
+            .iter()
+            .any(|r| r.path == ["id"] && r.any_of.is_empty())
+    };
+    assert!(emptied(&outsider, "ActivityRows"));
+    assert!(!emptied(&admin, "ActivityRows"));
+    assert!(
+        !emptied(&admin, "HarvestSources"),
+        "an admin reads harvest state"
+    );
+    assert!(
+        emptied(&w.member(), "HarvestSources"),
+        "a member without Read does not"
+    );
+}
+
 #[test]
 fn a_stored_run_error_reads_as_one_word() {
     use dataroom_core::ops::run_error_word;
@@ -1898,6 +2293,20 @@ async fn writes_into_a_catalogue_that_does_not_exist_are_not_found() {
             "branding.propose",
             json!({"branding": {"primary": "#112233"}}),
         ),
+        (
+            "profile.propose",
+            json!({"profile": {"id": "city-ext", "version": "1",
+                "uri": "https://example.org/p", "title": {"en": "City"}, "shapesTurtle": "",
+                "builtIn": false}}),
+        ),
+        (
+            "catalogue.propose",
+            json!({"catalogue": {
+                "orgId": w.org, "id": w.cat, "name": "city", "host": "data.city.example",
+                "title": {"sk": "Mesto"}, "description": {}, "defaultLanguage": "sk",
+                "languages": ["sk"], "mainProfile": "dcat-ap-3.0.1", "activeProfiles": [],
+                "modified": "2026-11-01T10:00:00Z"}}),
+        ),
     ] {
         match empty.run(&admin, op, input).await {
             Err(DataroomError::NotFound(m)) => assert_eq!(m, "catalogue not found", "{op}"),
@@ -1905,6 +2314,103 @@ async fn writes_into_a_catalogue_that_does_not_exist_are_not_found() {
         }
     }
     assert!(empty.activity_ops().await.is_empty());
+    // a dataset read where the catalogue is gone answers in English
+    empty
+        .store
+        .upsert_dataset(&admin, dataset("open", "city", "public", json!({})))
+        .await
+        .unwrap();
+    let got = empty
+        .run(&admin, "dataset.get", json!({"id": "open"}))
+        .await;
+    assert_eq!(got.unwrap()["name"], "open");
+}
+
+#[test]
+fn a_preview_card_falls_back_to_the_name_and_any_language_keywords() {
+    use dataroom_core::ops::PreviewRecord;
+    let ds = dataset(
+        "bez-nazvu",
+        "city",
+        "public",
+        json!({"title": {"sk": ""}, "keywords": {"de": ["luft", "a", "b", "c", "d", "e"]}}),
+    );
+    let card = PreviewRecord::of(&ds, "en");
+    assert_eq!(card.title, "bez-nazvu");
+    assert_eq!(card.keywords, ["luft", "a", "b", "c", "d"], "at most five");
+}
+
+/// A runner that tests and previews: the call answers its word and its records.
+struct Previewer;
+
+impl HarvestRunner for Previewer {
+    fn run_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        store: &'a dyn Store,
+        source: &'a HarvestSource,
+    ) -> BoxFuture<'a, Result<HarvestRun>> {
+        Harvester.run_source(ctx, store, source)
+    }
+
+    fn test_source<'a>(
+        &'a self,
+        _ctx: &'a RequestCtx,
+        _store: &'a dyn Store,
+        _source: &'a HarvestSource,
+    ) -> BoxFuture<'a, Result<dataroom_core::ops::SourceTest>> {
+        Box::pin(std::future::ready(Ok(
+            dataroom_core::ops::SourceTest::RefusedHost,
+        )))
+    }
+
+    fn preview_source<'a>(
+        &'a self,
+        _ctx: &'a RequestCtx,
+        _store: &'a dyn Store,
+        _source: &'a HarvestSource,
+    ) -> BoxFuture<'a, Result<dataroom_core::ops::SourcePreview>> {
+        Box::pin(std::future::ready(Ok(dataroom_core::ops::SourcePreview {
+            outcome: dataroom_core::ops::SourceTest::Ok,
+            records: Vec::new(),
+            partial: true,
+        })))
+    }
+}
+
+#[tokio::test]
+async fn a_source_test_answers_the_runners_word_and_preview() {
+    let w = world().await;
+    let src = json!({"source": {"name": "nkod", "kind": "dcat-ap",
+        "url": "https://nkod.example/feed.ttl", "publisherId": "city",
+        "allowedHosts": ["nkod.example"]}});
+    w.run(&w.admin(), "harvest_source.propose", src)
+        .await
+        .unwrap();
+    let mut ops = w.ops();
+    ops.harvester = Some(Arc::new(Previewer));
+    let admin = w.admin();
+    let tested = execute_operation(
+        &ops,
+        &admin,
+        "harvest_source.test",
+        json!({"source": "nkod"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(tested, json!({"outcome": "refused host"}));
+    let preview = execute_operation(
+        &ops,
+        &admin,
+        "harvest_source.test",
+        json!({"source": "nkod", "preview": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        (preview["outcome"].clone(), preview["partial"].clone()),
+        (json!("ok"), json!(true))
+    );
 }
 
 /// An activity row with a fresh id for a store write the test sets up; the store files it under

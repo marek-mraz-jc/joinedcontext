@@ -1,0 +1,125 @@
+id: https://city.example/models/rich
+name: rich
+title: Rich
+version: 1.2.0
+description: Every kind of slot
+license: CC-BY-4.0
+default_prefix: city
+default_range: string
+prefixes:
+  city: https://city.example/models/rich/
+  linkml: https://w3id.org/linkml/
+  ext: https://ext.example/vocab#
+  qudt: https://qudt.org/vocab/unit/
+  skos: http://www.w3.org/2004/02/skos/core#
+emit_prefixes: [ext]
+imports:
+  - linkml:types
+  - ngsi-ld-core
+types:
+  Celsius:
+    typeof: Temperature
+    description: degrees
+  Temperature:
+    typeof: float
+classes:
+  Place:
+    is_a: Entity
+    abstract: true
+  Station:
+    is_a: Place
+    description: A measuring station
+    exact_mappings: [ext:Site]
+    id_prefixes: [ext]
+    slots: [label, spot, level, heat, state, tags, open, opened, started, at, page, home, my-slot, note, words, extra, payload, zones]
+    slot_usage:
+      level:
+        required: true
+        annotations:
+          shown: false
+    annotations:
+      open_world: true
+      rank: 3
+  Zone:
+    is_a: Entity
+    slots: [station]
+  Address:
+    attributes:
+      street:
+        alias: streetName
+slots:
+  label:
+    required: true
+    rank: 1
+    slot_uri: ext:label
+    annotations:
+      ngsi_ld_kind: LanguageProperty
+  spot:
+    annotations:
+      ngsi_ld_kind: GeoProperty
+  level:
+    range: integer
+    unit:
+      ucum_code: m
+      symbol: m
+      exact_mappings: [qudt:M]
+    annotations:
+      threshold: 4.5
+      strict: true
+  heat:
+    range: Celsius
+  state:
+    range: State
+  tags:
+    multivalued: true
+  open:
+    range: boolean
+  opened:
+    range: date
+  started:
+    range: datetime
+  at:
+    range: time
+  page:
+    range: uri
+  home:
+    range: Address
+    inlined: true
+  my-slot:
+    range: double
+  note:
+    annotations:
+      ngsi_ld_kind: JsonProperty
+  words:
+    annotations:
+      ngsi_ld_kind: VocabProperty
+  extra:
+    annotations:
+      ngsi_ld_kind: ListProperty
+  payload:
+    range: decimal
+    annotations:
+      jsonld_keyword: "@json"
+  zones:
+    range: Zone
+    multivalued: true
+    inverse: station
+    annotations:
+      ngsi_ld_kind: Relationship
+  station:
+    range: Station
+    inverse: zones
+    annotations:
+      ngsi_ld_kind: Relationship
+enums:
+  State:
+    description: The state
+    permissible_values:
+      on:
+        description: switched on
+        meaning: ext:On
+        annotations:
+          colour: green
+      off: {}
+  Empty:
+    permissible_values: {}

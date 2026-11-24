@@ -46,8 +46,9 @@ jobs:
           - { ws: root, dir: ".", args: "nextest --profile ci --workspace" }
           - { ws: antares, dir: crates/antares, args: "nextest --profile ci --workspace" }
           - { ws: portal, dir: crates/portal, args: "--workspace -j 2" }
-          # then: a second pass into the same profile data, the test binaries ci.yml's platform-test runs
-          - { ws: platform, dir: vendor/joinedcontext-platform, args: "--workspace --lib --bins", then: "-p jc-core --test it" }
+          # context-gateway's `it` binary as ci.yml platform-test runs it: most of the gateway's
+          # handlers are tested there, through the router (T-7767)
+          - { ws: platform, dir: vendor/joinedcontext-platform, args: "--workspace --lib --bins", extra: "-p context-gateway --test it" }
     defaults: { run: { working-directory: "${{ matrix.dir }}" } }
     services:
       postgres:
@@ -108,13 +109,18 @@ jobs:
         run: |
           start=$(date +%s); out=coverage
           # shellcheck disable=SC2086
-          cargo llvm-cov ${{ matrix.args }} --locked --no-report --no-fail-fast || out=tests-failed
-          if [ -n "${{ matrix.then }}" ]; then
-            # shellcheck disable=SC2086
-            cargo llvm-cov ${{ matrix.then }} --locked --no-report --no-fail-fast || out=tests-failed
-          fi
-          [ "$out" = coverage ] ||
+          cargo llvm-cov ${{ matrix.args }} --locked --no-report --no-fail-fast || {
+            out=tests-failed
             echo "::warning::tests failed in ${{ matrix.ws }}: its crates are not judged by the ratchet tonight"
+          }
+          # a second test run of the workspace adds to the same profile data before the report
+          if [ -n "${{ matrix.extra }}" ]; then
+            # shellcheck disable=SC2086
+            DCAT_RECORDS_DIR="$RUNNER_TEMP/dcat-records" cargo llvm-cov ${{ matrix.extra }} --locked --no-report --no-fail-fast || {
+              out=tests-failed
+              echo "::warning::tests failed in ${{ matrix.ws }} (${{ matrix.extra }}): its crates are not judged by the ratchet tonight"
+            }
+          fi
           # the full export: the ratchet merges each function's instances from its records
           cargo llvm-cov report --json --output-path "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"
           gzip "$RUNNER_TEMP/$out-${{ matrix.ws }}.json"

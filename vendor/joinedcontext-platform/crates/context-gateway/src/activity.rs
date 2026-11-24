@@ -480,8 +480,111 @@ mod tests {
         assert_eq!(tally.len(), MAX_KEYS);
     }
 
+    /// The tests that take rows out of the process-wide tally, one at a time.
+    static TALLY_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// A collector answering `statuses` in turn (the last one repeats), keeping each body.
+    async fn collector(statuses: Vec<u16>) -> (String, std::sync::Arc<Mutex<Vec<Value>>>) {
+        let posted: std::sync::Arc<Mutex<Vec<Value>>> = std::sync::Arc::default();
+        let kept = posted.clone();
+        let app = axum::Router::new().route(
+            "/v1/logs",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let (kept, statuses) = (kept.clone(), statuses.clone());
+                async move {
+                    let mut kept = kept.lock().unwrap_or_else(|e| e.into_inner());
+                    let status = statuses[kept.len().min(statuses.len() - 1)];
+                    kept.push(body);
+                    axum::http::StatusCode::from_u16(status)
+                        .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let address = listener.local_addr().expect("the bound address");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{address}/v1/logs"), posted)
+    }
+
+    fn held_call(endpoint: &str) {
+        let mut tally = tally().lock().unwrap_or_else(|e| e.into_inner());
+        let mut row = call("user:ana", "query_entities");
+        row.endpoint = endpoint.to_owned();
+        add(&mut tally, row, SystemTime::now());
+    }
+
+    fn endpoints(posted: &[Value]) -> Vec<String> {
+        posted
+            .iter()
+            .flat_map(|body| {
+                body["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .map(|record| attributes(&record)["endpoint"]["stringValue"].to_string())
+            .collect()
+    }
+
+    /// T-7767: a flush posts the due rows as one OTLP body and takes them out of the tally,
+    /// whether the collector takes them, refuses them or cannot be reached; nothing due posts
+    /// nothing.
+    #[tokio::test]
+    async fn a_flush_posts_the_due_rows_once_and_drops_what_the_collector_refuses() {
+        let _one = TALLY_TESTS.lock().await;
+        let _ = take(true);
+        let (url, posted) = collector(vec![200, 500]).await;
+        let client = client().expect("an HTTP client");
+
+        flush(&client, &url, true).await;
+        assert!(
+            posted.lock().map(|p| p.is_empty()).unwrap_or(false),
+            "nothing due"
+        );
+
+        held_call("taken");
+        flush(&client, &url, true).await;
+        held_call("refused");
+        flush(&client, &url, true).await;
+        held_call("unreachable");
+        // A port nothing listens on: the post fails and the row is still dropped.
+        flush(&client, "http://127.0.0.1:9/v1/logs", true).await;
+        assert!(take(true).is_empty(), "every flushed row left the tally");
+
+        let posted = posted.lock().map(|p| p.clone()).unwrap_or_default();
+        assert_eq!(endpoints(&posted), ["\"taken\"", "\"refused\""]);
+        assert_eq!(
+            posted[0]["resourceLogs"][0]["resource"]["attributes"][0]["value"]["stringValue"],
+            "context-gateway"
+        );
+    }
+
+    /// T-7767: the follower posts every interval, and a signed-in caller's row goes out on the
+    /// first one.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn the_follower_posts_the_signed_in_rows_every_interval() {
+        let _one = TALLY_TESTS.lock().await;
+        let _ = take(true);
+        let (url, posted) = collector(vec![200]).await;
+        held_call("followed");
+        tokio::spawn(follow(url));
+        for _ in 0..120 {
+            if !posted.lock().map(|p| p.is_empty()).unwrap_or(true) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        let posted = posted.lock().map(|p| p.clone()).unwrap_or_default();
+        assert_eq!(endpoints(&posted), ["\"followed\""]);
+    }
+
     #[test]
     fn a_call_on_a_named_space_is_recorded_and_one_on_an_unnamed_space_is_not() {
+        let _one = TALLY_TESTS.blocking_lock();
         name_spaces(&BTreeMap::from([(
             "helsinki-air".to_owned(),
             "air".to_owned(),
