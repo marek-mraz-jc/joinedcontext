@@ -960,6 +960,25 @@ mod tests {
         assert_eq!((o.get_host(), o.get_port()), ("127.0.0.1", 3306));
         assert!(parse_mysql_dsn("u@unix(/tmp/s)/db").is_err());
         assert!(parse_mysql_dsn("nodb").is_err());
+        // an empty database name selects none, as go-sql-driver does
+        let (o, _) = parse_mysql_dsn("u:p@tcp(db.example.org:3307)/").unwrap();
+        assert_eq!((o.get_host(), o.get_port()), ("db.example.org", 3307));
+        assert_eq!(o.get_database(), None);
+    }
+
+    #[test]
+    fn postgres_urls_without_a_host_or_a_database_keep_the_defaults() {
+        let o = parse_postgres_dsn("postgres:///city?sslmode=disable")
+            .unwrap()
+            .opts;
+        assert_eq!(o.get_database(), Some("city"));
+        assert_eq!(o.get_port(), 5432);
+        let o = parse_postgres_dsn("postgresql://u@db.example.org:5433")
+            .unwrap()
+            .opts;
+        assert_eq!((o.get_host(), o.get_port()), ("db.example.org", 5433));
+        assert_eq!(o.get_username(), "u");
+        assert_eq!(o.get_database(), None);
     }
 
     #[test]

@@ -139,9 +139,10 @@ impl<const N: usize> MessageBatch for [SimplePartView; N] {
         if let Some(v) = crate::go_json::decode_with_numbers(&p.raw) {
             return Ok(v);
         }
-        let jv: serde_json::Value =
-            serde_json::from_slice(&p.raw).map_err(|e| format!("parse as json: {e}"))?;
-        Ok(Value::from_json_value(jv))
+        // The Go decoder reads every document serde_json reads: this path only words the error.
+        serde_json::from_slice(&p.raw)
+            .map(Value::from_json_value)
+            .map_err(|e| format!("parse as json: {e}"))
     }
     fn part_meta_get(&self, index: usize, key: &str) -> Option<Value> {
         self.get(index).and_then(|p| p.meta.get(key).cloned())
@@ -435,7 +436,7 @@ impl<'a, 'm> EvalContext<'a, 'm> {
             };
             for stmt in &map_def.statements {
                 if let Err(e) = exec_statement(stmt, &mut sub_ctx) {
-                    return Err(e.to_string());
+                    return Err(BloblangError::from(e).to_string());
                 }
             }
             Ok(map_root)
@@ -1028,23 +1029,36 @@ fn eval_numeric_degradation(
     }
 }
 
-fn exec_statement(stmt: &Statement, ctx: &mut EvalContext<'_, '_>) -> Result<(), BloblangError> {
+/// A failed statement: the line Bento names (the outermost statement's) and the message.
+struct Failed {
+    line: usize,
+    message: String,
+}
+
+impl From<Failed> for BloblangError {
+    fn from(f: Failed) -> Self {
+        BloblangError::Assignment {
+            line: f.line,
+            message: f.message,
+        }
+    }
+}
+
+fn exec_statement(stmt: &Statement, ctx: &mut EvalContext<'_, '_>) -> Result<(), Failed> {
     stacker::maybe_grow(128 * 1024, 2 * 1024 * 1024, || match stmt {
         Statement::Single {
             line,
             assignment,
             query,
         } => {
-            let val = ctx
-                .eval_expr(query)
-                .map_err(|e| BloblangError::Assignment {
-                    line: *line,
-                    message: e,
-                })?;
+            let val = ctx.eval_expr(query).map_err(|e| Failed {
+                line: *line,
+                message: e,
+            })?;
             if matches!(val, Value::Nothing) {
                 return Ok(());
             }
-            apply_assignment(assignment, val, ctx).map_err(|e| BloblangError::Assignment {
+            apply_assignment(assignment, val, ctx).map_err(|e| Failed {
                 line: *line,
                 message: e,
             })
@@ -1052,7 +1066,7 @@ fn exec_statement(stmt: &Statement, ctx: &mut EvalContext<'_, '_>) -> Result<(),
         Statement::If { line, branches } => {
             for (i, (cond_opt, stmts)) in branches.iter().enumerate() {
                 if let Some(cond) = cond_opt {
-                    let c_val = ctx.eval_expr(cond).map_err(|e| BloblangError::Assignment {
+                    let c_val = ctx.eval_expr(cond).map_err(|e| Failed {
                         line: *line,
                         message: format!("failed to check if condition {}: {e}", i + 1),
                     })?;
@@ -1060,7 +1074,7 @@ fn exec_statement(stmt: &Statement, ctx: &mut EvalContext<'_, '_>) -> Result<(),
                         Value::Bool(b) => b,
                         Value::Null => false,
                         other => {
-                            return Err(BloblangError::Assignment {
+                            return Err(Failed {
                                 line: *line,
                                 message: format!(
                                     "{} resolved to a non-boolean value {} ({})",
@@ -1078,12 +1092,9 @@ fn exec_statement(stmt: &Statement, ctx: &mut EvalContext<'_, '_>) -> Result<(),
                 // Bento wraps a failure once, at the top-level statement (`mapping.Executor`):
                 // one inside an `if` block carries the line of the outermost statement.
                 for s in stmts {
-                    exec_statement(s, ctx).map_err(|e| match e {
-                        BloblangError::Assignment { message, .. } => BloblangError::Assignment {
-                            line: *line,
-                            message,
-                        },
-                        other => other,
+                    exec_statement(s, ctx).map_err(|e| Failed {
+                        line: *line,
+                        message: e.message,
                     })?;
                 }
                 return Ok(());
@@ -1339,6 +1350,79 @@ mod tests {
         );
         let bad = [part("{nope")].part_structured(0).err().unwrap_or_default();
         assert!(bad.starts_with("parse as json: "), "{bad}");
+    }
+
+    #[test]
+    fn a_hand_built_tree_without_its_context_is_refused_not_a_panic() {
+        let one = |query: Expr| {
+            Executor::new(
+                "t".into(),
+                Arc::new(HashMap::new()),
+                vec![Statement::Single {
+                    line: 1,
+                    assignment: Assignment::Json(smallvec::SmallVec::new()),
+                    query,
+                }],
+                Environment::new(),
+            )
+            .exec_on_value(Value::Null)
+            .unwrap_err()
+            .to_string()
+        };
+        let named = Expr::FieldRef {
+            named_context: Some("x".into()),
+            from_root: false,
+            path: smallvec::SmallVec::new(),
+        };
+        assert_eq!(
+            one(named),
+            "failed assignment (line 1): named context x was not found"
+        );
+        let lambda = Expr::Lambda {
+            name: "y".into(),
+            body: Box::new(Expr::Literal(Value::Int(1))),
+        };
+        assert_eq!(
+            one(lambda),
+            "failed assignment (line 1): failed to capture context y: context was undefined"
+        );
+    }
+
+    #[test]
+    fn an_if_block_rewraps_an_inner_failure_and_a_map_cannot_assign_metadata() {
+        assert_eq!(
+            err("root = 1\nif true {\n  root.a = throw(\"no\")\n}", "{}"),
+            "failed assignment (line 2): no"
+        );
+        // The parser refuses `meta` inside a map; a hand-built map is refused when it runs.
+        let map = MapDef {
+            name: "m".into(),
+            statements: vec![Statement::Single {
+                line: 1,
+                assignment: Assignment::Meta(Some("a".into())),
+                query: Expr::Literal(Value::Int(1)),
+            }],
+        };
+        let call = Expr::MethodCall {
+            target: Box::new(Expr::Literal(Value::Null)),
+            name: "apply".into(),
+            args: crate::ast::ArgList::Positional(vec![Expr::Literal(Value::String("m".into()))]),
+        };
+        let exec = Executor::new(
+            "t".into(),
+            Arc::new(HashMap::from([("m".to_string(), Arc::new(map))])),
+            vec![Statement::Single {
+                line: 1,
+                assignment: Assignment::Json(smallvec::SmallVec::new()),
+                query: call,
+            }],
+            Environment::new(),
+        );
+        let meta = exec.exec_on_value(Value::Null).unwrap_err().to_string();
+        assert!(
+            meta.contains("unable to assign metadata in the current context"),
+            "{meta}"
+        );
     }
 
     #[test]

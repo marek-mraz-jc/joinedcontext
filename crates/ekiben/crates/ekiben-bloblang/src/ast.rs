@@ -181,13 +181,6 @@ pub enum ArgList {
 }
 
 impl ArgList {
-    pub fn is_empty(&self) -> bool {
-        match self {
-            ArgList::Positional(v) => v.is_empty(),
-            ArgList::Named(v) => v.is_empty(),
-        }
-    }
-
     pub fn exprs(&self) -> Vec<&Expr> {
         match self {
             ArgList::Positional(v) => v.iter().collect(),
@@ -600,5 +593,262 @@ impl Statement {
                 out
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Environment;
+
+    /// The targets a mapping reads, as `type:path` in the order the walk finds them.
+    fn targets(mapping: &str) -> Vec<String> {
+        let exec = Environment::new()
+            .compile_mapping(mapping)
+            .expect("the mapping compiles");
+        exec.query_targets()
+            .into_iter()
+            .map(|t| {
+                let ty = match t.target_type {
+                    TargetType::Metadata => "meta",
+                    TargetType::Value => "value",
+                    TargetType::Root => "root",
+                    TargetType::Variable => "var",
+                };
+                format!("{ty}:{}", t.path.join("."))
+            })
+            .collect()
+    }
+
+    fn lit(s: &str) -> Expr {
+        Expr::Literal(Value::String(s.to_string()))
+    }
+
+    #[test]
+    fn binary_operators_name_their_bento_operation() {
+        assert_eq!(BinaryOp::And.name(), "boolean and");
+        assert_eq!(BinaryOp::Or.name(), "boolean or");
+        assert_eq!(BinaryOp::Pipe.name(), "coalesce");
+        assert_eq!(BinaryOp::Lte.name(), "compare");
+        assert_eq!(BinaryOp::Mod.name(), "modulo");
+    }
+
+    #[test]
+    fn every_expression_has_the_annotation_bento_prints() {
+        let field = |nc: Option<&str>, root: bool, path: &[&str]| Expr::FieldRef {
+            named_context: nc.map(str::to_string),
+            from_root: root,
+            path: path.iter().map(|s| s.to_string()).collect(),
+        };
+        let json = |args: ArgList| Expr::FunctionCall {
+            name: "json".into(),
+            args,
+            state_id: 0,
+        };
+        let cases: Vec<(Expr, &str)> = vec![
+            (lit("x"), "string literal"),
+            (Expr::ArrayLiteral(vec![]), "array literal"),
+            (Expr::ObjectLiteral(vec![]), "object literal"),
+            (field(None, true, &[]), "field `root`"),
+            (field(None, true, &["a.b"]), "field `root.a~1b`"),
+            (field(Some("x"), false, &["y"]), "field `x.y`"),
+            (field(None, false, &[]), "field `this`"),
+            (Expr::VarRef("v".into()), "variable v"),
+            (Expr::MetaRef(Some("k".into())), "meta field k"),
+            (Expr::MetaRef(None), "meta object"),
+            (
+                json(ArgList::Positional(vec![lit("a.b")])),
+                "json path `a.b`",
+            ),
+            (
+                json(ArgList::Positional(vec![Expr::VarRef("p".into())])),
+                "json path ``",
+            ),
+            (json(ArgList::Positional(vec![])), "json path ``"),
+            (
+                json(ArgList::Named(vec![("path".into(), lit("c"))])),
+                "json path `c`",
+            ),
+            (
+                json(ArgList::Named(vec![("path".into(), Expr::MetaRef(None))])),
+                "json path ``",
+            ),
+            (
+                json(ArgList::Named(vec![("other".into(), lit("c"))])),
+                "json path ``",
+            ),
+            (
+                Expr::FunctionCall {
+                    name: "now".into(),
+                    args: ArgList::Positional(vec![]),
+                    state_id: 0,
+                },
+                "function now",
+            ),
+            (
+                Expr::MethodCall {
+                    target: Box::new(lit("a")),
+                    name: "trim".into(),
+                    args: ArgList::Positional(vec![]),
+                },
+                "method trim",
+            ),
+            (
+                Expr::MapExpr {
+                    target: Box::new(lit("a")),
+                    map_fn: Box::new(Expr::VarRef("m".into())),
+                },
+                "variable m",
+            ),
+            (
+                Expr::IndexExpr {
+                    target: Box::new(lit("a")),
+                    index: Box::new(lit("0")),
+                },
+                "index",
+            ),
+            (
+                Expr::SliceExpr {
+                    target: Box::new(lit("a")),
+                    start: None,
+                    end: None,
+                    step: None,
+                },
+                "slice",
+            ),
+            (Expr::Not(Box::new(Expr::MetaRef(None))), "not meta object"),
+            (
+                Expr::Binary {
+                    op: BinaryOp::Add,
+                    lhs: Box::new(lit("a")),
+                    rhs: Box::new(Expr::VarRef("r".into())),
+                },
+                "variable r",
+            ),
+            (
+                Expr::If {
+                    cond: Box::new(lit("c")),
+                    then_branch: Box::new(lit("t")),
+                    else_ifs: vec![],
+                    else_branch: None,
+                },
+                "if expression",
+            ),
+            (
+                Expr::Match {
+                    context_expr: None,
+                    cases: vec![],
+                },
+                "match expression",
+            ),
+            (
+                Expr::Lambda {
+                    name: "x".into(),
+                    body: Box::new(Expr::MetaRef(None)),
+                },
+                "meta object",
+            ),
+        ];
+        for (e, want) in cases {
+            assert_eq!(e.annotation(), want, "{e:?}");
+        }
+    }
+
+    #[test]
+    fn query_targets_walk_literals_variables_metadata_and_json() {
+        assert_eq!(
+            targets(r#"root = {this.k: this.v}"#),
+            ["value:k", "value:v"]
+        );
+        assert_eq!(targets("root = this"), ["value:"]);
+        assert_eq!(targets("root.a = 1\nroot.b = root.a"), ["root:a"]);
+        assert_eq!(targets("let n = 1\nroot = $n"), ["var:n"]);
+        assert_eq!(targets("root = @k"), ["meta:k"]);
+        assert_eq!(targets("root = @"), ["meta:"]);
+        assert_eq!(targets(r#"root = json("a.b")"#), ["value:a.b"]);
+        assert_eq!(targets(r#"root = json(path: "c")"#), ["value:c"]);
+        assert_eq!(targets("root = json(this.p)"), ["value:p", "value:"]);
+        assert_eq!(targets("root = json()"), ["value:"]);
+        assert_eq!(targets(r#"root = metadata("k")"#), ["meta:k"]);
+        assert_eq!(targets(r#"root = metadata(key: "k")"#), ["meta:k"]);
+        assert_eq!(targets("root = metadata()"), ["meta:"]);
+        assert_eq!(targets("root = metadata(this.k)"), ["value:k", "meta:"]);
+        assert_eq!(targets("root = json(path: this.p)"), ["value:p", "value:"]);
+        assert_eq!(
+            targets("root = metadata(key: this.k)"),
+            ["value:k", "meta:"]
+        );
+        assert_eq!(targets("root = this.a[0]"), ["value:a"]);
+    }
+
+    #[test]
+    fn query_targets_follow_methods_maps_indexes_and_branches() {
+        assert_eq!(targets(r#"root = this.get(this.k)"#), ["value:", "value:k"]);
+        assert_eq!(
+            targets(r#"root = this.a.get("b.c")"#),
+            ["value:a", "value:a.b.c"]
+        );
+        assert_eq!(
+            targets("map m { root = this.x.apply(\"m\") }\nroot = this.y.apply(\"m\")"),
+            ["value:y", "value:y.x"]
+        );
+        assert_eq!(targets("root = this.a.(this.b)"), ["value:a", "value:a.b"]);
+        assert_eq!(targets("root = this.apply(this.m)"), ["value:", "value:m"]);
+        // An unknown map compiles (the run refuses it) and adds no targets of its own.
+        assert_eq!(targets("root = this.apply(\"nope\")"), ["value:"]);
+        assert_eq!(
+            targets("map m { root = this.x.apply(\"m\") }\nroot = this.apply(\"m\")"),
+            ["value:", "value:x"]
+        );
+        assert_eq!(
+            targets("root = this.a.(x -> x.b)"),
+            ["value:a", "value:a.b"]
+        );
+        assert_eq!(
+            targets("root = this.l.map_each(_ -> this.z)"),
+            ["value:l", "value:z"]
+        );
+        assert_eq!(
+            targets("root = this.s.index(this.i)"),
+            ["value:s", "value:s.i"]
+        );
+        assert_eq!(targets("root = !this.b"), ["value:b"]);
+        assert_eq!(
+            targets("root = if this.c { this.t } else if this.d { this.e } else { this.f }"),
+            ["value:c", "value:t", "value:d", "value:e", "value:f"]
+        );
+        assert_eq!(
+            targets("root = if this.c { this.t }"),
+            ["value:c", "value:t"]
+        );
+        assert_eq!(
+            targets("root = match this.m { this.x > 1 => this.y, _ => 0 }"),
+            ["value:m", "value:m.x", "value:m.y"]
+        );
+    }
+
+    #[test]
+    fn a_popped_context_returns_to_the_one_before_or_stays_when_there_is_none() {
+        let p = |s: &str| vec![TargetPath::new(TargetType::Value, vec![s.to_string()])];
+        let base = TargetsContext::default().with_values(p("a"));
+        let pushed = base
+            .with_values_as_context()
+            .with_values(p("b"))
+            .with_values_as_context();
+        assert_eq!(pushed.main_context, p("b"));
+        let popped = pushed.pop_context();
+        assert_eq!(popped.main_context, p("a"));
+        assert_eq!(popped.pop_context().main_context, Vec::new());
+        assert_eq!(
+            TargetsContext::default().pop_context().main_context,
+            Vec::new()
+        );
+        let named = TargetsContext::default()
+            .with_values(p("c"))
+            .with_values_as_context();
+        let bound = named.with_context_as_named("n");
+        assert_eq!(bound.named_contexts.get("n"), Some(&p("c")));
+        let unbound = TargetsContext::default().with_context_as_named("m");
+        assert_eq!(unbound.named_contexts.get("m"), Some(&Vec::new()));
     }
 }

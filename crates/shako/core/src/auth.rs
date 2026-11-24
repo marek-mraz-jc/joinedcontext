@@ -854,10 +854,8 @@ impl TokenVerifier {
     pub fn extract_raw_token(auth_header: &str) -> Option<String> {
         let trimmed = auth_header.trim();
         let (scheme, rest) = trimmed.split_once(' ')?;
+        // `trimmed` ends in a non-space, so `rest` is never empty.
         let rest = rest.trim();
-        if rest.is_empty() {
-            return None;
-        }
         if scheme.eq_ignore_ascii_case("bearer") || scheme.eq_ignore_ascii_case("token") {
             return Some(rest.to_owned());
         }
@@ -1139,5 +1137,615 @@ mod tests {
                 .expect("pem")
                 .contains("BEGIN PUBLIC KEY")
         );
+    }
+
+    fn package(owner: &str, name: &str) -> ObjectTarget {
+        ObjectTarget::Package {
+            instance_id: InstanceId::from_u128(1),
+            org_id: OrgId::from_u128(10),
+            owner: owner.into(),
+            package_type: "container".into(),
+            name: name.into(),
+        }
+    }
+
+    fn repo_target(repo: &str) -> ObjectTarget {
+        ObjectTarget::Repository {
+            instance_id: InstanceId::from_u128(1),
+            org_id: OrgId::from_u128(10),
+            project_id: Some(String::new()),
+            owner: "jc".into(),
+            repo: repo.into(),
+            git_ref: None,
+        }
+    }
+
+    fn ctx_of(subject: Subject) -> RequestCtx {
+        RequestCtx::new(InstanceId::from_u128(1), OrgId::from_u128(10), subject)
+    }
+
+    fn user(id: &str) -> Subject {
+        Subject::authenticated(id, id, vec![OrgId::from_u128(10)])
+    }
+
+    fn binding(principal: Principal, actions: Vec<Action>, repo: Option<&str>) -> RoleBinding {
+        RoleBinding {
+            org_id: OrgId::from_u128(10),
+            principal,
+            actions,
+            project_id: None,
+            repo: repo.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn each_action_parses_by_its_aliases_and_implies_as_documented() {
+        let all = [
+            Action::Read,
+            Action::Propose,
+            Action::Write,
+            Action::Approve,
+            Action::Admin,
+            Action::Publish,
+            Action::Build,
+        ];
+        for action in all {
+            assert_eq!(Action::parse(action.as_str()), Some(action));
+            assert!(Action::Admin.implies(action) && action.implies(Action::Read));
+            assert_eq!(action.is_write(), action != Action::Read);
+        }
+        for (alias, action) in [
+            ("VIEW", Action::Read),
+            ("pull", Action::Read),
+            ("push", Action::Write),
+            ("edit", Action::Write),
+            ("review", Action::Approve),
+        ] {
+            assert_eq!(Action::parse(alias), Some(action), "{alias}");
+        }
+        assert_eq!(Action::parse("delete"), None);
+        assert!(Action::Write.implies(Action::Propose));
+        assert!(!Action::Write.implies(Action::Approve));
+        assert!(!Action::Propose.implies(Action::Write));
+        assert!(!Action::Publish.implies(Action::Build));
+    }
+
+    #[test]
+    fn a_subject_acts_in_exactly_one_organization_and_anonymity_names_nobody() {
+        let nobody = Subject::anonymous();
+        assert!(nobody.is_anonymous());
+        assert_eq!(nobody.login(), "");
+        assert!(
+            !nobody.is_named_in(&[String::new()]),
+            "an empty id names no anonymous caller"
+        );
+        assert_eq!(nobody.organization(), None);
+        let alice = user("alice");
+        assert_eq!(alice.organization(), Some(OrgId::from_u128(10)));
+        assert!(alice.is_named_in(&["bob".into(), "alice".into()]));
+        assert!(!alice.is_named_in(&[]));
+        let mut two = alice.clone();
+        two.organizations.push(OrgId::from_u128(11));
+        assert_eq!(two.organization(), None);
+        let mut empty_id = alice.clone();
+        empty_id.subject_id = Some(String::new());
+        assert!(empty_id.is_anonymous());
+
+        assert!(alice.allows_connector_segment("anything"));
+        let mut scoped = alice.clone();
+        scoped.connector_segments = Some(vec!["repos".into()]);
+        assert!(scoped.allows_connector_segment("repos"));
+        assert!(!scoped.allows_connector_segment("packages"));
+        scoped.connector_segments = Some(vec!["*".into()]);
+        assert!(scoped.allows_connector_segment("packages"));
+    }
+
+    #[test]
+    fn a_target_names_its_tenant_and_a_decision_becomes_404_or_403() {
+        let pkg = package("jc", "app");
+        assert_eq!(
+            (pkg.instance_id(), pkg.org_id()),
+            (InstanceId::from_u128(1), OrgId::from_u128(10))
+        );
+        assert_eq!((pkg.repo_name(), pkg.project_id()), (None, None));
+        let repo = repo_target("cfg");
+        assert_eq!(repo.repo_name(), Some("cfg"));
+        assert_eq!(repo.project_id(), None, "an empty project id is none");
+        assert_eq!(Decision::allow("ok").into_result("gone"), Ok(()));
+        assert_eq!(
+            Decision::deny_hidden("why").into_result("repository not found"),
+            Err(ShakoError::NotFound("repository not found".into()))
+        );
+        assert_eq!(
+            Decision::deny_visible("lacks write").into_result("gone"),
+            Err(ShakoError::Forbidden("lacks write".into()))
+        );
+    }
+
+    #[test]
+    fn the_local_authorizer_hides_other_tenants_and_grants_by_user_group_and_repository() {
+        let authz = LocalAuthorizer::new(vec![
+            binding(Principal::User("reader".into()), vec![Action::Read], None),
+            binding(
+                Principal::Group("ops".into()),
+                vec![Action::Read, Action::Write],
+                Some("cfg"),
+            ),
+        ])
+        .with_members(vec![GroupMember {
+            org_id: OrgId::from_u128(10),
+            group_id: "ops".into(),
+            subject_id: "olga".into(),
+        }]);
+        let check = |subject: Subject, action, target: &ObjectTarget| {
+            authz.check(&ctx_of(subject), action, target)
+        };
+        let cfg = repo_target("cfg");
+        let other = repo_target("other");
+
+        let hidden = check(Subject::anonymous(), Action::Read, &cfg);
+        assert_eq!(
+            (hidden.allowed, hidden.visible, hidden.reason.as_str()),
+            (false, false, "unauthenticated")
+        );
+        let mut outsider = user("reader");
+        outsider.organizations = vec![OrgId::from_u128(99)];
+        assert!(!check(outsider, Action::Read, &cfg).visible, "not a member");
+        let foreign = RequestCtx::new(
+            InstanceId::from_u128(2),
+            OrgId::from_u128(10),
+            user("reader"),
+        );
+        assert!(
+            !authz.check(&foreign, Action::Read, &cfg).visible,
+            "another instance"
+        );
+
+        assert!(check(user("reader"), Action::Read, &cfg).allowed);
+        let denied = check(user("reader"), Action::Write, &cfg);
+        assert_eq!(
+            (denied.allowed, denied.visible, denied.reason.as_str()),
+            (false, true, "caller lacks write permission")
+        );
+        assert!(!check(user("stranger"), Action::Read, &cfg).visible);
+        assert!(
+            check(user("olga"), Action::Write, &cfg).allowed,
+            "through the group"
+        );
+        assert!(
+            !check(user("olga"), Action::Read, &other).visible,
+            "the group's binding names cfg alone"
+        );
+        let mut read_only = user("olga");
+        read_only.read_only = true;
+        let refused = check(read_only, Action::Write, &cfg);
+        assert_eq!(
+            (refused.visible, refused.reason.as_str()),
+            (true, "caller token is read-only")
+        );
+
+        assert!(authz.principal_has_write(
+            InstanceId::from_u128(1),
+            OrgId::from_u128(10),
+            "jc",
+            "cfg",
+            "olga"
+        ));
+        assert!(!authz.principal_has_write(
+            InstanceId::from_u128(1),
+            OrgId::from_u128(10),
+            "jc",
+            "cfg",
+            "reader"
+        ));
+        assert!(!authz.principal_has_write(
+            InstanceId::from_u128(1),
+            OrgId::from_u128(10),
+            "jc",
+            "cfg",
+            ""
+        ));
+        assert_eq!(
+            authz.bindings_for_repo(OrgId::from_u128(10), "cfg"),
+            [("ops".to_owned(), Action::Write)]
+        );
+        assert!(
+            authz
+                .bindings_for_repo(OrgId::from_u128(10), "other")
+                .is_empty()
+        );
+        assert!(
+            authz
+                .bindings_for_repo(OrgId::from_u128(11), "cfg")
+                .is_empty()
+        );
+
+        authz.add_binding(binding(
+            Principal::User("late".into()),
+            vec![Action::Admin],
+            None,
+        ));
+        assert!(check(user("late"), Action::Admin, &other).allowed);
+    }
+
+    #[test]
+    fn a_registry_token_reaches_the_image_it_names_with_the_actions_it_names() {
+        let authz = LocalAuthorizer::new(Vec::new());
+        let token = |scope: &str| {
+            let mut s = user("bot");
+            s.registry_scope = Some(scope.into());
+            ctx_of(s)
+        };
+        let app = package("jc", "app");
+        let pull = token("repository:jc/other:push repository:jc/app:pull");
+        assert!(authz.check(&pull, Action::Read, &app).allowed);
+        let no_push = authz.check(&pull, Action::Publish, &app);
+        assert_eq!((no_push.allowed, no_push.visible), (false, true));
+        let push = token("repository:jc/app:push");
+        for action in [Action::Read, Action::Write, Action::Publish] {
+            assert!(authz.check(&push, action, &app).allowed, "{action:?}");
+        }
+        let admin = authz.check(&push, Action::Admin, &app);
+        assert_eq!(
+            (admin.allowed, admin.visible),
+            (false, false),
+            "no pull: hidden"
+        );
+        let other_image = authz.check(&push, Action::Read, &package("jc", "db"));
+        assert_eq!(
+            other_image.reason,
+            "registry token not scoped to this image"
+        );
+        let delete_only = token("repository:jc/app:delete");
+        assert!(!authz.check(&delete_only, Action::Read, &app).visible);
+        let not_a_package = authz.check(&push, Action::Read, &repo_target("cfg"));
+        assert_eq!(
+            not_a_package.reason,
+            "registry token may only access packages"
+        );
+    }
+
+    #[test]
+    fn an_authorizer_lists_no_group_bindings_unless_it_says_so() {
+        struct Nobody;
+        impl Authorizer for Nobody {
+            fn check(&self, _: &RequestCtx, _: Action, _: &ObjectTarget) -> Decision {
+                Decision::deny_hidden("nobody")
+            }
+            fn principal_has_write(
+                &self,
+                _: InstanceId,
+                _: OrgId,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> bool {
+                false
+            }
+        }
+        let nobody = Nobody;
+        assert!(
+            nobody
+                .bindings_for_repo(OrgId::from_u128(10), "cfg")
+                .is_empty()
+        );
+        assert!(
+            !nobody
+                .check(&ctx_of(user("a")), Action::Read, &repo_target("cfg"))
+                .allowed
+        );
+        assert!(!nobody.principal_has_write(
+            InstanceId::from_u128(1),
+            OrgId::from_u128(10),
+            "jc",
+            "cfg",
+            "a"
+        ));
+    }
+
+    #[test]
+    fn a_signing_key_loads_from_raw_hex_or_pem_and_refuses_anything_else() {
+        let raw = [0x11u8; 32];
+        let kid = ShakoSigningKey::from_secret_bytes(&raw).expect("raw").kid;
+        assert_eq!(ShakoSigningKey::from_text(&raw).expect("raw text").kid, kid);
+        let hex = format!(" {}\n", "11".repeat(32));
+        assert_eq!(
+            ShakoSigningKey::from_text(hex.as_bytes()).expect("hex").kid,
+            kid
+        );
+        let pem = SigningKey::from_slice(&raw)
+            .expect("key")
+            .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
+            .expect("pem");
+        assert_eq!(
+            ShakoSigningKey::from_text(pem.as_bytes()).expect("pem").kid,
+            kid
+        );
+        for bad in [
+            &b"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----"[..],
+            &[0u8; 32][..],
+            &b"short"[..],
+        ] {
+            let err = ShakoSigningKey::from_text(bad).expect_err("not a key");
+            assert_eq!(err.status_code(), 500, "{err}");
+        }
+        let file = std::env::temp_dir().join(format!("shako-key-{}.hex", uuid::Uuid::now_v7()));
+        std::fs::write(&file, &hex).expect("write");
+        let key = ShakoSigningKey::from_file(&file);
+        std::fs::remove_file(&file).expect("clean up");
+        let key = key.expect("from file");
+        assert_eq!(key.kid, kid);
+        let err = ShakoSigningKey::from_file(&file).expect_err("missing");
+        assert!(
+            err.to_string().contains("failed to read signing key"),
+            "{err}"
+        );
+        let shown = format!("{key:?}");
+        assert!(shown.contains(&kid) && !shown.contains("1111"), "{shown}");
+        assert!(!key.verify_cosign_payload(b"x", "%%% not base64"));
+        assert!(!key.verify_cosign_payload(b"x", "AAAA"));
+    }
+
+    #[test]
+    fn a_registry_token_needs_a_subject_and_lives_between_one_second_and_fifteen_minutes() {
+        let key = ShakoSigningKey::generate().expect("key");
+        let org = OrgId::from_u128(10);
+        let err = key
+            .mint_registry_token(&Subject::anonymous(), org, "repository:jc/app:pull", 60)
+            .expect_err("nobody");
+        assert_eq!(err.status_code(), 401);
+        let verifier = TokenVerifier::new(key.clone());
+        let lifetime = |ttl| {
+            let token = key
+                .mint_registry_token(&user("bot"), org, "s", ttl)
+                .expect("mint");
+            let payload = token.split('.').nth(1).expect("payload");
+            let claims: JwtClaims =
+                serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).expect("base64"))
+                    .expect("claims");
+            assert!(verifier.verify(&token, "container_registry").is_ok());
+            claims.exp - claims.iat.expect("iat")
+        };
+        assert_eq!(lifetime(0), 1);
+        assert_eq!(lifetime(100_000), 900);
+        assert!(std::ptr::eq(verifier.signing_key(), &verifier.signing_key));
+    }
+
+    #[test]
+    fn a_raw_credential_comes_from_bearer_token_or_basic_and_nothing_else() {
+        let basic = |text: &str| format!("Basic {}", STANDARD.encode(text));
+        let (pw, colons, empty, no_colon) = (
+            basic("user:pw"),
+            basic("user:a:b"),
+            basic("user:"),
+            basic("no-colon"),
+        );
+        let not_utf8 = format!("Basic {}", STANDARD.encode([0xff, 0x3a, 0x41]));
+        let cases = [
+            ("Bearer abc", Some("abc")),
+            ("  token   abc  ", Some("abc")),
+            (pw.as_str(), Some("pw")),
+            (colons.as_str(), Some("a:b")),
+            (empty.as_str(), None),
+            (no_colon.as_str(), None),
+            ("Basic %%%", None),
+            (not_utf8.as_str(), None),
+            ("Bearer", None),
+            ("Bearer    ", None),
+            ("Digest abc", None),
+            ("", None),
+        ];
+        for (header, want) in cases {
+            assert_eq!(
+                TokenVerifier::extract_raw_token(header).as_deref(),
+                want,
+                "{header:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_static_token_matches_by_hash_alone() {
+        let key = ShakoSigningKey::generate().expect("key");
+        let robot = user("robot");
+        let binding = StaticTokenBinding::new("raw-service-token", robot.clone());
+        assert_ne!(binding.token_sha256, "raw-service-token");
+        let verifier = TokenVerifier::new(key).with_static_tokens(vec![
+            StaticTokenBinding::new("raw-service-token", robot.clone()),
+            StaticTokenBinding::new("raw-service-token", user("shadow")),
+        ]);
+        assert_eq!(
+            verifier
+                .verify("raw-service-token", "shako")
+                .expect("static"),
+            robot,
+            "the first binding"
+        );
+        assert_eq!(
+            verifier
+                .verify("other-token", "shako")
+                .expect_err("unknown"),
+            ShakoError::Unauthorized("invalid token".into())
+        );
+    }
+
+    #[test]
+    fn a_jwt_is_refused_for_each_broken_part_and_read_for_each_optional_claim() {
+        let key = ShakoSigningKey::generate().expect("key");
+        let now = TimestampTz::now().as_second();
+        let sign = |claims: Value| {
+            let mut header = Header::new(Algorithm::ES256);
+            header.kid = Some(key.kid.clone());
+            encode(&header, &claims, &EncodingKey::from_ec_der(&key.pkcs8_der)).expect("sign")
+        };
+        let verifier =
+            TokenVerifier::new(key.clone()).with_expected_issuer("https://kc.example/realms/jc");
+        let refused = |token: &str, says: &str| {
+            let err = verifier.verify(token, "shako").expect_err(says);
+            assert_eq!(err, ShakoError::Unauthorized(says.into()));
+        };
+        let iss = "https://kc.example/realms/jc";
+        refused(
+            &sign(
+                json!({"sub": "u", "aud": "shako", "iss": "https://evil.example", "exp": now + 60}),
+            ),
+            "JWT verification failed",
+        );
+        refused(
+            &sign(json!({"sub": "u", "aud": "shako", "iss": iss, "exp": now - 3600})),
+            "JWT verification failed",
+        );
+        // No audience at all: refused, by the library or by the check after it.
+        let err = verifier
+            .verify(
+                &sign(json!({"sub": "u", "iss": iss, "exp": now + 60})),
+                "shako",
+            )
+            .expect_err("no aud");
+        assert_eq!(err.status_code(), 401);
+        refused(
+            &sign(json!({"sub": "", "aud": "shako", "iss": iss, "exp": now + 60})),
+            "JWT names no subject",
+        );
+        let hs = encode(
+            &Header::new(Algorithm::HS256),
+            &json!({"sub": "u", "exp": now + 60}),
+            &EncodingKey::from_secret(b"k"),
+        )
+        .expect("hs256");
+        refused(&hs, "unsupported JWT signature algorithm");
+        let no_kid = encode(
+            &Header::new(Algorithm::ES256),
+            &json!({"sub": "u", "exp": now + 60}),
+            &EncodingKey::from_ec_der(&key.pkcs8_der),
+        )
+        .expect("no kid");
+        refused(&no_kid, "JWT missing kid");
+        refused("not-a-jwt", "invalid token");
+
+        let org = OrgId::from_u128(10);
+        let full = verifier
+            .verify(
+                &sign(json!({"sub": "u1", "aud": ["account", "shako"], "iss": iss, "exp": now + 60,
+                    "preferred_username": "alice", "name": "Alice A", "email": "a@hel.fi", "azp": "portal",
+                    "jc_org": [org.to_string(), "helsinki"], "scope": "ignored"})),
+                "shako",
+            )
+            .expect("verified");
+        assert_eq!(
+            (
+                full.username.as_str(),
+                full.full_name.as_str(),
+                full.email.as_deref(),
+                full.client_id.as_deref()
+            ),
+            ("alice", "Alice A", Some("a@hel.fi"), Some("portal"))
+        );
+        assert_eq!(full.organizations, [org], "a name is no Organization id");
+        assert_eq!(
+            full.registry_scope, None,
+            "a scope reaches a registry token alone"
+        );
+        let bare = verifier
+            .verify(&sign(json!({"sub": "u2", "aud": "shako", "iss": iss, "exp": now + 60, "jc_org": org.to_string()})), "shako")
+            .expect("verified");
+        assert_eq!(
+            (bare.username.as_str(), bare.full_name.as_str()),
+            ("u2", "u2")
+        );
+        assert_eq!(bare.organizations, [org]);
+    }
+
+    #[test]
+    fn an_unknown_kid_refetches_at_most_every_ten_seconds_and_needs_a_usable_jwk() {
+        let key = ShakoSigningKey::generate().expect("key");
+        let other = ShakoSigningKey::generate().expect("other");
+        let now = TimestampTz::now().as_second();
+        let token = |kid: &str| {
+            let mut header = Header::new(Algorithm::ES256);
+            header.kid = Some(kid.to_owned());
+            encode(
+                &header,
+                &json!({"sub": "u", "aud": "shako", "exp": now + 60}),
+                &EncodingKey::from_ec_der(&other.pkcs8_der),
+            )
+            .expect("sign")
+        };
+        let plain = TokenVerifier::new(key.clone());
+        assert_eq!(
+            plain
+                .verify(&token("nope"), "shako")
+                .expect_err("no fetcher"),
+            ShakoError::Unauthorized("unknown signing key kid".into())
+        );
+
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = calls.clone();
+        let fetched = vec![
+            json!({"kid": "broken", "kty": "EC", "use": 7}),
+            json!({"kid": "bad-point", "kty": "EC", "crv": "P-256", "x": "!!", "y": "!!", "alg": "ES256"}),
+            json!({"no": "kid"}),
+        ];
+        let verifier = TokenVerifier::new(key.clone()).with_jwks_fetcher(Arc::new(move || {
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(fetched.clone())
+        }));
+        assert_eq!(
+            verifier
+                .verify(&token("broken"), "shako")
+                .expect_err("bad jwk"),
+            ShakoError::Unauthorized("invalid JWK".into())
+        );
+        assert_eq!(
+            verifier
+                .verify(&token("bad-point"), "shako")
+                .expect_err("bad point"),
+            ShakoError::Unauthorized("cannot construct decoding key".into())
+        );
+        // A kid the fetch did not bring, asked again within ten seconds: no second fetch.
+        assert!(verifier.verify(&token("missing"), "shako").is_err());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let failing = TokenVerifier::new(key.clone())
+            .with_jwks_fetcher(Arc::new(|| Err(ShakoError::Internal("jwks down".into()))));
+        assert_eq!(
+            failing
+                .verify(&token("x"), "shako")
+                .expect_err("fetch failed"),
+            ShakoError::Internal("jwks down".into())
+        );
+        let empty = TokenVerifier::new(key).with_jwks_fetcher(Arc::new(|| Ok(Vec::new())));
+        assert_eq!(
+            empty.verify(&token("x"), "shako").expect_err("not fetched"),
+            ShakoError::Unauthorized("unknown signing key kid".into())
+        );
+    }
+
+    #[test]
+    fn the_key_cache_holds_sixty_four_keys_and_never_drops_its_own() {
+        let key = ShakoSigningKey::generate().expect("key");
+        let verifier = TokenVerifier::new(key.clone());
+        for i in 0..70 {
+            verifier.insert_jwk(format!("a{i:02}"), json!({"kid": i}));
+        }
+        assert_eq!(verifier.jwks.read().keys.len(), 64);
+        assert!(
+            !verifier.jwks.read().keys.contains_key("a00"),
+            "the first key went"
+        );
+        assert!(verifier.jwks.read().keys.contains_key(&key.kid));
+        // With its own key first in order, the cache keeps it and grows past the bound.
+        let own_first = TokenVerifier::new(key.clone());
+        for i in 0..70 {
+            own_first.insert_jwk(format!("z{i:02}"), json!({}));
+        }
+        assert_eq!(own_first.jwks.read().keys.len(), 71);
+        let sub = user("bot");
+        let token = key
+            .mint_registry_token(&sub, OrgId::from_u128(10), "s", 60)
+            .expect("mint");
+        assert!(own_first.verify(&token, "container_registry").is_ok());
+        assert!(AudClaim::Multiple(vec!["a".into(), "b".into()]).contains("b"));
+        assert!(!AudClaim::Single("a".into()).contains("b"));
     }
 }

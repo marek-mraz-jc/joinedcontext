@@ -36,7 +36,7 @@ pub(crate) fn eval_crypto_family(
         "compare_bcrypt" => string_arg(args, ctx, "hashed_secret").and_then(|hash| {
             bcrypt::verify(target_val.get_string()?, &hash)
                 .map(Value::Bool)
-                .map_err(|e| e.to_string())
+                .map_err(crate::error::text)
         }),
         _ => {
             let (op, alg) = name
@@ -89,19 +89,11 @@ enum AnyAes {
 
 impl AnyAes {
     fn new(key: &[u8]) -> Result<Self, String> {
-        let bad = |_| format!("crypto/aes: invalid key size {}", key.len());
-        match key.len() {
-            16 => aes::Aes128::new_from_slice(key)
-                .map(Self::A128)
-                .map_err(bad),
-            24 => aes::Aes192::new_from_slice(key)
-                .map(Self::A192)
-                .map_err(bad),
-            32 => aes::Aes256::new_from_slice(key)
-                .map(Self::A256)
-                .map_err(bad),
-            n => Err(format!("crypto/aes: invalid key size {n}")),
-        }
+        aes::Aes128::new_from_slice(key)
+            .map(Self::A128)
+            .or_else(|_| aes::Aes192::new_from_slice(key).map(Self::A192))
+            .or_else(|_| aes::Aes256::new_from_slice(key).map(Self::A256))
+            .map_err(|_| format!("crypto/aes: invalid key size {}", key.len()))
     }
 
     fn encrypt(&self, block: &mut [u8; 16]) {
@@ -122,14 +114,14 @@ impl AnyAes {
         }
     }
 
-    fn gcm(&self, key: &[u8], encrypt: bool, nonce: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
+    fn gcm(&self, encrypt: bool, nonce: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
         let nonce: &aes_gcm::Nonce<aes_gcm::aead::consts::U12> = nonce
             .try_into()
             .map_err(|_| "crypto/cipher: incorrect nonce length given to GCM".to_string())?;
         let fail = |_| "cipher: message authentication failed".to_string();
         macro_rules! run {
-            ($t:ty) => {{
-                let c = <$t>::new_from_slice(key).map_err(|_| "creating gcm failed".to_string())?;
+            ($c:expr) => {{
+                let c = aes_gcm::AesGcm::<_, aes_gcm::aead::consts::U12>::from($c.clone());
                 if encrypt {
                     c.encrypt(nonce, data).map_err(fail)
                 } else {
@@ -138,9 +130,9 @@ impl AnyAes {
             }};
         }
         match self {
-            Self::A128(_) => run!(aes_gcm::Aes128Gcm),
-            Self::A192(_) => run!(aes_gcm::AesGcm<aes::Aes192, aes_gcm::aead::consts::U12>),
-            Self::A256(_) => run!(aes_gcm::Aes256Gcm),
+            Self::A128(c) => run!(c),
+            Self::A192(c) => run!(c),
+            Self::A256(c) => run!(c),
         }
     }
 }
@@ -226,7 +218,7 @@ fn aes_method(
         "ctr" => ctr(&cipher, &block_iv()?, &data),
         "ofb" => ofb(&cipher, &block_iv()?, &data),
         "cbc" => cbc(&cipher, &block_iv()?, &data, encrypt)?,
-        "gcm" => cipher.gcm(&key, encrypt, &iv, &data)?,
+        "gcm" => cipher.gcm(encrypt, &iv, &data)?,
         other if encrypt => return Err(format!("unrecognized encryption type: {other}")),
         other => return Err(format!("unrecognized decryption type: {other}")),
     };
@@ -343,7 +335,7 @@ impl Alg {
     fn hmac(self, key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
         macro_rules! mac {
             ($h:ty) => {{
-                let mut m = <Hmac<$h>>::new_from_slice(key).map_err(|e| e.to_string())?;
+                let mut m = <Hmac<$h>>::new_from_slice(key).map_err(crate::error::text)?;
                 m.update(data);
                 m.finalize().into_bytes().to_vec()
             }};
@@ -792,6 +784,318 @@ mod tests {
         assert!(parse_jwt(hs, &expired, "other")
             .unwrap_err()
             .contains("signature is invalid"));
+    }
+
+    /// One DER tag-length-value, the length in short or long form.
+    fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+        let mut out = vec![tag];
+        match content.len() {
+            n if n < 0x80 => out.push(n as u8),
+            n if n < 0x100 => out.extend([0x81, n as u8]),
+            n => out.extend([0x82, (n >> 8) as u8, n as u8]),
+        }
+        out.extend_from_slice(content);
+        out
+    }
+
+    fn int(bytes: &[u8]) -> Vec<u8> {
+        let mut v = vec![0u8];
+        v.extend_from_slice(bytes);
+        tlv(0x02, &v)
+    }
+
+    fn seq(items: &[Vec<u8>]) -> Vec<u8> {
+        tlv(0x30, &items.concat())
+    }
+
+    fn pem(label: &str, der: &[u8]) -> String {
+        pem_rfc7468::encode_string(label, pem_rfc7468::LineEnding::LF, der).expect("pem")
+    }
+
+    fn rsa_parts() -> (Vec<u8>, Vec<u8>) {
+        (
+            hex::decode(TEST_MODULUS).expect("hex"),
+            hex::decode(TEST_PRIVATE_EXPONENT).expect("hex"),
+        )
+    }
+
+    fn rsa_alg_id() -> Vec<u8> {
+        seq(&[tlv(0x06, RSA_OID), tlv(0x05, &[])])
+    }
+
+    #[test]
+    fn every_aes_key_size_round_trips_each_mode_and_a_bad_key_is_named() {
+        for len in [16, 24, 32] {
+            let c = AnyAes::new(&vec![1u8; len]).expect("key");
+            let iv = [2u8; 16];
+            let data = [3u8; 37];
+            assert_eq!(ofb(&c, &iv, &ofb(&c, &iv, &data)), data, "ofb {len}");
+            assert_eq!(ctr(&c, &iv, &ctr(&c, &iv, &data)), data, "ctr {len}");
+            let enc = cbc(&c, &iv, &[4u8; 32], true).expect("cbc");
+            assert_eq!(cbc(&c, &iv, &enc, false).expect("cbc"), [4u8; 32]);
+            let sealed = c.gcm(true, &[5u8; 12], &data).expect("seal");
+            assert_eq!(c.gcm(false, &[5u8; 12], &sealed).expect("open"), data);
+            let mut tampered = sealed.clone();
+            tampered[0] ^= 1;
+            assert_eq!(
+                c.gcm(false, &[5u8; 12], &tampered).unwrap_err(),
+                "cipher: message authentication failed"
+            );
+            assert_eq!(
+                c.gcm(true, &[5u8; 11], &data).unwrap_err(),
+                "crypto/cipher: incorrect nonce length given to GCM"
+            );
+        }
+        assert_eq!(
+            AnyAes::new(&[0u8; 5]).err().as_deref(),
+            Some("crypto/aes: invalid key size 5")
+        );
+        let c = AnyAes::new(&[1u8; 16]).expect("key");
+        assert_eq!(
+            cbc(&c, &[0u8; 16], &[1u8; 17], false).unwrap_err(),
+            "ciphertext is not a multiple of the block size"
+        );
+    }
+
+    #[test]
+    fn argon2_hashes_are_parsed_strictly_before_any_work() {
+        let bad = [
+            (
+                "$argon2d$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$a2V5",
+                "unrecognised argon2 format",
+            ),
+            (
+                "$argon2id$v=$m=8,t=1,p=1$c2FsdHNhbHQ$a2V5",
+                "failed to parse version",
+            ),
+            (
+                "$argon2id$v=19$m=x,t=1,p=1$c2FsdHNhbHQ$a2V5",
+                "failed to parse parameters",
+            ),
+            (
+                "$argon2id$v=19$m=8,t=1,p=1,q=1$c2FsdHNhbHQ$a2V5",
+                "failed to parse parameters",
+            ),
+            (
+                "$argon2id$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$!!",
+                "failed to parse base64 key",
+            ),
+            (
+                "$argon2id$v=19$m=8,t=0,p=1$c2FsdHNhbHQ$a2V5a2V5",
+                "time cost is too small",
+            ),
+            (
+                "$argon2id$v=19$m=8,t=1,p=1$c2E$a2V5a2V5",
+                "salt is too short",
+            ),
+        ];
+        for (hash, why) in bad {
+            let e = compare_argon2("pw", hash).unwrap_err();
+            assert!(e.contains(why), "{hash}: {e}");
+        }
+        let ok = "$argon2i$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$a2V5a2V5a2V5a2V5";
+        assert_eq!(compare_argon2("pw", ok), Ok(Value::Bool(false)));
+    }
+
+    #[test]
+    fn jwt_algorithm_names_and_malformed_tokens_are_refused() {
+        assert!(Alg::from_name("xs256").is_none());
+        assert!(Alg::from_name("hs128").is_none());
+        assert!(Alg::from_name("h").is_none());
+        let hs = Alg::from_name("hs256").expect("alg");
+        let seg = |s: &str| b64url().encode(s);
+        let signed = |h: &str, c: &str| {
+            let input = format!("{}.{}", seg(h), seg(c));
+            let sig = hs.hmac(b"k", input.as_bytes()).expect("mac");
+            format!("{input}.{}", b64url().encode(sig))
+        };
+        let head = r#"{"alg":"HS256"}"#;
+        let cases = [
+            (
+                format!("{}.{}.", seg("{"), seg("{}")),
+                "could not JSON decode header",
+            ),
+            (signed(head, "{"), "could not JSON decode claim"),
+            (signed(head, "[1]"), "claims are not an object"),
+            (
+                signed(head, r#"{"nbf":99999999999}"#),
+                "token is not valid yet",
+            ),
+        ];
+        for (token, why) in cases {
+            let e = parse_jwt(hs, &token, "k").unwrap_err();
+            assert!(e.contains(why), "{token}: {e}");
+        }
+        let claims = parse_jwt(
+            hs,
+            &signed(head, r#"{"u":18446744073709551615,"l":[1]}"#),
+            "k",
+        )
+        .expect("parses");
+        // golang-jwt reads every number as a float64
+        assert_eq!(claims.to_go_json(), r#"{"l":[1],"u":18446744073709552000}"#);
+    }
+
+    #[test]
+    fn rsa_keys_load_from_pkcs1_and_pkcs8_pem_and_refuse_the_rest() {
+        let (n, d) = rsa_parts();
+        let e = [0x01, 0x00, 0x01];
+        let pkcs1_pub = seq(&[int(&n), int(&e)]);
+        let pkcs1_priv = seq(&[int(&[0]), int(&n), int(&e), int(&d)]);
+        let spki = seq(&[
+            rsa_alg_id(),
+            tlv(0x03, &[[0u8].as_slice(), &pkcs1_pub].concat()),
+        ]);
+        let pkcs8 = seq(&[int(&[0]), rsa_alg_id(), tlv(0x04, &pkcs1_priv)]);
+        let rs = Alg::from_name("rs256").expect("alg");
+        for (private, public) in [
+            (
+                pem("RSA PRIVATE KEY", &pkcs1_priv),
+                pem("RSA PUBLIC KEY", &pkcs1_pub),
+            ),
+            (pem("PRIVATE KEY", &pkcs8), pem("PUBLIC KEY", &spki)),
+        ] {
+            let token = sign_jwt(rs, &BTreeMap::new(), &private).expect("sign");
+            assert_eq!(
+                parse_jwt(rs, &token, &public),
+                Ok(Value::Object(BTreeMap::new().into()))
+            );
+        }
+        let wrong_label = pem("EC PRIVATE KEY", &pkcs1_priv);
+        assert!(RsaPrivate::from_pem(&wrong_label).is_err());
+        assert!(RsaPublic::from_pem(&wrong_label).is_err());
+        assert!(sign_jwt(rs, &BTreeMap::new(), "nope")
+            .unwrap_err()
+            .starts_with("failed to decode signing_secret: invalid key"));
+        assert!(verify(rs, b"m", b"s", "nope")
+            .unwrap_err()
+            .starts_with("failed to decode signing_secret: invalid key"));
+        let other_oid = seq(&[seq(&[tlv(0x06, &[1, 2, 3])]), tlv(0x03, &[0])]);
+        assert_eq!(
+            unwrap_rsa(&other_oid, 0x03).unwrap_err(),
+            "key is not a valid RSA key"
+        );
+        let wrong_tag = seq(&[rsa_alg_id(), tlv(0x04, &[0])]);
+        assert_eq!(
+            unwrap_rsa(&wrong_tag, 0x03).unwrap_err(),
+            "invalid key: malformed DER"
+        );
+        let tiny = pem(
+            "RSA PRIVATE KEY",
+            &seq(&[int(&[0]), int(&[3]), int(&e), int(&[1])]),
+        );
+        assert_eq!(
+            RsaPrivate::from_pem(&tiny).err().as_deref(),
+            Some("key is not a valid RSA key")
+        );
+        // a 512-bit modulus is too short for an RS512 DigestInfo
+        let short = RsaPrivate {
+            n: vec![0xff; 64],
+            d: vec![1],
+        };
+        assert_eq!(
+            short
+                .sign(Alg::from_name("rs512").expect("alg"), b"m")
+                .unwrap_err(),
+            "key size too small for PKCS#1 v1.5 signature"
+        );
+        let public = RsaPublic::checked(&n, &e).expect("key");
+        assert!(!public.verify(rs, b"m", &[1, 2, 3]));
+        assert!(
+            !public.verify(rs, b"m", &n),
+            "a signature not below the modulus"
+        );
+        // a valid 512-bit PEM signs RS256 but is too short for RS512
+        let small = pem(
+            "RSA PRIVATE KEY",
+            &seq(&[int(&[0]), int(&[0xff; 64]), int(&e), int(&[1])]),
+        );
+        assert_eq!(
+            sign_jwt(
+                Alg::from_name("rs512").expect("alg"),
+                &BTreeMap::new(),
+                &small
+            )
+            .unwrap_err(),
+            "failed to sign token: key size too small for PKCS#1 v1.5 signature"
+        );
+        let even = RsaPrivate {
+            n: [vec![0xff; 63], vec![0xfe]].concat(),
+            d: vec![1],
+        };
+        assert_eq!(
+            even.sign(rs, b"m").unwrap_err(),
+            "rsa exponentiation failed"
+        );
+        assert_eq!(modpow(&n, &[1], &n), None, "a base not below the modulus");
+        let pkcs1_pem = pem("RSA PRIVATE KEY", &pkcs1_priv);
+        let rs512 = Alg::from_name("rs512").expect("alg");
+        assert!(sign_jwt(rs512, &BTreeMap::new(), &pkcs1_pem).is_ok());
+    }
+
+    #[test]
+    fn der_reader_refuses_truncated_and_mistagged_input() {
+        let bad = "invalid key: malformed DER";
+        assert_eq!(der_tlv(&[]).unwrap_err(), bad);
+        assert_eq!(der_tlv(&[0x30]).unwrap_err(), bad);
+        assert_eq!(der_tlv(&[0x30, 0x80]).unwrap_err(), bad);
+        assert_eq!(der_tlv(&[0x30, 0x85, 1, 1, 1, 1, 1]).unwrap_err(), bad);
+        assert_eq!(der_tlv(&[0x30, 0x82, 1]).unwrap_err(), bad);
+        assert_eq!(der_tlv(&[0x30, 0x03, 1]).unwrap_err(), bad);
+        assert_eq!(
+            der_tlv(&[0x30, 0x81, 0x01, 9, 8]),
+            Ok((0x30, &[9u8][..], &[8u8][..]))
+        );
+        assert_eq!(
+            der_seq(&[0x02, 0x00]).unwrap_err(),
+            "invalid key: expected a DER SEQUENCE"
+        );
+        assert_eq!(
+            der_ints(&[0x04, 0x00], 1).unwrap_err(),
+            "invalid key: expected a DER INTEGER"
+        );
+        assert_eq!(der_ints(&[0x02, 0x02, 0, 0], 1), Ok(vec![&[][..]]));
+    }
+
+    #[test]
+    fn es384_and_es512_tokens_round_trip_and_refuse_a_bad_key_or_signature() {
+        use p256::pkcs8::EncodePublicKey;
+        let k384 = p384::SecretKey::from_slice(&[7u8; 48]).expect("scalar");
+        let k521 = p521::SecretKey::from_slice(&[1u8; 66]).expect("scalar");
+        let keys = [
+            (
+                "es384",
+                k384.to_sec1_pem(Default::default())
+                    .expect("pem")
+                    .to_string(),
+                k384.public_key()
+                    .to_public_key_pem(Default::default())
+                    .expect("pem"),
+            ),
+            (
+                "es512",
+                k521.to_sec1_pem(Default::default())
+                    .expect("pem")
+                    .to_string(),
+                k521.public_key()
+                    .to_public_key_pem(Default::default())
+                    .expect("pem"),
+            ),
+        ];
+        for (name, private, public) in keys {
+            let alg = Alg::from_name(name).expect("alg");
+            let token = sign_jwt(alg, &BTreeMap::new(), &private).expect("sign");
+            assert!(parse_jwt(alg, &token, &public).is_ok(), "{name}");
+            assert_eq!(es_verify(alg, &public, b"m", &[1, 2]), Ok(false));
+            assert_eq!(
+                es_verify(alg, "nope", b"m", &[]).unwrap_err(),
+                ecdsa_signer::NOT_EC
+            );
+            assert_eq!(
+                es_sign(alg, "nope", b"m").unwrap_err(),
+                ecdsa_signer::NOT_EC
+            );
+        }
     }
 
     #[test]

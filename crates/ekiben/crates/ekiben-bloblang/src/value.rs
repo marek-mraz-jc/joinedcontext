@@ -151,10 +151,7 @@ impl Value {
             (
                 Value::Float(_) | Value::Int(_) | Value::Uint(_),
                 Value::Float(_) | Value::Int(_) | Value::Uint(_),
-            ) => match (self.as_f64(), other.as_f64()) {
-                (Some(a), Some(b)) => a == b,
-                _ => false,
-            },
+            ) => self.as_f64() == other.as_f64(),
             (Value::Array(a), Value::Array(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.compare_eq(y))
             }
@@ -454,10 +451,9 @@ impl Value {
                     Value::Int(i)
                 } else if let Some(u) = n.as_u64() {
                     Value::Uint(u)
-                } else if let Some(f) = n.as_f64() {
-                    Value::Float(f)
                 } else {
-                    Value::Null
+                    // without serde_json's arbitrary_precision every other number is an f64
+                    n.as_f64().map_or(Value::Null, Value::Float)
                 }
             }
             serde_json::Value::String(s) => Value::String(s),
@@ -856,38 +852,6 @@ pub fn type_error_from(from: &str, v: &Value, expected: &[&str]) -> String {
     out
 }
 
-/// Go's `%s` of a value as Bloblang holds it, applied through arrays and maps: `%!s(<nil>)`, `%!s(bool=true)`;
-/// numbers print as text (a JSON number reaches Bento as `json.Number`, a string type).
-pub fn format_go_s(v: &Value) -> String {
-    match v {
-        Value::Null | Value::Nothing | Value::Delete => "%!s(<nil>)".to_string(),
-        other => format_go_s_inner(other),
-    }
-}
-
-/// Inside a slice or map Go prints a nil element as `<nil>` for every verb.
-fn format_go_s_inner(v: &Value) -> String {
-    match v {
-        Value::Null | Value::Nothing | Value::Delete => "<nil>".to_string(),
-        Value::Bool(b) => format!("%!s(bool={b})"),
-        Value::Array(a) => format!(
-            "[{}]",
-            a.iter()
-                .map(format_go_s_inner)
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
-        Value::Object(m) => format!(
-            "map[{}]",
-            m.iter()
-                .map(|(k, v)| format!("{k}:{}", format_go_s_inner(v)))
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
-        other => other.to_string_coerced(),
-    }
-}
-
 /// Go's `%v` (`fmt.Sprint`) of a value as Bloblang holds it: `<nil>`, `[a b]`, `map[k:v]` with sorted keys.
 pub fn format_go_v(v: &Value) -> String {
     match v {
@@ -1096,13 +1060,373 @@ mod tests {
 
     #[test]
     fn a_shared_container_copies_on_write() {
-        let a = Value::Array(vec![Value::Int(1)].into());
+        let a: Shared<Vec<Value>> = vec![Value::Int(1)].into();
         let mut b = a.clone();
-        if let Value::Array(items) = &mut b {
-            items.push(Value::Int(2));
+        b.push(Value::Int(2));
+        assert_eq!(Value::Array(a).to_go_json(), "[1]");
+        assert_eq!(Value::Array(b).to_go_json(), "[1,2]");
+    }
+
+    fn path(p: &str) -> Vec<String> {
+        p.split('.').map(str::to_string).collect()
+    }
+
+    fn epoch(offset_secs: i32) -> Zoned {
+        let tz = jiff::tz::TimeZone::fixed(jiff::tz::Offset::from_seconds(offset_secs).unwrap());
+        Timestamp::UNIX_EPOCH.to_zoned(tz)
+    }
+
+    #[test]
+    fn a_shared_container_iterates_by_value_by_reference_and_mutably() {
+        let mut a: Shared<Vec<Value>> = vec![Value::Int(1), Value::Int(2)].into();
+        let keep = a.clone();
+        for v in &mut a {
+            *v = Value::Int(9);
         }
-        assert_eq!(a.to_go_json(), "[1]");
-        assert_eq!(b.to_go_json(), "[1,2]");
+        assert_eq!((&keep).into_iter().count(), 2);
+        assert_eq!(
+            keep.into_iter().collect::<Vec<_>>(),
+            [Value::Int(1), Value::Int(2)]
+        );
+        assert_eq!(
+            a.into_iter().collect::<Vec<_>>(),
+            [Value::Int(9), Value::Int(9)]
+        );
+    }
+
+    #[test]
+    fn type_names_and_equality_follow_bento_icompare() {
+        assert_eq!(Value::Delete.type_name(), "delete");
+        assert_eq!(Value::Nothing.type_name(), "nothing");
+        assert_eq!(Value::Number("1".into()).type_name(), "number");
+        assert!(Value::Delete.compare_eq(&Value::Delete));
+        assert!(Value::Nothing.compare_eq(&Value::Nothing));
+        assert!(!Value::Nothing.compare_eq(&Value::Null));
+        assert!(Value::Timestamp(epoch(0)).compare_eq(&Value::Timestamp(epoch(0))));
+        let later = Timestamp::new(1, 0)
+            .unwrap()
+            .to_zoned(jiff::tz::TimeZone::UTC);
+        assert!(!Value::Timestamp(epoch(0)).compare_eq(&Value::Timestamp(later)));
+        assert!(Value::Int(5).compare_eq(&Value::Uint(5)));
+        assert!(!Value::Int(-1).compare_eq(&Value::Uint(u64::MAX)));
+        assert!(Value::Uint(5).compare_eq(&Value::Int(5)));
+        assert!(!Value::Uint(5).compare_eq(&Value::Int(-5)));
+        assert!(Value::Float(2.0).compare_eq(&Value::Uint(2)));
+        assert!(!Value::Float(2.5).compare_eq(&Value::Int(2)));
+        assert!(Value::Number("7".into()).compare_eq(&Value::Int(7)));
+        assert!(!Value::String("a".into()).compare_eq(&Value::Bytes(b"a".to_vec())));
+    }
+
+    #[test]
+    fn sanitized_deep_reads_number_text_through_arrays_and_objects() {
+        let mut m = BTreeMap::new();
+        m.insert("n".to_string(), Value::Number("1.5".into()));
+        m.insert("s".to_string(), Value::String("x".into()));
+        let v = Value::Array(vec![Value::Number("3".into()), Value::Object(m.into())].into());
+        assert!(v.holds_number_text());
+        let clean = v.sanitized_deep();
+        assert!(!clean.holds_number_text());
+        assert_eq!(clean.to_go_json(), r#"[3,{"n":1.5,"s":"x"}]"#);
+        assert!(!Value::Bool(true).holds_number_text());
+        assert_eq!(Value::Bool(true).sanitized_deep(), Value::Bool(true));
+        let mut only = BTreeMap::new();
+        only.insert("n".to_string(), Value::Number("2".into()));
+        assert!(Value::Object(only.into()).holds_number_text());
+    }
+
+    #[test]
+    fn number_readers_convert_or_refuse_each_variant() {
+        assert_eq!(Value::Number("2.5".into()).as_f64(), Some(2.5));
+        assert_eq!(Value::Uint(3).as_f64(), Some(3.0));
+        assert_eq!(Value::Number("42".into()).get_int(), Ok(42));
+        assert_eq!(
+            Value::Uint(u64::MAX).get_int().unwrap_err(),
+            "uint64 value 18446744073709551615 exceeds int64 maximum"
+        );
+        assert_eq!(Value::Uint(7).get_int(), Ok(7));
+        assert_eq!(
+            Value::Float(1e19).get_int().unwrap_err(),
+            "float value 10000000000000000000 exceeds int64 bounds"
+        );
+        assert_eq!(
+            Value::Float(f64::NAN).get_int().unwrap_err(),
+            "cannot convert non-finite float to int64"
+        );
+        assert_eq!(Value::Float(-3.0).get_int(), Ok(-3));
+        assert_eq!(Value::Int(0).get_bool_go(), Ok(false));
+        assert_eq!(Value::Float(0.5).get_bool_go(), Ok(true));
+        assert_eq!(Value::Number("0".into()).get_bool_go(), Ok(false));
+        assert_eq!(Value::Number("0.0".into()).get_bool_go(), Ok(true));
+        assert!(Value::String("true".into()).get_bool_go().is_err());
+    }
+
+    #[test]
+    fn coercions_to_text_and_numbers_cover_every_variant() {
+        assert_eq!(Value::Float(0.1).to_string_coerced(), "0.1");
+        assert_eq!(Value::Number("1e3".into()).to_string_coerced(), "1e3");
+        assert_eq!(
+            Value::Timestamp(epoch(0)).to_string_coerced(),
+            "1970-01-01T00:00:00Z"
+        );
+        assert_eq!(Value::Number("2".into()).to_number_coerced(), Ok(2.0));
+        assert_eq!(Value::Float(1.5).to_number_coerced(), Ok(1.5));
+        assert_eq!(Value::Int(-2).to_number_coerced(), Ok(-2.0));
+        assert_eq!(Value::Uint(2).to_number_coerced(), Ok(2.0));
+        assert_eq!(
+            Value::Uint(u64::MAX).to_int_coerced().unwrap_err(),
+            "uint64 value 18446744073709551615 exceeds int64 maximum"
+        );
+        assert_eq!(Value::Bytes(b"0x10".to_vec()).to_int_coerced(), Ok(16));
+        assert_eq!(
+            Value::Null.to_int_coerced().unwrap_err(),
+            "expected number or string value, got null"
+        );
+        assert_eq!(Value::Number("9".into()).to_uint_coerced(), Ok(9));
+        assert!(Value::Number("1.5".into()).to_uint_coerced().is_err());
+        assert_eq!(Value::Uint(4).to_uint_coerced(), Ok(4));
+        assert_eq!(
+            Value::Number("99999999999999999999".into())
+                .to_uint_coerced()
+                .unwrap_err(),
+            r#"strconv.ParseInt: parsing "99999999999999999999": value out of range"#
+        );
+        assert_eq!(Value::Float(4.0).to_uint_coerced(), Ok(4));
+        for bad in [f64::NAN, f64::INFINITY, -1.0, 1.5] {
+            assert_eq!(
+                Value::Float(bad).to_uint_coerced().unwrap_err(),
+                format!("cannot convert float {bad} to uint64")
+            );
+        }
+        assert_eq!(Value::Bytes(b"0b11".to_vec()).to_uint_coerced(), Ok(3));
+        assert_eq!(
+            Value::Bool(true).to_uint_coerced().unwrap_err(),
+            "expected number or string value, got bool"
+        );
+    }
+
+    #[test]
+    fn bool_coercion_reads_numbers_text_and_go_spellings() {
+        assert_eq!(Value::Number("0".into()).to_bool_coerced(), Ok(false));
+        assert_eq!(Value::Bool(true).to_bool_coerced(), Ok(true));
+        assert_eq!(Value::Int(2).to_bool_coerced(), Ok(true));
+        assert_eq!(Value::Uint(0).to_bool_coerced(), Ok(false));
+        assert_eq!(Value::Float(0.0).to_bool_coerced(), Ok(false));
+        assert_eq!(Value::String("T".into()).to_bool_coerced(), Ok(true));
+        assert_eq!(Value::Bytes(b"False".to_vec()).to_bool_coerced(), Ok(false));
+        assert_eq!(
+            Value::String("yes".into()).to_bool_coerced().unwrap_err(),
+            "failed to parse 'yes' as bool"
+        );
+        assert_eq!(
+            Value::Null.to_bool_coerced().unwrap_err(),
+            "cannot convert null to bool"
+        );
+        for f in ["0", "f", "F", "false", "FALSE", "False"] {
+            assert_eq!(parse_go_bool(f), Ok(false), "{f}");
+        }
+    }
+
+    #[test]
+    fn timestamp_coercion_reads_unix_numbers_and_rfc3339_text() {
+        let fmt = |v: Value| v.to_timestamp_coerced().map(|t| format_rfc3339_nano(&t));
+        assert_eq!(
+            fmt(Value::Number("60".into())).as_deref(),
+            Ok("1970-01-01T00:01:00Z")
+        );
+        assert_eq!(fmt(Value::Uint(1)).as_deref(), Ok("1970-01-01T00:00:01Z"));
+        assert_eq!(
+            fmt(Value::Int(i64::MAX)).unwrap_err(),
+            "invalid unix timestamp: 9223372036854775807"
+        );
+        assert_eq!(
+            fmt(Value::Uint(u64::MAX)).unwrap_err(),
+            "invalid unix timestamp: 18446744073709551615"
+        );
+        assert_eq!(
+            fmt(Value::Float(1.9999999999)).as_deref(),
+            Ok("1970-01-01T00:00:02Z")
+        );
+        assert_eq!(
+            fmt(Value::Float(-0.5)).as_deref(),
+            Ok("1969-12-31T23:59:59.5Z")
+        );
+        assert_eq!(
+            fmt(Value::Float(1e20)).unwrap_err(),
+            "invalid unix float timestamp: 100000000000000000000"
+        );
+        assert_eq!(
+            fmt(Value::Bytes(b"2024-01-02T03:04:05+01:00".to_vec())).as_deref(),
+            Ok("2024-01-02T03:04:05+01:00")
+        );
+        assert_eq!(
+            fmt(Value::Bytes(b"nope".to_vec())).unwrap_err(),
+            "failed to parse RFC3339 timestamp 'nope': not RFC 3339"
+        );
+        assert_eq!(
+            fmt(Value::Null).unwrap_err(),
+            "expected timestamp, number, or string, got null"
+        );
+    }
+
+    #[test]
+    fn json_conversion_writes_whole_floats_as_go_and_drops_deleted_members() {
+        assert_eq!(
+            Value::Number("12".into()).to_json_value(),
+            serde_json::json!(12)
+        );
+        assert_eq!(
+            Value::Float(1.5e19).to_json_value(),
+            serde_json::json!(15_000_000_000_000_000_000u64)
+        );
+        assert_eq!(
+            Value::Float(f64::NAN).to_json_value(),
+            serde_json::Value::Null
+        );
+        let mut m = BTreeMap::new();
+        m.insert("gone".to_string(), Value::Nothing);
+        m.insert("kept".to_string(), Value::Int(1));
+        assert_eq!(
+            Value::Object(m.into()).to_json_value(),
+            serde_json::json!({"kept": 1})
+        );
+        let n: serde_json::Value = serde_json::from_str("18446744073709551616").unwrap();
+        assert_eq!(
+            Value::from_json_value(n),
+            Value::Float(18446744073709551616.0)
+        );
+    }
+
+    #[test]
+    fn paths_read_arrays_by_index_and_refuse_what_is_not_there() {
+        let v = Value::from_json_value(serde_json::json!({"a":[{"b":1},2],"s":"x"}));
+        assert_eq!(v.get_path(&path("a.0.b")), Value::Int(1));
+        assert_eq!(v.get_path(&path("a.5")), Value::Null);
+        assert_eq!(v.get_path(&path("a.x")), Value::Null);
+        assert_eq!(v.get_path(&path("s.t")), Value::Null);
+        assert!(v.exists_path(&path("a.1")));
+        assert!(!v.exists_path(&path("a.9")));
+        assert!(!v.exists_path(&path("a.x")));
+        assert!(!v.exists_path(&path("s.t")));
+        assert!(!v.exists_path(&path("q")));
+    }
+
+    #[test]
+    fn set_path_creates_objects_appends_and_names_the_failing_segment() {
+        let mut v =
+            Value::from_json_value(serde_json::json!({"a":{"n":null},"l":[{"x":1}],"s":"t"}));
+        v.set_path(&path("a.n.m"), Value::Int(1)).unwrap();
+        v.set_path(&path("l.-"), Value::Int(2)).unwrap();
+        v.set_path(&path("l.-.k"), Value::Int(3)).unwrap();
+        v.set_path(&path("l.0.y"), Value::Int(4)).unwrap();
+        assert_eq!(
+            v.to_go_json(),
+            r#"{"a":{"n":{"m":1}},"l":[{"x":1,"y":4},2,{"k":3}],"s":"t"}"#
+        );
+        assert_eq!(
+            v.set_path(&path("l.z"), Value::Null).unwrap_err(),
+            "unable to set target path z: array index 'z' is not an integer"
+        );
+        assert_eq!(
+            v.set_path(&path("l.7.q"), Value::Null).unwrap_err(),
+            "unable to set target path 7.q: index 7 out of bounds"
+        );
+        assert_eq!(
+            v.set_path(&path("s.t.u"), Value::Null).unwrap_err(),
+            "unable to set target path s.t.u as the value of s was a non-object type (string)"
+        );
+        let mut root = Value::Int(1);
+        assert_eq!(
+            root.set_path(&path("a"), Value::Null).unwrap_err(),
+            "unable to set target path a as the value of the root was a non-object type (number)"
+        );
+    }
+
+    #[test]
+    fn delete_path_removes_nested_keys_and_ignores_missing_ones() {
+        let mut v = Value::from_json_value(serde_json::json!({"a":{"b":1,"c":2},"s":"t"}));
+        v.delete_path(&path("a.b"));
+        v.delete_path(&path("x.y"));
+        v.delete_path(&path("s.t"));
+        delete_path_recursive(&mut v, &[]);
+        assert_eq!(v.to_go_json(), r#"{"a":{"c":2},"s":"t"}"#);
+    }
+
+    #[test]
+    fn go_float_and_go_v_spell_specials_and_containers_as_go() {
+        assert_eq!(format_go_float(f64::NAN), "NaN");
+        assert_eq!(format_go_float(f64::INFINITY), "+Inf");
+        assert_eq!(format_go_float(f64::NEG_INFINITY), "-Inf");
+        assert_eq!(format_json_float(f64::INFINITY), "null");
+        assert_eq!(format_go_v(&Value::Nothing), "<nil>");
+        assert_eq!(format_go_v(&Value::Bytes(vec![1, 2])), "[1 2]");
+        let v = Value::from_json_value(serde_json::json!({"a":[1,"x"],"b":null}));
+        assert_eq!(format_go_v(&v), "map[a:[1 x] b:<nil>]");
+        assert_eq!(
+            type_error_from("x", &Value::Null, &["a", "b", "c"]),
+            "expected a, b or c value, got null from x"
+        );
+    }
+
+    #[test]
+    fn go_integer_parsers_take_base_prefixes_and_refuse_overflow() {
+        assert_eq!(
+            parse_go_int("", 64).unwrap_err(),
+            "cannot parse empty string as integer"
+        );
+        assert_eq!(parse_go_int("-0x10", 64), Ok(-16));
+        assert_eq!(parse_go_int("+0b101", 64), Ok(5));
+        assert_eq!(parse_go_int("0o17", 64), Ok(15));
+        assert_eq!(parse_go_int("017", 64), Ok(15));
+        assert_eq!(parse_go_int("-9223372036854775808", 64), Ok(i64::MIN));
+        assert_eq!(
+            parse_go_int("-9223372036854775809", 64).unwrap_err(),
+            "integer '-9223372036854775809' overflows int64"
+        );
+        assert_eq!(parse_go_int("-1_000", 64), Ok(-1000));
+        assert_eq!(
+            parse_go_int("9223372036854775808", 64).unwrap_err(),
+            "integer '9223372036854775808' overflows int64"
+        );
+        assert_eq!(
+            check_int_bits(128, 8).unwrap_err(),
+            "value 128 overflows int8"
+        );
+        assert_eq!(
+            check_int_bits(-32769, 16).unwrap_err(),
+            "value -32769 overflows int16"
+        );
+        assert_eq!(
+            check_int_bits(1 << 31, 32).unwrap_err(),
+            "value 2147483648 overflows int32"
+        );
+        assert_eq!(check_int_bits(-128, 8), Ok(-128));
+        assert_eq!(
+            parse_go_uint("-1", 64).unwrap_err(),
+            "failed to parse '-1' as uint"
+        );
+        assert_eq!(
+            parse_go_uint("", 64).unwrap_err(),
+            "failed to parse '' as uint"
+        );
+        assert_eq!(parse_go_uint("+0B11", 64), Ok(3));
+        assert_eq!(parse_go_uint("0O7", 64), Ok(7));
+        assert_eq!(parse_go_uint("010", 64), Ok(8));
+        assert_eq!(parse_go_uint("0xFF", 8), Ok(255));
+        assert!(parse_go_uint("08", 64)
+            .unwrap_err()
+            .starts_with("failed to parse '08' as uint: "));
+        assert_eq!(
+            check_uint_bits(256, 8).unwrap_err(),
+            "value 256 overflows uint8"
+        );
+        assert_eq!(
+            check_uint_bits(65536, 16).unwrap_err(),
+            "value 65536 overflows uint16"
+        );
+        assert_eq!(
+            check_uint_bits(1 << 32, 32).unwrap_err(),
+            "value 4294967296 overflows uint32"
+        );
     }
 
     #[test]

@@ -849,15 +849,61 @@ pub(crate) mod tests {
     }
 
     fn module_of(url_key: &str) -> Module {
-        match url_key {
-            "JC_OIDC_ISSUER" => Module::Kaisatsu,
-            "JC_SHAKO_URL" => Module::Shako,
-            "JC_PORTAL_PIPELINE_RUNNER_URL" => Module::Ekiben,
-            "JC_PORTAL_CKAN_URL" => Module::Dataroom,
-            "JC_PORTAL_GRAFANA_URL" => Module::Daiya,
-            "JC_PORTAL_BROKER_URL" => Module::Antares,
-            other => panic!("{other}"),
-        }
+        [
+            ("JC_OIDC_ISSUER", Module::Kaisatsu),
+            ("JC_SHAKO_URL", Module::Shako),
+            ("JC_PORTAL_PIPELINE_RUNNER_URL", Module::Ekiben),
+            ("JC_PORTAL_CKAN_URL", Module::Dataroom),
+            ("JC_PORTAL_GRAFANA_URL", Module::Daiya),
+            ("JC_PORTAL_BROKER_URL", Module::Antares),
+        ]
+        .into_iter()
+        .find(|(key, _)| *key == url_key)
+        .expect(url_key)
+        .1
+    }
+
+    /// Pointing a module that is not mounted at a listener changes nothing; a mounted one keeps
+    /// its public mount.
+    #[test]
+    fn a_listener_for_an_unmounted_module_is_ignored() {
+        let (mut siblings, _setup, _dir) = fixture("https");
+        siblings.remove(Module::Viz);
+        let addr: SocketAddr = "127.0.0.1:41000".parse().unwrap();
+        siblings.set_internal(Module::Viz, addr);
+        siblings.set_in_pod(Module::Viz, addr);
+        assert!(siblings.get(Module::Viz).is_none());
+        let public = siblings.get(Module::Shako).unwrap().public.clone();
+        siblings.set_in_pod(Module::Shako, addr);
+        let shako = siblings.get(Module::Shako).unwrap();
+        assert_eq!(shako.internal, "http://127.0.0.1:41000/git");
+        assert_eq!(
+            (shako.public.as_str(), shako.reach),
+            (public.as_str(), None)
+        );
+        siblings.set_internal(Module::Shako, addr);
+        assert_eq!(
+            siblings.get(Module::Shako).unwrap().internal,
+            "http://127.0.0.1:41000"
+        );
+    }
+
+    /// A kaisatsu reached at its public address needs no separate admin back channel, and a
+    /// Portal without a gateway beside it gets no gateway settings.
+    #[test]
+    fn the_admin_back_channel_and_gateway_follow_their_siblings() {
+        let (mut siblings, setup, _dir) = fixture("https");
+        let public = siblings.get(Module::Kaisatsu).unwrap().public.clone();
+        siblings.insert_remote(
+            Module::Kaisatsu,
+            Sibling::direct(public.clone(), public.clone()),
+        );
+        siblings.remove(Module::Gateway);
+        let v = portal_vars(&siblings, &setup, none);
+        assert!(v["JC_OIDC_ISSUER"].starts_with(&public), "{v:?}");
+        assert!(!v.contains_key("JC_KEYCLOAK_ADMIN_URL"));
+        assert!(!v.contains_key("JC_PORTAL_GATEWAY_URL"));
+        assert!(!v.contains_key("JC_PORTAL_GATEWAY_CLIENT_ID"));
     }
 
     #[test]

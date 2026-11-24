@@ -1,0 +1,2 @@
+map m { root = this + 1 }
+root = this.a.apply("m")

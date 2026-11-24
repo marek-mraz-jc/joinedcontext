@@ -1,0 +1,10 @@
+# Two Organizations of one deployment, each on its own hosts (jc-multiorg-hosts).
+[[organizations]]
+name = "alpha"
+catalogue_id = "00000000-0000-7000-8000-0000000000a1"
+hosts = { portal = "portal.alpha.test", opendata = "opendata.alpha.test", api = "api.alpha.test", mcp = "mcp.alpha.test" }
+
+[[organizations]]
+name = "beta"
+catalogue_id = "00000000-0000-7000-8000-0000000000b1"
+hosts = { portal = "portal.beta.test", opendata = "opendata.beta.test", api = "api.beta.test", mcp = "mcp.beta.test" }
