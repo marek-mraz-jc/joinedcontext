@@ -90,10 +90,14 @@ jobs:
           docker run -d --name nats -p 4222:4222 nats@sha256:4b83414183aa5fb87cd164962c47eaffd214e84668dc4fa4f1d4c44a3e765ee8 -js
           echo "ANTARES_TEST_NATS_URL=nats://127.0.0.1:4222" >> "$GITHUB_ENV"
       # The Portal's instrumented lib test binary outgrows the runner's memory without swap (ci.yml portal-test).
+      # Its ~160 instrumented test binaries with debuginfo filled the 77 GB free disk while linking
+      # (run 45393241179: 1.1 GB left, `linking with cc failed`; a full disk lost the runner and its
+      # log in runs 45342728744 and 45374059840). llvm-cov reads the coverage map, not the debuginfo.
       - if: matrix.ws == 'portal'
         run: |
           sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
           sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal
+          { echo CARGO_PROFILE_DEV_DEBUG=0; echo CARGO_PROFILE_TEST_DEBUG=0; } >> "$GITHUB_ENV"
       # The platform's lockfile repeats the root one's versions (ci.yml platform-test).
       - if: matrix.ws == 'platform'
         run: python3 ../../.github/scripts/lock-subset.py ../../Cargo.lock Cargo.lock
