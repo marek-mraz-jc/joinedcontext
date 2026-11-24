@@ -530,6 +530,9 @@ async fn a_reader_reads_a_dashboards_versions_and_only_a_proposer_restores_one()
 }
 
 /// The saved charts' table, shared with grafana_tests: each test here clears only its own rows.
+/// The tests that use the saved charts' table run one at a time: each clears its rows first.
+static DATABASE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn database() -> Option<sqlx::PgPool> {
     let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
         .ok()
@@ -566,6 +569,7 @@ async fn saved_ids(pool: &sqlx::PgPool) -> Vec<String> {
 #[tokio::test]
 async fn saved_charts_move_into_one_dashboard_and_only_what_the_merged_file_draws_is_removed() {
     use joinedcontext_portal::grafana::{self, Kind, Visualization};
+    let _alone = DATABASE.lock().await;
     let Some(pool) = database().await else { return };
     let shako = common::forge().await;
     let grafana_server = daiya().await;
@@ -1602,8 +1606,9 @@ async fn a_variables_values_are_read_as_the_person_and_each_failure_says_why() {
         "{}",
         closed.text
     );
-    assert!(
-        body(&closed)["errors"].to_string().contains("endpoint:"),
+    assert_eq!(
+        body(&closed)["errors"][0]["path"],
+        "endpoint",
         "{}",
         closed.text
     );
@@ -1733,7 +1738,8 @@ async fn a_dashboard_over_the_file_limit_is_refused_before_it_is_proposed() {
         answer.text
     );
     assert!(
-        answer.text.contains("board: the dashboard is over 256 KiB"),
+        answer.text.contains("the dashboard is over 256 KiB")
+            && answer.text.contains(r#""path":"board""#),
         "{}",
         answer.text
     );
@@ -1855,16 +1861,20 @@ async fn a_restore_needs_the_saved_dashboard_and_a_removal_names_an_untitled_one
     )
     .await;
     assert_eq!(removed.status, StatusCode::ACCEPTED, "{}", removed.text);
-    let titles: Vec<String> = shako
+    let commits: Vec<String> = shako
         .received_requests()
         .await
         .unwrap_or_default()
         .iter()
-        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/PullRequests"))
-        .filter_map(|r| serde_json::from_slice::<Value>(&r.body).ok())
-        .filter_map(|b| b["Title"].as_str().map(str::to_owned))
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CommitFiles"))
+        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
         .collect();
-    assert_eq!(titles, [format!("remove dashboard {UID}")], "{titles:?}");
+    assert!(
+        commits
+            .iter()
+            .any(|c| c.contains(&format!("remove dashboard {UID}"))),
+        "{commits:?}"
+    );
 }
 
 /// The builder's start lists no waiting dashboard when the forge holds no pull requests; with no
@@ -1936,6 +1946,7 @@ async fn saved_charts_need_a_database_and_something_to_move() {
     );
     assert!(answer.text.contains("no database"), "{}", answer.text);
 
+    let _alone = DATABASE.lock().await;
     let Some(pool) = database().await else { return };
     let mut state = world(&shako, &grafana);
     state.db = Some(pool.clone());

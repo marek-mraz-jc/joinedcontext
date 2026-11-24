@@ -1124,11 +1124,16 @@ async fn a_tree_listing_a_path_twice_is_an_archive_error_not_a_broken_zip() {
         |_| {},
     )
     .await;
-    assert_eq!(answer.status, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(
-        answer.text().contains("archive failed"),
+    assert_eq!(
+        answer.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
         "{}",
         answer.text()
+    );
+    assert!(
+        !answer.content_type.contains("zip"),
+        "{}",
+        answer.content_type
     );
 }
 

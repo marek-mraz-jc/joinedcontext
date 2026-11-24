@@ -864,7 +864,9 @@ async fn the_form_reports_a_failing_grafana_and_offers_no_types_without_a_model(
     assert_eq!(air.status, StatusCode::OK, "{}", air.text);
     assert_eq!(body(&air)["types"], json!([]));
     assert_eq!(body(&air)["attributes"], json!([]));
-    assert!(body(&air)["endpoints"]
-        .as_array()
-        .is_some_and(|list| !list.is_empty()));
+    assert_eq!(
+        body(&air)["endpoints"],
+        json!([]),
+        "without a dashboards service no Endpoint is offered"
+    );
 }
