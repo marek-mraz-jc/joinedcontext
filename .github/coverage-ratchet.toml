@@ -64,7 +64,7 @@
 "jc" = { lines = 89.83, functions = 83.79 }
 "jc-audit" = { lines = 100.00, functions = 100.00 }
 "jc-chart" = { lines = 99.75, functions = 100.00 }
-"jc-core" = { lines = 94.39, functions = 94.61 }
+"jc-core" = { lines = 98.99, functions = 98.13 }
 "jc-dcat" = { lines = 97.56, functions = 97.76 }
 "jc-door" = { lines = 97.78, functions = 100.00 }
 "jc-embedder" = { lines = 96.08, functions = 87.50 }
