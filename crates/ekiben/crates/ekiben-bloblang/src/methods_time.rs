@@ -135,7 +135,7 @@ pub(crate) fn eval_time_family(
         "parse_duration_iso8601" => Some((|| {
             let s = target_val.get_string()?;
             let period = Iso8601Period::parse(&s)?;
-            let nanos = period.approx_nanos();
+            let nanos = period.approx_nanos()?;
             Ok(Value::Int(nanos))
         })()),
         _ => None,

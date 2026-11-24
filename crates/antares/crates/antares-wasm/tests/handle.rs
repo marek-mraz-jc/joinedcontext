@@ -323,3 +323,180 @@ async fn health_reports_the_memory_mode() {
     let doc: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
     assert_eq!(doc["store"], "memory");
 }
+
+/// `with_store` keeps the caller's mode name: the OPFS constructor passes its own, and
+/// `/q/health` reports what the page actually persists to.
+#[tokio::test(flavor = "current_thread")]
+async fn health_reports_the_mode_with_store_was_given() {
+    let broker = Broker::with_store(antares_sql::store::Store::default(), "opfs");
+    let resp = broker.handle(req("GET", "/q/health", "")).await;
+    assert_eq!(resp.status(), 200);
+    let doc: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+    assert_eq!(doc["store"], "opfs");
+}
+
+async fn source_alias(broker: &Broker, tenant: Option<&str>) -> String {
+    let mut r = req("GET", "/ngsi-ld/v1/info/sourceIdentity", "");
+    if let Some(t) = tenant {
+        r.headers_mut().insert("NGSILD-Tenant", t.parse().unwrap());
+    }
+    let resp = broker.handle(r).await;
+    assert_eq!(
+        resp.status(),
+        200,
+        "{}",
+        String::from_utf8_lossy(resp.body())
+    );
+    let doc: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+    doc["contextSourceAlias"].as_str().unwrap().to_owned()
+}
+
+/// Without an alias every instance is `antares-wasm`; a federation names each one, and the
+/// name is what peers register for loop detection, per tenant (`{alias}~{tenant}`).
+#[tokio::test(flavor = "current_thread")]
+async fn the_host_alias_names_the_instance_per_tenant() {
+    let plain = Broker::new();
+    assert_eq!(source_alias(&plain, None).await, "antares-wasm");
+
+    let named = Broker::with_store_alias(
+        antares_sql::store::Store::default(),
+        "memory",
+        Some("tab-2".to_owned()),
+    );
+    assert_eq!(source_alias(&named, None).await, "tab-2");
+    assert_eq!(source_alias(&named, Some("space-a")).await, "tab-2~space-a");
+}
+
+/// Two brokers built in one page share nothing: an entity created in one is a 404 in the other.
+#[tokio::test(flavor = "current_thread")]
+async fn two_instances_keep_separate_stores() {
+    let a = Broker::new();
+    let b = Broker::new();
+    let resp = a.handle(req("POST", "/ngsi-ld/v1/entities", ENTITY)).await;
+    assert_eq!(resp.status(), 201);
+    let path = "/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:wasm-1";
+    assert_eq!(a.handle(req("GET", path, "")).await.status(), 200);
+    assert_eq!(b.handle(req("GET", path, "")).await.status(), 404);
+}
+
+/// A second create of the same id is a 409 problem body, carried back through the seam whole.
+#[tokio::test(flavor = "current_thread")]
+async fn a_duplicate_create_is_a_conflict_with_its_problem_body() {
+    let broker = Broker::new();
+    let first = broker
+        .handle(req("POST", "/ngsi-ld/v1/entities", ENTITY))
+        .await;
+    assert_eq!(first.status(), 201);
+    let again = broker
+        .handle(req("POST", "/ngsi-ld/v1/entities", ENTITY))
+        .await;
+    assert_eq!(again.status(), 409);
+    let doc: serde_json::Value = serde_json::from_slice(again.body()).unwrap();
+    assert_eq!(
+        doc["type"],
+        "https://uri.etsi.org/ngsi-ld/errors/AlreadyExists"
+    );
+}
+
+/// Malformed input is refused with an actionable status, never a panic or an empty 200.
+#[tokio::test(flavor = "current_thread")]
+async fn malformed_requests_are_refused() {
+    let broker = Broker::new();
+
+    let resp = broker
+        .handle(req("POST", "/ngsi-ld/v1/entities", "{not json"))
+        .await;
+    assert_eq!(
+        resp.status(),
+        400,
+        "{}",
+        String::from_utf8_lossy(resp.body())
+    );
+
+    // 6.3.4: a body-bearing method without Content-Length
+    let bare = http::Request::builder()
+        .method("POST")
+        .uri("/ngsi-ld/v1/entities")
+        .header("Content-Type", "application/ld+json")
+        .body(ENTITY.as_bytes().to_vec())
+        .unwrap();
+    assert_eq!(broker.handle(bare).await.status(), 411);
+
+    let resp = broker
+        .handle(req("GET", "/ngsi-ld/v1/entities/not-a-uri", ""))
+        .await;
+    assert_eq!(
+        resp.status(),
+        400,
+        "{}",
+        String::from_utf8_lossy(resp.body())
+    );
+
+    let resp = broker
+        .handle(with_tenant_header(
+            req("GET", "/ngsi-ld/v1/entities?type=Vehicle", ""),
+            "no~tilde",
+        ))
+        .await;
+    assert_eq!(
+        resp.status(),
+        400,
+        "{}",
+        String::from_utf8_lossy(resp.body())
+    );
+}
+
+fn with_tenant_header(mut r: http::Request<Vec<u8>>, t: &str) -> http::Request<Vec<u8>> {
+    r.headers_mut().insert("NGSILD-Tenant", t.parse().unwrap());
+    r
+}
+
+/// A path no surface serves is a 404, and an empty query result is an empty array, not an error.
+#[tokio::test(flavor = "current_thread")]
+async fn unknown_paths_and_empty_results() {
+    let broker = Broker::new();
+    assert_eq!(
+        broker
+            .handle(req("GET", "/no/such/route", ""))
+            .await
+            .status(),
+        404
+    );
+
+    let resp = broker
+        .handle(req("GET", "/ngsi-ld/v1/entities?type=Vehicle", ""))
+        .await;
+    assert_eq!(resp.status(), 200);
+    let doc: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+    assert_eq!(doc, serde_json::json!([]));
+}
+
+/// A HEAD answers the GET's status and headers with no body bytes through the seam.
+#[tokio::test(flavor = "current_thread")]
+async fn head_returns_no_body() {
+    let broker = Broker::new();
+    broker
+        .handle(req("POST", "/ngsi-ld/v1/entities", ENTITY))
+        .await;
+    let resp = broker
+        .handle(req(
+            "HEAD",
+            "/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:wasm-1",
+            "",
+        ))
+        .await;
+    assert_eq!(resp.status(), 200);
+    assert!(resp.body().is_empty());
+}
+
+/// Delete round-trips through the seam: 204, then the entity is gone.
+#[tokio::test(flavor = "current_thread")]
+async fn delete_then_retrieve_is_not_found() {
+    let broker = Broker::new();
+    broker
+        .handle(req("POST", "/ngsi-ld/v1/entities", ENTITY))
+        .await;
+    let path = "/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:wasm-1";
+    assert_eq!(broker.handle(req("DELETE", path, "")).await.status(), 204);
+    assert_eq!(broker.handle(req("GET", path, "")).await.status(), 404);
+}

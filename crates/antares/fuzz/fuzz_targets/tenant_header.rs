@@ -13,7 +13,10 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(text) = std::str::from_utf8(data) {
         if let Ok(tenant) = antares_model::TenantId::new(text) {
             assert!(
-                tenant.as_str().bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'),
+                tenant
+                    .as_str()
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'),
                 "{text:?} accepted as a tenant"
             );
         }

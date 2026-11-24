@@ -10,7 +10,9 @@ fuzz_target!(|data: &[u8]| {
     if data.len() > 4096 {
         return;
     }
-    let Ok(pattern) = std::str::from_utf8(data) else { return };
+    let Ok(pattern) = std::str::from_utf8(data) else {
+        return;
+    };
     if let Ok(re) = antares_ql::regex::compile(pattern) {
         let _ = re.is_match("urn:ngsi-ld:Vehicle:A4567");
         let _ = re.is_match(&"a".repeat(256));

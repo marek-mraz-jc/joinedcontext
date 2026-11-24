@@ -50,7 +50,7 @@ pub fn sprintf(format: &str, args: &[Value]) -> String {
             i += 1;
             match args.get(arg).and_then(star) {
                 Some(w) => {
-                    if w < 0 {
+                    if w.is_negative() {
                         f.minus = true;
                         f.zero = false;
                     }
@@ -422,9 +422,7 @@ fn fmt_integer(out: &mut String, v: &Value, u: u64, negative: bool, verb: char, 
                 u32::try_from(u).ok().and_then(char::from_u32)
             };
             let c = c.unwrap_or('\u{FFFD}');
-            if f.sharp && c != '\'' && is_go_print(c)
-                || (f.sharp && c.is_ascii_graphic() && c != '\'')
-            {
+            if f.sharp && c != '\'' && is_go_print(c) {
                 pad(out, &format!("'{c}'"), f);
             } else {
                 pad(out, &quote(&c.to_string(), '\'', f.plus), f);
@@ -439,7 +437,7 @@ fn fmt_integer(out: &mut String, v: &Value, u: u64, negative: bool, verb: char, 
                 if let Some(c) = u32::try_from(u)
                     .ok()
                     .and_then(char::from_u32)
-                    .filter(|c| is_go_print(*c) || c.is_ascii_graphic() || *c == ' ')
+                    .filter(|c| is_go_print(*c) || *c == ' ')
                 {
                     s.push_str(&format!(" '{c}'"));
                 }
@@ -465,14 +463,11 @@ fn fmt_integer(out: &mut String, v: &Value, u: u64, negative: bool, verb: char, 
     };
     let min = match (f.prec, f.zero, f.wid) {
         (Some(p), _, _) => p,
-        (None, true, Some(w)) if !f.minus => {
-            w.saturating_sub(usize::from(negative || f.plus || f.space))
-        }
+        // sprintf clears zero under minus, as Go does.
+        (None, true, Some(w)) => w.saturating_sub(usize::from(negative || f.plus || f.space)),
         _ => 0,
     };
-    if digits.len() < min {
-        digits.insert_str(0, &"0".repeat(min - digits.len()));
-    }
+    digits.insert_str(0, &"0".repeat(min.saturating_sub(digits.len())));
     if f.sharp {
         match base {
             2 => digits.insert_str(0, "0b"),
@@ -583,7 +578,7 @@ fn format_float(x: f64, verb: char, prec: Option<usize>) -> String {
         return "NaN".to_string();
     }
     if x.is_infinite() {
-        return if x > 0.0 { "+Inf" } else { "-Inf" }.to_string();
+        return if x.is_sign_positive() { "+Inf" } else { "-Inf" }.to_string();
     }
     let neg = x.is_sign_negative();
     let (digs, dp) = decimal_digits(x.abs(), verb, prec);
@@ -605,19 +600,16 @@ fn format_float(x: f64, verb: char, prec: Option<usize>) -> String {
         _ => {
             let shortest = prec.is_none();
             let mut p = prec.map_or(nd, |p| if p == 0 { 1 } else { p });
+            // Go also lowers eprec to nd when nd >= dp; exp = dp - 1 is below nd then, so the
+            // %e/%f choice below is the same either way.
             let mut eprec = p as i64;
-            if eprec > nd as i64 && nd as i64 >= dp {
-                eprec = nd as i64;
-            }
             if shortest {
                 eprec = 6;
             }
             let exp = dp - 1;
             let e = if verb == 'G' { 'E' } else { 'e' };
             if exp < -4 || exp >= eprec {
-                if p > nd {
-                    p = nd;
-                }
+                p = p.min(nd);
                 fmt_e(&mut s, &digs, dp, p.saturating_sub(1), e);
             } else {
                 if p as i64 > dp {
@@ -633,6 +625,10 @@ fn format_float(x: f64, verb: char, prec: Option<usize>) -> String {
 /// The decimal digits of `x` (no leading or trailing zeros; "0" for zero) and the place of the
 /// decimal point, rounded as `strconv` rounds for `verb` and `prec`.
 fn decimal_digits(x: f64, verb: char, prec: Option<usize>) -> (Vec<u8>, i64) {
+    // An f64's exact decimal has at most 1074 places and 767 significant digits, so rounding at
+    // 1100 is exact and the zeros past it are trimmed anyway; Rust's format! refuses a precision
+    // past u16::MAX that Go's 1e6 limit allows.
+    let prec = prec.map(|p| p.min(1100));
     let sci = match (verb, prec) {
         (_, None) => format!("{x:e}"),
         ('e' | 'E', Some(p)) => format!("{x:.p$e}"),
@@ -781,6 +777,28 @@ mod tests {
     }
 
     #[test]
+    fn a_precision_past_u16_max_pads_zeros_as_go() {
+        // Fuzz crash (sprintf target): format! panicked on a precision above 65535.
+        let x = [Value::Float(1.5)];
+        assert_eq!(
+            sprintf("%.70000f", &x),
+            format!("1.5{}", "0".repeat(69_999))
+        );
+        assert_eq!(
+            sprintf("%.70000e", &x),
+            format!("1.5{}e+00", "0".repeat(69_999))
+        );
+        assert_eq!(sprintf("%.70000g", &x), "1.5");
+        assert_eq!(sprintf("%.1100f", &[Value::Float(5e-324)]).len(), 1102);
+        // The smallest subnormal's exact expansion still fits inside 1100 places.
+        let tiny = sprintf("%.1100f", &[Value::Float(5e-324)]);
+        assert!(
+            tiny.starts_with(&format!("0.{}494065645841246544", "0".repeat(323))),
+            "{tiny}"
+        );
+    }
+
+    #[test]
     fn formats_flags_widths_and_every_kind_as_go() {
         use std::collections::BTreeMap;
         let i = Value::Int;
@@ -794,6 +812,61 @@ mod tests {
             ("%*d", vec![Value::Uint(3), i(7)], "  7"),
             ("%*d", vec![st("x"), i(42)], "%!(BADWIDTH)42"),
             ("%*d", vec![i(2_000_000), i(1)], "%!(BADWIDTH)1"),
+            ("%*d", vec![Value::Uint(2_000_000), i(1)], "%!(BADWIDTH)1"),
+            // An index without its closing bracket is a bad index.
+            ("%[1d", vec![i(5)], "%!d(BADINDEX)"),
+            // A precision turns the zero flag off: Go pads with spaces then.
+            (
+                "%08.3d|%-08d|%8.2f|%08.2f",
+                vec![i(42), i(42), Value::Float(1.5), Value::Float(-1.5)],
+                "     042|42      |    1.50|-0001.50",
+            ),
+            ("%#U|%#U", vec![i(0x20), i(0xE9)], "U+0020 ' '|U+00E9 'é'"),
+            // %q escapes what Go's IsPrint refuses, by size; %+q every non-ASCII rune.
+            (
+                "%q|%q|%+q",
+                vec![st("\u{80}"), st("\u{2003}"), st("\u{10000}\u{ffff}")],
+                "\"\\u0080\"|\"\\u2003\"|\"\\U00010000\\uffff\"",
+            ),
+            (
+                "%#q|%#q|%#q",
+                vec![i(0xE9), i(0x27), i(0x41)],
+                "'é'|'\\''|'A'",
+            ),
+            // Go's fmtSbx: case, the space and # flags, width either side.
+            ("%x|%X", vec![st("zz"), st("zz")], "7a7a|7A7A"),
+            (
+                "% x|%# x|%#x",
+                vec![st("zz"), st("zz"), st("zz")],
+                "7a 7a|0x7a 0x7a|0x7a7a",
+            ),
+            (
+                "%12x|%-12x|",
+                vec![st("zz"), st("zz")],
+                "        7a7a|7a7a        |",
+            ),
+            (
+                "%# 14x|%#8x|% 8x|",
+                vec![st("zz"), st("zz"), st("zz")],
+                "     0x7a 0x7a|  0x7a7a|   7a 7a|",
+            ),
+            ("%.1x|%08x", vec![st("zz"), st("zz")], "7a|00007a7a"),
+            // A nil inside a slice or map prints <nil> under any verb, at the top only under %v.
+            (
+                "%d",
+                vec![Value::Array(vec![Value::Null].into())],
+                "[<nil>]",
+            ),
+            (
+                "%d",
+                vec![Value::Object(
+                    [("a".to_string(), Value::Null)]
+                        .into_iter()
+                        .collect::<BTreeMap<_, _>>()
+                        .into(),
+                )],
+                "map[%!d(string=a):<nil>]",
+            ),
             (
                 "%.*f|%.*f",
                 vec![i(2), fl(5.12159), i(-1), fl(1.5)],

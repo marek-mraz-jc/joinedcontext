@@ -68,7 +68,7 @@ jobs:
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Replay committed crash inputs
         run: |
-          for t in parse_q scope_q geo_params expand_entity q_to_sql type_selection projection representation join temporal order_by link_header tenant_header accept_header id_pattern datetime view_config_load; do
+          for t in parse_q scope_q geo_params expand_entity q_to_sql type_selection projection representation join temporal order_by link_header tenant_header accept_header body_bounds id_pattern datetime view_config_load; do
             cargo +nightly fuzz run "$t" "fuzz/regressions/$t" -- -runs=0
           done
 

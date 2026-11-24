@@ -79,3 +79,25 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "${{ matrix.crate }}-${{ matrix.target }}-fuzz-artifacts", path: "crates/ekiben/crates/${{ matrix.crate }}/fuzz/artifacts" }
+  # The bloblang parsers and formatters that read outside input (crates/ekiben/crates/ekiben-bloblang/fuzz,
+  # T-7576), one target per job; a crash goes to fuzz/corpus/<target> with its fix.
+  bloblang:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: { target: [time, sprintf, go_json, msgpack, wkt, gml, json_schema] }
+    defaults: { run: { working-directory: crates/ekiben/crates/ekiben-bloblang } }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: ./.github/actions/rust
+        with: { workspace: crates/ekiben/crates/ekiben-bloblang/fuzz, key: ekiben-bloblang-fuzz, toolchain: nightly }
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2.87.13
+        with: { tool: cargo-fuzz }
+      - env: { SECONDS_TO_FUZZ: "${{ inputs.seconds }}", TARGET: "${{ matrix.target }}" }
+        run: |
+          case "$SECONDS_TO_FUZZ" in ''|*[!0-9]*) echo "seconds: a whole number" >&2; exit 1 ;; esac
+          cargo +nightly fuzz run "$TARGET" --release --target x86_64-unknown-linux-gnu -- -max_total_time="$SECONDS_TO_FUZZ" -timeout=10 -rss_limit_mb=2048
+      - if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with: { name: "ekiben-bloblang-fuzz-${{ matrix.target }}", path: crates/ekiben/crates/ekiben-bloblang/fuzz/artifacts }
