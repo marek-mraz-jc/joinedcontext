@@ -90,8 +90,10 @@ pub struct Constraint {
 pub const PATTERN_MAX: usize = 256;
 
 /// `pattern` anchored on both ends, so it matches the whole value and never a part of it.
-fn whole_value(pattern: &str) -> std::result::Result<regex::Regex, regex::Error> {
-    regex::Regex::new(&format!("^(?:{pattern})$"))
+/// A pattern that compiles only inside that wrapper (`a)|(b`, one branch anchored at each end)
+/// is refused (T-7799).
+fn whole_value(pattern: &str) -> std::result::Result<std::sync::Arc<regex::Regex>, String> {
+    antares_ql::regex::compile_anchored(pattern)
 }
 
 /// The one `status` field a role may write: the build lane's `status.build` of an App (AP-73).
@@ -483,5 +485,29 @@ impl RoleBindingSpec {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// T-7799: a pattern that parses only inside the `^(?:...)$` wrapper is refused at
+    /// validation, naming the field, and one that slipped past it admits nothing.
+    #[test]
+    fn a_pattern_closing_the_wrapper_is_refused_and_holds_for_nothing() {
+        let constraint = |pattern: &str| -> Constraint {
+            serde_json::from_value(serde_json::json!({ "field": "metadata.name", "pattern": pattern }))
+                .expect("a constraint parses")
+        };
+        let escape = constraint("t1)|(.*");
+        let err = escape.validate().expect_err("closes the wrapper");
+        assert!(err.to_string().contains("constraints[].pattern"), "{err}");
+        for v in ["t1", "anything", "t1)"] {
+            assert!(!escape.holds(Some(v)), "{v}");
+        }
+        let journey = constraint("t1[0-9]{3}-.+");
+        assert!(journey.validate().is_ok());
+        assert!(journey.holds(Some("t1234-x")) && !journey.holds(Some("xt1234-x")));
     }
 }

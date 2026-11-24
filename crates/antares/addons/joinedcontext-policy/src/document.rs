@@ -731,7 +731,7 @@ fn rules(
                 )));
             }
             if let Some(p) = s.id_pattern.as_deref() {
-                antares_ql::regex::compile(&format!("^(?:{p})$"))
+                antares_ql::regex::compile_anchored(p)
                     .map_err(|e| why(format!("idPattern {p:?}: {e}")))?;
             }
             written_selectors.push(Selector {
@@ -1219,6 +1219,11 @@ mod tests {
             ),
             (
                 json!({"policies": [with("information", json!([{"entities": [{"type": "Car", "idPattern": "("}]}]))]}),
+                "idPattern",
+            ),
+            // T-7799: parses only inside the rule's `^(?:...)$`, closing its group early
+            (
+                json!({"policies": [with("information", json!([{"entities": [{"type": "Car", "idPattern": "urn:x:a)|(.*"}]}]))]}),
                 "idPattern",
             ),
             (

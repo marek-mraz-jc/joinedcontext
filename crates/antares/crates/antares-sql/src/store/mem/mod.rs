@@ -1180,7 +1180,7 @@ impl Store {
         // a pattern that does not compile matches nothing (`Rule::id_patterns`)
         let id_res: Option<Vec<_>> = f.id_patterns.map(|ps| {
             ps.iter()
-                .filter_map(|p| antares_ql::regex::compile(&format!("^(?:{p})$")).ok())
+                .filter_map(|p| antares_ql::regex::compile_anchored(p).ok())
                 .collect()
         });
         let matches = |id: &str, doc: &Value| {

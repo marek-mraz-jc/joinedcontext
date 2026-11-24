@@ -301,7 +301,11 @@ async fn revocation_under_an_injected_mount() {
 #[tokio::test]
 async fn scope_refusals_and_client_token_settings() {
     let (app, store, _) = app().await;
-    for (id, name, re) in [("sc-fam", "fam", "[a-z]+"), ("sc-badre", "badre", "(")] {
+    for (id, name, re) in [
+        ("sc-fam", "fam", "[a-z]+"),
+        ("sc-badre", "badre", "("),
+        ("sc-escre", "escre", "abc)|(.*"),
+    ] {
         store
             .upsert_client_scope(ClientScopeRepresentation {
                 id: id.into(),
@@ -320,7 +324,7 @@ async fn scope_refusals_and_client_token_settings() {
     }
     client(&store, "scoped", |c| {
         c.default_client_scopes = vec!["fam".into()];
-        c.optional_client_scopes = vec!["badre".into()];
+        c.optional_client_scopes = vec!["badre".into(), "escre".into()];
         c.attributes
             .insert("access.token.lifespan".into(), "123".into());
     })
@@ -334,6 +338,13 @@ async fn scope_refusals_and_client_token_settings() {
     );
     // A parameterized scope whose configured pattern does not compile: refused, not admitted.
     let (st, body) = cc(&app, "scoped", Some("badre:x")).await;
+    assert_eq!(
+        (st, err(&body).as_str()),
+        (StatusCode::BAD_REQUEST, "invalid_scope"),
+        "{body}"
+    );
+    // T-7799: a pattern that compiles only inside the `^(?:...)$` wrapper admits nothing.
+    let (st, body) = cc(&app, "scoped", Some("escre:zzz")).await;
     assert_eq!(
         (st, err(&body).as_str()),
         (StatusCode::BAD_REQUEST, "invalid_scope"),

@@ -361,10 +361,12 @@ pub(crate) fn parse(conf: &JsonValue) -> Result<Settings, String> {
     let topics = if bool_field(obj, "regexp_topics", false)? {
         let mut res = Vec::new();
         for t in &names {
+            // `t` must compile on its own too: `a)|(b` compiles only inside the wrapper and would
+            // subscribe to every topic starting with `a` or ending with `b` (T-7799).
+            let build = |p: &str| regex::RegexBuilder::new(p).size_limit(1 << 20).build();
             res.push(
-                regex::RegexBuilder::new(&format!("^(?:{t})$"))
-                    .size_limit(1 << 20)
-                    .build()
+                build(t)
+                    .and_then(|_| build(&format!("^(?:{t})$")))
                     .map_err(|_| {
                         err(format!(
                             "topics: {t} is not a regular expression, e.g. traffic-.*"

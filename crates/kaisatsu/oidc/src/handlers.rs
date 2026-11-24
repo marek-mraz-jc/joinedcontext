@@ -386,8 +386,11 @@ pub async fn resolve_scopes_for_client(
                 )));
             }
             if let Some(pattern) = param_scope.parameterized_regexp() {
+                // A pattern that compiles only inside the wrapper (`a)|(b`) would leave one
+                // branch anchored at each end and admit nearly any parameter (T-7799).
                 let anchored = format!("^(?:{pattern})$");
-                let re = Regex::new(&anchored)
+                let re = Regex::new(pattern)
+                    .and_then(|_| Regex::new(&anchored))
                     .map_err(|_| KaisatsuError::invalid_scope("invalid scope regexp"))?;
                 if !re.is_match(param) {
                     return Err(KaisatsuError::invalid_scope(format!(
