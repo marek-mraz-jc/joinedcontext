@@ -516,3 +516,40 @@ fn delivery_outcome(code: u16) -> Delivery {
         _ => Delivery::Retry,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A signature that is no hex, or is another secret's, never verifies; the right one does.
+    #[test]
+    fn only_the_secrets_own_signature_verifies() -> Result<(), ShakoError> {
+        let body = br#"{"ref":"refs/heads/main"}"#;
+        let sig = compute_gitea_signature("hook-secret", body)?;
+        assert!(verify_gitea_signature("hook-secret", body, &sig));
+        assert!(verify_gitea_signature(
+            "hook-secret",
+            body,
+            &format!(" {sig}\n")
+        ));
+        assert!(!verify_gitea_signature("other-secret", body, &sig));
+        assert!(!verify_gitea_signature("hook-secret", body, "not hex"));
+        assert!(!verify_gitea_signature("hook-secret", b"tampered", &sig));
+        Ok(())
+    }
+
+    /// An event the native format has no shape for carries its name, repository and sender only.
+    #[test]
+    fn an_unshaped_event_carries_its_name_repository_and_sender() {
+        let gitea = json!({
+            "action": "published",
+            "repository": { "full_name": "joinedcontext/site" },
+            "sender": { "login": "ada" },
+            "release": { "tag_name": "v1" },
+        });
+        let payload = native_webhook_payload("release", &gitea);
+        assert_eq!(payload["event"], json!("release"));
+        assert!(payload.get("release").is_none(), "{payload}");
+        assert!(payload.get("ref").is_none(), "{payload}");
+    }
+}

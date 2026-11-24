@@ -25,3 +25,7 @@ pub mod split_realm;
 pub use app::{MountPlan, Running, StartError, build_router, plan_mounts, run_until, start};
 pub use config::{Cli, Config, MountMode};
 pub use module::Module;
+/// Model Tools' `/generate` on a parsed body, the entry of its fuzz target (bins/jc/fuzz).
+#[cfg(feature = "model-tools")]
+#[doc(hidden)]
+pub use modules::model_tools::generate as model_tools_generate;

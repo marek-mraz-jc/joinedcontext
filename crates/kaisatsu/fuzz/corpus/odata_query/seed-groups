@@ -1,0 +1,1 @@
+$select=name,path&$filter=startswith(path,'/st')

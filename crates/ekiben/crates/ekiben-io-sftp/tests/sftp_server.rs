@@ -141,6 +141,63 @@ async fn put(s: &Server, pin: &str, c: &StreamContext, path: &str, body: &str) {
     f.shutdown().await.expect("close");
 }
 
+/// Every log message of this test binary: the warnings are the input's behaviour on failures it
+/// rides out.
+fn logs() -> &'static Mutex<Vec<String>> {
+    static LOGS: std::sync::OnceLock<Mutex<Vec<String>>> = std::sync::OnceLock::new();
+    let logs = LOGS.get_or_init(Mutex::default);
+    static SET: std::sync::Once = std::sync::Once::new();
+    SET.call_once(|| {
+        let _ = tracing::subscriber::set_global_default(Recorder);
+    });
+    logs
+}
+
+fn logged(part: &str) -> bool {
+    logs()
+        .lock()
+        .expect("lock")
+        .iter()
+        .any(|m| m.contains(part))
+}
+
+struct Recorder;
+
+struct Message(String);
+
+impl tracing::field::Visit for Message {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = format!("{value:?}");
+        }
+    }
+}
+
+impl tracing::Subscriber for Recorder {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut m = Message(String::new());
+        event.record(&mut m);
+        logs().lock().expect("lock").push(m.0);
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+/// One server test at a time: atmoz's sshd drops handshakes past its MaxStartups when the tests'
+/// sessions arrive together.
+async fn serial() -> tokio::sync::MutexGuard<'static, ()> {
+    static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    SERIAL.lock().await
+}
+
 fn lines(b: &ekiben_core::Batch) -> Vec<String> {
     b.iter()
         .map(|p| String::from_utf8_lossy(&p.as_bytes_ref()).into_owned())
@@ -153,6 +210,7 @@ async fn reads_matching_files_deletes_them_after_ack_and_refuses_bad_logins() {
         eprintln!("SFTP_TEST_ADDRESS unset: skipped");
         return;
     };
+    let _serial = serial().await;
     let c = ctx(Arc::default());
     let pin = pin(&s, &c).await;
     let dir = format!("/upload/once-{}", std::process::id());
@@ -210,6 +268,7 @@ async fn a_watcher_takes_each_new_file_once() {
         eprintln!("SFTP_TEST_ADDRESS unset: skipped");
         return;
     };
+    let _serial = serial().await;
     let cache = Arc::new(MemCache::default());
     let c = ctx(cache.clone());
     let pin = pin(&s, &c).await;
@@ -223,11 +282,15 @@ async fn a_watcher_takes_each_new_file_once() {
         &pin,
         json!({
             "paths": [format!("{dir}/*.csv")],
-            "watcher": {"enabled": true, "minimum_age": "0s", "poll_interval": "200ms", "cache": "seen"},
+            "watcher": {"enabled": true, "minimum_age": "0s", "poll_interval": "2s", "cache": "seen"},
         }),
         &c,
     );
-    let (b, ack) = i.read_batch(&c).await.expect("d.csv");
+    // The first listing runs at once; only later polls wait poll_interval.
+    let (b, ack) = tokio::time::timeout(Duration::from_millis(1500), i.read_batch(&c))
+        .await
+        .expect("d.csv before the first poll_interval")
+        .expect("d.csv");
     assert_eq!(lines(&b), ["d1"]);
     ack.ack();
     // Nothing new: the next read waits for a file.
@@ -243,4 +306,315 @@ async fn a_watcher_takes_each_new_file_once() {
         .expect("e.csv");
     assert_eq!(lines(&b), ["e1"]);
     assert!(cache.exists(&format!("{dir}/d.csv")).await.expect("cache"));
+    // a watcher without delete_on_finish leaves an acked file on the server
+    assert!(session.sftp.metadata(format!("{dir}/d.csv")).await.is_ok());
+    // A shutdown during the wait for new files ends the stream after the pause.
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let mut stopping = c.clone();
+    stopping.shutdown_rx = rx;
+    tx.send(true).expect("shutdown");
+    let end = tokio::time::timeout(Duration::from_secs(6), i.read_batch(&stopping))
+        .await
+        .expect("ends in time");
+    assert!(matches!(end, Err(CoreError::EndOfInput)));
+}
+
+fn private_key_target(s: &Server, pin: &str, key: Option<&str>) -> SftpTarget {
+    SftpTarget {
+        password: None,
+        private_key: key.map(|k| SecretString::new(k.to_string())),
+        ..target(s, pin)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn connect_names_missing_undecodable_and_refused_credentials() {
+    let Some(s) = server() else {
+        eprintln!("SFTP_TEST_ADDRESS unset: skipped");
+        return;
+    };
+    let _serial = serial().await;
+    let c = ctx(Arc::default());
+    let pin = pin(&s, &c).await;
+    fn err<T>(r: Result<T, CoreError>) -> String {
+        match r {
+            Ok(_) => panic!("connected"),
+            Err(e) => e.to_string(),
+        }
+    }
+    let e = err(connect(&private_key_target(&s, &pin, None), &c.org).await);
+    assert!(e.contains("no password or private_key"), "{e}");
+    let e = err(connect(&private_key_target(&s, &pin, Some("not a key")), &c.org).await);
+    assert!(e.contains("credentials.private_key does not decode"), "{e}");
+    // a well-formed key the server does not know
+    let dir = tempfile::TempDir::new().expect("tmp");
+    let path = dir.path().join("id");
+    let made = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+        .arg(&path)
+        .status()
+        .expect("ssh-keygen runs");
+    assert!(made.success());
+    let key = std::fs::read_to_string(&path).expect("key");
+    let e = err(connect(&private_key_target(&s, &pin, Some(&key)), &c.org).await);
+    assert!(e.contains("refused the credentials of user"), "{e}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn files_past_the_cap_are_skipped_or_refused_and_an_empty_file_is_passed_over() {
+    let Some(s) = server() else {
+        eprintln!("SFTP_TEST_ADDRESS unset: skipped");
+        return;
+    };
+    let _serial = serial().await;
+    logs();
+    let c = ctx(Arc::default());
+    let pin = pin(&s, &c).await;
+    let dir = format!("/upload/cap-{}", std::process::id());
+    let session = connect(&target(&s, &pin), &c.org).await.expect("connects");
+    session.sftp.create_dir(dir.clone()).await.expect("mkdir");
+    // a.csv holds exactly max_file_bytes and is read
+    put(&s, &pin, &c, &format!("{dir}/a.csv"), "a12\n").await;
+    put(&s, &pin, &c, &format!("{dir}/b.csv"), "b1\n").await;
+    put(&s, &pin, &c, &format!("{dir}/big.csv"), "far too long\n").await;
+    put(&s, &pin, &c, &format!("{dir}/empty.csv"), "").await;
+
+    let mut i = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/*.csv")], "max_file_bytes": 4, "delete_on_finish": true}),
+        &c,
+    );
+    assert_eq!(i.input_type(), "sftp");
+    let (b, ack) = i.read_batch(&c).await.expect("a.csv");
+    assert_eq!(lines(&b), ["a12"]);
+    assert!(i.is_connected());
+    // b.csv grows past the cap between the listing and its read
+    put(&s, &pin, &c, &format!("{dir}/b.csv"), "b1 grew\n").await;
+    let e = match i.read_batch(&c).await {
+        Ok(_) => panic!("read a file past max_file_bytes"),
+        Err(e) => e.to_string(),
+    };
+    assert!(e.contains("is larger than max_file_bytes (4 bytes)"), "{e}");
+    // acked from a thread without a runtime: the delete cannot run, the file stays
+    std::thread::spawn(move || ack.ack()).join().expect("ack");
+    // the empty file is deleted without a batch and the big one never listed
+    assert!(matches!(i.read_batch(&c).await, Err(CoreError::EndOfInput)));
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut left: Vec<String> = session
+        .sftp
+        .read_dir(dir.clone())
+        .await
+        .expect("list")
+        .map(|e| e.file_name())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["a.csv", "b.csv", "big.csv"]);
+    assert!(logged(&format!(
+        "{dir}/big.csv (13 bytes) is larger than max_file_bytes (4) and is skipped"
+    )));
+    i.close().await.expect("closes");
+    assert!(!i.is_connected());
+
+    // a listing of a missing directory fails a one-off read
+    let mut gone = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/none/*.csv")]}),
+        &c,
+    );
+    let e = match gone.read_batch(&c).await {
+        Ok(_) => panic!("listed a missing directory"),
+        Err(e) => e.to_string(),
+    };
+    assert!(
+        e.contains(&format!("sftp input: listing {dir}/none")),
+        "{e}"
+    );
+
+    // without delete_on_finish or a watcher an ack changes nothing on the server
+    let mut keep = input(&s, &pin, json!({"paths": [format!("{dir}/a.csv")]}), &c);
+    let (_, ack) = keep.read_batch(&c).await.expect("a.csv");
+    ack.ack();
+    // an ack whose file is gone already only logs the failed delete
+    let mut del = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/a.csv")], "delete_on_finish": true}),
+        &c,
+    );
+    let (_, ack) = del.read_batch(&c).await.expect("a.csv again");
+    session
+        .sftp
+        .remove_file(format!("{dir}/a.csv"))
+        .await
+        .expect("removed");
+    ack.ack();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(matches!(
+        del.read_batch(&c).await,
+        Err(CoreError::EndOfInput)
+    ));
+    assert!(logged(&format!("deleting {dir}/a.csv after ack failed")));
+}
+
+/// A cache whose deletes fail, to show a failed forget is only logged.
+#[derive(Default)]
+struct StickyCache(MemCache);
+
+#[async_trait]
+impl Cache for StickyCache {
+    async fn get(&self, key: &str) -> Result<Bytes, CoreError> {
+        self.0.get(key).await
+    }
+    async fn set(&self, key: &str, value: Bytes, ttl: Option<Duration>) -> Result<(), CoreError> {
+        self.0.set(key, value, ttl).await
+    }
+    async fn add(&self, key: &str, value: Bytes, ttl: Option<Duration>) -> Result<(), CoreError> {
+        self.0.add(key, value, ttl).await
+    }
+    async fn delete(&self, _: &str) -> Result<(), CoreError> {
+        Err(CoreError::other("cache down"))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_watcher_rides_out_a_vanished_file_and_a_missing_directory() {
+    let Some(s) = server() else {
+        eprintln!("SFTP_TEST_ADDRESS unset: skipped");
+        return;
+    };
+    let _serial = serial().await;
+    logs();
+    let cache = Arc::new(MemCache::default());
+    let c = ctx(cache.clone());
+    let pin = pin(&s, &c).await;
+    let dir = format!("/upload/ride-{}", std::process::id());
+    let session = connect(&target(&s, &pin), &c.org).await.expect("connects");
+    session.sftp.create_dir(dir.clone()).await.expect("mkdir");
+    put(&s, &pin, &c, &format!("{dir}/f.csv"), "f1\n").await;
+    put(&s, &pin, &c, &format!("{dir}/g.csv"), "g1\n").await;
+    let watcher =
+        json!({"enabled": true, "minimum_age": "0s", "poll_interval": "100ms", "cache": "seen"});
+    let mut i = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/*.csv")], "watcher": watcher}),
+        &c,
+    );
+    let (b, ack) = i.read_batch(&c).await.expect("f.csv");
+    assert_eq!(lines(&b), ["f1"]);
+    // a nacked file leaves the cache, so a later poll reads it again
+    ack.nack(BatchError::new(b, "output down".to_string()));
+    // g.csv vanishes between the listing and its read: skipped, forgotten, read never
+    session
+        .sftp
+        .remove_file(format!("{dir}/g.csv"))
+        .await
+        .expect("removed");
+    let (b, _ack) = tokio::time::timeout(Duration::from_secs(5), i.read_batch(&c))
+        .await
+        .expect("in time")
+        .expect("f.csv again");
+    assert_eq!(lines(&b), ["f1"]);
+    assert!(!cache.exists(&format!("{dir}/g.csv")).await.expect("cache"));
+    assert!(logged(&format!("reading {dir}/g.csv")) && logged("reconnecting"));
+
+    // a watched directory that does not exist is listed again and again, never an error
+    let sticky: Arc<dyn Cache> = Arc::new(StickyCache::default());
+    c.resources
+        .insert_cache(&OrgId::new("org-sftp"), "sticky", sticky);
+    let mut w = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/none/*.csv")], "watcher": {
+            "enabled": true, "minimum_age": "0s", "poll_interval": "100ms", "cache": "sticky"}}),
+        &c,
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(700), w.read_batch(&c))
+            .await
+            .is_err()
+    );
+    // a nack whose forget fails is only logged
+    let mut f = input(
+        &s,
+        &pin,
+        json!({"paths": [format!("{dir}/f.csv")], "watcher": {
+            "enabled": true, "minimum_age": "0s", "poll_interval": "100ms", "cache": "sticky"}}),
+        &c,
+    );
+    let (b, ack) = f.read_batch(&c).await.expect("f.csv");
+    ack.nack(BatchError::new(b, "output down".to_string()));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(400), f.read_batch(&c))
+            .await
+            .is_err(),
+        "the file stays seen: the cache kept it"
+    );
+    assert!(logged(&format!("listing {dir}/none")));
+    assert!(logged(&format!(
+        "forgetting {dir}/f.csv after a nack: cache down"
+    )));
+}
+
+#[tokio::test]
+async fn register_all_builds_the_input_and_lints_its_config() {
+    let registry = Registry::new();
+    ekiben_io_sftp::register_all(&registry);
+    let c = ctx(Arc::default());
+    let conf = |config: JsonValue| ComponentConfig {
+        label: String::new(),
+        component_type: "sftp".into(),
+        config,
+        processors: Vec::new(),
+    };
+    let good = json!({
+        "address": "127.0.0.1:22",
+        "host_key_fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "credentials": {"username": "city", "password": "hunter2"},
+        "paths": ["/upload/*.csv"],
+    });
+    assert!(registry
+        .lint_component("input", &conf(good.clone()))
+        .is_empty());
+    let input = registry.build_input(&conf(good), &c).expect("builds");
+    assert_eq!(input.input_type(), "sftp");
+    let bad = json!({"address": "x", "paths": ["/upload/*.csv"]});
+    let errs = registry
+        .lint_component("input", &conf(bad.clone()))
+        .join("; ");
+    assert!(errs.contains("host_key_fingerprint"), "{errs}");
+    match registry.build_input(&conf(bad), &c) {
+        Ok(_) => panic!("built without a pin"),
+        Err(e) => assert!(e.to_string().contains("host_key_fingerprint"), "{e}"),
+    }
+}
+
+#[tokio::test]
+async fn a_watcher_keeps_dialling_a_refused_server_with_a_growing_pause() {
+    logs();
+    // a port whose listener is gone refuses every connection
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = closed.local_addr().expect("addr").port();
+    drop(closed);
+    let s = Server {
+        address: format!("127.0.0.1:{port}"),
+        user: "city".into(),
+        password: "hunter2".into(),
+    };
+    let c = ctx(Arc::default());
+    let mut w = input(
+        &s,
+        "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        json!({"paths": ["/upload/*.csv"], "watcher": {"enabled": true, "cache": "seen"}}),
+        &c,
+    );
+    let r = tokio::time::timeout(Duration::from_millis(800), w.read_batch(&c)).await;
+    assert!(r.is_err(), "the watcher stopped dialling");
+    assert!(!w.is_connected());
+    assert!(
+        logged("connect failed, retrying in 100ms") && logged("connect failed, retrying in 200ms")
+    );
 }

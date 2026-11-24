@@ -1,0 +1,28 @@
+id: https://city.example/models/parking
+name: parking
+default_prefix: city
+default_range: string
+prefixes:
+  city: https://city.example/models/parking/
+  linkml: https://w3id.org/linkml/
+imports:
+  - linkml:types
+  - ngsi-ld-core
+classes:
+  ParkingSpot:
+    is_a: Entity
+    slots: [status, capacity]
+slots:
+  status:
+    range: SpotStatus
+    annotations:
+      ngsi_ld_kind: Property
+  capacity:
+    range: integer
+    annotations:
+      ngsi_ld_kind: Property
+enums:
+  SpotStatus:
+    permissible_values:
+      free: {}
+      occupied: {}

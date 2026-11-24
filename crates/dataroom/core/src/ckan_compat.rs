@@ -117,17 +117,19 @@ pub fn dataset_to_ckan(
             .or_insert_with(|| freq.clone());
     }
     if !dataset.themes.is_empty() {
-        if let Ok(s) = serde_json::to_string(&dataset.themes) {
-            extras_map.entry("theme".into()).or_insert(s);
-        }
+        extras_map
+            .entry("theme".into())
+            .or_insert_with(|| json!(dataset.themes).to_string());
     }
     if !dataset.spatial.is_empty() {
         if dataset.spatial.len() == 1 {
             extras_map
                 .entry("spatial_uri".into())
                 .or_insert_with(|| dataset.spatial[0].clone());
-        } else if let Ok(s) = serde_json::to_string(&dataset.spatial) {
-            extras_map.entry("spatial_uri".into()).or_insert(s);
+        } else {
+            extras_map
+                .entry("spatial_uri".into())
+                .or_insert_with(|| json!(dataset.spatial).to_string());
         }
     }
     if let Some(temp) = &dataset.temporal {

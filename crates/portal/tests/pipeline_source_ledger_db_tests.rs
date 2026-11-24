@@ -82,6 +82,74 @@ async fn the_ledger_keeps_ids_misses_and_the_hold_per_pipeline() {
     assert!(ledger.book(p, "y").await.expect("book").0.is_empty());
 }
 
+/// A project no Organization places has no key: the ledger keeps nothing for it and answers
+/// empty, it never fails; a run that read nothing deletable writes nothing.
+#[tokio::test]
+async fn an_unplaced_project_keeps_nothing_and_reads_empty() {
+    use joinedcontext_portal::pipeline_source_deletes::RemovalsOf;
+    let Some(url) = database_url() else {
+        eprintln!("JC_PORTAL_TEST_DATABASE_URL is not set: the ledger's database half is not run");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("the test database answers and migrates");
+    let placed = fresh_project();
+    let ledger = Ledger::new(
+        Some(pool.clone()),
+        common::keyed_mirror(&pool, &[&placed]).await,
+    );
+    let p = fresh_project();
+    let p = p.as_str();
+    let ids = ["urn:a".to_owned()];
+    ledger.seen(p, "x", "r1", &ids, true).await.expect("seen");
+    let not_ids = ["not an id".to_owned()];
+    ledger
+        .seen(&placed, "x", "r1", &not_ids, true)
+        .await
+        .expect("nothing deletable, nothing written");
+    assert!(ledger.book(&placed, "x").await.expect("book").0.is_empty());
+    let (rows, hold) = ledger.book(p, "x").await.expect("book");
+    assert!(rows.is_empty() && hold.is_none());
+    ledger
+        .settle(p, "x", &[("urn:a".into(), 1)], None)
+        .await
+        .expect("settle");
+    ledger.forget(p, "x", &ids).await.expect("forget");
+    ledger.keep(p, "x").await.expect("keep");
+    assert!(ledger
+        .mark(p, "x", "r1", &ids)
+        .await
+        .expect("mark")
+        .is_empty());
+    assert_eq!(ledger.take_marked(p, "x").await.expect("take"), None);
+    assert!(ledger
+        .written(p, "x", &ids)
+        .await
+        .expect("written")
+        .is_empty());
+    ledger.completed(p, "x", "r1").await.expect("completed");
+    assert_eq!(ledger.last_complete(p, "x").await.expect("last"), None);
+    ledger
+        .removed(p, "air", "x", ("r1", Cause::Snapshot), &ids)
+        .await
+        .expect("removed");
+    ledger
+        .removed(&placed, "air", "x", ("r1", Cause::Snapshot), &[])
+        .await
+        .expect("no id, no row");
+    assert!(ledger
+        .removals(p, RemovalsOf::Pipeline("x"), 10)
+        .await
+        .expect("removals")
+        .is_empty());
+    assert!(ledger
+        .removals(&placed, RemovalsOf::Space("air"), 10)
+        .await
+        .expect("removals")
+        .is_empty());
+}
+
 /// T-4892: the last complete run and the removals, per pipeline and per space, newest first.
 #[tokio::test]
 async fn the_report_keeps_the_last_complete_run_and_the_removals() {

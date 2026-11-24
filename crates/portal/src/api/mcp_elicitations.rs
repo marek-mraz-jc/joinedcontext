@@ -117,3 +117,53 @@ pub fn router() -> Router<AppState> {
             post(decide_question),
         )
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::auth::session::{Identity, Session};
+
+    /// A session of a client's token (an MCP client, an agent): the asker of the question itself.
+    pub(crate) fn client_session() -> CurrentUser {
+        CurrentUser(Session {
+            identity: Identity {
+                client: Some("claude-code".into()),
+                subject: "sub-ana".into(),
+                username: "ana".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: "dummy".into(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn a_clients_token_neither_reads_nor_decides_even_its_own_question() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let id = state
+            .mcp_elicitations
+            .ask("sub-ana", "jc_resource_delete", "city", "d", "m", "r");
+        let path = || Path(("city".to_owned(), id.clone()));
+        let read = get_question(client_session(), State(state.clone()), path()).await;
+        assert!(matches!(read, Err(ApiError::Denied(_))), "{read:?}");
+        let body = Ok(Json(DecisionRequest {
+            decision: ElicitationDecision::Accept,
+        }));
+        let decided = decide_question(client_session(), State(state.clone()), path(), body).await;
+        assert!(matches!(decided, Err(ApiError::Denied(_))), "{decided:?}");
+        let question = state
+            .mcp_elicitations
+            .question("sub-ana", "city", &id)
+            .expect("still open");
+        assert_eq!(question.decision, None, "nothing was decided");
+    }
+}

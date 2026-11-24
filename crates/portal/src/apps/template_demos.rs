@@ -154,4 +154,40 @@ mod tests {
         );
         assert_eq!(with_worker(html, None), html);
     }
+
+    #[tokio::test]
+    async fn only_a_shipped_template_or_a_plain_asset_name_is_served() {
+        let status = |r: Response| r.status();
+        assert_eq!(
+            status(demo(Path("no-such-template".to_owned())).await),
+            StatusCode::NOT_FOUND
+        );
+        for name in ["../index.html", "a/b.js", "..", "x..js"] {
+            assert_eq!(
+                status(asset(Path(name.to_owned())).await),
+                StatusCode::NOT_FOUND,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            status(asset(Path("missing-file.js".to_owned())).await),
+            StatusCode::NOT_FOUND
+        );
+        // A shipped template answers the demo page when the SDK's demos are built into this binary.
+        let Some(template) = samples::templates().first().map(|t| t.name.clone()) else {
+            return;
+        };
+        let page = demo(Path(template)).await;
+        if Demos::get("index.html").is_some() {
+            assert_eq!(page.status(), StatusCode::OK);
+            assert_eq!(page.headers()[header::CONTENT_SECURITY_POLICY], DEMO_CSP);
+            assert_eq!(page.headers()["x-frame-options"], "SAMEORIGIN");
+            assert!(page.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap_or_default()
+                .starts_with("text/html"));
+        } else {
+            assert_eq!(page.status(), StatusCode::NOT_FOUND, "no demos built");
+        }
+    }
 }

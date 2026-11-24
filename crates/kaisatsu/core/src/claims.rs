@@ -220,14 +220,14 @@ fn insert_at_claim_path(target: &mut Map<String, Value>, path: &str, value: Valu
     }
     let first = parts[0];
     let rest = parts[1..].join(".");
-    let entry = target
-        .entry(first.to_owned())
-        .or_insert_with(|| Value::Object(Map::new()));
-    if !entry.is_object() {
-        *entry = Value::Object(Map::new());
-    }
-    if let Value::Object(sub) = entry {
-        insert_at_claim_path(sub, &rest, value);
+    match target.entry(first.to_owned()).or_insert(Value::Null) {
+        Value::Object(sub) => insert_at_claim_path(sub, &rest, value),
+        // A claim holding a value is replaced by the object the path writes into.
+        other => {
+            let mut sub = Map::new();
+            insert_at_claim_path(&mut sub, &rest, value);
+            *other = Value::Object(sub);
+        }
     }
 }
 
@@ -298,10 +298,10 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
         claims.insert("jti".into(), Value::String(ctx.jti.to_owned()));
         claims.insert("iat".into(), json!(ctx.iat));
         claims.insert("exp".into(), json!(ctx.exp));
-        let typ = match kind {
-            TokenKind::AccessToken | TokenKind::Introspection => "Bearer",
-            TokenKind::IdToken => "ID",
-            TokenKind::UserInfo => "UserInfo",
+        let typ = if kind == TokenKind::IdToken {
+            "ID"
+        } else {
+            "Bearer"
         };
         claims.insert("typ".into(), Value::String(typ.into()));
         if let Some(sid) = ctx.session_id {
@@ -993,6 +993,256 @@ mod tests {
         ] {
             assert_eq!(claims.get(claim), None, "{claim}: {claims:?}");
         }
+    }
+
+    fn attr_mapper(
+        attribute: &str,
+        multivalued: bool,
+        aggregate: bool,
+    ) -> ProtocolMapperRepresentation {
+        ProtocolMapperRepresentation {
+            name: attribute.into(),
+            protocol_mapper: "oidc-usermodel-attribute-mapper".into(),
+            config: BTreeMap::from([
+                ("user.attribute".into(), attribute.into()),
+                ("claim.name".into(), attribute.into()),
+                ("multivalued".into(), multivalued.to_string()),
+                ("aggregate.attrs".into(), aggregate.to_string()),
+                ("access.token.claim".into(), "true".into()),
+                ("id.token.claim".into(), "true".into()),
+                ("userinfo.token.claim".into(), "true".into()),
+            ]),
+            ..Default::default()
+        }
+    }
+
+    fn mapper(kind: &str, config: &[(&str, &str)]) -> ProtocolMapperRepresentation {
+        let mut config: BTreeMap<String, String> = config
+            .iter()
+            .map(|(k, v)| ((*k).into(), (*v).into()))
+            .collect();
+        for claim in [
+            "access.token.claim",
+            "id.token.claim",
+            "userinfo.token.claim",
+        ] {
+            config.entry(claim.into()).or_insert_with(|| "true".into());
+        }
+        ProtocolMapperRepresentation {
+            name: kind.into(),
+            protocol_mapper: kind.into(),
+            config,
+            ..Default::default()
+        }
+    }
+
+    /// Edge cases of the mapper pipeline on one token each: an aggregated attribute lists a value
+    /// once, a full name of nothing writes no `name`, no web origins write no `allowed-origins`,
+    /// the audience resolver skips the client itself and a client already named, a mapper kind
+    /// not known is refused before anything is written, and the user info answer is typed `UserInfo`.
+    #[test]
+    fn mapper_edge_cases_write_each_value_once_and_nothing_empty() {
+        let realm = RealmConfig::default();
+        let client = ClientRepresentation {
+            client_id: "app".into(),
+            protocol_mappers: vec![
+                attr_mapper("dept", true, true),
+                mapper("oidc-full-name-mapper", &[]),
+                mapper("oidc-AllowedWebOrigins-mapper", &[]),
+                mapper(
+                    "oidc-audience-mapper",
+                    &[("included.client.audience", "api")],
+                ),
+                mapper("oidc-audience-resolve-mapper", &[]),
+            ],
+            ..Default::default()
+        };
+        let group = GroupRepresentation {
+            name: "roads".into(),
+            path: "/roads".into(),
+            attributes: HashMap::from([("dept".into(), vec!["roads".into(), "roads".into()])]),
+            ..Default::default()
+        };
+        let user = UserRepresentation {
+            id: "u1".into(),
+            username: "u1".into(),
+            attributes: HashMap::from([("dept".into(), vec!["roads".into(), "parks".into()])]),
+            client_roles: HashMap::from([
+                ("app".into(), vec!["reader".into()]),
+                ("api".into(), vec!["reader".into()]),
+            ]),
+            ..Default::default()
+        };
+        let groups = [group];
+        let ctx = MapperContext {
+            realm: &realm,
+            issuer: "https://idm.example.test/realms/dev",
+            client: &client,
+            user: &user,
+            user_groups: &groups,
+            all_realm_roles: &[],
+            active_scopes: &[],
+            granted_scope_string: "openid",
+            acr: "",
+            amr: &[],
+            session_id: None,
+            nonce: None,
+            jti: "j1",
+            iat: 1000,
+            exp: 1300,
+            auth_time: None,
+            dpop_jkt: None,
+            act: None,
+            active_org: None,
+        };
+        let claims = evaluate_mappers(&ctx, TokenKind::AccessToken).expect("claims");
+        assert_eq!(
+            claims.get("dept"),
+            Some(&json!(["roads", "parks"])),
+            "{claims:?}"
+        );
+        assert_eq!(claims.get("name"), None, "{claims:?}");
+        assert_eq!(claims.get("allowed-origins"), None, "{claims:?}");
+        let aud = claims
+            .get("aud")
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert_eq!(aud.matches("\"api\"").count(), 1, "api named once: {aud}");
+        let info = evaluate_mappers(&ctx, TokenKind::UserInfo).expect("user info");
+        for claim in ["typ", "iss", "azp", "jti"] {
+            assert_eq!(
+                info.get(claim),
+                None,
+                "no {claim} in the user info: {info:?}"
+            );
+        }
+        assert_eq!(info.get("dept"), Some(&json!(["roads", "parks"])));
+        let scripted = ClientRepresentation {
+            client_id: "app".into(),
+            protocol_mappers: vec![mapper("script-mapper", &[("claim.name", "x")])],
+            ..Default::default()
+        };
+        let refused = evaluate_mappers(
+            &MapperContext {
+                client: &scripted,
+                ..ctx
+            },
+            TokenKind::AccessToken,
+        );
+        assert_eq!(
+            refused,
+            Err(KaisatsuError::BadRequest(
+                "unknown protocol mapper kind: script-mapper".into()
+            ))
+        );
+    }
+
+    /// With an `organization:` scope granted, `jc_org` names only the pinned Organization, and
+    /// none when nothing is pinned.
+    #[test]
+    fn an_organization_scope_without_a_pin_writes_no_jc_org() {
+        let realm = RealmConfig::default();
+        let client = ClientRepresentation {
+            client_id: "app".into(),
+            protocol_mappers: vec![attr_mapper("jc_org", true, false)],
+            ..Default::default()
+        };
+        let group = GroupRepresentation {
+            name: "staff".into(),
+            path: "/hel/staff".into(),
+            attributes: HashMap::from([("jc_org".into(), vec!["hel".into()])]),
+            ..Default::default()
+        };
+        let user = UserRepresentation {
+            id: "u1".into(),
+            username: "u1".into(),
+            ..Default::default()
+        };
+        let groups = [group];
+        for (pin, want) in [(None, None), (Some("hel"), Some(json!(["hel"])))] {
+            let ctx = MapperContext {
+                realm: &realm,
+                issuer: "https://idm.example.test/realms/dev",
+                client: &client,
+                user: &user,
+                user_groups: &groups,
+                all_realm_roles: &[],
+                active_scopes: &[],
+                granted_scope_string: "openid organization:hel",
+                acr: "",
+                amr: &[],
+                session_id: None,
+                nonce: None,
+                jti: "j1",
+                iat: 1000,
+                exp: 1300,
+                auth_time: None,
+                dpop_jkt: None,
+                act: None,
+                active_org: pin,
+            };
+            let claims = evaluate_mappers(&ctx, TokenKind::AccessToken).expect("claims");
+            assert_eq!(claims.get("jc_org").cloned(), want, "{pin:?}: {claims:?}");
+        }
+    }
+
+    /// Composite roles resolve through cycles and duplicates, each role once.
+    #[test]
+    fn composite_roles_resolve_through_a_cycle_once_each() {
+        let role = |name: &str, composites: &[&str]| RoleRepresentation {
+            name: name.into(),
+            composite: !composites.is_empty(),
+            composites: crate::model::RoleComposites {
+                realm: composites.iter().map(|c| (*c).to_owned()).collect(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let all = [role("a", &["b"]), role("b", &["a", "c"]), role("c", &[])];
+        let mut got = resolve_effective_realm_roles(&["a".into()], &["a".into(), "c".into()], &all);
+        got.sort();
+        assert_eq!(got, ["a", "b", "c"]);
+    }
+
+    /// A claim path through a claim that holds a value replaces it with the object the path
+    /// writes into; through an object, it adds beside what is there.
+    #[test]
+    fn a_dotted_claim_path_writes_into_an_object_and_replaces_a_value() {
+        let mut claims = Map::new();
+        claims.insert("a".into(), json!("plain"));
+        claims.insert("o".into(), json!({ "kept": 1 }));
+        insert_at_claim_path(&mut claims, "a.b", json!(1));
+        insert_at_claim_path(&mut claims, "o.new.deep", json!(2));
+        insert_at_claim_path(&mut claims, "..", json!(3));
+        assert_eq!(
+            Value::Object(claims),
+            json!({ "a": { "b": 1 }, "o": { "kept": 1, "new": { "deep": 2 } } })
+        );
+    }
+
+    /// A pairwise subject needs one redirect host: an address that is no URL, or has no host,
+    /// counts none.
+    #[test]
+    fn pairwise_hosts_skip_redirects_without_a_host() {
+        let pairwise = mapper(
+            "oidc-sha256-pairwise-sub-mapper",
+            &[("pairwiseSubAlgorithmSalt", "s")],
+        );
+        let client = |uris: &[&str]| ClientRepresentation {
+            client_id: "app".into(),
+            redirect_uris: uris.iter().map(|u| (*u).to_owned()).collect(),
+            ..Default::default()
+        };
+        let one = compute_pairwise_sub(
+            &pairwise,
+            &client(&["https://a.example/cb", "not a url", "urn:x:y"]),
+            "u1",
+        )
+        .expect("one host");
+        let same = compute_pairwise_sub(&pairwise, &client(&["https://a.example/other/*"]), "u1")
+            .expect("one host");
+        assert_eq!(one, same, "one sector, one subject");
+        assert!(compute_pairwise_sub(&pairwise, &client(&["not a url"]), "u1").is_err());
     }
 
     #[test]

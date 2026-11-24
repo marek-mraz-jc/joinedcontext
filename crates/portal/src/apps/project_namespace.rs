@@ -123,3 +123,45 @@ pub fn pull_secret_copy(source: &Value, name: &str, namespace: &str) -> Option<V
         "data": data,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pull_secret_copy_carries_type_and_data_and_nothing_the_api_server_added() {
+        let source = json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": { "name": "app-registry", "namespace": "joinedcontext", "uid": "u-1",
+                          "resourceVersion": "42", "ownerReferences": [{ "name": "x" }] },
+            "type": "kubernetes.io/dockerconfigjson",
+            "data": { ".dockerconfigjson": "e30=" },
+        });
+        let copy = pull_secret_copy(&source, "app-registry", "dev-roads-apps").unwrap_or_default();
+        assert_eq!(copy["metadata"]["namespace"], "dev-roads-apps");
+        assert_eq!(copy["metadata"]["labels"][MANAGED_BY_LABEL], MANAGED_BY);
+        assert!(
+            copy["metadata"].get("uid").is_none()
+                && copy["metadata"].get("ownerReferences").is_none()
+        );
+        assert_eq!(copy["type"], "kubernetes.io/dockerconfigjson");
+        assert_eq!(copy["data"], source["data"]);
+        // A Secret without data or a type is not copied.
+        let mut no_data = source.clone();
+        no_data.as_object_mut().map(|o| o.remove("data"));
+        assert_eq!(pull_secret_copy(&no_data, "app-registry", "ns"), None);
+        let mut no_type = source.clone();
+        no_type.as_object_mut().map(|o| o.remove("type"));
+        assert_eq!(pull_secret_copy(&no_type, "app-registry", "ns"), None);
+        assert_eq!(
+            pull_secret_copy(&json!({ "data": "text", "type": "Opaque" }), "a", "ns"),
+            None
+        );
+    }
+
+    #[test]
+    fn the_role_binding_names_the_release_s_cluster_role() {
+        assert_eq!(apps_role("dev"), "dev-portal-apps");
+    }
+}
