@@ -642,6 +642,88 @@ mod tests {
         assert!(child.shapes_turtle().contains("<urn:x:p>"));
     }
 
+    /// A profile that states its own serialisations keeps them, and a property its base
+    /// declares for the same subject and predicate is held once, its own.
+    #[test]
+    fn a_profile_keeps_its_own_serialisations_and_properties_over_its_bases() {
+        let child = r#"{"id":"child","version":"1","uri":"urn:x:child","source":"s",
+            "title":{"en":"C"},"bases":["dcat-ap-3.0.1"],"serialisations":["json-ld","rdf-xml"],
+            "required":[{"target":"urn:x:T","path":"urn:x:p","source":"urn:x:s"}],
+            "properties":[{"extra":"own","subject":"dataset","predicate":"urn:x:a","kind":"iri"}]}"#;
+        let done = load(&[("dcat-ap-3.0.1", EU, FILES), ("child", child, &[])]).expect("loads");
+        let child = &done[1];
+        assert_eq!(child.serialisations, [RdfFormat::JsonLd, RdfFormat::RdfXml]);
+        assert_eq!(
+            child.properties.len(),
+            1,
+            "the base's urn:x:a is the child's own"
+        );
+        assert_eq!(child.properties[0].extra, "own");
+    }
+
+    /// A path nothing embeds is named in the refusal.
+    #[test]
+    fn a_file_nothing_embeds_is_refused_by_name() {
+        assert_eq!(
+            embedded::<Directories>("no-such-profile/profile.json"),
+            Err("no-such-profile/profile.json: not embedded".to_owned())
+        );
+        assert!(embedded::<Directories>("dcat-ap-3.0.1/profile.json").is_ok());
+    }
+
+    /// A declared literal property writes each value of a JSON array, blanks skipped; an IRI
+    /// property without a class or code list writes the IRI untyped, and refuses a non-IRI;
+    /// a property whose extra the dataset lacks writes nothing.
+    #[test]
+    fn declared_properties_write_literals_and_classless_iris() {
+        use crate::graph::{LiteralValue, SubjectNode, Term};
+        let custom = r#"{"id":"dcat-ap-3.0.1","version":"1","uri":"urn:x:eu","source":"s",
+            "title":{"en":"EU"},"serialisations":["turtle"],"shapes":["a.ttl"],
+            "properties":[
+              {"extra":"note","subject":"dataset","predicate":"urn:x:note","kind":"literal"},
+              {"extra":"area","subject":"dataset","predicate":"urn:x:area","kind":"iri"},
+              {"extra":"bad","subject":"dataset","predicate":"urn:x:bad","kind":"iri"},
+              {"extra":"absent","subject":"dataset","predicate":"urn:x:absent","kind":"literal"}]}"#;
+        let mut done = load(&[("dcat-ap-3.0.1", custom, FILES)]).expect("loads");
+        let profile = DcatProfile(Box::leak(Box::new(done.remove(0))));
+        let mut ds = crate::dcat::tests::full_dataset();
+        ds.extras
+            .insert("note".into(), r#"["first", "  ", "second"]"#.into());
+        ds.extras
+            .insert("area".into(), "https://e.org/area/1".into());
+        ds.extras.insert("bad".into(), "not an iri".into());
+        let cat = crate::dcat::tests::sample_catalogue(ds.org_id, ds.catalogue_id);
+        let g = crate::dcat::dataset_to_graph(&ds, &cat, None, profile);
+        let objects = |p: &str| -> Vec<Term> {
+            let mut all: Vec<_> = g
+                .triples
+                .iter()
+                .filter(|t| t.predicate == p)
+                .map(|t| t.object.clone())
+                .collect();
+            all.sort_by(|a, b| a.string_value().cmp(b.string_value()));
+            all
+        };
+        assert_eq!(
+            objects("urn:x:note"),
+            [
+                Term::Literal(LiteralValue::plain("first")),
+                Term::Literal(LiteralValue::plain("second"))
+            ]
+        );
+        assert_eq!(
+            objects("urn:x:area"),
+            [Term::Iri("https://e.org/area/1".into())]
+        );
+        let area = SubjectNode::Named("https://e.org/area/1".into());
+        assert!(
+            g.triples.iter().all(|t| t.subject != area),
+            "no class, no code list: nothing said of the IRI"
+        );
+        assert!(objects("urn:x:bad").is_empty(), "a non-IRI is no IRI value");
+        assert!(objects("urn:x:absent").is_empty());
+    }
+
     #[test]
     fn a_bad_manifest_is_refused_naming_its_directory() {
         let child = |body: &str| {

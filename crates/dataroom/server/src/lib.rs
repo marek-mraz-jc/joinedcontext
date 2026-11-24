@@ -632,6 +632,35 @@ mod tests {
         assert_eq!(imported.publisher_id, "banskabystrica");
     }
 
+    /// An organization the dump names twice, or one already stored, is created once: the first
+    /// entry's title stays and a second import creates nothing.
+    #[tokio::test]
+    async fn import_ckan_creates_a_named_organization_once() {
+        let org_id = OrgId::from_uuid(Uuid::from_u128(1));
+        let cat_id = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let store = MemoryStore::new();
+        let ctx = RequestCtx::new(
+            org_id,
+            cat_id,
+            Subject::authenticated("admin", vec![org_id], Vec::new()),
+        );
+        let dump = serde_json::json!({
+            "organizations": [
+                {"name": "mesto", "title": "Mesto"},
+                "mesto",
+                {"name": "mesto", "title": "Iný názov"}
+            ],
+            "result": {"count": 0, "results": []}
+        })
+        .to_string();
+        let (pubs, dss) = import_ckan_json(&store, &ctx, &dump, "sk").await.unwrap();
+        assert_eq!((pubs, dss), (1, 0));
+        let held = store.get_publisher(&ctx, "mesto").await.unwrap().unwrap();
+        assert_eq!(held.title.get("sk").map(String::as_str), Some("Mesto"));
+        let (pubs, _) = import_ckan_json(&store, &ctx, &dump, "sk").await.unwrap();
+        assert_eq!(pubs, 0, "a second import creates no organization");
+    }
+
     #[tokio::test]
     async fn e4_import_ckan_preserves_names_publishers_resources_extras_and_hidden_list() {
         let org_id = OrgId::from_uuid(Uuid::from_u128(1));

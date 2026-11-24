@@ -149,18 +149,19 @@ pub async fn handler(
         duration_ms: start.elapsed().as_millis(),
     });
 
-    Response::builder()
-        .status(status)
-        .header(
-            axum::http::header::CONTENT_TYPE,
-            match content_type.is_empty() {
-                true => "application/octet-stream".to_owned(),
-                false => content_type,
-            },
-        )
-        .header(REMAINING_HEADER, left.to_string())
-        .body(Body::from(body))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    let content_type = match content_type.is_empty() {
+        true => "application/octet-stream".to_owned(),
+        false => content_type,
+    };
+    (
+        status,
+        [
+            (axum::http::header::CONTENT_TYPE.as_str(), content_type),
+            (REMAINING_HEADER, left.to_string()),
+        ],
+        Body::from(body),
+    )
+        .into_response()
 }
 
 /// One URL the run is allowed to ask for, or the problem document saying why not.
@@ -360,6 +361,35 @@ fn bad_request(detail: impl Into<String>) -> jc_core::ProblemDetails {
 
 fn forbidden(detail: impl Into<String>) -> jc_core::ProblemDetails {
     jc_core::ProblemDetails::forbidden().with_detail(detail.into())
+}
+
+/// The URL rules over any string, for the fuzz target `fetch_url` (T-7795). Compiled only with
+/// the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::*;
+
+    /// A URL the rules let through is https, on the list, and carries no credential; so is every
+    /// redirect hop from it, and a content type is judged without a panic.
+    pub fn url(raw: &str, location: &str, allowed: &[String]) {
+        let holds =
+            |url: &Url| {
+                assert_eq!(url.scheme(), "https");
+                assert!(url.username().is_empty() && url.password().is_none());
+                let host = url.host_str().unwrap_or_default();
+                assert!(allowed.iter().any(|entry| entry.eq_ignore_ascii_case(host)));
+                assert!(url.query_pairs().all(|(name, _)| !CREDENTIAL_PARAMETERS
+                    .contains(&name.to_ascii_lowercase().as_str())));
+            };
+        if let Ok(url) = checked(raw, allowed) {
+            holds(&url);
+            if let Ok(next) = next_hop(&url, location, allowed) {
+                holds(&next);
+            }
+        }
+        let _ = readable(raw);
+    }
 }
 
 #[cfg(test)]

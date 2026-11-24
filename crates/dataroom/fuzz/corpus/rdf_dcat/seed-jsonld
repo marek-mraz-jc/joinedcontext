@@ -1,0 +1,1 @@
+{"@context":{"id":"@id","dct":"http://purl.org/dc/terms/","title":{"@id":"dct:title","@language":"sk"}},"id":"https://e.org/ds","title":"Ovzdušie","@type":"http://www.w3.org/ns/dcat#Dataset"}

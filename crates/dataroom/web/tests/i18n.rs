@@ -250,6 +250,21 @@ fn a_quality_that_is_no_number_keeps_the_tag_at_full_weight() {
 }
 
 #[test]
+fn accept_language_parameters_other_than_q_are_ignored() {
+    let offered: Vec<String> = vec!["sk".into(), "cs".into(), "en".into()];
+    let r = |al: &str| resolve_request_language("/", None, Some(al), &offered, "sk");
+    // `level=1` is no quality: cs keeps q=1 and beats en at 0.5.
+    assert_eq!(r("en;q=0.5, cs;level=1"), resolved("cs", "/", false));
+    // A later q= still applies after another parameter.
+    assert_eq!(r("cs;level=1;q=0.2, en;q=0.5"), resolved("en", "/", false));
+    // A negative or NaN quality refuses the tag, as q=0 does.
+    assert_eq!(r("cs;q=-1, en;q=0.1"), resolved("en", "/", false));
+    assert_eq!(r("cs;q=NaN, en;q=0.1"), resolved("en", "/", false));
+    // Nothing usable: the default.
+    assert_eq!(r(";;;, ;q=1"), resolved("sk", "/", false));
+}
+
+#[test]
 fn a_default_language_nobody_ships_falls_back_to_the_first_offered() {
     let offered: Vec<String> = vec!["cs".into(), "en".into()];
     assert_eq!(

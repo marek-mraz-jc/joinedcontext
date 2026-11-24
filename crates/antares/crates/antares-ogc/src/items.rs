@@ -917,7 +917,7 @@ impl Cursor {
                 whole: false,
             };
             let (one, _, _) = scanned(view.scan(caller, &r.pushdown, None, past).await)?;
-            next = (!one.is_empty()).then(|| r.pos.saturating_add(size));
+            next = (!one.is_empty()).then_some(r.pos.saturating_add(size));
         } else if keyset {
             next = r.cursor.as_ref().map(|_| r.pos.saturating_add(docs.len()));
         } else if ahead {
@@ -1459,6 +1459,16 @@ mod tests {
         assert_eq!(read_token(&t, 7, 2), Some((1, 20)));
         assert_eq!(read_token(&t, 8, 2), None, "another request");
         assert_eq!(read_token(&t, 7, 1), None, "no such part");
+        // a token carrying a store cursor is a keyset token: never read as a plain one
+        let keyset = keyset_token(1, 20, 7, Some("50-ab.0c"));
+        assert_eq!(keyset, "1.20.0000000000000007.50-ab.0c");
+        assert_eq!(read_token(&keyset, 7, 2), None);
+        assert_eq!(
+            read_keyset_token(&keyset, 7, 2),
+            Some((1, 20, Some("50-ab.0c".to_owned())))
+        );
+        assert_eq!(read_keyset_token(&format!("{t}.not-a-cursor"), 7, 2), None);
+        assert_eq!(keyset_token(1, 20, 7, None), t);
         for bad in [
             "",
             "1.2",
