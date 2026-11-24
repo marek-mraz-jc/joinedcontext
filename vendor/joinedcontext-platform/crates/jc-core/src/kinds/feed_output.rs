@@ -500,3 +500,167 @@ pub fn feed_gaps(outputs: &[FeedOutput], linkml: Option<&str>) -> Result<Vec<Str
     }
     Ok(gaps)
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn feed_links_and_extensions() {
+        let output = FeedOutput {
+            name: "news".into(),
+            version: 1,
+            title: BTreeMap::new(),
+            description: BTreeMap::new(),
+            sources: vec![],
+            filter: FeedFilter::default(),
+            query: None,
+            lang: None,
+            limit: None,
+            sort: None,
+        };
+        let outputs = [output];
+        let links = feed_links(&outputs);
+        assert_eq!(links.len(), 3);
+        assert_eq!(links[0].1, "feeds/news.atom");
+        assert_eq!(links[0].2, "Atom");
+        assert_eq!(links[1].1, "feeds/news.rss");
+        assert_eq!(links[1].2, "RSS 2.0");
+        assert_eq!(links[2].1, "feeds/news.json");
+        assert_eq!(links[2].2, "JSON Feed");
+    }
+
+    #[test]
+    fn feed_roles_as_str_and_feed_paths_one() {
+        for role in [
+            FeedRole::Title,
+            FeedRole::Summary,
+            FeedRole::Content,
+            FeedRole::Link,
+            FeedRole::Updated,
+            FeedRole::Published,
+            FeedRole::Author,
+            FeedRole::Category,
+            FeedRole::Image,
+        ] {
+            assert!(!role.as_str().is_empty());
+        }
+
+        let one = FeedPaths::One("title".into());
+        assert_eq!(one.list(), vec!["title"]);
+    }
+
+    #[test]
+    fn source_gaps_invalid_attribute_path() {
+        let mut gaps = Vec::new();
+        let mut source = FeedSource {
+            entity_type: "Event".into(),
+            preset: None,
+            mapping: BTreeMap::new(),
+        };
+        source
+            .mapping
+            .insert(FeedRole::Summary, FeedPaths::One("invalid..path".into()));
+        source_gaps("events", &source, &mut gaps);
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("names attribute paths such as name")));
+    }
+
+    #[test]
+    fn feed_output_label_fallback() {
+        let mut output = FeedOutput {
+            name: "news".into(),
+            version: 1,
+            title: BTreeMap::new(),
+            description: BTreeMap::new(),
+            sources: vec![],
+            filter: FeedFilter::default(),
+            query: None,
+            lang: None,
+            limit: None,
+            sort: None,
+        };
+        assert_eq!(output.label("sk"), "news");
+        output.title.insert("en".into(), "English News".into());
+        assert_eq!(output.label("sk"), "English News");
+        output.title.insert("sk".into(), "Spravy".into());
+        assert_eq!(output.label("sk"), "Spravy");
+    }
+
+    #[test]
+    fn feed_output_shape_gaps_non_plain_and_empty_sources() {
+        let output = FeedOutput {
+            name: "news".into(),
+            version: 1,
+            title: BTreeMap::from([("sk".into(), "\nnot plain\t".into())]),
+            description: BTreeMap::new(),
+            sources: vec![],
+            filter: FeedFilter::default(),
+            query: None,
+            lang: None,
+            limit: None,
+            sort: None,
+        };
+        let gaps = output.shape_gaps();
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("is plain text of 1 to 200 characters")));
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("sources lists 1 to 20 types")));
+    }
+
+    #[test]
+    fn feed_output_model_gaps_unresolved_preset_and_filter() {
+        let model_yaml = "classes:\n  Event:\n    slots: [startDate, headline]\nslots:\n  startDate:\n    range: datetime\n  headline:\n    range: string\n";
+        let schema: serde_norway::Value = serde_norway::from_str(model_yaml).unwrap();
+
+        let output = FeedOutput {
+            name: "events".into(),
+            version: 1,
+            title: BTreeMap::new(),
+            description: BTreeMap::new(),
+            sources: vec![FeedSource {
+                entity_type: "Event".into(),
+                preset: Some(FeedPreset::Event),
+                mapping: BTreeMap::new(),
+            }],
+            filter: FeedFilter {
+                q: Some("nonExistentAttr==1".into()),
+                ..Default::default()
+            },
+            query: None,
+            lang: None,
+            limit: None,
+            sort: None,
+        };
+        let gaps = output.model_gaps(&schema);
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("the preset reads title as name")));
+        assert!(gaps.iter().any(|g| g.contains("names `nonExistentAttr`")));
+    }
+
+    #[test]
+    fn feed_gaps_invalid_yaml_error() {
+        let output = FeedOutput {
+            name: "events".into(),
+            version: 1,
+            title: BTreeMap::new(),
+            description: BTreeMap::new(),
+            sources: vec![FeedSource {
+                entity_type: "Event".into(),
+                preset: Some(FeedPreset::Event),
+                mapping: BTreeMap::new(),
+            }],
+            filter: FeedFilter::default(),
+            query: None,
+            lang: None,
+            limit: None,
+            sort: None,
+        };
+        let res = feed_gaps(&[output], Some("invalid: [yaml"));
+        assert!(res.is_err());
+    }
+}

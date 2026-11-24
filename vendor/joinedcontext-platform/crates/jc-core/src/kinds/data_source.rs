@@ -3353,3 +3353,571 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use crate::envelope::{ObjectMeta, SecretRef};
+    use serde_json::json;
+
+    #[test]
+    fn sheet_name_gap_checks_length_characters_and_whitespace() {
+        assert_eq!(
+            sheet_name_gap("").unwrap(),
+            "a sheet name is 1 to 31 characters, such as Stations 2026"
+        );
+        assert_eq!(
+            sheet_name_gap(&"a".repeat(32)).unwrap(),
+            "a sheet name is 1 to 31 characters, such as Stations 2026"
+        );
+        for bad_char in [':', '\\', '/', '?', '*', '[', ']', '\n'] {
+            let name = format!("sheet{bad_char}");
+            assert_eq!(
+                sheet_name_gap(&name).unwrap(),
+                "a sheet name holds no control character and none of : \\ / ? * [ ]",
+                "character: {bad_char}"
+            );
+        }
+        for bad_trim in ["'sheet", "sheet'", " sheet", "sheet "] {
+            assert_eq!(
+                sheet_name_gap(bad_trim).unwrap(),
+                "a sheet name neither starts nor ends with ' or a space",
+                "trimmed: {bad_trim}"
+            );
+        }
+        assert_eq!(sheet_name_gap("Stations 2026"), None);
+    }
+
+    #[test]
+    fn gtfs_feed_and_datasource_type_as_str_report_wire_names() {
+        assert_eq!(GtfsFeed::VehiclePositions.as_str(), "vehiclePositions");
+        assert_eq!(GtfsFeed::TripUpdates.as_str(), "tripUpdates");
+        assert_eq!(GtfsFeed::Alerts.as_str(), "alerts");
+        assert_eq!(DataSourceType::Webhook.as_str(), "webhook");
+        assert_eq!(DataSourceType::Webhook.to_string(), "webhook");
+    }
+
+    #[test]
+    fn webhook_connection_credential_returns_none_when_both_or_neither_auth_is_set() {
+        let conn_neither = WebhookConnection {
+            auth: WebhookAuth {
+                hmac: None,
+                bearer: None,
+            },
+            max_body_bytes: None,
+            max_in_flight: None,
+        };
+        assert!(conn_neither.credential().is_none());
+
+        let conn_both = WebhookConnection {
+            auth: WebhookAuth {
+                hmac: Some(WebhookHmac {
+                    header: "X-Hub-Signature-256".into(),
+                    secret_ref: SecretRef {
+                        name: "hmac-secret".into(),
+                        key: None,
+                        env_var: None,
+                    },
+                }),
+                bearer: Some(WebhookBearer {
+                    token_ref: SecretRef {
+                        name: "bearer-token".into(),
+                        key: None,
+                        env_var: None,
+                    },
+                }),
+            },
+            max_body_bytes: None,
+            max_in_flight: None,
+        };
+        assert!(conn_both.credential().is_none());
+    }
+
+    #[test]
+    fn datasource_spec_validates_against_project_namespace() {
+        let meta = ObjectMeta {
+            name: "feed".into(),
+            namespace: Some("helsinki".into()),
+            ..Default::default()
+        };
+        let valid_http = DataSourceSpec {
+            source_type: DataSourceType::Http,
+            mqtt: None,
+            http: Some(HttpConnection {
+                url: "https://example.com/data.json".into(),
+                ..Default::default()
+            }),
+            web_socket: None,
+            gtfs_rt: None,
+            webhook: None,
+            tls: None,
+            input: None,
+            secrets: vec![],
+            personal_fields: vec![],
+        };
+        assert!(valid_http.validate_spec(&meta).is_ok());
+    }
+
+    #[test]
+    fn validate_personal_fields_checks_bounds_and_format() {
+        let mut source = DataSourceSpec {
+            source_type: DataSourceType::Http,
+            mqtt: None,
+            http: Some(HttpConnection {
+                url: "https://example.com/data.json".into(),
+                ..Default::default()
+            }),
+            web_socket: None,
+            gtfs_rt: None,
+            webhook: None,
+            tls: None,
+            input: None,
+            secrets: vec![],
+            personal_fields: (0..257).map(|i| format!("field_{i}")).collect(),
+        };
+        let err = source.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("names 257 fields; at most 256"),
+            "{err}"
+        );
+
+        source.personal_fields = vec!["".into()];
+        assert!(source
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("a field name of 1 to 256 bytes, such as `rider`"));
+
+        source.personal_fields = vec!["a".repeat(257)];
+        assert!(source
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("a field name of 1 to 256 bytes, such as `rider`"));
+
+        source.personal_fields = vec!["bad\0field".into()];
+        assert!(source
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("a field name holds no control character"));
+
+        source.personal_fields = vec!["rider".into(), "rider".into()];
+        assert!(source
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("each field is named once"));
+    }
+
+    #[test]
+    fn runner_source_refuses_typed_connection_blocks() {
+        let source = DataSourceSpec {
+            source_type: DataSourceType::Runner("nats".into()),
+            mqtt: Some(MqttConnection::default()),
+            http: None,
+            web_socket: None,
+            gtfs_rt: None,
+            webhook: None,
+            tls: None,
+            input: Some(json!({ "urls": ["nats://broker.example.fi:4222"], "subject": "events" })),
+            secrets: vec![],
+            personal_fields: vec![],
+        };
+        let err = source.validate().unwrap_err();
+        assert!(err.to_string().contains("runner data sources do not use typed connection blocks; configure `spec.input` instead"), "{err}");
+    }
+
+    #[test]
+    fn http_sheet_requires_xlsx_format_and_valid_name() {
+        let mut source = DataSourceSpec {
+            source_type: DataSourceType::Http,
+            mqtt: None,
+            http: Some(HttpConnection {
+                url: "https://example.com/test".into(),
+                format: Some(HttpBodyFormat::Csv),
+                sheet: Some("Sheet1".into()),
+                ..Default::default()
+            }),
+            web_socket: None,
+            gtfs_rt: None,
+            webhook: None,
+            tls: None,
+            input: None,
+            secrets: vec![],
+            personal_fields: vec![],
+        };
+        let err = source.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("sheet names the sheet of an xlsx body: set format: xlsx, or drop sheet"),
+            "{err}"
+        );
+
+        if let Some(ref mut http) = source.http {
+            http.format = None;
+        }
+        let err = source.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("sheet names the sheet of an xlsx body: set format: xlsx, or drop sheet"),
+            "{err}"
+        );
+
+        if let Some(ref mut http) = source.http {
+            http.format = Some(HttpBodyFormat::Xlsx);
+            http.sheet = Some("Sheet:Invalid".into());
+        }
+        let err = source.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a sheet name holds no control character and none of : \\ / ? * [ ]"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn tls_ca_cert_ref_is_validated_when_present() {
+        let source = DataSourceSpec {
+            source_type: DataSourceType::Http,
+            mqtt: None,
+            http: Some(HttpConnection {
+                url: "https://example.com/test".into(),
+                ..Default::default()
+            }),
+            web_socket: None,
+            gtfs_rt: None,
+            webhook: None,
+            tls: Some(TlsSettings {
+                insecure_skip_verify: false,
+                ca_cert_ref: Some(SecretRef {
+                    name: "invalid_name_due_to_capital_A".into(),
+                    key: None,
+                    env_var: None,
+                }),
+            }),
+            input: None,
+            secrets: vec![],
+            personal_fields: vec![],
+        };
+        let err = source.validate().unwrap_err();
+        assert!(err.to_string().contains("spec.tls.caCertRef.name"), "{err}");
+    }
+
+    #[test]
+    fn runner_secret_requires_valid_env_var_and_string_interpolation() {
+        let mut source = DataSourceSpec {
+            source_type: DataSourceType::Runner("ftp".into()),
+            mqtt: None,
+            http: None,
+            web_socket: None,
+            gtfs_rt: None,
+            webhook: None,
+            tls: None,
+            input: Some(json!({
+                "address": "files.example.org:21",
+                "password": "${FTP_PASS}"
+            })),
+            secrets: vec![SecretRef {
+                name: "ftp-login".into(),
+                key: Some("password".into()),
+                env_var: Some("invalid_lowercase".into()),
+            }],
+            personal_fields: vec![],
+        };
+        let err = source.validate().unwrap_err();
+        // envelope.rs refuses the name first, with the stricter pattern
+        assert!(err.to_string().contains("spec.secrets[0].envVar"), "{err}");
+
+        source.secrets[0].env_var = Some("FTP_PASS".into());
+        source.input = Some(json!({
+            "address": "files.example.org:21",
+            "password": 12345
+        }));
+        let err = source.validate().unwrap_err();
+        assert!(err.to_string().contains("a runner-documented secret field holds a `${VAR}` interpolation naming an entry of spec.secrets, never a value (MF-35, PL-16)"), "{err}");
+    }
+
+    #[test]
+    fn mqtt_requires_topics_and_bounded_qos() {
+        let mut source = DataSourceSpec {
+            source_type: DataSourceType::Mqtt,
+            mqtt: Some(MqttConnection {
+                urls: vec!["tcp://broker.example.com:1883".into()],
+                topics: vec![],
+                ..Default::default()
+            }),
+            http: None,
+            web_socket: None,
+            gtfs_rt: None,
+            webhook: None,
+            tls: None,
+            input: None,
+            secrets: vec![],
+            personal_fields: vec![],
+        };
+        let err = source.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("an MQTT connection needs at least one topic filter"),
+            "{err}"
+        );
+
+        if let Some(ref mut mqtt) = source.mqtt {
+            mqtt.topics = vec!["sensors/#".into()];
+            mqtt.qos = Some(3);
+        }
+        let err = source.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("MQTT quality of service is 0, 1 or 2"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn secret_refs_gathers_all_configured_references() {
+        let ca_ref = SecretRef {
+            name: "ca-cert".into(),
+            key: None,
+            env_var: None,
+        };
+        let pass_ref = SecretRef {
+            name: "mqtt-pass".into(),
+            key: None,
+            env_var: None,
+        };
+        let auth_ref = SecretRef {
+            name: "api-token".into(),
+            key: None,
+            env_var: None,
+        };
+
+        let mqtt_source = DataSourceSpec {
+            source_type: DataSourceType::Mqtt,
+            mqtt: Some(MqttConnection {
+                urls: vec!["tcp://example.com:1883".into()],
+                topics: vec!["#".into()],
+                password_ref: Some(pass_ref.clone()),
+                ..Default::default()
+            }),
+            http: None,
+            web_socket: None,
+            gtfs_rt: None,
+            webhook: None,
+            tls: Some(TlsSettings {
+                insecure_skip_verify: false,
+                ca_cert_ref: Some(ca_ref.clone()),
+            }),
+            input: None,
+            secrets: vec![],
+            personal_fields: vec![],
+        };
+        let refs = mqtt_source.secret_refs();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].name, "mqtt-pass");
+        assert_eq!(refs[1].name, "ca-cert");
+
+        let http_source = DataSourceSpec {
+            source_type: DataSourceType::Http,
+            mqtt: None,
+            http: Some(HttpConnection {
+                url: "https://example.com".into(),
+                authorization: Some(Authorization {
+                    header: None,
+                    scheme: None,
+                    header_ref: auth_ref.clone(),
+                }),
+                ..Default::default()
+            }),
+            web_socket: None,
+            gtfs_rt: None,
+            webhook: None,
+            tls: Some(TlsSettings {
+                insecure_skip_verify: false,
+                ca_cert_ref: Some(ca_ref.clone()),
+            }),
+            input: None,
+            secrets: vec![],
+            personal_fields: vec![],
+        };
+        let refs = http_source.secret_refs();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].name, "api-token");
+        assert_eq!(refs[1].name, "ca-cert");
+
+        let ws_source = DataSourceSpec {
+            source_type: DataSourceType::WebSocket,
+            mqtt: None,
+            http: None,
+            web_socket: Some(WebSocketConnection {
+                url: "wss://example.com".into(),
+                open_message: None,
+            }),
+            gtfs_rt: None,
+            webhook: None,
+            tls: Some(TlsSettings {
+                insecure_skip_verify: false,
+                ca_cert_ref: Some(ca_ref.clone()),
+            }),
+            input: None,
+            secrets: vec![],
+            personal_fields: vec![],
+        };
+        let refs = ws_source.secret_refs();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name, "ca-cert");
+
+        let gtfs_source = DataSourceSpec {
+            source_type: DataSourceType::GtfsRt,
+            mqtt: None,
+            http: None,
+            web_socket: None,
+            gtfs_rt: Some(GtfsRtConnection {
+                url: "https://example.com/gtfs".into(),
+                feed: GtfsFeed::Alerts,
+            }),
+            webhook: None,
+            tls: Some(TlsSettings {
+                insecure_skip_verify: false,
+                ca_cert_ref: Some(ca_ref.clone()),
+            }),
+            input: None,
+            secrets: vec![],
+            personal_fields: vec![],
+        };
+        let refs = gtfs_source.secret_refs();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name, "ca-cert");
+    }
+
+    #[test]
+    fn validate_input_tree_handles_paths_wrappers_and_processors() {
+        let err = validate_input_tree(
+            "file",
+            json!({ "paths": "/outside/test.csv" }).as_object().unwrap(),
+            &[],
+            "/data/",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("spec.input.paths"), "{err}");
+
+        let err = validate_input_tree(
+            "file",
+            json!({ "path": "/outside/test.csv" }).as_object().unwrap(),
+            &[],
+            "/data/",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("spec.input.path"), "{err}");
+
+        let err = validate_input_tree(
+            "batched",
+            json!({ "child": "not-a-map" }).as_object().unwrap(),
+            &[],
+            "/data/",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("an input inside `batched` is a map of its name to its configuration"),
+            "{err}"
+        );
+
+        let err = validate_input_tree(
+            "broker",
+            json!({ "inputs": [{ "unknown_input_type": {} }] })
+                .as_object()
+                .unwrap(),
+            &[],
+            "/data/",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unknown input `unknown_input_type` inside `broker`"),
+            "{err}"
+        );
+
+        let err = validate_input_tree(
+            "nats",
+            json!({
+                "urls": ["nats://broker.example.fi:4222"],
+                "subject": "events",
+                "processors": "not_an_array"
+            })
+            .as_object()
+            .unwrap(),
+            &[],
+            "/data/",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("an input's processors are a list"),
+            "{err}"
+        );
+
+        let valid_nested = json!({
+            "child": {
+                "nats": {
+                    "urls": ["nats://broker.example.fi:4222"],
+                    "subject": "events",
+                    "processors": [{ "mapping": "root = this" }]
+                }
+            }
+        });
+        assert!(
+            validate_input_tree("batched", valid_nested.as_object().unwrap(), &[], "/data/")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn helper_functions_cover_env_vars_and_verbs() {
+        let mut targets = Vec::new();
+        let items = json!({ "items": [1, 2] });
+        collect_secret_targets(&items, &["items[]"], "", &mut targets);
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].0, "items[0]");
+
+        let mut str_list = Vec::new();
+        let number = json!(12345);
+        strings_of(&number, "root".into(), &mut str_list);
+        assert!(str_list.is_empty());
+
+        let mut var_list = Vec::new();
+        interpolated_names(&number, &mut var_list);
+        assert!(var_list.is_empty());
+
+        assert_eq!(
+            is_exact_var_interpolation("${VALID_VAR}"),
+            Some("VALID_VAR")
+        );
+        assert_eq!(is_exact_var_interpolation("${}"), None);
+        assert_eq!(is_exact_var_interpolation("${NOT VALID}"), None);
+
+        let sec_no_key = SecretRef {
+            name: "src-feed".into(),
+            key: None,
+            env_var: None,
+        };
+        assert_eq!(env_var_of("feed", &sec_no_key), "DS_FEED");
+
+        let sec_with_key = SecretRef {
+            name: "src-feed".into(),
+            key: Some("token".into()),
+            env_var: None,
+        };
+        assert_eq!(env_var_of("feed", &sec_with_key), "DS_FEED_TOKEN");
+
+        assert!(verb(None).is_ok());
+        assert!(verb(Some("GET")).is_ok());
+        assert!(verb(Some("POST")).is_ok());
+        let err = verb(Some("PATCH")).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a polled feed is read with GET or POST"),
+            "{err}"
+        );
+    }
+}

@@ -604,3 +604,177 @@ impl DataAgreementSpec {
         true
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use std::time::SystemTime;
+
+    #[test]
+    fn did_as_ref_and_org_domain() {
+        let did = Did::new("did:web:hel.fi").expect("valid did");
+        assert_eq!(did.as_ref(), "did:web:hel.fi");
+        assert_eq!(did.org_domain(), "hel.fi");
+        let err = Did::new("did:web:singlelabel").expect_err("invalid org domain");
+        assert!(matches!(err, Error::Name { field: "did", .. }));
+    }
+
+    #[test]
+    fn connector_engine_as_str_and_display() {
+        assert_eq!(ConnectorEngine::Rainbow.as_str(), "rainbow");
+        assert_eq!(ConnectorEngine::Edc.as_str(), "edc");
+        assert_eq!(format!("{}", ConnectorEngine::Rainbow), "rainbow");
+        assert_eq!(format!("{}", ConnectorEngine::Edc), "edc");
+    }
+
+    #[test]
+    fn agreement_role_as_str_and_display() {
+        assert_eq!(AgreementRole::Provider.as_str(), "provider");
+        assert_eq!(AgreementRole::Consumer.as_str(), "consumer");
+        assert_eq!(format!("{}", AgreementRole::Provider), "provider");
+        assert_eq!(format!("{}", AgreementRole::Consumer), "consumer");
+    }
+
+    #[test]
+    fn agreement_state_as_str_and_display() {
+        for (state, wire) in [
+            (AgreementState::Requested, "requested"),
+            (AgreementState::Offered, "offered"),
+            (AgreementState::Accepted, "accepted"),
+            (AgreementState::Finalized, "finalized"),
+            (AgreementState::Terminated, "terminated"),
+        ] {
+            assert_eq!(state.as_str(), wire);
+            assert_eq!(format!("{state}"), wire);
+        }
+    }
+
+    #[test]
+    fn agreement_state_transition_rules() {
+        assert!(AgreementState::Requested.allows_transition_to(AgreementState::Offered));
+        assert!(AgreementState::Offered.allows_transition_to(AgreementState::Accepted));
+        assert!(AgreementState::Accepted.allows_transition_to(AgreementState::Finalized));
+        assert!(AgreementState::Requested.allows_transition_to(AgreementState::Terminated));
+        assert!(AgreementState::Terminated.allows_transition_to(AgreementState::Terminated));
+        assert!(!AgreementState::Terminated.allows_transition_to(AgreementState::Requested));
+        assert!(!AgreementState::Finalized.allows_transition_to(AgreementState::Accepted));
+    }
+
+    #[test]
+    fn data_offer_context_space_and_validation() {
+        let mut spec = DataOfferSpec {
+            context_space_ref: "space-1".into(),
+            endpoint_refs: vec![Ref::Name("ep-1".into())],
+            policy: serde_json::json!({"permission": [{"action": "use"}]}),
+            contains_personal_data: false,
+            purpose: None,
+        };
+        assert_eq!(spec.context_space(), Some("space-1"));
+
+        spec.context_space_ref = "Bad_Space!".into();
+        let err = spec.validate().expect_err("invalid space ref");
+        assert!(err.to_string().contains("spec.contextSpaceRef"), "{err}");
+
+        spec.context_space_ref = "space-1".into();
+        spec.endpoint_refs = vec![Ref::Name("Bad_Endpoint!".into())];
+        let err = spec.validate().expect_err("invalid endpoint ref name");
+        assert!(err.to_string().contains("spec.endpointRefs.name"), "{err}");
+
+        spec.endpoint_refs = vec![Ref::Typed(crate::envelope::TypedRef {
+            kind: "ContextSpace".into(),
+            name: "ep-1".into(),
+            namespace: None,
+        })];
+        let err = spec.validate().expect_err("kind must be Endpoint");
+        assert!(matches!(
+            err,
+            Error::Kind {
+                expected: "Endpoint",
+                ..
+            }
+        ));
+
+        spec.endpoint_refs = vec![Ref::Name("ep-1".into())];
+        spec.policy = serde_json::json!({"permission": "not-an-array"});
+        let err = spec.validate().expect_err("permission not array");
+        assert!(err.to_string().contains("spec.policy.permission"), "{err}");
+    }
+
+    #[test]
+    fn data_agreement_validation_and_active_check() {
+        let did = Did::new("did:web:remote.fi").expect("did");
+        let mut spec = DataAgreementSpec {
+            role: AgreementRole::Provider,
+            offer_ref: Some(Ref::Name("Bad_Offer!".into())),
+            remote_participant: did.clone(),
+            agreement_id: "agree-1".into(),
+            state: AgreementState::Requested,
+            validity: Validity {
+                from: None,
+                to: None,
+            },
+            token_secret_ref: None,
+            constraints: AgreementConstraints::default(),
+        };
+        let err = spec.validate().expect_err("invalid offer ref name");
+        assert!(err.to_string().contains("spec.offerRef.name"), "{err}");
+
+        spec.offer_ref = Some(Ref::Typed(crate::envelope::TypedRef {
+            kind: "ContextSpace".into(),
+            name: "offer-1".into(),
+            namespace: None,
+        }));
+        let err = spec.validate().expect_err("kind must be DataOffer");
+        assert!(matches!(
+            err,
+            Error::Kind {
+                expected: "DataOffer",
+                ..
+            }
+        ));
+
+        spec.role = AgreementRole::Consumer;
+        spec.offer_ref = None;
+        spec.state = AgreementState::Finalized;
+        spec.token_secret_ref = Some(SecretRef {
+            name: "Bad_Secret!".into(),
+            key: None,
+            env_var: None,
+        });
+        let err = spec.validate().expect_err("invalid token secret ref name");
+        assert!(
+            err.to_string().contains("spec.tokenSecretRef.name"),
+            "{err}"
+        );
+
+        let t1 = jc_time::parse_rfc3339("2026-06-01T00:00:00Z").map(jc_time::TimestampTz);
+        let t2 = jc_time::parse_rfc3339("2026-01-01T00:00:00Z").map(jc_time::TimestampTz);
+        spec.token_secret_ref = Some(SecretRef {
+            name: "sec".into(),
+            key: None,
+            env_var: None,
+        });
+        spec.validity = Validity { from: t1, to: t2 };
+        let err = spec.validate().expect_err("validity from > to");
+        assert!(err.to_string().contains("spec.validity"), "{err}");
+
+        let from_ts = jc_time::parse_rfc3339("2026-01-01T00:00:00Z").map(jc_time::TimestampTz);
+        let to_ts = jc_time::parse_rfc3339("2026-12-31T00:00:00Z").map(jc_time::TimestampTz);
+        spec.validity = Validity {
+            from: from_ts,
+            to: to_ts,
+        };
+        spec.validate().expect("valid agreement");
+        assert!(spec.allows_transition_to(AgreementState::Terminated));
+
+        let mid = SystemTime::from(jc_time::parse_rfc3339("2026-06-01T00:00:00Z").unwrap());
+        let before = SystemTime::from(jc_time::parse_rfc3339("2025-06-01T00:00:00Z").unwrap());
+        let after = SystemTime::from(jc_time::parse_rfc3339("2027-06-01T00:00:00Z").unwrap());
+        assert!(spec.is_active(mid));
+        assert!(!spec.is_active(before));
+        assert!(!spec.is_active(after));
+
+        spec.state = AgreementState::Requested;
+        assert!(!spec.is_active(mid));
+    }
+}

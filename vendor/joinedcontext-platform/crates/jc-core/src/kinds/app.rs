@@ -1399,3 +1399,156 @@ impl fmt::Display for AppLifecycle {
         f.write_str(self.as_str())
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use crate::envelope::{Ref, TypedRef};
+    use crate::kinds::endpoint::Representation;
+    use crate::kinds::policy::Operation;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn app_lifecycle_as_str_and_display() {
+        for (lifecycle, expected) in [
+            (AppLifecycle::Draft, "draft"),
+            (AppLifecycle::Preview, "preview"),
+            (AppLifecycle::Published, "published"),
+            (AppLifecycle::Retired, "retired"),
+        ] {
+            assert_eq!(lifecycle.as_str(), expected);
+            assert_eq!(lifecycle.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn app_source_with_empty_git_ref_is_refused() {
+        let source = AppSource {
+            path: None,
+            git: Some(GitSource {
+                url: "https://forge.example.com/org/repo".into(),
+                git_ref: "   ".into(),
+                path: None,
+            }),
+        };
+        let err = source.validate().expect_err("empty ref should be refused");
+        assert!(err.to_string().contains("ref must not be empty"), "{err}");
+    }
+
+    #[test]
+    fn app_build_with_invalid_toolchain_name_is_refused() {
+        let mut build_map = BTreeMap::new();
+        build_map.insert("Node_JS".to_string(), "22".to_string());
+        let build = AppBuild(build_map);
+        let err = build
+            .validate(AppClass::Ui)
+            .expect_err("invalid toolchain name");
+        assert!(
+            err.to_string()
+                .contains("toolchain name must be a lowercase identifier"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_subjects_with_source_and_user_only() {
+        let subjects = vec![crate::kinds::role::Subject {
+            user: Some("00000000-0000-0000-0000-000000000001".into()),
+            group: None,
+            source: Some(crate::kinds::role::SubjectSource::Provider),
+        }];
+        let err = validate_subjects("access[].subjects", &subjects).expect_err("source is refused");
+        assert!(
+            err.to_string()
+                .contains("a role here names Group manifests only"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn data_need_validations() {
+        let base_need = || DataNeed {
+            context_space_ref: Ref::Typed(TypedRef {
+                kind: "ContextSpace".into(),
+                name: "valid-space".into(),
+                namespace: None,
+            }),
+            types: vec!["AirQualityObserved".into()],
+            attrs: vec![],
+            operations: vec![OperationRef::Single(Operation::RetrieveEntity)],
+            q: None,
+            scope_q: None,
+            geo_q: None,
+            temporal_q: None,
+            representations: vec![],
+            roles: vec![],
+        };
+
+        let mut bad_space = base_need();
+        bad_space.context_space_ref = Ref::Name("Invalid_Space".into());
+        let err = bad_space.validate().expect_err("invalid space name");
+        assert!(
+            err.to_string().contains("dataNeeds.contextSpaceRef"),
+            "{err}"
+        );
+
+        let mut bad_kind = base_need();
+        bad_kind.context_space_ref = Ref::Typed(TypedRef {
+            kind: "Endpoint".into(),
+            name: "valid-space".into(),
+            namespace: None,
+        });
+        let err = bad_kind.validate().expect_err("wrong kind");
+        assert!(
+            err.to_string().contains("kind must be `ContextSpace`"),
+            "{err}"
+        );
+
+        let mut bad_attr = base_need();
+        bad_attr.attrs = vec!["invalid-attr".into()];
+        let err = bad_attr.validate().expect_err("invalid attr name");
+        assert!(
+            err.to_string()
+                .contains("attribute name must be an NGSI-LD term"),
+            "{err}"
+        );
+
+        let mut dup_attr = base_need();
+        dup_attr.attrs = vec!["pm10".into(), "pm10".into()];
+        let err = dup_attr.validate().expect_err("duplicate attribute");
+        assert!(err.to_string().contains("duplicate attribute"), "{err}");
+
+        let mut dup_rep = base_need();
+        dup_rep.representations = vec![Representation::Mcp, Representation::Mcp];
+        let err = dup_rep.validate().expect_err("duplicate representation");
+        assert!(
+            err.to_string().contains("duplicate representation"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn default_storage_structs_and_blob_quota_validation() {
+        let sql = SqlStorage::default();
+        assert_eq!(sql.migrations, "migrations");
+        assert_eq!(sql.quota_mib, 100);
+
+        let blob = BlobStorage::default();
+        assert_eq!(blob.quota_mib, 1024);
+
+        let storage_valid = AppStorage {
+            sql: None,
+            blob: Some(blob),
+        };
+        assert!(storage_valid.validate().is_ok());
+
+        let storage_invalid_blob = AppStorage {
+            sql: None,
+            blob: Some(BlobStorage { quota_mib: 0 }),
+        };
+        let err = storage_invalid_blob
+            .validate()
+            .expect_err("zero blob quota");
+        assert!(err.to_string().contains("storage.blob.quotaMiB"), "{err}");
+    }
+}

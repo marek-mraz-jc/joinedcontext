@@ -1811,3 +1811,222 @@ mod tests {
         assert_eq!(gaps.len(), 1, "{gaps:?}");
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn representations_expecting_message() {
+        let err = serde_json::from_str::<Representations>(r#"{"ical": 123}"#).unwrap_err();
+        assert!(err.to_string().contains("a list of named outputs"), "{err}");
+    }
+
+    #[test]
+    fn ical_links_and_output_labels() {
+        let mut output = IcalOutput::legacy(IcalMapping::default());
+        let outputs = [output.clone()];
+        let links = ical_links(&outputs);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].1, "feeds/events.ics");
+
+        assert_eq!(output.label("sk"), "events");
+        output.title.insert("en".into(), "English Title".into());
+        assert_eq!(output.label("sk"), "English Title");
+        output.title.insert("sk".into(), "Slovak Title".into());
+        assert_eq!(output.label("sk"), "Slovak Title");
+    }
+
+    #[test]
+    fn ical_output_shape_and_model_gaps_branches() {
+        let mut output = IcalOutput::legacy(IcalMapping::default());
+        output.timezone = Some("Invalid/Zone Name".into());
+        let gaps = output.shape_gaps();
+        assert!(gaps.iter().any(|g| g.contains("is not an IANA zone name")));
+
+        output.name = "-invalid-name".into();
+        let gaps = output.model_gaps(None).expect("returns Ok with shape gaps");
+        assert!(!gaps.is_empty());
+
+        output.name = "events".into();
+        output.timezone = None;
+        output.query = Some("unknownParam=123".into());
+        let gaps = output.shape_gaps();
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("which a preset cannot store")));
+    }
+
+    #[test]
+    fn query_model_gaps_with_empty_types_list() {
+        let schema: serde_norway::Value = serde_norway::from_str("classes: { Event: {} }").unwrap();
+        let model = Model { schema: &schema };
+        let filter = OutputFilter {
+            q: Some("attr==1".into()),
+            ..Default::default()
+        };
+        let gaps = query_model_gaps(&model, Some(&filter), false, &["NonExistentClass"]);
+        assert!(gaps.is_empty());
+    }
+
+    #[test]
+    fn from_query_with_unmapped_type() {
+        let err = OutputFilter::from_query("type=Unmapped&q=a==1", &["Event"]).unwrap_err();
+        assert!(err.contains("which the output's sources do not map"));
+    }
+
+    #[test]
+    fn ical_field_remaps_and_field_source_expecting() {
+        assert!(!IcalField::Summary.remaps().is_empty());
+        assert!(IcalField::Uid.remaps().is_empty());
+
+        let err = serde_json::from_str::<FieldSource>("123").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("an attribute name or an object of a source and its remaps"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn ical_mapping_shape_and_conflict_gaps() {
+        let mapping = IcalMapping {
+            entity_type: "bad entity type".into(),
+            ..Default::default()
+        };
+        let gaps = mapping.shape_gaps();
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("is not an NGSI-LD type name")));
+
+        let mut mapping_both = IcalMapping {
+            preset: Some(Preset::SdmEvent),
+            ..Default::default()
+        };
+        mapping_both.mapping.insert(
+            IcalField::Duration,
+            FieldSource::Remap(Box::new(FieldRemap {
+                constant: Some("PT1H".into()),
+                ..Default::default()
+            })),
+        );
+        let model_yaml = "classes:\n  Event:\n    slots: [startDate, endDate, name]\nslots:\n  startDate:\n    range: datetime\n    required: true\n  endDate:\n    range: datetime\n  name:\n    range: string\n    required: true\n";
+        let gaps = mapping_both.model_gaps(Some(model_yaml)).unwrap();
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("maps both DTEND and DURATION")));
+    }
+
+    #[test]
+    fn field_remap_shape_and_value_gaps() {
+        let remap_join = FieldRemap {
+            join: vec!["field".into()],
+            ..Default::default()
+        };
+        let gaps = source_gaps(IcalField::Uid, &remap_join);
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("does not take `join`; it takes none")));
+
+        let remap_sep = FieldRemap {
+            attribute: Some("name".into()),
+            separator: Some(", ".into()),
+            ..Default::default()
+        };
+        let gaps = field_shape_gaps(IcalField::Summary, &remap_sep);
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("`separator` belongs to `join`")));
+
+        let remap_long_sep = FieldRemap {
+            join: vec!["a".into(), "b".into()],
+            separator: Some("very_long_separator_exceeding_10_chars".into()),
+            ..Default::default()
+        };
+        let gaps = field_shape_gaps(IcalField::Summary, &remap_long_sep);
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("`separator` must be 1 to 10 characters")));
+
+        let remap_lang = FieldRemap {
+            attribute: Some("name".into()),
+            language: Some("invalid_lang".into()),
+            ..Default::default()
+        };
+        let gaps = field_shape_gaps(IcalField::Summary, &remap_lang);
+        assert!(gaps.iter().any(|g| g.contains("is neither a language tag")));
+
+        let remap_trunc = FieldRemap {
+            attribute: Some("name".into()),
+            truncate: Some(0),
+            ..Default::default()
+        };
+        let gaps = field_shape_gaps(IcalField::Summary, &remap_trunc);
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("`truncate` must be 1 to 10000")));
+
+        let mut bad_map = BTreeMap::new();
+        bad_map.insert("".into(), "CONFIRMED".into());
+        let remap_map = FieldRemap {
+            attribute: Some("status".into()),
+            map: bad_map,
+            ..Default::default()
+        };
+        let gaps = field_shape_gaps(IcalField::Status, &remap_map);
+        assert!(gaps
+            .iter()
+            .any(|g| g.contains("`map` keys and values must be short plain text")));
+    }
+
+    #[test]
+    fn core_slots_and_model_resolution_variations() {
+        assert!(core_slot("observationSpace").is_some());
+        assert!(core_slot("operationSpace").is_some());
+
+        let enum_yaml = "enums:\n  Color:\n    permissible_values: [Red, Green, Blue]\n";
+        let schema: serde_norway::Value = serde_norway::from_str(enum_yaml).unwrap();
+        let model = Model { schema: &schema };
+        let values = model.enum_values("Color").unwrap();
+        assert_eq!(values, vec!["Red", "Green", "Blue"]);
+
+        let geo_yaml = "classes:\n  Place:\n    attributes:\n      geo:\n        range: GeoJSON\n        annotations:\n          ngsi_ld_kind:\n            value: GeoProperty\n";
+        let schema: serde_norway::Value = serde_norway::from_str(geo_yaml).unwrap();
+        let model = Model { schema: &schema };
+        let slot = model.slot("Place", "geo").unwrap();
+        assert_eq!(slot.kind.as_deref(), Some("GeoProperty"));
+
+        let inherit_yaml = "classes:\n  Base:\n    attributes:\n      title:\n        range: string\n  Derived:\n    is_a: Base\n";
+        let schema: serde_norway::Value = serde_norway::from_str(inherit_yaml).unwrap();
+        let model = Model { schema: &schema };
+        let slot = model.slot("Derived", "title").unwrap();
+        assert_eq!(slot.range, "string");
+
+        let org_yaml = "classes:\n  Org:\n    attributes:\n      url:\n        range: uri\n  Event:\n    attributes:\n      organizer:\n        range: Org\n";
+        let schema: serde_norway::Value = serde_norway::from_str(org_yaml).unwrap();
+        let model = Model { schema: &schema };
+        let slot = model.slot("Event", "organizer").unwrap();
+        assert!(fits(&model, &slot, Accepts::CalAddress));
+    }
+
+    #[test]
+    fn field_model_gaps_with_join_required_and_categories_enum_continue() {
+        let model_yaml = "classes:\n  Event:\n    attributes:\n      firstPart:\n        range: string\n        required: true\n      secondPart:\n        range: string\n        required: false\n      category:\n        range: CategoryEnum\n        required: false\nenums:\n  CategoryEnum:\n    permissible_values: [Music, Art]\n";
+        let schema: serde_norway::Value = serde_norway::from_str(model_yaml).unwrap();
+        let model = Model { schema: &schema };
+
+        let remap_join = FieldRemap {
+            join: vec!["firstPart".into(), "secondPart".into()],
+            ..Default::default()
+        };
+        let gaps = field_model_gaps(&model, "Event", IcalField::Summary, &remap_join, true);
+        assert!(gaps.is_empty());
+
+        let remap_cat = FieldRemap {
+            attribute: Some("category".into()),
+            ..Default::default()
+        };
+        let gaps = field_model_gaps(&model, "Event", IcalField::Categories, &remap_cat, true);
+        assert!(gaps.is_empty(), "{gaps:?}");
+    }
+}

@@ -2588,3 +2588,589 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn output_mode_display() {
+        assert_eq!(format!("{}", OutputMode::Upsert), "upsert");
+        assert_eq!(format!("{}", OutputMode::Replace), "replace");
+        assert_eq!(format!("{}", OutputMode::UpdateAttrs), "update-attrs");
+        assert_eq!(format!("{}", OutputMode::Merge), "merge");
+        assert_eq!(format!("{}", OutputMode::Backfill), "backfill");
+    }
+
+    #[test]
+    fn period_seconds_and_shortest_clock() {
+        let p = PipelineSpec {
+            class: PipelineClass::Auto,
+            period: Some("3h".into()),
+            schedule: Some("0 * * * *".into()),
+            target_endpoint: Some("urn:ngsi-ld:Endpoint:hel.fi:space:ep".parse().unwrap()),
+            enabled: true,
+            allow_feedback: false,
+            source: None,
+            compute: None,
+            output: None,
+            sources: vec![],
+            steps: vec![],
+            outputs: vec![],
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+        assert_eq!(p.period_seconds(), Some(3 * 3600));
+        assert_eq!(p.shortest_clock_seconds(), Some(3600));
+    }
+
+    #[test]
+    fn data_source_ref_kind_must_be_data_source() {
+        let src = PipelineSource {
+            data_source_ref: Some(Ref::Typed(crate::envelope::TypedRef {
+                kind: "Endpoint".into(),
+                name: "ds-1".into(),
+                namespace: None,
+            })),
+            ..Default::default()
+        };
+        let err = src.validate().expect_err("kind must be DataSource");
+        assert!(matches!(
+            err,
+            Error::Kind {
+                expected: "DataSource",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn mixed_first_and_second_shape_is_refused() {
+        let p = PipelineSpec {
+            class: PipelineClass::Resident,
+            target_endpoint: Some("urn:ngsi-ld:Endpoint:hel.fi:space:ep".parse().unwrap()),
+            outputs: vec![PipelineOutput {
+                target_endpoint: "urn:ngsi-ld:Endpoint:hel.fi:space:ep".parse().unwrap(),
+                entity_type: None,
+                mode: None,
+            }],
+            enabled: true,
+            schedule: None,
+            period: None,
+            source: None,
+            compute: None,
+            output: None,
+            allow_feedback: false,
+            sources: vec![],
+            steps: vec![],
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+        let err = p.validate().expect_err("mixed shapes");
+        assert!(err.to_string().contains("not both (PL-52)"), "{err}");
+    }
+
+    #[test]
+    fn scripts_forbidden_on_first_shape() {
+        let p = PipelineSpec {
+            class: PipelineClass::Resident,
+            target_endpoint: Some("urn:ngsi-ld:Endpoint:hel.fi:space:ep".parse().unwrap()),
+            scripts: vec![AppliedScript {
+                script_ref: crate::kinds::script::ScriptRef {
+                    name: "clean".into(),
+                    version: "1.0.0".into(),
+                },
+                apply_to: ApplyTo::StepsStart,
+                types: vec![],
+            }],
+            enabled: true,
+            schedule: None,
+            period: None,
+            source: None,
+            compute: None,
+            output: None,
+            allow_feedback: false,
+            sources: vec![],
+            steps: vec![],
+            outputs: vec![],
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+        };
+        let err = p.validate().expect_err("scripts on first shape");
+        assert!(err.to_string().contains("spec.scripts"), "{err}");
+    }
+
+    #[test]
+    fn expiry_with_multiple_outputs_refused() {
+        let p = PipelineSpec {
+            target_endpoint: None,
+            class: PipelineClass::Resident,
+            sources: vec![PipelineSource {
+                endpoint_ref: Some(Ref::Name("ep1".into())),
+                ..Default::default()
+            }],
+            outputs: vec![
+                PipelineOutput {
+                    target_endpoint: "urn:ngsi-ld:Endpoint:hel.fi:s1:ep1".parse().unwrap(),
+                    entity_type: Some("Sensor".into()),
+                    mode: None,
+                },
+                PipelineOutput {
+                    target_endpoint: "urn:ngsi-ld:Endpoint:hel.fi:s2:ep2".parse().unwrap(),
+                    entity_type: Some("Sensor".into()),
+                    mode: None,
+                },
+            ],
+            expiry: Some(Expiry {
+                after: "24h".into(),
+                types: vec!["Sensor".into()],
+            }),
+            enabled: true,
+            schedule: None,
+            period: None,
+            source: None,
+            compute: None,
+            output: None,
+            allow_feedback: false,
+            steps: vec![],
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+        let err = p.validate().expect_err("expiry with multiple outputs");
+        assert!(err.to_string().contains("spec.expiry"), "{err}");
+        assert!(err.to_string().contains("more than one output"), "{err}");
+    }
+
+    #[test]
+    fn history_and_attributes_validation() {
+        let p = PipelineSpec {
+            target_endpoint: None,
+            class: PipelineClass::Resident,
+            sources: vec![PipelineSource {
+                endpoint_ref: Some(Ref::Name("ep1".into())),
+                ..Default::default()
+            }],
+            outputs: vec![PipelineOutput {
+                target_endpoint: "urn:ngsi-ld:Endpoint:hel.fi:s1:ep1".parse().unwrap(),
+                entity_type: Some("Sensor".into()),
+                mode: None,
+            }],
+            history: vec![crate::kinds::pipeline_history::History {
+                entity_type: "Sensor".into(),
+                attributes: vec![serde_json::from_value(serde_json::json!({
+                    "names": ["temperature"], "keep": "every"
+                }))
+                .expect("an attribute history")],
+            }],
+            attributes: vec![crate::kinds::pipeline_attributes::AttributeRules {
+                entity_type: "Sensor".into(),
+                rules: vec![serde_json::from_value(serde_json::json!({
+                    "names": ["temperature"], "unitCode": "CEL"
+                }))
+                .expect("an attribute rule")],
+                system_members: None,
+                source_dates: None,
+            }],
+            enabled: true,
+            schedule: None,
+            period: None,
+            source: None,
+            compute: None,
+            output: None,
+            allow_feedback: false,
+            steps: vec![],
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+        p.validate().expect("valid history and attributes");
+    }
+
+    #[test]
+    fn query_ids_type_mismatch() {
+        let p = PipelineSpec {
+            class: PipelineClass::Resident,
+            target_endpoint: Some("urn:ngsi-ld:Endpoint:hel.fi:space:ep".parse().unwrap()),
+            source: Some(PipelineSource {
+                endpoint_ref: Some(Ref::Name("ep1".into())),
+                query: Some(SourceQuery {
+                    entity_type: Some("Sensor".into()),
+                    ids: vec!["urn:ngsi-ld:Device:dev1".parse().unwrap()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            enabled: true,
+            schedule: None,
+            period: None,
+            compute: None,
+            output: None,
+            allow_feedback: false,
+            sources: vec![],
+            steps: vec![],
+            outputs: vec![],
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+        let err = p.validate().expect_err("ids type mismatch");
+        assert!(matches!(
+            err,
+            Error::Kind {
+                expected: "query.type",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn compute_step_edge_cases() {
+        let base = PipelineSpec {
+            class: PipelineClass::Resident,
+            target_endpoint: Some("urn:ngsi-ld:Endpoint:hel.fi:space:ep".parse().unwrap()),
+            enabled: true,
+            schedule: None,
+            period: None,
+            source: None,
+            compute: None,
+            output: None,
+            allow_feedback: false,
+            sources: vec![],
+            steps: vec![],
+            outputs: vec![],
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+
+        let mut p = base.clone();
+        p.compute = Some(Compute {
+            kind: ComputeKind::Wasm,
+            module: Some("mod".into()),
+            function: None,
+            mapping_ref: None,
+            bloblang: None,
+            kpi: None,
+            datacube: None,
+            script_ref: None,
+        });
+        let err = p.validate().expect_err("wasm needs function");
+        assert!(err.to_string().contains("spec.compute.function"), "{err}");
+
+        p.compute = Some(Compute {
+            kind: ComputeKind::Mapping,
+            module: None,
+            function: None,
+            mapping_ref: None,
+            bloblang: None,
+            kpi: None,
+            datacube: None,
+            script_ref: None,
+        });
+        let err = p.validate().expect_err("mapping needs mappingRef");
+        assert!(err.to_string().contains("spec.compute.mappingRef"), "{err}");
+
+        p.compute = Some(Compute {
+            kind: ComputeKind::Mapping,
+            module: Some("m.wasm".into()),
+            function: None,
+            mapping_ref: Some(Ref::Name("map1".into())),
+            bloblang: None,
+            kpi: None,
+            datacube: None,
+            script_ref: None,
+        });
+        let err = p.validate().expect_err("mapping forbids module");
+        assert!(err.to_string().contains("spec.compute.module"), "{err}");
+
+        p.compute = Some(Compute {
+            kind: ComputeKind::Mapping,
+            module: None,
+            function: Some("fn".into()),
+            mapping_ref: Some(Ref::Name("map1".into())),
+            bloblang: None,
+            kpi: None,
+            datacube: None,
+            script_ref: None,
+        });
+        let err = p.validate().expect_err("mapping forbids function");
+        assert!(err.to_string().contains("spec.compute.function"), "{err}");
+
+        p.compute = Some(Compute {
+            kind: ComputeKind::Mapping,
+            module: None,
+            function: None,
+            mapping_ref: Some(Ref::Typed(crate::envelope::TypedRef {
+                kind: "Endpoint".into(),
+                name: "map1".into(),
+                namespace: None,
+            })),
+            bloblang: None,
+            kpi: None,
+            datacube: None,
+            script_ref: None,
+        });
+        let err = p.validate().expect_err("mapping_ref kind must be Mapping");
+        assert!(matches!(
+            err,
+            Error::Kind {
+                expected: "Mapping",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn applied_script_too_many_types() {
+        let types: Vec<String> = (0..21).map(|i| format!("Type{i}")).collect();
+        let p = PipelineSpec {
+            target_endpoint: None,
+            class: PipelineClass::Resident,
+            sources: vec![PipelineSource {
+                endpoint_ref: Some(Ref::Name("ep1".into())),
+                ..Default::default()
+            }],
+            outputs: vec![PipelineOutput {
+                target_endpoint: "urn:ngsi-ld:Endpoint:hel.fi:s1:ep1".parse().unwrap(),
+                entity_type: None,
+                mode: None,
+            }],
+            scripts: vec![AppliedScript {
+                script_ref: crate::kinds::script::ScriptRef {
+                    name: "scr".into(),
+                    version: "1.0.0".into(),
+                },
+                apply_to: ApplyTo::StepsStart,
+                types,
+            }],
+            enabled: true,
+            schedule: None,
+            period: None,
+            source: None,
+            compute: None,
+            output: None,
+            allow_feedback: false,
+            steps: vec![],
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+        };
+        let err = p.validate().expect_err("too many script types");
+        assert!(err.to_string().contains("spec.scripts.types"), "{err}");
+        assert!(err.to_string().contains("at most 20 types"), "{err}");
+    }
+
+    #[test]
+    fn kpi_inputs_missing_entity_type_and_route_output_validation() {
+        let p_kpi = PipelineSpec {
+            target_endpoint: None,
+            class: PipelineClass::Resident,
+            sources: vec![PipelineSource {
+                name: Some("src1".into()),
+                endpoint_ref: Some(Ref::Name("ep1".into())),
+                query: Some(SourceQuery::default()),
+                ..Default::default()
+            }],
+            outputs: vec![PipelineOutput {
+                target_endpoint: "urn:ngsi-ld:Endpoint:hel.fi:s1:ep1".parse().unwrap(),
+                entity_type: None,
+                mode: None,
+            }],
+            steps: vec![Step::Compute(Compute {
+                kind: ComputeKind::Kpi,
+                kpi: Some(Box::new(crate::kpi_join::KpiStep {
+                    name: "kpi1".into(),
+                    title: None,
+                    formula: "count(src1) + count(src2)".into(),
+                    unit_code: "C62".into(),
+                    join: crate::kpi_join::Join::default(),
+                    window: None,
+                })),
+                module: None,
+                function: None,
+                mapping_ref: None,
+                bloblang: None,
+                datacube: None,
+                script_ref: None,
+            })],
+            enabled: true,
+            schedule: None,
+            period: None,
+            source: None,
+            compute: None,
+            output: None,
+            allow_feedback: false,
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+        let err = p_kpi.validate().expect_err("kpi missing query.entity_type");
+        assert!(err.to_string().contains("spec.sources.query.type"), "{err}");
+
+        let p_route = PipelineSpec {
+            target_endpoint: None,
+            class: PipelineClass::Resident,
+            sources: vec![PipelineSource {
+                endpoint_ref: Some(Ref::Name("ep1".into())),
+                ..Default::default()
+            }],
+            outputs: vec![PipelineOutput {
+                target_endpoint: "urn:ngsi-ld:Endpoint:hel.fi:s1:ep1".parse().unwrap(),
+                entity_type: None,
+                mode: None,
+            }],
+            routes: vec![PipelineRoute {
+                name: "route-1".into(),
+                when: "this.val > 10".into(),
+                steps: vec![],
+                outputs: vec![PipelineOutput {
+                    target_endpoint: "urn:ngsi-ld:Endpoint:hel.fi:s1:ep1".parse().unwrap(),
+                    entity_type: Some("bad_entity_type".into()),
+                    mode: None,
+                }],
+            }],
+            enabled: true,
+            schedule: None,
+            period: None,
+            source: None,
+            compute: None,
+            output: None,
+            allow_feedback: false,
+            steps: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+        let err = p_route
+            .validate()
+            .expect_err("bad entity type in route output");
+        assert!(err.to_string().contains("bad_entity_type"), "{err}");
+    }
+
+    #[test]
+    fn replace_conflicts_detection_and_formatting() {
+        let mint_a = IdMint {
+            mint: Mint::Template,
+            from: None,
+            template: Some("urn:ngsi-ld:Sensor:a:{code}".into()),
+        };
+        let mint_b = IdMint {
+            mint: Mint::Template,
+            from: None,
+            template: Some("urn:ngsi-ld:Sensor:b:{code}".into()),
+        };
+        let mint_c = IdMint {
+            mint: Mint::Template,
+            from: None,
+            template: Some("urn:ngsi-ld:Sensor:a:{code}".into()),
+        };
+        let base = PipelineSpec {
+            class: PipelineClass::Resident,
+            target_endpoint: Some("urn:ngsi-ld:Endpoint:hel.fi:space:ep1".parse().unwrap()),
+            output: None,
+            enabled: true,
+            schedule: None,
+            period: None,
+            source: None,
+            compute: None,
+            allow_feedback: false,
+            sources: vec![],
+            steps: vec![],
+            outputs: vec![],
+            routes: vec![],
+            secret_refs: vec![],
+            quotas: None,
+            expiry: None,
+            lifetime: vec![],
+            history: vec![],
+            attributes: vec![],
+            source_deletes: None,
+            scripts: vec![],
+        };
+        let mut p1 = base.clone();
+        p1.output = Some(Output {
+            entity_type: "Sensor".into(),
+            mode: OutputMode::Replace,
+            id: Some(mint_a),
+        });
+        let mut p2 = base.clone();
+        p2.output = Some(Output {
+            entity_type: "Sensor".into(),
+            mode: OutputMode::Replace,
+            id: Some(mint_b),
+        });
+        let mut p3 = base;
+        p3.output = Some(Output {
+            entity_type: "Sensor".into(),
+            mode: OutputMode::Replace,
+            id: Some(mint_c),
+        });
+
+        let c_diff = replace_conflicts(&[("pipe1", &p1), ("pipe2", &p2)], |_| Some("space".into()));
+        assert!(c_diff.is_empty());
+
+        let c_same = replace_conflicts(&[("pipe1", &p1), ("pipe3", &p3)], |_| Some("space".into()));
+        assert_eq!(c_same.len(), 2);
+        let display_text = format!("{}", c_same[0]);
+        assert!(display_text.contains("with mode replace"));
+        assert!(display_text.contains("pipe1"));
+    }
+}
