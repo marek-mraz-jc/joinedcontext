@@ -1848,7 +1848,10 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     assert_eq!(headers[header::CONTENT_TYPE], "text/css; charset=utf-8");
     assert_eq!(
         css,
-        format!("body.{} .site-header {{\n  background: #123456;\n}}\n", sheet.class)
+        format!(
+            "body.{} .site-header {{\n  background: #123456;\n}}\n",
+            sheet.class
+        )
     );
     let (st, _, _) = send_json(
         &app,
@@ -1863,7 +1866,10 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     assert_eq!(st, StatusCode::NOT_FOUND, "another hash");
     // T-7745: the stylesheet changes no byte of the page's CSP but its per-request nonce.
     let csp_of = |headers: &axum::http::HeaderMap| {
-        let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap().to_owned();
+        let csp = headers[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap()
+            .to_owned();
         let nonce = csp
             .split("'nonce-")
             .nth(1)
@@ -1872,8 +1878,26 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
             .to_owned();
         csp.replace(&nonce, "N")
     };
-    let (_, with_sheet, _) = send_json(&app, Method::GET, "/", "data.banskabystrica.sk", None, None, None).await;
-    let (_, without, html) = send_json(&plain, Method::GET, "/", "data.banskabystrica.sk", None, None, None).await;
+    let (_, with_sheet, _) = send_json(
+        &app,
+        Method::GET,
+        "/",
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
+    let (_, without, html) = send_json(
+        &plain,
+        Method::GET,
+        "/",
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
     assert!(!html.contains("/portal-css/"), "no stylesheet, no link");
     assert_eq!(csp_of(&with_sheet), csp_of(&without));
     let (st, _, list_a) = send_json(
@@ -1933,7 +1957,10 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
         assert!(!html_b.contains(theirs), "host A's {theirs} on host B");
     }
     // T-7745: the shared server never links or serves host A's stylesheet on host B.
-    assert!(!html_b.contains("/portal-css/"), "host A's stylesheet on host B");
+    assert!(
+        !html_b.contains("/portal-css/"),
+        "host A's stylesheet on host B"
+    );
     assert!(!html_b.contains("jc-portal-css"));
     let (st, _, _) = send_json(
         &app,
@@ -1945,7 +1972,11 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
         None,
     )
     .await;
-    assert_eq!(st, StatusCode::NOT_FOUND, "host A's stylesheet served on host B");
+    assert_eq!(
+        st,
+        StatusCode::NOT_FOUND,
+        "host A's stylesheet served on host B"
+    );
 
     let (_, _, robots_b) = send_json(
         &app,

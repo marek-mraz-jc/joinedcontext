@@ -2987,14 +2987,28 @@ mod tests {
                 "appearance": { "css": ".site-header { background: #7a1f5c }" } }),
         ));
         let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
-        let sheet = looks[&mobility].layout.stylesheet.as_ref().expect("its own");
+        let sheet = looks[&mobility]
+            .layout
+            .stylesheet
+            .as_ref()
+            .expect("its own");
         assert_eq!(
             sheet.class,
             jc_core::kinds::stylesheet::portal_class(&mobility.to_string())
         );
-        assert!(sheet.css.starts_with(&format!("body.{} .site-header", sheet.class)));
-        assert!(looks[&city].layout.stylesheet.is_none(), "not the default portal's");
-        assert!(looks[&town].layout.stylesheet.is_none(), "not another Organization's");
+        assert!(
+            sheet
+                .css
+                .starts_with(&format!("body.{} .site-header", sheet.class))
+        );
+        assert!(
+            looks[&city].layout.stylesheet.is_none(),
+            "not the default portal's"
+        );
+        assert!(
+            looks[&town].layout.stylesheet.is_none(),
+            "not another Organization's"
+        );
         const { assert!(super::super::appearance::FOLLOW_LOOK_EVERY.as_secs() < 10) };
     }
 
