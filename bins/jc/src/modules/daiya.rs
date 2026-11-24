@@ -167,21 +167,17 @@ mod tests {
             database: Some(database(true)),
             ..DaiyaSection::default()
         };
-        let StoreConfig::Postgres {
-            url,
-            password_file,
-            max_connections,
-            migrate,
-        } = store_config(&cfg)
-        else {
-            panic!("a database section makes a Postgres store");
-        };
-        assert_eq!(url, "postgres://daiya_app@db:5432/daiya");
-        assert_eq!(password_file, PathBuf::from("/run/secrets/app"));
-        assert_eq!(max_connections, 7);
-        let migrate = migrate.expect("both migration keys set");
-        assert_eq!(migrate.url, "postgres://daiya_owner@db:5432/daiya");
-        assert_eq!(migrate.password_file, PathBuf::from("/run/secrets/owner"));
+        assert!(
+            matches!(
+                store_config(&cfg),
+                StoreConfig::Postgres { url, password_file, max_connections: 7, migrate: Some(m) }
+                    if url == "postgres://daiya_app@db:5432/daiya"
+                        && password_file == std::path::Path::new("/run/secrets/app")
+                        && m.url == "postgres://daiya_owner@db:5432/daiya"
+                        && m.password_file == std::path::Path::new("/run/secrets/owner")
+            ),
+            "a database section makes a Postgres store with its migration role"
+        );
         // A migration URL without its password file migrates nothing.
         let mut half = database(false);
         half.migrate_url = Some("postgres://daiya_owner@db/daiya".into());
@@ -317,6 +313,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_bad_prometheus_reach_or_provisioning_root_refuses_the_start() {
+        let _log =
+            tracing::subscriber::set_default(tracing_subscriber::fmt().with_test_writer().finish());
         let tmp = tempfile::tempdir().unwrap();
         let roles = [Module::Daiya];
         let bad_reach = DaiyaSection {

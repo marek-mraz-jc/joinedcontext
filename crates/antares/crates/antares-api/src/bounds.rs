@@ -1197,16 +1197,23 @@ mod tests {
     }
 
     /// Each refusal reaches the client as the NGSI-LD answer its cause
-    /// names: 403 past one answer's bound, 500 for an overloaded pool or a
-    /// broken body.
+    /// names: 403 past one answer's bound, 503 with `Retry-After` while the
+    /// pool is full, 500 for a broken body.
     #[test]
     fn each_refusal_maps_to_its_ngsi_ld_answer() {
         use axum::response::IntoResponse;
-        let status = |r| crate::negotiate::ApiError::from(r).into_response().status();
-        assert_eq!(status(AnswerRefusal::TooLarge), StatusCode::FORBIDDEN);
-        for r in [AnswerRefusal::OverBudget, AnswerRefusal::Body] {
-            assert_eq!(status(r), StatusCode::INTERNAL_SERVER_ERROR, "{r:?}");
-        }
+        let answer = |r| crate::negotiate::ApiError::from(r).into_response();
+        assert_eq!(
+            answer(AnswerRefusal::TooLarge).status(),
+            StatusCode::FORBIDDEN
+        );
+        let full = answer(AnswerRefusal::OverBudget);
+        assert_eq!(full.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(full.headers().contains_key(axum::http::header::RETRY_AFTER));
+        assert_eq!(
+            answer(AnswerRefusal::Body).status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
         assert!(matches!(
             antares_model::NgsiError::from(AnswerRefusal::Body),
             antares_model::NgsiError::InternalError(m) if m == "buffered answer body failed"

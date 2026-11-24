@@ -2956,6 +2956,8 @@ mod tests {
     #[cfg(feature = "portal")]
     #[test]
     fn style_tokens_reach_the_catalogue_and_unreadable_pairs_give_way() {
+        let _log =
+            tracing::subscriber::set_default(tracing_subscriber::fmt().with_test_writer().finish());
         let look = |v: serde_json::Value| -> jc_core::kinds::OrganizationAppearance {
             serde_json::from_value(v).expect("an appearance")
         };
@@ -3444,6 +3446,8 @@ mod tests {
     /// `catalogue.propose` set on the default catalogue.
     #[tokio::test]
     async fn the_configured_host_replaces_a_proposed_one() {
+        let _log =
+            tracing::subscriber::set_default(tracing_subscriber::fmt().with_test_writer().finish());
         let (store, org, cat, _) = stored_default("opendata.city.example").await;
         let mut proposed = store.get_catalogue(org, cat).await.unwrap().unwrap();
         proposed.host = "proposed.example".into();
