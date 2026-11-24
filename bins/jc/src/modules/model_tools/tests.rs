@@ -1098,6 +1098,58 @@ fn types_resolve_through_typeof_and_their_uri_coerces_the_term() {
 }
 
 #[test]
+fn a_member_name_is_quoted_in_jc_types_only_when_it_is_no_identifier() {
+    let model = MODEL
+        .replace(
+            "slots: [status, capacity]",
+            "slots: [status, capacity, _hidden, $ref, a_b$c, 9lives]",
+        )
+        .replace(
+            "enums:\n",
+            "  _hidden: {}\n  $ref: {}\n  a_b$c: {}\n  9lives: {}\nenums:\n",
+        );
+    let (_, out) = generate(&source(&model));
+    let ts = out["typescript"].as_str().unwrap_or_default();
+    for line in [
+        "  _hidden?: string | null;",
+        "  $ref?: string | null;",
+        "  a_b$c?: string | null;",
+        "  \"9lives\"?: string | null;",
+    ] {
+        assert!(ts.contains(line), "{line}: {out}");
+    }
+}
+
+#[test]
+fn an_inline_object_may_nest_eight_levels_and_not_nine() {
+    // L0 (the entity) holds L1 inline, ..., each level one deeper; the deepest is plain.
+    let chain = |levels: usize| {
+        let head = &MODEL[..MODEL.find("classes:").unwrap_or_default()];
+        let mut text = format!("{head}classes:\n  L0:\n    is_a: Entity\n    slots: [next0]\n");
+        for i in 1..=levels {
+            text += &format!("  L{i}:\n    slots: [next{i}]\n");
+        }
+        text += "slots:\n";
+        for i in 0..levels {
+            text += &format!("  next{i}:\n    range: L{}\n    inlined: true\n", i + 1);
+        }
+        text += &format!("  next{levels}:\n    range: string\n");
+        errors_of(&generate(&source(&text)).1)
+    };
+    assert_eq!(
+        chain(8),
+        Vec::<String>::new(),
+        "eight levels of inline objects"
+    );
+    let e = chain(9);
+    assert!(
+        e.iter()
+            .any(|m| m.starts_with("example: `L9` nests inline objects more than 8 deep")),
+        "{e:?}"
+    );
+}
+
+#[test]
 fn a_whole_number_stays_a_number_in_the_broker_schema_and_a_fraction_is_text() {
     let compiled = |rank: &str| {
         let model = MODEL.replace("  capacity:\n", &format!("  capacity:\n    rank: {rank}\n"));
