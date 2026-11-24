@@ -847,6 +847,7 @@ mod tests {
                 vec![st("zz"), st("zz")],
                 "        7a7a|7a7a        |",
             ),
+            ("%10x|", vec![st("abc")], "    616263|"),
             (
                 "%# 14x|%#8x|% 8x|",
                 vec![st("zz"), st("zz"), st("zz")],

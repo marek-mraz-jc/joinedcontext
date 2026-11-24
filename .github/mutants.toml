@@ -100,6 +100,12 @@ exclude_re = [
   # T-7576 msgpack len: an overstated remainder lets a forged length through one step further, where the first element
   # read fails with the same "unexpected EOF"; the collect never reserves by the length.
   'ekiben-bloblang/src/msgpack\.rs:\d+:\d+: replace - with \+ in Reader<.*>::len',
+  # T-7576 go_sort insertion_sort: starting at i = a runs one iteration whose `j > a` test fails at once.
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace \+ with \* in insertion_sort',
+  # T-7576 go_sort sort_slice_at: a larger recursion limit only matters once pdqsort exhausts bits(n) unbalanced
+  # partitions; break_patterns prevents that: 200,000 shaped inputs of 13-132 elements never reached the heap sort
+  # fallback (a_spent_recursion_limit_falls_back_to_heap_sort reaches it with limit 0).
+  'ekiben-bloblang/src/go_sort\.rs:\d+:\d+: replace - with \+ in sort_slice_at',
   # T-7748 executor: EmptyBatch::part_bytes answers an empty slice, borrowed or owned alike.
   'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace <impl MessageBatch for EmptyBatch>::part_bytes -> Cow<.*> with Cow::(Borrowed|Owned)\(Vec::leak\(Vec::new\(\)\).*',
   # T-7748 executor: the parser builds every Executor with an empty annotation.

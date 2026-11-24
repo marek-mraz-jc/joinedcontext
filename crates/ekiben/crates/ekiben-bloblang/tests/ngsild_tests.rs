@@ -84,6 +84,22 @@ fn property_examples() {
 
 #[test]
 fn property_null_empty_and_types() {
+    // A null or empty optional parameter is left out, not refused.
+    for args in [
+        "unit_code: null",
+        r#"unit_code: """#,
+        "observed_at: null",
+        r#"observed_at: """#,
+    ] {
+        assert_eq!(
+            run(
+                &format!("root = this.t.ngsild_property({args})"),
+                json!({"t": 1})
+            ),
+            Ok(json!({"type": "Property", "value": 1})),
+            "{args}"
+        );
+    }
     assert!(err("root = this.missing.ngsild_property()", json!({})).contains("needs a value"));
     assert!(err(
         r#"root = this.t.ngsild_property(observed_at: "yesterday")"#,

@@ -417,6 +417,42 @@ mod tests {
     }
 
     #[test]
+    fn the_number_of_comparisons_is_pinned_per_input_shape() {
+        // sort_slice_at's less sees places, as Go's less(i, j) does, so the comparison sequence is
+        // observable; a different recursion limit or pivot rule changes these counts.
+        let want = [
+            (100, [632, 605, 677, 630]),
+            (1000, [9819, 5763, 8289, 9690]),
+            (4096, [47656, 21959, 34253, 47165]),
+        ];
+        for (n, counts) in want {
+            for (shape, count) in counts.into_iter().enumerate() {
+                let mut v: Vec<i64> = (0..n as i64)
+                    .map(|i| match shape {
+                        0 => {
+                            if i % 2 == 0 {
+                                i
+                            } else {
+                                n as i64 + i
+                            }
+                        }
+                        1 => i % 17,
+                        2 => (i * 7919) % 101,
+                        _ => i.min(n as i64 - i),
+                    })
+                    .collect();
+                let mut calls = 0;
+                sort_slice(&mut v, |a, b| {
+                    calls += 1;
+                    a < b
+                });
+                assert_eq!(calls, count, "n {n} shape {shape}");
+                assert!(v.windows(2).all(|w| w[0] <= w[1]));
+            }
+        }
+    }
+
+    #[test]
     fn a_spent_recursion_limit_falls_back_to_heap_sort() {
         for n in [13usize, 40, 101] {
             let mut v: Vec<i64> = (0..n as i64).map(|i| (i * 37) % 23).collect();
