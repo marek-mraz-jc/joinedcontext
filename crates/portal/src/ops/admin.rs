@@ -530,7 +530,7 @@ mod tests {
         // Exporting reads the project's repository; a Portal without one says so, after the
         // caller's rights were judged.
         let state = state();
-        for input in [json!({}), json!({ "format": "json", "names": ["air"] })] {
+        for input in [json!({}), json!({ "format": "json", "names": "air" })] {
             match call(
                 find("jc_project_export").expect("listed"),
                 &admin(&state),
