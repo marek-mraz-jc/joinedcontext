@@ -226,10 +226,15 @@ fn dated(into: &mut HashMap<String, String>, lastmod: HashMap<String, String>) {
     }
 }
 
-/// The URL without its fragment, as the crawl's frontier keys it; `url` already drops a
-/// scheme's default port when it parses.
+/// The URL without its fragment and its scheme's default port, as the crawl's frontier keys it.
 fn canonical(mut u: Url) -> Url {
     u.set_fragment(None);
+    if u.scheme() == "http" && u.port() == Some(80) {
+        let _ = u.set_port(None);
+    }
+    if u.scheme() == "https" && u.port() == Some(443) {
+        let _ = u.set_port(None);
+    }
     u
 }
 

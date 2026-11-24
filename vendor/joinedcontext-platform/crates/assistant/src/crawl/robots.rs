@@ -96,15 +96,20 @@ pub async fn fetch_robots(
     .await;
 
     match outcome {
-        // `fetch_url` answers `Success` for a 2xx alone; any other status is `Status`.
-        FetchOutcome::Success { body, .. } => {
-            let text = String::from_utf8_lossy(&body);
-            let sitemaps = extract_sitemaps(&text);
-            // A robots.txt that cannot be read at all is treated as a refusal: the site
-            // said something, and guessing it meant "everything" is not ours to do.
-            match texting_robots::Robot::new(USER_AGENT_TOKEN, &body) {
-                Ok(robot) => (Robots::Rules(robot), sitemaps),
-                Err(_) => (Robots::DisallowAll, Vec::new()),
+        FetchOutcome::Success { status, body, .. } => {
+            if status.is_success() {
+                let text = String::from_utf8_lossy(&body);
+                let sitemaps = extract_sitemaps(&text);
+                // A robots.txt that cannot be read at all is treated as a refusal: the site
+                // said something, and guessing it meant "everything" is not ours to do.
+                match texting_robots::Robot::new(USER_AGENT_TOKEN, &body) {
+                    Ok(robot) => (Robots::Rules(robot), sitemaps),
+                    Err(_) => (Robots::DisallowAll, Vec::new()),
+                }
+            } else if status.is_client_error() {
+                (Robots::AllowAll, Vec::new())
+            } else {
+                (Robots::DisallowAll, Vec::new())
             }
         }
         // RFC 9309 §2.3.1.3: a 4xx means there are no rules for this host.
