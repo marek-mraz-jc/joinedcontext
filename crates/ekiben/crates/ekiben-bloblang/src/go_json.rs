@@ -317,6 +317,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn objects_and_arrays_nest_to_the_limit_and_no_deeper() {
+        let objects = |n: usize| format!("{}1{}", r#"{"a":"#.repeat(n), "}".repeat(n));
+        assert!(decode_with_numbers(objects(MAX_DEPTH - 1).as_bytes()).is_some());
+        assert_eq!(decode_with_numbers(objects(MAX_DEPTH).as_bytes()), None);
+        let arrays = |n: usize| format!("{}1{}", "[".repeat(n), "]".repeat(n));
+        assert!(decode_with_numbers(arrays(MAX_DEPTH - 1).as_bytes()).is_some());
+        assert_eq!(decode_with_numbers(arrays(MAX_DEPTH).as_bytes()), None);
+    }
+
+    #[test]
     fn literals_decode_and_a_misspelt_one_is_refused() {
         assert_eq!(
             decode_with_numbers(b"[true,false,null]"),

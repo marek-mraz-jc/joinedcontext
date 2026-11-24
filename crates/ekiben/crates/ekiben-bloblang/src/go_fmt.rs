@@ -383,9 +383,7 @@ fn fmt_integer(out: &mut String, v: &Value, u: u64, negative: bool, verb: char, 
                 u32::try_from(u).ok().and_then(char::from_u32)
             };
             let c = c.unwrap_or('\u{FFFD}');
-            if f.sharp && c != '\'' && is_go_print(c)
-                || (f.sharp && c.is_ascii_graphic() && c != '\'')
-            {
+            if f.sharp && c != '\'' && is_go_print(c) {
                 pad(out, &format!("'{c}'"), f);
             } else {
                 pad(out, &quote(&c.to_string(), '\'', f.plus), f);
@@ -780,6 +778,13 @@ mod tests {
             ("%*d", vec![st("x"), i(42)], "%!(BADWIDTH)42"),
             ("%*d", vec![i(2_000_000), i(1)], "%!(BADWIDTH)1"),
             ("%*d", vec![Value::Uint(2_000_000), i(1)], "%!(BADWIDTH)1"),
+            // %q escapes what Go's IsPrint refuses, by size; %+q every non-ASCII rune.
+            (
+                "%q|%q|%+q",
+                vec![st("\u{80}"), st("\u{2003}"), st("\u{10000}\u{ffff}")],
+                "\"\\u0080\"|\"\\u2003\"|\"\\U00010000\\uffff\"",
+            ),
+            ("%#q|%#q|%#q", vec![i(0xE9), i(0x27), i(0x41)], "'é'|'\\''|'A'"),
             // Go's fmtSbx: case, the space and # flags, width either side.
             ("%x|%X", vec![st("zz"), st("zz")], "7a7a|7A7A"),
             (

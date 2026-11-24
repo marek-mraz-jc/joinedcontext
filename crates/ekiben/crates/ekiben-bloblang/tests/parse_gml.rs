@@ -373,6 +373,15 @@ fn deep_nesting_is_refused_without_a_stack_overflow() {
     assert!(parse_gml(&text(&elements), None, None)
         .unwrap_err()
         .contains("nest deeper than 32"));
+    // parse_xml's repeated-element arrays count as levels too.
+    let mut pos = json!("1 2");
+    for _ in 0..40 {
+        pos = json!([pos]);
+    }
+    let arrays = Value::from_json_value(json!({ "Point": { "pos": pos } }));
+    assert!(parse_gml(&arrays, None, None)
+        .unwrap_err()
+        .contains("nest deeper than 32"));
 }
 
 #[test]

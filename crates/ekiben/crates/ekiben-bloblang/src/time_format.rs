@@ -275,15 +275,12 @@ pub fn round_local(dt: &Zoned, span_nanos: i64) -> Result<Zoned, String> {
     let local = dt.timestamp().as_nanosecond() + i128::from(dt.offset().seconds()) * 1_000_000_000;
     let stamp =
         i64::try_from(local).map_err(|_| "timestamp exceeds num_nanoseconds limit".to_string())?;
-    let delta_down = stamp % span_nanos;
-    if delta_down == 0 {
+    // Euclidean: a stamp before 1970 rounds the same way as one after it.
+    let down = stamp.rem_euclid(span_nanos);
+    if down == 0 {
         return Ok(dt.clone());
     }
-    let (up, down) = if delta_down < 0 {
-        (delta_down.abs(), span_nanos - delta_down.abs())
-    } else {
-        (span_nanos - delta_down, delta_down)
-    };
+    let up = span_nanos - down;
     let shift = if up <= down { up } else { -down };
     // `stamp` fits an i64 of nanoseconds (years 1677 to 2262), far inside jiff's range.
     let Ok(ts) = dt
