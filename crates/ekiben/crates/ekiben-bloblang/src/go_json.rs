@@ -317,6 +317,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn objects_and_arrays_nest_to_the_limit_and_no_deeper() {
+        let objects = |n: usize| format!("{}1{}", r#"{"a":"#.repeat(n), "}".repeat(n));
+        assert!(decode_with_numbers(objects(MAX_DEPTH - 1).as_bytes()).is_some());
+        assert_eq!(decode_with_numbers(objects(MAX_DEPTH).as_bytes()), None);
+        let arrays = |n: usize| format!("{}1{}", "[".repeat(n), "]".repeat(n));
+        assert!(decode_with_numbers(arrays(MAX_DEPTH - 1).as_bytes()).is_some());
+        assert_eq!(decode_with_numbers(arrays(MAX_DEPTH).as_bytes()), None);
+    }
+
+    #[test]
+    fn literals_decode_and_a_misspelt_one_is_refused() {
+        assert_eq!(
+            decode_with_numbers(b"[true,false,null]"),
+            Some(Value::Array(
+                vec![Value::Bool(true), Value::Bool(false), Value::Null].into()
+            ))
+        );
+        assert_eq!(
+            decode_with_numbers(br#""a b""#),
+            Some(Value::String("a b".into()))
+        );
+        // A digits-only number Go would print the same as a float stays json.Number text.
+        assert!(matches!(
+            number_from_text("100000000000000000000"),
+            Value::Number(_)
+        ));
+        for bad in [&b"tru"[..], b"fals", b"nul", b"[true,nil]", b"\"a\x1fb\""] {
+            assert_eq!(decode_with_numbers(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
     fn numbers_keep_the_text_go_would_not_print() {
         let v = decode_with_numbers(
             br#"{"a":5.0,"b":1E2,"c":10,"d":5.5,"e":-0,"f":12345678901234567890123,"g":[0.10]}"#,

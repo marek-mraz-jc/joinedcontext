@@ -256,21 +256,20 @@ fn break_patterns<T, F: FnMut(usize, &T, usize, &T) -> bool>(
     a: usize,
     b: usize,
 ) {
+    // pdqsort calls this only past MAX_INSERTION (12), so Go's `length >= 8` test always holds.
     let length = b - a;
-    if length >= 8 {
-        let mut random = length as u64;
-        let modulus = 1usize << (usize::BITS - length.leading_zeros());
-        let mid = a + (length / 4) * 2;
-        for idx in mid - 1..=mid + 1 {
-            random ^= random << 13;
-            random ^= random >> 7;
-            random ^= random << 17;
-            let mut other = (random as usize) & (modulus - 1);
-            if other >= length {
-                other -= length;
-            }
-            d.swap(idx, a + other);
+    let mut random = length as u64;
+    let modulus = 1usize << (usize::BITS - length.leading_zeros());
+    let mid = a + (length / 4) * 2;
+    for idx in mid - 1..=mid + 1 {
+        random ^= random << 13;
+        random ^= random >> 7;
+        random ^= random << 17;
+        let mut other = (random as usize) & (modulus - 1);
+        if other >= length {
+            other -= length;
         }
+        d.swap(idx, a + other);
     }
 }
 
@@ -284,14 +283,13 @@ fn choose_pivot<T, F: FnMut(usize, &T, usize, &T) -> bool>(
     let l = b - a;
     let mut swaps = 0;
     let (mut i, mut j, mut k) = (a + l / 4, a + l / 4 * 2, a + l / 4 * 3);
-    if l >= 8 {
-        if l >= SHORTEST_NINTHER {
-            i = median(d, i - 1, i, i + 1, &mut swaps);
-            j = median(d, j - 1, j, j + 1, &mut swaps);
-            k = median(d, k - 1, k, k + 1, &mut swaps);
-        }
-        j = median(d, i, j, k, &mut swaps);
+    // l > MAX_INSERTION (12) here, so Go's `l >= 8` test always holds.
+    if l >= SHORTEST_NINTHER {
+        i = median(d, i - 1, i, i + 1, &mut swaps);
+        j = median(d, j - 1, j, j + 1, &mut swaps);
+        k = median(d, k - 1, k, k + 1, &mut swaps);
     }
+    j = median(d, i, j, k, &mut swaps);
     match swaps {
         0 => (j, Hint::Increasing),
         MAX_SWAPS => (j, Hint::Decreasing),

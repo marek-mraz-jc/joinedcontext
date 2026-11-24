@@ -89,6 +89,11 @@ exclude_re = [
   # "integer"; the true schema matched by its own arm and by `_` both answer Ok.
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: replace \|\| with && in type_of',
   'ekiben-bloblang/src/json_schema\.rs:\d+:\d+: delete match arm Json::Bool\(true\) in Validator<.*>::validate',
+  # T-7576 go_fmt fmt_float: a width equal to the number's length inserts zero zeros after the sign, the same text.
+  'ekiben-bloblang/src/go_fmt\.rs:\d+:\d+: replace > with >= in fmt_float',
+  # T-7576 go_fmt format_float %g: p == dp takes p = nd, and nd <= p (digits are rounded to p), so (p - dp).max(0)
+  # is 0 either way.
+  'ekiben-bloblang/src/go_fmt\.rs:\d+:\d+: replace > with >= in format_float',
   # T-7748 executor: EmptyBatch::part_bytes answers an empty slice, borrowed or owned alike.
   'ekiben-bloblang/src/executor\.rs:\d+:\d+: replace <impl MessageBatch for EmptyBatch>::part_bytes -> Cow<.*> with Cow::(Borrowed|Owned)\(Vec::leak\(Vec::new\(\)\).*',
   # T-7748 executor: the parser builds every Executor with an empty annotation.
