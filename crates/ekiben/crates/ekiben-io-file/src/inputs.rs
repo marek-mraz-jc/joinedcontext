@@ -194,7 +194,6 @@ fn generate_timer(interval: &str) -> Result<GenerateTimer, CoreError> {
         return Ok(GenerateTimer::None);
     }
     let dur_err = match parse_duration_str(interval) {
-        Ok(d) if d.is_zero() => return Ok(GenerateTimer::None),
         Ok(d) => return Ok(GenerateTimer::Every(d)),
         Err(e) => e.to_string(),
     };

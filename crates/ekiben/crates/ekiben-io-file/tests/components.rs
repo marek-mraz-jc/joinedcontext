@@ -1112,14 +1112,20 @@ async fn a_file_output_drops_a_held_file_whose_write_fails() {
         .status()
         .expect("mkfifo runs");
     assert!(made.success());
-    // the reader takes the first batch and goes away, so the held file's next write breaks
+    // the reader takes the first batch and goes away, so the held file's next write breaks; it
+    // opens read-write, which never blocks on a FIFO, and reports within 5 s or the test fails
     let reader_path = fifo.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
     let reader = std::thread::spawn(move || {
         use std::io::Read;
-        let mut f = std::fs::File::open(reader_path).expect("open for reading");
+        let mut f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(reader_path)
+            .expect("open the FIFO");
         let mut buf = [0u8; 6];
         f.read_exact(&mut buf).expect("first batch");
-        buf
+        let _ = tx.send(buf);
     });
     let c = ctx();
     let o = output(
@@ -1130,7 +1136,11 @@ async fn a_file_output_drops_a_held_file_whose_write_fails() {
     o.write_batch(&c, parts(&["first"]))
         .await
         .expect("first batch");
-    assert_eq!(&reader.join().expect("reader"), b"first\n");
+    let got = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the first batch reached the reader");
+    assert_eq!(&got, b"first\n");
+    reader.join().expect("reader");
     let e = refusal(o.write_batch(&c, parts(&["second"])).await);
     assert!(e.contains("failed to write") && e.contains("pipe"), "{e}");
 }
@@ -1283,8 +1293,9 @@ async fn retry_tries_again_until_success_or_the_limit() {
         ["1", "2", "3", "4"].map(Fail::Other).into_iter().collect(),
         false,
     );
+    // waits of 10 ms then 20 ms: the second already passes the 15 ms budget, so the third try is the last
     let short =
-        json!({"initial_interval": "20ms", "max_interval": "20ms", "max_elapsed_time": "30ms"});
+        json!({"initial_interval": "10ms", "max_interval": "1s", "max_elapsed_time": "15ms"});
     let o = output(
         &c,
         json!({"retry": {"backoff": short, "output": {"rec": "retry-c"}}}),
@@ -1394,6 +1405,16 @@ async fn fallback_marks_the_whole_batch_and_answers_the_last_tier_error() {
         .expect("second tier");
     assert_eq!(next.bodies(), [vec!["a"]]);
     assert_eq!(next.marks(), [vec!["first copy"]]);
+    // a batch of one is never narrowed: the next tier gets the batch error's message
+    rec("fb1-1", vec![Fail::Indexed("single", vec![0])], false);
+    let next = rec("fb1-2", vec![], false);
+    let o = output(
+        &c,
+        json!({"fallback": [{"rec": "fb1-1"}, {"rec": "fb1-2"}]}),
+    )
+    .expect("builds");
+    o.write_batch(&c, parts(&["x"])).await.expect("second tier");
+    assert_eq!(next.marks(), [vec!["single"]]);
     let only = rec("fbw-only", vec![], false);
     let o = output(&c, json!({"fallback": [{"rec": "fbw-only"}]})).expect("builds");
     o.write_batch(&c, parts(&["x"])).await.expect("first tier");
@@ -1420,6 +1441,21 @@ async fn switch_routes_by_check_continues_when_told_and_refuses_in_strict_mode()
     assert_eq!(b.bodies(), [vec!["a1", "b1"]]);
     o.close().await.expect("closes");
     assert_eq!(a.closes.load(Ordering::SeqCst), 1);
+
+    // without strict_mode a part no case takes is dropped
+    let a = rec("swn-a", vec![], false);
+    let o = output(
+        &c,
+        json!({"switch": {"cases": [
+            {"check": "content() == \"a\"", "output": {"rec": "swn-a"}},
+            {"check": "content() == \"b\"", "output": {"rec": "swn-a"}},
+        ]}}),
+    )
+    .expect("builds");
+    o.write_batch(&c, parts(&["c", "a"]))
+        .await
+        .expect("c dropped");
+    assert_eq!(a.bodies(), [vec!["a"]]);
 
     rec("sws-a", vec![], false);
     rec(

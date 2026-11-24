@@ -1,6 +1,6 @@
 //! Input: one byte that picks a scanner, then the bytes of a file or stream, which that scanner
 //! splits into messages. Every scanner must answer messages or an error; a decompressing one
-//! stops at its cap.
+//! stops at its cap; a byte scanner never answers more bytes than the stream held.
 #![no_main]
 
 use ekiben_io_file::inputs::Scanner;
@@ -38,10 +38,14 @@ fuzz_target!(|data: &[u8]| {
     let scanner = Scanner::from_config(obj.as_object().expect("object")).expect("seed scanner");
     let name = if pick % 2 == 0 { "upload/a.csv" } else { "upload/a.json" };
     if let Ok(parts) = scanner.scan(raw, name) {
-        // a message never holds more than the stream gave, decompression aside
-        if !conf.contains("decompress") {
+        // a byte scanner hands on slices of the stream: never more bytes than it read. The
+        // structured ones (csv rows repeat the header names, JSON escapes) and decompression grow.
+        let structured = ["csv", "json_documents", "xml_documents", "decompress", "switch"]
+            .iter()
+            .any(|k| conf.contains(k));
+        if !structured {
             let total: usize = parts.iter().map(|p| p.as_bytes_ref().len()).sum();
-            assert!(total <= raw.len() * 8 + 64 * parts.len(), "{conf}");
+            assert!(total <= raw.len(), "{conf}");
         }
     }
 });

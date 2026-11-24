@@ -136,6 +136,24 @@ fn an_address_without_a_port_dials_22_and_a_root_glob_lists_the_root() {
     assert_eq!(s.paths[0].0, "/");
     let s = Settings::parse(&with(json!({"address": "[::1]:2222"}))).expect("parses");
     assert_eq!((s.target.host.as_str(), s.target.port), ("::1", 2222));
+    let s = Settings::parse(&with(json!({"address": "[::1]"}))).expect("parses");
+    assert_eq!((s.target.host.as_str(), s.target.port), ("::1", 22));
+    for address in [":22", "[]:22", "[]"] {
+        let e = Settings::parse(&with(json!({"address": address})))
+            .err()
+            .expect("refused");
+        assert!(e.contains("address must be host:port"), "{address}: {e}");
+    }
+    // the pin is SHA256: and at least 20 characters
+    let pin = "SHA256:abcdefghijklm";
+    assert_eq!(pin.len(), 20);
+    Settings::parse(&with(json!({"host_key_fingerprint": pin}))).expect("a 20-character pin");
+    for pin in ["SHA256:abcdefghijkl", "SHA256:x"] {
+        let e = Settings::parse(&with(json!({"host_key_fingerprint": pin})))
+            .err()
+            .expect("short");
+        assert!(e.contains("host_key_fingerprint must pin"), "{pin}: {e}");
+    }
     // a watcher that is not enabled is no watcher, and max_file_bytes takes its ceiling
     let s = Settings::parse(&with(json!({
         "watcher": {"enabled": false, "cache": "c"},
@@ -290,6 +308,25 @@ fn a_private_key_config_parses_with_or_without_a_pass() {
         .expect("parses");
         assert!(s.target.password.is_none() && s.target.private_key.is_some());
         assert_eq!(s.target.private_key_pass.is_some(), !pass.is_empty());
+    }
+    // an encrypted key opens with its pass and is refused without it
+    let made = std::process::Command::new("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "open sesame", "-f"])
+        .arg(dir.path().join("locked"))
+        .status()
+        .expect("ssh-keygen runs");
+    assert!(made.success());
+    let locked = std::fs::read_to_string(dir.path().join("locked")).expect("private key");
+    let creds = |pass: &str| {
+        with(json!({"credentials": {
+            "username": "city", "private_key": locked, "private_key_pass": pass,
+        }}))
+    };
+    Settings::parse(&creds("open sesame")).expect("opens with its pass");
+    for pass in ["", "wrong"] {
+        let e = Settings::parse(&creds(pass)).err().expect("refused");
+        assert!(e.contains("private_key_pass does not open it"), "{e}");
+        assert!(!e.contains("open sesame"), "{e}");
     }
 }
 

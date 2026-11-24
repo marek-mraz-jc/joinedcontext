@@ -107,20 +107,21 @@ impl Settings {
         }
         let obj = conf.as_object().ok_or("sftp input: expected an object")?;
         let address = text(obj, "address");
+        const ADDRESS: &str = "sftp input: address must be host:port, e.g. sftp.example.org:22";
+        // `[v6]:port`, `host:port` or a bare host on 22; an IPv6 address needs its brackets
         let (host, port) = match address.rsplit_once(':') {
-            Some((h, p)) if !h.is_empty() && !p.contains(']') => (
-                h.trim_start_matches('[').trim_end_matches(']').to_string(),
-                p.parse::<u16>().map_err(|_| {
-                    "sftp input: address must be host:port, e.g. sftp.example.org:22".to_string()
-                })?,
-            ),
-            _ if !address.is_empty() => (address.clone(), 22),
-            _ => {
-                return Err(
-                    "sftp input: address must be host:port, e.g. sftp.example.org:22".into(),
-                )
+            Some((h, p)) if !p.contains(']') => {
+                (h, p.parse::<u16>().map_err(|_| ADDRESS.to_string())?)
             }
+            _ => (address.as_str(), 22),
         };
+        let host = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_string();
+        if host.is_empty() {
+            return Err(ADDRESS.into());
+        }
         let fp = text(obj, "host_key_fingerprint");
         if !fp.starts_with("SHA256:") || fp.len() < 20 {
             return Err("sftp input: host_key_fingerprint must pin the server's host key as SHA256:..., the fingerprint `ssh-keyscan -p 22 host | ssh-keygen -lf -` prints".into());

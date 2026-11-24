@@ -302,6 +302,8 @@ async fn a_watcher_takes_each_new_file_once() {
         .expect("e.csv");
     assert_eq!(lines(&b), ["e1"]);
     assert!(cache.exists(&format!("{dir}/d.csv")).await.expect("cache"));
+    // a watcher without delete_on_finish leaves an acked file on the server
+    assert!(session.sftp.metadata(format!("{dir}/d.csv")).await.is_ok());
 }
 
 fn private_key_target(s: &Server, pin: &str, key: Option<&str>) -> SftpTarget {
@@ -358,7 +360,8 @@ async fn files_past_the_cap_are_skipped_or_refused_and_an_empty_file_is_passed_o
     let dir = format!("/upload/cap-{}", std::process::id());
     let session = connect(&target(&s, &pin), &c.org).await.expect("connects");
     session.sftp.create_dir(dir.clone()).await.expect("mkdir");
-    put(&s, &pin, &c, &format!("{dir}/a.csv"), "a1\n").await;
+    // a.csv holds exactly max_file_bytes and is read
+    put(&s, &pin, &c, &format!("{dir}/a.csv"), "a12\n").await;
     put(&s, &pin, &c, &format!("{dir}/b.csv"), "b1\n").await;
     put(&s, &pin, &c, &format!("{dir}/big.csv"), "far too long\n").await;
     put(&s, &pin, &c, &format!("{dir}/empty.csv"), "").await;
@@ -371,7 +374,7 @@ async fn files_past_the_cap_are_skipped_or_refused_and_an_empty_file_is_passed_o
     );
     assert_eq!(i.input_type(), "sftp");
     let (b, ack) = i.read_batch(&c).await.expect("a.csv");
-    assert_eq!(lines(&b), ["a1"]);
+    assert_eq!(lines(&b), ["a12"]);
     assert!(i.is_connected());
     // b.csv grows past the cap between the listing and its read
     put(&s, &pin, &c, &format!("{dir}/b.csv"), "b1 grew\n").await;
