@@ -868,3 +868,36 @@ async fn the_output_over_mqtts_trusts_only_its_root_ca() {
         .expect("publishes over TLS");
     assert_eq!(broker.await.unwrap(), b"\x00\x01tsecure");
 }
+
+/// A nacked QoS 1 message is not acknowledged (the broker sends it again); the components name
+/// themselves.
+#[tokio::test]
+async fn a_nacked_qos1_message_gets_no_puback() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (reg, ctx, _stop) = context(true);
+    let mut input = build(
+        json!({ "qos": 1, "topics": ["t"], "urls": [format!("tcp://{addr}")] }),
+        &ctx,
+        &reg,
+    );
+    assert_eq!((input.input_type(), input.label()), ("mqtt", ""));
+    let output = build_output(
+        json!({ "urls": [format!("tcp://{addr}")], "topic": "t" }),
+        &ctx,
+        &reg,
+    );
+    assert_eq!((output.output_type(), output.label()), ("mqtt", ""));
+    let (connected, (mut s, _, _)) = tokio::join!(input.connect(&ctx), accept(&listener));
+    connected.unwrap();
+    s.write_all(&publish("t", 1, 5, b"m")).await.unwrap();
+    let (batch, ack) = tokio::time::timeout(Duration::from_secs(10), input.read_batch(&ctx))
+        .await
+        .expect("a message")
+        .expect("read");
+    ack.nack(ekiben_core::BatchError::new(batch, "refused downstream"));
+    let mut b = [0u8; 1];
+    let more = tokio::time::timeout(Duration::from_millis(300), s.read(&mut b)).await;
+    assert!(more.is_err(), "no PUBACK for a nacked message");
+    input.close().await.unwrap();
+}

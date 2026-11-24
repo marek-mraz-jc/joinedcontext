@@ -649,19 +649,36 @@ const BACKOFF_CEILING: std::time::Duration = std::time::Duration::from_secs(300)
 /// What a failing pass does next: wait twice as long each time up to [`BACKOFF_CEILING`], and
 /// say why once per reason instead of on every tick (T-2969). A refusal the forge repeats every
 /// 5 s is one line in the log, not seventeen thousand a day.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Backoff {
+    /// The pass interval the waits double from.
+    every: std::time::Duration,
     failures: u32,
     reason: Option<String>,
 }
 
+impl Default for Backoff {
+    fn default() -> Self {
+        Self::every(PASS_EVERY)
+    }
+}
+
 impl Backoff {
+    fn every(every: std::time::Duration) -> Self {
+        Self {
+            every,
+            failures: 0,
+            reason: None,
+        }
+    }
+
     /// After a failed pass: how long to wait, and whether `reason` is news worth a warning.
     fn failed(&mut self, reason: String) -> (std::time::Duration, bool) {
         self.failures = self.failures.saturating_add(1);
         let news = self.reason.as_deref() != Some(reason.as_str());
         self.reason = Some(reason);
-        let wait = PASS_EVERY
+        let wait = self
+            .every
             .checked_mul(1u32.checked_shl(self.failures.min(16)).unwrap_or(u32::MAX))
             .unwrap_or(BACKOFF_CEILING)
             .min(BACKOFF_CEILING);
@@ -671,7 +688,7 @@ impl Backoff {
     /// After a pass that ran: whether it had been failing, so the recovery is said once too.
     fn recovered(&mut self) -> bool {
         let was_failing = self.failures > 0;
-        *self = Self::default();
+        *self = Self::every(self.every);
         was_failing
     }
 }
@@ -706,21 +723,34 @@ pub fn spawn_periodic(
     mirror: std::sync::Arc<Mirror>,
     settings: Settings,
 ) {
-    let kube = match KubeClient::in_cluster() {
-        Ok(Some(kube)) => kube,
+    match KubeClient::in_cluster() {
+        Ok(Some(kube)) => {
+            spawn_passes(kube, forge, db, syncer, mirror, settings, PASS_EVERY);
+        }
         Ok(None) => {
             tracing::info!("no cluster: App builds wait in the queue and nobody starts them");
-            return;
         }
         Err(err) => {
             tracing::warn!(error = %err, "the ServiceAccount mount is unreadable, so no build pod starts");
-            return;
         }
-    };
+    }
+}
+
+/// The passes of [`spawn_periodic`] against `kube`, one every `every` while this replica leads,
+/// a failing one backing off from `every`. Public for the tests, which pass a short interval.
+pub fn spawn_passes(
+    kube: KubeClient,
+    forge: std::sync::Arc<ShakoClient>,
+    db: PgPool,
+    syncer: std::sync::Arc<crate::reconciler::Syncer>,
+    mirror: std::sync::Arc<Mirror>,
+    settings: Settings,
+    every: std::time::Duration,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(PASS_EVERY);
+        let mut ticker = tokio::time::interval(every);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut backoff = Backoff::default();
+        let mut backoff = Backoff::every(every);
         let mut resume = tokio::time::Instant::now();
         let mut count: u32 = 0;
         loop {
@@ -756,7 +786,7 @@ pub fn spawn_periodic(
                 }
             }
         }
-    });
+    })
 }
 
 #[cfg(test)]

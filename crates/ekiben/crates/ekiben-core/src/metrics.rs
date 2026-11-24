@@ -384,3 +384,14 @@ impl MetricsRegistry {
             .render(&|owner| owner.is_some_and(|o| o.org == org))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_reservoir_reports_zeroes() {
+        let stats = TimingReservoir::new(4).percentiles();
+        assert_eq!((stats.p50, stats.p90, stats.p99), (0.0, 0.0, 0.0));
+    }
+}

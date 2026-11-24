@@ -731,6 +731,24 @@ mod tests {
                 .0,
             StatusCode::NOT_FOUND
         );
+        // On a host bound below the root, the segment and the root together are the root.
+        for path in ["/com_example/data", "/com_example/data/"] {
+            assert_eq!(
+                call(&jc, "opendata.example.com", path, PAGE).await,
+                (StatusCode::PERMANENT_REDIRECT, "/".into()),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            call(
+                &jc,
+                "opendata.example.com",
+                "/com_example/data/dataset/x",
+                PAGE
+            )
+            .await,
+            (StatusCode::PERMANENT_REDIRECT, "/dataset/x".into())
+        );
     }
 
     /// A module mounted at the root sits outside a host bound at `/data`: its public base on that

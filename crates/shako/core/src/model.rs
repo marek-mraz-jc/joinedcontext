@@ -508,3 +508,83 @@ pub struct OutboxClaim {
     pub event: OutboxEvent,
     pub attempts: u32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo_with(id: uuid::Uuid) -> RepoRecord {
+        let now = TimestampTz::now();
+        RepoRecord {
+            id: RepoId(id),
+            instance_id: InstanceId::new(),
+            org_id: OrgId::new(),
+            project_id: "p".into(),
+            owner: "o".into(),
+            name: "r".into(),
+            description: String::new(),
+            default_branch: "main".into(),
+            private: true,
+            archived: false,
+            size_bytes: 0,
+            next_pr_number: 1,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn numeric_id_is_positive_and_takes_the_high_bytes() {
+        assert_eq!(repo_with(uuid::Uuid::nil()).numeric_id(), 1);
+        assert_eq!(repo_with(uuid::Uuid::max()).numeric_id(), i64::MAX as u64);
+        assert_eq!(
+            repo_with(uuid::Uuid::from_u128(7u128 << 64)).numeric_id(),
+            7
+        );
+    }
+
+    #[test]
+    fn instance_defaults_and_rule_defaults_from_serde() {
+        let i = InstanceRecord::default_for(InstanceId::new(), OrgId::new(), "git.example");
+        assert_eq!(i.host, "git.example");
+        assert_eq!((i.max_repos, i.max_push_bytes), (200, 512 * 1024 * 1024));
+        assert_eq!(i.max_storage_bytes, 5 * 1024 * 1024 * 1024);
+        assert!(i.path_prefix.is_empty());
+
+        let rule: BranchProtectionRule =
+            serde_json::from_value(serde_json::json!({"rule_name": "main"})).expect("rule");
+        assert!(rule.enable_push && rule.block_admin_merge_override);
+        assert!(!rule.enable_force_push);
+        assert!(
+            serde_json::from_value::<BranchProtectionRule>(
+                serde_json::json!({"rule_name": "main", "surprise": 1})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn review_verdicts_round_trip_and_unknown_is_refused() {
+        for v in [
+            ReviewVerdict::Approved,
+            ReviewVerdict::RequestChanges,
+            ReviewVerdict::Comment,
+        ] {
+            assert_eq!(ReviewVerdict::parse(v.as_str()), Some(v));
+        }
+        assert_eq!(ReviewVerdict::parse("approved"), None);
+    }
+
+    #[test]
+    fn total_bytes_saturates() {
+        let usage = QuotaUsageRecord {
+            instance_id: InstanceId::new(),
+            org_id: OrgId::new(),
+            repo_count: 0,
+            git_bytes: u64::MAX,
+            package_bytes: 5,
+            updated_at: TimestampTz::now(),
+        };
+        assert_eq!(usage.total_bytes(), u64::MAX);
+    }
+}

@@ -1,0 +1,11 @@
+input:
+  generate: {mapping: "root = 1"}
+pipeline:
+  processors:
+    - mapping: root = this
+    - split: {}
+output:
+  drop: {}
+metrics:
+  prometheus: {use_histogram_timing: true}
+  mapping: root = this

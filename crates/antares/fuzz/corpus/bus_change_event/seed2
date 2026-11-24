@@ -1,0 +1,2 @@
+changes.other.T.x
+{"tenant":"acme","entity_id":"urn:x:1","types":[],"op":"Delete","changed_attrs":["a"],"payload":{"id":"urn:x:1"},"prev_payload":null,"version":2,"incarnation":"2026-08-05T00:00:00Z","seq":0}

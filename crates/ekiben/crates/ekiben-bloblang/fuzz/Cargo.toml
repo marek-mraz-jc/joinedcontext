@@ -3,6 +3,8 @@
 # MessagePack, WKT, GML and JSON Schema. Each must answer a value or an error, never panic,
 # hang or allocate without bound. Run by hand: cargo +nightly fuzz run <target> --
 # -max_total_time=300. Not a member of the ekiben workspace.
+# T-7666 adds mapping (mapping text through parser and executor), execute (message bytes through
+# fixed mappings) and field (`${! }` interpolations).
 [package]
 name = "ekiben-bloblang-fuzz"
 version = "0.0.0"
@@ -61,6 +63,27 @@ bench = false
 [[bin]]
 name = "json_schema"
 path = "fuzz_targets/json_schema.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mapping"
+path = "fuzz_targets/mapping.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "execute"
+path = "fuzz_targets/execute.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "field"
+path = "fuzz_targets/field.rs"
 test = false
 doc = false
 bench = false

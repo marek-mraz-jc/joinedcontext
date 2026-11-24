@@ -366,4 +366,42 @@ mod tests {
         assert!(validate_tree_path(&deepest).is_ok());
         assert!(validate_tree_path(&format!("{deepest}/f")).is_err());
     }
+
+    #[test]
+    fn names_refs_tags_and_package_segments_refuse_their_edges() {
+        assert!(validate_repo_or_owner_name("a..b", "repository").is_err());
+        assert!(validate_full_ref_name("").is_err());
+        assert!(validate_full_ref_name(&format!("refs/heads/{}", "a".repeat(250))).is_err());
+        for bad in ["", "/lead", "trail/", "a..b"] {
+            assert!(validate_branch_name(bad).is_err(), "{bad:?}");
+        }
+        assert!(validate_branch_name(&"b".repeat(201)).is_err());
+        assert!(validate_branch_name("work/air-v2").is_ok());
+
+        assert!(validate_tag_name("v1.0.0").is_ok());
+        for bad in ["", "v1..0", "v1 0", "v1.lock"] {
+            assert!(validate_tag_name(bad).is_err(), "{bad:?}");
+        }
+        assert!(validate_tag_name(&"t".repeat(201)).is_err());
+
+        for good in ["serde", "1.0.0+build:7", "jc_core-0.1.crate"] {
+            assert!(validate_package_segment(good, "version").is_ok(), "{good}");
+        }
+        let long = "p".repeat(129);
+        for bad in [
+            "",
+            long.as_str(),
+            ".",
+            "..",
+            "a..b",
+            "a/b",
+            "a\\b",
+            "a\0b",
+            "a b",
+            "ä",
+        ] {
+            let err = validate_package_segment(bad, "version").expect_err(bad);
+            assert!(err.to_string().contains("version"), "{bad:?}: {err}");
+        }
+    }
 }

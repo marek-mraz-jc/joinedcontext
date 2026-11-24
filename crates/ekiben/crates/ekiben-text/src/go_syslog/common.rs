@@ -338,6 +338,20 @@ mod tests {
         );
         assert_eq!(format_rfc3339_nano(&s), "0000-02-29T01:02:03Z");
         assert!(parse_stamp(b"Feb 30 01:02:03").is_err());
+        // a wall time jiff cannot hold (hour 24, minute or second 60, a leap second) is no
+        // time: the stamp reads as the Unix epoch, as chrono's default wall time did
+        for bad in [
+            &b"Feb 28 24:00:00"[..],
+            b"Feb 28 23:60:00",
+            b"Dec 31 23:59:60",
+            b"Feb 28 99:99:99",
+        ] {
+            let t = parse_stamp(bad).unwrap();
+            assert_eq!(format_rfc3339_nano(&t), "1970-01-01T00:00:00Z", "{bad:?}");
+        }
+        // in RFC 3339 the whole value falls back to midnight of 1970-01-01, the date dropped too
+        let t = parse_rfc3339(b"2026-03-04T23:59:60Z").unwrap();
+        assert_eq!(format_rfc3339_nano(&t), "1970-01-01T00:00:00Z");
         let z = load_location("Europe/Bratislava").unwrap();
         assert_eq!(
             format_rfc3339_nano(&in_location(add_years(s.clone(), 2024), &z)),

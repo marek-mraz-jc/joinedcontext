@@ -294,11 +294,17 @@ async fn a_q_never_matches_an_expired_instance() {
 }
 
 /// T-5826: a rule's `idPatterns` are exact here too, each read whole; one
-/// that does not compile matches nothing, as the rule's own check reads it.
+/// that does not compile, alone or only inside the wrapper, matches nothing,
+/// as the rule's own check reads it.
 #[tokio::test]
 async fn id_patterns_are_decided_and_counted() {
     let (s, t) = seeded().await;
-    let ps = ["urn:ngsi-ld:T:[13]".to_owned(), "(unclosed".to_owned()];
+    let ps = [
+        "urn:ngsi-ld:T:[13]".to_owned(),
+        "(unclosed".to_owned(),
+        // T-7799: compiles only inside the rule's `^(?:...)$`
+        "urn:ngsi-ld:T:9)|(.*".to_owned(),
+    ];
     let out = s
         .query_entities(
             &t,

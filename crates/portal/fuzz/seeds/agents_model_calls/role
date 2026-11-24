@@ -1,0 +1,3 @@
+read-only please ```json
+{"tool":"change_resource","kind":"Role","name":"r","patch":{"spec":{"rules":[{"kinds":["Pipeline"],"verbs":["read","propose"]}]}}}
+```

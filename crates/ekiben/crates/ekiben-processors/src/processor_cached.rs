@@ -138,12 +138,11 @@ impl CachedProcessor {
     }
 
     fn should_skip(&self, batch: &[Part]) -> Result<bool, String> {
-        let Some(pred) = &self.skip_on else {
+        // Children never hand back an empty batch (every processor drops one); the guard keeps
+        // query_part(0) off an empty batch all the same.
+        let Some(pred) = self.skip_on.as_ref().filter(|_| !batch.is_empty()) else {
             return Ok(false);
         };
-        if batch.is_empty() {
-            return Ok(false);
-        }
         pred.query_part(0, &PartsView(batch))
             .map_err(|e| format!("failed to execute skip_on mapping: {e}"))
     }

@@ -1,0 +1,1 @@
+root = this.c.map_each(x -> x.number().catch(0)).sum()

@@ -169,10 +169,12 @@ impl Processor for JqProcessor {
                     .into_iter()
                     .map(|mut part| {
                         // A panic inside jaq fails this message, not the batch.
-                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let r = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             this.process(&mut part)
-                        }))
-                        .unwrap_or_else(|_| Err("jq query failed inside the evaluator".into()));
+                        })) {
+                            Ok(r) => r,
+                            Err(_) => Err("jq query failed inside the evaluator".into()),
+                        };
                         (part, r)
                     })
                     .collect();

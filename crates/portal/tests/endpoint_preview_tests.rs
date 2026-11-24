@@ -90,12 +90,19 @@ async fn broker() -> MockServer {
 struct Rig {
     state: AppState,
     broker: MockServer,
+    /// The admin token file of a converged rig's ViewSync.
+    token: Option<std::path::PathBuf>,
 }
 
 /// jana reads the space `air`; eva is an organization member who reads nothing of it.
 async fn rig(converged: bool) -> Rig {
+    rig_with(converged, Config::for_tests()).await
+}
+
+/// [`rig`] on a Portal configured as `config` says.
+async fn rig_with(converged: bool, config: Config) -> Rig {
     let broker = broker().await;
-    let state = AppState::new(Config::for_tests(), None);
+    let state = AppState::new(config, None);
     state
         .mirror
         .upsert(envelope("ContextSpace", "air", "city", json!({})));
@@ -124,6 +131,7 @@ async fn rig(converged: bool) -> Rig {
                 "scope": { "contextSpace": "air" } }),
     ));
     let mut state = state;
+    let mut kept = None;
     if converged {
         let dir = std::env::temp_dir().join(format!(
             "portal-preview-{}-{:?}",
@@ -136,8 +144,13 @@ async fn rig(converged: bool) -> Rig {
         let views = ViewSync::new(broker.uri(), &token);
         views.converge(&repo).await;
         state.views = Some(Arc::new(views));
+        kept = Some(token);
     }
-    Rig { state, broker }
+    Rig {
+        state,
+        broker,
+        token: kept,
+    }
 }
 
 /// The preview requests the broker received: the headers named, the query and the view.
@@ -310,6 +323,93 @@ async fn a_bad_draft_is_400_and_no_view_is_503() {
         "{}",
         answer.text
     );
+}
+
+/// A Portal whose views have not converged yet answers both previews with the 503 of a view
+/// not compiled; one whose broker admin token is gone answers the 503 of a broker that did not
+/// answer. Neither reaches the broker.
+#[tokio::test]
+async fn an_uncompiled_view_or_an_unreachable_broker_is_503_on_both_previews() {
+    let mut fresh = rig(false).await;
+    fresh.state.views = Some(Arc::new(ViewSync::new(
+        fresh.broker.uri(),
+        Path::new("/nonexistent/token"),
+    )));
+    let r = rig(true).await;
+    std::fs::remove_file(r.token.as_ref().expect("a converged rig keeps its token"))
+        .expect("remove the token");
+    for (rig, says) in [(&fresh, "not compiled yet"), (&r, "did not answer")] {
+        for (uri, body) in [
+            (route("air-staff"), draft()),
+            (ical_route("air-staff"), preset(json!({}))),
+        ] {
+            let answer = send(&rig.state, member(), "POST", &uri, Some(body)).await;
+            assert_eq!(
+                answer.status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{uri}: {}",
+                answer.text
+            );
+            assert!(answer.text.contains(says), "{uri} {says}: {}", answer.text);
+        }
+        assert!(previews(&rig.broker).await.is_empty());
+    }
+}
+
+/// The preview is a person's editor: jana's bearer token, obtained by a client and verified
+/// against the realm, is refused with a 403 that says so, and the broker is never asked.
+#[tokio::test]
+async fn a_bearer_token_is_refused_the_preview() {
+    use axum::body::Body;
+    use axum::http::{header, Request};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let config = Config::from_vars(|key| {
+        match key {
+            "JC_OIDC_ISSUER" => Some(common::REALM.issuer.as_str()),
+            "JC_PORTAL_COOKIE_KEY" => {
+                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001")
+            }
+            "JC_OIDC_CLIENT_ID" => Some("portal-api"),
+            "JC_OIDC_CLIENT_SECRET" => Some("secret"),
+            _ => None,
+        }
+        .map(str::to_owned)
+    })
+    .expect("config");
+    let r = rig_with(true, config).await;
+    let token = common::REALM.person_token_with(
+        "portal-api",
+        "svc-air",
+        "jana",
+        &[],
+        json!({ "groups": ["/city"] }),
+    );
+    let response = joinedcontext_portal::server::app(r.state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(route("air-staff"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(draft().to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let text = String::from_utf8_lossy(
+        &response
+            .into_body()
+            .collect()
+            .await
+            .expect("a body")
+            .to_bytes(),
+    )
+    .into_owned();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{text}");
+    assert!(text.contains("not a workload token"), "{text}");
+    assert!(previews(&r.broker).await.is_empty());
 }
 
 /// jana as a member of the project's group, whom the gateway's door admits (EP-14).

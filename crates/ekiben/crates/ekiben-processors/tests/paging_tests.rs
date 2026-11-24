@@ -278,8 +278,10 @@ async fn dedupe_drops_a_repeat_from_a_later_page() {
 #[tokio::test]
 async fn unarchive_pages_hold_the_members_process_batch_returns() {
     let (reg, ctx) = make_ctx();
-    let cases: [(&str, &str); 5] = [
+    let cases: [(&str, &str); 6] = [
         ("json_array", r#"[1,{"a":"b"},"x",null,[2],3]"#),
+        // A format pages cannot stream is unarchived whole, as process_batch does.
+        ("xml_documents_to_json", "<a><b>1</b></a>"),
         ("lines", "a\nb\n\nc\n"),
         ("csv", "id,name\n1,a\n2,b\n3,c\n4,d\n5,e\n"),
         (
@@ -304,6 +306,52 @@ async fn unarchive_pages_hold_the_members_process_batch_returns() {
         };
         assert_eq!(messages(&pages), messages(&one), "{format}");
         assert!(pages.iter().all(|p| p.len() <= 2), "{format}");
+    }
+}
+
+#[tokio::test]
+async fn unarchive_pages_flag_what_process_batch_flags_and_skip_an_empty_csv() {
+    let (reg, ctx) = make_ctx();
+    let cases: [(&str, &[u8], Option<&str>); 3] = [
+        ("csv", b"", None),
+        (
+            "json_documents",
+            b"{\"a\":1} {nope",
+            Some("key must be a string"),
+        ),
+        (
+            "csv",
+            b"id\n\xff\xfe\n",
+            Some("failed to parse message as csv: "),
+        ),
+    ];
+    for (format, doc, want) in cases {
+        let conf = ComponentConfig::from_json_value(
+            &serde_json::json!({"unarchive": {"format": format}}),
+            "noop",
+            None,
+        )
+        .unwrap();
+        let proc = reg.build_processor(&conf, &ctx, "0").unwrap();
+        let input = vec![Part::new(doc.to_vec())];
+        let pages: Vec<Batch> = match proc.pages(&ctx, input.clone(), 1) {
+            Ok(pages) => pages.collect(),
+            Err(_) => panic!("unarchive pages {format}"),
+        };
+        let one = proc.process_batch(&ctx, input).await.unwrap();
+        assert_eq!(messages(&pages), messages(&one), "{format}");
+        let flagged: Vec<String> = pages
+            .iter()
+            .flatten()
+            .filter_map(|p| p.error_get().map(|e| e.message.clone()))
+            .collect();
+        match want {
+            None => assert!(messages(&pages).is_empty(), "{format}"),
+            Some(want) => {
+                assert_eq!(flagged.len(), 1, "{format}: {flagged:?}");
+                assert!(flagged[0].contains(want), "{format}: {}", flagged[0]);
+            }
+        }
     }
 }
 

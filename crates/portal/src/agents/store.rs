@@ -684,7 +684,7 @@ impl AgentStore {
         run_id: &str,
         endpoints: &[crate::agents::endpoints::RunEndpoint],
     ) -> Result<(), StoreError> {
-        let value = serde_json::to_value(endpoints).unwrap_or_else(|_| serde_json::json!([]));
+        let value = serde_json::to_value(endpoints).unwrap_or_default();
         let (name, slug) = endpoints
             .first()
             .map(|e| (e.name.clone(), e.slug.clone()))
@@ -1033,6 +1033,179 @@ mod tests {
             .expect("record_first_version");
         let after_v1 = store.get_run("run-1").await.expect("get").expect("exists");
         assert!(after_v1.first_version_ms.is_some());
+    }
+
+    /// T-7711: the memory store answers like the database for what it does not hold, ties on the
+    /// creation time are broken by id, and every field a run gathers is kept.
+    #[tokio::test]
+    async fn the_memory_store_keeps_every_field_and_ignores_unknown_runs() {
+        let store = AgentStore::new(None, Arc::default());
+        assert!(!store.is_durable());
+        assert_eq!(format!("{store:?}"), "AgentStore { durable: false, .. }");
+        // Writes for a run nobody created change nothing and fail nothing.
+        store
+            .set_expiry("ghost", "2099-01-01T00:00:00Z")
+            .await
+            .expect("no run");
+        store.invalidate_ticket("ghost").await.expect("no run");
+        store.record_usage("ghost", 1, 1).await.expect("no run");
+        store
+            .set_preview_url("ghost", "https://x.example")
+            .await
+            .expect("no run");
+        store.record_first_version("ghost").await.expect("no run");
+        store
+            .set_files("ghost", serde_json::json!({}))
+            .await
+            .expect("no run");
+        store.set_title("ghost", "t").await.expect("no run");
+        store.set_endpoints("ghost", &[]).await.expect("no run");
+        store.set_merge_request("ghost", 1).await.expect("no run");
+        assert!(store.get_run("ghost").await.expect("read").is_none());
+        assert!(store
+            .events_since("ghost", 0)
+            .await
+            .expect("read")
+            .is_empty());
+        assert!(matches!(
+            store
+                .set_status("ghost", AgentRunStatus::Cancelled, None)
+                .await,
+            Err(StatusChangeError::Unknown)
+        ));
+
+        // Two live runs of one app created in the same second: the higher id is newer.
+        let (a, b) = (
+            run("run-a", "helsinki", "2026-09-12T10:15:30Z"),
+            run("run-b", "helsinki", "2026-09-12T10:15:30Z"),
+        );
+        store.create_run(&b).await.expect("create");
+        store.create_run(&a).await.expect("create");
+        let live = store
+            .live_run_for_app("helsinki", "city-bikes-overview")
+            .await
+            .expect("read")
+            .expect("a live run");
+        assert_eq!(live.id, "run-a", "same second: the first id");
+        let expired = store
+            .list_expired("2099-01-01T00:00:00Z")
+            .await
+            .expect("read");
+        assert_eq!(expired.len(), 2);
+        assert!(store
+            .list_expired("2000-01-01T00:00:00Z")
+            .await
+            .expect("read")
+            .is_empty());
+
+        let by_status = |status: &str| RunFilter {
+            status: Some(status.to_owned()),
+            ..RunFilter::default()
+        };
+        let failed = store
+            .list_runs_filtered("helsinki", &by_status("failed"), 10)
+            .await
+            .expect("read");
+        assert!(failed.is_empty(), "{failed:?}");
+        let queued = store
+            .list_runs_filtered("helsinki", &by_status("queued"), 10)
+            .await
+            .expect("read");
+        let ids: Vec<&str> = queued.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["run-a", "run-b"]);
+        assert!(store
+            .list_runs("helsinki", -1)
+            .await
+            .expect("read")
+            .is_empty());
+
+        store.set_title("run-a", "City bikes").await.expect("title");
+        store
+            .set_merge_request("run-a", 7)
+            .await
+            .expect("merge request");
+        store
+            .set_files("run-a", serde_json::json!({ "src/App.tsx": "x" }))
+            .await
+            .expect("files");
+        store
+            .set_preview_url("run-a", "https://p.example")
+            .await
+            .expect("url");
+        store
+            .set_preview_url("run-a", "https://q.example")
+            .await
+            .expect("url");
+        store.record_first_version("run-a").await.expect("first");
+        let first = store.get_run("run-a").await.expect("read").expect("held");
+        store.record_first_version("run-a").await.expect("kept");
+        let endpoints = [crate::agents::endpoints::RunEndpoint {
+            name: "bikes".into(),
+            slug: "s1".into(),
+            space: "transport".into(),
+        }];
+        store
+            .set_endpoints("run-a", &endpoints)
+            .await
+            .expect("endpoints");
+        let read = store.get_run("run-a").await.expect("read").expect("held");
+        assert_eq!(read.title.as_deref(), Some("City bikes"));
+        assert_eq!(read.merge_request, Some(7));
+        assert_eq!(read.files["src/App.tsx"], "x");
+        assert_eq!(read.preview_url.as_deref(), Some("https://q.example"));
+        assert!(read.first_frame_ms.is_some() && read.first_version_ms.is_some());
+        assert_eq!(
+            read.first_version_ms, first.first_version_ms,
+            "the first one stays"
+        );
+        assert_eq!(
+            (read.endpoint_name.as_str(), read.endpoint_slug.as_str()),
+            ("bikes", "s1")
+        );
+        assert_eq!(read.endpoints[0]["space"], "transport");
+        store.set_endpoints("run-a", &[]).await.expect("none");
+        let read = store.get_run("run-a").await.expect("read").expect("held");
+        assert_eq!(
+            (read.endpoint_name.as_str(), &read.endpoints),
+            ("", &serde_json::json!([]))
+        );
+    }
+
+    /// T-7711: the project memory of run ids starts over when full instead of growing.
+    #[test]
+    fn the_run_project_memory_starts_over_when_full() {
+        let store = AgentStore::new(None, Arc::default());
+        let runs: Vec<AgentRun> = (0..=KNOWN_RUNS)
+            .map(|i| run(&format!("run-{i}"), "helsinki", "2026-09-12T10:15:30Z"))
+            .collect();
+        store.learn(&runs);
+        let known = store.known();
+        assert_eq!(known.len(), 1);
+        assert_eq!(
+            known.get(&format!("run-{KNOWN_RUNS}")).map(String::as_str),
+            Some("helsinki")
+        );
+    }
+
+    /// T-7711: a thread that panicked while holding the run-project memory leaves it usable.
+    #[test]
+    fn a_poisoned_run_project_memory_is_still_read() {
+        let store = AgentStore::new(None, Arc::default());
+        store.learn([&run("run-1", "helsinki", "2026-09-12T10:15:30Z")]);
+        let poisoned = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _held = store.known();
+                    panic!("a holder panicked");
+                })
+                .join()
+        });
+        assert!(poisoned.is_err());
+        assert!(store.projects.is_poisoned());
+        assert_eq!(
+            store.known().get("run-1").map(String::as_str),
+            Some("helsinki")
+        );
     }
 
     #[tokio::test]

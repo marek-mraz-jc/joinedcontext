@@ -781,6 +781,17 @@ pub fn id_pattern_literal(pattern: &str) -> Option<IdLiteral<'_>> {
     })
 }
 
+/// `pattern` as a policy rule reads it, `^(?:pattern)$`. `None` for a pattern
+/// that parses only inside that wrapper: one that closes its group early
+/// (`a)|(b`) would leave one branch anchored at the start and the other at the
+/// end, so no pushdown is taken from it and the regex still decides.
+fn as_rule_reads(pattern: &str) -> Option<regex_syntax::hir::Hir> {
+    regex_syntax::Parser::new().parse(pattern).ok()?;
+    regex_syntax::Parser::new()
+        .parse(&format!("^(?:{pattern})$"))
+        .ok()
+}
+
 /// A literal every id a policy rule's `pattern` selects carries, the
 /// longest one after the start, else the prefix,
 /// read as the rule reads it, anchored at both ends (`^(?:pattern)$`); the
@@ -792,9 +803,7 @@ pub fn id_pattern_literal(pattern: &str) -> Option<IdLiteral<'_>> {
 /// group, only classes). A necessary condition only: the regex still decides.
 pub fn id_pattern_required(pattern: &str) -> Option<(String, bool)> {
     use regex_syntax::hir::{HirKind, Look};
-    let hir = regex_syntax::Parser::new()
-        .parse(&format!("^(?:{pattern})$"))
-        .ok()?;
+    let hir = as_rule_reads(pattern)?;
     let HirKind::Concat(parts) = hir.kind() else {
         return None;
     };
@@ -844,9 +853,7 @@ pub struct IdSegments {
 /// and a literal starting with `sep`.
 pub fn id_pattern_segments(pattern: &str) -> Option<IdSegments> {
     use regex_syntax::hir::{Class, HirKind, Look};
-    let hir = regex_syntax::Parser::new()
-        .parse(&format!("^(?:{pattern})$"))
-        .ok()?;
+    let hir = as_rule_reads(pattern)?;
     let HirKind::Concat(parts) = hir.kind() else {
         return None;
     };
@@ -893,9 +900,7 @@ pub fn id_pattern_segments(pattern: &str) -> Option<IdSegments> {
 /// ponytail: no `\d`, `.` or non-ASCII folding (Unicode classes differ); add one
 /// here with a parity case when a seeded pattern needs it.
 pub fn id_pattern_sql(pattern: &str) -> Option<String> {
-    let hir = regex_syntax::Parser::new()
-        .parse(&format!("^(?:{pattern})$"))
-        .ok()?;
+    let hir = as_rule_reads(pattern)?;
     let mut out = String::new();
     are(&hir, &mut out)?;
     // a long pattern may pass `regex`'s bound and still be too complex for
@@ -1024,6 +1029,11 @@ mod id_literal_tests {
         assert_eq!(sql("^[5a]$").as_deref(), Some("^^[5a]$$"));
         // fuzz store_id_pattern (T-7595): the empty rule selects only the empty id
         assert_eq!(sql("").as_deref(), Some("^$"));
+        // fuzz store_id_pattern (T-7595): a pattern that closes the rule's group
+        // early is no anchored rule, so nothing is pushed down from it
+        assert_eq!(sql("urn2|1-x)n|x(%@b"), None);
+        assert_eq!(id_pattern_required("urn:x:a)(b"), None);
+        assert!(id_pattern_segments("urn:x:a)(:b").is_none());
         // every bounded repetition form a rule writes
         assert_eq!(
             sql("^urn:x:a?b{2,}c{2,5}d*$").as_deref(),
