@@ -510,3 +510,278 @@ fn a_model_no_space_owns_is_no_second_model_of_a_space_dm74() {
         "{refused:#?}"
     );
 }
+
+#[test]
+fn merge_names_a_prefix_clash_and_both_models() {
+    let other = KPI.replace(
+        "jc: https://joinedcontext.com/models/",
+        "jc: https://elsewhere.example/",
+    );
+    let base = AIR.replace(
+        "sdm: https://smartdatamodels.org/",
+        "sdm: https://smartdatamodels.org/\n  jc: https://joinedcontext.com/models/",
+    );
+    let refused = merge_sources("helsinki", &[source("air", &base), source("kpi", &other)])
+        .expect_err("one prefix cannot name two IRIs");
+    assert!(
+        matches!(&refused, MergeError::Clash { what: "prefix", name, first, second }
+            if name == "jc" && first == "air" && second == "kpi"),
+        "{refused:?}"
+    );
+    let shown = refused.to_string();
+    assert!(
+        shown.contains("prefix `jc`") && shown.contains("DM-62"),
+        "{shown}"
+    );
+}
+
+#[test]
+fn merge_renames_an_id_without_a_path_and_keeps_the_id_when_the_base_is_named() {
+    let bare = AIR.replace("id: https://hel.fi/models/air", "id: air-model");
+    let merged = merge_sources("helsinki", &[source("air", &bare)]).expect("one source merges");
+    assert_eq!(text(&merged, &["id"]), Some("helsinki"));
+    assert_eq!(text(&merged, &["name"]), Some("helsinki"));
+
+    let kept = merge_sources("air", &[source("air", AIR)]).expect("the base keeps its id");
+    assert_eq!(text(&kept, &["id"]), Some("https://hel.fi/models/air"));
+}
+
+#[test]
+fn merge_refuses_a_source_that_is_not_a_mapping_naming_its_model() {
+    for (sources, model) in [
+        (vec![source("air", "- a\n- b\n")], "air"),
+        (vec![source("air", AIR), source("kpi", "just text")], "kpi"),
+    ] {
+        let refused =
+            merge_sources("helsinki", &sources).expect_err("a list is no LinkML document");
+        assert!(
+            matches!(&refused, MergeError::Source { model: m, .. } if m == model),
+            "{refused:?}"
+        );
+        assert!(
+            refused
+                .to_string()
+                .starts_with(&format!("model `{model}`:")),
+            "{refused}"
+        );
+    }
+}
+
+#[test]
+fn merge_refuses_a_base_section_that_is_not_a_mapping() {
+    let base = AIR.replace(
+        "classes:\n  AirQualityObserved:\n    slots: [pm10, name]\n",
+        "classes: [AirQualityObserved]\n",
+    );
+    let refused = merge_sources("helsinki", &[source("air", &base), source("kpi", KPI)])
+        .expect_err("a class cannot be added to a list");
+    assert!(matches!(refused, MergeError::Repository(_)), "{refused:?}");
+    assert_eq!(
+        refused.to_string(),
+        "`classes` of the base model is not a mapping"
+    );
+}
+
+#[test]
+fn merge_names_the_model_that_first_defined_a_clashing_member() {
+    let third = r#"id: https://hel.fi/models/third
+name: third
+prefixes:
+  jc: https://joinedcontext.com/models/
+default_prefix: jc
+enums:
+  Window:
+    permissible_values:
+      week: {}
+"#;
+    let refused = merge_sources(
+        "helsinki",
+        &[
+            source("air", AIR),
+            source("kpi", KPI),
+            source("third", third),
+        ],
+    )
+    .expect_err("Window differs between kpi and third");
+    assert!(
+        matches!(&refused, MergeError::Clash { what: "enum", name, first, second }
+            if name == "Window" && first == "kpi" && second == "third"),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn merge_leaves_odd_members_alone_and_writes_attribute_iris() {
+    let other = r#"id: https://hel.fi/models/odd
+name: odd
+prefixes:
+  jc: https://joinedcontext.com/models/
+default_prefix: jc
+default_range: integer
+imports:
+  - linkml:types
+  - extra
+classes:
+  Odd:
+    attributes:
+      count: {}
+      named:
+        slot_uri: schema:named
+      broken: just text
+  Bare: null
+slots:
+  loose: null
+types:
+  Code:
+    typeof: string
+  Coded:
+    typeof: string
+    uri: jc:Coded
+"#;
+    let merged = merge_sources("helsinki", &[source("air", AIR), source("odd", other)])
+        .expect("odd members merge as they are");
+    assert_eq!(
+        text(
+            &merged,
+            &["classes", "Odd", "attributes", "count", "slot_uri"]
+        ),
+        Some("jc:count")
+    );
+    assert_eq!(
+        text(&merged, &["classes", "Odd", "attributes", "count", "range"]),
+        Some("integer")
+    );
+    assert_eq!(
+        text(
+            &merged,
+            &["classes", "Odd", "attributes", "named", "slot_uri"]
+        ),
+        Some("schema:named")
+    );
+    assert_eq!(
+        text(&merged, &["classes", "Odd", "attributes", "broken"]),
+        Some("just text")
+    );
+    assert_eq!(
+        text(&merged, &["classes", "Odd", "class_uri"]),
+        Some("jc:Odd")
+    );
+    assert!(at(&merged, &["classes", "Bare"]).is_some_and(Value::is_null));
+    assert!(at(&merged, &["slots", "loose"]).is_some_and(Value::is_null));
+    assert!(
+        at(&merged, &["types", "Code", "uri"]).is_none(),
+        "LinkML refuses a type without uri"
+    );
+    assert_eq!(text(&merged, &["types", "Coded", "uri"]), Some("jc:Coded"));
+    let imports: Vec<&str> = at(&merged, &["imports"])
+        .and_then(Value::as_sequence)
+        .expect("imports")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(imports, ["linkml:types", "extra"]);
+}
+
+#[test]
+fn merge_takes_imports_into_a_base_without_any_and_ignores_a_base_list_that_is_not_one() {
+    let bare = AIR.replace("imports:\n  - linkml:types\n", "");
+    let merged =
+        merge_sources("helsinki", &[source("air", &bare), source("kpi", KPI)]).expect("merges");
+    let imports: Vec<&str> = at(&merged, &["imports"])
+        .and_then(Value::as_sequence)
+        .expect("imports created")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(imports, ["linkml:types", "ngsi-ld-core"]);
+
+    let odd = AIR.replace("imports:\n  - linkml:types\n", "imports: linkml:types\n");
+    let merged =
+        merge_sources("helsinki", &[source("air", &odd), source("kpi", KPI)]).expect("merges");
+    assert_eq!(text(&merged, &["imports"]), Some("linkml:types"));
+}
+
+#[test]
+fn merge_treats_a_slot_relying_on_the_default_range_as_the_one_naming_it() {
+    let base = AIR.replace(
+        "  name:\n    slot_uri: schema:name\n",
+        "  name:\n    slot_uri: schema:name\n    range: string\n",
+    );
+    let other = AIR
+        .replace(
+            "id: https://hel.fi/models/air",
+            "id: https://hel.fi/models/air2",
+        )
+        .replace("name: air\n", "name: air2\n");
+    let merged = merge_sources("helsinki", &[source("air", &base), source("air2", &other)])
+        .expect("`range: string` and `default_range: string` are one slot");
+    assert_eq!(text(&merged, &["slots", "name", "range"]), Some("string"));
+}
+
+#[test]
+fn merge_of_a_space_with_only_the_named_model_changes_nothing() {
+    let dir = repo("only", &[("city", "AirQualityObserved", AIR)], None);
+    let report = merge(&dir, "helsinki", "city", None).expect("one model is already merged");
+    assert_eq!(report.model, "city");
+    assert_eq!(report.merged, ["city"]);
+    assert!(report.written.is_empty() && report.removed.is_empty());
+    assert!(dir.join(MODELS).join("city.yaml").exists());
+}
+
+#[test]
+fn merge_refuses_an_open_and_a_closed_model() {
+    let dir = repo(
+        "world",
+        &[
+            ("air", "AirQualityObserved", AIR),
+            ("kpi", "KeyPerformanceIndicator", KPI),
+        ],
+        None,
+    );
+    let path = dir.join(MODELS).join("kpi.yaml");
+    let manifest = std::fs::read_to_string(&path).expect("kpi manifest");
+    std::fs::write(
+        &path,
+        manifest.replace(
+            "  lifecycle: draft\n",
+            "  lifecycle: draft\n  openWorld: true\n",
+        ),
+    )
+    .expect("write kpi");
+    let refused = merge(&dir, "helsinki", "city", None).expect_err("open and closed differ");
+    let shown = refused.to_string();
+    assert!(
+        shown.contains("model `air` is closed and model `kpi` is open-world")
+            && shown.contains("DM-28"),
+        "{shown}"
+    );
+    assert!(dir.join(MODELS).join("air.yaml").exists());
+}
+
+#[test]
+fn merge_names_the_model_whose_source_is_missing_or_not_yaml() {
+    let dir = repo(
+        "sources",
+        &[
+            ("air", "AirQualityObserved", AIR),
+            ("kpi", "KeyPerformanceIndicator", KPI),
+        ],
+        None,
+    );
+    std::fs::write(
+        dir.join(MODELS).join("kpi.linkml.yaml"),
+        "classes: [unclosed",
+    )
+    .expect("write");
+    let refused = merge(&dir, "helsinki", "city", None).expect_err("kpi is not YAML");
+    assert!(
+        matches!(&refused, MergeError::Source { model, reason } if model == "kpi" && reason.contains("kpi.linkml.yaml")),
+        "{refused:?}"
+    );
+    std::fs::remove_file(dir.join(MODELS).join("kpi.linkml.yaml")).expect("remove");
+    let refused = merge(&dir, "helsinki", "city", None).expect_err("kpi has no source");
+    assert!(
+        matches!(&refused, MergeError::Source { model, .. } if model == "kpi"),
+        "{refused:?}"
+    );
+}

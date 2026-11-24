@@ -12,7 +12,10 @@ use crate::common;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use jcctl::login::{endpoint_scope, endpoint_slug, issuer, login, LoginError, PORTAL_SCOPE};
+use jcctl::login::{
+    default_endpoint_token_file, endpoint_scope, endpoint_slug, issuer, login, token_may_travel,
+    LoginError, PORTAL_SCOPE,
+};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
@@ -427,4 +430,240 @@ fn the_token_command_needs_an_endpoint_address() {
         "https://api.example.org/api/endpoint/abc",
     ]);
     assert!(String::from_utf8_lossy(&on_login.stderr).starts_with("usage:"));
+}
+
+/// An issuer that answers each connection with the next raw response, in order, whatever was
+/// asked; `None` closes the connection without a word.
+fn raw_stub(answers: Vec<Option<String>>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+    let port = listener.local_addr().expect("an address").port();
+    std::thread::spawn(move || {
+        for (stream, answer) in listener.incoming().zip(answers) {
+            let Ok(mut stream) = stream else { continue };
+            let mut raw = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            while let Ok(read) = stream.read(&mut buffer) {
+                if read == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&raw);
+                if let Some((head, rest)) = text.split_once("\r\n\r\n") {
+                    let length = head
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                        })
+                        .unwrap_or(0);
+                    if rest.len() >= length {
+                        break;
+                    }
+                }
+            }
+            if let Some(answer) = answer {
+                let _ = stream.write_all(answer.as_bytes());
+            }
+        }
+    });
+    format!("http://127.0.0.1:{port}/realms/city")
+}
+
+fn http(status: u16, body: &str) -> Option<String> {
+    Some(format!(
+        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
+        body.len()
+    ))
+}
+
+fn device(expires_in: u64, complete: bool) -> Option<String> {
+    let mut answer = json!({
+        "device_code": "dev-code-1",
+        "user_code": "WDJB-MJHT",
+        "verification_uri": "https://idm.example/realms/city/device",
+        "expires_in": expires_in,
+        "interval": 0
+    });
+    if complete {
+        answer["verification_uri_complete"] = json!("https://idm.example/device?c=1");
+    }
+    http(200, &answer.to_string())
+}
+
+#[test]
+fn a_provider_without_a_complete_address_is_told_as_address_and_code() {
+    let url = raw_stub(vec![
+        device(600, false),
+        http(200, &json!({ "access_token": TOKEN }).to_string()),
+    ]);
+    let path = target("no-complete");
+    let (result, told, _) = run(&url, &path);
+    let done = result.expect("signed in");
+    assert_eq!(done.expires_in, None);
+    assert_eq!(
+        told,
+        ["To sign in, open https://idm.example/realms/city/device and enter the code WDJB-MJHT"]
+    );
+    assert_eq!(std::fs::read_to_string(&path).expect("token"), TOKEN);
+}
+
+#[test]
+fn a_code_that_expires_before_the_first_poll_writes_nothing() {
+    let url = raw_stub(vec![device(0, true)]);
+    let path = target("expired-at-once");
+    let (result, told, slept) = run(&url, &path);
+    assert_eq!(
+        result.expect_err("expired"),
+        LoginError::Refused("the code expired before it was confirmed".to_owned())
+    );
+    assert_eq!(told.len(), 1);
+    assert_eq!(slept, [Duration::ZERO]);
+    assert!(!path.exists());
+}
+
+#[test]
+fn a_token_answer_without_a_token_is_refused_in_the_providers_words_or_ours() {
+    for (body, says) in [
+        (
+            json!({}).to_string(),
+            "the token endpoint answered without a token",
+        ),
+        (
+            json!({ "access_token": "" }).to_string(),
+            "the token endpoint answered without a token",
+        ),
+        (
+            json!({ "error": "server_error" }).to_string(),
+            "server_error",
+        ),
+        (
+            json!({ "error": "server_error", "error_description": "Realm is restarting" })
+                .to_string(),
+            "Realm is restarting",
+        ),
+    ] {
+        let url = raw_stub(vec![device(600, true), http(400, &body)]);
+        let path = target("no-token");
+        let (result, _, _) = run(&url, &path);
+        assert_eq!(
+            result.expect_err(&body),
+            LoginError::Refused(says.to_owned()),
+            "{body}"
+        );
+        assert!(!path.exists(), "{body} wrote a token");
+    }
+}
+
+#[test]
+fn an_unreadable_provider_is_unavailable_and_names_the_issuer() {
+    for (answers, says) in [
+        (
+            vec![device(600, true), http(200, "<html>proxy</html>")],
+            "not JSON",
+        ),
+        (
+            vec![http(200, "<html>proxy</html>")],
+            "the device authorization is unreadable",
+        ),
+        (vec![None], ""),
+        (vec![device(600, true), None], ""),
+        (
+            vec![
+                device(600, true),
+                Some("HTTP/1.1 200 X\r\nContent-Length: 90\r\n\r\n{\"acc".into()),
+            ],
+            "",
+        ),
+        (
+            vec![Some(
+                "HTTP/1.1 200 X\r\nContent-Length: 90\r\n\r\n{\"dev".into(),
+            )],
+            "",
+        ),
+    ] {
+        let url = raw_stub(answers);
+        let path = target("unavailable");
+        let (result, _, _) = run(&url, &path);
+        match result.expect_err("no token") {
+            LoginError::Unavailable { url: at, message } => {
+                assert!(at.starts_with(&url), "{at}");
+                assert!(message.contains(says), "{message}");
+                assert!(!message.contains("dev-code-1"), "{message}");
+            }
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+        assert!(!path.exists());
+    }
+}
+
+#[test]
+fn a_refused_device_start_without_oauth_words_names_the_status() {
+    let url = raw_stub(vec![http(503, "upstream down")]);
+    let (result, _, _) = run(&url, &target("refused-start"));
+    let LoginError::Refused(message) = result.expect_err("refused") else {
+        panic!("expected Refused");
+    };
+    assert!(
+        message.starts_with("the provider refused to start a device sign-in (503"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_token_that_cannot_be_written_is_a_write_error_and_leaves_no_staging_file() {
+    let dir = common::temp_dir("login-unwritable");
+    std::fs::write(dir.join("file"), "x").expect("a plain file");
+    let under_a_file = dir.join("file").join("token");
+    let url = raw_stub(vec![
+        device(600, true),
+        http(200, &json!({ "access_token": TOKEN }).to_string()),
+    ]);
+    let (result, _, _) = run(&url, &under_a_file);
+    assert!(
+        matches!(result.expect_err("parent is a file"), LoginError::Write { path, .. } if path.ends_with("file/token"))
+    );
+
+    let a_directory = dir.join("taken");
+    std::fs::create_dir_all(a_directory.join("inside")).expect("a directory where the token goes");
+    let url = raw_stub(vec![
+        device(600, true),
+        http(200, &json!({ "access_token": TOKEN }).to_string()),
+    ]);
+    let (result, _, _) = run(&url, &a_directory);
+    assert!(matches!(
+        result.expect_err("rename over a directory"),
+        LoginError::Write { .. }
+    ));
+    let left: Vec<_> = std::fs::read_dir(&dir)
+        .expect("list")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with('.'))
+        .collect();
+    assert!(left.is_empty(), "staging left behind: {left:?}");
+}
+
+#[test]
+fn a_token_travels_over_https_or_plain_http_inside_the_cluster_only() {
+    let travels = |u: &str| token_may_travel(&reqwest::Url::parse(u).expect(u));
+    assert!(travels("https://api.example.org/x"));
+    assert!(travels("http://localhost:8080/x"));
+    assert!(travels("http://portal/x"));
+    assert!(travels("http://portal.jc.svc/x"));
+    assert!(travels("http://portal.jc.svc.cluster.local./x"));
+    assert!(travels("http://[::1]:8080/x"));
+    assert!(travels("http://127.0.0.1/x"));
+    assert!(!travels("http://api.example.org/x"));
+    assert!(!travels("http://10.0.0.1/x"));
+    assert!(!travels("ftp://localhost/x"));
+    assert!(!travels("data:text/plain,token"));
+}
+
+#[test]
+fn an_endpoint_token_file_sits_under_endpoints_beside_the_default_token() {
+    if let Some(file) = default_endpoint_token_file("air1") {
+        assert!(file.ends_with("jcctl/endpoints/air1"), "{}", file.display());
+    }
 }
