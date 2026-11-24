@@ -4113,6 +4113,193 @@ mod tests {
         );
     }
 
+    /// Deleting the second client's role takes it from that client's holders, not the first's.
+    #[tokio::test]
+    async fn deleting_a_role_of_another_client_leaves_the_first_clients_holders() {
+        let store = MemoryStore::default();
+        let (app, other) = (
+            store.upsert_client(client("app")).await.expect("client"),
+            store.upsert_client(client("other")).await.expect("client"),
+        );
+        store.create_user(user("both")).await.expect("user");
+        for c in [&app, &other] {
+            let role = store
+                .upsert_role(RoleRepresentation {
+                    realm_id: R.into(),
+                    name: "reader".into(),
+                    client_role: true,
+                    container_id: Some(c.id.clone()),
+                    ..Default::default()
+                })
+                .await
+                .expect("role");
+            store
+                .add_role_mapping(mapping("both", &role, Some(&c.id)))
+                .await
+                .expect("map");
+        }
+        assert!(
+            store
+                .delete_role(R, Some(&other.id), "reader")
+                .await
+                .expect("delete")
+        );
+        let held = store
+            .get_user_by_id(R, None, "both")
+            .await
+            .expect("read")
+            .expect("person")
+            .client_roles;
+        assert_eq!(held.get("app"), Some(&vec!["reader".to_owned()]));
+        assert!(held.get("other").is_none_or(Vec::is_empty));
+    }
+
+    /// A role is one per realm, container and name: written again it keeps its id; a realm role
+    /// and a client role of one name, or one name in two realms, are separate roles.
+    #[tokio::test]
+    async fn roles_are_one_per_realm_container_and_name() {
+        let store = MemoryStore::default();
+        let app = store.upsert_client(client("app")).await.expect("client");
+        let role = |realm: &str, container: Option<&str>| RoleRepresentation {
+            realm_id: realm.into(),
+            name: "reader".into(),
+            client_role: container.is_some(),
+            container_id: container.map(str::to_owned),
+            ..Default::default()
+        };
+        let realm_role = store.upsert_role(role(R, None)).await.expect("role");
+        let client_role = store
+            .upsert_role(role(R, Some(&app.id)))
+            .await
+            .expect("role");
+        let q_role = store.upsert_role(role("q", None)).await.expect("role");
+        assert_ne!(realm_role.id, client_role.id);
+        assert_ne!(realm_role.id, q_role.id);
+        let again = store
+            .upsert_role(RoleRepresentation {
+                description: Some("again".into()),
+                ..role(R, None)
+            })
+            .await
+            .expect("again");
+        assert_eq!(again.id, realm_role.id, "the same role keeps its id");
+        let realm_roles = store.list_roles(R, None).await.expect("realm roles");
+        assert_eq!(realm_roles.len(), 1);
+        assert_eq!(realm_roles[0].description.as_deref(), Some("again"));
+        let client_roles = store
+            .list_roles(R, Some(&app.id))
+            .await
+            .expect("client roles");
+        assert_eq!(client_roles.len(), 1);
+        assert_eq!(client_roles[0].id, client_role.id);
+        assert_eq!(store.list_roles("q", None).await.expect("q").len(), 1);
+        assert!(
+            store
+                .list_roles("q", Some(&app.id))
+                .await
+                .expect("q")
+                .is_empty()
+        );
+    }
+
+    /// Membership is per realm: a group or person of another realm is not found, a second add
+    /// is one membership, and a removal or a group delete takes only that membership.
+    #[tokio::test]
+    async fn group_membership_is_per_realm_group_and_person() {
+        let store = MemoryStore::default();
+        for realm in [R, "q"] {
+            for id in ["ada", "bob"] {
+                store
+                    .create_user(UserRepresentation {
+                        realm_id: realm.into(),
+                        ..user(id)
+                    })
+                    .await
+                    .expect("person");
+            }
+            for name in ["one", "two"] {
+                let mut g = group(name, None, &format!("/{name}"));
+                g.realm_id = realm.into();
+                g.id = name.into();
+                store.upsert_group(g).await.expect("group");
+            }
+        }
+        store.create_user(user("only-r")).await.expect("person");
+        let mut only = group("only", None, "/only");
+        only.id = "only".into();
+        store.upsert_group(only).await.expect("group");
+        let missing = store.add_user_to_group("q", "ada", "only").await;
+        assert!(
+            matches!(missing, Err(KaisatsuError::NotFound(_))),
+            "{missing:?}"
+        );
+        let nobody = store.add_user_to_group("q", "only-r", "one").await;
+        assert!(
+            matches!(nobody, Err(KaisatsuError::NotFound(_))),
+            "{nobody:?}"
+        );
+        for (realm, person, g) in [
+            (R, "ada", "one"),
+            (R, "ada", "one"),
+            (R, "ada", "two"),
+            (R, "bob", "one"),
+            ("q", "ada", "one"),
+        ] {
+            store
+                .add_user_to_group(realm, person, g)
+                .await
+                .expect("member");
+        }
+        let members = |realm: &'static str, g: &'static str| {
+            let store = &store;
+            async move {
+                let mut ids: Vec<String> = store
+                    .list_group_members(realm, None, g, 0, 100)
+                    .await
+                    .expect("members")
+                    .into_iter()
+                    .map(|u| u.id)
+                    .collect();
+                ids.sort();
+                ids
+            }
+        };
+        assert_eq!(members(R, "one").await, ["ada", "bob"], "ada once");
+        store
+            .remove_user_from_group(R, "ada", "two")
+            .await
+            .expect("remove");
+        store
+            .remove_user_from_group(R, "bob", "two")
+            .await
+            .expect("remove nothing");
+        assert!(members(R, "two").await.is_empty());
+        assert_eq!(members(R, "one").await, ["ada", "bob"]);
+        assert_eq!(members("q", "one").await, ["ada"]);
+        store
+            .add_user_to_group(R, "ada", "two")
+            .await
+            .expect("member again");
+        assert!(store.delete_group(R, None, "one").await.expect("delete"));
+        assert_eq!(
+            members(R, "two").await,
+            ["ada"],
+            "another group keeps its members"
+        );
+        assert_eq!(
+            members("q", "one").await,
+            ["ada"],
+            "q's group keeps its members"
+        );
+        assert!(
+            store
+                .get_group("q", None, "one")
+                .await
+                .expect("get")
+                .is_some()
+        );
+    }
+
     /// A role mapped twice is held once; removing a client role from a person who holds none of
     /// that client changes nothing, and a realm role goes on its own.
     #[tokio::test]
