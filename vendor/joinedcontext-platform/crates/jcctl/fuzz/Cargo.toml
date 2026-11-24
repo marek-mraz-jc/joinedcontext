@@ -1,0 +1,68 @@
+# Fuzzes what jcctl reads from outside (T-7793): Endpoint and realm addresses typed on the command
+# line, manifest files (`-f`, `jcctl fmt`, diff against the live copy), the runner's refusal text
+# and a mapping's output, LinkML documents of several models merged into one, seed entities against
+# what the broker answered, export specs, store prefixes, and sops-encrypted secret files. Each
+# target must end in a value or an error, never a panic, a hang or an allocation past the input's
+# size. Run by hand: cargo +nightly fuzz run <target> --target x86_64-unknown-linux-gnu -- -max_total_time=300.
+# Not a member of the platform workspace.
+[package]
+name = "jcctl-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+serde_norway = "0.9"
+url = "2"
+age = { version = "0.12", default-features = false }
+jcctl = { path = ".." }
+
+[[bin]]
+name = "addresses"
+path = "fuzz_targets/addresses.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifests"
+path = "fuzz_targets/manifests.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "refusal"
+path = "fuzz_targets/refusal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "linkml_merge"
+path = "fuzz_targets/linkml_merge.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "entities"
+path = "fuzz_targets/entities.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sops"
+path = "fuzz_targets/sops.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

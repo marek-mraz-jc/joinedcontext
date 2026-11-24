@@ -1,7 +1,9 @@
 # Fuzzing the Portal's parsers of outside input (T-7656, T-7727, T-7729, T-7698, T-7699): label and
 # field selectors and the list filter and orderBy of a request's query string, the gateway's
 # Prometheus page, a pipeline's cron schedule, the masking of a record the runner posts, the list
-# query string and its cursor, a device's JSON Web Key Set, and an MQTT test-publish body. Its own
+# query string and its cursor, a device's JSON Web Key Set, an MQTT test-publish body, and (T-7658) a
+# feedback body, a comment's mentions, a git bundle's header, an entity bound for the trash and an
+# Endpoint preview's body. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 [package]
@@ -93,3 +95,38 @@ ngsild-model = { path = "../../../vendor/ngsild/crates/antares-model" }
 [patch.crates-io]
 rstar = { path = "../../antares/vendor/rstar" }
 geo-types = { path = "../../antares/vendor/geo-types" }
+
+[[bin]]
+name = "feedback"
+path = "fuzz_targets/feedback.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mentions"
+path = "fuzz_targets/mentions.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bundle_head"
+path = "fuzz_targets/bundle_head.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "trash_entity"
+path = "fuzz_targets/trash_entity.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "preview_query"
+path = "fuzz_targets/preview_query.rs"
+test = false
+doc = false
+bench = false

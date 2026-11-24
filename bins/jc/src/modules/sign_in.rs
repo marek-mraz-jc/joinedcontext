@@ -145,10 +145,31 @@ mod tests {
             "a removed row, another role, an unknown Organization and a second row are left out; \
              the served working hosts go with the sign-in host"
         );
+        let two = from_registry(
+            [
+                ("IDM.hel.fi:443", "hel", "signin", "served"),
+                ("idm.bbsk.sk", "bbsk", "signin", "served"),
+            ],
+            &["bbsk".to_owned(), "hel".to_owned()],
+        );
+        assert_eq!(
+            two.iter()
+                .map(|s| (s.organization.as_str(), s.host.as_str()))
+                .collect::<Vec<_>>(),
+            [("bbsk", "idm.bbsk.sk"), ("hel", "idm.hel.fi")],
+            "sorted by Organization, each host lowercase without its port"
+        );
+        assert!(
+            two.iter().all(|s| s.portals.is_empty()),
+            "no working host served"
+        );
+        assert!(from_registry([], &["hel".to_owned()]).is_empty());
     }
 
-    #[test]
-    fn a_follower_gets_the_last_set_at_once_and_each_change_once() {
+    /// Inside a runtime, as the Portal's registry watcher publishes: a test that started
+    /// kaisatsu leaves its follower, which spawns the realm apply.
+    #[tokio::test]
+    async fn a_follower_gets_the_last_set_at_once_and_each_change_once() {
         let seen = Arc::new(Mutex::new(Vec::<usize>::new()));
         let one = vec![SignIn {
             organization: "hel".into(),

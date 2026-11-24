@@ -476,11 +476,13 @@ pub async fn endpoint_page(
     if !is_slug(slug) || sources.is_empty() {
         return Ok(None);
     }
+    // The passages that name the slug, from `chunk_endpoints` (T-7789): an index lookup, never
+    // a pattern over every passage.
     let url: Option<String> = sqlx::query_scalar(
-        "WITH named AS (SELECT c.url, c.id, c.url ~ '/dataset/[^/]+/?$' AS dataset \
-             FROM chunks c JOIN sites s ON s.id = c.site_id \
-             WHERE s.source = ANY($2) AND (NOT $3 OR c.visibility = 'public') \
-             AND c.text ~ ('/api/endpoint/' || $1 || '([^a-z0-9-]|$)')) \
+        "WITH named AS (SELECT e.url, e.chunk_id AS id, e.url ~ '/dataset/[^/]+/?$' AS dataset \
+             FROM chunk_endpoints e JOIN sites s ON s.id = e.site_id \
+             WHERE e.slug = $1 AND e.kind = '' AND s.source = ANY($2) \
+             AND (NOT $3 OR e.visibility = 'public')) \
          SELECT url FROM named \
          WHERE NOT dataset OR (SELECT count(DISTINCT url) FROM named WHERE dataset) = 1 \
          ORDER BY NOT dataset, url ~ '/api/endpoint/', id LIMIT 1",
@@ -531,20 +533,20 @@ pub async fn dataset_page(
     sources: &[String],
     public_only: bool,
 ) -> Result<Option<String>, Error> {
-    let Some(pattern) = dataset_pattern(slugs, kind) else {
-        return Ok(None);
-    };
-    if sources.is_empty() {
+    if dataset_pattern(slugs, kind).is_none() || sources.is_empty() {
         return Ok(None);
     }
+    // From `chunk_endpoints` by slug and type (T-7789).
     let url: Option<String> = sqlx::query_scalar(
-        "SELECT c.url FROM chunks c JOIN sites s ON s.id = c.site_id \
-         WHERE s.source = ANY($2) AND (NOT $3 OR c.visibility = 'public') \
-         AND c.url !~ '/api/endpoint/' AND c.text ~ $1 ORDER BY c.id DESC LIMIT 1",
+        "SELECT e.url FROM chunk_endpoints e JOIN sites s ON s.id = e.site_id \
+         WHERE e.slug = ANY($1) AND e.kind = $4 AND s.source = ANY($2) \
+         AND (NOT $3 OR e.visibility = 'public') \
+         AND e.url !~ '/api/endpoint/' ORDER BY e.chunk_id DESC LIMIT 1",
     )
-    .bind(pattern)
+    .bind(slugs)
     .bind(sources)
     .bind(public_only)
+    .bind(kind)
     .fetch_optional(conn)
     .await?;
     Ok(url)
@@ -644,18 +646,19 @@ pub async fn dataset_reads_projects(
     if dataset_pattern(&[slug.to_owned()], kind).is_none() {
         return Ok(false);
     }
-    let address = format!("/api/endpoint/{slug}/ngsi-ld/v1/entities?type={kind}&q=isPartOf");
     for (project, names) in sources {
         let mut tx = project_scope(pool, project).await?;
+        // From `chunk_endpoints` by slug and type (T-7789).
         let held: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM chunks c JOIN sites s ON s.id = c.site_id \
-             WHERE c.url = $1 AND s.source = ANY($2) AND (NOT $3 OR c.visibility = 'public') \
-             AND strpos(c.text, $4) > 0)",
+            "SELECT EXISTS (SELECT 1 FROM chunk_endpoints e JOIN sites s ON s.id = e.site_id \
+             WHERE e.slug = $4 AND e.kind = $5 AND e.narrows AND e.url = $1 \
+             AND s.source = ANY($2) AND (NOT $3 OR e.visibility = 'public'))",
         )
         .bind(url)
         .bind(names)
         .bind(public_only)
-        .bind(&address)
+        .bind(slug)
+        .bind(kind)
         .fetch_one(&mut *tx)
         .await?;
         tx.rollback().await?;
@@ -995,5 +998,39 @@ mod tests {
         ] {
             assert!(!is_project_name(name), "{name}");
         }
+    }
+
+    #[test]
+    fn each_error_says_what_failed_and_only_a_database_one_has_a_source() {
+        use std::error::Error as _;
+        let cases = [
+            (
+                Error::Embedding("no rows".into()),
+                "the embedding is not usable: no rows",
+            ),
+            (
+                Error::Project("../x".into()),
+                "`../x` is not a project name",
+            ),
+            (Error::Crawl("refused".into()), "the crawl failed: refused"),
+            (
+                Error::Extract("broken".into()),
+                "the text could not be read: broken",
+            ),
+            (Error::Model("gone".into()), "the embedding model: gone"),
+            (
+                Error::TooLarge("text 3".into()),
+                "the embedder refused the text: text 3",
+            ),
+        ];
+        for (error, said) in cases {
+            assert_eq!(error.to_string(), said);
+            assert!(error.source().is_none());
+        }
+        let database = Error::Database(sqlx::Error::RowNotFound);
+        assert!(database
+            .to_string()
+            .starts_with("the assistant's database: "));
+        assert!(database.source().is_some());
     }
 }

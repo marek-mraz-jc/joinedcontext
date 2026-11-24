@@ -1,0 +1,4 @@
+token: plain
+parking:
+  username: ingest
+  password: plain

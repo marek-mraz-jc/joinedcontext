@@ -157,6 +157,78 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A broker whose `/q/health` answers `answers` in turn (the last repeats).
+    async fn broker(
+        answers: Vec<(u16, &'static str)>,
+    ) -> (Broker, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let asked = std::sync::Arc::new(AtomicUsize::new(0));
+        let count = asked.clone();
+        let app = axum::Router::new().route(
+            "/q/health",
+            axum::routing::get(move || {
+                let (count, answers) = (count.clone(), answers.clone());
+                async move {
+                    let n = count.fetch_add(1, Ordering::SeqCst);
+                    let (status, body) = answers[n.min(answers.len() - 1)];
+                    (
+                        axum::http::StatusCode::from_u16(status)
+                            .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+                        body,
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let address = listener.local_addr().expect("the bound address");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (Broker::new(format!("http://{address}")), asked)
+    }
+
+    /// T-7767: each way a broker's health fails to publish limits is an error that says which,
+    /// and a published set is read.
+    #[tokio::test]
+    async fn the_health_is_read_and_each_failure_names_itself() {
+        let (down, _) = broker(vec![(503, "down")]).await;
+        let refused = read(&down).await.expect_err("a 503");
+        assert!(refused.contains("503"), "{refused}");
+        let (garbled, _) = broker(vec![(200, "not json")]).await;
+        assert!(read(&garbled).await.is_err());
+        let (silent, _) = broker(vec![(200, r#"{"status":"UP"}"#)]).await;
+        assert_eq!(
+            read(&silent).await,
+            Err("the broker's health publishes no limits".to_owned())
+        );
+        let (published, _) = broker(vec![(
+            200,
+            r#"{"limits":{"maxLimit":1000,"temporalInstanceLimit":1000}}"#,
+        )])
+        .await;
+        assert_eq!(read(&published).await, Ok(Limits::default()));
+        let unreachable = Broker::new("http://127.0.0.1:9");
+        assert!(read(&unreachable).await.is_err());
+    }
+
+    /// T-7767: the follower asks again after a failure and stops once the limits are read
+    /// (the default values, so the process-wide limits other tests read stay as they are).
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn the_follower_asks_again_until_the_limits_are_read() {
+        let (flaky, asked) = broker(vec![
+            (503, "down"),
+            (
+                200,
+                r#"{"limits":{"maxLimit":1000,"temporalInstanceLimit":1000}}"#,
+            ),
+        ])
+        .await;
+        follow(flaky).await;
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
     #[test]
     fn health_limits_are_read_and_a_default_stays_under_its_ceiling() {
         let health = json!({"limits": {"maxLimit": 500, "defaultLimit": 900,

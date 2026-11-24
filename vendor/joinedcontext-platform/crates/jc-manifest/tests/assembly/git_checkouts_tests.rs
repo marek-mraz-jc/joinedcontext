@@ -4,7 +4,7 @@ use crate::common;
 
 use common::{temp_dir, write, ENDPOINT, ORG, PROJECT, SPACE};
 use jc_core::kinds::Project;
-use jcctl::assemble::{assemble, Credential, GitCheckouts, Resolver};
+use jc_manifest::assemble::{assemble, Credential, GitCheckouts, Resolver};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -52,14 +52,14 @@ fn entry(git_ref: &str) -> Project {
     .expect("the entry parses")
 }
 
-fn no_secrets(_: &jc_core::SecretRef) -> Result<jcctl::assemble::Basic, String> {
+fn no_secrets(_: &jc_core::SecretRef) -> Result<jc_manifest::assemble::Basic, String> {
     Err("no secret store in this test".into())
 }
 
 fn checkouts<'a>(
     forge: &Path,
     cache: PathBuf,
-    secrets: &'a dyn Fn(&jc_core::SecretRef) -> Result<jcctl::assemble::Basic, String>,
+    secrets: &'a dyn Fn(&jc_core::SecretRef) -> Result<jc_manifest::assemble::Basic, String>,
 ) -> GitCheckouts<'a> {
     GitCheckouts {
         cache,
@@ -142,7 +142,7 @@ fn an_external_repository_never_gets_the_forge_credential() {
 
     // The secret store is asked for the entry's own secret, and a refusal stops the fetch.
     let asked = Cell::new(0);
-    let refusing = |secret: &jc_core::SecretRef| -> Result<jcctl::assemble::Basic, String> {
+    let refusing = |secret: &jc_core::SecretRef| -> Result<jc_manifest::assemble::Basic, String> {
         asked.set(asked.get() + 1);
         Err(format!("{} is not in the store", secret.name))
     };

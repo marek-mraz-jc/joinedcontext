@@ -503,6 +503,48 @@ mod tests {
         assert!(!detail.contains("broker.internal"), "{detail}");
     }
 
+    /// T-7767 (R46): the binary trusts the image's roots; a bundle adds to them only when it
+    /// holds a certificate, and one that holds none or a broken block is an error, never a
+    /// silent fallback to the public roots. A request error says the platform is at fault.
+    #[test]
+    fn a_trust_bundle_adds_certificates_or_refuses_the_start() {
+        let Ok(system) = std::fs::read(SYSTEM_ROOTS) else {
+            // No trust store in this image: the start is refused, naming the file.
+            assert!(
+                matches!(roots_from_file(SYSTEM_ROOTS), Err(ProxyError::Trust(why)) if why.contains(SYSTEM_ROOTS))
+            );
+            return;
+        };
+        assert!(Broker::verified("https://broker:1026").is_ok());
+        let text = String::from_utf8_lossy(&system);
+        let end = "-----END CERTIFICATE-----";
+        let first = text
+            .find(end)
+            .map(|at| &text[..at + end.len()])
+            .expect("a certificate");
+        assert!(Broker::trusting("https://broker:1026", first.as_bytes()).is_ok());
+        assert!(matches!(
+            Broker::trusting("https://broker:1026", b"no pem here"),
+            Err(ProxyError::Trust(why)) if why.contains("no CERTIFICATE")
+        ));
+        let broken = b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
+        assert!(matches!(
+            Broker::trusting("https://broker:1026", broken),
+            Err(ProxyError::Trust(_))
+        ));
+        assert!(matches!(
+            roots_from_file("/nonexistent/roots.pem"),
+            Err(ProxyError::Trust(why)) if why.starts_with("/nonexistent/roots.pem")
+        ));
+        let empty = std::env::temp_dir().join(format!("gw-empty-roots-{}.pem", std::process::id()));
+        std::fs::write(&empty, b"").expect("a file");
+        let path = empty.to_string_lossy().into_owned();
+        assert!(
+            matches!(roots_from_file(&path), Err(ProxyError::Trust(why)) if why.contains("no CERTIFICATE"))
+        );
+        let _ = std::fs::remove_file(&empty);
+    }
+
     #[test]
     fn the_hop_header_replaces_a_clients_and_never_prints() {
         let name = HeaderName::from_static("x-jc-gateway-hop");

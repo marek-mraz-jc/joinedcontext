@@ -1148,6 +1148,10 @@
         state = next;
         remember();
         read();
+      }, function (ids) {
+        state.stations = ids;
+        remember();
+        if (plan) draw();
       });
       var all = [];
       var units = {};
@@ -1378,11 +1382,6 @@
           if (bar) bar.busy(false);
         });
       }
-      if (bar) bar.onStations(function (ids) {
-        state.stations = ids;
-        remember();
-        if (plan) draw();
-      });
       var resizing = null;
       window.addEventListener("resize", function () {
         clearTimeout(resizing);
@@ -1393,8 +1392,9 @@
   }
 
   // The toolbar: labelled native selects, each with a hint line, in the page's language. `change`
-  // gets a new state for a change that needs a new read; stations filter the rows already read.
-  function toolbar(doc, source, state, t, lang, change) {
+  // gets a new state for a change that needs a new read; `pick` the stations, which filter the rows
+  // already read.
+  function toolbar(doc, source, state, t, lang, change, pick) {
     var own = defaults(source);
     var form = doc.createElement("form");
     form.className = "controls";
@@ -1540,19 +1540,17 @@
       if ((wanted === "P1M" || wanted === "P1Y") && duration(range.value)) wanted = gran.value = own.gran;
     });
     [range, from, to, gran, method].concat(attr ? [attr] : []).forEach(function (el) { el.addEventListener("change", changed); });
-    var onStations = function () {};
     stations.addEventListener("change", function () {
       var ids = Array.prototype.filter.call(stations.options, function (o) { return o.selected; }).map(function (o) { return o.value; });
       // "All stations" picked beside others clears them; a station picked beside it replaces it.
       var all = ids.indexOf("") >= 0;
       chosen = all && chosen.length ? [] : ids.filter(Boolean);
       mark();
-      onStations(chosen.slice());
+      pick(chosen.slice());
     });
     return {
       form: form,
       busy: function (on) { form.setAttribute("aria-busy", on ? "true" : "false"); },
-      onStations: function (f) { onStations = f; },
       // The granularity drawn; a finer one than the range is read by cannot be picked.
       gran: function (value, least) {
         Array.prototype.forEach.call(gran.options, function (o) { o.disabled = stepOf(o.value) < stepOf(least); });

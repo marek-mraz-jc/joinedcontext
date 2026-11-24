@@ -1,7 +1,7 @@
 //! A workspace preview is the repository rendered with `ws-{name}-` in front of every
 //! organization-unique identity, and a render that leaks one is refused (CC-78, PF-83; T-1230).
 
-use jcctl::loader::{LoadError, Repository, ResourceId};
+use jc_manifest::loader::{LoadError, Repository, ResourceId};
 use std::path::{Path, PathBuf};
 
 fn write(dir: &Path, rel: &str, body: &str) {
@@ -138,12 +138,12 @@ fn a_preview_endpoint_answers_on_a_minted_slug_of_its_own() {
     assert_ne!(slug, origin);
     assert_eq!(
         slug,
-        jcctl::loader::preview_slug_salted("ws-demo-", "", origin),
+        jc_manifest::loader::preview_slug_salted("ws-demo-", "", origin),
         "the same on every render"
     );
     assert_ne!(
         slug,
-        jcctl::loader::preview_slug_salted("ws-other-", "", origin),
+        jc_manifest::loader::preview_slug_salted("ws-other-", "", origin),
         "one per workspace"
     );
     jc_core::kinds::EndpointSlug::new(&slug).expect("opaque base32 like every slug (EP-02)");

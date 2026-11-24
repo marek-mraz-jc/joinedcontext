@@ -93,6 +93,36 @@ async fn shared_with_me_lists_only_organization_apps_of_other_projects_the_perso
     }
 }
 
+/// A shared App carries its title and description as written, in every language; an App whose
+/// manifest no longer reads is skipped, not a failed list.
+#[tokio::test]
+async fn a_shared_app_carries_its_title_and_description_and_an_unreadable_one_is_skipped() {
+    let state = state();
+    let mut titled = envelope("App", "air-map", "espoo", app("organization", "published"));
+    titled.metadata.title =
+        serde_json::from_value(json!({ "en": "Air map", "fi": "Ilmakartta" })).ok();
+    titled.metadata.description = serde_json::from_value(json!({ "en": "PM10 by street" })).ok();
+    state.mirror.upsert(titled);
+    state.mirror.upsert(envelope(
+        "App",
+        "broken-map",
+        "espoo",
+        json!({ "visibility": 7 }),
+    ));
+    let answer = send(&state, person("vera"), "GET", "/api/v1/shared-apps", None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let list: Value = serde_json::from_str(&answer.text).expect("a JSON list");
+    assert_eq!(
+        list,
+        json!([{
+            "project": "espoo", "name": "air-map",
+            "title": { "en": "Air map", "fi": "Ilmakartta" },
+            "description": { "en": "PM10 by street" },
+        }]),
+        "{list}"
+    );
+}
+
 #[tokio::test]
 async fn a_person_outside_the_organization_gets_an_empty_list_and_an_anonymous_caller_401() {
     let state = state();

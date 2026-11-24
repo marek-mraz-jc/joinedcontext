@@ -342,6 +342,28 @@ async fn refusing_embedder(refused_sent: Arc<AtomicUsize>) -> (String, String) {
     (format!("http://{addr}"), format!("http://{addr}/token"))
 }
 
+/// A question asked through the embedder service: its vector and no wait for a local model; a
+/// question the service refuses is an error, never an empty vector.
+#[tokio::test]
+async fn a_question_is_embedded_by_the_service_and_a_refused_one_is_an_error() {
+    let (url, token_url) = refusing_embedder(Arc::new(AtomicUsize::new(0))).await;
+    let embedder = Embedder::remote(jc_embedder::client::RemoteConfig {
+        url,
+        token_url,
+        client_id: "jc-assistant".into(),
+        client_secret: "s".into(),
+    })
+    .expect("remote");
+    assert!(embedder.is_remote());
+    let (vector, took) = embedder
+        .query_timed("Kedy je otvorená knižnica?")
+        .await
+        .expect("embedded");
+    assert_eq!(vector.len(), DIMENSIONS);
+    assert_eq!(took.waited, std::time::Duration::ZERO);
+    assert!(embedder.query("ODMIETNI túto otázku").await.is_err());
+}
+
 /// T-7290 (jc-prod zilina: "413 Payload Too Large text 5 is longer than 8192 bytes" every
 /// minute): a 20 000-byte passage of multi-byte letters stored before passages were split is
 /// sent within the cap and embedded; a passage the embedder still refuses is marked with why,

@@ -105,10 +105,9 @@ pub fn vars(
     let mut out = BTreeMap::new();
     let unset = |key: &str| env(&env_key(key)).is_none_or(|v| v.trim().is_empty());
     let mut group = |values: Vec<(&str, Option<String>)>| {
-        let Some((first, _)) = values.first() else {
-            return;
-        };
-        if !unset(first) || values.iter().any(|(_, v)| v.is_none()) {
+        if values.first().is_none_or(|(first, _)| !unset(first))
+            || values.iter().any(|(_, v)| v.is_none())
+        {
             return;
         }
         for (key, value) in values {
@@ -508,9 +507,8 @@ fn unpack(archive: &[u8], into: &Path) -> Result<(), String> {
         }
         budget -= body.len() as u64;
         let target = into.join(&relative);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("`{name}`: {e}"))?;
-        }
+        std::fs::create_dir_all(target.parent().unwrap_or(into))
+            .map_err(|e| format!("`{name}`: {e}"))?;
         std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -1337,6 +1335,15 @@ mod tests {
                                 axum::Json(serde_json::json!({"token": "pia-for-closedslug"}))
                                     .into_response()
                             }
+                            (true, Some("__Host-jc_session=garbled"), ..) => {
+                                (StatusCode::OK, "not json").into_response()
+                            }
+                            (true, Some("__Host-jc_session=broken"), ..) => {
+                                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                            }
+                            (true, Some("__Host-jc_session=newline"), ..) => {
+                                axum::Json(serde_json::json!({"token": "a\nb"})).into_response()
+                            }
                             _ => StatusCode::NO_CONTENT.into_response(),
                         }
                     },
@@ -1384,7 +1391,28 @@ mod tests {
             read(app.clone(), "__Host-jc_session=pia").await,
             "Bearer pia-for-closedslug"
         );
-        assert_eq!(read(app, "__Host-jc_session=gone").await, "anonymous");
+        assert_eq!(
+            read(app.clone(), "__Host-jc_session=gone").await,
+            "anonymous"
+        );
+        // An answer that does not read, a failing listener and a token that is no header value
+        // leave the read anonymous.
+        for cookie in [
+            "__Host-jc_session=garbled",
+            "__Host-jc_session=broken",
+            "__Host-jc_session=newline",
+        ] {
+            assert_eq!(read(app.clone(), cookie).await, "anonymous", "{cookie}");
+        }
+        // Without a Host header the request's authority is the host the Portal is told.
+        let req = axum::http::Request::get("http://portal.test/api/endpoint/closedslug")
+            .header("sec-fetch-site", "same-origin")
+            .header(header::COOKIE, "__Host-jc_session=pia")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = tower::ServiceExt::oneshot(app, req).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), 4096).await.unwrap();
+        assert_eq!(&body[..], b"Bearer pia-for-closedslug");
         let unreachable = echo(remote("http://127.0.0.1:9"));
         assert_eq!(
             read(unreachable, "__Host-jc_session=pia").await,
@@ -1869,6 +1897,50 @@ mod tests {
         assert!(!v.contains_key("JC_GATEWAY_REVOCATIONS_URL"));
     }
 
+    /// A group is filled only while its first key is unset, and a later key the operator set
+    /// stays theirs; without shako beside it the gateway gets no checkout directories.
+    #[test]
+    fn a_group_keeps_an_operators_later_key_and_no_shako_means_no_checkout() {
+        let (mut siblings, setup, mount, _d) = fixture();
+        let jwks = |k: &str| match k {
+            "JC_GATEWAY_OIDC_JWKS_URL" => Some("https://keys.test".to_owned()),
+            "JC_INTERNAL_BIND" => Some("0.0.0.0:9090".to_owned()),
+            _ => None,
+        };
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            None,
+            PortalAt::Here(None),
+            jwks,
+        );
+        assert_eq!(v["JC_OIDC_ISSUER"], "https://city.example/login/realms/jc");
+        assert!(
+            !v.contains_key("JC_OIDC_JWKS_URL"),
+            "the operator's key stays"
+        );
+        assert!(v.contains_key("JC_GATEWAY_REPO_DIR"));
+        siblings.remove(Module::Shako);
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            None,
+            PortalAt::Here(None),
+            |_| None,
+        );
+        for key in [
+            "JC_GATEWAY_REPO_DIR",
+            "JC_GATEWAY_PROJECTS_DIR",
+            "JC_GATEWAY_ASSEMBLY_DIR",
+        ] {
+            assert!(!v.contains_key(key), "{key}");
+        }
+    }
+
     #[test]
     fn the_siblings_fill_the_realm_the_forge_and_the_hop_and_an_explicit_key_wins() {
         let (siblings, setup, mount, _d) = fixture();
@@ -2319,6 +2391,306 @@ mod tests {
             .checkout("org", &spec)
             .unwrap_err();
         assert!(why.contains("larger than"), "{why}");
+    }
+
+    /// The forge client refuses an address that is not http(s), an owner that is no path name
+    /// and a token that cannot be a header value, before any request.
+    #[test]
+    fn the_forge_client_refuses_a_bad_address_owner_or_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = jc_secret::Secret::new("forge-token-not-secret".to_owned());
+        let new = |forge: &str, owner: &str, token: &jc_secret::Secret| {
+            ForgeArchives::new(forge, owner, token, dir.path().to_path_buf())
+                .err()
+                .unwrap()
+        };
+        assert!(new("ftp://forge.test", "city", &token).contains("not http or https"));
+        for owner in ["", ".hidden", "a/b", "c d"] {
+            assert!(
+                new("https://forge.test", owner, &token).contains("not an owner name"),
+                "{owner}"
+            );
+        }
+        let broken = jc_secret::Secret::new("line\nbreak".to_owned());
+        assert!(new("https://forge.test", "city", &broken).contains("not a header value"));
+    }
+
+    /// A commit id names itself without a request; a branch answer that does not read, a ref
+    /// that is neither a branch nor a tag, an empty commit list and a sha that is no commit id
+    /// are each refused with the ref named.
+    #[test]
+    fn a_ref_resolves_to_a_commit_id_or_is_refused_with_the_ref_named() {
+        use axum::http::StatusCode;
+        use axum::routing::get;
+        let dir = tempfile::tempdir().unwrap();
+        let unreachable = archives("http://127.0.0.1:9", dir.path());
+        assert_eq!(unreachable.commit("conf", SHA).unwrap(), SHA, "no request");
+        let e = unreachable.commit("conf", "main").unwrap_err();
+        assert!(e.contains("the forge does not answer"), "{e}");
+        let base = serve(
+            Router::new()
+                .route(
+                    "/api/v1/repos/city/conf/branches/garbled",
+                    get(|| async { "not json" }),
+                )
+                .route(
+                    "/api/v1/repos/city/conf/commits",
+                    get(|query: axum::extract::RawQuery| async move {
+                        match query.0.as_deref() {
+                            Some(q) if q.starts_with("sha=v1&") => {
+                                (StatusCode::OK, format!(r#"[{{"sha": "{SHA}"}}]"#))
+                            }
+                            Some(q) if q.starts_with("sha=empty&") => (StatusCode::OK, "[]".into()),
+                            Some(q) if q.starts_with("sha=short&") => {
+                                (StatusCode::OK, r#"[{"sha": "abc"}]"#.into())
+                            }
+                            Some(q) if q.starts_with("sha=weird&") => (StatusCode::OK, "{}".into()),
+                            _ => (StatusCode::NOT_FOUND, String::new()),
+                        }
+                    }),
+                ),
+        );
+        let forge = archives(&base, dir.path());
+        assert_eq!(forge.commit("conf", "v1").unwrap(), SHA, "a tag's commit");
+        for (git_ref, says) in [
+            ("garbled", "does not read"),
+            ("weird", "does not read"),
+            ("gone", "names no branch or tag"),
+            ("empty", "names no commit"),
+            ("short", "names no commit id"),
+        ] {
+            let e = forge.commit("conf", git_ref).unwrap_err();
+            assert!(e.contains(says) && e.contains(git_ref), "{git_ref}: {e}");
+        }
+    }
+
+    /// A forge answer cut short of its announced length is refused, never read as a whole body.
+    #[test]
+    fn a_forge_answer_cut_short_is_refused() {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut socket, _)) = listener.accept() {
+                let mut request = [0u8; 4096];
+                let _ = socket.read(&mut request);
+                let _ = socket.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 1000\r\nconnection: close\r\n\r\nshort",
+                );
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let forge = archives(&format!("http://{addr}"), dir.path());
+        let e = forge.get("conf/branches/main", MAX_ANSWER).unwrap_err();
+        assert!(e.starts_with("city/conf/branches/main: "), "{e}");
+    }
+
+    /// A registry entry naming both a forge repository and a url is refused; a commit without
+    /// an archive is refused; an archive that fails to unpack leaves no partial tree behind.
+    #[test]
+    fn a_checkout_refuses_two_sources_a_missing_archive_and_cleans_a_failed_unpack() {
+        use jc_manifest::assemble::Resolver as _;
+        let dir = tempfile::tempdir().unwrap();
+        let unreachable = archives("http://127.0.0.1:9", dir.path());
+        let e = unreachable
+            .checkout(
+                "conf",
+                &entry(
+                    serde_json::json!({"repository": {"name": "conf", "url": "https://x.test/r"}}),
+                ),
+            )
+            .unwrap_err();
+        assert!(e.contains("either a forge repository or a url"), "{e}");
+        let (base, _) = forge(b"not a zip".to_vec());
+        let cache = dir.path().join("cache");
+        let resolver = archives(&base, &cache);
+        let conf = entry(serde_json::json!({"repository": {"name": "conf"}}));
+        let e = resolver.checkout("conf", &conf).unwrap_err();
+        assert!(e.contains("the archive did not open"), "{e}");
+        assert_eq!(
+            std::fs::read_dir(&cache).unwrap().count(),
+            0,
+            "the partial tree is removed"
+        );
+        let other = entry(serde_json::json!({"repository": {"name": "other"}, "ref": SHA}));
+        let e = resolver.checkout("other", &other).unwrap_err();
+        assert!(e.contains("no archive of"), "{e}");
+    }
+
+    /// The forge's wrapper directory and directory entries are skipped, and an entry that names
+    /// the wrapper's parent lands nowhere; a file in a directory's place or the reverse, one
+    /// whose checksum fails and one the reader cannot open are refused.
+    #[test]
+    fn an_archive_with_odd_entries_unpacks_what_it_may_and_refuses_the_rest() {
+        let unpacked = |archive: Vec<u8>| {
+            let dir = tempfile::tempdir().unwrap();
+            let into = dir.path().join("tree");
+            std::fs::create_dir(&into).unwrap();
+            unpack(&archive, &into).map(|()| {
+                let mut names: Vec<String> = walk(&into);
+                names.sort();
+                names
+            })
+        };
+        fn walk(dir: &Path) -> Vec<String> {
+            std::fs::read_dir(dir)
+                .unwrap()
+                .flatten()
+                .flat_map(|e| {
+                    let path = e.path();
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    if path.is_dir() {
+                        walk(&path)
+                            .into_iter()
+                            .map(|n| format!("{name}/{n}"))
+                            .collect()
+                    } else {
+                        vec![name]
+                    }
+                })
+                .collect()
+        }
+        let mut out = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut out);
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.add_directory("conf-main/docs/", opts).unwrap();
+        zip.start_file("conf-main", opts).unwrap();
+        zip.start_file("conf-main/docs/a.md", opts).unwrap();
+        std::io::Write::write_all(&mut zip, b"a").unwrap();
+        zip.finish().unwrap();
+        assert_eq!(unpacked(out.into_inner()).unwrap(), ["docs/a.md"]);
+        assert_eq!(
+            unpacked(zip_of(&[("conf-main/../x", b"x")])).unwrap(),
+            Vec::<String>::new(),
+            "an entry that climbs out of the wrapper lands nowhere"
+        );
+        // A file where a later entry needs a directory, and a directory where one needs a file.
+        let e = unpacked(zip_of(&[("conf-main/a", b"1"), ("conf-main/a/b", b"2")])).unwrap_err();
+        assert!(e.starts_with("`conf-main/a/b`: "), "{e}");
+        let e = unpacked(zip_of(&[("conf-main/a/b", b"1"), ("conf-main/a", b"2")])).unwrap_err();
+        assert!(e.starts_with("`conf-main/a`: "), "{e}");
+        // The central directory's copy of the first entry: its checksum, then its method.
+        let patched = |offset: usize, bytes: &[u8]| {
+            let mut zip = zip_of(&[("conf-main/a", b"body")]);
+            let at = zip.windows(4).position(|w| w == b"PK\x01\x02").unwrap();
+            zip[at + offset..at + offset + bytes.len()].copy_from_slice(bytes);
+            let local = zip.windows(4).position(|w| w == b"PK\x03\x04").unwrap();
+            let local_offset = offset - 2;
+            zip[local + local_offset..local + local_offset + bytes.len()].copy_from_slice(bytes);
+            zip
+        };
+        let e = unpacked(patched(16, &[0, 0, 0, 0])).unwrap_err();
+        assert!(e.starts_with("`conf-main/a`: "), "{e}");
+        let e = unpacked(patched(10, &[77, 0])).unwrap_err();
+        assert!(e.contains("compression method"), "{e}");
+        let mut bad_local = zip_of(&[("conf-main/a", b"body")]);
+        let local = bad_local
+            .windows(4)
+            .position(|w| w == b"PK\x03\x04")
+            .unwrap();
+        bad_local[local..local + 4].copy_from_slice(b"XXXX");
+        let e = unpacked(bad_local).unwrap_err();
+        assert!(e.contains("archive entry 0"), "{e}");
+    }
+
+    /// The MQTT brokers' listener on an address already taken stops the start naming it.
+    #[tokio::test]
+    async fn the_mqtt_listener_on_a_taken_address_stops_the_start() {
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = taken.local_addr().unwrap();
+        let e = serve_internal(addr, Router::new())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("internal listener") && e.contains(&addr.to_string()),
+            "{e}"
+        );
+        let free = serve_internal("127.0.0.1:0".parse().unwrap(), Router::new())
+            .await
+            .unwrap();
+        assert_ne!(free.port(), 0);
+    }
+
+    /// The mount's own prefix goes back in front of the path when jc-router left no route
+    /// prefix: `/` is the prefix itself and a query is kept.
+    #[tokio::test]
+    async fn the_mount_prefix_goes_back_in_front_of_the_path() {
+        use axum::routing::any;
+        use tower::ServiceExt;
+        let app = Router::new()
+            .fallback(any(|uri: Uri| async move { uri.to_string() }))
+            .layer(axum::middleware::from_fn(whole_path));
+        let ask = |path: &str, prefix: Option<&str>| {
+            let mut req = axum::http::Request::get(path);
+            if let Some(prefix) = prefix {
+                req = req.extension(Mount::new("gateway", "https", "api.test", prefix).unwrap());
+            }
+            app.clone()
+                .oneshot(req.body(axum::body::Body::empty()).unwrap())
+        };
+        let text = |res: Response| async move {
+            String::from_utf8(
+                axum::body::to_bytes(res.into_body(), 1024)
+                    .await
+                    .unwrap()
+                    .to_vec(),
+            )
+            .unwrap()
+        };
+        assert_eq!(text(ask("/", Some("/gw")).await.unwrap()).await, "/gw");
+        assert_eq!(
+            text(ask("/api/endpoint/x?limit=1", Some("/gw")).await.unwrap()).await,
+            "/gw/api/endpoint/x?limit=1"
+        );
+        assert_eq!(text(ask("/a", None).await.unwrap()).await, "/a");
+        assert_eq!(text(ask("/a", Some("")).await.unwrap()).await, "/a");
+    }
+
+    /// The Portal-session reader exists only with a client of the gateway's own; it then asks
+    /// the Portal's internal listener at its endpoint-token path.
+    #[test]
+    fn remote_sessions_need_the_gateways_own_client() {
+        let config = |vars: &[(&str, &str)]| {
+            let vars: BTreeMap<String, String> = vars
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect();
+            Config::from_vars(|key| vars.get(key).cloned()).unwrap()
+        };
+        let base = [
+            ("JC_GATEWAY_BROKER_URL", "http://127.0.0.1:9"),
+            ("JC_GATEWAY_ORG_DOMAIN", "city.test"),
+            ("JC_GATEWAY_DOMAIN_VERIFICATIONS_URL", "http://127.0.0.1:9"),
+        ];
+        assert!(
+            RemoteSessions::new("http://portal.internal:9", &config(&base))
+                .unwrap()
+                .is_none()
+        );
+        let with_client = config(&[
+            base[0],
+            base[1],
+            base[2],
+            ("JC_OIDC_ISSUER", "https://login.city.test/realms/jc"),
+            (
+                "JC_OIDC_JWKS_URL",
+                "https://login.city.test/realms/jc/protocol/openid-connect/certs",
+            ),
+            (
+                "JC_GATEWAY_REVOCATIONS_URL",
+                "http://portal.internal:9/internal/revocations",
+            ),
+            ("JC_OIDC_CLIENT_ID", "context-gateway"),
+            ("JC_OIDC_CLIENT_SECRET", "gateway-secret-not-real"),
+        ]);
+        let remote = RemoteSessions::new("http://portal.internal:9/", &with_client)
+            .unwrap()
+            .expect("a client of its own");
+        assert_eq!(
+            remote.url,
+            "http://portal.internal:9/internal/endpoint-token"
+        );
     }
 
     #[test]
