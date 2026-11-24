@@ -599,11 +599,8 @@ fn model(
         .collect();
     let edm = edm::outputs(edm, &listed);
     let edm = if key.6 { edm::histories(edm) } else { edm };
-    tracing::debug!(
-        view = id,
-        schema_revision = revision,
-        "the view's OData model was built"
-    );
+    let schema_revision = revision;
+    tracing::debug!(view = id, schema_revision, "the view's OData model built");
     let documents = Arc::new(odata_axum::MetadataDocuments::default());
     // The XML document `$metadata` serves, written here once: its tag and its weight.
     let xml = documents.xml(&edm.csdl, &odata_csdl::Limits::strict());
@@ -638,11 +635,8 @@ fn parsed(revision: u64, bytes: &Arc<[u8]>) -> Option<Arc<linkml_model::Model>> 
 
 /// Logged once per revision on this pod: the result is cached.
 fn unreadable(revision: u64, e: &linkml_model::Error) {
-    tracing::warn!(
-        revision,
-        error = %e,
-        "the Tenant's schema cannot be read; OData is closed for its views"
-    );
+    let error = e;
+    tracing::warn!(revision, %error, "the Tenant's schema cannot be read; OData is closed for it");
 }
 
 /// The version the response is written in (Protocol 8.2.6, 8.2.7), as

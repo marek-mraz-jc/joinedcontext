@@ -41,17 +41,16 @@ pub fn items_query(pairs: &[(String, String)]) -> bool {
     items || item
 }
 
+/// The part, the offset and the store cursor a keyset token names.
+pub type Keyset = (usize, usize, Option<String>);
+
+/// A page token read plain and read with its store cursor.
+pub type Tokens = (Option<(usize, usize)>, Option<Keyset>);
+
 /// Reads `text` as the `next` token of a request whose digest is `digest` over `parts` parts,
 /// plain and with its store cursor.
 #[must_use]
-pub fn next_token(
-    text: &str,
-    digest: u64,
-    parts: usize,
-) -> (
-    Option<(usize, usize)>,
-    Option<(usize, usize, Option<String>)>,
-) {
+pub fn next_token(text: &str, digest: u64, parts: usize) -> Tokens {
     (
         crate::items::read_token(text, digest, parts),
         crate::items::read_keyset_token(text, digest, parts),

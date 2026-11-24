@@ -14,10 +14,10 @@
 "antares-linkml" = { lines = 99.80, functions = 100.00 }
 "antares-mcp" = { lines = 99.36, functions = 99.56 }
 "antares-notifier" = { lines = 99.05, functions = 99.14 }
-"antares-odata" = { lines = 99.47, functions = 99.12 }
-"antares-ogc" = { lines = 99.70, functions = 99.17 }
+"antares-odata" = { lines = 99.53, functions = 99.12 }
+"antares-ogc" = { lines = 99.76, functions = 99.52 }
 "antares-ops" = { lines = 99.00, functions = 99.00 }
-"antares-sta" = { lines = 100.00, functions = 99.78 }
+"antares-sta" = { lines = 100.00, functions = 100.00 }
 "antares-store" = { lines = 98.90, functions = 96.00 }
 "antares-views" = { lines = 99.88, functions = 99.30 }
 "antares-wasm" = { lines = 97.53, functions = 100.00 }
@@ -99,10 +99,10 @@
 "ngsild-residual" = { lines = 99.92, functions = 100.00 }
 "odata-axum" = { lines = 99.34, functions = 99.18 }
 "odata-batch" = { lines = 100.00, functions = 100.00 }
-"odata-csdl" = { lines = 99.76, functions = 100.00 }
+"odata-csdl" = { lines = 100.00, functions = 100.00 }
 "odata-json" = { lines = 100.00, functions = 100.00 }
 "odata-table" = { lines = 99.28, functions = 99.57 }
-"odata-url" = { lines = 99.88, functions = 100.00 }
+"odata-url" = { lines = 99.97, functions = 100.00 }
 "ogc-cql2" = { lines = 100.00, functions = 100.00 }
 "shako-api" = { lines = 96.35, functions = 90.25 }
 "shako-core" = { lines = 95.67, functions = 87.14 }

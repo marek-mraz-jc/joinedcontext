@@ -386,10 +386,8 @@ impl NatsBus {
                 )));
             }
         }
-        tracing::info!(
-            durables = ?balanced_durables,
-            "bus topology asserted: balanced durables present on {CHANGES_STREAM}"
-        );
+        let durables = balanced_durables;
+        tracing::info!(?durables, "bus topology asserted on {CHANGES_STREAM}");
         Ok(())
     }
 }
@@ -457,24 +455,22 @@ fn replicas_from(v: Option<&str>) -> Result<usize, BusError> {
 pub fn decode(msg: &async_nats::jetstream::Message) -> Option<ChangeEvent> {
     let ev: ChangeEvent = serde_json::from_slice(&msg.payload).ok()?;
     if !subject_tenant_agrees(msg.subject.as_str(), &ev) {
-        tracing::error!(
-            subject = %msg.subject,
-            tenant = %ev.tenant.as_str(),
-            "dropping change event: subject tenant segment disagrees with body"
-        );
+        let (subject, tenant) = (&msg.subject, ev.tenant.as_str());
+        tracing::error!(%subject, tenant, "dropping change event: subject and body tenants differ");
         return None;
     }
     Some(ev)
 }
 
+/// The warning a server that asks for no authentication gets.
+const OPEN_SERVER: &str = "connected to a NATS server that requires NO authentication — the \
+     ANTARES_CHANGES stream exposes all tenants' change events; require nkey/creds/mTLS and \
+     network-isolate the JetStream cluster in production";
+
 /// Warns when `info` names a server that asks for no authentication, and says so.
 fn open_to_anyone(info: &async_nats::ServerInfo) -> bool {
     if !info.auth_required {
-        tracing::warn!(
-            "connected to a NATS server that requires NO authentication — the \
-             ANTARES_CHANGES stream exposes all tenants' change events; require \
-             nkey/creds/mTLS and network-isolate the JetStream cluster in production"
-        );
+        tracing::warn!("{OPEN_SERVER}");
     }
     !info.auth_required
 }

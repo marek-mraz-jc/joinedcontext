@@ -600,12 +600,11 @@ mod tests {
     }
 
     #[test]
-    fn a_class_name_that_is_no_path_segment_is_left_out() -> Result<(), String> {
+    fn a_class_name_that_is_no_path_segment_is_left_out() {
         assert!(path_safe("Car_2.v-1"));
         assert!(!path_safe("Car 2"));
         assert!(!path_safe(""));
         assert!(!path_safe("Car/2"));
-        Ok(())
     }
 
     /// T-5204: a type no code knows gets its place and time from its model's annotations
