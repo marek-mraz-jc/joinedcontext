@@ -172,10 +172,12 @@ pub(crate) async fn upstream_body(
 /// backslash, no dot segment and no empty segment gets through (T-0817, T-1300, T-1301). The
 /// parser also drops every tab and line break before it reads a segment, so `.%09.` would be `..`
 /// once sent: no control character gets through either (T-7795). A decoded `?` or `#` ends the
-/// path there, so `..?x` would be `..` once sent: neither gets through (T-7795). A trailing slash,
-/// a directory listing, stays allowed.
+/// path there, so `..?x` would be `..` once sent: neither gets through (T-7795). The parser strips
+/// trailing spaces from the whole URL, and the path often ends it, so `.. ` would be `..`: no path
+/// ends in a space (T-7795). A trailing slash, a directory listing, stays allowed.
 pub(crate) fn escapes(path: &str) -> bool {
     path.contains(['%', '?', '#'])
+        || path.ends_with(' ')
         || path.contains(|c: char| c.is_ascii_control())
         || path.contains('\\')
         || path.starts_with('/')
@@ -250,6 +252,9 @@ mod tests {
             "..?x",
             "..#",
             "a/..?/../../b",
+            // The parser strips trailing spaces from the whole URL (T-7795).
+            ".. ",
+            "a/b/.. ",
         ] {
             assert!(escapes(path), "{path:?}");
         }

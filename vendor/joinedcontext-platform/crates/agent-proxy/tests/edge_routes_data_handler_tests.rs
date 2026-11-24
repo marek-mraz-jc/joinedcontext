@@ -168,6 +168,9 @@ async fn a_path_that_would_leave_the_endpoint_is_refused_however_it_is_spelled()
         "..%3Fid=x",
         "..%23",
         "ngsi-ld/v1/..%3F/../../admin",
+        // The URL parser strips trailing spaces from the whole URL, so a last `.. ` is `..`.
+        "..%20",
+        "..%20%20",
     ] {
         let proxy = with_gateway(false, &gateway.uri());
         let response = proxy
