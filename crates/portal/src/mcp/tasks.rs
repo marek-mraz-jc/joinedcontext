@@ -136,9 +136,9 @@ impl McpTasks {
             }
         });
         if let Ok(mut map) = self.tasks.lock() {
-            if let Some(task) = map.get_mut(&id) {
-                task.handle = Some(handle);
-            }
+            // The entry went in above, before the work started.
+            map.entry(id.clone())
+                .and_modify(|task| task.handle = Some(handle));
         }
         self.describe(owner, &id).unwrap_or_else(|| json!({}))
     }
@@ -302,10 +302,7 @@ mod tests {
     #[tokio::test]
     async fn a_cancelled_task_keeps_nothing_the_call_had_not_finished() {
         let tasks = McpTasks::new();
-        let started = tasks.start("owner-1", async {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            json!({ "isError": false, "written": true })
-        });
+        let started = tasks.start("owner-1", std::future::pending());
         // The call is under way, waiting, when it is cancelled.
         tokio::task::yield_now().await;
         let id = started["taskId"].as_str().expect("an id").to_owned();
@@ -432,10 +429,7 @@ mod tests {
     #[tokio::test]
     async fn a_task_still_working_is_told_to_wait_and_never_handed_half_an_answer() {
         let tasks = McpTasks::new();
-        let started = tasks.start("owner-1", async {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            json!({ "isError": false, "written": true })
-        });
+        let started = tasks.start("owner-1", std::future::pending());
         tokio::task::yield_now().await;
         let id = started["taskId"].as_str().expect("an id").to_owned();
         assert_eq!(
@@ -533,10 +527,10 @@ mod tests {
             task.finished_at = Some(now_unix() - ago);
         };
         finished_at(TASK_TTL_SECONDS - 5);
-        tasks.start("owner-2", async { json!({}) });
+        tasks.start("owner-2", std::future::ready(json!({})));
         assert!(tasks.describe("owner-1", &done).is_some());
         finished_at(TASK_TTL_SECONDS + 1);
-        tasks.start("owner-2", async { json!({}) });
+        tasks.start("owner-2", std::future::ready(json!({})));
         assert_eq!(tasks.describe("owner-1", &done), None);
         assert_eq!(tasks.result("owner-1", &done), Ok(None));
         // A task that never finished has no age to expire by.
@@ -618,5 +612,54 @@ mod tests {
         assert!(!is_long("jc_resource_list"));
         assert!(!is_long(""));
         assert_ne!(rand_id(), rand_id());
+    }
+
+    /// An answer that arrives after the task was cancelled, or after the task was forgotten,
+    /// changes nothing; cancelling a task whose work never got its handle still cancels it.
+    #[tokio::test]
+    async fn a_late_answer_changes_nothing_and_a_task_without_a_handle_still_cancels() {
+        let tasks = McpTasks::new();
+        let (release_late, late) = tokio::sync::oneshot::channel::<()>();
+        let (release_gone, gone) = tokio::sync::oneshot::channel::<()>();
+        let cancelled = tasks.start("owner-1", async move {
+            let _ = late.await;
+            json!({ "late": true })
+        });
+        let cancelled = cancelled["taskId"].as_str().expect("id").to_owned();
+        let forgotten = tasks.start("owner-1", async move {
+            let _ = gone.await;
+            json!({ "late": true })
+        });
+        let forgotten = forgotten["taskId"].as_str().expect("id").to_owned();
+        {
+            let mut map = tasks.tasks.lock().expect("lock");
+            // Cancelled while its handle was elsewhere: the work runs on to its answer.
+            let task = map.get_mut(&cancelled).expect("the task");
+            task.status = Status::Cancelled;
+            task.handle = None;
+            map.remove(&forgotten);
+        }
+        let _ = release_late.send(());
+        let _ = release_gone.send(());
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(
+            tasks.result("owner-1", &cancelled),
+            Err("the task was cancelled")
+        );
+        assert_eq!(tasks.describe("owner-1", &forgotten), None);
+
+        tasks.tasks.lock().expect("lock").insert(
+            "task-bare".to_owned(),
+            Task {
+                owner: "owner-1".to_owned(),
+                status: Status::Working,
+                result: None,
+                created_at: 1,
+                finished_at: None,
+                handle: None,
+            },
+        );
+        let after = tasks.cancel("owner-1", "task-bare").expect("the task");
+        assert_eq!(after["status"], "cancelled");
     }
 }

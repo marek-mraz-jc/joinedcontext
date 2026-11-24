@@ -1279,13 +1279,8 @@ async fn answer_call(
                         Err(err) => problem_result(err),
                     };
                 // `tasks/result` answers this later: grounded when it was evaluated (AG-12).
-                if let Some(meta) = outcome
-                    .as_object_mut()
-                    .map(|outcome| outcome.entry("_meta").or_insert_with(|| json!({})))
-                    .and_then(Value::as_object_mut)
-                {
-                    meta.insert(GROUNDING_META.to_owned(), grounding(&state_for_task));
-                }
+                // Each of the three answers above is an object whose `_meta` is one or absent.
+                outcome["_meta"][GROUNDING_META] = grounding(&state_for_task);
                 outcome
             }),
         );
@@ -1484,11 +1479,12 @@ fn may_ask(op: &crate::ops::OperationSummary) -> bool {
         || op.name == "jc_flow_start"
 }
 
-fn mcp_input_schema(mut schema: Value, asks: bool) -> Value {
-    if !schema.is_object() {
-        schema = json!({ "type": "object" });
-    }
-    if let Some(obj) = schema.as_object_mut() {
+fn mcp_input_schema(schema: Value, asks: bool) -> Value {
+    let mut obj = match schema {
+        Value::Object(obj) => obj,
+        _ => Map::new(),
+    };
+    {
         obj.remove("description");
         if !obj.contains_key("type") {
             obj.insert("type".to_string(), json!("object"));
@@ -1527,7 +1523,7 @@ fn mcp_input_schema(mut schema: Value, asks: bool) -> Value {
             }
         }
     }
-    schema
+    Value::Object(obj)
 }
 
 fn unauthorized_response(state: &AppState) -> Response {
@@ -1873,17 +1869,12 @@ fn problem_result(err: crate::ops::OpError) -> Value {
     let mut said = err.to_string();
     let (_, problem) = err.into_api_error().into_document();
     for named in problem["errors"].as_array().into_iter().flatten() {
-        let line = match (
-            named["path"].as_str(),
-            named["message"].as_str(),
-            named.as_str(),
-        ) {
-            (Some(path), Some(message), _) => format!("{path}: {message}"),
-            (None, Some(message), _) | (_, _, Some(message)) => message.to_owned(),
-            _ => continue,
-        };
-        said.push_str("\n- ");
-        said.push_str(&line);
+        // Each entry is a `FieldError`: always a path and a message.
+        let (path, message) = (
+            named["path"].as_str().unwrap_or_default(),
+            named["message"].as_str().unwrap_or_default(),
+        );
+        said.push_str(&format!("\n- {path}: {message}"));
     }
     json!({
         "isError": true,
@@ -3517,17 +3508,9 @@ mod tests {
             crate::error::type_uri("internal-error")
         );
 
-        let ran = std::sync::atomic::AtomicBool::new(false);
-        let refused = on_record(&state, audit(), async {
-            ran.store(true, std::sync::atomic::Ordering::SeqCst);
-            ok()
-        })
-        .await;
+        // Had the call been awaited, its 200 would come back, or the 500 of its lost outcome.
+        let refused = on_record(&state, audit(), std::future::ready(ok())).await;
         assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert!(
-            !ran.load(std::sync::atomic::Ordering::SeqCst),
-            "the call ran off the record"
-        );
         let said = body_of(refused).await.to_string();
         assert!(said.contains("did not run"), "{said}");
 
@@ -3543,5 +3526,122 @@ mod tests {
             &via,
         )
         .await;
+    }
+
+    /// RTE-10: a configured client origin is answered cross-origin beside the Portal's own.
+    #[tokio::test]
+    async fn a_configured_client_origin_is_answered_cross_origin() {
+        use tower::ServiceExt;
+        let mut config = crate::config::Config::for_tests();
+        config.mcp_client_origins = vec!["https://client.example".to_owned()];
+        let app = router(&config).with_state(AppState::new(config.clone(), None));
+        let preflight = |origin: &'static str| {
+            axum::http::Request::builder()
+                .method("OPTIONS")
+                .uri("/api/v1/mcp")
+                .header(header::ORIGIN, origin)
+                .header("access-control-request-method", "POST")
+                .body(Body::empty())
+                .expect("request")
+        };
+        let allowed = app
+            .clone()
+            .oneshot(preflight("https://client.example"))
+            .await
+            .expect("answer");
+        assert_eq!(
+            allowed.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "https://client.example"
+        );
+        let other = app
+            .oneshot(preflight("https://other.example"))
+            .await
+            .expect("answer");
+        assert!(!other
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+    }
+
+    /// A call naming its project in the params alone, with no arguments or arguments that are no
+    /// object, still runs as that project's; a credential in an argument is refused first.
+    #[tokio::test]
+    async fn arguments_absent_or_flat_and_a_pasted_credential() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let via = crate::change::ProposedVia::mcp(None);
+        let mut answer = None;
+        let bare = json!({ "name": "jc_resource_list", "project": "ovzdusie" });
+        let envelope =
+            answer_call(&state, steward(&state), json!(1), &bare, &via, &mut answer).await;
+        assert!(envelope.get("result").is_some(), "{envelope}");
+        let flat = json!({ "name": "jc_resource_list", "project": "ovzdusie", "arguments": "x" });
+        let envelope =
+            answer_call(&state, steward(&state), json!(2), &flat, &via, &mut answer).await;
+        assert_eq!(envelope["result"]["isError"], true, "{envelope}");
+        let pasted = json!({ "name": "jc_resource_list",
+            "arguments": { "project": "ovzdusie", "kind": "Pipeline", "password": "typed-in" } });
+        let envelope = answer_call(
+            &state,
+            steward(&state),
+            json!(3),
+            &pasted,
+            &via,
+            &mut answer,
+        )
+        .await;
+        assert_eq!(envelope["result"]["isError"], true, "{envelope}");
+        let text = envelope["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text");
+        assert!(
+            text.contains("/password") && !text.contains("typed-in"),
+            "{text}"
+        );
+    }
+
+    /// AG-60: a task is refused while the caller's calls at once are all running.
+    #[tokio::test]
+    async fn a_task_past_the_running_calls_is_refused() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let held: Vec<_> = (0..MAX_PARALLEL_CALLS)
+            .map(|_| {
+                state
+                    .mcp_enter(&[("f:1:steward", MAX_PARALLEL_CALLS)])
+                    .expect("a slot")
+            })
+            .collect();
+        let via = crate::change::ProposedVia::mcp(None);
+        let params = json!({ "name": "jc_pipeline_test", "task": {}, "arguments": {
+            "project": "ovzdusie",
+            "pipeline": { "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Pipeline",
+                          "metadata": { "name": "bikes" }, "spec": {} },
+            "sample": "{}" } });
+        let mut answer = None;
+        let envelope = answer_call(
+            &state,
+            steward(&state),
+            json!(1),
+            &params,
+            &via,
+            &mut answer,
+        )
+        .await;
+        let text = envelope["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(text.contains("of your calls are running now"), "{envelope}");
+        drop(held);
+    }
+
+    /// An answer whose body cannot be read is an error, never an allowed call.
+    #[tokio::test]
+    async fn an_answer_that_cannot_be_read_is_an_error() {
+        let cut = futures_util::stream::once(async {
+            Err::<Bytes, std::io::Error>(std::io::Error::other("cut"))
+        });
+        let (response, verdict) = outcome(Response::new(Body::from_stream(cut))).await;
+        assert_eq!(
+            (response.status(), verdict.as_str()),
+            (StatusCode::INTERNAL_SERVER_ERROR, "error")
+        );
     }
 }

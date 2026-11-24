@@ -613,10 +613,11 @@ fn tab_action(
         );
         return refused(403, "forbidden", "Forbidden", &why, "refused: target");
     };
+    // `project` was read off the arguments above, so they are an object.
     let mut checked = arguments.clone();
-    if let Some(fields) = checked.as_object_mut() {
-        fields.remove("project");
-    }
+    checked
+        .as_object_mut()
+        .and_then(|fields| fields.remove("project"));
     let asker = ui_actions::Asker {
         state,
         identity,
@@ -1937,5 +1938,28 @@ mod tests {
             detail.contains("this address to open: /projects/doprava/spaces"),
             "{detail}"
         );
+    }
+
+    /// JC1-22, T-6058: a connector over two projects keeps `project` required in every tool.
+    #[tokio::test]
+    async fn a_wider_connector_keeps_project_required() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut two = doprava();
+        let mut other = two.scope[0].clone();
+        other.project = "espoo".to_owned();
+        two.scope.push(other);
+        let now = crate::auth::session::now_unix();
+        let tab = state.paired_tabs.pair(&two.id, "f:1:ana", 5, now + 3600);
+        let _listening = state
+            .paired_tabs
+            .listen(&two.id, &tab, "f:1:ana", 5, now + 3600, now)
+            .expect("paired");
+        let (_, verdict, body) = judged(&state, &two, ana(), rpc("tools/list", json!({}))).await;
+        assert_eq!(verdict, "allowed");
+        let tools = body["result"]["tools"].as_array().expect("tools");
+        assert!(!tools.is_empty());
+        assert!(tools.iter().all(|t| t["inputSchema"]["required"]
+            .as_array()
+            .is_some_and(|r| r.contains(&json!("project")))));
     }
 }
