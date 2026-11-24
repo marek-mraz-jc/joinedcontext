@@ -478,6 +478,26 @@ mod tests {
     }
 
     #[test]
+    fn a_fresh_faker_draws_its_card_type_and_unix_times_from_its_stream() {
+        let fresh = |seed: i64| Faker {
+            rng: GoRand::new(seed),
+            card: None,
+        };
+        let cards: std::collections::HashSet<usize> =
+            (0..20).map(|seed| fresh(seed).card()).collect();
+        assert!(cards.len() > 2, "{cards:?}");
+        let mut f = fresh(7);
+        let first = f.card();
+        assert!((0..5).all(|_| f.card() == first));
+        let now = Timestamp::now().as_second();
+        let times: std::collections::HashSet<i64> = (0..10).map(|_| f.unix_time()).collect();
+        assert!(
+            times.len() > 5 && times.iter().all(|t| (0..now).contains(t)),
+            "{times:?}"
+        );
+    }
+
+    #[test]
     fn coordinates_and_amounts_are_uniform_fractions_scaled_into_range() {
         let num = |name: &str| match fake(name) {
             Ok(Value::Float(f)) => f,

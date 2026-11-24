@@ -621,6 +621,14 @@ mod tests {
     }
 
     #[test]
+    fn a_wkt_fault_names_its_byte_and_reason() {
+        assert_eq!(
+            parse_wkt("POINT(1 x)"),
+            Err("failed to parse WKT at byte 8: a position of 1 numbers does not match the geometry's dimensions".to_string())
+        );
+    }
+
+    #[test]
     fn crs84_names_end_in_a_colon_or_a_slash() {
         assert_eq!(epsg_code("urn:ogc:def:crs:OGC:2:CRS84"), Some(4326));
         assert_eq!(
