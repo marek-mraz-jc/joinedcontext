@@ -243,8 +243,7 @@ fn pg_text_to_binary(
         1700 => encode_numeric(&s()).ok_or_else(|| pg_invalid("numeric", &s()))?,
         1114 | 1184 => {
             let t = s();
-            let micros =
-                parse_pg_timestamp(&t).ok_or_else(|| pg_invalid(type_name, &t))?;
+            let micros = parse_pg_timestamp(&t).ok_or_else(|| pg_invalid(type_name, &t))?;
             micros.to_be_bytes().to_vec()
         }
         1082 => {
@@ -1457,14 +1456,14 @@ mod tests {
         ];
         let got = rows(
             &db,
-            "SELECT ? AS a, ? AS b, ? AS c, ? AS d, ? AS e, ? AS f, ? AS g, CAST(? AS DATETIME(6)) AS h, CAST(18446744073709551615 AS UNSIGNED) AS u, CAST(5 AS UNSIGNED) AS v",
+            "SELECT ? AS a, ? AS b, ? AS c, ? AS d, ? AS e, ? AS f, ? AS g, CAST(? AS DATETIME(6)) AS h, CAST(18446744073709551615 AS UNSIGNED) AS u, CAST(5 AS UNSIGNED) AS v, CAST(1.1 AS FLOAT) AS w",
             args,
             false,
         )
         .await;
         assert_eq!(
             got[0].as_ref().unwrap().to_go_json(),
-            r#"{"a":null,"b":1,"c":-2,"d":7,"e":1.5,"f":"s","g":"b","h":"2024-01-02 02:04:05.250000","u":"18446744073709551615","v":5}"#
+            r#"{"a":null,"b":1,"c":-2,"d":7,"e":1.5,"f":"s","g":"b","h":"2024-01-02 02:04:05.250000","u":"18446744073709551615","v":5,"w":1.1}"#
         );
         let got = rows(
             &db,
@@ -1514,6 +1513,14 @@ mod tests {
             mysql_value(&row, 0, false, true).unwrap(),
             Value::String("7".into())
         );
+        // parseTime reads only time columns; a number stays the text the protocol gave.
+        assert_eq!(
+            mysql_value(&row, 0, true, true).unwrap(),
+            Value::String("7".into())
+        );
+        // Without arguments go-sql-driver runs a text-protocol query: every value is text.
+        let got = rows(&db, "SELECT 7 AS a", vec![], false).await;
+        assert_eq!(got[0].as_ref().unwrap().to_go_json(), r#"{"a":"7"}"#);
         assert!(mysql_value(&row, 9, false, true)
             .unwrap_err()
             .contains("out of bounds"));
@@ -1748,6 +1755,10 @@ mod tests {
             Some(b"a\\b\x01".to_vec())
         );
         assert_eq!(decode_bytea_text(b"\\x"), Some(vec![]));
+        assert_eq!(
+            decode_bytea_text(b"a\\001b\\002"),
+            Some(b"a\x01b\x02".to_vec())
+        );
         assert_eq!(decode_bytea_text(b"\\xzz"), None);
         assert_eq!(decode_bytea_text(b"\\01"), None, "a cut octal escape");
         assert_eq!(decode_bytea_text(b"\\999"), None, "no octal digits");

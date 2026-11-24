@@ -61,6 +61,12 @@ exclude_re = [
   'ekiben-io-sql/src/util\.rs:\d+:\d+: replace \| with \^ in pg_text_to_binary',
   # T-7582 ekiben-io-sql decode_numeric: one more group of fraction digits is cut by the truncate to dscale after it.
   'ekiben-io-sql/src/util\.rs:\d+:\d+: replace < with <= in decode_numeric',
+  # T-7582 ekiben-io-sql parse_with_offset: index 10 ends the date, where the local part would be the date alone and
+  # the datetime format refuses it, so > 10 and >= 10 accept the same texts.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace > with >= in parse_with_offset',
+  # T-7582 ekiben-io-sql pg_time_of_day, mysql_binary_datetime: the value at the bound (86400 s, 1000000 us) makes
+  # Time::new refuse it right after, so < and <= refuse the same values.
+  'ekiben-io-sql/src/util\.rs:\d+:\d+: replace < with <= in (pg_time_of_day|mysql_binary_datetime)',
   # T-7632 ekiben-io-ngsild status_text: a body of exactly ERROR_BODY_BYTES is cut at its own length either way.
   'ekiben-io-ngsild/src/client\.rs:\d+:\d+: replace > with >= in status_text',
   # T-7632 ekiben-io-ngsild: the next pass due exactly now sleeps zero either way; an equal timestamp

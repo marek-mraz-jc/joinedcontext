@@ -972,11 +972,16 @@ mod tests {
         assert_eq!(o.get_host(), "h");
         assert_eq!(o.get_application_name(), Some("a b"));
         assert_eq!(o.get_username(), "postgres", "lib/pq's default user");
-        assert_eq!(o.get_options(), Some("-c search_path=x -c statement_timeout=5"));
+        assert_eq!(
+            o.get_options(),
+            Some("-c search_path=x -c statement_timeout=5")
+        );
         // lib/pq's own keys never reach the server as run-time parameters.
-        let o = parse_postgres_dsn("host=h binary_parameters=yes disable_prepared_binary_result=yes krbspn=x")
-            .unwrap()
-            .opts;
+        let o = parse_postgres_dsn(
+            "host=h binary_parameters=yes disable_prepared_binary_result=yes krbspn=x",
+        )
+        .unwrap()
+        .opts;
         assert_eq!(o.get_options(), None);
         let o = parse_postgres_dsn("fallback_application_name=f sslmode=verify-full")
             .unwrap()
