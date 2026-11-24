@@ -423,11 +423,7 @@ impl OutboundGuard {
             return Err(too_big());
         }
         let mut out = Vec::new();
-        while let Some(chunk) = resp
-            .chunk()
-            .await
-            .map_err(|e| KaisatsuError::OutboundRefused(e.without_url().to_string()))?
-        {
+        while let Some(chunk) = resp.chunk().await.map_err(refused)? {
             if out.len() + chunk.len() > MAX_OUTBOUND_BYTES {
                 return Err(too_big());
             }
@@ -543,18 +539,13 @@ impl OutboundGuard {
                 builder = builder.add_root_certificate(root);
             }
         }
-        let client = builder
-            .build()
-            .map_err(|e| KaisatsuError::OutboundRefused(e.to_string()))?;
+        let client = builder.build().map_err(refused)?;
 
         let mut req = client.get(url);
         if let Some(token) = bearer_token {
             req = req.bearer_auth(token);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| KaisatsuError::OutboundRefused(e.without_url().to_string()))?;
+        let resp = req.send().await.map_err(refused)?;
         if !resp.status().is_success() {
             return Err(KaisatsuError::OutboundRefused(format!(
                 "upstream answered {}",
@@ -633,23 +624,82 @@ impl OutboundGuard {
             .resolve(&host, addr)
             .no_proxy()
             .build()
-            .map_err(|e| KaisatsuError::OutboundRefused(e.to_string()))?;
+            .map_err(refused)?;
 
-        let resp = client
-            .post(url)
-            .form(form)
-            .send()
-            .await
-            .map_err(|e| KaisatsuError::OutboundRefused(e.without_url().to_string()))?;
+        let resp = client.post(url).form(form).send().await.map_err(refused)?;
         let status = resp.status().as_u16();
         let bytes = Self::read_capped(resp).await?;
         Ok((status, bytes))
     }
 }
 
+/// A failed outbound request or client build, without the URL (it may carry a query secret).
+fn refused(e: reqwest::Error) -> KaisatsuError {
+    KaisatsuError::OutboundRefused(e.without_url().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn loopback() -> OutboundGuard {
+        OutboundGuard::new(OutboundPolicy {
+            test_loopback: true,
+            ..OutboundPolicy::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn a_full_cluster_jwks_cache_starts_over_for_a_new_url() {
+        let guard = loopback();
+        let urls: Vec<String> = (0..=CLUSTER_JWKS_ENTRIES)
+            .map(|i| format!("http://127.0.0.1:9/{i}/openid/v1/jwks"))
+            .collect();
+        for url in &urls {
+            guard.insert_mock(url.clone(), 200, r#"{"keys":[{"kid":"k"}]}"#);
+        }
+        for url in &urls[..CLUSTER_JWKS_ENTRIES] {
+            guard.cluster_jwks(url, false).await.unwrap();
+        }
+        assert_eq!(guard.cluster_jwks.read().len(), CLUSTER_JWKS_ENTRIES);
+        // A URL already cached is answered from the cache and evicts nothing.
+        guard.cluster_jwks(&urls[0], false).await.unwrap();
+        assert_eq!(guard.cluster_jwks.read().len(), CLUSTER_JWKS_ENTRIES);
+        // One more URL: the cache is bounded, so it starts over with that one.
+        let last = &urls[CLUSTER_JWKS_ENTRIES];
+        guard.cluster_jwks(last, false).await.unwrap();
+        let cache = guard.cluster_jwks.read();
+        assert_eq!(cache.len(), 1);
+        assert!(cache.contains_key(last.as_str()));
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_cluster_ca_is_refused_before_any_request() {
+        let ca = std::env::temp_dir().join(format!("kaisatsu-ca-{}", uuid::Uuid::now_v7()));
+        std::fs::write(
+            &ca,
+            "-----BEGIN CERTIFICATE-----\n!!not base64!!\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        let guard = OutboundGuard::new(OutboundPolicy {
+            test_loopback: true,
+            cluster: ClusterCredentials {
+                ca: ca.clone(),
+                ..ClusterCredentials::default()
+            },
+            ..OutboundPolicy::default()
+        });
+        let err = guard
+            .cluster_jwks("http://127.0.0.1:9/openid/v1/jwks", false)
+            .await
+            .unwrap_err();
+        std::fs::remove_file(&ca).unwrap();
+        assert!(
+            matches!(&err, KaisatsuError::OutboundRefused(m) if m == "unreadable cluster CA"),
+            "{err:?}"
+        );
+        assert!(guard.cluster_jwks.read().is_empty());
+    }
 
     fn listing(hosts: &[&str]) -> OutboundGuard {
         OutboundGuard::new(OutboundPolicy {

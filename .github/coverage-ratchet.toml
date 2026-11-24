@@ -2,6 +2,7 @@
 # its line. `.github/scripts/coverage-ratchet.py update EXPORT.json` raises them; a branch that raises a
 # crate commits the new line with it. Lowering a floor is a hand edit with its reason in the commit.
 [crates]
+"agent-proxy" = { lines = 99.79, functions = 99.81 }
 "antares-bus" = { lines = 99.22, functions = 100.00 }
 "antares-export" = { lines = 100.00, functions = 100.00 }
 "antares-feed" = { lines = 99.80, functions = 99.37 }
@@ -32,18 +33,18 @@
 "daiya-server" = { lines = 99.07, functions = 100.00 }
 "daiya-store-memory" = { lines = 99.70, functions = 99.20 }
 "daiya-store-pg" = { lines = 99.89, functions = 99.40 }
-"dataroom-core" = { lines = 99.54, functions = 99.18 }
-"dataroom-api" = { lines = 99.00, functions = 99.53 }
-"dataroom-harvest" = { lines = 99.00, functions = 99.06 }
+"dataroom-api" = { lines = 99.43, functions = 99.54 }
+"dataroom-core" = { lines = 99.98, functions = 100.00 }
+"dataroom-harvest" = { lines = 99.65, functions = 99.06 }
 "dataroom-mcp" = { lines = 100.00, functions = 100.00 }
 "dataroom-plugin" = { lines = 100.00, functions = 100.00 }
-"dataroom-rdf" = { lines = 99.13, functions = 99.31 }
-"dataroom-search" = { lines = 99.85, functions = 99.27 }
-"dataroom-server" = { lines = 99.51, functions = 100.00 }
-"dataroom-shacl" = { lines = 99.28, functions = 99.53 }
+"dataroom-rdf" = { lines = 99.60, functions = 99.56 }
+"dataroom-search" = { lines = 100.00, functions = 100.00 }
+"dataroom-server" = { lines = 99.57, functions = 100.00 }
+"dataroom-shacl" = { lines = 99.86, functions = 100.00 }
 "dataroom-store-memory" = { lines = 99.90, functions = 100.00 }
-"dataroom-store-pg" = { lines = 99.51, functions = 99.29 }
-"dataroom-web" = { lines = 99.62, functions = 97.16 }
+"dataroom-store-pg" = { lines = 99.72, functions = 99.44 }
+"dataroom-web" = { lines = 99.79, functions = 97.28 }
 "ekiben-bloblang" = { lines = 91.30, functions = 89.36 }
 "ekiben-io-amqp" = { lines = 99.09, functions = 100.00 }
 "ekiben-io-file" = { lines = 100.00, functions = 100.00 }
@@ -87,9 +88,9 @@
 "kaisatsu-core" = { lines = 99.98, functions = 99.73 }
 "kaisatsu-crypto" = { lines = 99.70, functions = 100.00 }
 "kaisatsu-import" = { lines = 99.17, functions = 99.39 }
-"kaisatsu-login" = { lines = 99.09, functions = 99.54 }
+"kaisatsu-login" = { lines = 99.62, functions = 99.54 }
 "kaisatsu-mcp" = { lines = 100.00, functions = 100.00 }
-"kaisatsu-oidc" = { lines = 99.01, functions = 99.71 }
+"kaisatsu-oidc" = { lines = 99.82, functions = 100.00 }
 "kaisatsu-server" = { lines = 99.17, functions = 100.00 }
 "kaisatsu-store-memory" = { lines = 100.00, functions = 100.00 }
 "kaisatsu-store-pg" = { lines = 99.01, functions = 99.24 }
@@ -110,8 +111,8 @@
 "shako-core" = { lines = 95.67, functions = 87.14 }
 "shako-git" = { lines = 69.51, functions = 48.63 }
 "shako-mcp" = { lines = 100.00, functions = 100.00 }
-"shako-registry" = { lines = 98.65, functions = 97.14 }
+"shako-registry" = { lines = 100.00, functions = 100.00 }
 "shako-server" = { lines = 99.54, functions = 100.00 }
 "shako-store-memory" = { lines = 100.00, functions = 100.00 }
 "shako-store-pg" = { lines = 99.19, functions = 96.68 }
-"shako-web" = { lines = 96.69, functions = 87.83 }
+"shako-web" = { lines = 98.06, functions = 89.33 }

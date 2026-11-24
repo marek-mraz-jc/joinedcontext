@@ -422,6 +422,60 @@ async fn on_alpha(state: DataroomState, path: &str) -> (StatusCode, Option<Strin
     (resp.status(), location)
 }
 
+/// An authorizer that refuses every read in one catalogue and otherwise decides as the policy.
+struct NoReadIn(CatalogueId);
+
+impl Authorizer for NoReadIn {
+    fn check(
+        &self,
+        ctx: &RequestCtx,
+        action: Action,
+        object: &ObjectTarget,
+    ) -> dataroom_core::Decision {
+        if action == Action::Read && object.catalogue_id() == self.0 {
+            return dataroom_core::Decision::deny_hidden("closed");
+        }
+        PolicyAuthorizer::default().check(ctx, action, object)
+    }
+}
+
+/// A new home the caller may not read is no new home: the old address keeps its 404 and never
+/// names the other catalogue.
+#[tokio::test]
+async fn an_old_dataset_address_never_redirects_to_a_copy_the_caller_may_not_read() {
+    let mut state = two_organizations().await;
+    seed(&state, DEFAULT, ("air", "airslug", "public"), true).await;
+    seed(&state, OTHER, ("air", "airslug", "public"), false).await;
+    assert_eq!(
+        on_alpha(state.clone(), "/dataset/air").await.0,
+        StatusCode::MOVED_PERMANENTLY
+    );
+    state.authorizer = Arc::new(NoReadIn(CatalogueId::from_uuid(Uuid::from_u128(OTHER))));
+    assert_eq!(
+        on_alpha(state, "/dataset/air").await,
+        (StatusCode::NOT_FOUND, None)
+    );
+}
+
+/// An Organization the router decided that has no catalogue here answers 404 without echoing
+/// its name.
+#[tokio::test]
+async fn an_organization_without_a_catalogue_here_is_not_found() {
+    let (status, body) = call(
+        two_organizations().await,
+        mount("https", "city.test", "/com_zeta/opendata"),
+        Some("com_zeta"),
+        "GET",
+        "/api/3/action/status_show",
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(body.contains("no catalogue here"), "{body}");
+    assert!(!body.contains("com_zeta"), "{body}");
+}
+
 /// T-6853: a project moved from `com_alpha` to `com_beta` withdrew its dataset here and published
 /// it there; its old address answers 301 to the new one, its file format and query kept. Only the
 /// same Endpoint's dataset, public and active, in a catalogue of this deployment is a new home:

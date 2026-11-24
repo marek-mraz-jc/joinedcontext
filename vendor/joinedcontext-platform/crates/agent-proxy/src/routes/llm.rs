@@ -47,9 +47,7 @@ fn with_reasoning(body: &Bytes, rest: &str, effort: &str) -> Bytes {
             );
         }
     }
-    serde_json::to_vec(&map)
-        .map(Bytes::from)
-        .unwrap_or_else(|_| body.clone())
+    Bytes::from(Value::Object(map).to_string())
 }
 
 /// The body with `model` set to the run's profile model (F-PLT1-006): the profile's model and
@@ -67,7 +65,7 @@ fn with_model(body: Bytes, model: &str) -> Bytes {
         return body;
     }
     map.insert("model".into(), json!(model));
-    serde_json::to_vec(&map).map(Bytes::from).unwrap_or(body)
+    Bytes::from(Value::Object(map).to_string())
 }
 
 /// The body with its output capped at `left`, what remains of the run's token budget
@@ -98,7 +96,7 @@ fn within_budget(body: Bytes, left: u64) -> Bytes {
     if !lowered {
         return body;
     }
-    serde_json::to_vec(&map).map(Bytes::from).unwrap_or(body)
+    Bytes::from(Value::Object(map).to_string())
 }
 
 /// Why the body's OpenRouter `provider` field is refused, or `None` when it is absent or holds
@@ -160,7 +158,7 @@ fn routed(body: Bytes, routes: bool) -> Bytes {
     if map.remove("provider").is_none() {
         return body;
     }
-    serde_json::to_vec(&map).map(Bytes::from).unwrap_or(body)
+    Bytes::from(Value::Object(map).to_string())
 }
 
 /// Each reasoning effort and the thinking budget it is on Anthropic messages (AG-72).
@@ -189,9 +187,7 @@ fn with_stream_usage(body: &Bytes, rest: &str) -> Bytes {
         return body.clone();
     };
     options.entry("include_usage").or_insert(json!(true));
-    serde_json::to_vec(&map)
-        .map(Bytes::from)
-        .unwrap_or_else(|_| body.clone())
+    Bytes::from(Value::Object(map).to_string())
 }
 
 /// What a stream that reports no usage is counted as: the output it was allowed and a quarter of
@@ -201,7 +197,7 @@ fn uncounted_stream(body: &Bytes) -> u64 {
         .ok()
         .and_then(|value| value.get("max_tokens").and_then(Value::as_u64))
         .unwrap_or(STREAM_OUTPUT_UNSAID);
-    allowed + body.len() as u64 / 4
+    allowed.saturating_add(body.len() as u64 / 4)
 }
 
 /// The output a stream is counted for when its request names no `max_tokens`.
@@ -838,11 +834,12 @@ pub async fn handler(
         return refusal;
     }
 
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "application/json")
-        .body(Body::from(resp_bytes))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        Body::from(resp_bytes),
+    )
+        .into_response()
 }
 
 /// One streamed call: whose it is, what it asked and what it counts as without a usage.
@@ -892,7 +889,9 @@ fn stream_through(
         loop {
             // A caller gone or a provider silent past STREAM_IDLE ends the relay: neither the
             // task nor the upstream socket outlives the call (the client has no total timeout).
+            // The caller is asked first, so a send that found it gone ends the relay here.
             let next = tokio::select! {
+                biased;
                 () = tx.closed() => {
                     whole = false;
                     break;
@@ -915,10 +914,7 @@ fn stream_through(
                 Ok(chunk) => {
                     bytes += chunk.len();
                     usage.feed(&chunk);
-                    if tx.send(Ok(chunk)).await.is_err() {
-                        whole = false;
-                        break;
-                    }
+                    let _ = tx.send(Ok(chunk)).await;
                 }
                 Err(err) => {
                     whole = false;
@@ -957,12 +953,89 @@ fn stream_through(
     let body = futures::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|chunk| (chunk, rx))
     });
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "text/event-stream")
-        .header("Cache-Control", "no-cache")
-        .body(Body::from_stream(body))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (
+        status,
+        [
+            (axum::http::header::CONTENT_TYPE, "text/event-stream"),
+            (axum::http::header::CACHE_CONTROL, "no-cache"),
+        ],
+        Body::from_stream(body),
+    )
+        .into_response()
+}
+
+/// The body rewrites and the stream reader over any bytes, for the fuzz target `llm_body`
+/// (T-7795). Compiled only with the `fuzz` feature, which no deployment turns on.
+#[cfg(feature = "fuzz")]
+#[doc(hidden)]
+pub mod fuzzing {
+    use super::*;
+
+    /// Every rewrite of one body, each checked for what it promises.
+    pub fn body(body: &[u8], rest: &str, effort: &str, model: &str, left: u64, routes: bool) {
+        let bytes = Bytes::copy_from_slice(body);
+        let object = matches!(serde_json::from_slice::<Value>(body), Ok(Value::Object(_)));
+        let _ = provider_refusal(&bytes);
+        let sent = routed(bytes.clone(), routes);
+        if !object || routes {
+            assert_eq!(
+                sent, bytes,
+                "only an object loses its provider, and only off OpenRouter"
+            );
+        }
+        let sent = with_model(bytes.clone(), model);
+        if object && !model.is_empty() {
+            let named: Value = serde_json::from_slice(&sent).expect("an object stays JSON");
+            assert_eq!(
+                named["model"],
+                json!(model),
+                "the run's model is the one sent"
+            );
+        } else {
+            assert_eq!(sent, bytes);
+        }
+        let _ = with_reasoning(&bytes, rest, effort);
+        let capped = within_budget(bytes.clone(), left);
+        if let (true, Ok(Value::Object(map))) = (object, serde_json::from_slice::<Value>(&capped)) {
+            for field in ["max_tokens", "max_completion_tokens"] {
+                if let Some(asked) = map.get(field).and_then(Value::as_u64) {
+                    assert!(asked <= left, "{field} {asked} past the {left} left");
+                }
+            }
+        }
+        let _ = wants_stream(&bytes);
+        let _ = with_stream_usage(&bytes, rest);
+        assert!(uncounted_stream(&bytes) >= bytes.len() as u64 / 4);
+        let _ = effort_of(&bytes);
+        if let Some(model) = model_of(&bytes) {
+            assert!(model.chars().count() <= MODEL_NAME_MAX);
+        }
+    }
+
+    /// A provider's stream fed in chunks of `split` bytes: what it counts never shrinks, and
+    /// no line past the cap is held.
+    pub fn stream(chunks: &[u8], split: usize) {
+        let mut usage = StreamUsage::default();
+        let mut last = (0, 0, 0);
+        for chunk in chunks.chunks(split.max(1)) {
+            usage.feed(chunk);
+            assert!(usage.line.len() <= STREAM_LINE_MAX);
+            let now = (usage.input, usage.output, usage.cached);
+            assert!(now.0 >= last.0 && now.1 >= last.1 && now.2 >= last.2);
+            last = now;
+        }
+        let _ = CallUsage {
+            tokens: usage.tokens().unwrap_or(0),
+            input: usage.input,
+            output: usage.output,
+            cached: usage.cached,
+            latency_ms: 0,
+            model: None,
+            effort: None,
+            cost: usage.cost,
+        }
+        .payload();
+    }
 }
 
 #[cfg(test)]
@@ -999,6 +1072,12 @@ mod tests {
         ))
         .expect("JSON");
         assert_eq!(past["max_tokens"], 7);
+        // A cap equal to what is left is inside it; a body naming none at exactly the unsaid
+        // output is sent as it came (T-7795).
+        let equal = Bytes::from_static(br#"{ "model": "m", "max_tokens": 10 }"#);
+        assert_eq!(within_budget(equal.clone(), 10), equal);
+        let unsaid = Bytes::from_static(br#"{ "model": "m" }"#);
+        assert_eq!(within_budget(unsaid.clone(), STREAM_OUTPUT_UNSAID), unsaid);
     }
 
     fn sent(body: &str, rest: &str, effort: &str) -> Value {
@@ -1091,6 +1170,28 @@ mod tests {
         let mut none = StreamUsage::default();
         none.feed(b"data: {\"choices\":[]}\n\n: keep-alive\n");
         assert_eq!(none.tokens(), None);
+        // Output alone, before any input is told, still counts (T-7795).
+        let mut output = StreamUsage::default();
+        output.feed(b"data: {\"usage\":{\"output_tokens\":5}}\n");
+        assert_eq!(output.tokens(), Some(5));
+    }
+
+    /// A line exactly at the cap is read whole; one byte past it is cut and counts nothing
+    /// (T-7795).
+    #[test]
+    fn a_line_at_the_cap_is_read_and_one_byte_past_it_is_not() {
+        let line = |length: usize| {
+            let mut line = b"data: {\"usage\":{\"total_tokens\":9},\"pad\":\"".to_vec();
+            line.resize(length - 3, b'x');
+            line.extend_from_slice(b"\"}\n");
+            line
+        };
+        let mut at = StreamUsage::default();
+        at.feed(&line(STREAM_LINE_MAX + 1));
+        assert_eq!(at.tokens(), Some(9));
+        let mut past = StreamUsage::default();
+        past.feed(&line(STREAM_LINE_MAX + 2));
+        assert_eq!(past.tokens(), None);
     }
 
     /// T-2771: the counts are read in both shapes, the cached input included, and the frame the
@@ -1205,5 +1306,77 @@ mod tests {
             uncounted_stream(&Bytes::from_static(br#"{"max_tokens":60}"#)),
             60 + 4
         );
+    }
+
+    /// T-7795: a stream whose body asks for every token there is is counted as the most there
+    /// is, never wrapped round to a handful: an assistant's or an App's body reaches this
+    /// uncapped, and its day is counted from it.
+    #[test]
+    fn a_stream_asking_for_every_token_is_counted_as_the_most_there_is() {
+        let body = Bytes::from(format!(r#"{{"stream":true,"max_tokens":{}}}"#, u64::MAX));
+        assert_eq!(uncounted_stream(&body), u64::MAX);
+    }
+
+    /// A messages body that names its own thinking keeps it, whatever the run's effort says.
+    #[test]
+    fn a_messages_body_with_its_own_thinking_is_sent_as_it_came() {
+        let body = Bytes::from_static(
+            br#"{"max_tokens":10,"thinking":{"type":"enabled","budget_tokens":1024}}"#,
+        );
+        assert_eq!(with_reasoning(&body, "v1/messages", "high"), body);
+    }
+
+    /// Off OpenRouter, a body that is not an object, or names no provider, goes byte for byte;
+    /// an object's provider is dropped and the rest kept.
+    #[test]
+    fn only_an_objects_provider_is_dropped_off_openrouter() {
+        for body in ["[1,2]", "not json", r#"{"model":"m"}"#] {
+            let sent = Bytes::from(body.to_owned());
+            assert_eq!(routed(sent.clone(), false), sent, "{body}");
+        }
+        let routed: Value = serde_json::from_slice(&routed(
+            Bytes::from_static(br#"{"model":"m","provider":{"sort":"price"}}"#),
+            false,
+        ))
+        .expect("JSON");
+        assert_eq!(routed, json!({ "model": "m" }));
+    }
+
+    /// A stream body that is not an object, or whose `stream_options` is not one, is sent as it
+    /// came: the proxy asks for usage only where it can add the flag without changing a value.
+    #[test]
+    fn a_stream_body_the_usage_flag_cannot_join_is_sent_as_it_came() {
+        for body in ["[true]", r#"{"stream":true,"stream_options":"yes"}"#] {
+            let sent = Bytes::from(body.to_owned());
+            assert_eq!(
+                with_stream_usage(&sent, "v1/chat/completions"),
+                sent,
+                "{body}"
+            );
+        }
+        let asked: Value = serde_json::from_slice(&with_stream_usage(
+            &Bytes::from_static(br#"{"stream":true,"stream_options":{"include_usage":false}}"#),
+            "chat/completions",
+        ))
+        .expect("JSON");
+        assert_eq!(asked["stream_options"]["include_usage"], json!(false));
+    }
+
+    /// A stream line past the cap is dropped unread, and the reader goes on with the next one;
+    /// a provider's `usage.cost` is the call's cost.
+    #[test]
+    fn a_line_past_the_cap_is_dropped_and_the_next_one_is_read() {
+        let mut usage = StreamUsage::default();
+        let mut huge = b"data: {\"usage\":{\"total_tokens\":999999,\"pad\":\"".to_vec();
+        huge.resize(STREAM_LINE_MAX + 64, b'x');
+        huge.extend_from_slice(b"\"}}\n");
+        usage.feed(&huge);
+        assert_eq!(usage.tokens(), None, "the cut line counted nothing");
+        usage.feed(
+            b"data: {\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":4,\"cost\":0.25}}\n",
+        );
+        assert_eq!(usage.tokens(), Some(7));
+        assert_eq!(usage.cost, Some(0.25));
+        assert!(usage.line.is_empty());
     }
 }

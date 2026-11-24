@@ -400,6 +400,68 @@ fn nkod_folds_rows_and_keeps_only_open_licences_on_allowed_hosts() {
     assert_eq!(ds.distributions[0].title["cs"], "Ovzdušie");
 }
 
+/// Rows of one dataset and one distribution fold: the first frequency and the first stated
+/// terms of use win, a later row adds licences but never overwrites a stated term.
+#[test]
+fn nkod_rows_keep_the_first_frequency_and_the_first_stated_terms() {
+    let (org, cat) = ids();
+    let src = source(
+        "nkod-sparql",
+        "nkod",
+        "https://data.gov.cz/sparql",
+        &["www.brno.cz"],
+    );
+    let eu = "http://publications.europa.eu/resource/authority/licence/";
+    let freq = "http://publications.europa.eu/resource/authority/frequency/";
+    let rows = json!({"results": {"bindings": [
+        binding(&[("ds", "https://d/a"), ("title", "A"), ("frequency", &format!("{freq}DAILY")),
+                  ("dist", "https://d/a/1"), ("url", "https://www.brno.cz/a.csv"),
+                  ("work", &format!("{eu}CC_BY_4_0")), ("personal", "https://p/no")]),
+        binding(&[("ds", "https://d/a"), ("title", "A"), ("frequency", &format!("{freq}ANNUAL")),
+                  ("dist", "https://d/a/1"), ("url", "https://www.brno.cz/a.csv"),
+                  ("work", &format!("{eu}CC_BYSA_4_0")), ("personal", "https://p/yes")]),
+        // an empty frequency on a later row leaves the first one as well
+        binding(&[("ds", "https://d/a"), ("title", "A"), ("frequency", "")]),
+    ]}});
+    let (kept, skipped) = parse_nkod_sparql_bindings(org, cat, &src, &[], &rows, "cs");
+    assert!(skipped.is_empty(), "{skipped:?}");
+    let ds = &kept[0].1;
+    assert_eq!(ds.frequency.as_deref(), Some(&*format!("{freq}DAILY")));
+    assert_eq!(ds.distributions.len(), 1);
+    let terms = ds.distributions[0]
+        .terms_of_use
+        .as_ref()
+        .expect("the source's terms");
+    assert_eq!(
+        terms.authors_work.as_deref(),
+        Some(&*format!("{eu}CC_BY_4_0"))
+    );
+    assert_eq!(terms.personal_data.as_deref(), Some("https://p/no"));
+    // both licences were read; the stricter one is the dataset's
+    assert_eq!(ds.licence_id.as_deref(), Some("cc-by-sa"));
+
+    // An empty first frequency is no frequency: a later row states it.
+    let rows = json!({"results": {"bindings": [
+        binding(&[("ds", "https://d/b"), ("title", "B"), ("frequency", ""),
+                  ("dist", "https://d/b/1"), ("url", "https://www.brno.cz/b.csv"), ("work", "CC0")]),
+        binding(&[("ds", "https://d/b"), ("title", "B"), ("frequency", &format!("{freq}WEEKLY"))]),
+    ]}});
+    let (kept, _) = parse_nkod_sparql_bindings(org, cat, &src, &[], &rows, "cs");
+    assert_eq!(
+        kept[0].1.frequency.as_deref(),
+        Some(&*format!("{freq}WEEKLY"))
+    );
+    // No bindings at all, or a document that is no SPARQL answer: nothing, no skip.
+    for empty in [
+        json!({}),
+        json!({"results": {"bindings": "x"}}),
+        json!(null),
+    ] {
+        let (kept, skipped) = parse_nkod_sparql_bindings(org, cat, &src, &[], &empty, "cs");
+        assert!(kept.is_empty() && skipped.is_empty(), "{empty}");
+    }
+}
+
 #[test]
 fn nkod_moves_only_the_exact_host() {
     let (org, cat) = ids();

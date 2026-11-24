@@ -1835,12 +1835,12 @@ fn clean_ckan_tag(word: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use dataroom_core::DataroomError;
     use dataroom_core::ThemeTokens;
 
-    fn sample_catalogue(org_id: OrgId, catalogue_id: CatalogueId) -> Catalogue {
+    pub(crate) fn sample_catalogue(org_id: OrgId, catalogue_id: CatalogueId) -> Catalogue {
         Catalogue {
             org_id,
             branding: None,
@@ -2214,7 +2214,7 @@ mod tests {
     }
 
     /// A dataset with every optional DCAT field filled.
-    fn full_dataset() -> Dataset {
+    pub(crate) fn full_dataset() -> Dataset {
         serde_json::from_str(
             r#"{
             "orgId": "00000000-0000-0000-0000-000000000000", "catalogueId": "00000000-0000-0000-0000-000000000000", "id": "pkg-full", "name": "full",
@@ -2578,6 +2578,199 @@ mod tests {
             (None, None),
             "distributions disagree"
         );
+    }
+
+    /// Harvested shapes the reader skips or keeps: a series not typed Dataset is a dataset of
+    /// its own, a keyword that cleans to nothing or is no literal makes no tag, and a terms-of-
+    /// use authors' work names the distribution's licence only when none is stated and it is a
+    /// known licence.
+    #[test]
+    fn harvested_series_keywords_and_terms_of_use_licences() {
+        let org = OrgId::from_uuid(Uuid::from_u128(1));
+        let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let ttl = r#"
+            @prefix dcat: <http://www.w3.org/ns/dcat#> .
+            @prefix dct: <http://purl.org/dc/terms/> .
+            @prefix pu: <https://data.gov.cz/slovník/podmínky-užití/> .
+            <https://e.org/ds/t> a dcat:Dataset ;
+               dct:title "T"@cs ;
+               dcat:keyword "!!!"@cs, <https://e.org/kw>, "air"@cs ;
+               dcat:distribution <https://e.org/d/1>, <https://e.org/d/2>, <https://e.org/d/3>,
+                 <https://e.org/d/4> .
+            <https://e.org/d/1> a dcat:Distribution ;
+               dct:license <https://licence.example/own> ;
+               pu:specifikace [ pu:autorské-dílo <https://creativecommons.org/licenses/by/4.0/> ] .
+            <https://e.org/d/2> a dcat:Distribution ;
+               pu:specifikace [ pu:autorské-dílo <https://licence.example/unknown> ] .
+            <https://e.org/d/3> a dcat:Distribution ;
+               pu:specifikace [ pu:autorské-dílo <https://creativecommons.org/licenses/by/4.0/> ] .
+            <https://e.org/d/4> a dcat:Distribution ;
+               pu:specifikace [ pu:osobní-údaje <https://e.org/none> ] .
+            <https://e.org/series/s> a dcat:DatasetSeries ; dct:title "S"@cs .
+        "#;
+        let mut ds = parse_datasets_from_rdf(
+            ttl,
+            RdfFormat::Turtle,
+            org,
+            cid,
+            "city",
+            "cs",
+            &RdfLimits::default(),
+        )
+        .expect("harvested turtle");
+        ds.sort_by(|a, b| a.uri.cmp(&b.uri));
+        assert_eq!(ds.len(), 2, "the series alone is read too");
+        let (t, series) = (&ds[0], &ds[1]);
+        assert_eq!(series.dataset_type, "dataset_series");
+        assert_eq!(series.title.get("cs").map(String::as_str), Some("S"));
+        assert_eq!(
+            t.tags,
+            ["air"],
+            "a keyword that cleans to nothing is no tag"
+        );
+        let mut kws = t.keywords.get("cs").cloned().unwrap_or_default();
+        kws.sort();
+        assert_eq!(kws, ["!!!", "air"], "an IRI is no keyword");
+        let mut dists: Vec<_> = t.distributions.iter().collect();
+        dists.sort_by(|a, b| a.uri.cmp(&b.uri));
+        let aw = |i: usize| {
+            dists[i]
+                .terms_of_use
+                .as_ref()
+                .and_then(|t| t.authors_work.clone())
+        };
+        assert_eq!(
+            dists[0].licence.as_deref(),
+            Some("https://licence.example/own"),
+            "a stated licence stays"
+        );
+        assert_eq!(
+            aw(0).as_deref(),
+            Some("https://creativecommons.org/licenses/by/4.0/")
+        );
+        assert_eq!(
+            dists[1].licence, None,
+            "an unknown authors' work is no licence"
+        );
+        assert_eq!(aw(1).as_deref(), Some("https://licence.example/unknown"));
+        assert_eq!(
+            dists[2].licence.as_deref(),
+            Some("https://creativecommons.org/licenses/by/4.0/")
+        );
+        assert!(
+            dists[3].terms_of_use.is_some(),
+            "terms without an authors' work"
+        );
+        assert_eq!((aw(3), dists[3].licence.as_ref()), (None, None));
+    }
+
+    /// Writer edges: a contact point without e-mail writes no `vcard:hasEmail`, a period with
+    /// neither end writes no `dct:temporal`, an empty hash writes no checksum, a code-list
+    /// property writes nothing for an absent extra or an unlisted code, and an Organization
+    /// field without a namespace writes no triple.
+    #[test]
+    fn writer_skips_empty_contact_period_hash_unlisted_codes_and_unspaced_fields() {
+        let org = OrgId::from_uuid(Uuid::from_u128(1));
+        let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let cat = sample_catalogue(org, cid);
+        let mut ds = full_dataset();
+        ds.contact_point = Some(
+            serde_json::from_value(
+                serde_json::json!({"kind": "Organization", "name": {"cs": "Úřad"}, "email": ""}),
+            )
+            .expect("contact point"),
+        );
+        ds.temporal = Some(serde_json::from_value(serde_json::json!({})).expect("period"));
+        ds.distributions[0].hash = Some(String::new());
+        let g = dataset_to_graph(&ds, &cat, None, DcatProfile::eu());
+        assert!(objects_named(&g, &format!("{}hasEmail", ns::VCARD)).is_empty());
+        assert_eq!(
+            objects_named(&g, &format!("{}fn", ns::VCARD)),
+            ["Úřad"],
+            "the contact point is still written"
+        );
+        assert!(objects_named(&g, &format!("{}temporal", ns::DCT)).is_empty());
+        assert!(objects_named(&g, &format!("{}checksum", ns::SPDX)).is_empty());
+
+        let geo = DcatProfile::from_token("geodcat-ap-3.1.0").expect("installed");
+        let topic = "http://data.europa.eu/930/topicCategory";
+        let g = dataset_to_graph(&ds, &cat, None, geo);
+        assert!(objects_named(&g, topic).is_empty(), "no extra, no value");
+        ds.extras.insert(
+            "topic_category".into(),
+            r#"["http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/nope", "farming"]"#
+                .into(),
+        );
+        let g = dataset_to_graph(&ds, &cat, None, geo);
+        assert!(
+            objects_named(&g, topic).is_empty(),
+            "an unlisted code and a bare word are no values"
+        );
+        ds.extras.insert(
+            "topic_category".into(),
+            "http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/farming".into(),
+        );
+        let g = dataset_to_graph(&ds, &cat, None, geo);
+        assert_eq!(
+            objects_named(&g, topic),
+            ["http://inspire.ec.europa.eu/metadata-codelist/TopicCategory/farming"]
+        );
+
+        ds.extras.insert("x_funding".into(), "eu".into());
+        let mut fields = BrandingDatasetFields {
+            organization: "bbsk".into(),
+            namespace: String::new(),
+            fields: serde_json::from_value(serde_json::json!([
+                { "name": "funding", "label": { "sk": "Financovanie" }, "type": "enum",
+                  "values": ["eu", "city"] }
+            ]))
+            .expect("definitions"),
+        };
+        let mut g = RdfGraph::new();
+        add_field_triples(&mut g, &cat, std::slice::from_ref(&ds), &fields);
+        assert!(g.is_empty(), "no namespace, no predicate");
+        fields.namespace = "https://bbsk.sk/ns/dataset-fields/bbsk/".into();
+        add_field_triples(&mut g, &cat, std::slice::from_ref(&ds), &fields);
+        assert_eq!(
+            objects_named(&g, "https://bbsk.sk/ns/dataset-fields/bbsk/funding"),
+            ["eu"]
+        );
+    }
+
+    /// A dataset's own publisher IRI takes the record's names when it states none; without
+    /// it, the record's page IRI on the catalogue (no IRI of its own) still names the agent.
+    #[test]
+    fn dataset_publisher_falls_back_to_the_record_names_and_iri() {
+        let org = OrgId::from_uuid(Uuid::from_u128(1));
+        let cid = CatalogueId::from_uuid(Uuid::from_u128(10));
+        let cat = sample_catalogue(org, cid);
+        let record: Publisher = serde_json::from_value(serde_json::json!({
+            "orgId": Uuid::nil(), "catalogueId": Uuid::nil(), "id": "p", "name": "city",
+            "title": {"cs": "Město"}, "description": {}, "uri": "https://opendata.example.org/publisher/city",
+            "state": "active", "editorGrants": [],
+            "created": "2026-11-01T10:00:00Z", "modified": "2026-11-01T10:00:00Z"
+        }))
+        .expect("publisher");
+        assert!(!record.has_own_iri(&cat));
+        let mut ds = full_dataset();
+        let named = ds.publisher.as_mut().expect("fixture publisher");
+        named.name.clear();
+        assert_eq!(
+            dataset_publisher(&ds, &cat, Some(&record)),
+            Some((
+                Some("https://data.example.org/org/city".to_owned()),
+                record.title.clone()
+            ))
+        );
+        ds.publisher.as_mut().expect("fixture publisher").uri = None;
+        assert_eq!(
+            dataset_publisher(&ds, &cat, Some(&record)),
+            Some((
+                Some("https://opendata.example.org/publisher/city".to_owned()),
+                record.title.clone()
+            ))
+        );
+        assert_eq!(dataset_publisher(&ds, &cat, None), None, "nothing to name");
     }
 
     #[test]

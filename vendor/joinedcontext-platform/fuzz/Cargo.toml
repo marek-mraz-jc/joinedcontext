@@ -1,7 +1,7 @@
 # Fuzzing the platform's parsers of outside input under libFuzzer (T-7794): broker pages into CSV
-# (jc-tabular), manifest YAML (jc-manifest), DCAT records (jc-dcat) and model JSON Schemas; write
-# payloads against a model's relationships (jc-relationships) and units, `Link` headers and bodies
-# (jc-ngsi-input) (T-7805).
+# (jc-tabular), manifest YAML (jc-manifest), DCAT records (jc-dcat), model JSON Schemas,
+# jc-functions' invocation body (functions_invoke, T-7774), write payloads against a model's
+# relationships (jc-relationships) and units, `Link` headers and bodies (jc-ngsi-input) (T-7805).
 # `cargo +nightly fuzz run <target> fuzz/corpus/<target> fuzz/seeds/<target>`. Not a workspace member.
 [package]
 name = "jc-platform-fuzz"
@@ -21,7 +21,11 @@ serde_norway = "0.9"
 jc-tabular = { path = "../crates/jc-tabular" }
 jc-manifest = { path = "../crates/jc-manifest" }
 jc-dcat = { path = "../crates/jc-dcat", features = ["dcat-ap-sk", "dcat-ap-cz"] }
-jc-core = { path = "../crates/jc-core" }
+# jc-functions' invocation body (T-7774): the checks before any code runs.
+functions = { path = "../crates/functions" }
+jc-core = { path = "../crates/jc-core", features = ["auth"] }
+reqwest = { version = "0.12", default-features = false }
+tokio = { version = "1", features = ["sync"] }
 jc-relationships = { path = "../crates/jc-relationships" }
 jc-ngsi-input = { path = "../crates/jc-ngsi-input" }
 http = "1"
@@ -50,6 +54,13 @@ bench = false
 [[bin]]
 name = "model_schema"
 path = "fuzz_targets/model_schema.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "functions_invoke"
+path = "fuzz_targets/functions_invoke.rs"
 test = false
 doc = false
 bench = false

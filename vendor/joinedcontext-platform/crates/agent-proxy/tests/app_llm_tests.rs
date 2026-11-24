@@ -139,6 +139,19 @@ async fn nobody_but_the_portal_and_no_path_but_a_completion_reaches_the_provider
             "v1/chat/completions",
             StatusCode::BAD_REQUEST,
         ),
+        // One half that is not a name is enough to refuse it.
+        (
+            PORTAL_TOKEN,
+            "Roads/road-defects",
+            "v1/chat/completions",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            PORTAL_TOKEN,
+            "roads/x y",
+            "v1/chat/completions",
+            StatusCode::BAD_REQUEST,
+        ),
         (
             PORTAL_TOKEN,
             "roads/road-defects",

@@ -1212,6 +1212,47 @@ mod tests {
         );
     }
 
+    /// An inline context may alias keywords (`"id": "@id"`), define terms by object without a
+    /// scoped context, and chain prefixes up to three hops; a fourth hop is a context bomb.
+    #[test]
+    fn inline_context_aliases_term_objects_and_prefix_chain_limit() {
+        let d = RdfLimits::default();
+        let doc = json!({
+            "@context": {
+                "id": "@id",
+                "label": {"@id": "http://e.org/label", "@language": "sk"},
+                "own": {"@id": "ex:own"},
+                "ex": "http://e.org/ex#"
+            },
+            "id": "https://e.org/s",
+            "label": "Štítok",
+            "own": "v"
+        });
+        let g = parse_jsonld(&doc.to_string(), &d).expect("inline context");
+        let s = SubjectNode::Named("https://e.org/s".into());
+        assert_eq!(
+            g.first_object(&s, "http://e.org/label"),
+            Some(Term::Literal(LiteralValue::lang("Štítok", "sk")))
+        );
+        assert_eq!(
+            g.first_object(&s, "http://e.org/ex#own"),
+            Some(Term::Literal(LiteralValue::plain("v")))
+        );
+        // Three hops to a full IRI are read; four are refused before any expansion.
+        let three = r#"{"@context":{"a":"b:x","b":"c:x","c":"d:x","d":"http://e.org/"},"@id":"https://e.org/s","http://e.org/p":"v"}"#;
+        assert!(parse_jsonld(three, &d).is_ok(), "{three}");
+        let four =
+            r#"{"@context":{"a":"b:x","b":"c:x","c":"d:x","d":"e:x"},"@id":"https://e.org/s"}"#;
+        assert_eq!(kind(&refused(four, &d)), "context-bomb");
+        // Nesting past the cap is refused, at the cap it is read.
+        let shallow = RdfLimits { max_depth: 2, ..d };
+        let deep = r#"{"@id":"https://e.org/s","http://e.org/p":[[["v"]]]}"#;
+        assert_eq!(kind(&refused(deep, &shallow)), "nesting-depth");
+        // Empty input is no JSON; an empty array is an empty graph.
+        assert_eq!(kind(&refused("", &d)), "rdf");
+        assert!(parse_jsonld("[]", &d).expect("an empty array").is_empty());
+    }
+
     #[test]
     fn accepted_contexts_and_key_order() {
         let d = RdfLimits::default();

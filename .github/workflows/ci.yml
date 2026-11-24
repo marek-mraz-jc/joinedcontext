@@ -503,6 +503,8 @@ jobs:
       - run: >-
           cargo test --locked --no-fail-fast -p jcctl --test it --
           --skip ingestion_examples_tests:: --skip library_blueprints_tests::
+      # agent-proxy's route suites live in tests/ (T-7795).
+      - run: cargo test --locked --no-fail-fast -p agent-proxy --tests
   antares-clippy:
     needs: changes
     if: needs.changes.outputs.antares == 'true'
