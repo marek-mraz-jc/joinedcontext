@@ -12,7 +12,9 @@ fuzz_target!(|data: &[u8]| {
     let Ok(field) = Environment::new().compile_field(text) else {
         return;
     };
-    let parts = [SimplePartView::from_bytes(br#"{"topic":"events","n":[1,2]}"#.to_vec())];
+    let parts = [SimplePartView::from_bytes(
+        br#"{"topic":"events","n":[1,2]}"#.to_vec(),
+    )];
     let text = field.resolve_string(0, &parts);
     let bytes = field.resolve_bytes(0, &parts);
     assert_eq!(text.is_ok(), bytes.is_ok());
