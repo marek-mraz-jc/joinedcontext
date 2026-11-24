@@ -278,8 +278,10 @@ async fn dedupe_drops_a_repeat_from_a_later_page() {
 #[tokio::test]
 async fn unarchive_pages_hold_the_members_process_batch_returns() {
     let (reg, ctx) = make_ctx();
-    let cases: [(&str, &str); 5] = [
+    let cases: [(&str, &str); 6] = [
         ("json_array", r#"[1,{"a":"b"},"x",null,[2],3]"#),
+        // A format pages cannot stream is unarchived whole, one page per message.
+        ("binary", "abc"),
         ("lines", "a\nb\n\nc\n"),
         ("csv", "id,name\n1,a\n2,b\n3,c\n4,d\n5,e\n"),
         (

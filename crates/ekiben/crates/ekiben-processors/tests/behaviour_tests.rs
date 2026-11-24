@@ -1071,6 +1071,21 @@ async fn archive_and_unarchive_every_format() {
         err_of(&out[0][0]),
         "zip archive member 'same.txt' failed: the name is used twice in this batch"
     );
+    // Any other refusal of the zip writer keeps its own text: a name past the 64 KiB header.
+    let long = "n".repeat(70_000);
+    let out = e
+        .run(
+            json!({"archive": {"format": "zip", "path": "${! content() }"}}),
+            parts(&[&long]),
+        )
+        .await;
+    let err = err_of(&out[0][0]);
+    assert!(
+        err.starts_with("zip archive member 'nnn")
+            && err.ends_with("must be less than 64KiB when combined"),
+        "{}",
+        &err[err.len().saturating_sub(120)..]
+    );
     // A path that does not resolve names the member part_<index>, as Bento does.
     for fmt in ["tar", "zip"] {
         let out = e

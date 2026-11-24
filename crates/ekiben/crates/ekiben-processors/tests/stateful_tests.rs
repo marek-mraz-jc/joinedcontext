@@ -188,6 +188,13 @@ async fn group_by_refuses_a_bad_group_and_leaves_a_failing_check_groupless() {
     )
     .expect("built");
     assert_eq!(proc.processor_type(), "group_by");
+    // A group without processors only gathers its messages.
+    let gather = build(&ctx, "group_by:\n  - check: this.n > 1\n").expect("built");
+    let out = run(&ctx, &gather, &[r#"{"n":5}"#, r#"{"n":0}"#, r#"{"n":7}"#]).await;
+    assert_eq!(
+        bodies(&out),
+        vec![vec![r#"{"n":5}"#, r#"{"n":7}"#], vec![r#"{"n":0}"#]]
+    );
     let out = run(&ctx, &proc, &[r#"{"n":5}"#, "not json", r#"{"n":0}"#]).await;
     assert_eq!(
         bodies(&out),
