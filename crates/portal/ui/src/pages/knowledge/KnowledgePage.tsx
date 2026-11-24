@@ -15,7 +15,7 @@ import { AdminGrid } from "../../components/grid/AdminGrid";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import type { BadgeTone } from "../../components/ui";
 import { putDraft } from "../../api/drafts";
-import { duplicateDeployment, knowledgeKeys, listSources, topLanguages, listUsage, recrawl, timeText } from "./knowledge";
+import { duplicateDeployment, knowledgeKeys, linkHostsOf, listSources, topLanguages, listUsage, recrawl, timeText } from "./knowledge";
 import type { KnowledgeSourceRow, UsageDay } from "./knowledge";
 import { AssistantChat, EmbedSnippet } from "./AssistantChat";
 import { sum } from "./IndexStatus";
@@ -340,6 +340,8 @@ function Assistants({ project }: { project: string }): JSX.Element {
   const navigate = useNavigate();
   const [usageOf, setUsageOf] = useState<string | null>(null);
   const [chatWith, setChatWith] = useState<DeploymentItem | null>(null);
+  // The sources' sites the chat may link to; the page above already read them (same key).
+  const sourceRows = useQuery({ queryKey: knowledgeKeys.sources(project), retry: false, queryFn: () => listSources(project) });
   const [embedOf, setEmbedOf] = useState<DeploymentItem | null>(null);
   const list = useQuery({
     queryKey: queryKeys.list(project, "assistantdeployments"),
@@ -492,6 +494,7 @@ function Assistants({ project }: { project: string }): JSX.Element {
             project={project}
             deployment={chatWith.metadata.name}
             connectors={(chatWith.spec.connectors ?? []).map((c) => c.endpoint)}
+            linkHosts={linkHostsOf(chatWith.spec.allowedOrigins, chatWith.spec.sources, sourceRows.data ?? [])}
           />
         ) : null}
       </Dialog>

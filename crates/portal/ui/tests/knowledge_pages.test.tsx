@@ -5,7 +5,7 @@
 // src/pages/knowledge/knowledge.ts through the pages
 // they belong to; each was confirmed by
 // making the module throw and watching this file go red.
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { narrowsAndOrders } from "./grid_checks";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -22,7 +22,8 @@ vi.mock("../src/components/panels/VegaChart", async (actual) => ({
   ),
 }));
 import { App } from "../src/App";
-import { bytesText, chartSpec, dataChart, embedSnippet, readEvents, timeText, topLanguages, visualOf } from "../src/pages/knowledge/knowledge";
+import { bytesText, chartSpec, dataChart, embedSnippet, timeText, topLanguages, visualOf } from "../src/pages/knowledge/knowledge";
+import JCRender from "../src/generated/assistantRender";
 import { InclusionBadge } from "../src/pages/knowledge/SourcePage";
 import { UploadedFiles } from "../src/pages/knowledge/UploadedFiles";
 import { sum } from "../src/pages/knowledge/IndexStatus";
@@ -142,7 +143,7 @@ const page = (id: number, url: string, extra: Record<string, unknown> = {}) => (
 interface Stub {
   verbs?: string[];
   sources?: { code: number; body: unknown };
-  chat?: { code: number; body: string };
+  chat?: { code: number; body: string; headers?: Record<string, string>; hold?: boolean };
   upload?: { code: number; body: unknown };
   files?: { code: number; body: unknown };
   /** Addresses that answer 503, any method: a path's end (`/sources/bb-web/pages`) or a pattern. */
@@ -196,10 +197,18 @@ function renderAt(path: string, stub: Stub = {}) {
       writes.push({ path: url.pathname, body: request.body ? await request.json() : null });
       if (url.pathname.endsWith("/chat")) {
         const chat = stub.chat ?? { code: 200, body: ANSWER };
-        return new Response(chat.body, {
-          status: chat.code,
-          headers: { "Content-Type": chat.code >= 400 ? "application/problem+json" : "text/event-stream" },
-        });
+        const headers = { "Content-Type": chat.code >= 400 ? "application/problem+json" : "text/event-stream", ...chat.headers };
+        if (chat.hold) {
+          // A stream that stays open until the request is aborted, as a real fetch's body errors then.
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(chat.body));
+              request.signal.addEventListener("abort", () => controller.error(new DOMException("aborted", "AbortError")));
+            },
+          });
+          return new Response(body, { status: chat.code, headers });
+        }
+        return new Response(chat.body, { status: chat.code, headers });
       }
       if (url.pathname.endsWith("/recrawl")) return json({ job: 7 }, 202);
       if (url.pathname.includes("/drafts/")) return json({ version: 1 });
@@ -1082,6 +1091,7 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
     const box = within(dialog).getByRole("textbox", { name: "Your question" });
     await userEvent.type(box, "Kedy vyvážajú odpad?{Enter}");
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("The assistant's model did not answer. Your question is kept: try again in a minute.");
+    expect(within(dialog).getByRole("alert")).not.toHaveTextContent("Skúste");
     expect(box).toHaveValue("Kedy vyvážajú odpad?");
     const closest = within(dialog).getByRole("list", { name: "The sources that match your question best" });
     expect(within(closest).getByRole("link", { name: /Odvoz odpadu/ })).toHaveAttribute("href", "https://www.banskabystrica.sk/odpad");
@@ -1089,6 +1099,77 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
     await waitFor(() => expect(writes).toHaveLength(2));
     // A failed turn is not history the model is shown again.
     expect(writes[1].body).toMatchObject({ message: "Kedy vyvážajú odpad?", history: [] });
+  });
+
+  it("shows the stream from the shared reducer: progress, text, sources, data with CSV, steps and follow-ups (T-7790)", async () => {
+    const sse = (name: string, data: unknown) => `event: ${name}\ndata: ${JSON.stringify(data)}`;
+    const body = [
+      sse("conversation", { id: "c-1", at: "2026-11-24T10:00:00Z" }),
+      sse("stage", { stage: "searching", topic: "knižnica", count: 4 }),
+      sse("delta", { text: "Knižnica je otvorená do **18:00** [1]" }),
+      sse("data", { type: "Otváracie hodiny", columns: ["Deň", "Do"], rows: [["Po", "=18:00"], ["Ut", "18:00"]] }),
+      sse("answer", { text: "Knižnica je otvorená do **18:00** [1]. Viac na [stránke](https://evil.example/x)." }),
+      sse("citations", [{ n: 1, url: "https://www.banskabystrica.sk/kniznica", title: "Knižnica" }]),
+      sse("followups", { questions: ["A v sobotu?"] }),
+      sse("done", { tokens: 9, stagesMs: { route: 400, search: 900, answer: 1200 } }),
+    ].join("\n\n") + "\n\n";
+    const created: Blob[] = [];
+    const objectUrl = vi.spyOn(URL, "createObjectURL").mockImplementation((blob) => {
+      created.push(blob as Blob);
+      return "blob:csv";
+    });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const dialog = await ask(body);
+    const answer = await within(dialog).findByTestId("assistant-answer");
+    expect(within(answer).getByText("18:00").tagName).toBe("STRONG");
+    // A link off the deployment's hosts and the cited ones is its words, as in the widget.
+    expect(within(answer).queryByRole("link", { name: /stránke/ })).toBeNull();
+    expect(within(answer).getByRole("link", { name: "Source 1" })).toHaveAttribute("href", expect.stringMatching(/-1$/));
+    const sources = within(dialog).getByRole("list", { name: "Sources" });
+    expect(within(sources).getByRole("link", { name: /Knižnica/ })).toHaveAttribute("href", "https://www.banskabystrica.sk/kniznica");
+    expect(within(dialog).getByText("Steps (3)")).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Download CSV" }));
+    expect(objectUrl).toHaveBeenCalledTimes(1);
+    expect(created[0].type).toBe("text/csv;charset=utf-8");
+    // A UTF-8 BOM first (Blob.text drops it when it decodes), then the rows, the formula cell guarded.
+    expect([...new Uint8Array(await created[0].arrayBuffer()).slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(await created[0].text()).toBe("Deň,Do\r\nPo,'=18:00\r\nUt,18:00\r\n");
+    expect((click.mock.contexts[0] as HTMLAnchorElement).download).toBe("Otvaracie-hodiny.csv");
+    await userEvent.click(within(dialog).getByRole("button", { name: "A v sobotu?" }));
+    await waitFor(() => expect(within(dialog).getAllByText("A v sobotu?").length).toBeGreaterThan(0));
+  });
+
+  it("Stop ends the request, keeps what arrived and says so (T-7790)", async () => {
+    const body = 'event: conversation\ndata: {"id":"c-1"}\n\nevent: delta\ndata: {"text":"Zatiaľ toto"}\n\n';
+    renderAt("/projects/banskabystrica/knowledge", { chat: { code: 200, body, hold: true } });
+    const table = await screen.findByRole("table", { name: "Assistants" });
+    await userEvent.click(within(table).getByRole("button", { name: "Ask obcania" }));
+    const dialog = await screen.findByRole("dialog", { name: "Ask obcania" });
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "Your question" }), "PM10?{Enter}");
+    expect(await within(dialog).findByText("Zatiaľ toto")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Send" })).toBeNull();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Stop" }));
+    expect(await within(dialog).findByText("You stopped the answer. What arrived stays.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Zatiaľ toto")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
+
+  it("says a limit in the reader's language with its reset time, never the service's Slovak (T-7790)", async () => {
+    const body = 'event: error\ndata: {"status":429,"title":"Daily Limit Reached","detail":"Asistent dnes dosiahol denný limit."}\n\nevent: done\ndata: {}\n\n';
+    const before = Date.now();
+    renderAt("/projects/banskabystrica/knowledge", { chat: { code: 200, body, headers: { "Retry-After": "3600" } } });
+    const table = await screen.findByRole("table", { name: "Assistants" });
+    await userEvent.click(within(table).getByRole("button", { name: "Ask obcania" }));
+    const dialog = await screen.findByRole("dialog", { name: "Ask obcania" });
+    await act(async () => {
+      await i18n.changeLanguage("de");
+    });
+    await userEvent.type(within(dialog).getAllByRole("textbox")[0], "PM10?{Enter}");
+    const alert = await within(dialog).findByRole("alert");
+    const time = new Intl.DateTimeFormat("de", { hour: "numeric", minute: "2-digit" }).format(new Date(before + 3600e3));
+    expect(alert).toHaveTextContent(`Der Assistent hat sein Limit erreicht. Versuchen Sie es nach ${time} erneut.`);
+    expect(alert).not.toHaveTextContent("denný limit");
   });
 
   it("gives the frame to paste for a public assistant", async () => {
@@ -1167,40 +1248,31 @@ describe("a deployment's copy and its full page (T-4281, T-4282)", () => {
 });
 
 describe("the chat's stream and snippet", () => {
-  it("reads whole events, keeps a part still arriving, and skips a broken one", () => {
-    const first = readEvents('event: conversation\r\ndata: {"id":"c1"}\r\n\r\nevent: answer\ndata: {"te');
-    expect(first.events).toEqual([{ name: "conversation", id: "c1" }]);
-    const second = readEvents(`${first.rest}xt":"Hello"}\n\nevent: tool\ndata: not json\n\nevent: done\ndata: {"tokens":3}\n\n`);
+  it("reads whole events with the widget's parser, keeps a part still arriving, and skips a broken one (T-7790)", () => {
+    const first = JCRender.events('event: conversation\r\ndata: {"id":"c1"}\r\n\r\nevent: answer\ndata: {"te');
+    expect(first.events).toEqual([{ name: "conversation", data: { id: "c1" } }]);
+    const second = JCRender.events(`${first.rest}xt":"Hello"}\n\nevent: tool\ndata: not json\n\nevent: done\ndata: {"tokens":3}\n\n`);
     expect(second.events).toEqual([
-      { name: "answer", text: "Hello" },
-      { name: "done", tokens: 3 },
+      { name: "answer", data: { text: "Hello" } },
+      { name: "done", data: { tokens: 3 } },
     ]);
     expect(second.rest).toBe("");
   });
 
-  it("keeps an uploaded file's citation by its upload: address, and no other scheme (T-4869)", () => {
-    const { events } = readEvents('event: citations\ndata: [{"n":1,"url":"upload:files/a.pdf#page=2"},{"n":2,"url":"file:///etc/passwd"}]\n\n');
-    expect(events).toEqual([
-      { name: "citations", citations: [
-        { n: 1, url: "upload:files/a.pdf#page=2", tool: undefined, endpoint: undefined },
-        { n: 2, url: undefined, tool: undefined, endpoint: undefined },
-      ] },
+  it("keeps an uploaded file's citation by its name and no other scheme among the sources (T-4869, T-7790)", () => {
+    const state = JCRender.reduce(undefined, "citations", [
+      { n: 1, url: "upload:files/a.pdf#page=2" },
+      { n: 2, url: "file:///etc/passwd" },
+      { n: 3, url: "javascript:alert(1)" },
+      { n: 4, url: "https://a.example/" },
+      { x: 5 },
     ]);
-  });
-
-  it("keeps only http links among the citations and ignores an unknown event", () => {
-    const { events } = readEvents(
-      'event: citations\ndata: [{"n":1,"url":"javascript:alert(1)"},{"n":2,"url":"https://a.example/"},{"x":3}]\n\nevent: surprise\ndata: {}\n\n',
-    );
-    expect(events).toEqual([
-      {
-        name: "citations",
-        citations: [
-          { n: 1, url: undefined, tool: undefined, endpoint: undefined },
-          { n: 2, url: "https://a.example/", tool: undefined, endpoint: undefined },
-        ],
-      },
+    const { list } = JCRender.sources(state.citations);
+    expect(list.map((source) => [JCRender.label(source), JCRender.safeUrl(source.url)])).toEqual([
+      ["a.pdf", null],
+      ["a.example", "https://a.example/"],
     ]);
+    expect(JCRender.reduce(state, "surprise", {})).toEqual(state);
   });
 
   it("writes no address when the Portal does not know its domain", () => {
