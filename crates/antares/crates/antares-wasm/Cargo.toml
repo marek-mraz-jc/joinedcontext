@@ -66,6 +66,8 @@ send_wrapper = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+# wire_now's fallback error, read back in its unit tests
+tracing-subscriber = { workspace = true }
 # Tests need a real TCP listener feeding the SAME broker instance — the
 # native stand-in for the browser loopback host (tests/handle.rs).
 hyper = { workspace = true, features = ["server", "http1"] }

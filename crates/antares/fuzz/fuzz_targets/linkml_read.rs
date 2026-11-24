@@ -4,7 +4,11 @@
 use libfuzzer_sys::fuzz_target;
 use linkml_model::{Limits, Model};
 
-const LIMITS: Limits = Limits { max_bytes: 64 * 1024, max_depth: 32, max_elements: 4096 };
+const LIMITS: Limits = Limits {
+    max_bytes: 64 * 1024,
+    max_depth: 32,
+    max_elements: 4096,
+};
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(model) = Model::read(data, &LIMITS) {

@@ -257,6 +257,180 @@ mod tests {
     }
 
     #[test]
+    fn the_repo_root_is_made_private_where_configured_or_under_the_state_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default = repo_root(None, tmp.path()).unwrap();
+        assert_eq!(default, tmp.path().join("shako"));
+        let configured = tmp.path().join("a/b/repos");
+        assert_eq!(
+            repo_root(Some(&configured), tmp.path()).unwrap(),
+            configured
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&configured).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        let file = tmp.path().join("file");
+        std::fs::write(&file, "x").unwrap();
+        let e = repo_root(Some(&file.join("repos")), tmp.path())
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("cannot create repo root"), "{e}");
+    }
+
+    fn database(dir: &Path, migrate: bool) -> crate::pg::DatabaseSection {
+        let password = dir.join("password");
+        std::fs::write(&password, "pw").unwrap();
+        // A bound socket that never listens: the connection is refused at once.
+        crate::pg::DatabaseSection {
+            url: "postgres://shako_app@127.0.0.1:1/shako".into(),
+            password_file: password.clone(),
+            max_connections: None,
+            migrate_url: migrate.then(|| "postgres://shako_owner@127.0.0.1:1/shako".into()),
+            migrate_password_file: migrate.then_some(password),
+            maintenance_url: None,
+            maintenance_password_file: None,
+        }
+    }
+
+    fn with_kek(dir: &Path, kek: Option<&str>) -> crate::setup::Setup {
+        let mut given = BTreeMap::new();
+        if let Some(kek) = kek {
+            given.insert(
+                crate::setup::Secret::KaisatsuKek,
+                crate::setup::Given {
+                    secret: jc_secret::Secret::new(kek.into()),
+                    source: jc_secret::Source::Env,
+                    path: None,
+                },
+            );
+        }
+        let roles: &[Module] = if kek.is_some() {
+            &[Module::Shako, Module::Kaisatsu]
+        } else {
+            &[Module::Shako]
+        };
+        crate::setup::Setup::prepare(dir, roles, &given).unwrap()
+    }
+
+    async fn open_err(cfg: &ShakoSection, setup: &crate::setup::Setup, root: &Path) -> String {
+        match open_store(cfg, ORG, root, setup).await {
+            Ok(_) => panic!("the store must not open"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_database_store_refuses_to_start_without_a_usable_key_or_server() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = ShakoSection {
+            database: Some(database(tmp.path(), false)),
+            ..ShakoSection::default()
+        };
+        let e = open_err(&cfg, &with_kek(tmp.path(), None), tmp.path()).await;
+        assert!(e.contains("holds no kaisatsu-kek"), "{e}");
+        let e = open_err(&cfg, &with_kek(tmp.path(), Some("short")), tmp.path()).await;
+        assert!(e.contains("not a 32-byte key"), "{e}");
+        assert!(
+            !e.contains("short"),
+            "the key never reaches the message: {e}"
+        );
+        let kek = "k".repeat(32);
+        let mut unreadable = database(tmp.path(), false);
+        unreadable.password_file = tmp.path().join("missing");
+        let cfg_unreadable = ShakoSection {
+            database: Some(unreadable),
+            ..ShakoSection::default()
+        };
+        let setup = with_kek(tmp.path(), Some(&kek));
+        let e = open_err(&cfg_unreadable, &setup, tmp.path()).await;
+        assert!(e.contains("shako"), "{e}");
+        let e = open_err(&cfg, &setup, tmp.path()).await;
+        assert!(
+            e.contains("shako"),
+            "a refused server refuses the start: {e}"
+        );
+        let migrating = ShakoSection {
+            database: Some(database(tmp.path(), true)),
+            ..ShakoSection::default()
+        };
+        let e = open_err(&migrating, &setup, tmp.path()).await;
+        assert!(e.contains("cannot connect to Postgres"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_memory_forge_starts_with_the_admin_token_and_refuses_without_a_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let setup =
+            crate::setup::Setup::prepare(tmp.path(), &[Module::Shako], &BTreeMap::new()).unwrap();
+        let token = setup
+            .value(crate::setup::Secret::ShakoToken)
+            .unwrap()
+            .to_owned();
+        let state = build_state(&ShakoSection::default(), &setup).await.unwrap();
+        assert!(tmp.path().join("shako").is_dir(), "the default repo root");
+        let (main, v2) = build(
+            state,
+            jc_router::Mount::new("shako", "http", "localhost", "/shako").unwrap(),
+            "https://portal.city.test/",
+        );
+        use tower::ServiceExt as _;
+        let ask = |router: Router, path: &str, bearer: Option<&str>| {
+            let mut request = axum::http::Request::get(path);
+            if let Some(token) = bearer {
+                request = request.header("authorization", format!("Bearer {token}"));
+            }
+            let request = request.body(axum::body::Body::empty()).unwrap();
+            async move { router.oneshot(request).await.unwrap().status() }
+        };
+        assert_eq!(
+            ask(v2.clone(), "/v2/", None).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+        assert!(ask(v2.clone(), "/v2/", Some(&token)).await.is_success());
+        assert_eq!(
+            ask(v2, "/v2/", Some("not-the-token")).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+        assert_ne!(
+            ask(main, "/shako/", None).await,
+            axum::http::StatusCode::NOT_FOUND
+        );
+
+        let without =
+            crate::setup::Setup::prepare(tmp.path(), &[Module::Antares], &BTreeMap::new()).unwrap();
+        let e = build_state(&ShakoSection::default(), &without)
+            .await
+            .err()
+            .expect("no signing key")
+            .to_string();
+        assert!(e.contains("no signing key"), "{e}");
+    }
+
+    #[test]
+    fn a_signing_key_that_is_not_p256_refuses_the_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut given = BTreeMap::new();
+        given.insert(
+            crate::setup::Secret::ShakoSigningKey,
+            crate::setup::Given {
+                secret: jc_secret::Secret::new("not-a-key".into()),
+                source: jc_secret::Source::Env,
+                path: None,
+            },
+        );
+        let setup = crate::setup::Setup::prepare(tmp.path(), &[Module::Shako], &given).unwrap();
+        let e = signing_key(&setup).unwrap_err().to_string();
+        assert!(e.contains("not a P-256 key"), "{e}");
+        assert!(
+            !e.contains("not-a-key"),
+            "the key never reaches the message: {e}"
+        );
+    }
+
+    #[test]
     fn signing_key_is_kept_across_boots_and_missing_refuses_the_start() {
         let tmp = tempfile::tempdir().unwrap();
         let boot = || crate::setup::Setup::prepare(tmp.path(), &[Module::Shako], &BTreeMap::new());
