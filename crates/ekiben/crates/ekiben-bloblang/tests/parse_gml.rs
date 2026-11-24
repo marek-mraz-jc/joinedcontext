@@ -357,6 +357,36 @@ fn every_gml_shape_and_fault_reads_as_named() {
 }
 
 #[test]
+fn coordinates_separators_must_be_given_and_distinct() {
+    let refused = "parse_gml: gml:coordinates needs distinct cs, ts and decimal";
+    for attrs in [
+        r#"cs="""#,
+        r#"ts="""#,
+        r#"decimal="""#,
+        r#"cs=";" ts=";""#,
+        r#"decimal=",""#,
+        r#"decimal=" ""#,
+    ] {
+        let gml = format!("<gml:Point><gml:coordinates {attrs}>1,2</gml:coordinates></gml:Point>");
+        assert_eq!(
+            parse_gml(&text(&gml), None, None),
+            Err(refused.to_string()),
+            "{attrs}"
+        );
+    }
+}
+
+#[test]
+fn a_pos_list_cut_short_of_its_dimension_is_refused() {
+    let gml =
+        r#"<gml:LineString srsDimension="3"><gml:posList>1 2 3 4 5</gml:posList></gml:LineString>"#;
+    assert_eq!(
+        parse_gml(&text(gml), None, None),
+        Err("parse_gml: gml:posList holds 5 numbers, not a multiple of srsDimension 3".to_string())
+    );
+}
+
+#[test]
 fn deep_nesting_is_refused_without_a_stack_overflow() {
     let deep = |n: usize| {
         format!(

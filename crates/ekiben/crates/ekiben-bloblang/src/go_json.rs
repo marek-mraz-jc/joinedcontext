@@ -334,7 +334,16 @@ mod tests {
                 vec![Value::Bool(true), Value::Bool(false), Value::Null].into()
             ))
         );
-        for bad in [&b"tru"[..], b"fals", b"nul", b"[true,nil]"] {
+        assert_eq!(
+            decode_with_numbers(br#""a b""#),
+            Some(Value::String("a b".into()))
+        );
+        // A digits-only number Go would print the same as a float stays json.Number text.
+        assert!(matches!(
+            number_from_text("100000000000000000000"),
+            Value::Number(_)
+        ));
+        for bad in [&b"tru"[..], b"fals", b"nul", b"[true,nil]", b"\"a\x1fb\""] {
             assert_eq!(decode_with_numbers(bad), None, "{bad:?}");
         }
     }

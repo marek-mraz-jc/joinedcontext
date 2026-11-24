@@ -396,7 +396,7 @@ fn fmt_integer(out: &mut String, v: &Value, u: u64, negative: bool, verb: char, 
                 if let Some(c) = u32::try_from(u)
                     .ok()
                     .and_then(char::from_u32)
-                    .filter(|c| is_go_print(*c) || c.is_ascii_graphic() || *c == ' ')
+                    .filter(|c| is_go_print(*c) || *c == ' ')
                 {
                     s.push_str(&format!(" '{c}'"));
                 }
@@ -422,14 +422,11 @@ fn fmt_integer(out: &mut String, v: &Value, u: u64, negative: bool, verb: char, 
     };
     let min = match (f.prec, f.zero, f.wid) {
         (Some(p), _, _) => p,
-        (None, true, Some(w)) if !f.minus => {
-            w.saturating_sub(usize::from(negative || f.plus || f.space))
-        }
+        // sprintf clears zero under minus, as Go does.
+        (None, true, Some(w)) => w.saturating_sub(usize::from(negative || f.plus || f.space)),
         _ => 0,
     };
-    if digits.len() < min {
-        digits.insert_str(0, &"0".repeat(min - digits.len()));
-    }
+    digits.insert_str(0, &"0".repeat(min.saturating_sub(digits.len())));
     if f.sharp {
         match base {
             2 => digits.insert_str(0, "0b"),
@@ -778,6 +775,13 @@ mod tests {
             ("%*d", vec![st("x"), i(42)], "%!(BADWIDTH)42"),
             ("%*d", vec![i(2_000_000), i(1)], "%!(BADWIDTH)1"),
             ("%*d", vec![Value::Uint(2_000_000), i(1)], "%!(BADWIDTH)1"),
+            // A precision turns the zero flag off: Go pads with spaces then.
+            (
+                "%08.3d|%-08d|%8.2f|%08.2f",
+                vec![i(42), i(42), Value::Float(1.5), Value::Float(-1.5)],
+                "     042|42      |    1.50|-0001.50",
+            ),
+            ("%#U|%#U", vec![i(0x20), i(0xE9)], "U+0020 ' '|U+00E9 'é'"),
             // %q escapes what Go's IsPrint refuses, by size; %+q every non-ASCII rune.
             (
                 "%q|%q|%+q",

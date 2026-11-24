@@ -1417,6 +1417,10 @@ mod tests {
             format_go_layout(&utc, "Z07:00|Z0700|Z07|MST|"),
             "Z|Z|Z|UTC|"
         );
+        assert_eq!(
+            format_go_layout(&utc, "-07:00|-0700|-07|"),
+            "+00:00|+0000|+00|"
+        );
         Ok(())
     }
 
