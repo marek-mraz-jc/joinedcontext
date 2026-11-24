@@ -1,0 +1,7 @@
+branding:
+  instanceName: Mesto
+  colours:
+    primary: "#112233"
+  languages:
+    - sk
+    default: sk

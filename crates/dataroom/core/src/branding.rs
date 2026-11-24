@@ -1342,10 +1342,8 @@ fn svg_tags(text: &str) -> Vec<SvgTag<'_>> {
                     }
                 }
             }
-            if name.is_empty() {
-                i += 1;
-                continue;
-            }
+            // An empty name (a stray `=`) stays in the list: an HTML parser reads what follows as
+            // an attribute of its own, so the check refuses it instead of skipping it.
             attributes.push((name, value));
         }
         tags.push(SvgTag { attributes });
@@ -1360,6 +1358,11 @@ fn svg_tags(text: &str) -> Vec<SvgTag<'_>> {
 /// only name a local `#fragment` or an embedded raster image; animation may not retarget them.
 fn check_svg_attribute(name: &str, value: &str) -> Result<()> {
     let refuse = |why: String| Err(DataroomError::field_error("logo", why));
+    if name.is_empty() {
+        return refuse(format!(
+            "SVG contains an attribute without a name before '{value}'"
+        ));
+    }
     if name.starts_with("on") && name.len() > 2 {
         return refuse(format!(
             "SVG contains forbidden event handler attribute '{name}'"
@@ -1468,6 +1471,40 @@ pub fn is_mcp_server(v: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn parsed(text: &str) -> Vec<Vec<(&str, &str)>> {
+        svg_tags(text).into_iter().map(|t| t.attributes).collect()
+    }
+
+    /// The tag reader splits names and values as an HTML parser does: quotes of either kind,
+    /// spaces around `=`, unquoted values up to a space or `>`, `/` between attributes, closing
+    /// tags, and input that ends inside a tag.
+    #[test]
+    fn svg_tags_reads_each_attribute_as_a_browser_would() {
+        assert_eq!(
+            parsed(r#"<svg a="1" b='2'/>"#),
+            [vec![("a", "1"), ("b", "2")]]
+        );
+        assert_eq!(
+            parsed("<rect x = \"1\"   y=2 />"),
+            [vec![("x", "1"), ("y", "2")]]
+        );
+        assert_eq!(
+            parsed(r#"<g d="a>b/c" e='x"y'>"#),
+            [vec![("d", "a>b/c"), ("e", "x\"y")]]
+        );
+        assert_eq!(parsed("<p v=x>"), [vec![("v", "x")]]);
+        assert_eq!(parsed("<p hidden k>"), [vec![("hidden", ""), ("k", "")]]);
+        assert_eq!(parsed("<p a/b=\"c\">"), [vec![("a", ""), ("b", "c")]]);
+        assert_eq!(
+            parsed(r#"<a x="1"><b y="2"></b></a>"#),
+            [vec![("x", "1")], vec![("y", "2")], vec![], vec![]]
+        );
+        assert_eq!(parsed("<p v=\"abc"), [vec![("v", "abc")]]);
+        assert_eq!(parsed("<p v=x"), [vec![("v", "x")]]);
+        assert_eq!(parsed("<p\tv\n=\n'q'\n>"), [vec![("v", "q")]]);
+        assert_eq!(parsed("text only"), Vec::<Vec<(&str, &str)>>::new());
+    }
 
     /// T-7744: the token custom properties carry only hex colours, numbers in range and fixed
     /// lengths; a colour that is not hex never reaches the page.

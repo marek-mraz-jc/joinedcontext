@@ -126,6 +126,7 @@ impl Store for FailingStore {
         list_harvest_runs<'a>(ctx: &'a RequestCtx, source_id: Option<&'a str>) -> Vec<HarvestRun>;
         get_harvest_run<'a>(ctx: &'a RequestCtx, run_id: &'a str) -> Option<HarvestRun>;
         upsert_harvest_run<'a>(ctx: &'a RequestCtx, run: HarvestRun) -> HarvestRun;
+        claim_harvest_run<'a>(ctx: &'a RequestCtx, run: HarvestRun, stale_before: jc_time::TimestampTz) -> bool;
         record_activity<'a>(ctx: &'a RequestCtx, row: ActivityRow) -> ();
         list_activity<'a>(ctx: &'a RequestCtx, object_id: Option<&'a str>, limit: usize) -> Vec<ActivityRow>;
         upsert_shacl_report<'a>(ctx: &'a RequestCtx, report: ShaclValidationReport) -> ShaclValidationReport;

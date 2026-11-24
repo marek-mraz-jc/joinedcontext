@@ -57,11 +57,6 @@ pub trait DatasetValidator: Send + Sync {
     ) {
     }
 
-    /// Refuses a profile upload that takes a built-in's id or whose shapes do not parse.
-    fn check_profile(&self, _profile: &crate::model::ProfileRecord) -> Result<()> {
-        Ok(())
-    }
-
     /// Refuses profiles a catalogue may not take up: not installed, needing a publisher it does
     /// not declare, or, where a Portal manages the choice (`managed`), a built-in one.
     fn check_profile_choice(
@@ -1115,10 +1110,8 @@ async fn dispatch(
     op_name: &str,
     input: Value,
 ) -> Result<Value> {
-    let def = find_operation(op_name)
-        .ok_or_else(|| DataroomError::NotFound(format!("unknown operation: {op_name}")))?;
-
-    match def.name {
+    // A tool or command name answers as its operation; any other name falls to the last arm.
+    match find_operation(op_name).map_or(op_name, |def| def.name) {
         "catalogue.list" => {
             let cats = op_ctx.store.list_catalogues(req_ctx.org_id).await?;
             let visible: Vec<Catalogue> = cats
@@ -2196,7 +2189,7 @@ async fn dispatch(
             }))
         }
         other => Err(DataroomError::NotFound(format!(
-            "unknown operation {other}"
+            "unknown operation: {other}"
         ))),
     }
 }
