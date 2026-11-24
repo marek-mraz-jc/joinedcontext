@@ -4083,6 +4083,14 @@ mod receive_pack_tests {
     }
 
     #[test]
+    fn a_reason_that_is_no_utf8_is_reported_with_replacement_characters() {
+        // Fuzz crash-06aec710: a refusal reason with bytes that are no UTF-8.
+        let answer = b"000eunpack ok\n002eng refs\xff\xff\xff\xff\xff\xffu\xff\xff\xff\xff\xff\xff\xff\x16\n necessary objects\n0000";
+        let refused = receive_pack_status(answer).expect("unpacked");
+        assert_eq!(refused, ["refs\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}u\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{16}\n necessary objects"]);
+    }
+
+    #[test]
     fn an_answer_that_is_not_a_report_is_an_error() {
         for answer in [&b""[..], b"0000", b"zzzz", b"00ffunpack ok"] {
             assert!(receive_pack_status(answer).is_err(), "{answer:?}");

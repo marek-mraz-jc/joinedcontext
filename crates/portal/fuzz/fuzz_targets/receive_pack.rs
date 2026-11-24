@@ -9,7 +9,10 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(refused) = receive_pack_status(data) {
         assert!(data.windows(9).any(|w| w == b"unpack ok"));
         for reason in refused {
-            assert!(data.windows(reason.len()).any(|w| w == reason.as_bytes()));
+            // A reason is read lossily: every run between replacement characters is from the answer.
+            for run in reason.split('\u{fffd}').filter(|run| !run.is_empty()) {
+                assert!(data.windows(run.len()).any(|w| w == run.as_bytes()));
+            }
         }
     }
 });
