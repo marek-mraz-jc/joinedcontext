@@ -4,12 +4,12 @@
 [crates]
 "antares-bus" = { lines = 99.22, functions = 100.00 }
 "antares-export" = { lines = 100.00, functions = 100.00 }
-"antares-feed" = { lines = 99.80, functions = 99.36 }
+"antares-feed" = { lines = 99.80, functions = 99.37 }
 "antares-gbfs" = { lines = 100.00, functions = 100.00 }
 "antares-geojson" = { lines = 100.00, functions = 100.00 }
 "antares-gtfsrt" = { lines = 100.00, functions = 100.00 }
-"antares-ical" = { lines = 99.70, functions = 100.00 }
-"antares-icsr" = { lines = 89.20, functions = 97.10 }
+"antares-ical" = { lines = 99.79, functions = 100.00 }
+"antares-icsr" = { lines = 89.23, functions = 97.22 }
 "antares-jsonstat" = { lines = 100.00, functions = 100.00 }
 "antares-linkml" = { lines = 99.80, functions = 100.00 }
 "antares-mcp" = { lines = 99.36, functions = 99.56 }
@@ -18,9 +18,9 @@
 "antares-ogc" = { lines = 99.70, functions = 99.17 }
 "antares-ops" = { lines = 99.00, functions = 99.00 }
 "antares-sta" = { lines = 100.00, functions = 99.78 }
-"antares-views" = { lines = 99.70, functions = 99.30 }
-"antares-wasm" = { lines = 94.40, functions = 100.00 }
-"antares-ws" = { lines = 99.03, functions = 99.18 }
+"antares-views" = { lines = 99.88, functions = 99.30 }
+"antares-wasm" = { lines = 92.50, functions = 100.00 }
+"antares-ws" = { lines = 99.04, functions = 99.19 }
 "daiya-api" = { lines = 99.31, functions = 99.12 }
 "daiya-expr" = { lines = 99.25, functions = 100.00 }
 "daiya-import" = { lines = 99.29, functions = 99.29 }

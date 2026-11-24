@@ -114,9 +114,6 @@ exclude_re = [
   # segment, which the segment rule refuses with the same error, so `||` and `&&` between those two
   # checks answer alike; both checks stay as the root guard (integrator bounce 2026-11-23).
   'odata-table/src/git\.rs:90:9: replace \|\| with && in segments',
-  # odata-axum read `/$count` (T-7597): `top: Some(0)` only spares fetching rows nobody reads; the
-  # count is computed apart from the page, so the answer is the same number with or without it.
-  'odata-axum/src/table\.rs:\d+:\d+: delete field top from struct QueryOptions expression in read',
   # dataroom-api handle_odata `/{set}/$count`: top 0 only spares the rows the answer never
   # carries; without it the count is the same, the page is built and dropped (T-7627).
   'dataroom/api/src/odata_routes\.rs:\d+:\d+: delete field top from struct QueryOptions expression in handle_odata',
@@ -257,6 +254,48 @@ exclude_re = [
   # antares-notifier: page_sink is cfg(target_arch = "wasm32"); the native test run does not compile it, so its mutants
   # change nothing the native tests build (the browser build of antares-wasm registers and calls it).
   'crates/antares-notifier/src/http\.rs:\d+:\d+: replace .*page_sink::',
+  # antares-wasm browser.rs and opfs.rs are cfg(target_arch = "wasm32"), as are the globalThis reads in
+  # Broker::with_store_alias (ANTARES_PUBLIC_URL, ANTARES_TEMPORAL_INSTANCE_LIMIT, ANTARES_SWEEP_SECS): the native
+  # test run does not compile them, so their mutants change nothing it builds (the browser build runs them; T-7673).
+  'crates/antares-wasm/src/(browser|opfs)\.rs:',
+  # antares-icsr Internal::deliver: Grant::allows(false) is `!false || ...`, true for every grant, so the guard
+  # replaced with true reads alike; the guard stays as the read-access statement of the delivery (T-7673).
+  'crates/antares-icsr/src/lib\.rs:\d+:\d+: replace match guard g\.allows\(false\) with true in Internal::deliver',
+  # antares-ical Zone::local: the year test picks the fallback end only when jiff cannot convert the instant, which
+  # happens below -9999 or above 9999, never at year 0, so `<` and `<=` answer alike (T-7673).
+  'crates/antares-ical/src/zone\.rs:\d+:\d+: replace < with <= in Zone::local',
+  # antares-icsr SelfUrls::matching: an URL with a user or a password serialises with its userinfo, and no self URL
+  # holds one, so no prefix matches either way; the explicit refusal stays (T-7673).
+  'crates/antares-icsr/src/self_url\.rs:\d+:\d+: replace \|\| with && in SelfUrls::matching',
+  # antares-ws mqtt packet: the length byte is `n & 0x7f`, its top bit zero, so `| 0x80` and `^ 0x80` set the
+  # same continuation bit (T-7675).
+  'crates/antares-ws/src/mqtt\.rs:\d+:\d+: replace \| with \^ in packet',
+  # antares-ws READ_BUFFER_BYTES sizes the socket's read buffer only; any size reads the same frames (T-7675).
+  'crates/antares-ws/src/lib\.rs:\d+:\d+: replace \* with (\+|/)$',
+  # antares-ws leased: a wish equal to now + lease to the millisecond is never observed; both arms then answer the
+  # same instant (T-7675).
+  'crates/antares-ws/src/socket\.rs:\d+:\d+: replace < with <= in leased',
+  # antares-ws Session::tick: a pong exactly `pong_within` old to the nanosecond is never observed (T-7675).
+  'crates/antares-ws/src/socket\.rs:552:44: replace > with >= in Session::tick',
+  # antares-ws Session::tick idle and the STA MQTT tick's CONNECT deadline and keep alive: an age exactly the limit to
+  # the nanosecond is never observed at a tick (T-7675).
+  'crates/antares-ws/src/socket\.rs:555:82: replace > with >= in Session::tick',
+  'crates/antares-ws/src/sta_mqtt\.rs:(710:58|715:61): replace > with >= in Session::tick',
+  # antares-ws Conn::is_attached: the resume wakes the connection and the old socket, already waiting, drains first and
+  # ends because Conn::next answers None to a generation no longer attached; the heartbeat's check covers a wake the
+  # new socket takes first, an ordering no test can force (T-7675).
+  'crates/antares-ws/src/hub\.rs:\d+:\d+: replace Conn::is_attached -> bool with true',
+  # antares-ws show_changes: a showChanges Subscription's update notifications carry previousValue, which already
+  # keeps them out of coalescing (Forwarded::changes); the recorded flag only differs for two queued notifications
+  # of one Entity that both lack a previous value, an order the notifier gives no test a way to force (T-7675).
+  'crates/antares-ws/src/socket\.rs:\d+:\d+: replace show_changes -> Option<bool> with (None|Some\(false\))',
+  # antares-views union run: `live` only sizes the chunk each view is asked for per refill (ROWS_HELD shared out);
+  # the merged page, its order and its cursor are the same for any chunk of at least one row (T-7673).
+  'crates/antares-views/src/union\.rs:319:40: delete ! in run',
+  # antares-views union run: without count, the first refill and the loop's first refill ask the same parts for the
+  # same chunk, so skipping the first one when limit > 0 answers alike (T-7673).
+  'crates/antares-views/src/union\.rs:326:18: replace > with < in run',
+  'crates/antares-wasm/src/lib\.rs:\d+:\d+: (delete !|replace \S+ with \S+) in Broker::with_store_alias',
   # antares-notifier: the pump-finished guard after a successful publish only decides whether a connection whose broker
   # hung up in the same instant is pooled or the publish retried; both report the delivery, and a dead pooled connection
   # is replaced by the next publish's retry (a_dead_pooled_connection_is_replaced_by_one_retry). No test can order it.

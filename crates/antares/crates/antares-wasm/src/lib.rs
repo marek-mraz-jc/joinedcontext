@@ -140,14 +140,8 @@ impl Broker {
     /// would make that a wasm-bindgen recursive-borrow error. Router clone is
     /// a cheap Arc bump and shares all state.
     pub async fn handle(&self, req: http::Request<Vec<u8>>) -> http::Response<Vec<u8>> {
-        let (mut parts, body) = req.into_parts();
-        // The native binary routes under NormalizePathLayer::trim_trailing_slash
-        // (6.3 URLs arrive both with and without a trailing '/'); this seam is
-        // the wasm equivalent — same trim, applied before the router sees it.
-        if let Some(uri) = without_trailing_slash(&parts.uri) {
-            parts.uri = uri;
-        }
-        let req = http::Request::from_parts(parts, Body::from(body));
+        // antares_api::router trims a trailing '/' for every host (T-3701), this one included.
+        let req = req.map(Body::from);
         let mut router = self.router.clone();
         // The router's error type is Infallible: the pattern is irrefutable.
         let Ok(resp) = router.call(req).await;
@@ -159,22 +153,6 @@ impl Broker {
             .unwrap_or_default();
         http::Response::from_parts(parts, bytes)
     }
-}
-
-/// `uri` with its path's trailing '/'s trimmed and its query kept; `None` when
-/// there is nothing to trim, the path is "/" alone, or the URI has no path.
-fn without_trailing_slash(uri: &http::Uri) -> Option<http::Uri> {
-    let pq = uri.path_and_query()?;
-    let trimmed = pq.path().trim_end_matches('/');
-    if trimmed.len() == pq.path().len() || trimmed.is_empty() {
-        return None;
-    }
-    match pq.query() {
-        Some(q) => format!("{trimmed}?{q}"),
-        None => trimmed.to_owned(),
-    }
-    .parse()
-    .ok()
 }
 
 #[cfg(target_arch = "wasm32")]

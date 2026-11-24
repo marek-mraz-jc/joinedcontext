@@ -551,6 +551,13 @@ mod tests {
     fn an_output_without_title_or_updated_or_with_a_bad_name_does_not_compile() {
         let ok = json!({"name": "vsetky", "sources": [{"type": "Event", "preset": "event"}]});
         assert!(plan(&ok).is_ok());
+        let sources = |n: usize| -> Vec<Value> {
+            (0..n)
+                .map(|i| json!({"type": format!("T{i}"), "preset": "event"}))
+                .collect()
+        };
+        assert!(plan(&json!({"name": "x", "sources": sources(MAX_OUTPUTS)})).is_ok());
+        assert!(plan(&json!({"name": "x", "sources": sources(MAX_OUTPUTS + 1)})).is_err());
         for bad in [
             json!({"name": "Vsetky", "sources": [{"type": "Event", "preset": "event"}]}),
             json!({"name": "-x", "sources": [{"type": "Event", "preset": "event"}]}),

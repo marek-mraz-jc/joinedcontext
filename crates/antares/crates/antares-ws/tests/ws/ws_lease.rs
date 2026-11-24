@@ -66,6 +66,9 @@ async fn ws_a_socket_subscription_is_leased_and_renewed() -> Result<(), String> 
         "{r}"
     );
 
+    // before a third of the lease the heartbeat leaves it as it is
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(at(&stored(&b, &sub).await?, "/expiresAt")?, first);
     // a third of the lease later the heartbeat has moved it on
     tokio::time::sleep(Duration::from_millis(1200)).await;
     let renewed = at(&stored(&b, &sub).await?, "/expiresAt")?;
@@ -104,6 +107,15 @@ async fn ws_a_socket_subscription_is_leased_and_renewed() -> Result<(), String> 
         after < Timestamp::now() + SignedDuration::from_secs(2),
         "{after}"
     );
+    // an earlier wish than the lease is kept as it was asked
+    let earlier = jc_time::format_rfc3339(
+        Timestamp::now() + SignedDuration::from_millis(1000),
+        SecondsFormat::Millis,
+        true,
+    );
+    let wish = json!({"expiresAt": earlier});
+    assert_eq!(update(&mut c, &wished, wish).await?, 204);
+    assert_eq!(text(&stored(&b, &wished).await?, "/expiresAt"), earlier);
     let removed = json!({"expiresAt": "urn:ngsi-ld:null"});
     assert_eq!(update(&mut c, &wished, removed).await?, 204);
     let after = at(&stored(&b, &wished).await?, "/expiresAt")?;

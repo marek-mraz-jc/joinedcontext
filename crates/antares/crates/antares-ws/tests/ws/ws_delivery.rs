@@ -54,6 +54,19 @@ async fn ws_a_subscription_made_over_the_socket_notifies_over_it() -> Result<(),
     Ok(())
 }
 
+/// The Subscription a socket made is answered whole, a description of a
+/// few kilobytes included.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_a_long_subscription_is_answered_whole() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    let mut c = connect(b.addr, "/x/ws/ngsi-ld/v1", &[]).await?;
+    let sub = with(cars(), &["description"], json!("d".repeat(4096)));
+    let made = c.subscribe(sub).await?;
+    assert_eq!(status(&made), 201, "{made}");
+    assert_eq!(text(&made, "/body/description").len(), 4096, "{made}");
+    Ok(())
+}
+
 /// Drops every notification for the subject `eve`, delivers the rest.
 struct NotForEve;
 
