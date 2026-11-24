@@ -34,7 +34,6 @@ dependencies = [
  "axum",
  "libfuzzer-sys",
  "serde_json",
- "url",
 ]
 
 [[package]]
