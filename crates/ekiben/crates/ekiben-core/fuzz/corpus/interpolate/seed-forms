@@ -1,0 +1,3 @@
+url: ${DB_URL:postgres://x}
+key: ${{literal}}
+q: ${! meta("k") }

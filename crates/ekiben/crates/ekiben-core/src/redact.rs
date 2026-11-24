@@ -51,7 +51,7 @@ pub fn redact_url_str(raw: &str) -> String {
         let after_scheme = &raw[scheme_end + 3..];
         let authority_end = after_scheme.find('/').unwrap_or(after_scheme.len());
         let authority = &after_scheme[..authority_end];
-        if let Some(at_idx) = authority.find('@') {
+        if let Some(at_idx) = authority.rfind('@') {
             let userinfo = &authority[..at_idx];
             if let Some(colon_idx) = userinfo.find(':') {
                 let user = &userinfo[..colon_idx];
