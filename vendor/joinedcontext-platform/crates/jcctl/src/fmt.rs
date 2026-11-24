@@ -118,6 +118,14 @@ mod tests {
     }
 
     #[test]
+    fn a_block_with_a_kind_but_no_api_version_or_the_other_way_is_left_as_written() {
+        for block in ["a:   [1]\nkind: K\n", "a:   [1]\napiVersion: v1\n"] {
+            let src = format!("```yaml\n{block}```\n");
+            assert_eq!(format_markdown(&src), Ok(src.clone()), "{block}");
+        }
+    }
+
+    #[test]
     fn check_lists_files_to_change_and_writes_nothing_and_a_run_writes_them() {
         let dir = std::env::temp_dir().join(format!("jcctl-fmt-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
