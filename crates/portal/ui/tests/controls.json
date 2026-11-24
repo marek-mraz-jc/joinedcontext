@@ -1343,6 +1343,7 @@
       },
       "tests": [
         "cov2_dashboards_dashboard_json_editor.test.tsx",
+        "cov3_dashboards_dashboard_json_editor.test.tsx",
         "dashboard_json_editor.test.tsx"
       ]
     },
@@ -1476,6 +1477,7 @@
       },
       "tests": [
         "cov2_grafana_dashboard_builder.test.tsx",
+        "cov3_grafana_dashboard_builder.test.tsx",
         "cov_grafana_dashboard_builder.test.tsx",
         "dashboard_builder.test.tsx"
       ]
@@ -1485,6 +1487,7 @@
         "Button": 2
       },
       "tests": [
+        "cov3_grafana_grafana_page.test.tsx",
         "cov_grafana_grafana_page.test.tsx",
         "dashboard_page.test.tsx",
         "grafana_page.test.tsx"
@@ -1521,6 +1524,7 @@
         "Checkbox": 1
       },
       "tests": [
+        "cov3_grafana_dashboard_page.test.tsx",
         "cov_grafana_dashboard_page.test.tsx",
         "dashboard_page.test.tsx",
         "dashboard_panels.test.tsx",
@@ -1637,6 +1641,7 @@
         "Switch": 1
       },
       "tests": [
+        "cov3_gallery_interactions.test.tsx",
         "gallery_axe.test.tsx"
       ]
     },
@@ -1740,6 +1745,7 @@
       },
       "tests": [
         "ai_connectors.test.tsx",
+        "cov3_mcp_ai_connectors_page.test.tsx",
         "cov_mcp_ai_connectors_page.test.tsx"
       ]
     },
@@ -1758,6 +1764,7 @@
         "Button": 1
       },
       "tests": [
+        "cov3_mcp_servers_page.test.tsx",
         "cov_mcp_mcp_server_panels.test.tsx",
         "mcp_servers.test.tsx"
       ]
@@ -1954,6 +1961,7 @@
         "Button": 2
       },
       "tests": [
+        "cov3_operator_grids_search.test.tsx",
         "cov_operator_operator_changes.test.tsx",
         "operator_pages.test.tsx"
       ]
@@ -1963,6 +1971,7 @@
         "Button": 1
       },
       "tests": [
+        "cov3_operator_grids_search.test.tsx",
         "cov_operator_operator_hosts.test.tsx",
         "operator_pages.test.tsx"
       ]
@@ -1991,6 +2000,7 @@
         "Button": 5
       },
       "tests": [
+        "cov3_operator_grids_search.test.tsx",
         "cov_operator_operator_organizations.test.tsx",
         "operator_pages.test.tsx"
       ]
@@ -2364,6 +2374,7 @@
         "Checkbox": 2
       },
       "tests": [
+        "cov3_portals_profiles.test.tsx",
         "cov_portals_portal_profiles.test.tsx",
         "portals_area.test.tsx"
       ]
@@ -2374,6 +2385,7 @@
         "FilePicker": 1
       },
       "tests": [
+        "cov3_portals_files.test.tsx",
         "cov_portals_portal_files.test.tsx",
         "portal_files.test.tsx"
       ]
@@ -2384,6 +2396,7 @@
         "RadioGroup": 1
       },
       "tests": [
+        "cov3_portals_hosts.test.tsx",
         "cov_portals_portal_hosts.test.tsx",
         "portals_area.test.tsx"
       ]
@@ -2567,6 +2580,7 @@
       },
       "tests": [
         "cov2_sync_sync_sources_page.test.tsx",
+        "cov3_sync_sync_sources_page.test.tsx",
         "cov_sync_sync_sources_page.test.tsx",
         "form_errors_after_touch.test.tsx",
         "page_sync_sources_page.test.tsx",
