@@ -489,6 +489,46 @@ describe("one MQTT broker's page (T-6103)", () => {
     expect(screen.queryByRole("region", { name: en.mqttbrokers.edit.bar })).toBeNull();
   });
 
+  it("drops and grants holders, undoes a grant or a revoke by the opposite click, removes a role, and discards", async () => {
+    const sent: { method: string; path: string; body: unknown }[] = [];
+    showBroker({ sent });
+    const cams = await editable();
+    const add = () => within(cams).getByRole("combobox", { name: "Add an account to role cams" });
+    const drop = (account: string) => fireEvent.click(within(cams).getByRole("button", { name: `Remove ${account}` }));
+    // cam-3 holds cams by binding: dropping it revokes, granting it again takes the revoke back.
+    drop("cam-3");
+    fireEvent.change(add(), { target: { value: "cam-3" } });
+    // A grant not proposed yet is undone by its own chip.
+    fireEvent.change(add(), { target: { value: "cam-4" } });
+    drop("cam-4");
+    // cam-1 is on the role's own list: dropping it edits the broker.
+    drop("cam-1");
+    fireEvent.click(screen.getByRole("button", { name: en.mqttbrokers.edit.removeRole.replace("{role}", "ops") }));
+    const bar = screen.getByRole("region", { name: en.mqttbrokers.edit.bar });
+    expect(within(bar).queryByText(/cam-3|cam-4/)).toBeNull();
+    fireEvent.click(within(bar).getByRole("button", { name: en.mqttbrokers.edit.propose }));
+    await waitFor(() => expect(sent.length).toBe(2));
+    // No account changes: the broker alone is proposed, with cam-1 and the ops role gone.
+    expect(sent.map((call) => `${call.method} ${call.path}`)).toEqual([
+      `PUT /api/v1/projects/${PROJECT}/mqttbrokers/cameras?dryRun=All`,
+      `PUT /api/v1/projects/${PROJECT}/mqttbrokers/cameras`,
+    ]);
+    const roles = (sent[1]?.body as { spec: { roles: { name: string; serviceAccounts?: string[] }[] } }).spec.roles;
+    expect(roles.map((role) => [role.name, role.serviceAccounts])).toEqual([["cams", ["cam-2"]]]);
+  });
+
+  it("discards every change not proposed yet", async () => {
+    showBroker();
+    const cams = await editable();
+    fireEvent.click(within(cams).getByRole("button", { name: "Remove cam-1" }));
+    fireEvent.click(screen.getByRole("button", { name: en.mqttbrokers.edit.addRole }));
+    const bar = screen.getByRole("region", { name: en.mqttbrokers.edit.bar });
+    fireEvent.click(within(bar).getByRole("button", { name: en.mqttbrokers.edit.discard }));
+    expect(screen.queryByRole("region", { name: en.mqttbrokers.edit.bar })).toBeNull();
+    expect(within(await editable()).getByText("cam-1")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: en.mqttbrokers.edit.newRole })).toBeNull();
+  });
+
   it("shows the settings read only, with the reason, to a reader who may not propose", async () => {
     showBroker({ permissions: READER });
     expect(await screen.findByText(en.mqttbrokers.edit.readOnlyTitle)).toBeInTheDocument();
