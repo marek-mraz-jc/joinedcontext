@@ -744,6 +744,119 @@ async fn a_code_step_whose_person_was_deleted_names_nobody() {
     assert!(!html.contains(STEWARD), "{html}");
 }
 
+/// Puts the sign-in at `next`, as an earlier step would have, so a test can reach a step the
+/// forms alone never store (the password step is submitted together with the name).
+async fn put_state(
+    store: &MemoryStore,
+    a: &Attempt,
+    next: &kaisatsu_login::LoginState,
+    user: Option<&str>,
+) {
+    let mut s = store
+        .get_auth_session_by_id("dev", &a.session)
+        .await
+        .unwrap()
+        .unwrap();
+    s.step_state_json = serde_json::to_string(next).unwrap();
+    if let Some(u) = user {
+        s.user_id = Some(u.to_owned());
+    }
+    store.put_auth_session(s).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_stored_password_step_switches_to_a_passkey_for_the_same_person() {
+    let (app, store) = app().await;
+    let m = user(&store, MEMBER).await;
+    let a = start(&app, "").await;
+    put_state(
+        &store,
+        &a,
+        &kaisatsu_login::LoginState::Password {
+            user_id: m.id.clone(),
+        },
+        Some(&m.id),
+    )
+    .await;
+    let (st, _, html) = a.post(&app, &[("switch_to", "passkey")]).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    let s = store
+        .get_auth_session_by_id("dev", &a.session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<kaisatsu_login::LoginState>(&s.step_state_json).unwrap(),
+        kaisatsu_login::LoginState::Passkey {
+            user_id: Some(m.id.clone())
+        }
+    );
+    // An assertion the browser garbled is refused at the passkey step, not signed on.
+    let (st, _, _) = a.post(&app, &[("webauthn_assertion_response", "{}")]).await;
+    assert!(st.is_client_error(), "{st}");
+}
+
+#[tokio::test]
+async fn a_verified_upstream_sign_in_of_a_disabled_person_is_refused() {
+    let (app, store) = app().await;
+    let mut m = user(&store, MEMBER).await;
+    m.enabled = false;
+    store.update_user(m.clone()).await.unwrap();
+    let a = start(&app, "").await;
+    put_state(
+        &store,
+        &a,
+        &kaisatsu_login::LoginState::UpstreamIdp {
+            idp_alias: "up".into(),
+            assertion_verified: true,
+        },
+        Some(&m.id),
+    )
+    .await;
+    let (st, _, _) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn passkey_enrolment_in_a_realm_without_a_display_name_names_it_by_its_id() {
+    let (app, store) = app().await;
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.display_name = String::new();
+    store.upsert_realm(realm).await.unwrap();
+    let m = user(&store, MEMBER).await;
+    let a = start(&app, "").await;
+    put_state(
+        &store,
+        &a,
+        &kaisatsu_login::LoginState::RegisterWebAuthn {
+            user_id: m.id.clone(),
+            first_factor_passed: true,
+            second_factor_passed: false,
+        },
+        Some(&m.id),
+    )
+    .await;
+    let (st, _, html) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(extract_hidden_input(&html, "webauthn_rp_name"), "dev");
+}
+
+#[tokio::test]
+async fn a_sign_in_without_a_client_names_no_app() {
+    let (app, store) = app().await;
+    let a = start(&app, "").await;
+    let mut s = store
+        .get_auth_session_by_id("dev", &a.session)
+        .await
+        .unwrap()
+        .unwrap();
+    s.client_id = String::new();
+    store.put_auth_session(s).await.unwrap();
+    let (st, _, html) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(!html.contains("edge"), "{html}");
+}
+
 fn extract_input_value(html: &str, name: &str) -> String {
     let marker = format!("name=\"{name}\"");
     let i = html.find(&marker).expect("input");
@@ -806,7 +919,10 @@ async fn step_up_enrols_a_totp_credential() {
     let code =
         generate_totp_code_for_credential(&cred, jc_time::TimestampTz::now().as_second() as u64)
             .unwrap();
-    let (st, h, _) = a.post(&app, &[("otp", &code)]).await;
+    // Enrolling with "sign out other devices" ends the person's other sessions too.
+    let (st, h, _) = a
+        .post(&app, &[("otp", &code), ("logout-sessions", "on")])
+        .await;
     assert!(is_code(st, &h));
     let m = user(&store, MEMBER).await;
     assert!(
