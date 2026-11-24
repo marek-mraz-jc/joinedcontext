@@ -1,0 +1,1 @@
+[{"id":"https://w3id.org/m0","name":"m0","default_prefix":"m0","prefixes":{"m0":"https://w3id.org/m0/"},"classes":{"A":{"slots":["s"]}},"slots":{"s":{}}},{"id":"https://w3id.org/m1","name":"m1","default_prefix":"m1","default_range":"string","prefixes":{"m1":"https://w3id.org/m1/"},"classes":{"B":{}},"slots":{"t":{}}}]
