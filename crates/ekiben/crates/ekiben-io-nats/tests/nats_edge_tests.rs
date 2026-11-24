@@ -275,14 +275,8 @@ async fn request_reply_times_out_when_the_responder_nacks_or_sends_no_ack() {
     ack2.nack(BatchError::new(vec![m1], "refused"));
     let out = asking.await.unwrap().unwrap();
     for p in &out[0] {
-        assert_eq!(
-            p.error_get()
-                .map(|e| e.to_string())
-                .unwrap_or_default()
-                .contains("timed out"),
-            true,
-            "{p:?}"
-        );
+        let err = p.error_get().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("timed out"), "{err}");
     }
     // A subject that does not interpolate marks the message failed instead of asking.
     let broken = c
