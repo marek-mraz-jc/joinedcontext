@@ -42,11 +42,13 @@
 "dataroom-web" = { lines = 99.62, functions = 97.16 }
 "ekiben-bloblang" = { lines = 91.30, functions = 89.36 }
 "ekiben-io-amqp" = { lines = 99.09, functions = 100.00 }
+"ekiben-io-file" = { lines = 100.00, functions = 100.00 }
 "ekiben-io-http" = { lines = 90.41, functions = 80.23 }
 "ekiben-io-kafka" = { lines = 99.32, functions = 99.69 }
 "ekiben-io-ngsild" = { lines = 99.19, functions = 99.34 }
 "ekiben-io-remote" = { lines = 99.75, functions = 98.57 }
-"ekiben-io-s3" = { lines = 99.02, functions = 100.00 }
+"ekiben-io-s3" = { lines = 99.67, functions = 100.00 }
+"ekiben-io-sftp" = { lines = 100.00, functions = 100.00 }
 "ekiben-io-sql" = { lines = 100.00, functions = 100.00 }
 "ekiben-js" = { lines = 99.62, functions = 100.00 }
 "ekiben-linkml" = { lines = 100.00, functions = 100.00 }
