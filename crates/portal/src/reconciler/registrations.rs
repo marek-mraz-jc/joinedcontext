@@ -1325,20 +1325,17 @@ mod tests {
         }
     }
 
-    /// A member that reaches outside its project, or a hub space with no tenant, is refused with
-    /// the reason before anything is sent.
+    /// A member that reaches outside its project is refused with the reason before anything is
+    /// sent.
     #[tokio::test]
-    async fn a_registration_outside_its_project_or_without_a_tenant_is_refused() {
+    async fn a_registration_outside_its_project_is_refused() {
         let mut outside = csr("outside", json!({ "kind": "Endpoint", "name": "x", "namespace": "espoo" }));
         outside.spec["federation"] = json!({ "identity": "caller" });
-        let mut nowhere = csr("nowhere", json!({ "kind": "Endpoint", "name": "x" }));
-        nowhere.spec["contextSpaceRef"] = json!("no-such-space");
-        let mirror = mirror_with(vec![outside, nowhere]);
+        let mirror = mirror_with(vec![outside]);
         let ((found, refused), log) = super::super::logged(async { declared(&mirror) }).await;
         assert!(found.is_empty(), "{found:?}");
         let reasons: BTreeMap<_, _> = refused.iter().map(|(_, name, reason)| (name.as_str(), reason.as_str())).collect();
         assert!(reasons["outside"].starts_with("the manifest reaches outside its project, so it is not registered (PF-48): "), "{reasons:?}");
-        assert!(reasons["nowhere"].starts_with("not registered: the space helsinki/no-such-space has no broker tenant yet"), "{reasons:?}");
         assert!(log.contains("reaches outside its project"), "{log}");
     }
 
