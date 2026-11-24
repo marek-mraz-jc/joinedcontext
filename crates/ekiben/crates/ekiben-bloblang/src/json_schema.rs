@@ -55,11 +55,8 @@ fn type_of(v: &Json) -> &'static str {
     match v {
         Json::Null => "null",
         Json::Bool(_) => "boolean",
-        Json::Number(n)
-            if n.is_i64() || n.is_u64() || n.as_f64().is_some_and(|f| f.fract() == 0.0) =>
-        {
-            "integer"
-        }
+        // An i64 or u64 converts to a whole f64 too.
+        Json::Number(n) if n.as_f64().is_some_and(|f| f.fract() == 0.0) => "integer",
         Json::Number(_) => "number",
         Json::String(_) => "string",
         Json::Array(_) => "array",
@@ -117,12 +114,12 @@ impl<'s> Validator<'s> {
             return Err("json schema: exceeded maximum nesting".to_string());
         }
         let s = match schema {
-            Json::Bool(true) => return Ok(()),
             Json::Bool(false) => {
                 self.err(field, "False always fails validation".into());
                 return Ok(());
             }
             Json::Object(s) => s,
+            // `true` and a value that is no schema accept everything.
             _ => return Ok(()),
         };
         if let Some(Json::String(r)) = s.get("$ref") {
