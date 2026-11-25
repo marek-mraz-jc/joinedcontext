@@ -922,9 +922,8 @@ fn compute_pack_object_set(
                 queue.push_back((want, 1));
             }
             gix_object::Kind::Tree => {
-                if let Ok(tree) = repo.find_tree(want) {
-                    collect_filtered_tree_objects(repo, &tree, 0, params.filter, &mut objects)?;
-                }
+                let tree = obj.try_into_tree().map_err(git_err("decode tree"))?;
+                collect_filtered_tree_objects(repo, &tree, 0, params.filter, &mut objects)?;
             }
             gix_object::Kind::Blob => {
                 // Explicitly wanted blobs are always included even under blob:none

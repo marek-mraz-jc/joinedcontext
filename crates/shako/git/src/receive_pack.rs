@@ -674,9 +674,7 @@ fn index_pack_in_quarantine(
     )
     .map_err(|e| format!("index-pack failed: {e}"))?;
 
-    if let Some(keep) = outcome.keep_path {
-        let _ = std::fs::remove_file(keep);
-    }
+    let _ = outcome.keep_path.map(std::fs::remove_file);
     *out_pack = outcome.data_path;
     *out_idx = outcome.index_path;
     Ok(())

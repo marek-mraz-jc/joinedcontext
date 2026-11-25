@@ -185,15 +185,13 @@ fn write_bundle(
         },
     )
     .map_err(git_err("compact write bundle failed"))?;
-    if let Some(keep) = outcome.keep_path {
-        let _ = std::fs::remove_file(keep);
-    }
-    if let Some(pack) = &outcome.data_path {
-        for file in [pack.clone(), pack.with_extension("idx")] {
-            std::fs::File::open(&file)
-                .and_then(|f| f.sync_all())
-                .map_err(storage_err("compact sync"))?;
-        }
+    let _ = outcome.keep_path.map(std::fs::remove_file);
+    // Given a directory, gix always answers the data path; the index lies beside it.
+    let written = outcome.data_path.iter();
+    for file in written.flat_map(|pack| [pack.clone(), pack.with_extension("idx")]) {
+        std::fs::File::open(&file)
+            .and_then(|f| f.sync_all())
+            .map_err(storage_err("compact sync"))?;
     }
     Ok(outcome.data_path)
 }

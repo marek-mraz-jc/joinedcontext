@@ -115,9 +115,8 @@ pub fn init_bare_repo(
 ) -> ShakoResult<PathBuf> {
     let head_target = branch_ref(default_branch)?;
     let path = repo_disk_path(root, instance_id, repo_id)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(storage_err("failed to create instance dir"))?;
-    }
+    std::fs::create_dir_all(path.parent().unwrap_or(root))
+        .map_err(storage_err("failed to create instance dir"))?;
     let repo = gix::init_bare(&path).map_err(git_err("gix::init_bare failed"))?;
     std::fs::write(path.join("config"), SAFE_BARE_REPO_CONFIG)
         .map_err(storage_err("failed to write repo config"))?;
@@ -278,14 +277,14 @@ pub fn compute_repo_size_bytes(repo_path: &Path) -> u64 {
             return 0;
         };
         let mut sum = 0u64;
-        for entry in rd.flatten() {
-            let path = entry.path();
-            if let Ok(meta) = entry.metadata() {
-                if meta.is_dir() {
-                    sum = sum.saturating_add(dir_bytes(&path));
-                } else {
-                    sum = sum.saturating_add(meta.len());
-                }
+        let entries = rd
+            .flatten()
+            .filter_map(|e| Some((e.path(), e.metadata().ok()?)));
+        for (path, meta) in entries {
+            if meta.is_dir() {
+                sum = sum.saturating_add(dir_bytes(&path));
+            } else {
+                sum = sum.saturating_add(meta.len());
             }
         }
         sum
@@ -336,8 +335,7 @@ pub fn write_objects_as_pack(
     }
 
     let mut pack_bytes = Vec::new();
-    let num_entries = u32::try_from(entries.len())
-        .map_err(|_| ShakoError::BadRequest("too many objects in commit".into()))?;
+    let num_entries = u32::try_from(entries.len()).map_err(crate::pack::too_many_objects)?;
     let iter = output::bytes::FromEntriesIter::new(
         std::iter::once(gix::Result::Ok(entries)),
         &mut pack_bytes,
@@ -370,9 +368,7 @@ pub fn write_objects_as_pack(
         },
     )
     .map_err(git_err("write pack bundle failed"))?;
-    if let Some(keep) = outcome.keep_path {
-        let _ = std::fs::remove_file(keep);
-    }
+    let _ = outcome.keep_path.map(std::fs::remove_file);
     Ok(())
 }
 
@@ -781,14 +777,13 @@ pub(crate) fn build_nested_trees(
         subdirs: BTreeMap<String, DirNode>,
     }
 
-    fn insert_path(node: &mut DirNode, parts: &[&str], kind: EntryKind, oid: ObjectId) {
-        match parts {
-            [] => {}
-            [leaf] => {
-                node.files.insert((*leaf).to_owned(), (kind, oid));
+    fn insert_path(node: &mut DirNode, path: &str, kind: EntryKind, oid: ObjectId) {
+        match path.split_once('/') {
+            None => {
+                node.files.insert(path.to_owned(), (kind, oid));
             }
-            [first, rest @ ..] => {
-                let child = node.subdirs.entry((*first).to_owned()).or_default();
+            Some((dir, rest)) => {
+                let child = node.subdirs.entry(dir.to_owned()).or_default();
                 insert_path(child, rest, kind, oid);
             }
         }
@@ -833,8 +828,7 @@ pub(crate) fn build_nested_trees(
 
     let mut root = DirNode::default();
     for (path, (kind, oid)) in files {
-        let parts: Vec<&str> = path.split('/').collect();
-        insert_path(&mut root, &parts, *kind, *oid);
+        insert_path(&mut root, path, *kind, *oid);
     }
     write_dir(&root, new_objects)
 }

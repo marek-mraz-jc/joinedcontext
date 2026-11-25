@@ -87,9 +87,7 @@ pub fn restore_from_bundle(repo_path: &Path, bundle_bytes: &[u8]) -> ShakoResult
         gix_pack::bundle::write::Options::default(),
     )
     .map_err(git_err("restore bundle index-pack failed"))?;
-    if let Some(keep) = outcome.keep_path {
-        let _ = std::fs::remove_file(keep);
-    }
+    let _ = outcome.keep_path.map(std::fs::remove_file);
 
     for line in header_str.lines().skip(1) {
         let line = line.trim();

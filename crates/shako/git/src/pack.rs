@@ -19,6 +19,11 @@ pub type Admit<'a> = &'a mut dyn FnMut(u64) -> ShakoResult<()>;
 /// What an id costs while a pack is counted and written: the id, its location and offsets.
 pub const BYTES_PER_OBJECT: u64 = 128;
 
+/// The refusal of a pack past the format's 2^32 entries: its count field is a u32.
+pub(crate) fn too_many_objects<E>(_: E) -> ShakoError {
+    ShakoError::BadRequest("pack object count exceeds u32".into())
+}
+
 /// What a job over `count` objects holds when the largest inflates to `largest` bytes: that
 /// object, its compressed form, and the ids.
 #[must_use]
@@ -37,8 +42,7 @@ pub fn write_pack(
     admit: Admit<'_>,
 ) -> ShakoResult<()> {
     let failed = |e: &dyn std::fmt::Display| ShakoError::Git(format!("pack writing failed: {e}"));
-    let num_entries = u32::try_from(ids.len())
-        .map_err(|_| ShakoError::BadRequest("pack object count exceeds u32".into()))?;
+    let num_entries = u32::try_from(ids.len()).map_err(too_many_objects)?;
     let mut largest = 0;
     for id in ids {
         largest = largest.max(
