@@ -1,0 +1,1 @@
+{"description":"urn:ngsi-ld:null","contextSourceInfo":[{"key":"X-Api-Key","value":"k"}],"management":{"timeout":5,"cooldown":10,"cacheDuration":"PT1M"}}
