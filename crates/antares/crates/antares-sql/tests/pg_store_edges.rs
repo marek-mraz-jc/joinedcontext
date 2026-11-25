@@ -3,10 +3,10 @@
 //! declined confirmation, a stored subject this release cannot read, a
 //! refused change of a document or a hosted @context, a Tenant name the
 //! seal walk refuses, a migration history it cannot read, a server without
-//! PostGIS, a pool that is closed, and a lease whose session ended. Needs ANTARES_TEST_DATABASE_URL (see tests/pg.rs recipe);
-//! the tests that change what every test reads run in a database of their
-//! own. Every tracing event is built and written nowhere, so the events'
-//! argument lines run where a test reaches them.
+//! PostGIS, a pool that is closed, a lease whose session ended, and the
+//! store calls that find nothing to do. Needs ANTARES_TEST_DATABASE_URL (see
+//! tests/pg.rs recipe); the tests that change what every test reads run in a
+//! database of their own.
 
 #![cfg(feature = "postgres")]
 
@@ -16,14 +16,14 @@ use antares_sql::store::pg;
 use antares_sql::store::pg::doc::{DocKind, PgDocStore};
 use antares_sql::store::pg::maintenance::{self, TemporalBackend};
 use antares_store::confirmations::{Caps, Confirmation, Taken};
-use antares_store::CurrentStateDriver as Driver;
+use antares_store::filter::EntityFilter;
+use antares_store::{CurrentStateDriver as Driver, Kind};
 use serde_json::json;
 use sqlx::{Executor, PgPool};
 use std::time::Duration;
 
 macro_rules! require_db {
-    () => {{
-        trace_all();
+    () => {
         match std::env::var("ANTARES_TEST_DATABASE_URL") {
             Ok(url) => url,
             Err(_) => {
@@ -31,18 +31,7 @@ macro_rules! require_db {
                 return;
             }
         }
-    }};
-}
-
-fn trace_all() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let all = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_writer(std::io::sink)
-            .finish();
-        tracing::subscriber::set_global_default(all).expect("this binary's one subscriber");
-    });
+    };
 }
 
 fn run() -> u128 {
@@ -327,5 +316,102 @@ async fn id_reads_that_cannot_match_answer_empty() {
     );
     assert!(p.entities.get_many(&t, &[]).await.expect("none").is_empty());
     p.temporal.append_many(&[]).await.expect("an empty batch");
+    pool.close().await;
+}
+
+/// A batch delete names the id it found nothing for; an expired Entity is
+/// absent from a text query; the Entity digests are the listing's; a
+/// change that turns a hosted @context into a shared copy is refused; a
+/// purge of a Tenant that never existed purges nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn store_calls_that_find_nothing_say_so() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 4).await.expect("connect+migrate");
+    let store = AnyStore::Pg(PgBackend::new(pool.clone()));
+    let t = TenantId::new(&format!("edge_any_{}", run())).expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    for (id, expires) in [
+        ("urn:e:old", "2000-01-01T00:00:00Z"),
+        ("urn:e:live", "2999-01-01T00:00:00Z"),
+    ] {
+        store
+            .upsert(
+                &t,
+                Kind::Entity,
+                id,
+                json!({"id": id, "type": ["https://T"], "expiresAt": expires}),
+            )
+            .await
+            .expect("upsert");
+    }
+    let ids = ["urn:e:old", "urn:e:live"];
+    let f = EntityFilter {
+        ids: Some(&ids),
+        ..Default::default()
+    };
+    let rows = store.query_entities_text(&t, &f).await.expect("query").rows;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(rows[0].get().contains("urn:e:live"));
+    let digests = store.list_digests(&t, Kind::Entity).await.expect("digests");
+    assert!(
+        digests.iter().any(|(id, _)| id == "urn:e:live"),
+        "{digests:?}"
+    );
+    let gone = store
+        .batch_delete(&t, &["urn:e:live".to_owned(), "urn:e:none".to_owned()])
+        .await
+        .expect("delete");
+    assert_eq!(gone, vec![true, false]);
+
+    let ctx = format!("urn:edge:any:{}", run());
+    store
+        .context_put(
+            Some(&t),
+            &ctx,
+            json!({"localId": ctx, "kind": "Hosted", "owner": t.as_str(), "body": {}}),
+        )
+        .await
+        .expect("put");
+    let turned = store
+        .context_mutate(
+            Some(&t),
+            &ctx,
+            Box::new(|d: &mut serde_json::Value| {
+                d["kind"] = json!("Cached");
+                Ok(())
+            }),
+        )
+        .await
+        .expect("mutate");
+    assert_eq!(turned, Some(Err(())));
+    let never = TenantId::new(&format!("edge_never_{}", run())).expect("tenant");
+    assert!(!store.purge_tenant(&never).await.expect("purge"));
+    assert!(store.purge_tenant(&t).await.expect("purge"));
+    pool.close().await;
+}
+
+/// A database the migrations never reached answers a store call with a
+/// database error, never a panic; a fresh one sizes no Tenant before its
+/// first ANALYZE and purges the default Tenant's rows but keeps its row.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_database_without_tables_or_statistics_answers_an_error() {
+    let url = require_db!();
+    let bare = own_database(&url, "bare").await;
+    let raw = PgPool::connect(&bare).await.expect("connect");
+    let store = AnyStore::Pg(PgBackend::new(raw.clone()));
+    let t = TenantId::default();
+    assert!(store.get(&t, Kind::Entity, "urn:e:1").await.is_err());
+    raw.close().await;
+
+    let fresh = own_database(&url, "fresh").await;
+    let pool = pg::connect(&fresh, 4).await.expect("connect+migrate");
+    let store = AnyStore::Pg(PgBackend::new(pool.clone()));
+    assert!(Driver::tenant_bytes_estimate(&store, &t, 10).await.is_err());
+    assert!(store.purge_tenant(&t).await.expect("purge"));
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM tenants WHERE tenant_id = 'default'")
+        .fetch_one(&pool)
+        .await
+        .expect("count");
+    assert_eq!(kept, 1);
     pool.close().await;
 }

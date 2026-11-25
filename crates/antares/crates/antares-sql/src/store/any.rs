@@ -3455,7 +3455,6 @@ mod memory_arm_tests {
     #[cfg(feature = "postgres")]
     #[test]
     fn database_errors_map_to_what_a_client_may_see() {
-        crate::trace_all();
         assert!(matches!(
             db(sqlx::Error::PoolTimedOut),
             NgsiError::InternalError(m) if m == antares_model::error::DB_OVERLOADED

@@ -383,7 +383,6 @@ mod tests {
     /// as text, never decrypted.
     #[test]
     fn a_sealed_value_opens_only_in_its_own_row() {
-        crate::trace_all();
         let k = key(8);
         let stored = sealed(Some(&k), row(DocKind::Subscription), &sub("Bearer t"))
             .expect("seal")

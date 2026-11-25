@@ -1759,7 +1759,6 @@ mod tests {
     /// exactly that shape, and a per-entity check never sees it twice.
     #[test]
     fn the_index_ceiling_bounds_one_entity_too() {
-        crate::trace_all();
         let names: Vec<String> = (0..MAX_INDEX_ROWS + 500).map(|i| format!("p{i}")).collect();
         let reg = json!({
             "endpoint": "http://cs.example:9090",
