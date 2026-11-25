@@ -1411,6 +1411,67 @@ mod tests {
         assert!(organization_vars(&portal_only).is_empty());
     }
 
+    /// A `[[hosts]]` row lists under its Organization at its root, a Portal host under ODP-08's
+    /// list; once a row binds the base host no Organization has a shared path there. The
+    /// in-process publisher mints, a catalogue entry the Portal cannot read is left out, and a
+    /// split dataroom without the forwarders' client gives no publisher.
+    #[tokio::test]
+    async fn host_rows_and_portal_hosts_list_and_the_publisher_mints() {
+        use clap::Parser as _;
+        let text = include_str!("../../tests/fixtures/two-orgs.toml");
+        let file = crate::config::Config::parse_file(std::path::Path::new("jc.toml"), text)
+            .expect("parses");
+        let cli =
+            |roles: &str| crate::config::Cli::try_parse_from(["jc", "--role", roles]).expect("cli");
+        let mut cfg =
+            crate::config::Config::merge(cli("portal,dataroom"), file.clone()).expect("config");
+        cfg.organizations[0].hosts.portals = vec!["mobility.alpha.test".into()];
+        let row = |host: &str, root: Option<&str>| crate::config::HostSection {
+            host: host.into(),
+            organization: "alpha".into(),
+            root: root.map(str::to_owned),
+        };
+        cfg.hosts = vec![
+            row("data.alpha.test", Some("/open")),
+            row(&cfg.base_host, None),
+        ];
+        let vars = organization_vars(&cfg);
+        assert_eq!(vars["JC_PORTAL_PORTAL_HOSTS"], "alpha=mobility.alpha.test");
+        let addresses = joinedcontext_portal::organization_host::parse_addresses(
+            &vars["JC_PORTAL_ORGANIZATION_ADDRESSES"],
+        )
+        .expect("the Portal reads the addresses");
+        let alpha: Vec<String> = addresses[0]
+            .addresses
+            .iter()
+            .map(|a| a.url.to_string())
+            .collect();
+        let s = &cfg.scheme;
+        assert!(
+            alpha.contains(&format!("{s}://data.alpha.test/open/")),
+            "{alpha:?}"
+        );
+        assert!(
+            alpha.contains(&format!("{s}://{}/", cfg.base_host)),
+            "{alpha:?}"
+        );
+        assert!(
+            !alpha.contains(&format!("{s}://{}/alpha/", cfg.base_host)),
+            "the base host is a row's now: {alpha:?}"
+        );
+        let publisher = publisher_token(&cfg).expect("dataroom here");
+        let minted = publisher.mint().await.expect("the in-process issuer mints");
+        assert!(!minted.is_empty());
+        assert!(configured_catalogues(&[serde_json::json!({"organization": 1})], None).is_empty());
+        let mut split = crate::config::Config::merge(cli("portal"), file).expect("config");
+        split
+            .remote_modules
+            .insert(Module::Dataroom, "https://jc.base.test/opendata".into());
+        if crate::door::REMOTE.get().is_none() {
+            assert!(publisher_token(&split).is_none(), "no forwarders here");
+        }
+    }
+
     /// T-7133: an Organization with `hosts.idm` gets its realm in the Portal's settings, its
     /// sign-in host dialed at jc's listener beside the hosts jc already reaches; one without gets
     /// none, and neither does a Portal whose realm or reach the environment named.
@@ -1782,6 +1843,45 @@ mod tests {
         );
     }
 
+    /// A registry row's id reaches the run-time entry; the Portal names an Organization at its
+    /// registry host while that host is the one served, else at the working host it serves.
+    #[test]
+    fn a_run_time_organization_keeps_its_id_and_the_portal_its_served_host() {
+        let row = |name: &str, id: Option<&str>, host: &str| {
+            joinedcontext_portal::host_registry::OrganizationRow {
+                name: name.into(),
+                organization_id: id.map(str::to_owned),
+                host: host.into(),
+                state: "active".into(),
+                catalogue_id: None,
+            }
+        };
+        let rows = [
+            row("bbsk", Some("sk_bbsk"), "smartcity.bbsk.sk:8443"),
+            row("moved", Some("not an id!"), "old.moved.sk"),
+            row("empty", None, "empty.sk"),
+        ];
+        let hosts = |portal: &str| crate::config::OrganizationHosts {
+            portal: portal.into(),
+            ..Default::default()
+        };
+        let served = BTreeMap::from([
+            ("bbsk".to_owned(), hosts("smartcity.bbsk.sk")),
+            ("moved".to_owned(), hosts("new.moved.sk")),
+            ("empty".to_owned(), hosts("")),
+        ]);
+        assert_eq!(
+            portal_hosts(&rows, &served, "https"),
+            "bbsk=https://smartcity.bbsk.sk:8443,moved=https://new.moved.sk"
+        );
+        let entries = run_time(&rows, served, &[]);
+        let ids: Vec<(&str, Option<&str>)> = entries
+            .iter()
+            .map(|o| (o.name.as_str(), o.id.as_ref().map(|id| id.as_str())))
+            .collect();
+        assert_eq!(ids, [("bbsk", Some("sk_bbsk")), ("moved", None)]);
+    }
+
     #[test]
     fn an_organization_with_its_own_sign_in_host_gets_its_realm_in_the_portal() {
         let text = "base_host = \"city.example\"\n\
@@ -1849,13 +1949,15 @@ mod tests {
             && *at == "127.0.0.1:4000".parse::<std::net::SocketAddr>().unwrap()));
 
         for set in ["JC_PORTAL_ORGANIZATION_REALMS", "JC_PORTAL_REACH"] {
-            let mut vars = installation();
-            let env = |key: &str| (key == set).then(|| "[]".to_owned());
-            assert_eq!(
-                organization_realm_vars(&sign_ins, &siblings, "https", &mut vars, env),
-                None
-            );
-            assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_REALMS"), "{set}");
+            for sign_ins in [&sign_ins[..], &[]] {
+                let mut vars = installation();
+                let env = |key: &str| (key == set).then(|| "[]".to_owned());
+                assert_eq!(
+                    organization_realm_vars(sign_ins, &siblings, "https", &mut vars, env),
+                    None
+                );
+                assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_REALMS"), "{set}");
+            }
         }
         // Without the installation's own reach, jc's sibling listener is the reach and the
         // realms' sign-in hosts start the list.
