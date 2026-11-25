@@ -199,3 +199,10 @@ path = "fuzz_targets/kube_objects.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "stream_answers"
+path = "fuzz_targets/stream_answers.rs"
+test = false
+doc = false
+bench = false
