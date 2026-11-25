@@ -504,47 +504,58 @@ async fn subscribe(store: Arc<CaptureStore>, target: Target, host: String) {
     let mut bytes = 0usize;
     let mut tick = tokio::time::interval(FLUSH);
     loop {
-        tokio::select! {
-            event = events.poll() => match event {
-                Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                    if let Err(error) = client.try_subscribe_many(topics.clone()) {
-                        tracing::warn!(broker = %target.release, %error, "the MQTT capture did not subscribe");
+        // The poll future lives across flushes: rumqttc dials and waits for the CONNACK inside
+        // it, so dropping it on a tick would drop the half-open connection with it.
+        let event = {
+            let poll = events.poll();
+            tokio::pin!(poll);
+            loop {
+                tokio::select! {
+                    event = &mut poll => break event,
+                    _ = tick.tick() => {
+                        if buffer.is_empty() {
+                            continue;
+                        }
+                        let batch: Vec<Message> = std::mem::take(&mut buffer).into();
+                        bytes = 0;
+                        if let Err(error) = store
+                            .keep(&target.project, &target.name, target.per_topic, batch, TimestampTz::now())
+                            .await
+                        {
+                            tracing::warn!(broker = %target.release, %error, "the MQTT capture was not stored");
+                        }
                     }
                 }
-                Ok(Event::Incoming(Packet::Publish(publish))) => {
-                    let received_at = TimestampTz::now();
-                    bytes = bytes.saturating_add(publish.payload.len());
-                    buffer.push_back(Message {
-                        client_id: client_of(&target.publish, &publish.topic),
-                        topic: publish.topic,
-                        received_at,
-                        expires_at: received_at + jiff::SignedDuration::from_secs(target.window),
-                        payload: publish.payload.to_vec(),
-                    });
-                    while buffer.len() > BROKER_MESSAGES || bytes > BROKER_BYTES {
-                        let Some(oldest) = buffer.pop_front() else { break };
-                        bytes = bytes.saturating_sub(oldest.payload.len());
-                    }
+            }
+        };
+        match event {
+            Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                if let Err(error) = client.try_subscribe_many(topics.clone()) {
+                    tracing::warn!(broker = %target.release, %error, "the MQTT capture did not subscribe");
                 }
-                Ok(_) => {}
-                Err(error) => {
-                    // The broker and the error only: an error never carries a payload.
-                    tracing::warn!(broker = %target.release, %error, "the MQTT capture lost its broker; dialing again");
-                    tokio::time::sleep(RETRY).await;
+            }
+            Ok(Event::Incoming(Packet::Publish(publish))) => {
+                let received_at = TimestampTz::now();
+                bytes = bytes.saturating_add(publish.payload.len());
+                buffer.push_back(Message {
+                    client_id: client_of(&target.publish, &publish.topic),
+                    topic: publish.topic,
+                    received_at,
+                    expires_at: received_at + jiff::SignedDuration::from_secs(target.window),
+                    payload: publish.payload.to_vec(),
+                });
+                while buffer.len() > BROKER_MESSAGES || bytes > BROKER_BYTES {
+                    let Some(oldest) = buffer.pop_front() else {
+                        break;
+                    };
+                    bytes = bytes.saturating_sub(oldest.payload.len());
                 }
-            },
-            _ = tick.tick() => {
-                if buffer.is_empty() {
-                    continue;
-                }
-                let batch: Vec<Message> = std::mem::take(&mut buffer).into();
-                bytes = 0;
-                if let Err(error) = store
-                    .keep(&target.project, &target.name, target.per_topic, batch, TimestampTz::now())
-                    .await
-                {
-                    tracing::warn!(broker = %target.release, %error, "the MQTT capture was not stored");
-                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                // The broker and the error only: an error never carries a payload.
+                tracing::warn!(broker = %target.release, %error, "the MQTT capture lost its broker; dialing again");
+                tokio::time::sleep(RETRY).await;
             }
         }
     }
@@ -1012,14 +1023,16 @@ mod tests {
         packet
     }
 
-    /// Answers one connection: CONNACK, SUBACK, then `messages`, then holds it for `hold`.
+    /// Answers one connection: CONNACK after `connack`, SUBACK, then `messages`, then holds it
+    /// for `hold`.
     async fn one_connection(
         mut socket: tokio::net::TcpStream,
-        messages: Vec<(String, Vec<u8>)>,
+        (connack, messages): (Duration, Vec<(String, Vec<u8>)>),
         hold: Duration,
     ) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
         read_packet(&mut socket).await?;
+        tokio::time::sleep(connack).await;
         socket.write_all(&[0x20, 0x02, 0x00, 0x00]).await?;
         loop {
             let (first, body) = read_packet(&mut socket).await?;
@@ -1060,9 +1073,13 @@ mod tests {
         let burst: Vec<(String, Vec<u8>)> = (0..BROKER_MESSAGES + 5)
             .map(|n| ("cams/cam-1/frame".to_owned(), n.to_string().into_bytes()))
             .collect();
+        // The first CONNACK comes later than a flush tick: the dial must survive the tick.
         let scripts = Arc::new(Mutex::new(VecDeque::from([
-            burst,
-            vec![("cams/cam-2/frame".to_owned(), b"lost".to_vec())],
+            (FLUSH + Duration::from_millis(500), burst),
+            (
+                Duration::ZERO,
+                vec![("cams/cam-2/frame".to_owned(), b"lost".to_vec())],
+            ),
         ])));
         let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let accepting = {
