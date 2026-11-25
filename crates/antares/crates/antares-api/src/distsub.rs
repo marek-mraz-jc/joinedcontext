@@ -96,23 +96,25 @@ async fn ds_set_remote(
 ) -> bool {
     st.store
         .mutate(tenant, Kind::DistSub, own_id, |d| {
-            if let Some(o) = d.as_object_mut() {
-                match &entry {
-                    Some(v) => {
-                        if !o.get("remotes").is_some_and(Value::is_object) {
-                            o.insert("remotes".into(), json!({}));
-                        }
-                        if let Some(m) = o.get_mut("remotes").and_then(Value::as_object_mut) {
-                            if m.contains_key(reg_id) {
-                                return Err(());
-                            }
-                            m.insert(reg_id.to_owned(), v.clone());
-                        }
+            // a mapping document is an object; one that is not takes no remote
+            let o = d.as_object_mut().ok_or(())?;
+            match &entry {
+                Some(v) => {
+                    // a refusal commits nothing, so the map is put back only
+                    // once it took the entry
+                    let mut m = match o.remove("remotes") {
+                        Some(Value::Object(m)) => m,
+                        _ => serde_json::Map::new(),
+                    };
+                    if m.contains_key(reg_id) {
+                        return Err(());
                     }
-                    None => {
-                        if let Some(m) = o.get_mut("remotes").and_then(Value::as_object_mut) {
-                            m.remove(reg_id);
-                        }
+                    m.insert(reg_id.to_owned(), v.clone());
+                    o.insert("remotes".into(), Value::Object(m));
+                }
+                None => {
+                    if let Some(m) = o.get_mut("remotes").and_then(Value::as_object_mut) {
+                        m.remove(reg_id);
                     }
                 }
             }
@@ -1286,6 +1288,41 @@ mod mapping_edges {
             s[k] = v.clone();
         }
         s
+    }
+
+    /// A remote is recorded once per registration: a second one for the
+    /// same registration is refused and leaves the first; removing one from
+    /// a mapping that holds none changes nothing.
+    #[tokio::test]
+    async fn a_remote_is_recorded_once_and_removed_quietly() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        let id = "urn:ngsi-ld:Subscription:remotes";
+        st.store
+            .create(&t, Kind::DistSub, id, json!({"id": id}))
+            .await
+            .expect("seed");
+        assert!(
+            ds_set_remote(&st, &t, id, "reg", None).await,
+            "nothing to remove"
+        );
+        assert!(ds_set_remote(&st, &t, id, "reg", Some(json!("r1"))).await);
+        assert!(!ds_set_remote(&st, &t, id, "reg", Some(json!("r2"))).await);
+        let doc = st
+            .store
+            .get(&t, Kind::DistSub, id)
+            .await
+            .expect("store")
+            .expect("mapping");
+        assert_eq!(doc["remotes"], json!({"reg": "r1"}));
+        assert!(ds_set_remote(&st, &t, id, "reg", None).await);
+        let doc = st
+            .store
+            .get(&t, Kind::DistSub, id)
+            .await
+            .expect("store")
+            .expect("mapping");
+        assert_eq!(doc["remotes"], json!({}));
     }
 
     #[tokio::test]
