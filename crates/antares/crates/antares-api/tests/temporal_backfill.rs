@@ -123,4 +123,17 @@ async fn a_late_value_reaches_history_and_never_the_current_state() {
     assert_eq!(s, 204);
     let (_, now) = req(&st, "GET", &format!("/ngsi-ld/v1/entities/{id}"), None).await;
     assert_eq!(now["level"]["value"], 13.0);
+
+    // A value that says nothing of when it was observed is no backfill: it
+    // replaces the current one.
+    let (s, _) = req(
+        &st,
+        "PATCH",
+        &format!("/ngsi-ld/v1/entities/{id}/attrs"),
+        Some(json!({"level": {"type": "Property", "value": 14.0}})),
+    )
+    .await;
+    assert_eq!(s, 204);
+    let (_, now) = req(&st, "GET", &format!("/ngsi-ld/v1/entities/{id}"), None).await;
+    assert_eq!(now["level"]["value"], 14.0);
 }
