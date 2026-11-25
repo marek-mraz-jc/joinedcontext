@@ -91,13 +91,13 @@ pub(crate) async fn sync_now(state: &ShakoState, repo: &RepoRecord) -> ShakoResu
         }
         tokio::time::sleep(SYNC_NOW_POLL).await;
     };
-    let job = tokio::spawn({
+    // The sync runs on when the wait is over: dropping the wait leaves the task running.
+    let job = crate::service::spawned({
         let state = state.clone();
         async move { sync_claimed(&state, instance, org, id, mark).await }
     });
     match tokio::time::timeout_at(deadline, job).await {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(ShakoError::Internal(e.to_string())),
+        Ok(synced) => synced,
         Err(_) => Err(still_running()),
     }
 }

@@ -1847,3 +1847,473 @@ async fn a_commit_to_a_missing_branch_names_it() {
     assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
     assert!(answer.to_string().contains("nowhere"), "{answer}");
 }
+
+/// The same forge with a spool budget of `bytes`.
+fn with_spool(mut w: World, bytes: u64) -> World {
+    w.state.git_work = shako_api::work::GitWork::new(
+        w._root.path().join("small-spool"),
+        bytes,
+        shako_api::work::MEMORY_BYTES,
+    );
+    w.app = compat_and_native_rest_router()
+        .merge(odata_router())
+        .merge(smart_http_router())
+        .with_state(w.state.clone());
+    w
+}
+
+/// Feeds `stream` to `git fast-import` in the bare repository `site`.
+async fn fast_import(w: &World, stream: &[u8]) {
+    let mut child = jc_secret::spawn::command("git")
+        .arg("-C")
+        .arg(w.disk("site").await)
+        .args(["fast-import", "--quiet"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("fast-import");
+    std::io::Write::write_all(child.stdin.as_mut().expect("stdin"), stream).expect("stream");
+    assert!(child.wait().expect("fast-import ends").success());
+}
+
+/// The authenticated request context of the admin.
+fn admin_ctx(w: &World) -> shako_core::RequestCtx {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "authorization",
+        format!("token {ADMIN}").parse().expect("header"),
+    );
+    shako_api::authenticate_request(&w.state, &headers, "shako").expect("ctx")
+}
+
+/// A file whose answer is larger than the spool budget is refused on each surface naming
+/// `spool_bytes`; a small file of the same repository still reads.
+#[tokio::test]
+async fn a_file_past_the_spool_budget_is_refused_naming_it() {
+    let w = with_spool(seeded().await, 2 << 20);
+    let main = w.git("site", &["rev-parse", "main"]).await;
+    let big = vec![b'a'; 3 << 20];
+    let mut stream = format!("blob\nmark :1\ndata {}\n", big.len()).into_bytes();
+    stream.extend_from_slice(&big);
+    stream.extend_from_slice(
+        format!(
+            "\ncommit refs/heads/main\ncommitter Ada <ada@city.example> 1700000000 +0000\ndata 3\nbig\nfrom {main}\nM 100644 :1 big.bin\n"
+        )
+        .as_bytes(),
+    );
+    fast_import(&w, &stream).await;
+    let id = w.repo("site").await.id;
+    for uri in [
+        format!("{R}/contents/big.bin"),
+        format!("/odata/Repositories('{id}')/File(path='big.bin')"),
+    ] {
+        let (s, answer) = send(&w.app, "GET", &uri, None).await;
+        assert!(!s.is_success(), "{uri}: {s}");
+        assert!(
+            answer.to_string().contains("spool_bytes"),
+            "{uri}: {answer}"
+        );
+    }
+    let (s, file) = send(&w.app, "GET", &format!("{R}/contents/README.md"), None).await;
+    assert_eq!(s, StatusCode::OK, "{file}");
+}
+
+/// A pull request from a branch with no history in common with its base diffs from the base
+/// itself: its files and its OData expansion list what the head adds.
+#[tokio::test]
+async fn a_pull_request_without_a_merge_base_diffs_from_its_base() {
+    let w = seeded().await;
+    fast_import(
+        &w,
+        b"commit refs/heads/orphan\ncommitter Ada <ada@city.example> 1700000000 +0000\ndata 6\norphan\nM 100644 inline o.md\ndata 1\no\n",
+    )
+    .await;
+    let (s, pr) = send(
+        &w.app,
+        "POST",
+        &format!("{R}/pulls"),
+        Some(json!({ "head": "orphan", "base": "main", "title": "unrelated" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{pr}");
+    let number = pr["number"].as_u64().expect("number");
+    let (s, files) = send(&w.app, "GET", &format!("{R}/pulls/{number}/files"), None).await;
+    assert_eq!(s, StatusCode::OK, "{files}");
+    assert!(
+        files
+            .as_array()
+            .is_some_and(|f| f.iter().any(|f| f["filename"] == "o.md")),
+        "{files}"
+    );
+    let (s, page) = send(&w.app, "GET", "/odata/PullRequests?$expand=Files", None).await;
+    assert_eq!(s, StatusCode::OK, "{page}");
+    let row = &page["value"][0];
+    assert_eq!(row["MergeBase"].as_str().unwrap_or_default(), "", "{row}");
+    assert!(
+        row["Files"].to_string().contains("o.md"),
+        "the expansion diffs from the base: {row}"
+    );
+}
+
+/// A review names the commit it was given, and the head when it was given none or an empty one.
+#[tokio::test]
+async fn a_review_names_its_commit_or_the_head() {
+    let w = seeded().await;
+    let number = w.open_pull("dev").await;
+    let head = w.git("site", &["rev-parse", "dev"]).await;
+    let first = w.git("site", &["rev-parse", "main"]).await;
+    for (given, expected) in [
+        (json!(first), first.as_str()),
+        (json!(""), head.as_str()),
+        (Value::Null, head.as_str()),
+    ] {
+        let (s, review) = send(
+            &w.app,
+            "POST",
+            &format!("{R}/pulls/{number}/reviews"),
+            Some(json!({ "event": "COMMENT", "body": "seen", "commit_id": given })),
+        )
+        .await;
+        assert!(s.is_success(), "{given}: {review}");
+        assert_eq!(review["commit_id"], expected, "{given}: {review}");
+    }
+}
+
+/// A tag protection stored for a repository is part of its ref policy and covers only tags.
+#[tokio::test]
+async fn a_tag_protection_is_part_of_the_ref_policy() {
+    let w = seeded().await;
+    let repo = w.repo("site").await;
+    w.state
+        .store()
+        .upsert_tag_protection(TagProtectionRecord {
+            id: uuid::Uuid::now_v7(),
+            instance_id: INSTANCE,
+            org_id: ORG,
+            repo_id: repo.id,
+            rule: TagProtectionRule {
+                name_pattern: "v*".into(),
+                whitelist_usernames: vec!["admin".into()],
+            },
+            created_at: jc_time::TimestampTz::now(),
+        })
+        .await
+        .expect("stored");
+    let policy = w
+        .state
+        .ref_policy_for(INSTANCE, ORG, repo.id)
+        .await
+        .expect("policy");
+    assert_eq!(
+        policy
+            .matching_tag_rule("v1.0")
+            .map(|r| r.name_pattern.as_str()),
+        Some("v*")
+    );
+    assert!(policy.matching_tag_rule("release").is_none());
+    assert!(policy.matching_branch_rule("v1.0").is_none());
+}
+
+/// A write whose operation has no audit kind is refused before anything is recorded.
+#[tokio::test]
+async fn a_write_without_an_audit_kind_is_refused() {
+    let w = seeded().await;
+    let ctx = admin_ctx(&w);
+    let audited = shako_api::service::audit(&w.state, &ctx, "NoSuchWrite", "repos/x".into()).await;
+    assert!(
+        matches!(&audited, Err(ShakoError::Internal(m)) if m == "no audit kind for 'NoSuchWrite'"),
+        "{audited:?}"
+    );
+}
+
+/// A branch name Git cannot hold is not found; a ref naming a missing object is not found; a
+/// ref file that is not a ref is a Git error; reads and commits alike.
+#[tokio::test]
+async fn branches_git_cannot_read_answer_not_found_or_a_git_error() {
+    let w = seeded().await;
+    let heads = w.disk("site").await.join("refs/heads");
+    std::fs::write(heads.join("ghost"), format!("{}\n", "a".repeat(40))).expect("ghost ref");
+    std::fs::write(heads.join("junk"), "not a ref\n").expect("junk ref");
+    let (s, answer) = send(&w.app, "GET", &format!("{R}/branches/a..b"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
+    let (s, answer) = send(&w.app, "GET", &format!("{R}/branches/ghost"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
+    let (s, answer) = send(&w.app, "GET", &format!("{R}/branches/junk"), None).await;
+    assert!(s.is_server_error(), "{s} {answer}");
+    let (s, answer) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/x.md"),
+        Some(put("x", "bad name", "a..b")),
+    )
+    .await;
+    assert!(s.is_client_error(), "{s} {answer}");
+    let (s, answer) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/x.md"),
+        Some(put("x", "junk", "junk")),
+    )
+    .await;
+    assert!(!s.is_success(), "{s} {answer}");
+    let (s, _) = send(&w.app, "GET", &format!("{R}/contents/x.md"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "nothing was written");
+}
+
+/// A push waits for the repository lock at most a minute, then answers that another write
+/// holds it; the clock is paused, so the test waits no minute.
+#[tokio::test]
+async fn a_push_behind_a_held_lock_answers_overloaded() {
+    let w = seeded().await;
+    let id = w.repo("site").await.id;
+    let _held = w.state.repo_locks.lock(id).await;
+    tokio::time::pause();
+    let (s, body) = raw(&w.app, receive_pack(b"0000".to_vec(), None)).await;
+    assert_eq!(
+        s,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    assert!(
+        String::from_utf8_lossy(&body).contains("another write holds the repository"),
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+}
+
+/// A repository deleted and created again under its name while a push waited for the lock is
+/// a conflict: the push never lands in the new repository.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_push_into_a_repository_replaced_meanwhile_is_a_conflict() {
+    let w = seeded().await;
+    let old = w.repo("site").await.id;
+    let held = w.state.repo_locks.lock(old).await;
+    let push = tokio::spawn({
+        let app = w.app.clone();
+        async move { raw(&app, receive_pack(b"0000".to_vec(), None)).await }
+    });
+    // The push spools its four bytes and waits for the lock.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    assert!(!push.is_finished(), "the push waits for the lock");
+    assert!(
+        w.state
+            .store()
+            .delete_repo(INSTANCE, ORG, old)
+            .await
+            .expect("deleted")
+    );
+    let (s, created) = send(
+        &w.app,
+        "POST",
+        "/api/v1/orgs/joinedcontext/repos",
+        Some(json!({ "name": "site" })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{created}");
+    drop(held);
+    let (s, body) = push.await.expect("push task");
+    assert_eq!(
+        s,
+        StatusCode::CONFLICT,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    assert!(
+        String::from_utf8_lossy(&body).contains("replaced during the push"),
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+}
+
+/// A blob path with no directory above it, or one under a file, is a storage error naming why.
+#[tokio::test]
+async fn a_blob_that_cannot_be_written_is_a_storage_error() {
+    let written = shako_api::service::write_blob_file("/".into(), b"x".to_vec()).await;
+    assert!(
+        matches!(&written, Err(ShakoError::Storage(m)) if m == "a blob path names a file"),
+        "{written:?}"
+    );
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("file");
+    std::fs::write(&file, b"x").expect("file");
+    let written = shako_api::service::write_blob_file(file.join("sub/blob"), b"x".to_vec()).await;
+    assert!(
+        matches!(&written, Err(ShakoError::Storage(m)) if m.starts_with("blob write failed: ")),
+        "{written:?}"
+    );
+}
+
+/// A commit stands when the refreshed repository record cannot be stored.
+#[tokio::test]
+async fn a_commit_stands_when_its_refreshed_record_cannot_be_stored() {
+    let w = seeded().await;
+    w.store.fail("update_repo");
+    let (s, answer) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/u.md"),
+        Some(put("u", "kept", "main")),
+    )
+    .await;
+    w.store.heal();
+    assert_eq!(s, StatusCode::CREATED, "{answer}");
+    let (s, file) = send(&w.app, "GET", &format!("{R}/contents/u.md"), None).await;
+    assert_eq!(s, StatusCode::OK, "{file}");
+}
+
+/// Redelivering a hook whose repository is gone is not found, like an unknown hook.
+#[tokio::test]
+async fn redelivering_a_hook_of_a_deleted_repository_is_not_found() {
+    let w = seeded().await;
+    let (s, hook) = send(&w.app, "POST", &format!("{R}/hooks"), Some(json!({ "type": "gitea",
+        "config": { "url": "https://hooks.city.example/h", "content_type": "json", "secret": "s3cret-value" },
+        "events": ["push"], "active": true }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{hook}");
+    let repo = w.repo("site").await.id;
+    assert!(
+        w.state
+            .store()
+            .delete_repo(INSTANCE, ORG, repo)
+            .await
+            .expect("deleted")
+    );
+    let (s, answer) = send(
+        &w.app,
+        "POST",
+        "/odata/RedeliverWebhook",
+        Some(json!({ "Id": hook["id"].to_string().trim_matches('"') })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
+    assert!(answer.to_string().contains("webhook not found"), "{answer}");
+}
+
+/// Generic package files: a second file joins its version, a file past what the storage quota
+/// leaves is refused naming package storage, and a file whose blob is gone is not found.
+#[tokio::test]
+async fn generic_package_files_share_a_version_and_respect_storage() {
+    let w = seeded().await;
+    let ctx = admin_ctx(&w);
+    let publish = |file: &'static str, bytes: Vec<u8>| {
+        shako_api::service::publish_generic_file(
+            &w.state,
+            &ctx,
+            "joinedcontext",
+            "tool",
+            "1.0.0",
+            file,
+            bytes,
+        )
+    };
+    let a = publish("a.bin", b"aaaa".to_vec())
+        .await
+        .expect("first file");
+    let b = publish("b.bin", b"bbbb".to_vec())
+        .await
+        .expect("second file");
+    assert_eq!(a.version_id, b.version_id, "both files are one version's");
+
+    let mut instance = w.state.instance_for(INSTANCE, ORG).await.expect("instance");
+    let usage = w
+        .state
+        .store()
+        .get_quota_usage(INSTANCE, ORG)
+        .await
+        .expect("usage");
+    instance.max_storage_bytes = usage.total_bytes() + 8;
+    w.state
+        .store()
+        .upsert_instance(instance)
+        .await
+        .expect("instance stored");
+    let refused = publish("c.bin", vec![0u8; 64]).await;
+    assert!(
+        matches!(&refused, Err(ShakoError::QuotaExceeded { resource, limit: 8 }) if resource == "package storage"),
+        "{refused:?}"
+    );
+
+    std::fs::remove_file(shako_api::service::blob_disk_path(
+        &w.state,
+        "joinedcontext",
+        &a.sha256,
+    ))
+    .expect("blob removed");
+    let read = shako_api::service::read_generic_file(
+        &w.state,
+        &ctx,
+        "joinedcontext",
+        "tool",
+        "1.0.0",
+        "a.bin",
+    )
+    .await;
+    assert!(
+        matches!(&read, Err(ShakoError::NotFound(m)) if m == "package blob not found"),
+        "{:?}",
+        read.err()
+    );
+    let read = shako_api::service::read_generic_file(
+        &w.state,
+        &ctx,
+        "joinedcontext",
+        "tool",
+        "1.0.0",
+        "b.bin",
+    )
+    .await;
+    assert!(read.is_ok(), "the other file still reads");
+}
+
+/// A due mirror of a repository deleted before its drain ran is finished without a push: the
+/// drain claims it, finds no repository, and records the sync so nothing stays due.
+#[tokio::test]
+async fn a_due_mirror_of_a_deleted_repository_is_finished_without_a_push() {
+    let w = seeded().await;
+    let (s, mirror) = send(&w.app, "POST", &format!("{R}/push_mirrors"),
+        Some(json!({ "remote_address": "https://github.com/joinedcontext-apps/site.git", "sync_on_commit": true }))).await;
+    assert_eq!(s, StatusCode::OK, "{mirror}");
+    w.store.fail("claim_mirror_sync");
+    let (s, _) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/a.md"),
+        Some(put("a", "due", "main")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    w.store.heal();
+    let repo = w.repo("site").await.id;
+    assert!(
+        w.state
+            .store()
+            .delete_repo(INSTANCE, ORG, repo)
+            .await
+            .expect("deleted")
+    );
+    shako_api::drain_mirrors(&w.state, INSTANCE, ORG);
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    let due = w
+        .state
+        .store()
+        .claim_mirror_sync(INSTANCE, ORG, None)
+        .await
+        .expect("claim")
+        .is_some();
+    assert!(!due, "nothing stays due");
+}
+
+/// A bare repository name names only what the caller may read: a member with no binding gets
+/// 404 for a name the admin reads, so a name never confirms a hidden repository.
+#[tokio::test]
+async fn a_bare_name_names_only_what_the_caller_may_read() {
+    let w = seeded().await;
+    let (s, row) = send(&w.app, "GET", "/odata/Repositories('site')", None).await;
+    assert_eq!(s, StatusCode::OK, "{row}");
+    let (s, answer) = send_as(&w.app, OUTSIDER, "GET", "/odata/Repositories('site')", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{answer}");
+    assert!(
+        answer.to_string().contains("repository not found"),
+        "{answer}"
+    );
+}
