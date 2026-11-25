@@ -291,7 +291,13 @@ pub fn tx_reduce(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
             arr.iter()
                 .filter_map(Value::as_str)
                 .filter_map(|s| ReducerId::parse(s).ok().map(|r| (s.to_owned(), r)))
-                .collect()
+                .fold(Vec::new(), |mut kept: Vec<(String, ReducerId)>, r| {
+                    // A reducer named twice gives one column, not one column of doubled rows.
+                    if !kept.iter().any(|(name, _)| name == &r.0) {
+                        kept.push(r);
+                    }
+                    kept
+                })
         })
         .unwrap_or_else(|| vec![("max".to_owned(), ReducerId::Max)]);
 
@@ -337,10 +343,8 @@ pub fn tx_reduce(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
 
     // Default: seriesToRows
     let mut field_names = Vec::new();
-    let mut calc_cols: BTreeMap<String, Vec<Option<f64>>> = BTreeMap::new();
-    for (r_name, _) in &reducers {
-        calc_cols.insert(r_name.clone(), Vec::new());
-    }
+    // One column per reducer, in the order the options name them.
+    let mut calc_cols: Vec<Vec<Option<f64>>> = vec![Vec::new(); reducers.len()];
 
     for frame in &frames {
         for f in &frame.fields {
@@ -350,24 +354,19 @@ pub fn tx_reduce(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
             field_names.push(Some(f.effective_name().to_owned()));
             let non_null: Vec<Option<f64>> =
                 (0..f.len()).filter_map(|i| f.f64_at(i).map(Some)).collect();
-            for (r_name, r_id) in &reducers {
-                let v = reduce_slice(*r_id, &non_null);
-                if let Some(col) = calc_cols.get_mut(r_name) {
-                    col.push(v);
-                }
+            for ((_, r_id), col) in reducers.iter().zip(&mut calc_cols) {
+                col.push(reduce_slice(*r_id, &non_null));
             }
         }
     }
 
     let mut out_fields = vec![FieldColumn::strings("Field", field_names)];
-    for (r_name, _) in &reducers {
-        if let Some(vals) = calc_cols.remove(r_name) {
-            out_fields.push(FieldColumn::numbers(
-                reducer_display_name(r_name),
-                BTreeMap::new(),
-                vals,
-            ));
-        }
+    for ((r_name, _), vals) in reducers.iter().zip(calc_cols) {
+        out_fields.push(FieldColumn::numbers(
+            reducer_display_name(r_name),
+            BTreeMap::new(),
+            vals,
+        ));
     }
 
     vec![Frame {
@@ -1354,6 +1353,83 @@ pub fn tx_labels_to_fields(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn frame(fields: Vec<FieldColumn>) -> Frame {
+        Frame { name: "t".into(), ref_id: Some("A".into()), fields, meta: FrameMeta::default() }
+    }
+
+    fn nums(name: &str, vals: &[Option<f64>]) -> FieldColumn {
+        FieldColumn::numbers(name, BTreeMap::new(), vals.to_vec())
+    }
+
+    /// A reducer the options name twice answers one column whose rows line up with `Field`.
+    #[test]
+    fn reduce_names_a_repeated_reducer_once() {
+        let frames = vec![frame(vec![nums("a", &[Some(1.0), Some(3.0)]), nums("b", &[Some(5.0)])])];
+        let out = tx_reduce(frames, &json!({"reducers": ["max", "min", "max", "nope"]}));
+        let names: Vec<&str> = out[0].fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names.len(), 3, "{names:?}");
+        for f in &out[0].fields {
+            assert_eq!(f.values.len(), 2, "{}: {:?}", f.name, f.values);
+        }
+        assert_eq!(out[0].fields[1].values, vec![json!(3.0), json!(5.0)]);
+        assert_eq!(out[0].fields[2].values, vec![json!(1.0), json!(5.0)]);
+        // Only unknown reducers: the frames pass through untouched.
+        let frames = vec![frame(vec![nums("a", &[Some(1.0)])])];
+        assert_eq!(tx_reduce(frames.clone(), &json!({"reducers": ["nope"]})), frames);
+    }
+
+    /// Merge edge cases: a field named twice in one frame counts once, and a short column gives
+    /// no value for the rows it lacks.
+    #[test]
+    fn merge_counts_a_repeated_field_once_and_skips_missing_cells() {
+        let one = frame(vec![
+            FieldColumn::time("Time", vec![1, 2]),
+            nums("v", &[Some(1.0), Some(2.0)]),
+            nums("v", &[Some(9.0)]),
+        ]);
+        let two = frame(vec![FieldColumn::time("Time", vec![1]), nums("w", &[Some(7.0)])]);
+        let out = tx_merge(vec![one, two]);
+        assert_eq!(out.len(), 1, "{out:?}");
+        let time = out[0].fields.iter().find(|f| f.name == "Time").expect("Time kept");
+        assert_eq!(time.values, vec![json!(1), json!(2)]);
+        // One frame, or none with fields: nothing to merge.
+        assert_eq!(tx_merge(vec![frame(vec![]), frame(vec![nums("v", &[None])])]).len(), 2);
+        assert!(tx_merge(Vec::new()).is_empty());
+    }
+
+    /// Sorting puts nulls first ascending and compares two nulls by their text.
+    #[test]
+    fn sort_orders_nulls_before_numbers_both_ways() {
+        let mut f = frame(vec![nums("v", &[Some(2.0), None, Some(1.0), None])]);
+        sort_frame_by_col(&mut f, 0, false);
+        assert_eq!(f.fields[0].values, vec![Value::Null, Value::Null, json!(1.0), json!(2.0)]);
+        sort_frame_by_col(&mut f, 0, true);
+        assert_eq!(f.fields[0].values, vec![json!(2.0), json!(1.0), Value::Null, Value::Null]);
+    }
+
+    /// An outer join on a number key puts keys without a number (text, null) first, each in the
+    /// order it came.
+    #[test]
+    fn outer_join_on_numbers_orders_keys_without_a_number_first() {
+        let mut key = nums("k", &[Some(2.0), None]);
+        key.values.push(json!("x"));
+        let one = frame(vec![key, nums("a", &[Some(1.0), Some(2.0), Some(3.0)])]);
+        let two = frame(vec![nums("k", &[Some(1.0), Some(2.0)]), nums("b", &[Some(4.0), Some(5.0)])]);
+        let out = tx_join_by_field(vec![one, two], &json!({"byField": "k"}));
+        let k = out[0].fields.iter().find(|f| f.name == "k").expect("key column");
+        assert_eq!(k.values.len(), 4, "{:?}", k.values);
+        assert_eq!(&k.values[2..], &[json!(1.0), json!(2.0)]);
+        let inner = tx_join_by_field(
+            vec![
+                frame(vec![nums("k", &[Some(1.0), Some(2.0)]), nums("a", &[Some(1.0), Some(2.0)])]),
+                frame(vec![nums("k", &[Some(2.0)]), nums("b", &[Some(5.0)])]),
+            ],
+            &json!({"byField": "k", "mode": "inner"}),
+        );
+        let k = inner[0].fields.iter().find(|f| f.name == "k").expect("key column");
+        assert_eq!(k.values, vec![json!(2.0)]);
+    }
 
     #[test]
     fn organize_excludes_reorders_and_renames_like_bbsk_and_helsinki() {

@@ -540,3 +540,22 @@ fn a_number_input_to_reduce_warns_that_reduce_is_not_needed() {
         "Reduce operation is not needed. Input query or expression M is already reduced data."
     );
 }
+
+/// A node fed by two expressions waits for both (the in-degree counts down past one), and a
+/// classic condition over a query that answered no frames reads it as no data.
+#[test]
+fn a_node_with_two_expression_inputs_and_a_classic_over_no_frames() {
+    let ds = [series_set("D", "a", &[Some(1.0), Some(2.0)]), FrameSet::new("E", Vec::new())];
+    let nodes = [
+        node(json!({ "refId": "C", "type": "math", "expression": "$A + $B" })),
+        node(json!({ "refId": "A", "type": "math", "expression": "$D * 2" })),
+        node(json!({ "refId": "B", "type": "math", "expression": "$D + 1" })),
+        node(json!({
+            "refId": "N", "type": "classic_conditions",
+            "conditions": [{ "query": { "params": ["E"] }, "evaluator": { "params": [1] } }]
+        })),
+    ];
+    let out = run(&ds, &nodes).expect("pipeline runs");
+    assert_eq!(last_value(set(&out, "C")), Some(4.0 + 3.0));
+    assert_eq!(last_value(set(&out, "N")), None, "{:?}", set(&out, "N"));
+}

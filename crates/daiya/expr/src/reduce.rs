@@ -277,10 +277,10 @@ mod tests {
             std::slice::from_ref(&series),
         )
         .unwrap();
-        let ExprValue::Number { value, .. } = &strict[0] else {
-            panic!("expected number");
-        };
-        assert!(value.unwrap().is_nan());
+        assert!(
+            matches!(&strict[0], ExprValue::Number { value: Some(v), .. } if v.is_nan()),
+            "{strict:?}"
+        );
 
         // dropNN: drops None and NaN -> mean(10, 30) = 20
         let dropped = reduce_frames(
