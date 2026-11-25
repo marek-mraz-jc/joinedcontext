@@ -469,3 +469,48 @@ async fn an_endpoint_listing_datasets_is_one_record_per_dataset() {
     );
     assert!(!body.contains("Prachové"), "{body}");
 }
+
+/// A dataset record read with `Accept: text/turtle` is Turtle, and one read under a profile the
+/// Organization does not serve is a 404 whatever the dataset (EP-176).
+#[tokio::test]
+async fn a_dataset_record_is_turtle_on_request_and_an_unserved_profile_is_not_found() {
+    let realm = common::Realm::new();
+    let block: jc_core::kinds::Catalog = serde_norway::from_str(
+        "datasets:\n\
+         - { name: bb-ovzdusie-pm, title: { sk: Prachové častice }, description: { sk: PM10 a PM2.5 }, types: [AirQualityObserved] }\n",
+    )
+    .expect("the catalogue block parses");
+    block.validate().expect("the catalogue block validates");
+    let mut open = endpoint(OPEN, "ovzdusie", Audience::Public);
+    open.catalog = Some(Arc::new(block));
+    let record = format!("/api/endpoint/{OPEN}/datasets/bb-ovzdusie-pm");
+
+    let response = app_of(&realm, vec![open.clone()])
+        .oneshot(
+            Request::builder()
+                .uri(&record)
+                .header(axum::http::header::ACCEPT, "text/turtle")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("the gateway answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[axum::http::header::CONTENT_TYPE],
+        "text/turtle"
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("a readable body");
+    let turtle = String::from_utf8_lossy(&bytes);
+    assert!(turtle.contains("bb-ovzdusie-pm"), "{turtle}");
+
+    let (status, _, _, body) = get(
+        app_of(&realm, vec![open]),
+        &format!("{record}?profile=no-such-profile"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
