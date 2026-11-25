@@ -412,11 +412,12 @@ fn named_members(parameter: &str, text: &str) -> Vec<(String, &'static str)> {
 fn dotted(term: &str) -> Vec<String> {
     let cut = term.rfind(['/', '#']).map_or(0, |at| at.saturating_add(1));
     let (address, local) = term.split_at(cut);
-    let mut segments: Vec<String> = local.split('.').map(str::to_owned).collect();
-    if let Some(first) = segments.first_mut() {
-        first.insert_str(0, address);
-    }
-    segments
+    let mut segments = local.split('.');
+    // `split` yields at least one segment, the first the address joins
+    let first = format!("{address}{}", segments.next().unwrap_or_default());
+    std::iter::once(first)
+        .chain(segments.map(str::to_owned))
+        .collect()
 }
 
 /// The metadata member the segments after an Attribute name, `None` when they name only
@@ -784,6 +785,159 @@ mod tests {
         all.strip_headers(&mut h, "lastN=2");
         assert!(h.get("content-range").is_some());
         assert_eq!(h.get_all(header::LINK).iter().count(), 3);
+    }
+
+    /// Two narrowings pass what both pass, per Attribute and for the rest;
+    /// one side alone is that side.
+    #[test]
+    fn both_narrowings_pass_only_their_common_members() {
+        let engine = Metadata {
+            named: BTreeMap::from([(iri("name"), set(&["unitCode", "observedAt"]))]),
+            rest: set(&["observedAt"]),
+        };
+        let pair =
+            Metadata::both(Some(&public()), Some(Box::new(engine.clone()))).expect("both sides");
+        assert_eq!(pair.named[&iri("pm10")], set(&["observedAt"]));
+        assert_eq!(pair.named[&iri("name")], set(&["unitCode", "observedAt"]));
+        assert_eq!(pair.rest, set(&["observedAt"]));
+        assert_eq!(
+            Metadata::both(Some(&engine), None).as_deref(),
+            Some(&engine)
+        );
+        assert_eq!(Metadata::both(None, None), None);
+    }
+
+    /// What is no Attribute instance is left as it is: a scalar answer, a
+    /// scalar Attribute value, a non-object in an instance list; a
+    /// FeatureCollection strips each Feature, and `provenance` passed keeps
+    /// its every member.
+    #[test]
+    fn what_is_no_instance_is_left_alone() {
+        let m = public();
+        let mut scalar = json!(5);
+        m.strip(&mut scalar, core());
+        assert_eq!(scalar, json!(5));
+        let mut doc = json!({"id": "urn:ngsi-ld:A:1", "type": "A", "odd": 3,
+                             "pm10": [7, instance()]});
+        m.strip(&mut doc, core());
+        assert_eq!(doc["odd"], 3);
+        assert_eq!(doc["pm10"][0], 7);
+        assert!(doc["pm10"][1].get("unitCode").is_none(), "{doc}");
+        let mut fc = json!({"type": "FeatureCollection", "features": [
+            {"type": "Feature", "id": "urn:ngsi-ld:A:1", "properties": {"pm10": instance()}}]});
+        m.strip(&mut fc, core());
+        assert!(
+            fc["features"][0]["properties"]["pm10"]
+                .get("unitCode")
+                .is_none(),
+            "{fc}"
+        );
+        let open = Metadata {
+            named: BTreeMap::new(),
+            rest: set(&["provenance"]),
+        };
+        let mut doc = json!({"pm10": instance()});
+        open.strip(&mut doc, core());
+        assert_eq!(doc["pm10"]["provenance"], instance()["provenance"]);
+    }
+
+    /// A pair with no `=` is a name with an empty value; `modifiedBy`'s two
+    /// named members are told apart from its actor.
+    #[test]
+    fn query_pairs_and_modified_by_members_are_read_whole() {
+        assert_eq!(
+            form_urlencoded("local&q=a%20b"),
+            vec![
+                ("local".to_owned(), String::new()),
+                ("q".to_owned(), "a b".to_owned())
+            ]
+        );
+        assert_eq!(
+            member_of(&["modifiedBy", "organization"]),
+            Some("modifiedBy.organization")
+        );
+        assert_eq!(
+            member_of(&["modifiedBy", "actorKind"]),
+            Some("modifiedBy.actorKind")
+        );
+        assert_eq!(member_of(&["modifiedBy"]), Some("modifiedBy.actor"));
+    }
+
+    /// Outside the layer nothing would strip the answer: holding a
+    /// narrowing there is refused, holding none is not.
+    #[test]
+    fn a_narrowing_held_where_no_layer_runs_is_refused() {
+        assert!(hold(None).is_ok());
+        assert_eq!(
+            hold(Some(&public())),
+            Err(Denied(
+                "this read passes only some metadata members, and nothing here strips the \
+                 others"
+                    .into()
+            ))
+        );
+    }
+
+    /// The layer around a handler that holds a narrowing: a request whose
+    /// @context cannot be resolved (two Links naming two), an answer past the byte bound and an answer
+    /// that is no JSON each fail rather than pass unstripped.
+    #[tokio::test]
+    async fn the_layer_fails_closed_on_what_it_cannot_strip() {
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt as _;
+        async fn answer(
+            axum::extract::Path(kind): axum::extract::Path<String>,
+        ) -> axum::response::Response {
+            use axum::response::IntoResponse as _;
+            hold(Some(&public())).expect("inside the layer");
+            let ct = [(axum::http::header::CONTENT_TYPE, "application/json")];
+            match kind.as_str() {
+                "big" => (ct, "[1,2,3,4,5,6,7,8,9,10]").into_response(),
+                "text" => (ct, "not json").into_response(),
+                _ => (
+                    ct,
+                    r#"{"pm10":{"type":"Property","value":1,"unitCode":"GQ"}}"#,
+                )
+                    .into_response(),
+            }
+        }
+        let mut st = crate::AppState::new("metadata-layer".into());
+        st.max_answer_bytes = 8;
+        let app = axum::Router::new()
+            .route("/{kind}", axum::routing::get(answer))
+            .layer(axum::middleware::from_fn_with_state(st.clone(), layer))
+            .with_state(st);
+        let call = |path: &str, contexts: &[&str]| {
+            let mut b = Request::builder().uri(path);
+            for c in contexts {
+                b = b.header(
+                    "Link",
+                    format!("<{c}>; rel=\"http://www.w3.org/ns/json-ld#context\""),
+                );
+            }
+            app.clone()
+                .oneshot(b.body(axum::body::Body::empty()).expect("request"))
+        };
+        let read = |r: axum::response::Response| async move {
+            let status = r.status();
+            let bytes = axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .expect("body");
+            (status, String::from_utf8_lossy(&bytes).into_owned())
+        };
+        let (status, body) = read(call("/big", &[]).await.expect("answer")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body.contains(crate::bounds::ANSWER_TOO_LARGE), "{body}");
+        let (status, body) = read(call("/text", &[]).await.expect("answer")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body.contains("a narrowed answer is not JSON"), "{body}");
+        let (status, _) = read(
+            call("/ok", &["https://a.example/1", "https://a.example/2"])
+                .await
+                .expect("answer"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[test]
