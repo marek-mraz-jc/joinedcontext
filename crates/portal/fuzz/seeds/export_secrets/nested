@@ -1,0 +1,1 @@
+{"password":"x","outputs":[{"token":7,"secretRef":{"name":"db"}}],"apiKey":"${KEY}"}

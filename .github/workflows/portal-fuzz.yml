@@ -2,7 +2,8 @@
 # T-7729): label and field selectors, the list filter and orderBy, the gateway's metrics page, a
 # pipeline's cron schedule, the masking of a record the runner posts, the list query string and cursor
 # (T-7698), a device JWKS and an MQTT test-publish body (T-7699), a feedback body, a comment's
-# mentions, a git bundle's header, an entity bound for the trash and a preview body (T-7658). On demand only, an hour
+# mentions, a git bundle's header, an entity bound for the trash and a preview body (T-7658), an export's revision and kinds,
+# the secrets a bundle strips and a visualization title (T-7659). On demand only, an hour
 # per target by default. A crash uploads its input as an artifact; add it as a named regression
 # test with the fix, and to fuzz/seeds/<target> so the next run starts from it.
 name: portal-fuzz
@@ -20,7 +21,7 @@ jobs:
     timeout-minutes: 120
     strategy:
       fail-fast: false
-      matrix: { target: [selector, filter, prometheus, schedule, mask, list_query, device_jwks, test_publish, feedback, mentions, bundle_head, trash_entity, preview_query, auth_issuer_of, auth_csrf_double_submit, auth_login_redirect, auth_realms_parse] }
+      matrix: { target: [selector, filter, prometheus, schedule, mask, list_query, device_jwks, test_publish, feedback, mentions, bundle_head, trash_entity, preview_query, export_query, export_secrets, grafana_title, auth_issuer_of, auth_csrf_double_submit, auth_login_redirect, auth_realms_parse] }
     defaults: { run: { working-directory: crates/portal } }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
