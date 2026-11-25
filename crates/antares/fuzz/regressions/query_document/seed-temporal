@@ -1,0 +1,1 @@
+{"type":"Query","temporalQ":{"timerel":"after","timeAt":"2026-01-01T00:00:00Z","aggrMethods":["avg"]},"aggrParams":{"aggrMethods":"sum","aggrPeriodDuration":"P1D"}}

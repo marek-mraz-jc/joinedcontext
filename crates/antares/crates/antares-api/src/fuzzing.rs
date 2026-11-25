@@ -62,6 +62,39 @@ pub fn order_by(spec: &str, params: &HashMap<String, String>) -> bool {
     crate::paging::order_entities(&mut docs, spec, params, ctx()).is_ok()
 }
 
+/// 5.2.23 Query bodies (`/entityOperations/query`, and the temporal one):
+/// each member lifts into the GET twin's parameters or the body is refused.
+pub fn query_document(data: &[u8]) -> bool {
+    let Ok(serde_json::Value::Object(doc)) = serde_json::from_slice(data) else {
+        return false;
+    };
+    let mut accepted = false;
+    for temporal in [false, true] {
+        let mut params = HashMap::new();
+        accepted |= crate::paging::query_doc_params(&doc, temporal, &mut params).is_ok();
+    }
+    accepted
+}
+
+/// The keyset `cursor` of an Entity query's next Link (T-4907): a cursor
+/// this broker signed reads back as the id it carries, anything else is
+/// refused.
+pub fn paging_cursor(data: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(data) else {
+        return false;
+    };
+    let mut params = HashMap::from([(crate::paging::CURSOR.to_owned(), text.to_owned())]);
+    let read = crate::paging::cursor_after("view", "tenant", &params).is_ok();
+    let signed = crate::paging::encode_cursor("view", "tenant", &HashMap::new(), text);
+    let fits = !text.is_empty() && signed.len() <= 1024;
+    params.insert(crate::paging::CURSOR.to_owned(), signed);
+    let back = crate::paging::cursor_after("view", "tenant", &params);
+    if fits {
+        assert_eq!(back.ok().flatten().as_deref(), Some(text), "a signed cursor reads back");
+    }
+    read
+}
+
 /// 4.23.4 `collation`.
 pub fn collation(params: &HashMap<String, String>) -> bool {
     crate::paging::check_collation(params).is_ok()
