@@ -365,16 +365,16 @@ mod tests {
     fn param_u32_reads_numbers_strings_and_arrays_and_never_wraps() {
         let map = serde_json::json!({
             "n": 7, "s": "8", "an": [9], "as": ["10"], "big": 4_294_967_303u64,
-            "abig": [4_294_967_303u64], "bad": true, "empty": []
+            "abig": [4_294_967_303u64], "bad": true, "empty": [], "abad": [true]
         });
         let map = map.as_object().expect("object");
         let got: Vec<u32> = [
-            "n", "s", "an", "as", "big", "abig", "bad", "empty", "missing",
+            "n", "s", "an", "as", "big", "abig", "bad", "empty", "abad", "missing",
         ]
         .iter()
         .map(|k| param_u32(map, k, 1))
         .collect();
-        assert_eq!(got, [7, 8, 9, 10, 1, 1, 1, 1, 1]);
+        assert_eq!(got, [7, 8, 9, 10, 1, 1, 1, 1, 1, 1]);
     }
 
     #[test]

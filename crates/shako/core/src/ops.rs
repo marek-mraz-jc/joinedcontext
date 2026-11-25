@@ -34,7 +34,6 @@ pub struct ODataOperation {
     pub kind: ODataKind,
     pub name: &'static str,
     pub binding: Option<&'static str>,
-    pub binding_collection: bool,
     pub params: Vec<ODataParam>,
     pub return_type: Option<&'static str>,
 }
@@ -594,7 +593,6 @@ impl OperationRegistry {
                     kind: EntitySetRead,
                     name: set,
                     binding: None,
-                    binding_collection: false,
                     params: Vec::new(),
                     return_type: None,
                 },
@@ -623,7 +621,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "CreateRepository",
                     binding: None,
-                    binding_collection: false,
                     params: vec![
                         p("Owner", "Edm.String", true),
                         p("Name", "Edm.String", false),
@@ -655,7 +652,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "ImportRepository",
                     binding: None,
-                    binding_collection: false,
                     params: vec![
                         p("SourceOwner", "Edm.String", false),
                         p("SourceName", "Edm.String", false),
@@ -687,7 +683,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "Archive",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: Vec::new(),
                     return_type: Some("Shako.Repository"),
                 },
@@ -712,7 +707,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "Delete",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: Vec::new(),
                     return_type: None,
                 },
@@ -737,7 +731,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "CreateBranch",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![
                         p("NewBranchName", "Edm.String", false),
                         p("OldBranchName", "Edm.String", true),
@@ -765,7 +758,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "DeleteBranch",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![p("Branch", "Edm.String", false)],
                     return_type: None,
                 },
@@ -790,7 +782,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "CommitFiles",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![
                         p("Branch", "Edm.String", true),
                         p("Message", "Edm.String", false),
@@ -821,7 +812,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "OpenPullRequest",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![
                         p("Head", "Edm.String", false),
                         p("Base", "Edm.String", false),
@@ -851,7 +841,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "Review",
                     binding: Some("PullRequest"),
-                    binding_collection: false,
                     params: vec![
                         p("Event", "Edm.String", false),
                         p("Body", "Edm.String", true),
@@ -880,7 +869,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "Merge",
                     binding: Some("PullRequest"),
-                    binding_collection: false,
                     params: vec![
                         p("Style", "Edm.String", false),
                         p("Message", "Edm.String", true),
@@ -911,7 +899,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "UpdateBranch",
                     binding: Some("PullRequest"),
-                    binding_collection: false,
                     params: vec![p("Style", "Edm.String", true)],
                     return_type: Some("Edm.Untyped"),
                 },
@@ -936,7 +923,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "Close",
                     binding: Some("PullRequest"),
-                    binding_collection: false,
                     params: Vec::new(),
                     return_type: Some("Shako.PullRequest"),
                 },
@@ -961,7 +947,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "Protect",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![p("Rule", "Edm.Untyped", false)],
                     return_type: Some("Shako.ProtectionRule"),
                 },
@@ -986,7 +971,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "Unprotect",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![p("Pattern", "Edm.String", false)],
                     return_type: None,
                 },
@@ -1011,7 +995,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "AddPushMirror",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![
                         p("RemoteAddress", "Edm.String", false),
                         p("RemoteUsername", "Edm.String", true),
@@ -1044,7 +1027,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "RemovePushMirror",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![p("Name", "Edm.String", false)],
                     return_type: None,
                 },
@@ -1069,7 +1051,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "SyncPushMirrors",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: Vec::new(),
                     return_type: Some("Edm.Untyped"),
                 },
@@ -1094,7 +1075,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "AddWebhook",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![
                         p("Url", "Edm.String", false),
                         p("Secret", "Edm.String", true),
@@ -1126,7 +1106,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "RedeliverWebhook",
                     binding: Some("Webhook"),
-                    binding_collection: false,
                     params: Vec::new(),
                     return_type: Some("Shako.Delivery"),
                 },
@@ -1151,7 +1130,6 @@ impl OperationRegistry {
                     kind: A,
                     name: "PublishPackage",
                     binding: None,
-                    binding_collection: false,
                     params: vec![
                         p("Owner", "Edm.String", true),
                         p("Package", "Edm.String", false),
@@ -1182,7 +1160,6 @@ impl OperationRegistry {
                     kind: F,
                     name: "Tree",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![
                         p("Ref", "Edm.String", false),
                         p("Path", "Edm.String", true),
@@ -1213,7 +1190,6 @@ impl OperationRegistry {
                     kind: F,
                     name: "File",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![
                         p("Ref", "Edm.String", false),
                         p("Path", "Edm.String", false),
@@ -1241,7 +1217,6 @@ impl OperationRegistry {
                     kind: F,
                     name: "History",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![
                         p("Ref", "Edm.String", false),
                         p("Path", "Edm.String", true),
@@ -1270,7 +1245,6 @@ impl OperationRegistry {
                     kind: F,
                     name: "Compare",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![
                         p("Base", "Edm.String", false),
                         p("Head", "Edm.String", false),
@@ -1298,7 +1272,6 @@ impl OperationRegistry {
                     kind: F,
                     name: "Mergeable",
                     binding: Some("PullRequest"),
-                    binding_collection: false,
                     params: Vec::new(),
                     return_type: Some("Edm.Untyped"),
                 },
@@ -1323,7 +1296,6 @@ impl OperationRegistry {
                     kind: F,
                     name: "CommitStatus",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![p("Sha", "Edm.String", false)],
                     return_type: Some("Edm.Untyped"),
                 },
@@ -1348,7 +1320,6 @@ impl OperationRegistry {
                     kind: F,
                     name: "ArchiveLink",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![
                         p("Ref", "Edm.String", false),
                         p("Format", "Edm.String", false),
@@ -1376,7 +1347,6 @@ impl OperationRegistry {
                     kind: F,
                     name: "BundleLink",
                     binding: Some("Repository"),
-                    binding_collection: false,
                     params: vec![p("Ref", "Edm.String", false)],
                     return_type: Some("Edm.String"),
                 },
@@ -1401,7 +1371,6 @@ impl OperationRegistry {
                     kind: F,
                     name: "Allowed",
                     binding: None,
-                    binding_collection: false,
                     params: vec![
                         p("Operation", "Edm.String", false),
                         p("Object", "Edm.String", true),
@@ -1429,7 +1398,6 @@ impl OperationRegistry {
                     kind: F,
                     name: "Me",
                     binding: None,
-                    binding_collection: false,
                     params: vec![],
                     return_type: Some("Edm.Untyped"),
                 },
@@ -1539,11 +1507,7 @@ impl OperationRegistry {
                 o.name
             ));
             if let Some(b) = o.binding {
-                let ty = if o.binding_collection {
-                    format!("Collection({ns}.{b})")
-                } else {
-                    format!("{ns}.{b}")
-                };
+                let ty = format!("{ns}.{b}");
                 ops_xml.push_str(&format!(
                     "{inner}<Parameter Name=\"bindingParameter\" Type=\"{ty}\" Nullable=\"false\"/>\n"
                 ));
