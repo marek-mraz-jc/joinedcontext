@@ -25,6 +25,20 @@ pub mod compile;
 pub use sqlx;
 pub mod store;
 
+/// Builds every tracing event of the lib tests and writes it nowhere, so a
+/// multi-line event's argument lines run where a test reaches the event.
+#[cfg(test)]
+pub(crate) fn trace_all() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let all = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(std::io::sink)
+            .finish();
+        tracing::subscriber::set_global_default(all).expect("the lib tests' one subscriber");
+    });
+}
+
 pub use antares_store::StoreMode;
 
 /// The transaction preamble that makes RLS effective: always SET LOCAL,

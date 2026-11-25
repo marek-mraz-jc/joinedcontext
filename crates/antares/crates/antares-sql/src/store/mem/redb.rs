@@ -100,26 +100,140 @@ impl Shadow {
         &self,
         writes: impl IntoIterator<Item = (Table, &'a [u8], Option<&'a [u8]>)>,
     ) {
-        let result = (|| -> Result<(), String> {
-            let mut tx = self.db.begin_write().map_err(|e| e.to_string())?;
-            tx.set_durability(Durability::Immediate)
-                .map_err(|e| e.to_string())?;
-            for (table, key, value) in writes {
-                let mut t = tx.open_table(table).map_err(|e| e.to_string())?;
-                match value {
-                    Some(v) => {
-                        t.insert(key, v).map_err(|e| e.to_string())?;
-                    }
-                    None => {
-                        t.remove(key).map_err(|e| e.to_string())?;
-                    }
-                }
-            }
-            tx.commit().map_err(|e| e.to_string())
-        })();
+        let result = self.try_write_many(writes);
         if let Err(e) = result {
             tracing::error!("redb commit failed: {e} — aborting: an acked write must be durable");
             std::process::abort();
         }
+    }
+
+    /// The commit of [`Self::write_many`], its failure returned.
+    fn try_write_many<'a>(
+        &self,
+        writes: impl IntoIterator<Item = (Table, &'a [u8], Option<&'a [u8]>)>,
+    ) -> Result<(), String> {
+        let mut tx = self.db.begin_write().map_err(|e| e.to_string())?;
+        tx.set_durability(Durability::Immediate)
+            .map_err(|e| e.to_string())?;
+        for (table, key, value) in writes {
+            let mut t = tx.open_table(table).map_err(|e| e.to_string())?;
+            match value {
+                Some(v) => {
+                    t.insert(key, v).map_err(|e| e.to_string())?;
+                }
+                None => {
+                    t.remove(key).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicI64, Ordering};
+    use std::sync::{Arc, RwLock};
+
+    /// An in-memory redb file that fails every read after `reads` of them
+    /// and every write after `writes`: the I/O errors a disk gives.
+    #[derive(Debug)]
+    pub(in crate::store::mem) struct Fault {
+        pub(in crate::store::mem) bytes: Arc<RwLock<Vec<u8>>>,
+        pub(in crate::store::mem) reads: AtomicI64,
+        pub(in crate::store::mem) writes: AtomicI64,
+    }
+
+    impl Fault {
+        pub(in crate::store::mem) fn new(bytes: Vec<u8>, reads: i64, writes: i64) -> Self {
+            Self {
+                bytes: Arc::new(RwLock::new(bytes)),
+                reads: AtomicI64::new(reads),
+                writes: AtomicI64::new(writes),
+            }
+        }
+
+        fn spend(budget: &AtomicI64) -> std::io::Result<()> {
+            if budget.fetch_sub(1, Ordering::SeqCst) > 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::other("injected disk fault"))
+            }
+        }
+    }
+
+    impl ::redb::StorageBackend for Fault {
+        fn len(&self) -> std::io::Result<u64> {
+            Ok(self.bytes.read().expect("bytes").len() as u64)
+        }
+
+        fn read(&self, offset: u64, out: &mut [u8]) -> std::io::Result<()> {
+            Self::spend(&self.reads)?;
+            let bytes = self.bytes.read().expect("bytes");
+            let at = usize::try_from(offset).expect("offset");
+            let end = at.checked_add(out.len()).expect("end");
+            out.copy_from_slice(
+                bytes
+                    .get(at..end)
+                    .ok_or_else(|| std::io::Error::other("past the end"))?,
+            );
+            Ok(())
+        }
+
+        fn set_len(&self, len: u64) -> std::io::Result<()> {
+            Self::spend(&self.writes)?;
+            let len = usize::try_from(len).expect("len");
+            self.bytes.write().expect("bytes").resize(len, 0);
+            Ok(())
+        }
+
+        fn sync_data(&self) -> std::io::Result<()> {
+            Self::spend(&self.writes)
+        }
+
+        fn write(&self, offset: u64, data: &[u8]) -> std::io::Result<()> {
+            Self::spend(&self.writes)?;
+            let mut bytes = self.bytes.write().expect("bytes");
+            let at = usize::try_from(offset).expect("offset");
+            let end = at.checked_add(data.len()).expect("end");
+            if bytes.len() < end {
+                bytes.resize(end, 0);
+            }
+            bytes
+                .get_mut(at..end)
+                .expect("resized")
+                .copy_from_slice(data);
+            Ok(())
+        }
+    }
+
+    /// A write that the disk refuses at any step returns its error instead of
+    /// committing part of it; with a disk that answers it commits.
+    #[test]
+    fn a_refused_write_returns_its_error() {
+        let mut failed = std::collections::BTreeSet::new();
+        let mut committed = false;
+        for writes in 0..200 {
+            let Ok(db) =
+                Database::builder().create_with_backend(Fault::new(Vec::new(), i64::MAX, writes))
+            else {
+                continue;
+            };
+            let shadow = Shadow { db };
+            let rows: [(Table, &[u8], Option<&[u8]>); 3] = [
+                (T_ENTITIES, b"t\0a", Some(b"{}")),
+                (T_VIEWS, b"t\0v", Some(b"{}")),
+                (T_ENTITIES, b"t\0a", None),
+            ];
+            match shadow.try_write_many(rows) {
+                Ok(()) => committed = true,
+                Err(e) => {
+                    failed.insert(e);
+                }
+            }
+        }
+        assert!(committed, "a disk with room commits");
+        assert!(!failed.is_empty(), "no injected fault reached the write");
     }
 }

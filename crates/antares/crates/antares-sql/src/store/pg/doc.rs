@@ -350,6 +350,12 @@ const SEALED_JOB: &str = "plaintext_sealed";
 const SEAL_WALK_JOB: &str = "plaintext_seal_walk";
 
 /// The kinds whose rows hold a credential [`super::seal`] seals.
+/// A Tenant name a table holds, refused as configuration where
+/// [`TenantId`] would refuse it.
+fn stored_tenant(raw: String) -> Result<TenantId, sqlx::Error> {
+    TenantId::try_from(raw).map_err(|e| sqlx::Error::Configuration(Box::new(e)))
+}
+
 const SEALED_KINDS: [DocKind; 4] = [
     DocKind::Subscription,
     DocKind::CSourceSubscription,
@@ -478,11 +484,12 @@ impl PgDocStore {
         if super::seal::open(self.key.as_deref(), row, &mut doc).is_ok() {
             return Ok(doc);
         }
-        // the values the first try opened are plaintext now and pass
+        // the values the first try opened are plaintext now and pass; the one
+        // it failed on opens under a former name or fails here, so a success
+        // always needed a former name
         let former = self.former_names(tenant).await?;
-        if super::seal::open_renamed(self.key.as_deref(), row, &former, &mut doc)? {
-            super::seal::rename_tenant_header(kind, &mut doc, &former, tenant.as_str());
-        }
+        super::seal::open_renamed(self.key.as_deref(), row, &former, &mut doc)?;
+        super::seal::rename_tenant_header(kind, &mut doc, &former, tenant.as_str());
         Ok(doc)
     }
 
@@ -1017,8 +1024,7 @@ impl PgDocStore {
             let full = i64::try_from(rows.len()).unwrap_or(i64::MAX) >= PAGE;
             for r in rows {
                 let hex: String = r.get(1);
-                let d =
-                    u64::from_str_radix(&hex, 16).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+                let d = u64::from_str_radix(&hex, 16).map_err(super::undecodable)?;
                 out.push((r.get::<String, _>(0), d));
             }
             if !full {
@@ -1118,11 +1124,13 @@ impl PgDocStore {
         if !tenants.iter().any(|t| t == TenantId::DEFAULT) {
             tenants.push(TenantId::DEFAULT.to_owned());
         }
-        for raw in &tenants {
-            let tenant = TenantId::try_from(raw.clone())
-                .map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
+        let tenants = tenants
+            .into_iter()
+            .map(stored_tenant)
+            .collect::<Result<Vec<_>, _>>()?;
+        for tenant in &tenants {
             let mut tx = super::begin(&self.pool).await?;
-            crate::store::pg::set_tenant(&mut tx, &tenant).await?;
+            crate::store::pg::set_tenant(&mut tx, tenant).await?;
             sqlx::query(
                 "UPDATE csource_index SET headers = NULL
                   WHERE tenant_id = $1 AND headers IS NOT NULL",
@@ -1133,21 +1141,20 @@ impl PgDocStore {
             tx.commit().await?;
         }
         let mut sealed = 0u64;
-        for kind in SEALED_KINDS {
-            let Some(path) = super::seal::plaintext_path(kind) else {
-                continue;
-            };
+        // every sealed kind has a plaintext path
+        let paths = SEALED_KINDS
+            .into_iter()
+            .filter_map(|kind| Some((kind, super::seal::plaintext_path(kind)?)));
+        for (kind, path) in paths {
             let sql = format!(
                 "SELECT id FROM {} WHERE tenant_id = $1 AND jsonb_path_exists({}, $2::jsonpath)
                  ORDER BY id",
                 kind.table(),
                 kind.doc_column()
             );
-            for raw in &tenants {
-                let tenant = TenantId::try_from(raw.clone())
-                    .map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
+            for tenant in &tenants {
                 let mut tx = super::begin(&self.pool).await?;
-                crate::store::pg::set_tenant(&mut tx, &tenant).await?;
+                crate::store::pg::set_tenant(&mut tx, tenant).await?;
                 let ids: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.clone()))
                     .bind(tenant.as_str())
                     .bind(path)
@@ -1156,9 +1163,12 @@ impl PgDocStore {
                 tx.commit().await?;
                 for id in ids {
                     let written = self
-                        .mutate(&tenant, kind, &id, |_| {
-                            Ok::<(), std::convert::Infallible>(())
-                        })
+                        .mutate(
+                            tenant,
+                            kind,
+                            &id,
+                            |_| Ok::<(), std::convert::Infallible>(()),
+                        )
                         .await?;
                     sealed = sealed.saturating_add(u64::from(written.is_some()));
                 }
@@ -1179,8 +1189,7 @@ impl PgDocStore {
                 .await?;
         let mut sealed = 0u64;
         for raw in renamed {
-            let tenant =
-                TenantId::try_from(raw).map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
+            let tenant = stored_tenant(raw)?;
             let former = self.former_names(&tenant).await?;
             for kind in SEALED_KINDS {
                 // literals from DocKind
@@ -1750,6 +1759,7 @@ mod tests {
     /// exactly that shape, and a per-entity check never sees it twice.
     #[test]
     fn the_index_ceiling_bounds_one_entity_too() {
+        crate::trace_all();
         let names: Vec<String> = (0..MAX_INDEX_ROWS + 500).map(|i| format!("p{i}")).collect();
         let reg = json!({
             "endpoint": "http://cs.example:9090",
@@ -1817,5 +1827,38 @@ mod tests {
             .collect();
         names.sort_unstable();
         assert_eq!(names, ["owner", "speed"]);
+    }
+
+    /// The index row carries the mode as its code (an unknown or absent mode
+    /// is inclusive) and the scopes as a list: one scope string, the strings
+    /// of a list, nothing for any other shape, and no member without a scope.
+    #[test]
+    fn index_rows_code_the_mode_and_list_the_scopes() {
+        let reg = |extra: Value| {
+            let mut r = json!({"id": "urn:csr:m", "endpoint": "http://cs",
+                               "information": [{"entities": [{"type": "T"}]}]});
+            if let (Some(o), Value::Object(e)) = (r.as_object_mut(), extra) {
+                o.extend(e);
+            }
+            r
+        };
+        let row = |extra: Value| index_rows(&reg(extra)).remove(0);
+        for (mode, code) in [
+            ("auxiliary", 0),
+            ("inclusive", 1),
+            ("redirect", 2),
+            ("exclusive", 3),
+            ("other", 1),
+        ] {
+            assert_eq!(row(json!({"mode": mode}))["mode"], code, "{mode}");
+        }
+        assert_eq!(row(json!({}))["mode"], 1);
+        assert_eq!(row(json!({"scope": "/a"}))["scopes"], json!(["/a"]));
+        assert_eq!(
+            row(json!({"scope": ["/a", 7, "/b"]}))["scopes"],
+            json!(["/a", "/b"])
+        );
+        assert_eq!(row(json!({"scope": 7}))["scopes"], json!([]));
+        assert_eq!(row(json!({}))["scopes"], Value::Null);
     }
 }
