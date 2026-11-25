@@ -285,6 +285,53 @@ mod tests {
         assert_eq!(of_request(&h, Some(GATEWAY)), json!({"channel": "api"}));
     }
 
+    #[cfg(not(feature = "jc"))]
+    #[test]
+    fn vanilla_names_no_writer_and_shows_no_modified_by() {
+        let h = headers(&[("l5d-client-id", GATEWAY), ("jc-provenance-actor", "alice")]);
+        assert!(!names_writers(&h, Some(GATEWAY)));
+        assert!(!shows_modified_by(&h, Some(GATEWAY)));
+    }
+
+    /// T-6878: every member that can name a person goes from every kept
+    /// version; the rest of the provenance and a version without one stay.
+    #[test]
+    fn without_writers_drops_the_members_that_name_a_person() {
+        let mut chains = json!({
+            "speed": [
+                {"value": 1, "provenance": {"channel": "ui", "actor": "alice",
+                    "client": "portal", "reason": "fix", "requestId": "r1",
+                    "organization": "org-a"}},
+                {"value": 2}
+            ],
+            "odd": "not a list"
+        });
+        without_writers(chains.as_object_mut().expect("object"));
+        assert_eq!(
+            chains,
+            json!({
+                "speed": [
+                    {"value": 1, "provenance": {"channel": "ui", "organization": "org-a"}},
+                    {"value": 2}
+                ],
+                "odd": "not a list"
+            })
+        );
+    }
+
+    /// DM-138: `modifiedBy` keeps organization, actorKind and actor only, and
+    /// a provenance naming none of them leaves none.
+    #[test]
+    fn modified_by_keeps_who_and_nothing_else() {
+        assert_eq!(
+            modified_by(&json!({"organization": "o", "actorKind": "person",
+                "actor": "a", "channel": "ui"})),
+            Some(json!({"organization": "o", "actorKind": "person", "actor": "a"}))
+        );
+        assert_eq!(modified_by(&json!({"channel": "api"})), None);
+        assert_eq!(with_operation(&json!("x"), "delete"), json!("x"));
+    }
+
     #[test]
     fn the_operation_is_added() {
         assert_eq!(

@@ -1180,6 +1180,107 @@ mod clause_5_8_6_deletion_payload {
         data.into_iter().next().expect("entry")
     }
 
+    /// 5.8.6 Entity deletion: with sysAttrs and showChanges every Attribute
+    /// is tombstoned with its timestamps; without showChanges only deletedAt
+    /// travels; an attributeDeleted trigger names its own Attributes, and
+    /// one the Entity never held adds nothing.
+    #[tokio::test]
+    async fn an_entity_deletion_tombstones_by_trigger_and_show_changes() {
+        const D: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+        let before = json!({
+            "id": "urn:ngsi-ld:V:1", "type": ["https://uri.etsi.org/ngsi-ld/default-context/V"],
+            "createdAt": "2025-01-01T00:00:00Z", "modifiedAt": "2025-06-01T00:00:00Z",
+            format!("{D}speed"): [{"type": "Property", "value": 5,
+                "createdAt": "2025-01-01T00:00:00Z"}],
+            format!("{D}fuel"): [{"type": "Property", "value": 9}],
+        });
+        let shown = json!({"notification": {"sysAttrs": true, "showChanges": true}});
+        let e = build(&shown, &before, None, &[], true).await;
+        assert_eq!(e["deletedAt"], "2026-01-01T00:00:00Z", "{e}");
+        assert_eq!(e["createdAt"], "2025-01-01T00:00:00Z", "{e}");
+        assert_eq!(e["speed"]["previousValue"], 5, "{e}");
+        assert_eq!(e["speed"]["createdAt"], "2025-01-01T00:00:00Z", "{e}");
+        assert!(e.get("fuel").is_some(), "{e}");
+        let quiet = json!({"notification": {}});
+        let e = build(&quiet, &before, None, &[], true).await;
+        assert!(e.get("speed").is_none() && e.get("createdAt").is_none(), "{e}");
+        let named = vec![format!("{D}fuel"), format!("{D}never")];
+        let e = build(&quiet, &before, None, &named, false).await;
+        assert!(e.get("fuel").is_some() && e.get("speed").is_none(), "{e}");
+        assert!(e.get("never").is_none(), "{e}");
+        // an Entity with no type left still names its id
+        let bare = json!({"id": "urn:ngsi-ld:V:2"});
+        let e = build(&quiet, &bare, None, &[], true).await;
+        assert_eq!(e["id"], "urn:ngsi-ld:V:2", "{e}");
+    }
+
+    /// Neither side of the change: nothing to describe, nothing notified.
+    #[tokio::test]
+    async fn no_before_and_no_after_builds_no_data() {
+        let st = AppState::new("antares-tombstone-test".into());
+        let tenant = TenantId::new("default").expect("tenant");
+        let data = build_data(
+            &st,
+            &tenant,
+            &json!({}),
+            &ctx(),
+            None,
+            None,
+            &[],
+            true,
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+        assert!(data.is_empty(), "{data:?}");
+    }
+
+    /// showChanges on an update: a changed instance carries its previous
+    /// value, an unchanged one or one the before side held no value for
+    /// carries none; a deleted instance's tombstone lands beside the
+    /// survivors, also where the Attribute is no list; datasetId narrows
+    /// the payload to the named instances.
+    #[tokio::test]
+    async fn show_changes_on_an_update_and_tombstones_beside_survivors() {
+        const D: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+        let before = json!({
+            "id": "urn:ngsi-ld:V:1", "type": ["https://uri.etsi.org/ngsi-ld/default-context/V"],
+            format!("{D}speed"): [{"type": "Property", "value": 5}],
+            format!("{D}fuel"): [{"type": "Property"}],
+            format!("{D}gear"): [
+                {"type": "Property", "value": 1, "datasetId": "urn:ds:a"},
+                {"type": "Property", "value": 2, "datasetId": "urn:ds:b"}],
+            format!("{D}note"): [{"type": "Property", "value": "x", "datasetId": "urn:ds:n"}],
+        });
+        let after = json!({
+            "id": "urn:ngsi-ld:V:1", "type": ["https://uri.etsi.org/ngsi-ld/default-context/V"],
+            format!("{D}speed"): [{"type": "Property", "value": 6}],
+            format!("{D}fuel"): [{"type": "Property", "value": 1}],
+            format!("{D}gear"): [{"type": "Property", "value": 1, "datasetId": "urn:ds:a"}],
+            format!("{D}note"): "no list",
+            format!("{D}fresh"): [{"type": "Property", "value": 3}],
+        });
+        let sub = json!({"notification": {"showChanges": true}});
+        let deleted = vec![format!("{D}gear"), format!("{D}speed"), format!("{D}note")];
+        let e = build(&sub, &before, Some(&after), &deleted, false).await;
+        assert_eq!(e["speed"]["previousValue"], 5, "{e}");
+        assert!(e["fuel"].get("previousValue").is_none(), "{e}");
+        let gear = insts(&e, "gear");
+        assert_eq!(gear.len(), 2, "{e}");
+        assert!(gear.iter().any(|g| g["value"] == "urn:ngsi-ld:null"
+            && g["datasetId"] == "urn:ds:b"
+            && g["previousValue"] == 2), "{e}");
+        assert_eq!(e["note"], "no list", "{e}");
+        let only_a = json!({"datasetId": ["urn:ds:a"], "notification": {}});
+        let e = build(&only_a, &before, Some(&after), &[], false).await;
+        let gear = insts(&e, "gear");
+        assert_eq!(gear.len(), 1, "{e}");
+        assert_eq!(gear[0]["datasetId"], "urn:ds:a", "{e}");
+        // an after side that is no object travels on unchanged
+        let odd = json!("not an entity");
+        let e = build(&sub, &before, Some(&odd), &deleted, false).await;
+        assert_eq!(e, odd);
+    }
+
     /// 5.8.6: a deleted Attribute is notified as the NGSI-LD null value of
     /// its own type — `object` for a Relationship, the `{"@none": …}`
     /// languageMap form for a LanguageProperty, `json`, `vocab`, `value`.

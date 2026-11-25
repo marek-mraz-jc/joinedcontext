@@ -1614,6 +1614,173 @@ mod tests {
         assert_eq!(vp.get("splitEntities").map(String::as_str), Some("false"));
     }
 
+    /// Table 5.2.23-1 value spaces: each wrongly typed member is a 400 naming
+    /// the member, never a silently dropped parameter.
+    #[test]
+    fn query_doc_members_of_the_wrong_type_are_refused_by_name() {
+        let refused = |q: Value, temporal: bool| -> String {
+            let mut vp = HashMap::new();
+            match query_doc_params(q.as_object().expect("object"), temporal, &mut vp) {
+                Err(NgsiError::BadRequestData(m)) => m,
+                other => panic!("{q} must be refused, got {other:?}"),
+            }
+        };
+        for (q, temporal, want) in [
+            (json!({"entities": [{"type": "T", "id": 7}]}), false, "id must be a URI string or array"),
+            (json!({"entities": [{"type": "T", "id": [7]}]}), false, "id entries must be URIs"),
+            (json!({"entities": [{"type": "T", "idPattern": 7}]}), false, "idPattern must be a string"),
+            (json!({"entityMapLifetime": 60}), false, "entityMapLifetime must be a string"),
+            (json!({"geoQ": {"georel": 1}}), false, "geoQ georel must be a string"),
+            (json!({"geoQ": "near"}), false, "geoQ must be a GeoQuery object"),
+            (json!({"temporalQ": "x"}), true, "temporalQ must be a TemporalQuery object"),
+            (json!({"temporalQ": {}}), false, "only allowed for Query Temporal"),
+            (
+                json!({"temporalQ": {"aggrMethods": [1]}}),
+                true,
+                "temporalQ aggrMethods entries must be strings",
+            ),
+            (
+                json!({"aggrParams": {"aggrMethods": [1]}}),
+                true,
+                "aggrMethods entries must be strings",
+            ),
+            (json!({"ordering": {"orderBy": "id"}}), false, "orderBy must be an array"),
+            (json!({"ordering": {"orderBy": [1]}}), false, "orderBy entries must be strings"),
+        ] {
+            let m = refused(q.clone(), temporal);
+            assert!(m.contains(want), "{q}: {m}");
+        }
+    }
+
+    /// The well-typed members lift into the GET twin's parameters: an id
+    /// list, a string idPattern, geoQ with and without coordinates, an
+    /// aggrParams without aggrMethods.
+    #[test]
+    fn query_doc_members_lift_into_the_get_parameters() {
+        let lift = |q: Value, temporal: bool| {
+            let mut vp = HashMap::new();
+            query_doc_params(q.as_object().expect("object"), temporal, &mut vp).expect("valid");
+            vp
+        };
+        let vp = lift(
+            json!({"entities": [{"type": "T", "id": ["urn:a", "urn:b"]}],
+                   "entityMapLifetime": "PT1H",
+                   "geoQ": {"georel": "near;maxDistance==5", "geometry": "Point",
+                            "coordinates": [1, 2]}}),
+            false,
+        );
+        assert_eq!(vp.get("id").map(String::as_str), Some("urn:a,urn:b"));
+        assert_eq!(vp.get("coordinates").map(String::as_str), Some("[1,2]"));
+        let vp = lift(json!({"entities": [{"type": "T", "idPattern": "urn:.*"}],
+                             "geoQ": {"georel": "near"}}), false);
+        assert_eq!(vp.get("idPattern").map(String::as_str), Some("urn:.*"));
+        assert!(!vp.contains_key("coordinates"), "{vp:?}");
+        let vp = lift(json!({"aggrParams": {"aggrPeriodDuration": "P1D"}}), true);
+        assert!(!vp.contains_key("aggrMethods"), "{vp:?}");
+    }
+
+    /// 4.23.3: every malformed orderBy spelling and collation is a 400, a
+    /// known strength builds, and `type` and sub-Attribute paths order.
+    #[test]
+    fn order_by_refusals_and_member_paths() {
+        let ctx = Loader::new().core();
+        let none = params(&[]);
+        let mut docs = vec![ent("urn:a", "n", json!(1))];
+        for (spec, p, want) in [
+            ("n;sideways", none.clone(), "invalid orderBy direction"),
+            ("n[x", none.clone(), "unclosed bracket"),
+            ("[x]", none.clone(), "invalid orderBy"),
+            ("n", params(&[("collation", "not a tag!")]), "not an RFC 6067 tag"),
+            ("n", params(&[("collation", "de-u-ks-level9")]), "unknown collation strength"),
+            ("n;dist-asc", params(&[("orderFrom", "[1,")]), "invalid orderFrom"),
+        ] {
+            match order_entities(&mut docs, spec, &p, &ctx) {
+                Err(NgsiError::BadRequestData(m)) => assert!(m.contains(want), "{spec}: {m}"),
+                other => panic!("{spec} must be refused, got {other:?}"),
+            }
+        }
+        for ks in ["level1", "level2", "level3", "level4", "identic"] {
+            let p = params(&[("collation", &format!("de-u-ks-{ks}"))]);
+            check_collation(&p).expect(ks);
+        }
+        check_collation(&none).expect("no collation");
+        let typed = |id: &str, t: &str| json!({"id": id, "type": [t]});
+        let mut docs = vec![typed("urn:1", "Zebra"), typed("urn:2", "Ant")];
+        order_entities(&mut docs, "type", &none, &ctx).expect("order");
+        assert_eq!(ids(&docs), vec!["urn:2", "urn:1"]);
+        // a sub-Attribute and an instance member on the path (4.23.3)
+        let sub = |id: &str, v: i64, at: &str| {
+            json!({"id": id, "type": ["T"], format!("{D}speed"): [{"type": "Property",
+                "value": 1, "observedAt": at,
+                format!("{D}accuracy"): [{"type": "Property", "value": v}]}]})
+        };
+        let mut docs = vec![
+            sub("urn:b", 9, "2026-01-02T00:00:00Z"),
+            sub("urn:a", 2, "2026-01-01T00:00:00Z"),
+            json!({"id": "urn:none", "type": ["T"]}),
+        ];
+        order_entities(&mut docs, "speed.accuracy;desc", &none, &ctx).expect("order");
+        assert_eq!(ids(&docs), vec!["urn:none", "urn:b", "urn:a"]);
+        order_entities(&mut docs, "speed.observedAt", &none, &ctx).expect("order");
+        assert_eq!(ids(&docs), vec!["urn:a", "urn:b", "urn:none"]);
+        // Booleans order false < true; two Nulls tie and keep the store order
+        let mut docs = vec![
+            ent("urn:t", "flag", json!(true)),
+            ent("urn:f", "flag", json!(false)),
+            ent("urn:n1", "flag", Value::Null),
+            ent("urn:n2", "flag", Value::Null),
+        ];
+        order_entities(&mut docs, "flag", &none, &ctx).expect("order");
+        assert_eq!(ids(&docs), vec!["urn:f", "urn:t", "urn:n1", "urn:n2"]);
+        // under a distance key an Entity without the GeoProperty sorts after
+        // one with it, whichever side of the comparison it lands on
+        let geo = json!({"id": "urn:g", "type": ["T"],
+            "https://uri.etsi.org/ngsi-ld/location": [{"type": "GeoProperty",
+                "value": {"type": "Point", "coordinates": [8.0, 40.0]}}]});
+        let bare = json!({"id": "urn:bare", "type": ["T"]});
+        let p = params(&[("orderFrom", "[8,40]")]);
+        for start in [vec![bare.clone(), geo.clone()], vec![geo, bare]] {
+            let mut docs = start;
+            order_entities(&mut docs, "location;dist-asc", &p, &ctx).expect("order");
+            assert_eq!(ids(&docs), vec!["urn:g", "urn:bare"]);
+        }
+    }
+
+    /// A cursor is refused unless it decodes to the id its own tag signs: odd
+    /// or non-hex digits, bytes that are no UTF-8, a foreign tag.
+    #[test]
+    fn a_forged_cursor_is_refused() {
+        for c in ["zz.tag", "abc.tag", "ff.tag", "nodot", ".tag"] {
+            let p = params(&[(CURSOR, c)]);
+            assert!(
+                matches!(cursor_after("v", "t", &p), Err(NgsiError::BadRequestData(_))),
+                "{c}"
+            );
+        }
+        let good = encode_cursor("v", "t", &params(&[]), "urn:a");
+        let p = params(&[(CURSOR, good.as_str())]);
+        assert_eq!(cursor_after("v", "t", &p).expect("own"), Some("urn:a".into()));
+        assert!(cursor_after("v", "other", &p).is_err(), "another Tenant's cursor");
+        assert_eq!(cursor_after("v", "t", &params(&[])).expect("none"), None);
+    }
+
+    /// A warning that is no header value is dropped, the others are sent;
+    /// GeoJSON pages link with their own media type; a csource page without
+    /// a limit still links its offset.
+    #[test]
+    fn warnings_geojson_links_and_csource_links_without_a_limit() {
+        let mut resp = axum::response::Response::new(axum::body::Body::empty());
+        attach_warnings(&mut resp, &["199 ok".into(), "bad\nvalue".into()]);
+        let sent: Vec<_> = resp.headers().get_all("NGSILD-Warning").iter().collect();
+        assert_eq!(sent, vec!["199 ok"]);
+        assert_eq!(link_media_type(Accept::GeoJson), "application/geo+json");
+        let st = state();
+        let (_, _, links) =
+            paginate_pre_accept(&st, &params(&[]), items(1), "/csourceRegistrations", Accept::Json, 300, true)
+                .expect("page");
+        assert!(links.iter().any(|l| l.contains("offset=100") && l.contains("rel=\"next\"")), "{links:?}");
+    }
+
     /// 5.2.33: the `entities` EntitySelectors are a union and "id takes
     /// precedence over idPattern" PER selector. A flat filter carries one
     /// id/idPattern pair, so a member may only be emitted when it holds for
