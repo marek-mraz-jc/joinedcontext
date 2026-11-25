@@ -2179,6 +2179,83 @@ async fn a_decided_change_answers_by_its_key() {
     assert_eq!(merged["name"], id, "{merged}");
 }
 
+/// T-7837: `approve` and `reject` bound to a Change ask its `If-Match` first (428 without it),
+/// take only their own parameter, and then answer as the REST door's approval and rejection.
+#[tokio::test]
+async fn a_changes_approve_and_reject_actions_ask_the_etag_and_answer_as_the_rest_door() {
+    let (_shako, state) = one_change(false).await;
+    let open = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-only",
+        "/api/v1/projects/helsinki/changes",
+    )
+    .await;
+    let id = open.json()["items"][0]["metadata"]["name"]
+        .as_str()
+        .expect("one change")
+        .to_owned();
+    let entity = format!("/api/v1/changes(project='helsinki',name='{id}')");
+    // The tag a bound action checks is the list row's, as a grid sends it.
+    let row = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-only",
+        "/api/v1/projects('helsinki')/changes",
+    )
+    .await;
+    let etag = row.json()["value"][0]["@odata.etag"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(!etag.is_empty(), "{}", row.text);
+    let cookie = cookies(&state.config, person("hel-only", &[]), "hel").await;
+    let mut wrong = Vec::new();
+    for (action, body, tag, want) in [
+        (
+            "reject",
+            json!({ "reason": "no" }),
+            None,
+            StatusCode::PRECONDITION_REQUIRED,
+        ),
+        (
+            "approve",
+            json!({ "reason": "no" }),
+            Some(etag.as_str()),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "reject",
+            json!({ "confirm": "x" }),
+            Some(etag.as_str()),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "approve",
+            json!({}),
+            Some(etag.as_str()),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "reject",
+            json!({ "reason": "no" }),
+            Some(etag.as_str()),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let uri = format!("{entity}/JoinedContext.Portal.{action}");
+        let body = Some(("application/json", body.to_string().into_bytes()));
+        let answer = raw_sent(&state, "POST", &uri, &cookie, body, tag).await;
+        if answer.status != want {
+            wrong.push(format!(
+                "{action} {tag:?}: {} {}",
+                answer.status, answer.text
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 /// T-7097: a refusal naming fields keeps them over OData, as the REST door's `errors[]`: each a
 /// detail with its target, the first the error's own, beside the problem's hint.
 #[tokio::test]

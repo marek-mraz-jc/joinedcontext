@@ -3633,9 +3633,7 @@ mod tests {
     #[test]
     fn dry_run_and_confirm_take_their_own_types_only() {
         let of = |v: Value| {
-            let Value::Object(map) = v else {
-                return Err(StatusCode::IM_A_TEAPOT);
-            };
+            let map = v.as_object().cloned().unwrap_or_default();
             dry_run(&map)
                 .map(|q| (q.dry_run, q.confirm))
                 .map_err(|r| r.status())
@@ -3664,33 +3662,37 @@ mod tests {
     /// `$expand` is one level on a project's kinds; each other form is named (T-7837).
     #[test]
     fn expand_takes_one_plain_level_of_a_projects_kind() {
-        let status = |query: &str| {
-            let parsed = odata_url::parse(
-                &format!("projects?{query}"),
-                &EdmModel(&ORG.public),
-                &limits(),
-            );
-            match parsed {
-                Ok(ODataUri::Resource { options, .. }) => expansions(&options)
-                    .map(|sets| sets.len())
-                    .map_err(|r| r.status()),
-                Ok(_) => Err(StatusCode::IM_A_TEAPOT),
-                Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
-            }
+        let status = |target: &str| {
+            let parsed = odata_url::parse(target, &EdmModel(&ORG.public), &limits())
+                .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+            let ODataUri::Resource { options, .. } = parsed else {
+                return Err(StatusCode::IM_A_TEAPOT);
+            };
+            expansions(&options)
+                .map(|sets| sets.len())
+                .map_err(|r| r.status())
         };
-        assert_eq!(status("$top=1"), Ok(0));
-        assert_eq!(status("$expand=spaces"), Ok(1));
-        assert_eq!(status("$expand=*"), Err(StatusCode::NOT_IMPLEMENTED));
+        assert_eq!(status("projects?$top=1"), Ok(0));
+        assert_eq!(status("$metadata"), Err(StatusCode::IM_A_TEAPOT));
         assert_eq!(
-            status("$expand=spaces/$ref"),
+            status("projects?$expand=nope"),
+            Err(StatusCode::UNPROCESSABLE_ENTITY)
+        );
+        assert_eq!(status("projects?$expand=spaces"), Ok(1));
+        assert_eq!(
+            status("projects?$expand=*"),
             Err(StatusCode::NOT_IMPLEMENTED)
         );
         assert_eq!(
-            status("$expand=spaces($levels=2)"),
+            status("projects?$expand=spaces/$ref"),
             Err(StatusCode::NOT_IMPLEMENTED)
         );
         assert_eq!(
-            status("$expand=spaces($select=name)"),
+            status("projects?$expand=spaces($levels=2)"),
+            Err(StatusCode::NOT_IMPLEMENTED)
+        );
+        assert_eq!(
+            status("projects?$expand=spaces($select=name)"),
             Err(StatusCode::NOT_IMPLEMENTED)
         );
     }
