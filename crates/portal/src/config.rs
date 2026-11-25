@@ -3117,6 +3117,11 @@ mod tests {
             }
             }
         };
+        assert_eq!(
+            vars("smartcity")("JC_PORTAL_OTHER"),
+            None,
+            "two variables only"
+        );
         assert_eq!(installation_organization(|_| None).unwrap(), None);
         assert_eq!(installation_organization(vars(" ")).unwrap(), None);
         let seed = installation_organization(vars("smartcity"))
@@ -3454,9 +3459,6 @@ mod tests {
         assert!(oidc_config(&one("JC_OIDC_ISSUER", "https://kc/realms/x")).is_err());
         let full = |name: &str| match name {
             "JC_OIDC_ISSUER" => Some("https://kc/realms/x".to_owned()),
-            "JC_PORTAL_COOKIE_KEY" => {
-                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001".into())
-            }
             "JC_OIDC_CLIENT_ID" => Some("portal".to_owned()),
             "JC_OIDC_CLIENT_SECRET" => Some("s".to_owned()),
             "JC_KEYCLOAK_ADMIN_URL" => Some("http://kc:8080/admin".to_owned()),
@@ -3491,6 +3493,7 @@ mod tests {
             _ => None,
         };
         assert_eq!(cookie_keys(&rotating, true).unwrap().1.len(), 2);
+        assert_eq!(rotating("JC_PORTAL_OTHER"), None, "two variables only");
         assert!(cookie_keys(&one("JC_PORTAL_COOKIE_KEY", "short"), false).is_err());
         assert!(cookie_keys(&one("JC_PORTAL_COOKIE_KEY_PREVIOUS", "short"), false).is_err());
     }
@@ -3661,10 +3664,13 @@ mod tests {
     #[test]
     fn the_inline_limits_from_jc_toml_are_checked_and_never_sit_beside_the_file() {
         let with = |inline: &'static str, file: Option<&'static str>| {
-            organization_bounds(&move |name: &str| match name {
-                "JC_PORTAL_ORGANIZATION_BOUNDS" => Some(inline.to_owned()),
-                "JC_PORTAL_ORGANIZATION_BOUNDS_FILE" => file.map(str::to_owned),
-                _ => None,
+            // organization_bounds reads the inline variable and the file variable, nothing else.
+            organization_bounds(&move |name: &str| {
+                if name == "JC_PORTAL_ORGANIZATION_BOUNDS" {
+                    Some(inline.to_owned())
+                } else {
+                    file.map(str::to_owned)
+                }
             })
         };
         let raised = with(r#"{"spec.projects.quota.apps":{"max":250}}"#, None).expect("inline");
@@ -4077,12 +4083,8 @@ mod tests {
 
     #[test]
     fn partial_oidc_configuration_is_rejected() {
-        let err = Config::from_vars(|k| match k {
-            "JC_OIDC_ISSUER" => Some("https://idm.example.sk/realms/bb".to_string()),
-            "JC_PORTAL_COOKIE_KEY" => {
-                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001".into())
-            }
-            _ => None,
+        let err = Config::from_vars(|k| {
+            (k == "JC_OIDC_ISSUER").then(|| "https://idm.example.sk/realms/bb".to_string())
         })
         .expect_err("partial oidc config must fail closed");
         match err {
@@ -4144,7 +4146,6 @@ mod tests {
             }
             "JC_OIDC_CLIENT_ID" => Some("portal".to_string()),
             "JC_OIDC_CLIENT_SECRET" => Some("s3cr3t".to_string()),
-            "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID" => Some("portal-reconciler".to_string()),
             "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SECRET" => Some("old".to_string()),
             "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SERVICE_ACCOUNT" => {
                 Some("portal-reconciler".to_string())
@@ -4161,12 +4162,9 @@ mod tests {
         ));
 
         // A ServiceAccount without a realm has no audience to mint for.
-        let err = Config::from_vars(|k| match k {
-            "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID" => Some("portal-reconciler".to_string()),
-            "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SERVICE_ACCOUNT" => {
-                Some("portal-reconciler".to_string())
-            }
-            _ => None,
+        let err = Config::from_vars(|k| {
+            (k == "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SERVICE_ACCOUNT")
+                .then(|| "portal-reconciler".to_string())
         })
         .expect_err("no issuer");
         assert!(
@@ -4239,9 +4237,6 @@ mod tests {
     fn unreadable_oidc_ca_file_stops_start_up() {
         let err = Config::from_vars(|k| match k {
             "JC_OIDC_ISSUER" => Some("https://idm.example.sk/realms/bb".to_string()),
-            "JC_PORTAL_COOKIE_KEY" => {
-                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001".into())
-            }
             "JC_OIDC_CLIENT_ID" => Some("portal".to_string()),
             "JC_OIDC_CLIENT_SECRET" => Some("s3cr3t".to_string()),
             "JC_OIDC_CA_FILE" => Some("/nonexistent/jc-portal/ca.crt".to_string()),
@@ -4325,6 +4320,7 @@ mod tests {
             "JC_PORTAL_GRAFANA_PASSWORD" => Some("a-password".to_owned()),
             _ => None,
         };
+        assert_eq!(all("JC_PORTAL_OTHER"), None, "four variables only");
         let config = grafana_config(&all).expect("valid").expect("configured");
         assert_eq!(config.url, "http://grafana:3000/grafana");
         assert!(!format!("{config:?}").contains("a-password"));
@@ -4797,10 +4793,8 @@ mod tests {
         ));
 
         // http url is rejected from environment
-        let err = Config::from_vars(|k| match k {
-            "JC_BASEMAP_URL" => Some("http://tiles.example.com/{z}/{x}/{y}.png".to_string()),
-            "JC_BASEMAP_ATTRIBUTION" => Some("OSM".to_string()),
-            _ => None,
+        let err = Config::from_vars(|k| {
+            (k == "JC_BASEMAP_URL").then(|| "http://tiles.example.com/{z}/{x}/{y}.png".to_string())
         })
         .expect_err("http rejected");
         assert!(matches!(
