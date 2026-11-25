@@ -33,6 +33,11 @@ fuzz_target!(|data: &[u8]| {
             filters: vec![ValueKind::Text; panel.filters.len()],
         })
         .collect();
-    let file = compile(UID, &board, &sources, &vec![Vec::new(); board.variables.len()]);
+    let file = compile(
+        UID,
+        &board,
+        &sources,
+        &vec![Vec::new(); board.variables.len()],
+    );
     read_file(UID, &file.to_string()).expect("a compiled board is the builder's own file");
 });
