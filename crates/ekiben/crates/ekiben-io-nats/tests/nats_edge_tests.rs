@@ -740,7 +740,7 @@ fn a_memory_kv_bucket_keeps_its_history_depth() {
     let cl = InMemoryNatsCluster::get("edge-test\nnats://memory/kv_depth");
     let put = |b: &str, i: u32| cl.kv_put(b, "k", Bytes::from(i.to_string())).unwrap();
     // Default depth 1, as a NATS KV bucket made without `history`.
-    let last = (0..20).map(|i| put("one", i)).last().unwrap();
+    let last = (0..20).map(|i| put("one", i)).next_back().unwrap();
     let hist = cl.kv_history("one", "k");
     assert_eq!(hist.len(), 1);
     assert_eq!(hist[0].revision, last);

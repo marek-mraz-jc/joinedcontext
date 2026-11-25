@@ -303,13 +303,13 @@ impl InMemoryNatsCluster {
         log.bytes += msg_bytes(&msg);
         log.msgs.push_back(msg);
         // ponytail: one message larger than MEM_JS_MAX_BYTES stays until the next publish.
-        while log.msgs.len() > 1
-            && (log.msgs.len() > MEM_JS_MAX_MSGS || log.bytes > MEM_JS_MAX_BYTES)
+        while let Some(old) = (log.msgs.len() > 1
+            && (log.msgs.len() > MEM_JS_MAX_MSGS || log.bytes > MEM_JS_MAX_BYTES))
+            .then(|| log.msgs.pop_front())
+            .flatten()
         {
-            if let Some(old) = log.msgs.pop_front() {
-                log.bytes -= msg_bytes(&old);
-                log.dropped += 1;
-            }
+            log.bytes -= msg_bytes(&old);
+            log.dropped += 1;
         }
         drop(log);
         self.publish_core(subject, None, headers, data);
