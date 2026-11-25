@@ -275,6 +275,16 @@ fn rehost(mut url: Url, host: &str) -> Url {
     url
 }
 
+/// `path` at the root of `url`'s site: what `Url::join` of an absolute path gives, without a
+/// failure arm, since a start URL with a host always takes a path.
+fn at_root(url: &Url, path: &str) -> String {
+    let mut root = url.clone();
+    root.set_path(path);
+    root.set_query(None);
+    root.set_fragment(None);
+    root.to_string()
+}
+
 /// A response's media type, without its parameters.
 fn media_type(headers: &HeaderMap) -> Option<&str> {
     headers
@@ -354,10 +364,7 @@ async fn crawl(
     let (start_url, site_host) = settle_start(crawler, start_url, site_host).await;
     let site_id = upsert_site(pool, project, organization, source, spec.visibility).await?;
 
-    let robots_url_str = match start_url.join("/robots.txt") {
-        Ok(u) => u.to_string(),
-        Err(_) => format!("{}://{}/robots.txt", start_url.scheme(), site_host),
-    };
+    let robots_url_str = at_root(&start_url, "/robots.txt");
     let (robots, robots_sitemaps) = robots::fetch_robots(
         &crawler.client,
         &crawler.policy,
@@ -367,10 +374,7 @@ async fn crawl(
     .await;
 
     let mut listed = if spec.sitemap {
-        let mut initial_sitemaps = Vec::new();
-        if let Ok(default_sm) = start_url.join("/sitemap.xml") {
-            initial_sitemaps.push(default_sm.to_string());
-        }
+        let mut initial_sitemaps = vec![at_root(&start_url, "/sitemap.xml")];
         initial_sitemaps.extend(robots_sitemaps);
         sitemap::fetch_sitemap_urls(
             &crawler.client,

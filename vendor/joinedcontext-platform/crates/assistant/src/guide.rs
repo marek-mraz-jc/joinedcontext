@@ -194,7 +194,8 @@ pub fn sections(file: &str, markdown: &str, portal: &str, project: &str) -> Vec<
     }
     let stem = file.trim_end_matches(".md");
     let mut title = stem.to_owned();
-    let mut parts: Vec<(Option<&str>, Vec<&str>)> = vec![(None, Vec::new())];
+    let mut parts: Vec<(Option<&str>, Vec<&str>)> = Vec::new();
+    let mut current: (Option<&str>, Vec<&str>) = (None, Vec::new());
     let mut in_fence = false;
     for line in lines {
         if line.trim_start().starts_with("```") {
@@ -206,14 +207,16 @@ pub fn sections(file: &str, markdown: &str, portal: &str, project: &str) -> Vec<
                 continue;
             }
             if let Some(h2) = line.strip_prefix("## ") {
-                parts.push((Some(h2.trim()), Vec::new()));
+                parts.push(std::mem::replace(
+                    &mut current,
+                    (Some(h2.trim()), Vec::new()),
+                ));
                 continue;
             }
         }
-        if let Some((_, body)) = parts.last_mut() {
-            body.push(line);
-        }
+        current.1.push(line);
     }
+    parts.push(current);
     let home = format!("{portal}/projects/{project}");
     parts
         .into_iter()

@@ -131,9 +131,7 @@ impl Turn {
     pub async fn cancelled(&self) {
         let mut stop = self.stop.subscribe();
         // The sender lives in `self`, so `wait_for` ends only on a cancel.
-        if stop.wait_for(|stopped| *stopped).await.is_err() {
-            std::future::pending::<()>().await;
-        }
+        let _ = stop.wait_for(|stopped| *stopped).await;
     }
 
     fn done(&self) -> Option<Instant> {
@@ -201,6 +199,22 @@ mod tests {
         let (b, _) = turns.start("bb", "v1", Instant::now()).expect("held");
         assert_ne!(a, b);
         assert_eq!(a.len(), 36);
+    }
+
+    #[test]
+    fn a_turn_whose_log_lock_was_poisoned_still_takes_its_events_and_its_end() {
+        let turns = Turns::default();
+        let now = Instant::now();
+        let (_, turn) = turns.start("bb", "v1", now).expect("held");
+        let held = Arc::clone(&turn);
+        let _ = std::thread::spawn(move || {
+            let _guard = held.log.lock().expect("the lock is free");
+            panic!("poisons the log on purpose");
+        })
+        .join();
+        turn.push(&delta("a"));
+        turn.finish(now);
+        assert!(turn.log.lock().is_err());
     }
 
     #[test]
