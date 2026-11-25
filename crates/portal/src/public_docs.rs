@@ -255,7 +255,12 @@ pub fn docs_commit() -> String {
 /// The release these pages belong to: the Portal's version and, in an image, the commit it was
 /// built from (the `JC_PORTAL_COMMIT` build argument, T-4483).
 pub fn release() -> String {
-    match option_env!("JC_PORTAL_COMMIT").map(str::trim) {
+    release_of(option_env!("JC_PORTAL_COMMIT"))
+}
+
+/// [`release`] of the commit an image was built from, `None` outside an image.
+fn release_of(built: Option<&str>) -> String {
+    match built.map(str::trim) {
         Some(built) if !built.is_empty() => format!("{} {}", crate::APP_VERSION, short(built)),
         _ => crate::APP_VERSION.to_owned(),
     }
@@ -683,5 +688,30 @@ mod tests {
         assert!(render("API", "no-such-page-here", &all).is_none());
         assert!(render("API", "", &all).is_none());
         assert!(render("API", "../COMMIT", &all).is_none());
+    }
+
+    #[test]
+    fn the_release_names_the_built_commit_short_and_only_when_there_is_one() {
+        assert_eq!(
+            release_of(Some(" 0123456789abcdef0123 ")),
+            format!("{} 0123456789ab", crate::APP_VERSION)
+        );
+        assert_eq!(
+            release_of(Some("abc")),
+            format!("{} abc", crate::APP_VERSION)
+        );
+        assert_eq!(release_of(Some("  ")), crate::APP_VERSION);
+        assert_eq!(release_of(None), crate::APP_VERSION);
+    }
+
+    /// The derive's lookups: a folder or a file the includes do not name, a path outside the
+    /// folder, and the trait's own entry points.
+    #[test]
+    fn the_bundle_answers_only_its_included_files_inside_its_folder() {
+        assert!(Pages::get("API").is_none(), "a folder is no page");
+        assert!(Pages::get("../Cargo.toml").is_none());
+        assert!(Pages::get("API/no-such-page.md").is_none());
+        assert!(<Pages as RustEmbed>::get("COMMIT").is_some());
+        assert!(<Pages as RustEmbed>::iter().any(|path| path == "COMMIT"));
     }
 }

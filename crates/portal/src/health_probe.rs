@@ -238,6 +238,8 @@ pub struct Probes {
     client: reqwest::Client,
     counts: tokio::sync::Mutex<HashMap<(String, String), u64>>,
     kept: tokio::sync::Mutex<Option<(TimestampTz, Vec<Finding>)>>,
+    /// How a space is named at its broker (`JC_TENANT_NAMES`), read once.
+    tenant_names: context_gateway::store::TenantNames,
 }
 
 impl Probes {
@@ -255,6 +257,7 @@ impl Probes {
                 .unwrap_or_default(),
             counts: tokio::sync::Mutex::default(),
             kept: tokio::sync::Mutex::default(),
+            tenant_names: context_gateway::store::TenantNames::from_env(),
         }
     }
 
@@ -360,16 +363,18 @@ impl Probes {
         };
         let mut counts = self.counts.lock().await;
         let mut findings = Vec::new();
-        for space in mirror.matching(|env| env.kind == "ContextSpace") {
-            let Some(project) = space.metadata.namespace.clone() else {
-                continue;
-            };
+        // The mirror keeps no manifest without a namespace (`Mirror::upsert`); none is counted.
+        let spaces = mirror
+            .matching(|env| env.kind == "ContextSpace")
+            .into_iter()
+            .filter_map(|space| Some((space.metadata.namespace.clone()?, space)));
+        for (project, space) in spaces {
             let name = space.metadata.name.clone();
             let broker = crate::spaces::broker(mirror, &project, &name);
             if !counter.reaches(&broker) {
                 continue;
             }
-            let usage = match crate::spaces::tenant(mirror, &project, &name) {
+            let usage = match crate::spaces::tenant_as(mirror, &project, &name, self.tenant_names) {
                 Ok(tenant) => counter.usage(&broker, &tenant).await,
                 Err(reason) => Err(reason),
             };
@@ -913,5 +918,30 @@ mod tests {
             .findings(&mirror, TimestampTz::now())
             .await;
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// A space with no broker tenant yet (a project-key name and a project the registry has not
+    /// keyed) is a red `entities` check naming why, and its broker is never asked.
+    #[tokio::test]
+    async fn a_space_with_no_tenant_yet_is_red_and_not_counted() {
+        let mirror = Mirror::default();
+        mirror.upsert(
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
+                "metadata": {"name": "air", "namespace": "probe-unkeyed"},
+                "spec": {},
+            }))
+            .expect("a space"),
+        );
+        let counter = Arc::new(Counter::new(Some("http://127.0.0.1:1".to_owned()), None));
+        let mut probes = Probes::new(None, Some(counter));
+        probes.tenant_names = context_gateway::store::TenantNames::ProjectKey;
+        let found = probes.findings(&mirror, TimestampTz::now()).await;
+        let entities = found
+            .iter()
+            .find(|f| f.name == "air" && f.check == "entities")
+            .expect("an entities check");
+        assert_eq!(entities.status, Status::Error, "{found:?}");
+        assert!(probes.counts.lock().await.is_empty());
     }
 }

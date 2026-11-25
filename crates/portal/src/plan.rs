@@ -108,8 +108,8 @@ pub fn diff(current: Option<&ResourceEnvelope>, desired: Option<&ResourceEnvelop
         }
         (Some(curr), Some(des)) => {
             let mut fields = Vec::new();
-            let curr_meta = serde_json::to_value(&curr.metadata).unwrap_or(serde_json::Value::Null);
-            let des_meta = serde_json::to_value(&des.metadata).unwrap_or(serde_json::Value::Null);
+            let curr_meta = meta_value(&curr.metadata);
+            let des_meta = meta_value(&des.metadata);
 
             diff_values("metadata", &curr_meta, &des_meta, &mut fields);
             diff_values("spec", &curr.spec, &des.spec, &mut fields);
@@ -123,12 +123,16 @@ pub fn diff(current: Option<&ResourceEnvelope>, desired: Option<&ResourceEnvelop
     }
 }
 
+/// `metadata` as JSON. Its fields are strings and string-keyed maps, which always serialize, so
+/// the fallback never runs.
+fn meta_value(meta: &crate::resource::ObjectMeta) -> serde_json::Value {
+    serde_json::to_value(meta).unwrap_or(serde_json::Value::Null)
+}
+
 /// Collects all leaf values from `metadata` and `spec` of a resource envelope.
 fn envelope_leaves(env: &ResourceEnvelope) -> Vec<(String, serde_json::Value)> {
     let mut leaves = Vec::new();
-    if let Ok(meta_val) = serde_json::to_value(&env.metadata) {
-        collect_leaves("metadata", &meta_val, &mut leaves);
-    }
+    collect_leaves("metadata", &meta_value(&env.metadata), &mut leaves);
     collect_leaves("spec", &env.spec, &mut leaves);
     leaves
 }
@@ -188,29 +192,31 @@ fn diff_values(
                 let child_path = format!("{path}.{key}");
                 match (curr_map.get(key), des_map.get(key)) {
                     (Some(c), Some(d)) => diff_values(&child_path, c, d, fields),
-                    (Some(c), None) => {
-                        let mut removed = Vec::new();
-                        collect_leaves(&child_path, c, &mut removed);
-                        for (p, val) in removed {
-                            fields.push(FieldChange {
-                                path: p,
-                                from: Some(val),
-                                to: None,
-                            });
+                    // The key comes from one of the maps, so exactly one side holds it here.
+                    (c, d) => {
+                        if let Some(c) = c {
+                            let mut removed = Vec::new();
+                            collect_leaves(&child_path, c, &mut removed);
+                            for (p, val) in removed {
+                                fields.push(FieldChange {
+                                    path: p,
+                                    from: Some(val),
+                                    to: None,
+                                });
+                            }
+                        }
+                        if let Some(d) = d {
+                            let mut added = Vec::new();
+                            collect_leaves(&child_path, d, &mut added);
+                            for (p, val) in added {
+                                fields.push(FieldChange {
+                                    path: p,
+                                    from: None,
+                                    to: Some(val),
+                                });
+                            }
                         }
                     }
-                    (None, Some(d)) => {
-                        let mut added = Vec::new();
-                        collect_leaves(&child_path, d, &mut added);
-                        for (p, val) in added {
-                            fields.push(FieldChange {
-                                path: p,
-                                from: None,
-                                to: Some(val),
-                            });
-                        }
-                    }
-                    (None, None) => {}
                 }
             }
         }
@@ -263,21 +269,21 @@ fn diff_values(
 /// the target outright.
 pub fn merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
     if let serde_json::Value::Object(patch_obj) = patch {
-        if !target.is_object() {
-            *target = serde_json::Value::Object(serde_json::Map::new());
-        }
-        if let serde_json::Value::Object(target_obj) = target {
-            for (key, value) in patch_obj {
-                if value.is_null() {
-                    target_obj.remove(key);
-                } else {
-                    let entry = target_obj
-                        .entry(key.clone())
-                        .or_insert(serde_json::Value::Null);
-                    merge_patch(entry, value);
-                }
+        let mut target_obj = match std::mem::take(target) {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+        for (key, value) in patch_obj {
+            if value.is_null() {
+                target_obj.remove(key);
+            } else {
+                let entry = target_obj
+                    .entry(key.clone())
+                    .or_insert(serde_json::Value::Null);
+                merge_patch(entry, value);
             }
         }
+        *target = serde_json::Value::Object(target_obj);
     } else {
         *target = patch.clone();
     }
@@ -574,6 +580,29 @@ mod tests {
         let mut array = json!([1, 2]);
         merge_patch(&mut array, &json!(["x"]));
         assert_eq!(array, json!(["x"]));
+    }
+
+    #[test]
+    fn a_key_that_left_and_a_key_that_came_are_a_removal_and_an_addition() {
+        let curr = sample_envelope("public-air", json!({ "old": { "a": 1 } }));
+        let des = sample_envelope("public-air", json!({ "new": [2] }));
+        let plan = diff(Some(&curr), Some(&des));
+        assert_eq!(plan.summary, PlanSummary::new(0, 1, 0));
+        assert_eq!(
+            plan.fields,
+            vec![
+                FieldChange {
+                    path: "spec.new[0]".to_string(),
+                    from: None,
+                    to: Some(json!(2)),
+                },
+                FieldChange {
+                    path: "spec.old.a".to_string(),
+                    from: Some(json!(1)),
+                    to: None,
+                },
+            ]
+        );
     }
 }
 

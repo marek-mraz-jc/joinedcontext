@@ -307,23 +307,24 @@ pub async fn move_one(state: &AppState, identity: &Identity) -> Result<Moved, Ap
     let Some(mut tx) = crate::api::preferences::person_tx(state).await? else {
         return Ok(Moved::default());
     };
-    let Some(mut doc) = crate::db::load_preferences(&mut tx, subject)
+    // A document that is no object holds no old list either.
+    let Some(Value::Object(mut doc)) = crate::db::load_preferences(&mut tx, subject)
         .await
         .map_err(db_error)?
     else {
         return Ok(Moved::default());
     };
     drop(tx);
-    if doc.get(KEY).is_none() {
+    let Some(listed) = doc.get(KEY).cloned() else {
         return Ok(Moved::default());
-    }
+    };
     if state.mirror.is_empty() {
         // Before the first mirror a selector resolves to nothing: wait rather than lose it.
         return Err(ApiError::Unavailable(
             "your connectors are being moved to the connector store; try again in a minute".into(),
         ));
     }
-    let Ok(old) = serde_json::from_value::<Vec<Old>>(doc[KEY].clone()) else {
+    let Ok(old) = serde_json::from_value::<Vec<Old>>(listed) else {
         // The list stays where it is: a later Portal that reads it moves it then.
         tracing::warn!(%subject, "old personal connectors are not readable; left in place, none moved");
         return Ok(Moved {
@@ -367,23 +368,21 @@ pub async fn move_one(state: &AppState, identity: &Identity) -> Result<Moved, Ap
             Err(other) => return Err(other),
         }
     }
-    if let Some(object) = doc.as_object_mut() {
-        object.remove(KEY);
-        if !kept.is_empty() {
-            // Appended to what an earlier move kept, whatever shape that holds.
-            let mut list = match object.remove(ASIDE) {
-                Some(Value::Array(earlier)) => earlier,
-                Some(other) => vec![other],
-                None => Vec::new(),
-            };
-            list.extend(kept);
-            object.insert(ASIDE.to_owned(), Value::Array(list));
-        }
+    doc.remove(KEY);
+    if !kept.is_empty() {
+        // Appended to what an earlier move kept, whatever shape that holds.
+        let mut list = match doc.remove(ASIDE) {
+            Some(Value::Array(earlier)) => earlier,
+            Some(other) => vec![other],
+            None => Vec::new(),
+        };
+        list.extend(kept);
+        doc.insert(ASIDE.to_owned(), Value::Array(list));
     }
     let Some(mut tx) = crate::api::preferences::person_tx(state).await? else {
         return Ok(moved);
     };
-    crate::db::save_preferences(&mut tx, subject, &doc)
+    crate::db::save_preferences(&mut tx, subject, &Value::Object(doc))
         .await
         .map_err(db_error)?;
     tx.commit().await.map_err(db_error)?;
@@ -789,5 +788,159 @@ mod tests {
         assert!(readable(&state, &reader, None).is_none());
         let adopted_one = adopted(&old, &endpoints, &ceiling);
         assert!(readable(&state, &reader, adopted_one).is_none());
+    }
+
+    /// A Portal on a scratch database whose installation Organization `persons` holds the rows of
+    /// `reader`, who reads the one Endpoint of project `mesto`; their row keeps one old connector
+    /// that moves.
+    async fn scratch_world(scratch: &crate::test_db::Scratch) -> (AppState, Identity) {
+        use crate::permissions::ORG_NAMESPACE;
+        use crate::resource::ObjectMeta;
+        let seed = crate::host_registry::SeedOrganization {
+            name: "persons".to_owned(),
+            organization_id: None,
+            host: "portal.persons.example".to_owned(),
+            catalogue_id: None,
+        };
+        crate::host_registry::seed_organizations(&scratch.pool, std::slice::from_ref(&seed))
+            .await
+            .expect("the installation Organization");
+        let mut config = crate::config::Config::for_tests();
+        config.installation_organization = Some(seed);
+        let state = AppState::new(config, None).with_db(scratch.pool.clone());
+        let put = |kind: &str, name: &str, namespace: &str, spec: Value| {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: ObjectMeta::new(name, namespace),
+                spec,
+                status: None,
+            })
+        };
+        put(
+            "Endpoint",
+            "air",
+            "mesto",
+            json!({ "contextSpaceRef": "mesto", "slug": "air".repeat(26)[..26].to_owned(),
+                    "audience": "organization" }),
+        );
+        put(
+            "Role",
+            "endpoint-readers",
+            ORG_NAMESPACE,
+            json!({ "rules": [{ "kinds": ["Endpoint", "ContextSpace"], "verbs": ["read"] }] }),
+        );
+        put(
+            "RoleBinding",
+            "reader-reads-mesto",
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": "reader@hel.fi" }], "role": "endpoint-readers",
+                    "scope": { "project": "mesto" } }),
+        );
+        let reader = Identity {
+            client: None,
+            subject: "sub-reader".into(),
+            username: "reader".into(),
+            email: Some("reader@hel.fi".into()),
+            name: None,
+            roles: vec![],
+            groups: vec![],
+            second_factor: false,
+        };
+        let mut tx = crate::api::preferences::person_tx(&state)
+            .await
+            .expect("the key")
+            .expect("a keyed transaction");
+        crate::db::save_preferences(
+            &mut tx,
+            "sub-reader",
+            &json!({ "connectors": [{ "name": "fav", "select": { "projects": ["mesto"] } }] }),
+        )
+        .await
+        .expect("saved");
+        tx.commit().await.expect("committed");
+        (state, reader)
+    }
+
+    async fn row_of(state: &AppState) -> Value {
+        let mut tx = crate::api::preferences::person_tx(state)
+            .await
+            .expect("the key")
+            .expect("a keyed transaction");
+        crate::db::load_preferences(&mut tx, "sub-reader")
+            .await
+            .expect("loaded")
+            .expect("a row")
+    }
+
+    #[tokio::test]
+    async fn a_store_that_fails_a_create_fails_the_move_and_keeps_the_old_list() {
+        let Some(scratch) = crate::test_db::scratch().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let (state, reader) = scratch_world(&scratch).await;
+        scratch.refuse("connectors", "INSERT").await;
+        let failed = move_one(&state, &reader).await;
+        assert!(
+            failed.is_err() && !matches!(failed, Err(ApiError::Conflict(_))),
+            "{failed:?}"
+        );
+        assert!(row_of(&state).await.get("connectors").is_some());
+        scratch.remove().await;
+    }
+
+    #[tokio::test]
+    async fn an_organization_removed_while_moving_keeps_the_old_list_where_it_is() {
+        let Some(scratch) = crate::test_db::scratch().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let (state, reader) = scratch_world(&scratch).await;
+        // The connector's insert removes the Organization, so the write-back finds no key.
+        for statement in [
+            "CREATE FUNCTION jc_remove_persons() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN UPDATE organizations SET state = 'removed' WHERE name = 'persons'; \
+             RETURN NULL; END $$",
+            "CREATE TRIGGER jc_remove_persons AFTER INSERT ON connectors \
+             FOR EACH STATEMENT EXECUTE FUNCTION jc_remove_persons()",
+        ] {
+            sqlx::query(statement)
+                .execute(&scratch.pool)
+                .await
+                .expect("trigger");
+        }
+        let moved = move_one(&state, &reader).await.expect("a move");
+        assert_eq!(moved.moved, 1, "{moved:?}");
+        // Back in the registry, the row is read again: the old list stays until a later move.
+        sqlx::query("UPDATE organizations SET state = 'active' WHERE name = 'persons'")
+            .execute(&scratch.pool)
+            .await
+            .expect("active again");
+        assert!(row_of(&state).await.get("connectors").is_some());
+        scratch.remove().await;
+    }
+
+    #[tokio::test]
+    async fn a_document_that_is_no_object_moves_nothing() {
+        let Some(scratch) = crate::test_db::scratch().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let (state, reader) = scratch_world(&scratch).await;
+        let mut tx = crate::api::preferences::person_tx(&state)
+            .await
+            .expect("the key")
+            .expect("a keyed transaction");
+        crate::db::save_preferences(&mut tx, "sub-reader", &json!(["connectors"]))
+            .await
+            .expect("saved");
+        tx.commit().await.expect("committed");
+        assert_eq!(
+            move_one(&state, &reader).await.expect("a move"),
+            Moved::default()
+        );
+        assert_eq!(row_of(&state).await, json!(["connectors"]));
+        scratch.remove().await;
     }
 }

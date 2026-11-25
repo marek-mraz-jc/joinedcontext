@@ -340,4 +340,27 @@ mod tests {
             "{found:?}"
         );
     }
+
+    #[test]
+    fn a_refusal_that_names_no_field_is_said_at_the_entry_and_its_space() {
+        let model = crate::pipeline_validation::ModelSchema::compile(
+            "transport",
+            "1.0.0",
+            &json!({ "definitions": {} }),
+            &[],
+            false,
+        );
+        let said = explained(
+            jc_core::error::Error::ApiVersion("v0".to_owned()),
+            2,
+            "Bus",
+            "vehicles",
+            &model,
+        );
+        assert!(
+            said.starts_with("spec.lifetime[2]: apiVersion `v0`"),
+            "{said}"
+        );
+        assert!(said.ends_with("(space vehicles)"), "{said}");
+    }
 }

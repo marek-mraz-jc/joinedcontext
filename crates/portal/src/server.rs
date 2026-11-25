@@ -217,21 +217,24 @@ async fn public_form_framing(
         return response;
     };
     let headers = response.headers_mut();
-    let Some(policy) = headers
+    // A policy that reads as text, with origins that passed `is_embed_origin` (lower-case ASCII,
+    // digits, `-.:/`), stays a header value; a response without one keeps what it has.
+    let Some(framed) = headers
         .get(header::CONTENT_SECURITY_POLICY)
         .and_then(|value| value.to_str().ok())
+        .map(|policy| {
+            policy.replacen(
+                "frame-ancestors 'self';",
+                &format!("frame-ancestors 'self' {};", origins.join(" ")),
+                1,
+            )
+        })
+        .and_then(|framed| HeaderValue::from_str(&framed).ok())
     else {
         return response;
     };
-    let framed = policy.replacen(
-        "frame-ancestors 'self';",
-        &format!("frame-ancestors 'self' {};", origins.join(" ")),
-        1,
-    );
-    if let Ok(value) = HeaderValue::from_str(&framed) {
-        headers.insert(header::CONTENT_SECURITY_POLICY, value);
-        headers.remove("x-frame-options");
-    }
+    headers.insert(header::CONTENT_SECURITY_POLICY, framed);
+    headers.remove("x-frame-options");
     response
 }
 
@@ -337,36 +340,12 @@ pub fn spawn_background(state: &AppState) {
         // Portal whose peers cannot be reached still serves; the mirror says so in its log and
         // the reference stands with whatever the repository already pinned.
         if let Some(shako) = state.shako.as_ref() {
-            match crate::sync::schema_api::PeerSchemaApi::new() {
-                Ok(peers) => {
-                    let peers: crate::sync::mirror::Peers = std::sync::Arc::new(peers);
-                    let public_url = state.config.public_base_url.to_string();
-                    // An Endpoint this instance serves is read from its broker's view in
-                    // process (SHR-16); a Portal that writes no views reads them over `peers`,
-                    // which refuses what is not public https.
-                    let local: crate::sync::mirror::Peers = match syncer.views() {
-                        Some(views) => {
-                            std::sync::Arc::new(crate::sync::schema_api::LocalSchemaApi::new(
-                                &public_url,
-                                views,
-                                tokio::runtime::Handle::current(),
-                            ))
-                        }
-                        None => peers.clone(),
-                    };
-                    crate::sync::mirror::spawn_periodic(
-                        shako.clone(),
-                        syncer.clone(),
-                        state.mirror.clone(),
-                        public_url,
-                        peers,
-                        local,
-                    );
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, "no HTTP client for peer schema surfaces; foreign models are not mirrored")
-                }
-            }
+            spawn_foreign_mirror(
+                state,
+                syncer,
+                shako,
+                crate::sync::schema_api::PeerSchemaApi::new(),
+            );
         }
     }
 
@@ -407,6 +386,42 @@ pub fn spawn_background(state: &AppState) {
     crate::grafana::spawn_provisioning(state.clone());
 }
 
+/// The foreign-model mirror of [`spawn_background`] over the peers' schema surfaces, or a warning
+/// when no client for them could be built.
+fn spawn_foreign_mirror(
+    state: &AppState,
+    syncer: &std::sync::Arc<crate::reconciler::Syncer>,
+    shako: &std::sync::Arc<crate::forge::ShakoClient>,
+    peers: Result<crate::sync::schema_api::PeerSchemaApi, reqwest::Error>,
+) {
+    let peers: crate::sync::mirror::Peers = match peers {
+        Ok(peers) => std::sync::Arc::new(peers),
+        Err(err) => {
+            tracing::warn!(error = %err, "no HTTP client for peer schema surfaces; foreign models are not mirrored");
+            return;
+        }
+    };
+    let public_url = state.config.public_base_url.to_string();
+    // An Endpoint this instance serves is read from its broker's view in process (SHR-16); a
+    // Portal that writes no views reads them over `peers`, which refuses what is not public https.
+    let local: crate::sync::mirror::Peers = match syncer.views() {
+        Some(views) => std::sync::Arc::new(crate::sync::schema_api::LocalSchemaApi::new(
+            &public_url,
+            views,
+            tokio::runtime::Handle::current(),
+        )),
+        None => peers.clone(),
+    };
+    crate::sync::mirror::spawn_periodic(
+        shako.clone(),
+        syncer.clone(),
+        state.mirror.clone(),
+        public_url,
+        peers,
+        local,
+    );
+}
+
 /// The internal listener runs beside the public one, on the same replica, whenever this Portal
 /// verifies tokens: every route on it answers a workload token of the realm and nothing else,
 /// so a Portal without a realm opens no second port. The gateway polls its revocations here
@@ -435,13 +450,12 @@ pub fn serve_internal_listener(
     crate::api::pipeline_test::internal_listener_bound(addr);
     tracing::info!(bind = %addr, "portal internal listener listening");
     let internal_router = internal_app(state.clone());
+    // axum 0.8: a serve with graceful shutdown never resolves to an error, only to `Ok` once
+    // `shutdown` resolved, so there is no failure to log.
     tokio::spawn(async move {
-        if let Err(err) = axum::serve(internal, internal_router)
+        let _stopped = axum::serve(internal, internal_router)
             .with_graceful_shutdown(shutdown)
-            .await
-        {
-            tracing::error!(error = %err, "the internal listener stopped");
-        }
+            .await;
     });
     Ok(addr)
 }
@@ -475,27 +489,50 @@ pub async fn spawn_build_listener(
     let addr = listener.local_addr()?;
     tracing::info!(bind = %addr, "portal build listener listening");
     let router = build_app(state.clone());
+    // Never an error, as for the internal listener.
     tokio::spawn(async move {
-        if let Err(err) = axum::serve(listener, router)
+        let _stopped = axum::serve(listener, router)
             .with_graceful_shutdown(shutdown)
-            .await
-        {
-            tracing::error!(error = %err, "the build listener stopped");
-        }
+            .await;
     });
     Ok(Some(addr))
 }
 
+#[cfg(unix)]
 async fn shutdown_signal() {
+    use tokio::signal::unix::SignalKind;
+    shutdown_on(SignalKind::interrupt(), SignalKind::terminate()).await;
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    if let Err(err) = tokio::signal::ctrl_c().await {
+        tracing::error!(error = %err, "failed to listen for ctrl+c");
+    }
+}
+
+/// Resolves on the first `interrupt` (ctrl+c, what `tokio::signal::ctrl_c` listens for on unix)
+/// or `terminate`. A ctrl+c listener that cannot be installed resolves at once; a SIGTERM handler
+/// that cannot be installed never resolves.
+#[cfg(unix)]
+async fn shutdown_on(
+    interrupt: tokio::signal::unix::SignalKind,
+    terminate: tokio::signal::unix::SignalKind,
+) {
+    use tokio::signal::unix::signal;
     let ctrl_c = async {
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            tracing::error!(error = %err, "failed to listen for ctrl+c");
+        match signal(interrupt) {
+            Ok(mut stream) => {
+                stream.recv().await;
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "failed to listen for ctrl+c");
+            }
         }
     };
 
-    #[cfg(unix)]
     let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        match signal(terminate) {
             Ok(mut stream) => {
                 stream.recv().await;
             }
@@ -505,9 +542,6 @@ async fn shutdown_signal() {
             }
         }
     };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
 
     tokio::select! {
         _ = ctrl_c => {},
@@ -541,5 +575,115 @@ mod tests {
             crate::auth::bearer::BearerVerifier::new(&issuer, "portal"),
         ));
         assert!(internal_listener_opens(&state));
+    }
+
+    /// A form page whose answer carries no policy keeps its own framing header: there is no
+    /// `frame-ancestors` to widen (EP-101).
+    #[tokio::test]
+    async fn a_framed_form_page_without_a_policy_keeps_its_own_headers() {
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        use tower::ServiceExt;
+
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "Endpoint".into(),
+            metadata: ObjectMeta {
+                name: "feedback-form".into(),
+                namespace: Some("helsinki".into()),
+                ..Default::default()
+            },
+            spec: serde_json::json!({
+                "slug": "ep-framed",
+                "creates": { "mintIds": true, "embedOrigins": ["https://www.hel.fi"] }
+            }),
+            status: None,
+        });
+        let app = Router::new()
+            .route(
+                "/f/{slug}",
+                axum::routing::get(|| async { ([("x-frame-options", "SAMEORIGIN")], "form") }),
+            )
+            .layer(from_fn_with_state(state, public_form_framing));
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/f/ep-framed")
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert!(response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .is_none());
+        assert_eq!(response.headers()["x-frame-options"], "SAMEORIGIN");
+    }
+
+    #[tokio::test]
+    async fn no_client_for_the_peers_mirrors_no_foreign_model_and_says_so() {
+        let state = AppState::new(Config::for_tests(), None);
+        let shako = std::sync::Arc::new(
+            crate::forge::ShakoClient::new(
+                "http://127.0.0.1:1".parse().expect("a url"),
+                "bb",
+                "org",
+                "token",
+            )
+            .expect("shako client"),
+        );
+        let syncer = std::sync::Arc::new(crate::reconciler::Syncer::new(
+            std::sync::Arc::clone(&shako),
+            std::sync::Arc::clone(&state.mirror),
+        ));
+        let err = reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("not a url");
+        let ((), log) = crate::test_log::logged(tracing::level_filters::LevelFilter::WARN, async {
+            spawn_foreign_mirror(&state, &syncer, &shako, Err(err));
+        })
+        .await;
+        assert!(
+            log.contains("no HTTP client for peer schema surfaces"),
+            "{log}"
+        );
+    }
+
+    /// A ctrl+c listener that cannot be installed stops the server at once and says why.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_ctrl_c_listener_that_cannot_be_installed_shuts_down_and_says_so() {
+        use tokio::signal::unix::SignalKind;
+        let (stopped, log) =
+            crate::test_log::logged(tracing::level_filters::LevelFilter::ERROR, async {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    shutdown_on(SignalKind::from_raw(-1), SignalKind::from_raw(-1)),
+                )
+                .await
+            })
+            .await;
+        assert!(stopped.is_ok(), "the shutdown resolves");
+        assert!(log.contains("failed to listen for ctrl+c"), "{log}");
+    }
+
+    /// A SIGTERM handler that cannot be installed says so and leaves the server running.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_sigterm_handler_that_cannot_be_installed_keeps_serving_and_says_so() {
+        use tokio::signal::unix::SignalKind;
+        let (stopped, log) =
+            crate::test_log::logged(tracing::level_filters::LevelFilter::ERROR, async {
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(200),
+                    shutdown_on(SignalKind::user_defined2(), SignalKind::from_raw(-1)),
+                )
+                .await
+            })
+            .await;
+        assert!(stopped.is_err(), "the shutdown never resolves");
+        assert!(log.contains("failed to install SIGTERM handler"), "{log}");
     }
 }

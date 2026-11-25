@@ -2057,6 +2057,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_held_signal_is_not_doubled_and_a_close_and_a_digest_skip_other_incidents() {
+        let mirror = mirror();
+        let store = Arc::new(AlertStore::new(None, Default::default()));
+        let runs = Arc::new(crate::pipeline_log::LogStore::new(None, Default::default()));
+        let evaluator = Evaluator::new(
+            Arc::clone(&mirror),
+            Arc::new(crate::quality::Store::default()),
+            Arc::clone(&store),
+        )
+        .with_run_health(Arc::clone(&runs));
+        store
+            .upsert(
+                "jana",
+                "helsinki",
+                Scope::Pipeline,
+                "bikes",
+                &[Event::Failure],
+                Delivery::Digest,
+            )
+            .await
+            .unwrap()
+            .expect("kept");
+        for run in ["r1", "r2", "r3"] {
+            runs.append(
+                "helsinki",
+                "bikes",
+                run,
+                &[crate::pipeline_log::NewLine {
+                    record_id: String::new(),
+                    step: None,
+                    outcome: crate::pipeline_log::Outcome::Failed,
+                    message: "GET https://feed.example/x answered 404".to_owned(),
+                }],
+            )
+            .await
+            .unwrap();
+        }
+        mirror.upsert(pipeline("bikes", json!({ "phase": "Error" })));
+        mirror.upsert(pipeline("trams", json!({ "phase": "Error" })));
+        evaluator.run(at("2026-10-07T03:00:00Z")).await.unwrap();
+        let open = store.open_incidents().await.unwrap();
+        assert_eq!(open.len(), 2, "{open:?}");
+        let bikes: IncidentKey = ("helsinki".into(), "bikes".into(), Event::Failure);
+        assert_eq!(
+            open[&bikes].detail, "",
+            "the pipeline's own signal is kept, the run health one is not added"
+        );
+
+        mirror.upsert(pipeline("trams", json!({ "phase": "Live" })));
+        evaluator.run(at("2026-10-07T03:30:00Z")).await.unwrap();
+        let open = store.open_incidents().await.unwrap();
+        assert_eq!(
+            open.keys().collect::<Vec<_>>(),
+            vec![&bikes],
+            "only trams closed"
+        );
+
+        evaluator.run(at("2026-10-07T07:30:00Z")).await.unwrap();
+        let told = store.notices(&["jana".into()]).await.unwrap();
+        assert_eq!(
+            told.iter()
+                .map(|n| (n.pipeline.as_str(), n.change.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("bikes", "digest")],
+            "trams is not covered by the subscription"
+        );
+    }
+
+    #[tokio::test]
     async fn a_person_keeps_their_newest_notices_and_reads_only_their_own() {
         let store = AlertStore::new(None, Default::default());
         let sub = store

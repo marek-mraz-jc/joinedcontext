@@ -5160,6 +5160,26 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn the_memory_store_refuses_a_second_live_connector_of_the_same_name() {
+        let store = ConnectorStore::new(None, None);
+        let base = "https://portal.test";
+        let mut ask = new(&["data-read"], false, 1);
+        ask.name = "bikes".into();
+        store
+            .create("jana", ask, Default::default(), base)
+            .await
+            .expect("created");
+        let mut again = new(&["data-read"], false, 1);
+        again.name = "bikes".into();
+        let refused = store.create("jana", again, Default::default(), base).await;
+        assert!(
+            matches!(&refused, Err(ApiError::Conflict(m)) if m.contains("named bikes already")),
+            "{refused:?}"
+        );
+        assert_eq!(store.of_owner("jana", base).await.expect("list").len(), 1);
+    }
+
+    #[tokio::test]
     async fn an_allowed_call_of_a_connector_nobody_holds_is_kept_and_marks_none() {
         let store = ConnectorStore::new(None, None);
         let trail = Trail::new(Some("ghost".into()), None);

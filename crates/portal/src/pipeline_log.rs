@@ -492,14 +492,17 @@ pub fn with_passes(stream: &mut serde_json::Value, url: &str) {
         "request_map": format!("root = {{ \"run\": {RUN}, \"sent\": [] }}"),
         "processors": [{ "label": PASS_LABELS[1], "http": pass_http(url) }],
     }});
-    let Some(pipeline) = stream.as_object_mut().map(|stream| {
-        stream
-            .entry("pipeline")
-            .or_insert_with(|| serde_json::json!({}))
-    }) else {
-        return;
-    };
-    let Some(pipeline) = pipeline.as_object_mut() else {
+    // `/input/generate` was found, so the stream is an object: only a `pipeline` that is not one
+    // is left as it is.
+    let Some(pipeline) = stream
+        .as_object_mut()
+        .map(|stream| {
+            stream
+                .entry("pipeline")
+                .or_insert_with(|| serde_json::json!({}))
+        })
+        .and_then(serde_json::Value::as_object_mut)
+    else {
         return;
     };
     let processors = pipeline
@@ -2230,5 +2233,47 @@ mod tests {
             .await
             .expect("append");
         assert_eq!(store.runs(&project, "x", 5).await.expect("runs")[0].sent, 1);
+    }
+
+    /// T-7494: a trim that fails is said and costs the write nothing: the run is kept.
+    #[tokio::test]
+    async fn a_trim_that_fails_is_logged_and_the_run_is_kept() {
+        let Some(scratch) = crate::test_db::scratch().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let (project, organization) = (format!("p{}", unique()), format!("o{}", unique()));
+        sqlx::query(
+            "INSERT INTO organizations (name, host, state, created_by) \
+             VALUES ($1, $1 || '.example', 'active', 'test')",
+        )
+        .bind(&organization)
+        .execute(&scratch.pool)
+        .await
+        .expect("an Organization of the registry");
+        let mirror = std::sync::Arc::new(crate::store::Mirror::new());
+        mirror.upsert(
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1",
+                "kind": "Project",
+                "metadata": { "name": project, "namespace": crate::permissions::ORG_NAMESPACE },
+                "spec": { "organizationRef": organization },
+            }))
+            .expect("a project"),
+        );
+        scratch.refuse("pipeline_log", "DELETE").await;
+        let store = LogStore::new(Some(scratch.pool.clone()), mirror);
+        let (appended, text) = crate::test_log::logged(
+            tracing::level_filters::LevelFilter::WARN,
+            store.append(&project, "x", "r1", &[line("urn:a", Outcome::Sent, "")]),
+        )
+        .await;
+        appended.expect("the write does not wait for the trim");
+        assert!(
+            text.contains("a pipeline's log was not trimmed; a later write trims it"),
+            "{text}"
+        );
+        assert_eq!(store.runs(&project, "x", 5).await.expect("runs")[0].sent, 1);
+        scratch.remove().await;
     }
 }

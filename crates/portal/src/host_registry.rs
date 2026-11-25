@@ -730,4 +730,30 @@ mod tests {
         assert!(unplaced_pipelines(&pool, &mirror).await.is_err());
         assert!(report_unplaced_pipelines(&pool, &mirror).await.is_err());
     }
+
+    /// A registry and a forge that name the same Organizations report an empty drift, unlogged.
+    #[tokio::test]
+    async fn a_registry_and_a_forge_that_agree_report_no_drift() {
+        let Some(scratch) = crate::test_db::scratch().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        sqlx::query(
+            "INSERT INTO organizations (name, host, state, created_by) \
+             VALUES ('smartcity', 'smartcity.example', 'active', 'test') ON CONFLICT DO NOTHING",
+        )
+        .execute(&scratch.pool)
+        .await
+        .expect("an Organization of the registry");
+        let mirror = Mirror::new();
+        for row in organizations(&scratch.pool).await.expect("the registry") {
+            if row.state == "active" {
+                organization(&mirror, &row.name);
+            }
+        }
+        let drift = report_drift(&scratch.pool, &mirror).await;
+        scratch.remove().await;
+        let drift = drift.expect("no error").expect("a loaded mirror reports");
+        assert!(drift.is_empty(), "{drift:?}");
+    }
 }

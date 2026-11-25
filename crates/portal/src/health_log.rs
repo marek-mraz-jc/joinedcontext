@@ -499,10 +499,12 @@ pub fn derive(
     };
     let mut findings = Vec::new();
     for (manifest, kind) in KINDS {
-        for envelope in mirror.matching(|env| env.kind == manifest) {
-            let Some(project) = envelope.metadata.namespace.clone() else {
-                continue;
-            };
+        // The mirror keeps no manifest without a namespace (`Mirror::upsert`); none is judged.
+        let envelopes = mirror
+            .matching(|env| env.kind == manifest)
+            .into_iter()
+            .filter_map(|envelope| Some((envelope.metadata.namespace.clone()?, envelope)));
+        for (project, envelope) in envelopes {
             let name = envelope.metadata.name.clone();
             findings.push(reconcile(&project, kind, &envelope));
             match kind {
@@ -730,9 +732,12 @@ impl HealthStore {
     ) -> Result<(), sqlx::Error> {
         let (pool, mirror) = match &self.inner {
             Inner::Memory(memory) => {
-                if let Ok(mut memory) = memory.write() {
-                    memory.record(now, findings);
-                }
+                // Held only by `record` and `list`, which do not panic: never poisoned, and a
+                // poisoned lock would hold whole maps all the same.
+                memory
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .record(now, findings);
                 return Ok(());
             }
             Inner::Postgres(pool, mirror) => (pool, mirror),

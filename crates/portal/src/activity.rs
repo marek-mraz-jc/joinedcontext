@@ -324,8 +324,10 @@ pub(crate) fn odt_to_ts(odt: time::OffsetDateTime) -> TimestampTz {
 }
 
 pub(crate) fn ts_to_odt(dt: TimestampTz) -> time::OffsetDateTime {
+    // jiff's range (-9999-01-02 to 9999-12-30) lies inside time's (-9999-01-01 to 9999-12-31):
+    // every second converts, and the epoch is never taken.
     time::OffsetDateTime::from_unix_timestamp(dt.as_second())
-        .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -964,5 +966,16 @@ mod tests {
         assert_eq!(severity_rank("error"), Some(2));
         assert_eq!(severity_rank("fatal"), None);
         assert_eq!(severity_rank(""), None);
+    }
+
+    /// Both ends of jiff's range are instants of time's: the conversion's fallback is never taken.
+    #[test]
+    fn every_instant_jiff_holds_converts_to_time() {
+        for edge in [jiff::Timestamp::MIN, jiff::Timestamp::MAX] {
+            assert_eq!(
+                ts_to_odt(TimestampTz(edge)).unix_timestamp(),
+                edge.as_second()
+            );
+        }
     }
 }

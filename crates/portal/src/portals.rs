@@ -963,6 +963,20 @@ mod tests {
     }
 
     #[test]
+    fn an_endpoints_source_without_a_url_passes_the_harvest_checks() {
+        let mirror = mirror();
+        mirror.upsert(envelope(
+            "Project",
+            "doprava",
+            json!({ "organizationRef": { "name": "ba" } }),
+        ));
+        let mut p = portal("ba-mobility", "ba", "mobility", None);
+        p.spec["sources"] =
+            json!([{ "name": "own", "type": "endpoints", "projects": ["doprava"] }]);
+        check(&mirror, Some(&settings(10)), &p).expect("an endpoints source names no host");
+    }
+
+    #[test]
     fn a_host_pair_without_an_equals_sign_is_named() {
         assert_eq!(
             parse("mobility.ba.sk", None, "").expect_err("no organization"),

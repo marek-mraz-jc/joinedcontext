@@ -1467,6 +1467,30 @@ mod tests {
             0,
             "nothing to refuse"
         );
+        // An Organization at the legacy `org.yaml` is a warning, printed beside the outcome.
+        let legacy = dir.join("org.yaml");
+        std::fs::write(
+            &legacy,
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: hel\n  \
+             namespace: org\nspec:\n  domain: hel.fi\n  locales: [sk, en]\n  defaultLocale: sk\n",
+        )
+        .expect("the legacy organization");
+        let report = validate(
+            &dir,
+            Default::default(),
+            (&OrganizationBounds::default(), None, None, None),
+        );
+        assert!(
+            report.warnings.iter().any(|w| w.message.contains("legacy")),
+            "{:?}",
+            report.warnings
+        );
+        assert_ne!(
+            run(&["--as-portal", "--repo-dir", &org]),
+            2,
+            "no usage error"
+        );
+        std::fs::remove_file(&legacy).expect("the legacy organization goes");
         let file = dir.join("projects/city/spaces/air/endpoints/air.yaml");
         std::fs::create_dir_all(file.parent().expect("a parent")).expect("the tree");
         std::fs::write(&file, "kind: NoSuchKind\nmetadata: { name: air }\n").expect("the manifest");
@@ -1539,6 +1563,29 @@ mod tests {
         );
 
         write("public");
+        let report = validate(&dir, Default::default(), settings);
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|f| f.message.contains("the Portal refuses it")),
+            "{:?}",
+            report.findings
+        );
+
+        // A manifest the loader takes and the Portal's envelope does not (a metadata member
+        // nobody knows) is left to jcctl's own findings, never judged as a proposal.
+        let manifest = json!({
+            "apiVersion": crate::resource::API_VERSION,
+            "kind": "Endpoint",
+            "metadata": { "name": "air", "namespace": "city", "colour": "red" },
+            "spec": {
+                "contextSpaceRef": "air", "slug": "dddddddddddddddddddddddddd",
+                "audience": "organization", "enabledRepresentations": ["ngsi-ld"],
+                "publish": { "ckan": { "instanceRef": "opendata" } }
+            }
+        });
+        std::fs::write(&file, manifest.to_string()).expect("the manifest");
         let report = validate(&dir, Default::default(), settings);
         assert!(
             !report

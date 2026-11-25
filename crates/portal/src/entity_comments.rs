@@ -147,10 +147,10 @@ async fn inbox_keys(
         .into_iter()
         .map(|(_, key)| Some(key))
         .collect();
+    // The reserved project is never among the recorded ones: `every_recorded` reads the rows that
+    // are `NOT reserved`, `installation` the one that is, and a project id is the table's key.
     if let Some(key) = crate::project_ids::installation(pool, mirror).await? {
-        if !keys.contains(&Some(key)) {
-            keys.push(Some(key));
-        }
+        keys.push(Some(key));
     }
     keys.push(None);
     Ok(keys)

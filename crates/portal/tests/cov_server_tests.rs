@@ -272,6 +272,17 @@ async fn the_background_work_starts_with_a_portal_that_writes_no_views() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
+/// A forge and a syncer without an outbound client for `SyncSource`s: the sync loop and the
+/// mirror start, the `SyncSource` loop does not.
+#[tokio::test]
+async fn the_background_work_starts_without_a_sync_driver() {
+    let forge = MockServer::start().await;
+    let mut state = busy_state(&forge, false);
+    state.sync = None;
+    server::spawn_background(&state);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+}
+
 #[tokio::test]
 async fn the_background_work_of_a_bare_portal_starts_without_a_database() {
     server::spawn_background(&AppState::new(Config::for_tests(), None));

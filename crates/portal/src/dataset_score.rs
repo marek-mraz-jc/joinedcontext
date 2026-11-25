@@ -998,12 +998,16 @@ mod tests {
     #[tokio::test]
     async fn an_unreadable_health_log_leaves_the_score_unmeasured_not_failed() {
         use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .acquire_timeout(std::time::Duration::from_millis(50))
-            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
-            .expect("a lazy pool");
-        let state =
-            crate::state::AppState::new(crate::config::Config::for_tests(), None).with_db(pool);
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None)
+            .with_db(crate::test_db::dead_pool());
+        // A Project the mirror holds, so reading its checks reaches the database that is down.
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "Project".to_owned(),
+            metadata: ObjectMeta::new("bbsk", crate::permissions::ORG_NAMESPACE),
+            spec: serde_json::json!({ "organizationRef": "o" }),
+            status: None,
+        });
         let endpoint = ResourceEnvelope {
             api_version: API_VERSION.to_owned(),
             kind: "Endpoint".to_owned(),
@@ -1011,8 +1015,16 @@ mod tests {
             spec: serde_json::json!({}),
             status: None,
         };
-        let got = of_endpoint(&state, "bbsk", &endpoint).await;
+        let (got, log) = crate::test_log::logged(
+            tracing::level_filters::LevelFilter::WARN,
+            of_endpoint(&state, "bbsk", &endpoint),
+        )
+        .await;
         assert_eq!(got.score, None);
         assert_eq!(got.parts.len(), 4);
+        assert!(
+            log.contains("the health log could not be read for a score"),
+            "{log}"
+        );
     }
 }

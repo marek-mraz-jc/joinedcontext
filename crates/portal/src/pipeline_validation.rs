@@ -328,10 +328,13 @@ pub fn insert_stage(
     let labels = STAGE_LABELS
         .iter()
         .filter(|label| whole || **label != "validation_quality");
-    for (processor, label) in checks.iter_mut().zip(labels) {
-        if let Some(fields) = processor.as_object_mut() {
-            fields.insert("label".into(), json!(label));
-        }
+    // Every processor of the stage and the sink is an object.
+    for (fields, label) in checks
+        .iter_mut()
+        .filter_map(Value::as_object_mut)
+        .zip(labels)
+    {
+        fields.insert("label".into(), json!(label));
     }
     processors.splice(split..split, checks);
     true
@@ -1131,5 +1134,43 @@ mod tests {
         let compiled = load(&repo, &dir);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(compiled.is_empty(), "{:?}", compiled.keys());
+    }
+
+    #[test]
+    fn a_space_whose_spec_does_not_parse_compiles_to_nothing() {
+        let dir = std::env::temp_dir().join(format!(
+            "portal-validation-bad-space-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        write(
+            &dir,
+            "projects/ovzdusie/spaces/air/space.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n  notAField: 1\n  dataModelRef: { kind: DataModel, name: air }\n",
+        );
+        let repo = jcctl::loader::Repository::load(&dir).expect("the repository loads");
+        let compiled = load(&repo, &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(compiled.is_empty(), "{:?}", compiled.keys());
+    }
+
+    /// DM-88: a rejecting range with only a maximum, or with both bounds, tests each bound it has.
+    #[test]
+    fn a_rejecting_range_tests_only_the_bounds_it_names() {
+        let mut capped = model(false);
+        capped.quality = serde_json::from_value(json!([
+            {"name": "pm10-capped", "entityType": "AirQualityObserved", "kind": "range", "attribute": "pm10", "max": 900, "outcome": "reject"},
+            {"name": "pm10-between", "entityType": "AirQualityObserved", "kind": "range", "attribute": "pm10", "min": 1, "max": 800, "outcome": "reject"}
+        ]))
+        .expect("rules");
+        let stage = stage(&capped);
+        assert_eq!(stage.len(), 3, "the quality mapping is there");
+        let mapping = stage[2]["mapping"].as_str().expect("the quality mapping");
+        assert!(mapping.contains("$v > 900"), "{mapping}");
+        assert!(!mapping.contains("$v < 900"), "{mapping}");
+        assert!(
+            mapping.contains("$v < 1") && mapping.contains("$v > 800"),
+            "{mapping}"
+        );
     }
 }

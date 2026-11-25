@@ -161,6 +161,20 @@ pub(crate) fn host_runner() -> Option<std::sync::Arc<dyn RunnerSecrets>> {
         .clone()
 }
 
+/// `work` on a blocking thread; a `work` that panicked, or that the runtime dropped before it ran,
+/// is a resolution that did not finish.
+async fn off_runtime<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, SecretError> + Send + 'static,
+) -> Result<T, SecretError> {
+    match tokio::task::spawn_blocking(work).await {
+        Ok(resolved) => resolved,
+        Err(err) => Err(SecretError::Unresolved {
+            name: String::new(),
+            reason: format!("the resolver did not finish: {err}"),
+        }),
+    }
+}
+
 /// Resolves references against the configured backend.
 #[derive(Debug, Clone)]
 pub struct Resolver {
@@ -190,14 +204,7 @@ impl Resolver {
         let resolver = self.clone();
         let folder = secrets_folder(repository, project, references)?;
         let references = references.to_vec();
-        match tokio::task::spawn_blocking(move || resolver.environment(&folder, &references)).await
-        {
-            Ok(resolved) => resolved,
-            Err(err) => Err(SecretError::Unresolved {
-                name: String::new(),
-                reason: format!("the resolver did not finish: {err}"),
-            }),
-        }
+        off_runtime(move || resolver.environment(&folder, &references)).await
     }
 
     /// One reference's value, for a caller that wants the credential itself rather than an
@@ -855,5 +862,24 @@ mod tests {
             runner.refused()[&("helsinki".to_owned(), "bikes".to_owned())],
             "the Secret was not written"
         );
+    }
+
+    /// A resolution whose thread panicked is unresolved with that said, never a lost answer.
+    #[tokio::test]
+    async fn a_resolver_that_panicked_did_not_finish() {
+        let err =
+            off_runtime(|| -> Result<Environment, SecretError> { panic!("the backend panicked") })
+                .await
+                .expect_err("a panic is no environment");
+        match err {
+            SecretError::Unresolved { name, reason } => {
+                assert!(name.is_empty());
+                assert!(
+                    reason.starts_with("the resolver did not finish"),
+                    "{reason}"
+                );
+            }
+            other => panic!("not unresolved: {other}"),
+        }
     }
 }

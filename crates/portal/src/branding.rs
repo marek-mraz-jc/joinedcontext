@@ -300,17 +300,23 @@ impl Branding {
     /// that one place knows both the colour and the text that can be read on it; a brand that is
     /// not a colour at all keeps the neutral default's.
     pub fn primary_dark(&self) -> String {
-        mix_with_white(&self.colours.primary, DARK_BRAND_SHARE)
-            .unwrap_or_else(|| Self::default().primary_dark)
+        let [r, g, b] = self.primary_dark_rgb();
+        format!("#{r:02x}{g:02x}{b:02x}")
+    }
+
+    /// [`Branding::primary_dark`] as its three channels; the neutral default's `#5985e7` for a
+    /// brand that is not a colour.
+    fn primary_dark_rgb(&self) -> [u8; 3] {
+        rgb_of(&self.colours.primary).map_or(DEFAULT_PRIMARY_DARK, |brand| {
+            mix_with_white(brand, DARK_BRAND_SHARE)
+        })
     }
 
     /// The readable text colour on top of [`Branding::primary_dark`], by the same rule and the
     /// same two candidates as [`Branding::primary_foreground`].
     pub fn primary_foreground_dark(&self) -> &'static str {
         let dark = self.primary_dark();
-        let Some(background) = luminance(&dark) else {
-            return FOREGROUND_ON_LIGHT;
-        };
+        let background = luminance_of(self.primary_dark_rgb());
         let on_dark = contrast(background, luminance(FOREGROUND_ON_DARK).unwrap_or(1.0));
         let on_light = contrast(background, luminance(FOREGROUND_ON_LIGHT).unwrap_or(0.0));
         if on_dark.max(on_light) < MIN_CONTRAST {
@@ -473,19 +479,16 @@ const DARK_BRAND_SHARE: f64 = 0.72;
 
 /// `color-mix(in oklab, colour <share>%, white)`, the browser's own arithmetic, so the colour the
 /// UI paints and the colour this choice was made against are the same one.
-fn mix_with_white(colour: &str, share: f64) -> Option<String> {
-    let [r, g, b] = rgb_of(colour)?;
-    let mixed = from_oklab(
-        to_oklab([r, g, b])
-            .iter()
-            .zip(to_oklab([255, 255, 255]))
-            .map(|(brand, white)| brand * share + white * (1.0 - share))
-            .collect::<Vec<_>>()
-            .try_into()
-            .ok()?,
-    );
-    Some(format!("#{:02x}{:02x}{:02x}", mixed[0], mixed[1], mixed[2]))
+fn mix_with_white(brand: [u8; 3], share: f64) -> [u8; 3] {
+    let brand = to_oklab(brand);
+    let white = to_oklab([255, 255, 255]);
+    from_oklab(std::array::from_fn(|i| {
+        brand[i] * share + white[i] * (1.0 - share)
+    }))
 }
+
+/// The dark theme's primary for a brand that is not a colour: the neutral default's, `#5985e7`.
+const DEFAULT_PRIMARY_DARK: [u8; 3] = [0x59, 0x85, 0xe7];
 
 /// sRGB to Oklab (Björn Ottosson's matrices), the space `color-mix(in oklab, …)` interpolates in.
 ///
@@ -557,7 +560,11 @@ pub(crate) fn rgb_of(colour: &str) -> Option<[u8; 3]> {
 
 /// Relative luminance of a hex colour (WCAG 2.1), for the contrast decision the UI cannot make.
 pub(crate) fn luminance(colour: &str) -> Option<f32> {
-    let [r, g, b] = rgb_of(colour)?;
+    rgb_of(colour).map(luminance_of)
+}
+
+/// [`luminance`] of three channels.
+fn luminance_of([r, g, b]: [u8; 3]) -> f32 {
     // Each channel is linearised before it is weighted: sRGB is gamma-encoded, and weighting the
     // encoded bytes gives a number that is not a luminance and cannot be compared to a ratio.
     let channel = |c: u8| {
@@ -568,7 +575,7 @@ pub(crate) fn luminance(colour: &str) -> Option<f32> {
             ((c + 0.055) / 1.055).powf(2.4)
         }
     };
-    Some(0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b))
+    0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
 }
 
 #[cfg(test)]
@@ -951,6 +958,45 @@ languages:
         assert_eq!(branding.languages.default, "sk");
         assert_eq!(branding.languages.offered, vec!["en", "sk"]);
         assert_eq!(branding.org_domain, "hel.fi");
+    }
+
+    #[test]
+    fn an_organization_without_locales_keeps_the_installations_languages() {
+        let spec: jc_core::kinds::OrganizationSpec = serde_json::from_value(serde_json::json!({
+            "domain": "hel.fi", "locales": [], "defaultLocale": "sk"
+        }))
+        .expect("an Organization spec");
+        let installation = Branding::default();
+        let languages = (
+            installation.languages.default.clone(),
+            installation.languages.offered.clone(),
+        );
+        let branding = installation.with_organization(&spec);
+        assert_eq!(
+            (branding.languages.default, branding.languages.offered),
+            languages
+        );
+        assert_eq!(branding.org_domain, "hel.fi");
+    }
+
+    /// A grey whose dark-theme mix sits near the crossover reaches 4.5:1 with neither text: the
+    /// better one is served and the log names the colour.
+    #[tokio::test]
+    async fn a_dark_primary_no_text_reads_on_is_logged_and_gets_the_better_of_the_two() {
+        let branding = with_primary("#4d4d4d");
+        assert_eq!(branding.primary_dark(), "#7b7b7b");
+        let (chosen, log) =
+            crate::test_log::logged(tracing::level_filters::LevelFilter::WARN, async {
+                branding.primary_foreground_dark()
+            })
+            .await;
+        assert!(log.contains("in the dark theme"), "{log}");
+        let background = luminance("#7b7b7b").expect("a hex colour");
+        let got = contrast(background, luminance(chosen).expect("a hex colour"));
+        assert!(got < MIN_CONTRAST, "{got}");
+        for other in [FOREGROUND_ON_DARK, FOREGROUND_ON_LIGHT] {
+            assert!(got >= contrast(background, luminance(other).expect("a hex colour")));
+        }
     }
 
     #[test]

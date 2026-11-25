@@ -116,13 +116,16 @@ pub fn recipients_of(text: &str) -> Vec<String> {
 }
 
 /// The public recipient of the age identity file the Portal resolves references with.
+/// `identities_from_file` refuses a file with no key line, so a file that reads holds one.
 pub fn own_recipient(identity_file: &std::path::Path) -> Result<String, String> {
-    let identities = jcctl::secrets::identities_from_file(identity_file)
-        .map_err(|_| "the Portal's age identity file cannot be read".to_owned())?;
-    identities
-        .first()
-        .map(|identity| identity.to_public().to_string())
-        .ok_or_else(|| "the Portal's age identity file holds no key".to_owned())
+    jcctl::secrets::identities_from_file(identity_file)
+        .ok()
+        .and_then(|identities| {
+            identities
+                .first()
+                .map(|identity| identity.to_public().to_string())
+        })
+        .ok_or_else(|| "the Portal's age identity file cannot be read".to_owned())
 }
 
 /// One SOPS file holding the secret `name` with these `keys`, encrypted for `recipients`.
@@ -142,7 +145,7 @@ pub fn encrypt(
         mac.update(value.as_bytes());
         leaves.insert(
             key.as_str().into(),
-            seal(value.as_bytes(), &format!("{name}:{key}:"), &data_key[..])?.into(),
+            seal(value.as_bytes(), &format!("{name}:{key}:"), &data_key)?.into(),
         );
     }
     let mac_hex: String = mac.finalize().iter().map(|b| format!("{b:02X}")).collect();
@@ -165,7 +168,7 @@ pub fn encrypt(
     let metadata = serde_json::json!({
         "age": age,
         "lastmodified": now,
-        "mac": seal(mac_hex.as_bytes(), now, &data_key[..])?,
+        "mac": seal(mac_hex.as_bytes(), now, &data_key)?,
         "unencrypted_suffix": "_unencrypted",
         "version": "3.9.0",
     });
@@ -177,11 +180,10 @@ pub fn encrypt(
 }
 
 /// One `ENC[AES256_GCM,…]` literal, authenticated with `aad` as SOPS does.
-fn seal(plaintext: &[u8], aad: &str, data_key: &[u8]) -> Result<String, String> {
+fn seal(plaintext: &[u8], aad: &str, data_key: &[u8; 32]) -> Result<String, String> {
     let mut nonce = [0u8; 32];
     OsRng.fill_bytes(&mut nonce);
-    let cipher = SopsCipher::new_from_slice(data_key)
-        .map_err(|_| "the data key is not 32 bytes".to_owned())?;
+    let cipher = SopsCipher::new(data_key.into());
     let mut sealed = cipher
         .encrypt(
             &aes_gcm::Nonce::<U32>::from(nonce),
@@ -352,6 +354,29 @@ mod tests {
         let err = super::own_recipient(std::path::Path::new("/nonexistent/age-identity.txt"))
             .expect_err("no such file");
         assert_eq!(err, "the Portal's age identity file cannot be read");
+    }
+
+    #[test]
+    fn an_identity_file_with_no_key_names_no_recipient_and_one_with_a_key_names_its_own() {
+        let dir = std::env::temp_dir().join(format!("t7858-identity-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the folder");
+        let empty = dir.join("empty.txt");
+        std::fs::write(&empty, "# created: never\n").expect("the file");
+        assert_eq!(
+            super::own_recipient(&empty),
+            Err("the Portal's age identity file cannot be read".to_owned())
+        );
+        let identity = age::x25519::Identity::generate();
+        let keyed = dir.join("keyed.txt");
+        {
+            use age::secrecy::ExposeSecret;
+            std::fs::write(&keyed, identity.to_string().expose_secret()).expect("the file");
+        }
+        assert_eq!(
+            super::own_recipient(&keyed),
+            Ok(identity.to_public().to_string())
+        );
+        std::fs::remove_dir_all(&dir).expect("cleaned");
     }
 
     #[test]

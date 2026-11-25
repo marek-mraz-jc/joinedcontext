@@ -258,8 +258,26 @@ pub struct NetLookup {
 
 impl NetLookup {
     pub fn new() -> Result<Self, String> {
-        let mut builder = hickory_resolver::TokioResolver::builder_tokio()
-            .map_err(|e| format!("the resolver configuration is unreadable: {e}"))?;
+        Self::from_system(hickory_resolver::system_conf::read_system_conf())
+    }
+
+    /// [`Self::new`] from the system configuration as read, so a test hands it an unreadable one.
+    fn from_system(
+        system: Result<
+            (
+                hickory_resolver::config::ResolverConfig,
+                hickory_resolver::config::ResolverOpts,
+            ),
+            hickory_resolver::net::NetError,
+        >,
+    ) -> Result<Self, String> {
+        let (config, options) =
+            system.map_err(|e| format!("the resolver configuration is unreadable: {e}"))?;
+        let mut builder = hickory_resolver::TokioResolver::builder_with_config(
+            config,
+            hickory_resolver::net::runtime::TokioRuntimeProvider::default(),
+        );
+        *builder.options_mut() = options;
         builder.options_mut().timeout = LOOKUP_TIMEOUT;
         let http = reqwest::Client::builder()
             .no_proxy()
@@ -972,6 +990,155 @@ mod tests {
         let lookup = net().await;
         assert_eq!(
             Lookup::did_document(&lookup, "did.nowhere.invalid").await,
+            Err(Unanswered)
+        );
+    }
+
+    #[test]
+    fn an_unreadable_resolver_configuration_is_said_in_words() {
+        let unreadable = hickory_resolver::system_conf::parse_resolv_conf(b"# no nameserver\n");
+        let said = NetLookup::from_system(unreadable).err();
+        assert!(
+            said.as_deref()
+                .is_some_and(|said| said.starts_with("the resolver configuration is unreadable")),
+            "{said:?}"
+        );
+    }
+
+    /// The test certificate of `tests/fixtures` (CN localhost, SAN 127.0.0.1; its key is the
+    /// constant `[7; 32]`, no secret).
+    const TEST_CERT: &[u8] = include_bytes!("../tests/fixtures/db-relay.cert.der");
+
+    /// `localhost:{port}` of an https server with the test certificate that answers every
+    /// request with `answer` and closes, and a lookup whose client trusts that certificate and
+    /// takes `localhost` to it: the production client reaches public addresses only.
+    async fn did_server(answer: Vec<u8>) -> (NetLookup, String) {
+        use p256::pkcs8::EncodePrivateKey;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio_rustls::rustls;
+        let key = p256::SecretKey::from_slice(&[7; 32])
+            .expect("a scalar")
+            .to_pkcs8_der()
+            .expect("an encoded key")
+            .as_bytes()
+            .to_vec();
+        let config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("TLS versions")
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![TEST_CERT.to_vec().into()],
+            rustls::pki_types::PrivatePkcs8KeyDer::from(key).into(),
+        )
+        .expect("the test certificate");
+        let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                let acceptor = acceptor.clone();
+                let answer = answer.clone();
+                tokio::spawn(async move {
+                    let mut stream = acceptor.accept(socket).await?;
+                    let mut request = Vec::new();
+                    let mut buffer = [0_u8; 1024];
+                    while !request.windows(4).any(|end| end == b"\r\n\r\n") {
+                        let read = stream.read(&mut buffer).await?;
+                        if read == 0 {
+                            break;
+                        }
+                        request.extend_from_slice(&buffer[..read]);
+                    }
+                    stream.write_all(&answer).await?;
+                    stream.shutdown().await
+                });
+            }
+        });
+        let http = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve("localhost", std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
+            .add_root_certificate(
+                reqwest::Certificate::from_der(TEST_CERT).expect("the test certificate"),
+            )
+            .timeout(Duration::from_secs(5))
+            .build()
+            .expect("a test client");
+        (
+            NetLookup {
+                http,
+                ..net().await
+            },
+            format!("localhost:{port}"),
+        )
+    }
+
+    fn http_answer(status: &str, length: usize, body: &[u8]) -> Vec<u8> {
+        let mut answer = format!(
+            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {length}\r\nconnection: close\r\n\r\n"
+        )
+        .into_bytes();
+        answer.extend_from_slice(body);
+        answer
+    }
+
+    #[tokio::test]
+    async fn a_did_document_served_whole_is_read_as_json() {
+        let body = br#"{"id":"did:web:hel.fi","service":[]}"#;
+        let (lookup, domain) = did_server(http_answer("200 OK", body.len(), body)).await;
+        assert_eq!(
+            Lookup::did_document(&lookup, &domain).await,
+            Ok(json!({"id": "did:web:hel.fi", "service": []}))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_did_document_that_is_not_there_is_no_document() {
+        let (lookup, domain) = did_server(http_answer("404 Not Found", 0, b"")).await;
+        assert_eq!(
+            Lookup::did_document(&lookup, &domain).await,
+            Ok(Value::Null)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_did_document_the_server_fails_on_is_unanswered() {
+        let (lookup, domain) = did_server(http_answer("500 Internal Server Error", 0, b"")).await;
+        assert_eq!(
+            Lookup::did_document(&lookup, &domain).await,
+            Err(Unanswered)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_did_document_past_the_limit_is_unanswered() {
+        let body = vec![b' '; DID_DOCUMENT_LIMIT + 1];
+        let (lookup, domain) = did_server(http_answer("200 OK", body.len(), &body)).await;
+        assert_eq!(
+            Lookup::did_document(&lookup, &domain).await,
+            Err(Unanswered)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_did_document_that_is_no_json_is_unanswered() {
+        let body = b"<html>not a document</html>";
+        let (lookup, domain) = did_server(http_answer("200 OK", body.len(), body)).await;
+        assert_eq!(
+            Lookup::did_document(&lookup, &domain).await,
+            Err(Unanswered)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_did_document_cut_off_mid_body_is_unanswered() {
+        let (lookup, domain) = did_server(http_answer("200 OK", 1000, br#"{"id":"#)).await;
+        assert_eq!(
+            Lookup::did_document(&lookup, &domain).await,
             Err(Unanswered)
         );
     }

@@ -302,49 +302,51 @@ impl Ledger {
         if ids.is_empty() {
             return Ok(());
         }
-        if let Inner::Postgres(pool, mirror) = &self.inner {
-            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
-                return Ok(());
-            };
-            let sql = if wrote {
-                "INSERT INTO pipeline_source_ledger (project, pipeline, entity_id, last_run, \
-                 last_written) SELECT $1, $2, i, $3, now() FROM UNNEST($4::text[]) AS t(i) \
-                 ON CONFLICT (project, pipeline, entity_id) DO UPDATE SET last_run = $3, \
-                 last_seen = now(), last_written = now()"
-            } else {
-                "UPDATE pipeline_source_ledger SET last_run = $3, last_seen = now() \
-                 WHERE project = $1 AND pipeline = $2 AND entity_id = ANY($4::text[])"
-            };
-            sqlx::query(sql)
-                .bind(project)
-                .bind(pipeline)
-                .bind(run)
-                .bind(&ids)
-                .execute(&mut *tx)
-                .await?;
-            tx.commit().await?;
-            return Ok(());
-        }
-        if let Some(mut map) = self.memory() {
-            let book = map
-                .entry((project.to_owned(), pipeline.to_owned()))
-                .or_default();
-            for id in ids {
-                if wrote {
-                    book.rows.entry(id.to_owned()).or_insert(Row {
-                        last_run: String::new(),
-                        misses: 0,
-                    });
-                }
-                if let Some(row) = book.rows.get_mut(id) {
-                    row.last_run = run.to_owned();
+        let (pool, mirror) = match &self.inner {
+            Inner::Postgres(pool, mirror) => (pool, mirror),
+            Inner::Memory(map) => {
+                let mut map = map.write().unwrap_or_else(|e| e.into_inner());
+                let book = map
+                    .entry((project.to_owned(), pipeline.to_owned()))
+                    .or_default();
+                for id in ids {
                     if wrote {
-                        book.written
-                            .insert(id.to_owned(), jc_time::TimestampTz::now().as_second());
+                        book.rows.entry(id.to_owned()).or_insert(Row {
+                            last_run: String::new(),
+                            misses: 0,
+                        });
+                    }
+                    if let Some(row) = book.rows.get_mut(id) {
+                        row.last_run = run.to_owned();
+                        if wrote {
+                            book.written
+                                .insert(id.to_owned(), jc_time::TimestampTz::now().as_second());
+                        }
                     }
                 }
+                return Ok(());
             }
-        }
+        };
+        let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+            return Ok(());
+        };
+        let sql = if wrote {
+            "INSERT INTO pipeline_source_ledger (project, pipeline, entity_id, last_run, \
+             last_written) SELECT $1, $2, i, $3, now() FROM UNNEST($4::text[]) AS t(i) \
+             ON CONFLICT (project, pipeline, entity_id) DO UPDATE SET last_run = $3, \
+             last_seen = now(), last_written = now()"
+        } else {
+            "UPDATE pipeline_source_ledger SET last_run = $3, last_seen = now() \
+             WHERE project = $1 AND pipeline = $2 AND entity_id = ANY($4::text[])"
+        };
+        sqlx::query(sql)
+            .bind(project)
+            .bind(pipeline)
+            .bind(run)
+            .bind(&ids)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -407,40 +409,42 @@ impl Ledger {
         misses: &[(String, u8)],
         hold: Option<&Hold>,
     ) -> Result<(), sqlx::Error> {
-        if let Inner::Postgres(pool, mirror) = &self.inner {
-            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
-                return Ok(());
-            };
-            let (ids, counts): (Vec<&str>, Vec<i16>) = misses
-                .iter()
-                .map(|(id, missed)| (id.as_str(), i16::from(*missed)))
-                .unzip();
-            sqlx::query(
-                "UPDATE pipeline_source_ledger AS l SET misses = t.m \
-                 FROM UNNEST($3::text[], $4::smallint[]) AS t(i, m) \
-                 WHERE l.project = $1 AND l.pipeline = $2 AND l.entity_id = t.i",
-            )
-            .bind(project)
-            .bind(pipeline)
-            .bind(&ids)
-            .bind(&counts)
-            .execute(&mut *tx)
-            .await?;
-            set_hold(&mut tx, project, pipeline, hold).await?;
-            return tx.commit().await;
-        }
-        if let Some(mut map) = self.memory() {
-            let book = map
-                .entry((project.to_owned(), pipeline.to_owned()))
-                .or_default();
-            for (id, missed) in misses {
-                if let Some(row) = book.rows.get_mut(id) {
-                    row.misses = *missed;
+        let (pool, mirror) = match &self.inner {
+            Inner::Postgres(pool, mirror) => (pool, mirror),
+            Inner::Memory(map) => {
+                let mut map = map.write().unwrap_or_else(|e| e.into_inner());
+                let book = map
+                    .entry((project.to_owned(), pipeline.to_owned()))
+                    .or_default();
+                for (id, missed) in misses {
+                    if let Some(row) = book.rows.get_mut(id) {
+                        row.misses = *missed;
+                    }
                 }
+                book.hold = hold.cloned();
+                return Ok(());
             }
-            book.hold = hold.cloned();
-        }
-        Ok(())
+        };
+        let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+            return Ok(());
+        };
+        let (ids, counts): (Vec<&str>, Vec<i16>) = misses
+            .iter()
+            .map(|(id, missed)| (id.as_str(), i16::from(*missed)))
+            .unzip();
+        sqlx::query(
+            "UPDATE pipeline_source_ledger AS l SET misses = t.m \
+             FROM UNNEST($3::text[], $4::smallint[]) AS t(i, m) \
+             WHERE l.project = $1 AND l.pipeline = $2 AND l.entity_id = t.i",
+        )
+        .bind(project)
+        .bind(pipeline)
+        .bind(&ids)
+        .bind(&counts)
+        .execute(&mut *tx)
+        .await?;
+        set_hold(&mut tx, project, pipeline, hold).await?;
+        tx.commit().await
     }
 
     /// Takes deleted ids out of the ledger.
@@ -450,57 +454,61 @@ impl Ledger {
         pipeline: &str,
         ids: &[String],
     ) -> Result<(), sqlx::Error> {
-        if let Inner::Postgres(pool, mirror) = &self.inner {
-            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+        let (pool, mirror) = match &self.inner {
+            Inner::Postgres(pool, mirror) => (pool, mirror),
+            Inner::Memory(map) => {
+                let mut map = map.write().unwrap_or_else(|e| e.into_inner());
+                if let Some(book) = map.get_mut(&(project.to_owned(), pipeline.to_owned())) {
+                    ids.iter().for_each(|id| {
+                        book.rows.remove(id);
+                        book.marked.remove(id);
+                        book.written.remove(id);
+                    });
+                }
                 return Ok(());
-            };
-            sqlx::query(
-                "DELETE FROM pipeline_source_ledger WHERE project = $1 AND pipeline = $2 \
-                 AND entity_id = ANY($3::text[])",
-            )
-            .bind(project)
-            .bind(pipeline)
-            .bind(ids)
-            .execute(&mut *tx)
-            .await?;
-            tx.commit().await?;
-            return Ok(());
-        }
-        if let Some(mut map) = self.memory() {
-            if let Some(book) = map.get_mut(&(project.to_owned(), pipeline.to_owned())) {
-                ids.iter().for_each(|id| {
-                    book.rows.remove(id);
-                    book.marked.remove(id);
-                    book.written.remove(id);
-                });
             }
-        }
+        };
+        let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+            return Ok(());
+        };
+        sqlx::query(
+            "DELETE FROM pipeline_source_ledger WHERE project = $1 AND pipeline = $2 \
+             AND entity_id = ANY($3::text[])",
+        )
+        .bind(project)
+        .bind(pipeline)
+        .bind(ids)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 
     /// "Keep": every id counts as read again and the hold is cleared.
     pub async fn keep(&self, project: &str, pipeline: &str) -> Result<(), sqlx::Error> {
-        if let Inner::Postgres(pool, mirror) = &self.inner {
-            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+        let (pool, mirror) = match &self.inner {
+            Inner::Postgres(pool, mirror) => (pool, mirror),
+            Inner::Memory(map) => {
+                let mut map = map.write().unwrap_or_else(|e| e.into_inner());
+                if let Some(book) = map.get_mut(&(project.to_owned(), pipeline.to_owned())) {
+                    book.rows.values_mut().for_each(|row| row.misses = 0);
+                    book.hold = None;
+                }
                 return Ok(());
-            };
-            sqlx::query(
-                "UPDATE pipeline_source_ledger SET misses = 0 WHERE project = $1 AND pipeline = $2",
-            )
-            .bind(project)
-            .bind(pipeline)
-            .execute(&mut *tx)
-            .await?;
-            set_hold(&mut tx, project, pipeline, None).await?;
-            return tx.commit().await;
-        }
-        if let Some(mut map) = self.memory() {
-            if let Some(book) = map.get_mut(&(project.to_owned(), pipeline.to_owned())) {
-                book.rows.values_mut().for_each(|row| row.misses = 0);
-                book.hold = None;
             }
-        }
-        Ok(())
+        };
+        let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+            return Ok(());
+        };
+        sqlx::query(
+            "UPDATE pipeline_source_ledger SET misses = 0 WHERE project = $1 AND pipeline = $2",
+        )
+        .bind(project)
+        .bind(pipeline)
+        .execute(&mut *tx)
+        .await?;
+        set_hold(&mut tx, project, pipeline, None).await?;
+        tx.commit().await
     }
 
     /// Marks the ids `run`'s source said are deleted (PL-98) and answers the ones the ledger holds:
@@ -736,27 +744,29 @@ impl Ledger {
         pipeline: &str,
         run: &str,
     ) -> Result<(), sqlx::Error> {
-        if let Inner::Postgres(pool, mirror) = &self.inner {
-            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+        let (pool, mirror) = match &self.inner {
+            Inner::Postgres(pool, mirror) => (pool, mirror),
+            Inner::Memory(map) => {
+                let mut map = map.write().unwrap_or_else(|e| e.into_inner());
+                map.entry((project.to_owned(), pipeline.to_owned()))
+                    .or_default()
+                    .complete = Some((run.to_owned(), jc_time::TimestampTz::now().to_rfc3339()));
                 return Ok(());
-            };
-            sqlx::query(
-                "INSERT INTO pipeline_source_complete (project, pipeline, run) VALUES ($1, $2, $3) \
-                 ON CONFLICT (project, pipeline) DO UPDATE SET run = $3, at = now()",
-            )
-            .bind(project)
-            .bind(pipeline)
-            .bind(run)
-            .execute(&mut *tx)
-            .await?;
-            tx.commit().await?;
+            }
+        };
+        let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
             return Ok(());
-        }
-        if let Some(mut map) = self.memory() {
-            map.entry((project.to_owned(), pipeline.to_owned()))
-                .or_default()
-                .complete = Some((run.to_owned(), jc_time::TimestampTz::now().to_rfc3339()));
-        }
+        };
+        sqlx::query(
+            "INSERT INTO pipeline_source_complete (project, pipeline, run) VALUES ($1, $2, $3) \
+             ON CONFLICT (project, pipeline) DO UPDATE SET run = $3, at = now()",
+        )
+        .bind(project)
+        .bind(pipeline)
+        .bind(run)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -799,54 +809,56 @@ impl Ledger {
         if ids.is_empty() {
             return Ok(());
         }
-        if let Inner::Postgres(pool, mirror) = &self.inner {
-            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+        let (pool, mirror) = match &self.inner {
+            Inner::Postgres(pool, mirror) => (pool, mirror),
+            Inner::Memory(map) => {
+                let mut map = map.write().unwrap_or_else(|e| e.into_inner());
+                let book = map
+                    .entry((project.to_owned(), pipeline.to_owned()))
+                    .or_default();
+                let at = jc_time::TimestampTz::now().to_rfc3339();
+                for id in ids {
+                    book.removed.retain(|(_, removal)| &removal.id != id);
+                    let removal = Removal {
+                        id: id.clone(),
+                        pipeline: pipeline.to_owned(),
+                        run: run.to_owned(),
+                        at: at.clone(),
+                        reason: reason(cause, pipeline, run),
+                    };
+                    book.removed.push((space.to_owned(), removal));
+                }
+                let over = book.removed.len().saturating_sub(REMOVALS_KEPT);
+                book.removed.drain(..over);
                 return Ok(());
-            };
-            sqlx::query(
-                "INSERT INTO pipeline_source_removed (project, space, entity_id, pipeline, run, \
-                 cause) SELECT $1, $2, i, $3, $4, $6 FROM UNNEST($5::text[]) AS t(i) \
-                 ON CONFLICT (project, space, entity_id) DO UPDATE SET pipeline = $3, run = $4, \
-                 cause = $6, at = now()",
-            )
-            .bind(project)
-            .bind(space)
-            .bind(pipeline)
-            .bind(run)
-            .bind(ids)
-            .bind(cause.as_str())
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "DELETE FROM pipeline_source_removed WHERE project = $1 \
-                 AND at < now() - make_interval(days => $2)",
-            )
-            .bind(project)
-            .bind(REMOVED_DAYS)
-            .execute(&mut *tx)
-            .await?;
-            return tx.commit().await;
-        }
-        if let Some(mut map) = self.memory() {
-            let book = map
-                .entry((project.to_owned(), pipeline.to_owned()))
-                .or_default();
-            let at = jc_time::TimestampTz::now().to_rfc3339();
-            for id in ids {
-                book.removed.retain(|(_, removal)| &removal.id != id);
-                let removal = Removal {
-                    id: id.clone(),
-                    pipeline: pipeline.to_owned(),
-                    run: run.to_owned(),
-                    at: at.clone(),
-                    reason: reason(cause, pipeline, run),
-                };
-                book.removed.push((space.to_owned(), removal));
             }
-            let over = book.removed.len().saturating_sub(REMOVALS_KEPT);
-            book.removed.drain(..over);
-        }
-        Ok(())
+        };
+        let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+            return Ok(());
+        };
+        sqlx::query(
+            "INSERT INTO pipeline_source_removed (project, space, entity_id, pipeline, run, \
+             cause) SELECT $1, $2, i, $3, $4, $6 FROM UNNEST($5::text[]) AS t(i) \
+             ON CONFLICT (project, space, entity_id) DO UPDATE SET pipeline = $3, run = $4, \
+             cause = $6, at = now()",
+        )
+        .bind(project)
+        .bind(space)
+        .bind(pipeline)
+        .bind(run)
+        .bind(ids)
+        .bind(cause.as_str())
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "DELETE FROM pipeline_source_removed WHERE project = $1 \
+             AND at < now() - make_interval(days => $2)",
+        )
+        .bind(project)
+        .bind(REMOVED_DAYS)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await
     }
 
     /// The newest removals, at most `limit`: of one pipeline, or of every pipeline in one space.
@@ -3227,18 +3239,175 @@ mod tests {
         assert!(removed[0].url.path().contains("source-deletes"));
     }
 
+    /// The runner takes the stream and hangs up on its removal. A dropped wiremock server goes
+    /// back to its pool and still answers, so the runner here is a socket of the test's own.
     #[tokio::test(flavor = "current_thread")]
     async fn a_stream_the_runner_can_no_longer_remove_is_only_a_warning() {
-        let runner = runner_taking_streams().await;
-        let state = runner_world(Some(&runner.uri()), false, json!("veh"));
-        let started = launch(&state, "helsinki", "feed", "r1", &["urn:a".to_owned()]).await;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let runner = format!("http://{}", listener.local_addr().expect("address"));
+        let hung_up = std::sync::Arc::new(AtomicBool::new(false));
+        let seen = std::sync::Arc::clone(&hung_up);
+        tokio::spawn(async move {
+            let mut answered = false;
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0_u8; 8192];
+                let _ = socket.read(&mut request).await;
+                if answered {
+                    drop(socket);
+                    seen.store(true, Ordering::SeqCst);
+                } else {
+                    answered = true;
+                    let _ = socket
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                        )
+                        .await;
+                    // Read the rest of the request until the client closes, so no reset loses
+                    // the answer.
+                    while matches!(socket.read(&mut request).await, Ok(read) if read > 0) {}
+                }
+            }
+        });
+        let state = runner_world(Some(&runner), false, json!("veh"));
+        let (started, log) =
+            crate::test_log::logged(tracing::level_filters::LevelFilter::WARN, async {
+                let started = launch(&state, "helsinki", "feed", "r1", &["urn:a".to_owned()]).await;
+                // The removal task starts its window sleep on its first poll, before the clock stops.
+                tokio::task::yield_now().await;
+                tokio::time::pause();
+                tokio::time::advance(STREAM_WINDOW + Duration::from_secs(1)).await;
+                let waited = std::time::Instant::now();
+                let mut after = 0;
+                while after < 50 && waited.elapsed() < Duration::from_secs(10) {
+                    // A blocking wait parks the runtime (driving its I/O) without moving the clock.
+                    tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(2)))
+                        .await
+                        .expect("the wait");
+                    if hung_up.load(Ordering::SeqCst) {
+                        after += 1;
+                    }
+                }
+                started
+            })
+            .await;
         assert_eq!(started, Ok(1));
-        drop(runner);
-        tokio::time::pause();
-        tokio::time::advance(STREAM_WINDOW + Duration::from_secs(1)).await;
-        for _ in 0..200 {
-            tokio::task::yield_now().await;
-            std::thread::sleep(Duration::from_millis(2));
-        }
+        assert!(
+            log.contains("a source-delete stream was not removed"),
+            "{log}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_judged_miss_of_an_id_the_memory_ledger_lacks_adds_no_row() {
+        let ledger = Ledger::new(None, Default::default());
+        ledger
+            .seen("p", "x", "r1", &["urn:a".to_owned()], true)
+            .await
+            .expect("seen");
+        ledger
+            .settle(
+                "p",
+                "x",
+                &[("urn:a".into(), 1), ("urn:stranger".into(), 2)],
+                None,
+            )
+            .await
+            .expect("settle");
+        let (rows, _) = ledger.book("p", "x").await.expect("book");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows["urn:a"].misses, 1);
+        // A database ledger has no memory map to fall back on.
+        assert!(Ledger::new(Some(dead_pool()), Default::default())
+            .memory()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn a_report_of_a_pipeline_the_mirror_lacks_settles_the_ledger_and_records_no_removal() {
+        let state = snapshot_world(Vec::new());
+        state
+            .source_ledger
+            .seen("helsinki", "gone", "r0", &["urn:a".to_owned()], true)
+            .await
+            .expect("seen");
+        let report: Report = serde_json::from_value(json!({
+            "run": "r1", "deleted": ["urn:a"], "gone": [], "failed": []
+        }))
+        .expect("report");
+        reported(&state, "helsinki", "gone", report)
+            .await
+            .expect("reported");
+        let (rows, _) = state
+            .source_ledger
+            .book("helsinki", "gone")
+            .await
+            .expect("book");
+        assert!(rows.is_empty());
+        assert!(state
+            .source_ledger
+            .removals("helsinki", RemovalsOf::Pipeline("gone"), 10)
+            .await
+            .expect("removals")
+            .is_empty());
+    }
+
+    /// A launch that cannot start (no runner) puts the marks back; when the database refuses that
+    /// too, the marks are lost and the log says so.
+    #[tokio::test]
+    async fn marks_the_database_will_not_take_back_are_logged_as_lost() {
+        let Some(scratch) = crate::test_db::scratch().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let state = events_world().with_db(scratch.pool.clone());
+        crate::project_ids::placed(&scratch.pool, &state.mirror, "helsinki", "helsinki-org").await;
+        let ids = ["urn:a".to_owned()];
+        let ledger = &state.source_ledger;
+        ledger
+            .seen("helsinki", "pushed", "r0", &ids, true)
+            .await
+            .expect("seen");
+        assert_eq!(
+            ledger
+                .mark("helsinki", "pushed", "r1", &ids)
+                .await
+                .expect("mark"),
+            ids.to_vec()
+        );
+        // Refuses a new mark only: taking the marks (marked_run set to NULL) still works.
+        sqlx::query(
+            "CREATE FUNCTION jc_refuse_mark() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+             IF NEW.marked_run IS NOT NULL THEN RAISE EXCEPTION 'refused by the test'; END IF; \
+             RETURN NEW; END $$",
+        )
+        .execute(&scratch.pool)
+        .await
+        .expect("trigger function");
+        sqlx::query(
+            "CREATE TRIGGER jc_refuse_mark BEFORE UPDATE ON pipeline_source_ledger \
+             FOR EACH ROW EXECUTE FUNCTION jc_refuse_mark()",
+        )
+        .execute(&scratch.pool)
+        .await
+        .expect("trigger");
+        let ((), log) = crate::test_log::logged(
+            tracing::level_filters::LevelFilter::WARN,
+            launch_marked(&state, "helsinki", "pushed"),
+        )
+        .await;
+        assert!(log.contains("the marked deletes were not started"), "{log}");
+        assert!(log.contains("the source's delete marks were lost"), "{log}");
+        assert_eq!(
+            ledger
+                .take_marked("helsinki", "pushed")
+                .await
+                .expect("take"),
+            None
+        );
+        scratch.remove().await;
     }
 }

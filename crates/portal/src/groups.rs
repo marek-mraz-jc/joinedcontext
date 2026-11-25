@@ -97,10 +97,21 @@ fn owner(state: &AppState, identity: &Identity, app: Option<&String>) -> String 
 /// The App whose default group the organization's `Group` `name` is, as `(project, App)`, when
 /// the group is annotated with it and that App exists (AP-118).
 fn app_of(state: &AppState, name: &str) -> Option<(String, Value)> {
+    app_group(state, name).map(|(_, owner, app)| (owner, app))
+}
+
+/// The organization's Group `name` as held, with the project and the App it is the default
+/// group of.
+fn app_group(
+    state: &AppState,
+    name: &str,
+) -> Option<(crate::resource::ResourceEnvelope, String, Value)> {
     let held = state.mirror.get(ORG_NAMESPACE, "Group", name)?;
     let (project, app) = held.metadata.annotations.get(APP_LABEL)?.split_once('/')?;
     let app = state.mirror.get(project, "App", app)?;
-    Some((project.to_owned(), serde_json::to_value(app).ok()?))
+    let app = serde_json::to_value(app).ok()?;
+    let project = project.to_owned();
+    Some((held, project, app))
 }
 
 /// Whether the caller may read the organization's `Group` `name` because it is the default group
@@ -147,16 +158,13 @@ pub fn for_proposal(
     let Some(name) = manifest.pointer("/metadata/name").and_then(Value::as_str) else {
         return effective;
     };
-    let Some((owner, app)) = app_of(state, name) else {
+    let Some((held, owner, app)) = app_group(state, name) else {
         return effective;
     };
     let kept = manifest
         .pointer("/metadata/annotations")
         .and_then(|annotations| annotations.get(APP_LABEL))
         .and_then(Value::as_str);
-    let Some(held) = state.mirror.get(ORG_NAMESPACE, "Group", name) else {
-        return effective;
-    };
     let annotated = held.metadata.annotations.get(APP_LABEL).cloned();
     if kept.is_none() || kept.map(str::to_owned) != annotated {
         return effective;
@@ -269,20 +277,22 @@ fn project_unbinding(state: &AppState, identity: &Identity, name: &str) -> Optio
 
 /// Whether `manifest` equals the stored Group except in `spec.members` (and `status`).
 fn only_members_differ(held: &crate::resource::ResourceEnvelope, manifest: &Value) -> bool {
-    let without_members = |value: Value| {
-        let mut value = value;
-        if let Some(object) = value.as_object_mut() {
-            object.remove("status");
-        }
+    use crate::resource::ResourceEnvelope;
+    // Both sides are envelopes, compared without their status.
+    let without_members = |mut envelope: ResourceEnvelope| {
+        envelope.strip_status();
+        let mut value = serde_json::to_value(envelope)?;
         if let Some(spec) = value.get_mut("spec").and_then(Value::as_object_mut) {
             spec.remove("members");
         }
-        value
+        Ok::<Value, serde_json::Error>(value)
     };
-    let proposed = serde_json::from_value::<crate::resource::ResourceEnvelope>(manifest.clone())
-        .and_then(serde_json::to_value);
-    match (serde_json::to_value(held), proposed) {
-        (Ok(held), Ok(proposed)) => without_members(held) == without_members(proposed),
+    let proposed = serde_json::from_value::<ResourceEnvelope>(manifest.clone());
+    match (
+        without_members(held.clone()),
+        proposed.and_then(without_members),
+    ) {
+        (Ok(held), Ok(proposed)) => held == proposed,
         _ => false,
     }
 }

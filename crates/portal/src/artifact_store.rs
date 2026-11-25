@@ -104,8 +104,7 @@ impl Credential {
     /// nothing is stored. The context string is versioned: v1 named an Organization, v2 the
     /// project key, so no v2 key equals a v1 one.
     pub fn derive(root_secret: &str, key: &ProjectKey, role: Role) -> Self {
-        let mut mac = HmacSha256::new_from_slice(root_secret.as_bytes())
-            .unwrap_or_else(|_| unreachable!("HMAC takes a key of any length"));
+        let mut mac = hmac_sha256(root_secret.as_bytes());
         mac.update(
             format!(
                 "joinedcontext/artifact-store/v2/{}/{role}",
@@ -130,8 +129,7 @@ impl Credential {
     /// The pair a WASM shard gets (AP-158), derived like an organization's, under its own
     /// versioned context so no shard's key can equal an organization's.
     pub fn derive_shard(root_secret: &str, shard: u32) -> Self {
-        let mut mac = HmacSha256::new_from_slice(root_secret.as_bytes())
-            .unwrap_or_else(|_| unreachable!("HMAC takes a key of any length"));
+        let mut mac = hmac_sha256(root_secret.as_bytes());
         mac.update(format!("joinedcontext/apps-store/v1/shard/{shard}").as_bytes());
         let mut secret_key =
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
@@ -846,9 +844,15 @@ fn signing_key(secret: &str, date: &str, region: &str, service: &str) -> Vec<u8>
     hmac(&key, b"aws4_request")
 }
 
+/// HMAC-SHA256 under `key`: the one place the crate builds one, so its unreachable arm is one line
+/// (HMAC takes a key of any length; RFC 2104 hashes or pads it).
+pub(crate) fn hmac_sha256(key: &[u8]) -> HmacSha256 {
+    HmacSha256::new_from_slice(key)
+        .unwrap_or_else(|_| unreachable!("HMAC takes a key of any length"))
+}
+
 fn hmac(key: &[u8], message: &[u8]) -> Vec<u8> {
-    let mut mac = HmacSha256::new_from_slice(key)
-        .unwrap_or_else(|_| unreachable!("HMAC takes a key of any length"));
+    let mut mac = hmac_sha256(key);
     mac.update(message);
     mac.finalize().into_bytes().to_vec()
 }

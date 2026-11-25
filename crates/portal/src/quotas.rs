@@ -104,6 +104,13 @@ pub fn limits(quotas: &Quotas) -> BTreeMap<String, u32> {
         .collect()
 }
 
+/// The limit of `dimension` in an [`effective`] quota. That quota is capped at the deployment's
+/// ceiling, and every catalog entry of `spec.projects.quota` has a maximum, so each dimension
+/// holds one; one left open would limit nothing, as `u32::MAX` does.
+fn limit_of(quotas: &Quotas, dimension: &str) -> u32 {
+    limits(quotas).get(dimension).copied().unwrap_or(u32::MAX)
+}
+
 /// The refusal every door gives for a quota, so the sentence is the same everywhere (PF-74).
 pub fn over(dimension: &str, after: u32, limit: u32, project: &str) -> ApiError {
     ApiError::Denied(format!(
@@ -124,12 +131,7 @@ pub fn beyond(
     let Some((_, kind)) = COUNTED.into_iter().find(|(d, _)| *d == dimension) else {
         return Vec::new();
     };
-    let Some(limit) = limits(&effective(mirror, project, bounds))
-        .get(dimension)
-        .copied()
-    else {
-        return Vec::new();
-    };
+    let limit = limit_of(&effective(mirror, project, bounds), dimension);
     let mut counted: Vec<String> = mirror
         .list(project, kind, &ListOptions::default())
         .items
@@ -157,9 +159,7 @@ pub fn check(
         if counted_kind != kind || !counts(mirror, project, dimension, kind, spec) {
             continue;
         }
-        let Some(limit) = limits(&quotas).get(dimension).copied() else {
-            continue;
-        };
+        let limit = limit_of(&quotas, dimension);
         // Rewriting what is already counted changes no count, so it exceeds nothing even in a
         // project already over the limit: the build lane's status.build of a published App, a
         // fix to one (PF-74, T-2633). What stands beyond the quota stays unscheduled (`beyond`).
@@ -824,5 +824,15 @@ mod tests {
         let mirror = mirror_with(vec![resident("a"), resident("b")]);
         assert!(beyond(&mirror, "ovzdusie", "unknownDimension", &bounds()).is_empty());
         assert!(beyond(&mirror, "ovzdusie", "", &bounds()).is_empty());
+    }
+
+    /// `limit_of`'s fallback never runs: the ceiling limits every counted dimension.
+    #[test]
+    fn the_ceiling_limits_every_counted_dimension_and_an_open_one_limits_nothing() {
+        let quotas = effective(&Mirror::new(), "ovzdusie", &bounds());
+        for (dimension, _) in COUNTED {
+            assert!(limits(&quotas).contains_key(dimension), "{dimension}");
+        }
+        assert_eq!(limit_of(&Quotas::default(), "apps"), u32::MAX);
     }
 }

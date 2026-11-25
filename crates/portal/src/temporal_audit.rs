@@ -248,16 +248,26 @@ static PATTERNS: LazyLock<Option<(regex::Regex, regex::Regex)>> = LazyLock::new(
 /// Each (entity type, attribute) a mapping writes. `default_type` is the type of an attribute
 /// written before any entity type literal, the pipeline's one output type.
 pub fn scan(text: &str, default_type: Option<&str>) -> BTreeMap<(String, String), Seen> {
-    let Some((type_literal, key)) = PATTERNS.as_ref() else {
-        return BTreeMap::new();
-    };
+    PATTERNS
+        .as_ref()
+        .map(|(type_literal, key)| scan_with(type_literal, key, text, default_type))
+        .unwrap_or_default()
+}
+
+fn scan_with(
+    type_literal: &regex::Regex,
+    key: &regex::Regex,
+    text: &str,
+    default_type: Option<&str>,
+) -> BTreeMap<(String, String), Seen> {
     let blank = blanked(text.as_bytes());
     let mut found: BTreeMap<(String, String), Seen> = BTreeMap::new();
     let mut entity_type = default_type.map(str::to_owned);
-    for m in type_literal.captures_iter(text) {
-        let (Some(whole), Some(name)) = (m.get(0), m.get(1)) else {
-            continue;
-        };
+    // Group 1 of the type literal is not optional: every match has it.
+    let matches = type_literal
+        .captures_iter(text)
+        .filter_map(|m| Some((m.get_match(), m.get(1)?)));
+    for (whole, name) in matches {
         // Inside another string literal or a comment.
         if blank.get(whole.start()) != Some(&b'"') {
             continue;

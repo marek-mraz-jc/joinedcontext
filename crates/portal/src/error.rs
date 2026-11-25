@@ -26,6 +26,39 @@ pub struct ProblemDetails {
     pub errors: Option<Vec<FieldError>>,
 }
 
+impl ProblemDetails {
+    /// The document as JSON, member for member what its `Serialize` writes (a test holds the two
+    /// equal), built without a fallible serializer in between.
+    pub fn into_value(self) -> serde_json::Value {
+        let mut document = serde_json::Map::new();
+        document.insert("type".to_owned(), self.r#type.into());
+        document.insert("title".to_owned(), self.title.into());
+        document.insert("status".to_owned(), self.status.into());
+        for (member, value) in [
+            ("detail", self.detail),
+            ("instance", self.instance),
+            ("hint", self.hint),
+        ] {
+            if let Some(value) = value {
+                document.insert(member.to_owned(), value.into());
+            }
+        }
+        if let Some(errors) = self.errors {
+            let errors: serde_json::Value = errors
+                .into_iter()
+                .map(|error| {
+                    let mut member = serde_json::Map::new();
+                    member.insert("path".to_owned(), error.path.into());
+                    member.insert("message".to_owned(), error.message.into());
+                    serde_json::Value::Object(member)
+                })
+                .collect();
+            document.insert("errors".to_owned(), errors);
+        }
+        serde_json::Value::Object(document)
+    }
+}
+
 /// One violation: the member it is about and what is wrong with it (AG-146). `path` is the
 /// member's dotted path (`spec.history[1]`), or empty when the finding is about the whole request.
 #[derive(Debug, Clone, Serialize, serde::Deserialize, ToSchema, PartialEq, Eq)]
@@ -248,7 +281,9 @@ impl ApiError {
     /// The answer's status and document: the problem a REST door answers and an
     /// MCP tool error carries as its structured content, so both read alike (AG-146, T-5949).
     pub fn into_document(self) -> (StatusCode, serde_json::Value) {
-        let this = match self {
+        let mut errors = None;
+        let (status, slug, title, detail) = match self {
+            // The body is the document already, with the problem members added.
             Self::VerdictRequired(body) => {
                 let status = StatusCode::CONFLICT;
                 return (
@@ -256,10 +291,6 @@ impl ApiError {
                     with_problem_members(body, status, "verdict-required"),
                 );
             }
-            other => other,
-        };
-        let mut errors = None;
-        let (status, slug, title, detail) = match this {
             Self::NotFound(msg) => (
                 StatusCode::NOT_FOUND,
                 "resource-not-found",
@@ -337,13 +368,6 @@ impl ApiError {
                 "Precondition Failed",
                 Some(detail),
             ),
-            // Answered above with its own document; kept here so the match stays exhaustive.
-            Self::VerdictRequired(body) => (
-                StatusCode::CONFLICT,
-                "verdict-required",
-                "Verdict Required",
-                Some(body.to_string()),
-            ),
             Self::UnsupportedMediaType(msg) => (
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 "unsupported-media-type",
@@ -405,10 +429,7 @@ impl ApiError {
             hint: hint_of(slug),
             errors,
         };
-        let body = serde_json::to_value(&problem).unwrap_or_else(|_| {
-            serde_json::json!({"type": "https://joinedcontext.com/errors/internal-error", "title": "Internal Server Error", "status": 500})
-        });
-        (status, body)
+        (status, problem.into_value())
     }
 }
 
@@ -758,6 +779,34 @@ mod tests {
         buffer.write_all(b"x").expect("write");
         buffer.flush().expect("flush");
         assert_eq!(buffer.0.lock().expect("buffer").len(), 1);
+    }
+
+    /// The hand-built document is the one `Serialize` writes, every member set and none.
+    #[test]
+    fn a_problem_document_is_what_its_serialization_writes() {
+        let full = super::ProblemDetails {
+            r#type: super::type_uri("invalid-request"),
+            title: "Invalid Request".into(),
+            status: 400,
+            detail: Some("d".into()),
+            instance: Some("/api/v1/x".into()),
+            hint: Some("h".into()),
+            errors: Some(vec![super::FieldError {
+                path: "spec.a".into(),
+                message: "m".into(),
+            }]),
+        };
+        let bare = super::ProblemDetails {
+            detail: None,
+            instance: None,
+            hint: None,
+            errors: None,
+            ..full.clone()
+        };
+        for problem in [full, bare] {
+            let serialized = serde_json::to_value(&problem).expect("serializes");
+            assert_eq!(problem.into_value(), serialized);
+        }
     }
 
     // Inside the tests module: the slug scan reads each file up to its first `#[cfg(test)]`.
