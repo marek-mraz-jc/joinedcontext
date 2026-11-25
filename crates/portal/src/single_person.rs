@@ -185,13 +185,14 @@ pub async fn mode(state: &AppState, organization: &str) -> Result<ApprovalMode, 
         None => None,
     };
     let (mut on, mut changed, mut off_reason) = row.unwrap_or((false, 0, None));
-    // `on` comes only from a stored row, so the pool is there whenever it is set.
-    if let (true, Some(pool)) = (on && people > 1, state.db.as_ref()) {
+    if on && people > 1 {
         let reason = second_person_reason(people);
-        let mut conn = pool.acquire().await.map_err(db)?;
-        set(&mut conn, organization, false, "portal", Some(&reason))
-            .await
-            .map_err(db)?;
+        if let Some(pool) = state.db.as_ref() {
+            let mut conn = pool.acquire().await.map_err(db)?;
+            set(&mut conn, organization, false, "portal", Some(&reason))
+                .await
+                .map_err(db)?;
+        }
         tracing::warn!(target: "audit", organization, people, "single-person approvals turned off: a second person holds a role");
         on = false;
         changed = crate::auth::session::now_unix();
