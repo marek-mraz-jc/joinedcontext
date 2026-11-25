@@ -1189,8 +1189,7 @@ fn report_secret(name: &str, source: jc_secret::Source, profile: crate::config::
         tracing::warn!(
             name,
             source = source.as_str(),
-            "a secret comes from the environment: in production give it as a file \
-             (NAME_FILE, a compose secret or a mounted Kubernetes Secret)"
+            "a secret comes from the environment: in production give it as a file (NAME_FILE, a compose secret or a mounted Kubernetes Secret)"
         );
     } else {
         tracing::info!(name, source = source.as_str(), "secret");

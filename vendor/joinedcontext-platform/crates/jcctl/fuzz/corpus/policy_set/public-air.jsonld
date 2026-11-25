@@ -1,0 +1,25 @@
+{
+  "@context": [
+    "http://www.w3.org/ns/odrl.jsonld",
+    "https://joinedcontext.com/odrl/ngsi-ld/v1/context.jsonld"
+  ],
+  "@type": "Set",
+  "assigner": "did:web:banskabystrica.sk",
+  "conflict": "prohibit",
+  "permission": [
+    {
+      "action": [
+        "ngsi-ld:queryEntity"
+      ],
+      "assignee": {
+        "@type": "ngsi-ld:Role",
+        "uid": "public"
+      },
+      "target": {
+        "@type": "ngsi-ld:EntityType",
+        "uid": "AirQualityObserved"
+      }
+    }
+  ],
+  "uid": "urn:joinedcontext:policy:ovzdusie:ovzdusie:public-air"
+}

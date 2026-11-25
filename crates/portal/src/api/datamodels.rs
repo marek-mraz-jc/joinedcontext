@@ -1896,6 +1896,58 @@ mod tests {
             .collect()
     }
 
+    /// DM-23 (T-7815): a removed enum, a slot that became required and one whose multivalued
+    /// flipped are each breaking; a slot no longer required is additive.
+    #[test]
+    fn a_removed_enum_a_newly_required_slot_and_a_flipped_multivalued_are_breaking() {
+        let prev = json!({
+            "slots": {
+                "name": { "range": "string" },
+                "tags": { "range": "string", "multivalued": true },
+                "note": { "range": "string", "required": true }
+            },
+            "enums": { "Level": { "permissible_values": { "low": {} } } },
+        });
+        let next = json!({
+            "slots": {
+                "name": { "range": "string", "required": true },
+                "tags": { "range": "string" },
+                "note": { "range": "string" }
+            },
+        });
+        let changes = classify_linkml_changes(&prev, &next);
+        let reason = |subject: &str| -> Vec<(String, String)> {
+            changes
+                .iter()
+                .filter(|c| c.subject == subject)
+                .map(|c| (c.severity.clone(), c.reason.clone()))
+                .collect()
+        };
+        assert_eq!(
+            reason("Level"),
+            [("breaking".into(), "enum 'Level' was removed".into())],
+            "{changes:?}"
+        );
+        assert_eq!(
+            reason("name"),
+            [("breaking".into(), "slot 'name' became required".into())],
+            "{changes:?}"
+        );
+        assert_eq!(
+            reason("tags"),
+            [("breaking".into(), "slot 'tags' multivalued changed".into())],
+            "{changes:?}"
+        );
+        assert_eq!(
+            reason("note"),
+            [(
+                "additive".into(),
+                "slot 'note' is no longer required".into()
+            )],
+            "{changes:?}"
+        );
+    }
+
     /// F-POR1-015: an inline class attribute and an enum value are part of the contract; removing
     /// either is breaking, adding an optional one is not.
     #[test]
@@ -2002,13 +2054,13 @@ mod tests {
         assert_eq!(overall_severity(&changes), "breaking");
         let first = version("0.1.0");
         assert!(refuse_unversioned_break(false, &changes, &first, &first).is_ok());
-        let Err(ApiError::Invalid { detail, errors }) =
-            refuse_unversioned_break(true, &changes, &first, &first)
-        else {
-            panic!("a published model's break under its major is refused");
-        };
-        assert!(detail.contains("publish it as 1.0.0"), "{detail}");
-        assert!(!errors.is_empty());
+        let refused = refuse_unversioned_break(true, &changes, &first, &first)
+            .expect_err("a published model's break under its major is refused");
+        assert!(
+            matches!(&refused, ApiError::Invalid { detail, errors }
+                if detail.contains("publish it as 1.0.0") && !errors.is_empty()),
+            "{refused:?}"
+        );
         assert!(refuse_unversioned_break(true, &changes, &first, &version("1.0.0")).is_ok());
     }
 

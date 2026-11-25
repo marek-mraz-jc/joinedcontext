@@ -179,3 +179,22 @@ pub fn router() -> Router<AppState> {
             delete(delete_pipeline_template),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::response::IntoResponse;
+
+    /// Each template refusal answers with the status its cause calls for (T-7827).
+    #[test]
+    fn each_template_error_maps_to_its_status() {
+        let status = |err: TemplateError| ApiError::from(err).into_response().status();
+        assert_eq!(status(TemplateError::TooLarge), StatusCode::BAD_REQUEST);
+        assert_eq!(status(TemplateError::Limit), StatusCode::CONFLICT);
+        assert_eq!(status(TemplateError::NotFound), StatusCode::NOT_FOUND);
+        assert_eq!(
+            status(TemplateError::Db("gone".into())),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
+}

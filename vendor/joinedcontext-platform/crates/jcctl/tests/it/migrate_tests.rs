@@ -190,3 +190,68 @@ fn migrate_refuses_to_run_twice_or_over_anything() {
     let stray = migrate::run(&source, &temp_dir("migrate-stray")).expect_err("no project.yaml");
     assert!(stray.to_string().contains("projects/stray/"), "{stray}");
 }
+
+/// An organization without projects migrates to the organization alone; a file beside the
+/// project folders is not a project; `projects` as a file, a layout that does not read and a
+/// project.yaml that is not YAML are refused with the path.
+#[test]
+fn migrate_reads_only_project_folders_and_names_what_it_cannot_read() {
+    let bare = temp_dir("migrate-bare");
+    git(&bare, &["init", "-q", "-b", "main"]);
+    write(&bare, "org.yaml", ORG);
+    commit(&bare, "org: the organization");
+    let migration = migrate::run(&bare, &temp_dir("migrate-bare-out")).expect("no projects");
+    assert!(migration.projects.is_empty());
+
+    let file = temp_dir("migrate-file");
+    git(&file, &["init", "-q", "-b", "main"]);
+    write(&file, "org.yaml", ORG);
+    write(&file, "projects", "not a folder\n");
+    commit(&file, "projects as a file");
+    let refused = migrate::run(&file, &temp_dir("migrate-file-out")).expect_err("a file");
+    assert!(refused.to_string().contains("projects"), "{refused}");
+
+    let source = layout_1("migrate-readme");
+    write(&source, "projects/README.md", "the projects\n");
+    commit(&source, "a readme beside the projects");
+    let out = temp_dir("migrate-readme-out");
+    let migration = migrate::run(&source, &out).expect("the readme is no project");
+    assert_eq!(migration.projects.len(), 2);
+
+    let broken = temp_dir("migrate-layout");
+    write(&broken, "org.yaml", ORG);
+    write(&broken, ".jc/layout", "seven\n");
+    let refused = migrate::run(&broken, &temp_dir("migrate-layout-out")).expect_err("layout");
+    assert!(refused.to_string().contains(".jc/layout"), "{refused}");
+
+    let yaml = layout_1("migrate-yaml");
+    write(&yaml, "projects/doprava/project.yaml", "kind: [unclosed\n");
+    commit(&yaml, "doprava: broken");
+    let refused = migrate::run(&yaml, &temp_dir("migrate-yaml-out")).expect_err("not YAML");
+    assert!(refused.to_string().contains("doprava"), "{refused}");
+}
+
+/// The command prints the organization repository and each project with its head, and a
+/// refused migration exits 1 with the reason.
+#[test]
+fn the_migrate_command_lists_what_it_moved() {
+    let source = layout_1("migrate-cli");
+    let out = temp_dir("migrate-cli-out");
+    let run = |out: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .args(["migrate", "--repo-dir"])
+            .arg(&source)
+            .arg("--out-dir")
+            .arg(out)
+            .output()
+            .expect("jcctl runs")
+    };
+    let moved = run(&out);
+    assert_eq!(moved.status.code(), Some(0), "{moved:?}");
+    let said = String::from_utf8_lossy(&moved.stdout);
+    assert!(said.starts_with("organization repository: "), "{said}");
+    assert!(said.contains("project ovzdusie: "), "{said}");
+    let again = run(&out);
+    assert_eq!(again.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&again.stderr).contains("not empty"));
+}

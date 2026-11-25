@@ -702,9 +702,9 @@ mod tests {
                 "the chat is not configured",
             ),
         ] {
-            let Err((refused, why)) = config(&env(&chat_env(&[(key, value)]))) else {
-                panic!("{key} is refused");
-            };
+            let (refused, why) = config(&env(&chat_env(&[(key, value)])))
+                .err()
+                .expect("the value is refused");
             assert_eq!(refused, what, "{key}");
             assert!(why.starts_with(key), "{key}: {why}");
         }

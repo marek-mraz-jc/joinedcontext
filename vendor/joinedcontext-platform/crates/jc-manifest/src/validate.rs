@@ -2336,8 +2336,8 @@ fn stale_projections(repo_dir: &Path, repo: &Repository) -> Vec<(Location, Strin
                 let linkml = repo_dir
                     .join(&model_path)
                     .parent()
-                    .map(|dir| dir.join(&spec.linkml))
-                    .unwrap_or_else(|| repo_dir.join(&spec.linkml));
+                    .unwrap_or(repo_dir)
+                    .join(&spec.linkml);
                 let classes = std::fs::read_to_string(&linkml)
                     .map_err(|err| err.to_string())
                     .and_then(|text| jc_core::kinds::model_projection::linkml_classes(&text));
@@ -2463,8 +2463,8 @@ fn space_linkml(
         let file = repo_dir
             .join(&path)
             .parent()
-            .map(|dir| dir.join(&model.linkml))
-            .unwrap_or_else(|| repo_dir.join(&model.linkml));
+            .unwrap_or(repo_dir)
+            .join(&model.linkml);
         std::fs::read_to_string(&file).map_err(|err| {
             format!(
                 "its LinkML source cannot be read at `{}`: {err}",
@@ -2763,8 +2763,8 @@ fn imports_out_of_the_folder(repo_dir: &Path, manifest: &Path, linkml: &str) -> 
     let path = repo_dir
         .join(manifest)
         .parent()
-        .map(|dir| dir.join(linkml))
-        .unwrap_or_else(|| repo_dir.join(linkml));
+        .unwrap_or(repo_dir)
+        .join(linkml);
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };

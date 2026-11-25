@@ -115,6 +115,60 @@ fn the_link_follows_the_ref_and_the_registry() {
     );
 }
 
+/// The command: `--once` prints the project that moved, nothing on a pass that moves nothing,
+/// keeps the last checkout of a ref that is gone (exit 0) and exits 1 only when the registry
+/// itself does not read.
+#[test]
+fn the_command_reports_each_move_and_fails_only_on_the_registry() {
+    let (_forge, _work, org, options) = setup("checkouts-cli");
+    let projects = temp_dir("checkouts-cli-projects");
+    let token = temp_dir("checkouts-cli-token").join("token");
+    std::fs::write(&token, "forge-token").expect("token file");
+    let secrets = temp_dir("checkouts-cli-secrets");
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .arg("checkouts")
+            .arg("--org-dir")
+            .arg(&org)
+            .arg("--projects-dir")
+            .arg(&projects)
+            .args(["--forge", &options.forge, "--token-file"])
+            .arg(&token)
+            .arg("--secrets-dir")
+            .arg(&secrets)
+            .args(["--interval", "5", "--only", "ovzdusie", "--once"])
+            .output()
+            .expect("jcctl runs")
+    };
+    let first = run();
+    let said = String::from_utf8_lossy(&first.stdout);
+    assert_eq!(first.status.code(), Some(0), "{first:?}");
+    assert!(said.starts_with("project ovzdusie: "), "{said}");
+
+    let again = run();
+    assert_eq!(again.status.code(), Some(0));
+    assert!(again.stdout.is_empty(), "{again:?}");
+
+    write(&org, "projects/ovzdusie.yaml", &entry("v9"));
+    let gone = run();
+    assert_eq!(gone.status.code(), Some(0));
+    let said = String::from_utf8_lossy(&gone.stderr);
+    assert!(said.contains("kept the last checkout"), "{said}");
+
+    write(&org, "projects/ovzdusie.yaml", "kind: [not a manifest\n");
+    let broken = run();
+    assert_eq!(broken.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&broken.stderr);
+    assert!(said.contains("the registry did not read"), "{said}");
+
+    let zero = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["checkouts", "--org-dir", "o", "--projects-dir", "p"])
+        .args(["--forge", "f", "--interval", "0"])
+        .output()
+        .expect("jcctl runs");
+    assert!(String::from_utf8_lossy(&zero.stderr).starts_with("usage:"));
+}
+
 /// CC-89: an external repository's Secret is read from its mounted directory, and neither a
 /// missing mount nor a name that walks out of it reads anything; no error carries a value.
 #[test]

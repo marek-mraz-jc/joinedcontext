@@ -588,6 +588,58 @@ fn the_assembly_in_memory_is_what_the_written_render_loads() {
 
 /// `slug` under `links` pointed at `tree`, as `jcctl checkouts` leaves a checkout: a link to a
 /// tree named by its commit, swapped by one rename.
+/// PF-86: the registry reads `.yaml` and `.yml` entries, skips any other file, and refuses an
+/// entry that pins no repository or a `projects` that is a file.
+#[test]
+fn the_registry_reads_yaml_entries_and_refuses_what_is_no_entry() {
+    let org = organization("registry-yml", &[]);
+    write(&org, "projects/ovzdusie.yml", ENTRY);
+    write(&org, "projects/README.md", "the registry\n");
+    let registry = jc_manifest::assemble::read_registry(&org).expect("the registry reads");
+    assert_eq!(registry.keys().collect::<Vec<_>>(), ["ovzdusie"]);
+
+    let org = organization("registry-no-repository", &[("ovzdusie", PROJECT)]);
+    let error = jc_manifest::assemble::read_registry(&org).expect_err("no repository");
+    assert!(error.to_string().contains("PF-86"), "{error}");
+
+    let org = temp_dir("registry-file");
+    write(&org, "projects", "not a folder");
+    let error = jc_manifest::assemble::read_registry(&org).expect_err("projects is a file");
+    assert!(error.to_string().contains("projects"), "{error}");
+}
+
+/// PF-86: a project repository without its `project.yaml`, or whose `project.yaml` is a
+/// registry entry, is refused alone and named on its entry.
+#[test]
+fn a_project_repository_without_its_own_project_file_is_refused() {
+    let org = organization("own-file", &[("ovzdusie", ENTRY)]);
+    let project = project_repository("own-file-missing");
+    std::fs::remove_file(project.join("project.yaml")).expect("remove project.yaml");
+    let missing = assemble(
+        &org,
+        &checkouts(&[("ovzdusie", &project)]),
+        &temp_dir("own-file-missing-into").join("render"),
+        None,
+    )
+    .expect("the organization assembles");
+    let refusal = format!("{:?}", missing.entries[0]);
+    assert!(refusal.contains("project.yaml"), "{refusal}");
+    assert!(!missing.entries[0].rendered);
+
+    let project = project_repository("own-file-entry");
+    write(&project, "project.yaml", ENTRY);
+    let entry = assemble(
+        &org,
+        &checkouts(&[("ovzdusie", &project)]),
+        &temp_dir("own-file-entry-into").join("render"),
+        None,
+    )
+    .expect("the organization assembles");
+    let refusal = format!("{:?}", entry.entries[0]);
+    assert!(refusal.contains("registry"), "{refusal}");
+    assert!(!entry.entries[0].rendered);
+}
+
 fn link(links: &Path, slug: &str, tree: &Path) -> Directories {
     std::fs::create_dir_all(links).expect("the links");
     let at = links.join(slug);

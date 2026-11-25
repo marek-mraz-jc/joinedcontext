@@ -456,8 +456,13 @@ mod tests {
                 assert!(request_of(tool.name, arguments).is_none(), "{}", tool.name);
                 continue;
             }
-            let (method, path, _) = request_of(tool.name, arguments)
-                .unwrap_or_else(|| panic!("{} is a write with no NGSI-LD request", tool.name));
+            let request = request_of(tool.name, arguments);
+            assert!(
+                request.is_some(),
+                "{} is a write with no NGSI-LD request",
+                tool.name
+            );
+            let (method, path, _) = request.expect("a write's NGSI-LD request");
             assert_eq!(
                 operations::operation_of(&method, &path, false).as_ref(),
                 tool.operations.first(),

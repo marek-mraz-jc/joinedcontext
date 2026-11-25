@@ -538,6 +538,46 @@ async fn an_archive_that_does_not_check_creates_nothing() {
     nothing_created(&server).await;
 }
 
+/// CC-88, UI-87 (T-7815): a git import's form fields are read as the form sends them, and each
+/// one a person gets wrong is a 400 naming it, before anything is created.
+#[tokio::test]
+async fn each_wrong_git_import_field_is_refused_naming_it() {
+    let (server, state) = world().await;
+    let file = archive(PROJECT, |_| {});
+    for (file, fields, needle) in [
+        (
+            file.clone(),
+            vec![("parameters", "{")],
+            "parameters is a JSON object",
+        ),
+        (file.clone(), vec![("colour", "red")], "not 'colour'"),
+        (
+            Vec::new(),
+            vec![("dryRun", "true")],
+            "carries the archive as 'file'",
+        ),
+        (
+            file.clone(),
+            vec![
+                ("displayName", "Ovzdušie"),
+                ("name", "air"),
+                ("dryRun", "true"),
+            ],
+            "takes its name from the path",
+        ),
+    ] {
+        let answer = import(&state, person("jana"), "?format=git", &file, &fields).await;
+        assert_eq!(
+            answer.status,
+            StatusCode::BAD_REQUEST,
+            "{needle}: {}",
+            answer.text
+        );
+        assert!(answer.text.contains(needle), "{needle}: {}", answer.text);
+    }
+    nothing_created(&server).await;
+}
+
 /// PF-86: a repository of one of the names already in the forge is refused before anything is
 /// created, and nobody's repository is removed.
 #[tokio::test]

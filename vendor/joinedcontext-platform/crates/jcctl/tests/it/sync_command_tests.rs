@@ -105,6 +105,77 @@ fn a_source_the_repository_does_not_hold_is_named_not_guessed() {
     let _ = std::fs::remove_dir_all(&origin);
 }
 
+/// A source without a project, a state file that is no JSON and a state path that is a folder
+/// are errors naming what is wrong; a run without a state file starts fresh and keeps nothing,
+/// and a scheduled run (not --once) polls on the source's own clock.
+#[test]
+fn the_state_file_and_the_source_name_are_checked() {
+    let repo = repo_with_source("sync-cmd-state");
+    let origin = checkout("sync-cmd-state-origin");
+    let state = origin.join("state.json");
+
+    let mut bare = options(&origin, &state);
+    bare.source = "regional".to_owned();
+    let error = sync::run(&repo, &bare).expect_err("no project in the source");
+    assert!(error.to_string().contains("regional"), "{error}");
+
+    std::fs::write(&state, "{ not json").expect("a broken state");
+    let error = sync::run(&repo, &options(&origin, &state)).expect_err("not JSON");
+    assert!(error.to_string().contains("state.json"), "{error}");
+
+    let folder = origin.join("state-dir");
+    std::fs::create_dir_all(&folder).expect("a folder");
+    let error = sync::run(&repo, &options(&origin, &folder)).expect_err("a folder");
+    assert!(error.to_string().contains("state-dir"), "{error}");
+
+    let mut stateless = options(&origin, &state);
+    stateless.state = None;
+    let run = sync::run(&repo, &stateless).expect("a fresh run");
+    assert!(run.proposal.is_some());
+
+    let mut scheduled = options(&origin, &origin.join("scheduled.json"));
+    scheduled.once = false;
+    sync::run(&repo, &scheduled).expect("a scheduled run");
+
+    let _ = std::fs::remove_dir_all(&repo);
+    let _ = std::fs::remove_dir_all(&origin);
+}
+
+/// Without --json the command names the proposal and its file count; the run after it over the
+/// same origin proposes nothing and prints the phase with its reason (exit 0); a source the
+/// repository lacks exits 1.
+#[test]
+fn the_text_report_names_the_proposal_then_the_phase() {
+    let repo = repo_with_source("sync-cmd-text");
+    let origin = checkout("sync-cmd-text-origin");
+    let state = temp_dir("sync-cmd-text-state").join("state.json");
+    let run = |source: &str| {
+        Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .arg("sync")
+            .arg("--repo-dir")
+            .arg(&repo)
+            .args(["--source", source, "--checkout"])
+            .arg(&origin)
+            .arg("--state")
+            .arg(&state)
+            .arg("--once")
+            .output()
+            .expect("jcctl runs")
+    };
+    let first = run("ovzdusie/regional");
+    let said = String::from_utf8_lossy(&first.stdout);
+    assert_eq!(first.status.code(), Some(2), "{first:?}");
+    assert!(said.contains("file(s) to review"), "{said}");
+
+    let second = run("ovzdusie/regional");
+    assert_eq!(second.status.code(), Some(0), "{second:?}");
+    assert!(String::from_utf8_lossy(&second.stdout).contains(": "));
+
+    let unknown = run("ovzdusie/nowhere");
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(!unknown.stderr.is_empty());
+}
+
 #[test]
 fn the_command_prints_the_change_and_exits_two_when_a_proposal_is_open() {
     let repo = repo_with_source("sync-cmd-cli");

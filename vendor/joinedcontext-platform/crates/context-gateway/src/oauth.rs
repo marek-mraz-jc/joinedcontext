@@ -788,6 +788,67 @@ mod tests {
         ));
     }
 
+    /// The signing key never reaches a log line through `{:?}`; an overlong redirect URI is no
+    /// allowed one; a client with two URIs names the one it means; a code exchanged for another
+    /// resource, and a refresh token by another client, are refused.
+    #[test]
+    fn the_key_is_redacted_and_the_flow_refuses_each_mismatch() {
+        let issuer = issuer();
+        let shown = format!("{issuer:?}");
+        assert!(
+            shown.contains("<redacted>") && !shown.contains(&"k".repeat(32)),
+            "{shown}"
+        );
+        assert!(shown.contains(BASE), "{shown}");
+        let long = format!("{GEMINI}?{}", "a".repeat(MAX_REDIRECT_URI_LEN));
+        assert!(!issuer.redirect_allowed(&long));
+
+        let two = issuer
+            .register(vec![GEMINI.into(), "https://claude.ai/cb".into()])
+            .expect("allowed")
+            .0;
+        assert_eq!(
+            issuer.authorize(&form(&[
+                ("client_id", &two),
+                ("response_type", "code"),
+                ("code_challenge", &sha256(VERIFIER)),
+                ("code_challenge_method", "S256"),
+            ])),
+            Err("redirect_uri is missing".to_owned())
+        );
+
+        let client_id = client(&issuer);
+        let code = code(&issuer, &client_id);
+        let mut elsewhere = form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", &client_id),
+            ("code", &code),
+            ("redirect_uri", GEMINI),
+            ("code_verifier", VERIFIER),
+        ]);
+        elsewhere.insert("resource".into(), format!("{BASE}/api/endpoint/x/mcp"));
+        assert_eq!(
+            issuer.token(&elsewhere).err().map(|e| e.0),
+            Some("invalid_target")
+        );
+        elsewhere.insert("resource".into(), format!("{BASE}/api/mcp/"));
+        let pair = issuer.token(&elsewhere).expect("the code's own resource");
+        let refresh = pair["refresh_token"].as_str().expect("a refresh token");
+        assert_eq!(
+            issuer
+                .token(&form(&[
+                    ("grant_type", "refresh_token"),
+                    ("client_id", &two),
+                    ("refresh_token", refresh),
+                ]))
+                .err(),
+            Some((
+                "invalid_grant",
+                "the refresh token was issued to another client"
+            ))
+        );
+    }
+
     #[test]
     fn each_authorize_refusal_names_its_reason() {
         let issuer = issuer();

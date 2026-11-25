@@ -477,7 +477,19 @@ async fn send_to(
     uri: &str,
     body: Option<Value>,
 ) -> Answer {
-    let (upstream, store) = broker(campus(), failing).await;
+    send_held(campus(), endpoint, failing, method, uri, body).await
+}
+
+/// [`send_to`] with the broker holding `held` instead of the campus.
+async fn send_held(
+    held: Vec<Value>,
+    endpoint: Endpoint,
+    failing: &[&str],
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+) -> Answer {
+    let (upstream, store) = broker(held, failing).await;
     let gateway = Arc::new(
         Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN).serve([endpoint]),
     );
@@ -714,6 +726,40 @@ async fn a_cascade_two_levels_deep_deletes_from_the_farthest_in() {
         at(":s1") < at(":l1") && at(":s1") < at(":l2"),
         "{deletes:?}"
     );
+}
+
+/// DM-71: a delete whose rules would reach more than 500 entities is refused as a conflict that
+/// says to delete in smaller parts, and the broker is asked to delete nothing.
+#[tokio::test]
+async fn a_delete_reaching_more_than_its_limit_is_refused_and_deletes_nothing() {
+    let held: Vec<Value> = std::iter::once(entity("School", "big", &[]))
+        .chain((0..501).map(|n| {
+            entity(
+                "Teacher",
+                &format!("t{n}"),
+                &[("school", link(&urn("School", "big")))],
+            )
+        }))
+        .collect();
+    let answer = send_held(
+        held,
+        endpoint(CLASSES),
+        &[],
+        Method::DELETE,
+        &format!("/entities/{}", urn("School", "big")),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.body);
+    assert!(
+        answer.body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("more than 500 entities") && d.contains("smaller parts")),
+        "{}",
+        answer.body
+    );
+    assert!(answer.writes().is_empty(), "{:?}", answer.writes());
+    assert!(answer.held(&urn("School", "big")).is_some());
 }
 
 #[tokio::test]

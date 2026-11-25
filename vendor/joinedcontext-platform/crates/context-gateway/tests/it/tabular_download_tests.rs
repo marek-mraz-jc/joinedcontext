@@ -634,6 +634,68 @@ information:
     assert_eq!(body, "id,type,pm10.value,note.value\r\n");
 }
 
+/// A model projection keeps its classes and slots only (MP-01): a class it leaves out has no
+/// columns and no personal attribute, a one-to-one relationship is a scalar column, a
+/// one-to-many one is not, and a quantity with a UN/CEFACT code carries its unit.
+#[test]
+fn a_projection_narrows_the_columns_and_the_personal_attributes() {
+    let model = json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "definitions": {
+            "AirQualityObserved": { "type": "object", "properties": {
+                "id": { "type": "string" },
+                "pm10": { "type": "number", "x-unit": { "exactMappings": ["ucefact:GQ"] } },
+                "station": { "type": "string", "x-ngsi-ld-relationship": { "target": "Station" } },
+                "sensors": { "type": "array", "x-ngsi-ld-relationship": { "target": "Sensor" } },
+                "reporter": { "type": "string", "x-personal-data": true },
+                "note": { "type": "string" } } },
+            "Station": { "type": "object", "properties": {
+                "id": { "type": "string" },
+                "keeper": { "type": "string", "x-personal-data": true } } }
+        }
+    });
+    let classes = ["AirQualityObserved".to_owned(), "Station".to_owned()];
+    let schema =
+        jc_manifest::model_schema::ModelSchema::compile("air", "1.0.0", &model, &classes, true);
+    let mut endpoint = endpoint(vec![Representation::Csv], None);
+    endpoint.declared_types = Some(Arc::new(context_gateway::resolver::DeclaredTypes {
+        model: "air".into(),
+        classes: classes.into(),
+        units: Default::default(),
+        relationships: Default::default(),
+        quality: Vec::new(),
+        schema: Some(Arc::new(schema)),
+    }));
+    endpoint.projection = Some(Arc::new(
+        serde_norway::from_str(
+            "contextSpaceRef: ovzdusie\ndataModelRef: { name: air, version: 1.0.0 }\n\
+             classes:\n  - name: AirQualityObserved\n    slots: [pm10, station, sensors, reporter]\n",
+        )
+        .expect("the projection parses"),
+    ));
+    assert_eq!(
+        endpoint.personal_attributes(),
+        vec!["AirQualityObserved.reporter"]
+    );
+    let slots = endpoint.csv_slots(&[], |_, _| true);
+    let columns: Vec<(&str, bool, bool)> = slots
+        .iter()
+        .map(|s| (s.name.as_str(), s.scalar, s.unit))
+        .collect();
+    assert_eq!(
+        columns,
+        vec![
+            ("pm10", true, true),
+            ("reporter", true, false),
+            ("sensors", false, false),
+            ("station", true, false),
+        ]
+    );
+    assert!(endpoint
+        .csv_slots(&["Station".to_owned()], |_, _| true)
+        .is_empty());
+}
+
 /// EP-06 on a modelled Endpoint (T-5209 review): an attribute the model declares but the Policy
 /// does not grant is no column either, not even an empty one.
 #[tokio::test]

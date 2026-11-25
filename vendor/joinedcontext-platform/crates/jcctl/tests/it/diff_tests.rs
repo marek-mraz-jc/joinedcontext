@@ -228,6 +228,43 @@ spec:
     );
 }
 
+/// A dataset the live resource lacks is missing with the manifest's whole instance; two empty
+/// lists are equal; a managed-attributes annotation that is not a string claims nothing.
+#[test]
+fn a_dataset_only_the_manifest_has_is_missing_and_empty_lists_are_equal() {
+    let space = |annotations: &str, temperature: &str| {
+        manifest(&format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: ovzdusie\n  namespace: ovzdusie\n{annotations}spec:\n  temperature: {temperature}\n"
+        ))
+    };
+    let declared = space(
+        "",
+        "[{ datasetId: \"urn:ngsi-ld:Dataset:indoor\", value: 21 }]",
+    );
+    let live = space(
+        "",
+        "[{ datasetId: \"urn:ngsi-ld:Dataset:outdoor\", value: 8 }]",
+    );
+    assert_eq!(
+        diff(&declared, &live),
+        vec![FieldDiff {
+            path: "spec.temperature[urn:ngsi-ld:Dataset:indoor]".to_owned(),
+            declared: Some(json!({ "datasetId": "urn:ngsi-ld:Dataset:indoor", "value": 21 })),
+            live: None,
+        }]
+    );
+    assert!(diff(&space("", "[]"), &space("", "[]")).is_empty());
+    let listed = "  annotations:\n    joinedcontext.com/managed-attributes: [humidity]\n";
+    let claimed = space(listed, "[]");
+    let mut extra = space(listed, "[]");
+    extra
+        .spec
+        .as_object_mut()
+        .expect("a spec object")
+        .insert("humidity".to_owned(), json!(40));
+    assert!(diff(&claimed, &extra).is_empty());
+}
+
 /// CC-17: only the members the platform writes are stripped, directly under `metadata` and
 /// `spec`; a `createdAt` deeper in the spec is the manifest's own, and a change to it is drift.
 #[test]

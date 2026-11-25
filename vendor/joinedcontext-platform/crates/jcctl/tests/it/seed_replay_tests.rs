@@ -291,6 +291,18 @@ fn plan_reports_what_apply_would_do_and_writes_nothing() {
     let before = seed::plan(&repo, &gateway).expect("the plan runs");
     assert_eq!(before.pending(), 3);
     assert!(
+        before.render().contains("create    ovzdusie"),
+        "{}",
+        before.render()
+    );
+    let json = before.to_json();
+    assert_eq!(json["summary"]["drifted"], 3);
+    assert_eq!(json["drifted"][0]["drift"], "MISSING");
+    assert_eq!(
+        json["drifted"][0]["resolutions"],
+        serde_json::json!(["revert"])
+    );
+    assert!(
         platform.lock().expect("the platform").writes().is_empty(),
         "plan is read-only (CC-15)"
     );
@@ -299,6 +311,40 @@ fn plan_reports_what_apply_would_do_and_writes_nothing() {
     let after = seed::plan(&repo, &gateway).expect("the plan runs again");
     assert!(after.is_clean(), "{}", after.render());
     assert!(after.render().contains("unchanged ovzdusie"));
+}
+
+/// `plan` and `drift` with --gateway-url compare the seed entities through the gateway: exit 2
+/// while one is missing (text or JSON), 0 once the replay wrote them.
+#[test]
+fn plan_and_drift_commands_compare_the_seeds_through_the_gateway() {
+    let platform = Arc::new(Mutex::new(Platform::default()));
+    let base = spawn(Arc::clone(&platform));
+    let repo = checkout("seed-cli");
+    let token = common::temp_dir("seed-cli-token").join("token");
+    std::fs::write(&token, format!("{TOKEN}\n")).expect("the token file");
+    let run = |verb: &str, extra: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .args([verb, "--repo-dir"])
+            .arg(&repo)
+            .args(["--gateway-url", &base, "--token-file"])
+            .arg(&token)
+            .args(extra)
+            .output()
+            .expect("jcctl runs")
+    };
+    let planned = run("plan", &[]);
+    assert_eq!(planned.status.code(), Some(2), "{planned:?}");
+    assert!(String::from_utf8_lossy(&planned.stdout).contains("create "));
+    let drifted = run("drift", &[]);
+    assert_eq!(drifted.status.code(), Some(2), "{drifted:?}");
+    let drifted = run("drift", &["--json"]);
+    assert_eq!(drifted.status.code(), Some(2), "{drifted:?}");
+    let report: serde_json::Value = serde_json::from_slice(&drifted.stdout).expect("JSON");
+    assert_eq!(report["summary"]["drifted"], 3);
+
+    seed::apply(&repo, &gateway_at(&base)).expect("the replay runs");
+    assert_eq!(run("plan", &["--json"]).status.code(), Some(0));
+    assert_eq!(run("drift", &[]).status.code(), Some(0));
 }
 
 #[test]
@@ -312,6 +358,15 @@ fn an_entity_changed_in_the_repository_is_the_only_one_written_again() {
         "projects/mesto/spaces/ovzdusie/entities/seed/stations.json",
         &format!("[{},{}]", air("1", 42), air("2", 99)),
     );
+    let planned = seed::plan(&repo, &gateway).expect("the plan runs");
+    assert!(
+        planned.render().contains("update    ovzdusie"),
+        "{}",
+        planned.render()
+    );
+    let json = planned.to_json();
+    assert_eq!(json["summary"]["drifted"], 1);
+    assert_eq!(json["drifted"][0]["drift"], "MODIFIED");
 
     let report = seed::apply(&repo, &gateway).expect("the second replay");
     let updated: Vec<&str> = report

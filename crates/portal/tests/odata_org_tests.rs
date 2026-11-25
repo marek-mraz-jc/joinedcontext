@@ -497,7 +497,27 @@ type Case = (
 async fn each_refused_option_answers_its_status() {
     let state = state();
     let mode = Mode::Path("hel");
-    let cases: [Case; 15] = [
+    let cases: [Case; 19] = [
+        (
+            "/api/v1/projects?$expand=*",
+            &[],
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            "/api/v1/projects?$expand=spaces/$ref",
+            &[],
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            "/api/v1/projects?$expand=spaces($select=name)",
+            &[],
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            "/api/v1/projects?$expand=spaces/endpoints",
+            &[],
+            StatusCode::NOT_IMPLEMENTED,
+        ),
         (
             "/api/v1/spaces?$search=air",
             &[],
@@ -607,6 +627,63 @@ async fn each_refused_option_answers_its_status() {
         anonymous.text
     );
     assert_eq!(anonymous.json()["error"]["status"], json!(401));
+}
+
+/// Each path shape the service does not serve is refused with its status; a count of a
+/// project's kind, of the projects and of a set answers as text.
+#[tokio::test]
+async fn each_path_shape_answers_its_status() {
+    let state = state();
+    let mode = Mode::Path("hel");
+    let cookie = cookies(&state.config, person("hel-only", &[]), "hel").await;
+    for (uri, want) in [
+        (
+            "/api/v1/projects('helsinki')/spaces?$expand=spaces",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/api/v1/projects('helsinki')/spaces(1)",
+            StatusCode::NOT_FOUND,
+        ),
+        ("/api/v1/spaces('air')", StatusCode::BAD_REQUEST),
+        ("/api/v1/projects(1)/spaces", StatusCode::BAD_REQUEST),
+        (
+            "/api/v1/projects('helsinki')/nothings",
+            StatusCode::BAD_REQUEST,
+        ),
+        ("/api/v1/projects('helsinki')/spaces/$count", StatusCode::OK),
+        ("/api/v1/projects/$count", StatusCode::OK),
+        ("/api/v1/spaces/$count", StatusCode::OK),
+    ] {
+        let answer = send(&state, mode, &cookie, uri, &[]).await;
+        assert_eq!(answer.status, want, "{uri}: {}", answer.text);
+        if want == StatusCode::OK {
+            assert!(
+                answer.text.trim().parse::<u64>().is_ok(),
+                "{uri}: {}",
+                answer.text
+            );
+        } else {
+            assert_eq!(
+                answer.json()["error"]["status"],
+                json!(want.as_u16()),
+                "{uri}"
+            );
+        }
+    }
+    // A keyed project expands its kinds and still carries its ETag.
+    let one = send(
+        &state,
+        mode,
+        &cookie,
+        "/api/v1/projects('helsinki')?$expand=spaces",
+        &[],
+    )
+    .await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.text);
+    let body = one.json();
+    assert!(body["spaces"].is_array(), "{body}");
+    assert!(body["@odata.etag"].is_string(), "{body}");
 }
 
 /// The `portals` set (ODP-08): 401 to nobody, refused to a reader without a Portal rule, and
@@ -3074,6 +3151,24 @@ async fn bound_writes_need_if_match_and_keep_the_rest_doors_rights() {
     )
     .await;
     assert_eq!(unknown.status, StatusCode::BAD_REQUEST, "{}", unknown.text);
+    // The whole manifest goes to the REST door's replace, as the patch goes to its patch.
+    let whole = act(
+        &state,
+        "hel-editor",
+        update,
+        Some(&etag),
+        json!({ "manifest": { "apiVersion": "joinedcontext.com/v1alpha1", "kind": "ContextSpace", "metadata": { "name": "air", "namespace": "helsinki" }, "spec": { "title": "Air" } }, "dryRun": true }),
+    )
+    .await;
+    assert!(
+        !matches!(
+            whole.status,
+            StatusCode::BAD_REQUEST | StatusCode::INTERNAL_SERVER_ERROR
+        ),
+        "{} {}",
+        whole.status,
+        whole.text
+    );
     let create = act(
         &state,
         "hel-editor",
@@ -3083,6 +3178,67 @@ async fn bound_writes_need_if_match_and_keep_the_rest_doors_rights() {
     )
     .await;
     assert_eq!(create.status, StatusCode::NOT_FOUND, "{}", create.text);
+
+    // A project the editor reads: an action it lacks is 404, a call without a manifest or with a
+    // kind no project holds is 400, and a well-formed dry run goes to the REST door.
+    let on_helsinki = "/api/v1/projects('helsinki')/JoinedContext.Portal.";
+    for (action, body, status, says) in [
+        (
+            "propose_nothing",
+            json!({}),
+            StatusCode::NOT_FOUND,
+            "has no action",
+        ),
+        (
+            "propose_create",
+            json!({ "dryRun": true }),
+            StatusCode::BAD_REQUEST,
+            "takes the manifest",
+        ),
+        (
+            "propose_create",
+            json!({ "manifest": 5 }),
+            StatusCode::BAD_REQUEST,
+            "takes the manifest",
+        ),
+        (
+            "propose_create",
+            json!({ "manifest": { "kind": "Organization" } }),
+            StatusCode::BAD_REQUEST,
+            "manifest.kind",
+        ),
+        (
+            "propose_create",
+            json!({ "manifest": { "kind": "NoSuchKind" } }),
+            StatusCode::BAD_REQUEST,
+            "manifest.kind",
+        ),
+    ] {
+        let answer = act(
+            &state,
+            "hel-editor",
+            &format!("{on_helsinki}{action}"),
+            None,
+            body,
+        )
+        .await;
+        assert_eq!(answer.status, status, "{action}: {}", answer.text);
+        assert!(answer.text.contains(says), "{action}: {}", answer.text);
+    }
+    let dry = act(
+        &state,
+        "hel-editor",
+        &format!("{on_helsinki}propose_create"),
+        None,
+        json!({ "manifest": { "apiVersion": "joinedcontext.com/v1alpha1", "kind": "ContextSpace", "metadata": { "name": "water", "namespace": "helsinki" }, "spec": { "title": "Water" } }, "dryRun": true }),
+    )
+    .await;
+    assert_ne!(
+        dry.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        dry.text
+    );
 }
 
 /// Writes other than actions answer 405 naming the action; a cookie write without the CSRF

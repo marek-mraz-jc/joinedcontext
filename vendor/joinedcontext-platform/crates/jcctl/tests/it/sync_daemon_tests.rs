@@ -154,6 +154,79 @@ fn run(
 }
 
 /// MF-27, MF-28: a moved source becomes one reviewable proposal carrying the import.
+/// The phase names the status block and the Portal carry.
+#[test]
+fn each_phase_has_its_status_name() {
+    let names: Vec<&str> = [
+        Phase::Synced,
+        Phase::OutOfSync,
+        Phase::PendingApproval,
+        Phase::Error,
+        Phase::Paused,
+    ]
+    .into_iter()
+    .map(Phase::as_str)
+    .collect();
+    assert_eq!(
+        names,
+        ["Synced", "OutOfSync", "PendingApproval", "Error", "Paused"]
+    );
+}
+
+/// A manifest that is no SyncSource, or whose spec does not parse or fails its validation,
+/// is refused before the remote is asked anything.
+#[test]
+fn a_manifest_that_is_no_valid_sync_source_asks_the_remote_nothing() {
+    let dirs = dirs("refused-spec");
+    let remote = Fake::at("9f1c0de", &[("space.yaml", SANDBOX)]);
+    let mut other = source(json!({}));
+    other.kind = "ContextSpace".to_owned();
+    let refused = |manifest: &RawManifest| {
+        sync::poll(manifest, &State::default(), HOUR, &dirs.0, &dirs.1, &remote)
+            .expect_err("refused")
+            .to_string()
+    };
+    assert!(refused(&other).contains("SyncSource"));
+    assert!(!refused(&source(json!({ "bogus": 1 }))).is_empty());
+    assert!(!refused(&source(json!({ "schedule": { "interval": "soon" } }))).is_empty());
+    assert!(remote.calls().is_empty(), "{:?}", remote.calls());
+}
+
+/// The selector leaves a file that is no manifest, an empty document and a document the
+/// import gates refuse for those gates; the fail and rename conflict policies run like the
+/// others.
+#[test]
+fn a_selector_passes_what_it_cannot_judge_to_the_import_gates() {
+    for policy in ["fail", "rename"] {
+        let dirs = dirs(&format!("selector-gates-{policy}"));
+        let remote = Fake::at(
+            "9f1c0de",
+            &[
+                ("space.yaml", &*format!("---\n---\n{SANDBOX}")),
+                ("README.md", "not a manifest"),
+                ("broken.yaml", "kind: [unclosed\n"),
+            ],
+        );
+        let manifest = source(json!({
+            "selector": { "joinedcontext.com/tier": "standard" },
+            "conflictPolicy": policy,
+        }));
+        let outcome = sync::poll(
+            &manifest,
+            &State::default(),
+            HOUR,
+            &dirs.0,
+            &dirs.1,
+            &remote,
+        )
+        .expect("the run is judged");
+        assert!(
+            outcome.proposal.is_some() || !outcome.reason.is_empty(),
+            "{policy}: {outcome:?}"
+        );
+    }
+}
+
 #[test]
 fn a_moved_source_becomes_a_reviewable_proposal() {
     let dirs = dirs("proposed");

@@ -67,6 +67,32 @@ async fn start_upstream() -> (String, Arc<AtomicUsize>) {
                         )
                             .into_response();
                     }
+                    if tile.starts_with("97.") {
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "down").into_response();
+                    }
+                    if tile.starts_with("96.") {
+                        return (
+                            [(header::CONTENT_TYPE, "image/jpeg")],
+                            vec![0xff, 0xd8, 0xff, 1],
+                        )
+                            .into_response();
+                    }
+                    if tile.starts_with("95.") {
+                        // Sends one chunk, then breaks the body off.
+                        let first = futures_util::stream::once(async {
+                            Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![0u8; 16]))
+                        });
+                        let cut = futures_util::stream::once(async {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            Err(std::io::Error::other("cut"))
+                        });
+                        let broken = first.chain(cut);
+                        return (
+                            [(header::CONTENT_TYPE, "image/png")],
+                            Body::from_stream(broken),
+                        )
+                            .into_response();
+                    }
                     if tile.starts_with("non_image") || tile.starts_with("99.") {
                         (
                             [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
@@ -254,6 +280,83 @@ async fn configured_tile_served_and_cached_and_key_redacted() {
     assert_eq!(body2, body);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+/// An unknown style is 404; a tile without an extension is a png; a jpeg keeps its type from the
+/// upstream and from the cache; an upstream error or a body broken off is 502; one address past
+/// 600 tiles a minute is 429.
+#[tokio::test]
+async fn styles_types_upstream_failures_and_the_rate_limit() {
+    let (addr, calls) = start_upstream().await;
+    let temp_dir = std::env::temp_dir().join(format!("jc-bm-edge-{}", crate::unique::unique()));
+    let mut config = Config::for_tests();
+    config.basemap = Some(BasemapConfig::for_tests(
+        format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
+        "OSM".to_string(),
+        temp_dir.clone(),
+    ));
+    let app = server::app(AppState::new(config, None).with_mirror(mirror()));
+    let tile = |rest: &str| format!("/api/v1/projects/{PROJECT}/basemap/default/{rest}");
+
+    let (status, _, body) = call_app(
+        &app,
+        &format!("/api/v1/projects/{PROJECT}/basemap/satellite/0/0/0.png"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(String::from_utf8_lossy(&body).contains("'satellite'"));
+
+    let (status, headers, _) = call_app(&app, &tile("7/0/1")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get(header::CONTENT_TYPE).expect("type"),
+        "image/png"
+    );
+
+    for _ in 0..2 {
+        let (status, headers, body) = call_app(&app, &tile("7/0/96.jpg")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            headers.get(header::CONTENT_TYPE).expect("type"),
+            "image/jpeg"
+        );
+        assert_eq!(body, [0xff, 0xd8, 0xff, 1]);
+    }
+
+    for (rest, says) in [("7/0/97.png", "HTTP 500"), ("7/0/95.png", "upstream body")] {
+        let (status, _, body) = call_app(&app, &tile(rest)).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{rest}");
+        assert!(
+            String::from_utf8_lossy(&body).contains(says),
+            "{rest}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+    let before = calls.load(Ordering::SeqCst);
+
+    let ip = "198.51.100.78";
+    let mut refused = None;
+    // The bucket refills ten a second, so a few more than 600 run before the refusal.
+    for _ in 0..3000 {
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(tile("7/0/96.jpg"))
+            .header("x-forwarded-for", ip)
+            .body(Body::empty())
+            .expect("request");
+        let resp = app.clone().oneshot(req).await.expect("response");
+        if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+            refused = Some(resp.status());
+            break;
+        }
+    }
+    assert_eq!(refused, Some(StatusCode::TOO_MANY_REQUESTS));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        before,
+        "the cache answered every tile"
+    );
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
 

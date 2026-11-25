@@ -1758,10 +1758,7 @@ fn unread_publisher_tokens(cfg: &Config, env: &BTreeMap<String, String>) -> Vec<
 fn warn_unread_publisher_tokens(cfg: &Config, env: &BTreeMap<String, String>) {
     let named = unread_publisher_tokens(cfg, env);
     if !named.is_empty() {
-        tracing::warn!(
-            settings = %named.join(", "),
-            "deprecated and not read: the Portal publishes with a short-lived service token; remove these settings"
-        );
+        tracing::warn!(settings = %named.join(", "), "deprecated and not read: the Portal publishes with a short-lived service token; remove these settings");
     }
 }
 
