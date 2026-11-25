@@ -6,6 +6,7 @@ use crate::pack::{Admit, write_pack};
 use crate::pktline::{parse_all_pkt_lines, write_flush, write_text_line};
 use crate::repo::{is_ancestor, open_isolated};
 use crate::upload_pack::collect_advertised_refs;
+use crate::{git_err, storage_err};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use gix_hash::ObjectId;
@@ -240,8 +241,7 @@ pub fn write_send_pack(
     let held: Vec<ObjectId> = remote_refs.values().copied().collect();
     let objects = objects_to_send(&repo, &new_tips, &held)?;
     write_pack(&repo, &objects, &mut out, admit)?;
-    out.flush()
-        .map_err(|e| ShakoError::Storage(format!("mirror spool: {e}")))?;
+    out.flush().map_err(storage_err("mirror spool"))?;
     Ok(SendPack { commands, diverged })
 }
 
@@ -252,18 +252,24 @@ fn objects_to_send(
     tips: &[ObjectId],
     remote: &[ObjectId],
 ) -> ShakoResult<Vec<ObjectId>> {
-    let failed = |e: &dyn std::fmt::Display| ShakoError::Git(format!("mirror walk failed: {e}"));
     let mut known = BTreeSet::new();
     let mut hidden = Vec::new();
     for id in remote.iter().filter(|id| repo.has_object(**id)) {
         let mut at = *id;
         loop {
             known.insert(at);
-            let object = repo.find_object(at).map_err(|e| failed(&e))?;
+            let object = repo
+                .find_object(at)
+                .map_err(git_err("mirror walk failed"))?;
             match object.kind {
                 gix_object::Kind::Tag => {
-                    let tag = object.try_into_tag().map_err(|e| failed(&e))?;
-                    at = tag.target_id().map_err(|e| failed(&e))?.detach();
+                    let tag = object
+                        .try_into_tag()
+                        .map_err(git_err("mirror walk failed"))?;
+                    at = tag
+                        .target_id()
+                        .map_err(git_err("mirror walk failed"))?
+                        .detach();
                 }
                 gix_object::Kind::Commit => {
                     hidden.push(at);
@@ -280,11 +286,18 @@ fn objects_to_send(
     for tip in tips {
         let mut at = *tip;
         loop {
-            let object = repo.find_object(at).map_err(|e| failed(&e))?;
+            let object = repo
+                .find_object(at)
+                .map_err(git_err("mirror walk failed"))?;
             match object.kind {
                 gix_object::Kind::Tag => {
-                    let tag = object.try_into_tag().map_err(|e| failed(&e))?;
-                    let target = tag.target_id().map_err(|e| failed(&e))?.detach();
+                    let tag = object
+                        .try_into_tag()
+                        .map_err(git_err("mirror walk failed"))?;
+                    let target = tag
+                        .target_id()
+                        .map_err(git_err("mirror walk failed"))?
+                        .detach();
                     send.insert(at);
                     at = target;
                 }
@@ -310,16 +323,23 @@ fn objects_to_send(
             .rev_walk(starts)
             .with_hidden(hidden)
             .all()
-            .map_err(|e| failed(&e))?;
+            .map_err(git_err("mirror walk failed"))?;
         for info in walk {
-            commits.insert(info.map_err(|e| failed(&e))?.id);
+            commits.insert(info.map_err(git_err("mirror walk failed"))?.id);
         }
     }
     let mut trees = loose_trees;
     let mut boundary = BTreeSet::new();
     for id in &commits {
-        let commit = repo.find_commit(*id).map_err(|e| failed(&e))?;
-        trees.push(commit.tree_id().map_err(|e| failed(&e))?.detach());
+        let commit = repo
+            .find_commit(*id)
+            .map_err(git_err("mirror walk failed"))?;
+        trees.push(
+            commit
+                .tree_id()
+                .map_err(git_err("mirror walk failed"))?
+                .detach(),
+        );
         for parent in commit.parent_ids() {
             if !commits.contains(&parent.detach()) {
                 boundary.insert(parent.detach());
@@ -330,14 +350,14 @@ fn objects_to_send(
     for id in boundary {
         let tree = repo
             .find_commit(id)
-            .map_err(|e| failed(&e))?
+            .map_err(git_err("mirror walk failed"))?
             .tree()
-            .map_err(|e| failed(&e))?;
+            .map_err(git_err("mirror walk failed"))?;
         crate::bundle::collect_all_tree_objects(repo, &tree, &mut known)?;
     }
     let held = known.clone();
     for id in trees {
-        let tree = repo.find_tree(id).map_err(|e| failed(&e))?;
+        let tree = repo.find_tree(id).map_err(git_err("mirror walk failed"))?;
         crate::bundle::collect_all_tree_objects(repo, &tree, &mut known)?;
     }
     send.extend(commits);
@@ -464,6 +484,34 @@ mod tests {
 
     fn names(commands: &[SendPackCommand]) -> Vec<&str> {
         commands.iter().map(|(_, _, name)| name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_tag_of_a_blob_alone_sends_the_tag_and_blob_without_a_walk() {
+        use crate::testutil::{annotated_tag, raw, repo};
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, false);
+        let blob = raw(&path, gix_object::Kind::Blob, b"key\n");
+        let tag = annotated_tag(&path, "key", blob, gix_object::Kind::Blob);
+        let handle = open_isolated(&path).expect("open");
+        let mut sent = objects_to_send(&handle, &[tag], &[]).expect("plan");
+        sent.sort();
+        let mut want = vec![tag, blob];
+        want.sort();
+        assert_eq!(sent, want);
+    }
+
+    #[test]
+    fn a_remote_refusal_shows_as_is_when_no_secret_is_set() {
+        let mut resp = Vec::new();
+        write_text_line(&mut resp, "unpack ok").expect("pkt");
+        write_text_line(&mut resp, "ng refs/heads/main denied").expect("pkt");
+        write_flush(&mut resp).expect("flush");
+        let id = ObjectId::null(gix_hash::Kind::Sha1);
+        let commands = [(id, id, "refs/heads/main".to_owned())];
+        let err = verify_remote_report_status(&resp, &commands, "").expect_err("refused");
+        assert!(err.to_string().contains("refs/heads/main denied"), "{err}");
+        assert!(!err.to_string().contains("[REDACTED]"), "{err}");
     }
 
     #[test]

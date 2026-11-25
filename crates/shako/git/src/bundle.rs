@@ -5,6 +5,7 @@
 use crate::pack::{Admit, write_pack};
 use crate::repo::{open_isolated, resolve_commit_oid};
 use crate::upload_pack::collect_advertised_refs;
+use crate::{git_err, storage_err};
 use gix_hash::ObjectId;
 use shako_core::{ShakoError, ShakoResult};
 use std::collections::BTreeSet;
@@ -25,7 +26,7 @@ pub fn create_single_ref_bundle(
     out.write_all(
         format!("# v2 git bundle\n{tip_oid} refs/heads/bundle\n{tip_oid} HEAD\n\n").as_bytes(),
     )
-    .map_err(|e| ShakoError::Storage(format!("bundle write: {e}")))?;
+    .map_err(storage_err("bundle write"))?;
     write_pack(&repo, &objects, out, admit)
 }
 
@@ -72,8 +73,7 @@ pub fn restore_from_bundle(repo_path: &Path, bundle_bytes: &[u8]) -> ShakoResult
     }
 
     let pack_dir = repo_path.join("objects/pack");
-    std::fs::create_dir_all(&pack_dir)
-        .map_err(|e| ShakoError::Storage(format!("mkdir pack dir: {e}")))?;
+    std::fs::create_dir_all(&pack_dir).map_err(storage_err("mkdir pack dir"))?;
     let mut cursor = std::io::Cursor::new(pack);
     let mut progress = gix::progress::Discard;
     let should_interrupt = std::sync::atomic::AtomicBool::new(false);
@@ -86,10 +86,8 @@ pub fn restore_from_bundle(repo_path: &Path, bundle_bytes: &[u8]) -> ShakoResult
         gix_hash::Kind::Sha1,
         gix_pack::bundle::write::Options::default(),
     )
-    .map_err(|e| ShakoError::Git(format!("restore bundle index-pack failed: {e}")))?;
-    if let Some(keep) = outcome.keep_path {
-        let _ = std::fs::remove_file(keep);
-    }
+    .map_err(git_err("restore bundle index-pack failed"))?;
+    let _ = outcome.keep_path.map(std::fs::remove_file);
 
     for line in header_str.lines().skip(1) {
         let line = line.trim();
@@ -117,18 +115,16 @@ pub(crate) fn collect_all_objects_from_tips(
     let walk = repo
         .rev_walk(tips.iter().copied())
         .all()
-        .map_err(|e| ShakoError::Git(format!("bundle rev_walk failed: {e}")))?;
+        .map_err(git_err("bundle rev_walk failed"))?;
     // Strict: compaction deletes what this misses, so an object it cannot read stops it.
-    let unreadable =
-        |e: &dyn std::fmt::Display| ShakoError::Git(format!("object walk failed: {e}"));
     for item in walk {
-        let item = item.map_err(|e| unreadable(&e))?;
+        let item = item.map_err(git_err("object walk failed"))?;
         set.insert(item.id);
         let tree = item
             .object()
-            .map_err(|e| unreadable(&e))?
+            .map_err(git_err("object walk failed"))?
             .tree()
-            .map_err(|e| unreadable(&e))?;
+            .map_err(git_err("object walk failed"))?;
         collect_all_tree_objects(repo, &tree, &mut set)?;
     }
     Ok(set.into_iter().collect())
@@ -142,14 +138,10 @@ pub(crate) fn collect_all_tree_objects(
     if !out.insert(tree.id) {
         return Ok(());
     }
-    let decoded = tree
-        .decode()
-        .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
+    let decoded = tree.decode().map_err(git_err("decode tree"))?;
     for entry in decoded.entries {
         if entry.mode.is_tree() {
-            let sub = repo
-                .find_tree(entry.oid)
-                .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))?;
+            let sub = repo.find_tree(entry.oid).map_err(git_err("find subtree"))?;
             collect_all_tree_objects(repo, &sub, out)?;
         } else if !entry.mode.is_commit() {
             out.insert(entry.oid.to_owned());
@@ -163,6 +155,27 @@ mod tests {
     use super::*;
     use crate::repo::{create_branch, list_branches, list_tags, set_ref_direct};
     use crate::testutil::{annotated_tag, put, repo};
+
+    #[test]
+    fn the_tree_walk_keeps_blobs_and_trees_but_not_a_submodule_commit() {
+        use crate::testutil::{GONE, oid, raw, tree};
+        use gix_object::tree::EntryKind;
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, false);
+        let blob = raw(&path, gix_object::Kind::Blob, b"a\n");
+        let root = tree(
+            &path,
+            &[
+                (EntryKind::Blob, "a.txt", blob),
+                (EntryKind::Commit, "vendor", oid(GONE)),
+            ],
+        );
+        let handle = crate::repo::open_isolated(&path).expect("open");
+        let mut out = BTreeSet::new();
+        collect_all_tree_objects(&handle, &handle.find_tree(root).expect("tree"), &mut out)
+            .expect("walk");
+        assert_eq!(out, BTreeSet::from([root, blob]));
+    }
 
     #[test]
     fn a_full_backup_restores_every_branch_and_tag_into_an_empty_repository() {

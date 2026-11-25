@@ -3,8 +3,9 @@
 //! Pull Request merge (`merge`, `squash`, `fast-forward-only`), `update-branch`, and tree diffing
 //! (Contract S10, Threat T10).
 
+use crate::git_err;
 use crate::repo::{
-    CommitAuthor, build_nested_trees, collect_tree_blobs, is_ancestor, open_isolated,
+    CommitAuthor, branch_ref, build_nested_trees, collect_tree_blobs, is_ancestor, open_isolated,
     resolve_commit_oid, sanitize_actor_field, write_objects_as_pack,
 };
 use bstr::BString;
@@ -12,7 +13,7 @@ use gix_hash::ObjectId;
 use gix_object::WriteTo;
 use gix_object::tree::EntryKind;
 use gix_ref::{
-    FullName, Target,
+    Target,
     transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
 };
 use serde::{Deserialize, Serialize};
@@ -114,19 +115,15 @@ fn merge_trees_in_memory(
 
     let our_commit = repo
         .find_commit(our_oid)
-        .map_err(|e| ShakoError::Git(format!("find our commit: {e}")))?;
-    let our_tree = our_commit
-        .tree()
-        .map_err(|e| ShakoError::Git(format!("find our tree: {e}")))?;
+        .map_err(git_err("find our commit"))?;
+    let our_tree = our_commit.tree().map_err(git_err("find our tree"))?;
     let mut our_files = BTreeMap::new();
     collect_tree_blobs(repo, &our_tree, "", &mut our_files)?;
 
     let their_commit = repo
         .find_commit(their_oid)
-        .map_err(|e| ShakoError::Git(format!("find their commit: {e}")))?;
-    let their_tree = their_commit
-        .tree()
-        .map_err(|e| ShakoError::Git(format!("find their tree: {e}")))?;
+        .map_err(git_err("find their commit"))?;
+    let their_tree = their_commit.tree().map_err(git_err("find their tree"))?;
     let mut their_files = BTreeMap::new();
     collect_tree_blobs(repo, &their_tree, "", &mut their_files)?;
 
@@ -213,9 +210,7 @@ pub fn execute_pr_merge(
         ));
     }
 
-    let base_ref_name: FullName = format!("refs/heads/{base_branch}")
-        .try_into()
-        .map_err(|e| ShakoError::Unprocessable(format!("invalid base branch: {e}")))?;
+    let base_ref_name = branch_ref(base_branch)?;
 
     if style == MergeStyle::FastForwardOnly {
         if !is_ancestor(&repo, base_oid, head_oid) {
@@ -242,9 +237,10 @@ pub fn execute_pr_merge(
                 gix::lock::acquire::Fail::Immediately,
                 gix::lock::acquire::Fail::Immediately,
             )
-            .map_err(|e| ShakoError::Conflict(format!("concurrent update on {base_branch}: {e}")))?
-            .commit(None)
-            .map_err(|e| ShakoError::Conflict(format!("commit ref failed: {e}")))?;
+            .and_then(|tx| tx.commit(None))
+            .map_err(|e| {
+                ShakoError::Conflict(format!("concurrent update on {base_branch}: {e}"))
+            })?;
         return Ok(head_oid.to_hex().to_string());
     }
 
@@ -296,10 +292,10 @@ pub fn execute_pr_merge(
     let mut commit_raw = Vec::new();
     commit_obj
         .write_to(&mut commit_raw)
-        .map_err(|e| ShakoError::Git(format!("serialize merge commit: {e}")))?;
+        .map_err(git_err("serialize merge commit"))?;
     let commit_oid =
         gix_object::compute_hash(gix_hash::Kind::Sha1, gix_object::Kind::Commit, &commit_raw)
-            .map_err(|e| ShakoError::Git(format!("hash merge commit: {e}")))?;
+            .map_err(git_err("hash merge commit"))?;
     new_objects.push((commit_oid, gix_object::Kind::Commit, commit_raw));
 
     write_objects_as_pack(repo_path, &new_objects)?;
@@ -323,9 +319,8 @@ pub fn execute_pr_merge(
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(|e| ShakoError::Conflict(format!("concurrent update on {base_branch}: {e}")))?
-        .commit(None)
-        .map_err(|e| ShakoError::Conflict(format!("commit ref failed: {e}")))?;
+        .and_then(|tx| tx.commit(None))
+        .map_err(|e| ShakoError::Conflict(format!("concurrent update on {base_branch}: {e}")))?;
 
     Ok(commit_oid.to_hex().to_string())
 }
@@ -381,19 +376,15 @@ pub fn diff_refs_files(
 
     let base_commit = repo
         .find_commit(merge_base_oid)
-        .map_err(|e| ShakoError::Git(format!("find base commit: {e}")))?;
-    let base_tree = base_commit
-        .tree()
-        .map_err(|e| ShakoError::Git(format!("find base tree: {e}")))?;
+        .map_err(git_err("find base commit"))?;
+    let base_tree = base_commit.tree().map_err(git_err("find base tree"))?;
     let mut base_files = BTreeMap::new();
     collect_tree_blobs(&repo, &base_tree, "", &mut base_files)?;
 
     let head_commit = repo
         .find_commit(head_oid)
-        .map_err(|e| ShakoError::Git(format!("find head commit: {e}")))?;
-    let head_tree = head_commit
-        .tree()
-        .map_err(|e| ShakoError::Git(format!("find head tree: {e}")))?;
+        .map_err(git_err("find head commit"))?;
+    let head_tree = head_commit.tree().map_err(git_err("find head tree"))?;
     let mut head_files = BTreeMap::new();
     collect_tree_blobs(&repo, &head_tree, "", &mut head_files)?;
 
@@ -476,6 +467,39 @@ mod tests {
         read_file_at_ref(path, branch, name, &mut crate::testutil::admit_all)
             .expect("read")
             .map(|(_, bytes)| String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[test]
+    fn a_held_base_branch_lock_turns_each_merge_into_a_conflict() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, true);
+        create_branch(&path, "head", "main").expect("head");
+        put(&path, "head", "feature.txt", b"feature\n");
+        let ff_lock = path.join("refs/heads/main.lock");
+        crate::testutil::lock(&path, "refs/heads/main");
+        let fast = execute_pr_merge(
+            &path,
+            "main",
+            "head",
+            &opts(MergeStyle::FastForwardOnly, None),
+        )
+        .expect_err("main is locked");
+        assert!(
+            fast.to_string().contains("concurrent update on main: "),
+            "{fast}"
+        );
+        assert_eq!(fast.status_code(), 409);
+        // main moves on, so a merge writes a merge commit of its own.
+        std::fs::remove_file(&ff_lock).expect("unlock");
+        put(&path, "main", "main.txt", b"main\n");
+        crate::testutil::lock(&path, "refs/heads/main");
+        let merged = execute_pr_merge(&path, "main", "head", &opts(MergeStyle::Merge, None))
+            .expect_err("main is locked");
+        assert!(
+            merged.to_string().contains("concurrent update on main: "),
+            "{merged}"
+        );
+        assert_eq!(merged.status_code(), 409);
     }
 
     #[test]

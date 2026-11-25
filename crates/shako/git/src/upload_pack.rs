@@ -17,6 +17,7 @@ use crate::pktline::{
     write_flush, write_sideband_chunks, write_text_line,
 };
 use crate::repo::open_isolated;
+use crate::{git_err, storage_err};
 use bstr::ByteSlice;
 use gix_hash::ObjectId;
 use gix_packetline::Channel;
@@ -57,12 +58,8 @@ pub fn collect_advertised_refs(
         });
     }
 
-    let platform = repo
-        .references()
-        .map_err(|e| ShakoError::Git(format!("references: {e}")))?;
-    let all_refs = platform
-        .all()
-        .map_err(|e| ShakoError::Git(format!("all refs: {e}")))?;
+    let platform = repo.references().map_err(git_err("references"))?;
+    let all_refs = platform.all().map_err(git_err("all refs"))?;
 
     let mut named: BTreeMap<String, AdvertisedRef> = BTreeMap::new();
     for mut r in all_refs.flatten() {
@@ -212,8 +209,7 @@ pub fn read_negotiation(
 ) -> ShakoResult<Vec<u8>> {
     use std::io::{Read as _, Seek as _};
     const STEP: usize = 1024 * 1024;
-    file.rewind()
-        .map_err(|e| ShakoError::Storage(format!("negotiation spool: {e}")))?;
+    file.rewind().map_err(storage_err("negotiation spool"))?;
     let mut reader: Box<dyn std::io::Read + '_> = if gzip {
         Box::new(flate2::read::GzDecoder::new(file))
     } else {
@@ -266,8 +262,8 @@ pub fn handle_upload_pack(
     } else {
         handle_upload_pack_v0(repo_path, &lines)?
     };
-    let write = |e: std::io::Error| ShakoError::Storage(format!("upload-pack answer: {e}"));
-    out.write_all(&answer.head).map_err(write)?;
+    out.write_all(&answer.head)
+        .map_err(storage_err("upload-pack answer"))?;
     if let Some(Pack {
         repo,
         objects,
@@ -278,14 +274,14 @@ pub fn handle_upload_pack(
             Some(max) => {
                 let mut framed = Sideband::new(&mut out, max);
                 write_pack(&repo, &objects, &mut framed, admit)?;
-                framed.flush().map_err(write)?;
+                framed.flush().map_err(storage_err("upload-pack answer"))?;
                 drop(framed);
                 write_flush(&mut out)?;
             }
             None => write_pack(&repo, &objects, &mut out, admit)?,
         }
     }
-    out.flush().map_err(write)
+    out.flush().map_err(storage_err("upload-pack answer"))
 }
 
 /// An upload-pack answer: the negotiation's lines and the pack that follows them.
@@ -538,7 +534,7 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Answer> {
             .map_err(|_| ShakoError::BadRequest(format!("invalid want-ref '{rname}'")))?;
         let mut r = repo
             .try_find_reference(partial)
-            .map_err(|e| ShakoError::Git(e.to_string()))?
+            .map_err(git_err("find ref"))?
             .ok_or_else(|| ShakoError::BadRequest(format!("wanted ref '{rname}' not found")))?;
         let id = r
             .peel_to_id()
@@ -912,27 +908,31 @@ fn compute_pack_object_set(
     let mut queue: VecDeque<(ObjectId, u32)> = VecDeque::new();
 
     for &want in &params.wants {
-        let Ok(obj) = repo.find_object(want) else {
+        let Ok(mut obj) = repo.find_object(want) else {
             continue;
         };
+        // A tag chain goes whole with the object at its end, as git sends a tagged tree or blob.
+        while obj.kind == gix_object::Kind::Tag {
+            objects.insert(obj.id);
+            let tag = obj.try_into_tag().map_err(git_err("peel tag"))?;
+            obj = tag
+                .target_id()
+                .map_err(git_err("peel tag"))?
+                .object()
+                .map_err(git_err("peel tag"))?;
+        }
         match obj.kind {
-            gix_object::Kind::Tag => {
-                objects.insert(want);
-                if let Ok(peeled) = obj.peel_to_kind(gix_object::Kind::Commit) {
-                    queue.push_back((peeled.id, 1));
-                }
-            }
             gix_object::Kind::Commit => {
-                queue.push_back((want, 1));
+                queue.push_back((obj.id, 1));
             }
             gix_object::Kind::Tree => {
-                if let Ok(tree) = repo.find_tree(want) {
-                    collect_filtered_tree_objects(repo, &tree, 0, params.filter, &mut objects)?;
-                }
+                let tree = obj.try_into_tree().map_err(git_err("decode tree"))?;
+                collect_filtered_tree_objects(repo, &tree, 0, params.filter, &mut objects)?;
             }
-            gix_object::Kind::Blob => {
-                // Explicitly wanted blobs are always included even under blob:none
-                objects.insert(want);
+            // Explicitly wanted blobs are always included even under blob:none; no tag is left
+            // after the loop above.
+            gix_object::Kind::Blob | gix_object::Kind::Tag => {
+                objects.insert(obj.id);
             }
         }
     }
@@ -1023,14 +1023,10 @@ fn collect_filtered_tree_objects(
     if !objects.insert(tree.id) {
         return Ok(());
     }
-    let decoded = tree
-        .decode()
-        .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
+    let decoded = tree.decode().map_err(git_err("decode tree"))?;
     for entry in decoded.entries {
         if entry.mode.is_tree() {
-            let sub = repo
-                .find_tree(entry.oid)
-                .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))?;
+            let sub = repo.find_tree(entry.oid).map_err(git_err("find subtree"))?;
             collect_filtered_tree_objects(repo, &sub, depth + 1, filter, objects)?;
         } else if !entry.mode.is_commit() {
             match filter {
@@ -1171,6 +1167,173 @@ mod tests {
         lines.extend_from_slice(args);
         lines.push(FLUSH);
         serve(path, Some("version=2"), &lines)
+    }
+
+    /// One pkt-line of raw `bytes`, for a line that is not UTF-8.
+    fn raw_pkt(bytes: &[u8]) -> Vec<u8> {
+        let mut out = format!("{:04x}", bytes.len() + 4).into_bytes();
+        out.extend_from_slice(bytes);
+        out
+    }
+
+    #[test]
+    fn a_detached_head_has_no_symref_and_a_symbolic_branch_is_not_advertised() {
+        use crate::testutil::point;
+        let f = fixture();
+        point(&f.path, "refs/heads/alias", "ref: refs/heads/main");
+        point(&f.path, "HEAD", &f.c3.to_string());
+        let adv = text(&advertise_upload_pack(&f.path, None).expect("adv"));
+        assert!(!adv.contains("symref=HEAD:"), "{adv}");
+        assert!(!adv.contains("refs/heads/alias"), "{adv}");
+        assert!(adv.contains("refs/heads/main"), "{adv}");
+    }
+
+    #[test]
+    fn an_unborn_head_beside_other_branches_is_listed_and_a_dangling_want_ref_refused() {
+        use crate::testutil::{GONE, point};
+        let f = fixture();
+        point(&f.path, "HEAD", "ref: refs/heads/unborn");
+        let listed = text(&v2(&f.path, "ls-refs", &["symrefs", "unborn"]).expect("ls-refs"));
+        assert!(listed.contains("unborn HEAD"), "{listed}");
+        point(&f.path, "refs/heads/dangling", GONE);
+        let refused = v2(&f.path, "fetch", &["want-ref refs/heads/dangling", "done"])
+            .expect_err("nothing to peel");
+        assert_eq!(refused.to_string(), "cannot peel 'refs/heads/dangling'");
+    }
+
+    #[test]
+    fn unknown_and_non_utf8_v2_arguments_are_ignored() {
+        let f = fixture();
+        let mut body = pkt(&["command=ls-refs", DELIM]);
+        body.extend(raw_pkt(b"\xff\xfe"));
+        body.extend(pkt(&["no-such-arg", FLUSH]));
+        let mut out = Vec::new();
+        handle_upload_pack(
+            &f.path,
+            Some("version=2"),
+            &body,
+            &mut out,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("ls-refs");
+        assert!(text(&out).contains("refs/heads/main"));
+
+        let oid_arg = format!("oid {}", f.c1);
+        let info = text(&v2(&f.path, "object-info", &["size", "bogus", &oid_arg]).expect("info"));
+        assert!(info.contains(&f.c1.to_string()), "{info}");
+
+        let want = format!("want {}", f.c3);
+        let fetched = v2(&f.path, "fetch", &[&want, "no-such-arg", "done"]).expect("fetch");
+        assert_eq!(pack_count(&fetched), Some(13));
+    }
+
+    #[test]
+    fn a_v0_request_skips_lines_it_does_not_know_and_acks_one_common_have() {
+        let f = fixture();
+        let mut body = pkt(&[&format!("want {} side-band-64k", f.c3)]);
+        body.extend(raw_pkt(b"\xff\xfe"));
+        body.extend(b"0001");
+        body.extend(pkt(&[FLUSH, &format!("have {}", f.c1)]));
+        body.extend(raw_pkt(b"\xff\xfe"));
+        body.extend(pkt(&["bogus", "done"]));
+        let mut out = Vec::new();
+        handle_upload_pack(
+            &f.path,
+            None,
+            &body,
+            &mut out,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("fetch");
+        let answer = text(&out);
+        assert!(answer.contains(&format!("ACK {}", f.c1)), "{answer}");
+        assert!(
+            !answer.contains("continue") && !answer.contains("common"),
+            "{answer}"
+        );
+    }
+
+    #[test]
+    fn the_reachability_gate_reads_refs_to_blobs_and_a_repository_without_commits() {
+        use crate::testutil::{GONE, oid, point, raw};
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = repo(tmp.path(), 1, false);
+        let blob = raw(&path, gix_object::Kind::Blob, b"key\n");
+        point(&path, "refs/tags/key", &blob.to_string());
+        let handle = open_isolated(&path).expect("open");
+        let reachable = collect_reachable_objects_for_check(&handle, &[oid(GONE)]).expect("gate");
+        assert_eq!(reachable, BTreeSet::from([blob]));
+    }
+
+    #[test]
+    fn a_fetch_packs_around_tags_of_blobs_diamonds_and_commits_it_cannot_read() {
+        use crate::testutil::{GONE, commit, corrupt, oid, point, raw, tree};
+        use gix_object::tree::EntryKind;
+        let f = fixture();
+        let path = &f.path;
+        let blob = raw(path, gix_object::Kind::Blob, b"key\n");
+        let blob_tag = annotated_tag(path, "key", blob, gix_object::Kind::Blob);
+        let files = tree(path, &[(EntryKind::Blob, "k.txt", blob)]);
+        let base = commit(path, files, &[]);
+        let left = commit(path, files, &[base]);
+        let other = tree(
+            path,
+            &[
+                (EntryKind::Blob, "other.txt", blob),
+                (EntryKind::Commit, "vendor", oid(GONE)),
+            ],
+        );
+        let right = commit(path, other, &[base]);
+        let merged = commit(path, files, &[left, right]);
+        point(path, "refs/heads/diamond", &merged.to_string());
+        let orphan = commit(path, files, &[oid(GONE)]);
+        point(path, "refs/heads/orphan", &orphan.to_string());
+        let treeless = commit(path, oid(GONE), &[]);
+        point(path, "refs/heads/treeless", &treeless.to_string());
+        let unreadable = commit(path, files, &[right]);
+        point(path, "refs/heads/unreadable", &unreadable.to_string());
+        corrupt(path, unreadable);
+
+        let fetch = |want: ObjectId| {
+            let want = format!("want {want}");
+            pack_count(&v2(path, "fetch", &[&want, "done"]).expect("fetch"))
+        };
+        assert_eq!(fetch(blob_tag), Some(2), "the tag and its blob");
+        assert_eq!(
+            fetch(merged),
+            Some(7),
+            "four commits, two trees, one blob, each once"
+        );
+        assert_eq!(
+            fetch(orphan),
+            Some(3),
+            "the commit, its tree and blob; the parent is gone"
+        );
+        assert_eq!(fetch(treeless), Some(1), "the commit alone");
+        assert_eq!(
+            fetch(unreadable),
+            Some(0),
+            "an empty pack: nothing it can read"
+        );
+    }
+
+    #[test]
+    fn a_fetch_unshallows_a_client_and_leaves_out_blobs_past_the_limit() {
+        let f = fixture();
+        let want = format!("want {}", f.c3);
+        let shallow = format!("shallow {}", f.c2);
+        // A shallow id the fetch does not reach (here a tag object) stays shallow.
+        let stays = format!("shallow {}", f.tag);
+        let answer =
+            text(&v2(&f.path, "fetch", &[&want, &shallow, &stays, "done"]).expect("fetch"));
+        assert!(answer.contains(&format!("unshallow {}", f.c2)), "{answer}");
+        assert!(
+            !answer.contains(&format!("unshallow {}", f.tag)),
+            "{answer}"
+        );
+        let limited =
+            v2(&f.path, "fetch", &[&want, "filter blob:limit=100", "done"]).expect("fetch");
+        assert_eq!(pack_count(&limited), Some(12), "big.bin stays out");
     }
 
     fn fetch(path: &Path, args: &[&str]) -> ShakoResult<Vec<u8>> {

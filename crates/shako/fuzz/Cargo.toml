@@ -81,6 +81,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "git_archive"
+path = "fuzz_targets/git_archive.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "core_input"
 path = "fuzz_targets/core_input.rs"
 test = false
