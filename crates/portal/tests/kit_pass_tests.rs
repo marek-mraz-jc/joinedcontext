@@ -1695,6 +1695,28 @@ async fn an_application_is_written_in_one_call_and_the_template_never_reaches_th
         StatusCode::OK => {
             assert!(String::from_utf8_lossy(&body).contains("importmap"));
             assert!(headers.contains_key(header::CONTENT_SECURITY_POLICY));
+            // T-7837: the same document again is the one kept; its tag sent back is a 304.
+            let uri = run["previewUrl"].as_str().unwrap_or_default();
+            let (again, _, kept) = call(&app, &cookie, Method::GET, uri, None).await;
+            assert_eq!((again, kept), (StatusCode::OK, body));
+            let tag = headers[header::ETAG]
+                .to_str()
+                .unwrap_or_default()
+                .to_owned();
+            let unchanged = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header(header::COOKIE, &cookie)
+                        .header(header::IF_NONE_MATCH, format!("W/\"x\", {tag}"))
+                        .body(Body::empty())
+                        .expect("a request"),
+                )
+                .await
+                .expect("a response");
+            assert_eq!(unchanged.status(), StatusCode::NOT_MODIFIED);
+            assert_eq!(unchanged.headers()[header::ETAG], tag.as_str());
         }
         StatusCode::SERVICE_UNAVAILABLE => {
             joinedcontext_portal::agents::kit::sdk_built_or_skip(false, "runtime/runtime.json");

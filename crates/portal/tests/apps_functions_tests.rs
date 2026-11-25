@@ -600,6 +600,51 @@ async fn an_organization_apps_function_acts_as_the_viewer_and_answers_her_refusa
     );
 }
 
+/// T-7837: each refusal of jc-functions reaches the caller as its own status through the real
+/// route: full 429 with Retry-After, too large 413, any other status or an answer that is no
+/// outcome 503.
+#[tokio::test]
+async fn each_runtime_refusal_reaches_the_caller_as_its_status() {
+    if !runs_functions() {
+        return;
+    }
+    for (at, (runtime_answer, want)) in [
+        (ResponseTemplate::new(429), StatusCode::TOO_MANY_REQUESTS),
+        (ResponseTemplate::new(413), StatusCode::PAYLOAD_TOO_LARGE),
+        (ResponseTemplate::new(500), StatusCode::SERVICE_UNAVAILABLE),
+        (
+            ResponseTemplate::new(200).set_body_string("not an outcome"),
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let runtime = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/invoke"))
+            .respond_with(runtime_answer)
+            .mount(&runtime)
+            .await;
+        let rig = organization_rig(&format!("fn-refused-{at}"), runtime).await;
+        let eva = common::REALM.person_token("bbsk-events", "eva", &[]);
+        let cookie = format!("__Host-jc_csrf={CSRF}");
+        let (status, body) = post(
+            &rig,
+            "/apps/bbsk-events/api/functions/near-me",
+            &[
+                ("x-access-token", &eva),
+                ("cookie", &cookie),
+                ("x-csrf-token", CSRF),
+            ],
+            Vec::new(),
+        )
+        .await;
+        assert_eq!(status, want, "{body}");
+        assert_eq!(invocations(&rig.runtime).await.len(), 1);
+    }
+}
+
 /// RTE-12: an edge token that names a Portal session binds the CSRF token to that person, so
 /// the call passes with the token the Portal handed her and is refused with a plain
 /// double-submit pair any page on the host could have set.
