@@ -153,7 +153,7 @@ impl KvBucket {
 
     pub async fn put(&self, key: &str, value: Bytes) -> Result<u64, CoreError> {
         match self.target().await? {
-            Target::Memory(c, b) => Ok(c.kv_put(&b, key, value)),
+            Target::Memory(c, b) => c.kv_put(&b, key, value),
             Target::Live(s) => s.put(key, value).await.map_err(live_err),
         }
     }
@@ -192,14 +192,14 @@ impl KvBucket {
     /// does not report it).
     pub async fn delete(&self, key: &str) -> Result<u64, CoreError> {
         match self.target().await? {
-            Target::Memory(c, b) => Ok(c.kv_delete(&b, key)),
+            Target::Memory(c, b) => c.kv_delete(&b, key),
             Target::Live(s) => s.delete(key).await.map(|()| 0).map_err(live_err),
         }
     }
 
     pub async fn purge(&self, key: &str) -> Result<u64, CoreError> {
         match self.target().await? {
-            Target::Memory(c, b) => Ok(c.kv_purge(&b, key)),
+            Target::Memory(c, b) => c.kv_purge(&b, key),
             Target::Live(s) => s.purge(key).await.map(|()| 0).map_err(live_err),
         }
     }

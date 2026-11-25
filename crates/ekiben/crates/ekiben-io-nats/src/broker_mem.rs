@@ -63,6 +63,124 @@ impl JsConsumerState {
     }
 }
 
+/// Messages a memory cluster's JetStream log keeps; the oldest goes first, as JetStream's
+/// limits policy drops it. Also the most a memory consumer or core subscription may hold
+/// unacknowledged or queued (`max_ack_pending`, `prefetch_count`).
+pub const MEM_JS_MAX_MSGS: usize = 10_000;
+/// Bytes (subject, headers and payload) a memory cluster's JetStream log keeps.
+pub const MEM_JS_MAX_BYTES: usize = 64 << 20;
+/// Revisions a memory KV bucket keeps per key unless set otherwise (NATS KV's default).
+pub const MEM_KV_DEFAULT_HISTORY: usize = 1;
+/// The deepest history a memory KV bucket may keep (NATS KV's own limit).
+pub const MEM_KV_MAX_HISTORY: usize = 64;
+/// Bytes (keys and values of every kept revision, per entry overhead included) all KV buckets
+/// of one memory cluster keep; a write past it is refused.
+pub const MEM_KV_MAX_BYTES: usize = 64 << 20;
+const KV_ENTRY_OVERHEAD: usize = 64;
+
+/// The cluster refuses a config value over its cap, naming the field.
+pub fn check_mem_cap(field: &str, value: usize) -> Result<(), CoreError> {
+    if value > MEM_JS_MAX_MSGS {
+        return Err(CoreError::config(format!(
+            "{field} {value} is over the in-memory NATS cluster's limit of {MEM_JS_MAX_MSGS}"
+        )));
+    }
+    Ok(())
+}
+
+fn msg_bytes(m: &MemNatsMsg) -> usize {
+    m.subject.len()
+        + m.data.len()
+        + m.headers
+            .iter()
+            .map(|(k, v)| k.len() + v.len())
+            .sum::<usize>()
+}
+
+fn kv_entry_bytes(e: &KvEntry) -> usize {
+    e.key.len() + e.value.len() + KV_ENTRY_OVERHEAD
+}
+
+/// The JetStream log: `dropped` messages left the front, so `msgs[i]` has stream sequence
+/// `dropped + i + 1`.
+#[derive(Default)]
+struct JsLog {
+    msgs: VecDeque<MemNatsMsg>,
+    dropped: u64,
+    bytes: usize,
+}
+
+impl JsLog {
+    fn end_seq(&self) -> u64 {
+        self.dropped + self.msgs.len() as u64
+    }
+
+    /// The index of the first message after `cursor`; a cursor behind the front moves to it.
+    fn index_after(&self, cursor: &mut u64) -> usize {
+        *cursor = (*cursor).max(self.dropped);
+        (*cursor - self.dropped) as usize
+    }
+}
+
+#[derive(Default)]
+struct KvState {
+    buckets: HashMap<String, BTreeMap<String, VecDeque<KvEntry>>>,
+    revisions: HashMap<String, u64>,
+    history: HashMap<String, usize>,
+    bytes: usize,
+}
+
+impl KvState {
+    /// Appends `entry` to its key (after clearing the key when `clear`), trims the key to the
+    /// bucket's history depth, and refuses the write when the cluster's KV bytes would pass
+    /// [`MEM_KV_MAX_BYTES`].
+    fn write(&mut self, entry: KvEntry, clear: bool) -> Result<u64, CoreError> {
+        let depth = self
+            .history
+            .get(&entry.bucket)
+            .copied()
+            .unwrap_or(MEM_KV_DEFAULT_HISTORY);
+        let hist = self
+            .buckets
+            .get(&entry.bucket)
+            .and_then(|b| b.get(&entry.key));
+        let kept = hist.map_or(0, VecDeque::len);
+        let leaving = if clear {
+            kept
+        } else {
+            (kept + 1).saturating_sub(depth)
+        };
+        let freed: usize = hist
+            .into_iter()
+            .flatten()
+            .take(leaving)
+            .map(kv_entry_bytes)
+            .sum();
+        let after = self.bytes - freed + kv_entry_bytes(&entry);
+        if after > MEM_KV_MAX_BYTES {
+            return Err(CoreError::other(format!(
+                "nats: maximum bytes exceeded: the in-memory NATS cluster keeps at most {MEM_KV_MAX_BYTES} bytes of KV data"
+            )));
+        }
+        let rev = self.revisions.entry(entry.bucket.clone()).or_insert(0);
+        *rev += 1;
+        let rev = *rev;
+        let hist = self
+            .buckets
+            .entry(entry.bucket.clone())
+            .or_default()
+            .entry(entry.key.clone())
+            .or_default();
+        hist.drain(..leaving);
+        hist.push_back(KvEntry {
+            revision: rev,
+            ..entry
+        });
+        self.bytes = after;
+        Ok(rev)
+    }
+}
+
 struct CoreSubEntry {
     pattern: String,
     queue: Option<String>,
@@ -75,11 +193,10 @@ struct CoreSubEntry {
 pub struct InMemoryNatsCluster {
     core_subs: Mutex<Vec<CoreSubEntry>>,
     rr_counter: Mutex<usize>,
-    js_log: Mutex<Vec<MemNatsMsg>>,
+    js_log: Mutex<JsLog>,
     js_consumers: Mutex<HashMap<String, JsConsumerState>>,
     js_notify: Notify,
-    kv_buckets: Mutex<HashMap<String, BTreeMap<String, Vec<KvEntry>>>>,
-    kv_revisions: Mutex<HashMap<String, u64>>,
+    kv: Mutex<KvState>,
 }
 
 static GLOBAL_CLUSTERS: OnceLock<Mutex<HashMap<String, Arc<InMemoryNatsCluster>>>> =
@@ -95,11 +212,10 @@ impl InMemoryNatsCluster {
                 Arc::new(Self {
                     core_subs: Mutex::new(Vec::new()),
                     rr_counter: Mutex::new(0),
-                    js_log: Mutex::new(Vec::new()),
+                    js_log: Mutex::new(JsLog::default()),
                     js_consumers: Mutex::new(HashMap::new()),
                     js_notify: Notify::new(),
-                    kv_buckets: Mutex::new(HashMap::new()),
-                    kv_revisions: Mutex::new(HashMap::new()),
+                    kv: Mutex::new(KvState::default()),
                 })
             })
             .clone()
@@ -112,13 +228,21 @@ impl InMemoryNatsCluster {
         queue: Option<String>,
         cap: usize,
     ) -> mpsc::Receiver<MemNatsMsg> {
-        let (tx, rx) = mpsc::channel(cap.max(64));
-        self.core_subs.lock().unwrap().push(CoreSubEntry {
+        let (tx, rx) = mpsc::channel(cap.clamp(64, MEM_JS_MAX_MSGS));
+        let mut subs = self.core_subs.lock().unwrap();
+        subs.retain(|s| !s.tx.is_closed());
+        subs.push(CoreSubEntry {
             pattern: pattern.to_string(),
             queue,
             tx,
         });
         rx
+    }
+
+    /// Core subscriptions the cluster holds, closed ones included until the next subscribe or
+    /// publish prunes them.
+    pub fn core_subscriptions(&self) -> usize {
+        self.core_subs.lock().unwrap().len()
     }
 
     pub fn publish_core(
@@ -167,7 +291,7 @@ impl InMemoryNatsCluster {
         data: Bytes,
     ) -> u64 {
         let mut log = self.js_log.lock().unwrap();
-        let seq = (log.len() as u64) + 1;
+        let seq = log.end_seq() + 1;
         let msg = MemNatsMsg {
             subject: subject.clone(),
             reply: None,
@@ -176,11 +300,27 @@ impl InMemoryNatsCluster {
             stream_seq: seq,
             timestamp_unix_nano: i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0),
         };
-        log.push(msg);
+        log.bytes += msg_bytes(&msg);
+        log.msgs.push_back(msg);
+        // ponytail: one message larger than MEM_JS_MAX_BYTES stays until the next publish.
+        while log.msgs.len() > 1
+            && (log.msgs.len() > MEM_JS_MAX_MSGS || log.bytes > MEM_JS_MAX_BYTES)
+        {
+            if let Some(old) = log.msgs.pop_front() {
+                log.bytes -= msg_bytes(&old);
+                log.dropped += 1;
+            }
+        }
         drop(log);
         self.publish_core(subject, None, headers, data);
         self.js_notify.notify_waiters();
         seq
+    }
+
+    /// Messages and bytes the JetStream log keeps.
+    pub fn js_retained(&self) -> (usize, usize) {
+        let log = self.js_log.lock().unwrap();
+        (log.msgs.len(), log.bytes)
     }
 
     pub fn ensure_consumer(
@@ -206,10 +346,10 @@ impl InMemoryNatsCluster {
             entry.initialized = true;
             match entry.deliver_policy.as_str() {
                 "new" => {
-                    entry.cursor_seq = log.len() as u64;
+                    entry.cursor_seq = log.end_seq();
                 }
                 "last" => {
-                    entry.cursor_seq = (log.len() as u64).saturating_sub(1);
+                    entry.cursor_seq = log.end_seq().saturating_sub(1);
                 }
                 _ => {
                     entry.cursor_seq = 0;
@@ -238,8 +378,10 @@ impl InMemoryNatsCluster {
             state
                 .in_flight
                 .insert(msg.stream_seq, (msg.clone(), num_delivered));
-            let pending = log[state.cursor_seq as usize..]
-                .iter()
+            let start = log.index_after(&mut state.cursor_seq);
+            let pending = log
+                .msgs
+                .range(start..)
                 .filter(|m| subject_matches(&state.subject_filter, &m.subject))
                 .count()
                 + state.redeliver_queue.len();
@@ -253,15 +395,17 @@ impl InMemoryNatsCluster {
         }
 
         // 2. Scan forward in the stream log
-        while (state.cursor_seq as usize) < log.len() {
-            let msg = log[state.cursor_seq as usize].clone();
+        let mut idx = log.index_after(&mut state.cursor_seq);
+        while let Some(msg) = log.msgs.get(idx).cloned() {
+            idx += 1;
             state.cursor_seq += 1;
             if subject_matches(&state.subject_filter, &msg.subject) {
                 state.consumer_seq_counter += 1;
                 let c_seq = state.consumer_seq_counter;
                 state.in_flight.insert(msg.stream_seq, (msg.clone(), 1));
-                let pending = log[state.cursor_seq as usize..]
-                    .iter()
+                let pending = log
+                    .msgs
+                    .range(idx..)
                     .filter(|m| subject_matches(&state.subject_filter, &m.subject))
                     .count();
                 return Some(JsDeliveredMsg {
@@ -298,26 +442,61 @@ impl InMemoryNatsCluster {
     }
 
     // Key-Value Store operations
-    fn next_kv_rev(&self, bucket: &str) -> u64 {
-        let mut revs = self.kv_revisions.lock().unwrap();
-        let entry = revs.entry(bucket.to_string()).or_insert(0);
-        *entry += 1;
-        *entry
+
+    /// Sets how many revisions per key `bucket` keeps (1 to [`MEM_KV_MAX_HISTORY`]), as a
+    /// bucket's `history` does on a NATS server.
+    pub fn kv_set_history(&self, bucket: &str, depth: usize) -> Result<(), CoreError> {
+        if !(1..=MEM_KV_MAX_HISTORY).contains(&depth) {
+            return Err(CoreError::config(format!(
+                "history {depth} must be between 1 and {MEM_KV_MAX_HISTORY}"
+            )));
+        }
+        self.kv
+            .lock()
+            .unwrap()
+            .history
+            .insert(bucket.to_string(), depth);
+        Ok(())
+    }
+
+    /// Bytes all KV buckets of the cluster keep, as [`MEM_KV_MAX_BYTES`] counts them.
+    pub fn kv_retained_bytes(&self) -> usize {
+        self.kv.lock().unwrap().bytes
+    }
+
+    fn kv_latest(&self, bucket: &str, key: &str) -> Option<KvEntry> {
+        let kv = self.kv.lock().unwrap();
+        kv.buckets.get(bucket)?.get(key)?.back().cloned()
+    }
+
+    fn kv_write(
+        &self,
+        bucket: &str,
+        key: &str,
+        value: Bytes,
+        operation: &'static str,
+    ) -> Result<u64, CoreError> {
+        let entry = KvEntry {
+            bucket: bucket.to_string(),
+            key: key.to_string(),
+            value,
+            revision: 0,
+            delta: 0,
+            operation,
+            created: crate::kv_backend::go_rfc3339_nano(jiff::Timestamp::now()),
+        };
+        self.kv
+            .lock()
+            .unwrap()
+            .write(entry, operation == "KeyValuePurgeOp")
     }
 
     pub fn kv_get(&self, bucket: &str, key: &str) -> Result<KvEntry, CoreError> {
-        let buckets = self.kv_buckets.lock().unwrap();
-        let Some(b_map) = buckets.get(bucket) else {
-            return Err(CoreError::KeyNotFound(key.to_string()));
-        };
         // A key's history is never empty: a delete or purge leaves its marker.
-        let Some(latest) = b_map.get(key).and_then(|h| h.last()) else {
-            return Err(CoreError::KeyNotFound(key.to_string()));
-        };
-        if latest.operation != "KeyValuePutOp" {
-            return Err(CoreError::KeyNotFound(key.to_string()));
+        match self.kv_latest(bucket, key) {
+            Some(latest) if latest.operation == "KeyValuePutOp" => Ok(latest),
+            _ => Err(CoreError::KeyNotFound(key.to_string())),
         }
-        Ok(latest.clone())
     }
 
     pub fn kv_get_revision(
@@ -326,11 +505,8 @@ impl InMemoryNatsCluster {
         key: &str,
         revision: u64,
     ) -> Result<KvEntry, CoreError> {
-        let buckets = self.kv_buckets.lock().unwrap();
-        let Some(b_map) = buckets.get(bucket) else {
-            return Err(CoreError::KeyNotFound(key.to_string()));
-        };
-        let Some(history) = b_map.get(key) else {
+        let kv = self.kv.lock().unwrap();
+        let Some(history) = kv.buckets.get(bucket).and_then(|b| b.get(key)) else {
             return Err(CoreError::KeyNotFound(key.to_string()));
         };
         history
@@ -340,35 +516,18 @@ impl InMemoryNatsCluster {
             .ok_or_else(|| CoreError::KeyNotFound(format!("{key}@{revision}")))
     }
 
-    pub fn kv_put(&self, bucket: &str, key: &str, value: Bytes) -> u64 {
-        let rev = self.next_kv_rev(bucket);
-        let mut buckets = self.kv_buckets.lock().unwrap();
-        let b_map = buckets.entry(bucket.to_string()).or_default();
-        let hist = b_map.entry(key.to_string()).or_default();
-        hist.push(KvEntry {
-            bucket: bucket.to_string(),
-            key: key.to_string(),
-            value,
-            revision: rev,
-            delta: 0,
-            operation: "KeyValuePutOp",
-            created: crate::kv_backend::go_rfc3339_nano(jiff::Timestamp::now()),
-        });
-        rev
+    pub fn kv_put(&self, bucket: &str, key: &str, value: Bytes) -> Result<u64, CoreError> {
+        self.kv_write(bucket, key, value, "KeyValuePutOp")
     }
 
     pub fn kv_create(&self, bucket: &str, key: &str, value: Bytes) -> Result<u64, CoreError> {
+        if self
+            .kv_latest(bucket, key)
+            .is_some_and(|e| e.operation == "KeyValuePutOp")
         {
-            let buckets = self.kv_buckets.lock().unwrap();
-            if let Some(b_map) = buckets.get(bucket) {
-                if let Some(hist) = b_map.get(key) {
-                    if hist.last().is_some_and(|e| e.operation == "KeyValuePutOp") {
-                        return Err(CoreError::KeyAlreadyExists(key.to_string()));
-                    }
-                }
-            }
+            return Err(CoreError::KeyAlreadyExists(key.to_string()));
         }
-        Ok(self.kv_put(bucket, key, value))
+        self.kv_put(bucket, key, value)
     }
 
     pub fn kv_update(
@@ -378,61 +537,26 @@ impl InMemoryNatsCluster {
         value: Bytes,
         expected_rev: u64,
     ) -> Result<u64, CoreError> {
-        {
-            let buckets = self.kv_buckets.lock().unwrap();
-            let current_rev = buckets
-                .get(bucket)
-                .and_then(|b| b.get(key))
-                .and_then(|h| h.last())
-                .map(|e| e.revision)
-                .unwrap_or(0);
-            if current_rev != expected_rev {
-                return Err(CoreError::other(format!(
-                    "nats_kv update revision mismatch: expected {expected_rev}, got {current_rev}"
-                )));
-            }
+        let current_rev = self.kv_latest(bucket, key).map_or(0, |e| e.revision);
+        if current_rev != expected_rev {
+            return Err(CoreError::other(format!(
+                "nats_kv update revision mismatch: expected {expected_rev}, got {current_rev}"
+            )));
         }
-        Ok(self.kv_put(bucket, key, value))
+        self.kv_put(bucket, key, value)
     }
 
-    pub fn kv_delete(&self, bucket: &str, key: &str) -> u64 {
-        let rev = self.next_kv_rev(bucket);
-        let mut buckets = self.kv_buckets.lock().unwrap();
-        let b_map = buckets.entry(bucket.to_string()).or_default();
-        let hist = b_map.entry(key.to_string()).or_default();
-        hist.push(KvEntry {
-            bucket: bucket.to_string(),
-            key: key.to_string(),
-            value: Bytes::new(),
-            revision: rev,
-            delta: 0,
-            operation: "KeyValueDeleteOp",
-            created: crate::kv_backend::go_rfc3339_nano(jiff::Timestamp::now()),
-        });
-        rev
+    pub fn kv_delete(&self, bucket: &str, key: &str) -> Result<u64, CoreError> {
+        self.kv_write(bucket, key, Bytes::new(), "KeyValueDeleteOp")
     }
 
-    pub fn kv_purge(&self, bucket: &str, key: &str) -> u64 {
-        let rev = self.next_kv_rev(bucket);
-        let mut buckets = self.kv_buckets.lock().unwrap();
-        let b_map = buckets.entry(bucket.to_string()).or_default();
-        let hist = b_map.entry(key.to_string()).or_default();
-        hist.clear();
-        hist.push(KvEntry {
-            bucket: bucket.to_string(),
-            key: key.to_string(),
-            value: Bytes::new(),
-            revision: rev,
-            delta: 0,
-            operation: "KeyValuePurgeOp",
-            created: crate::kv_backend::go_rfc3339_nano(jiff::Timestamp::now()),
-        });
-        rev
+    pub fn kv_purge(&self, bucket: &str, key: &str) -> Result<u64, CoreError> {
+        self.kv_write(bucket, key, Bytes::new(), "KeyValuePurgeOp")
     }
 
     pub fn kv_history(&self, bucket: &str, key_filter: &str) -> Vec<KvEntry> {
-        let buckets = self.kv_buckets.lock().unwrap();
-        let Some(b_map) = buckets.get(bucket) else {
+        let kv = self.kv.lock().unwrap();
+        let Some(b_map) = kv.buckets.get(bucket) else {
             return Vec::new();
         };
         let mut out = Vec::new();
@@ -445,14 +569,14 @@ impl InMemoryNatsCluster {
     }
 
     pub fn kv_keys(&self, bucket: &str, key_filter: &str) -> Vec<String> {
-        let buckets = self.kv_buckets.lock().unwrap();
-        let Some(b_map) = buckets.get(bucket) else {
+        let kv = self.kv.lock().unwrap();
+        let Some(b_map) = kv.buckets.get(bucket) else {
             return Vec::new();
         };
         b_map
             .iter()
             .filter_map(|(k, hist)| {
-                let is_live = hist.last().is_some_and(|e| e.operation == "KeyValuePutOp");
+                let is_live = hist.back().is_some_and(|e| e.operation == "KeyValuePutOp");
                 (is_live && subject_matches(key_filter, k)).then_some(k.clone())
             })
             .collect()

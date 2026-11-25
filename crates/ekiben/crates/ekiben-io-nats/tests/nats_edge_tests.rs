@@ -379,6 +379,16 @@ async fn core_and_jetstream_configs_are_refused_with_the_field_named() {
         ),
         (
             "nats",
+            json!({"urls": [url], "subject": "s", "prefetch_count": 10_001}),
+            "prefetch_count 10001 is over the in-memory NATS cluster's limit of 10000",
+        ),
+        (
+            "nats_jetstream_in",
+            json!({"urls": [url], "subject": "s", "max_ack_pending": 10_001}),
+            "max_ack_pending 10001 is over the in-memory NATS cluster's limit of 10000",
+        ),
+        (
+            "nats",
             json!({"urls": [url], "subject": "s", "nak_delay": "soon"}),
             "soon",
         ),
@@ -605,6 +615,55 @@ fn the_memory_cluster_pulls_acks_and_redelivers_by_consumer() {
     assert!(cl.try_pull_jetstream("c").is_none());
 }
 
+#[test]
+fn the_memory_jetstream_log_drops_the_oldest_past_its_limits() {
+    use ekiben_io_nats::broker_mem::{MEM_JS_MAX_BYTES, MEM_JS_MAX_MSGS};
+    let cl = InMemoryNatsCluster::get("edge-test\nnats://memory/js_cap");
+    cl.ensure_consumer("all", ">", "all", 1);
+    for i in 0..MEM_JS_MAX_MSGS + 5 {
+        cl.publish_jetstream("s".into(), BTreeMap::new(), Bytes::from(i.to_string()));
+    }
+    assert_eq!(cl.js_retained().0, MEM_JS_MAX_MSGS);
+    // A consumer that had read nothing starts at the oldest message kept.
+    let first = cl.try_pull_jetstream("all").unwrap();
+    assert_eq!(first.msg.stream_seq, 6);
+    assert_eq!(&first.msg.data[..], b"5");
+    assert_eq!(first.num_pending, MEM_JS_MAX_MSGS - 1);
+    cl.ack_jetstream("all", 6);
+    // A consumer made now at "last" reads the newest message.
+    cl.ensure_consumer("last", ">", "last", 1);
+    let last = cl.try_pull_jetstream("last").unwrap();
+    assert_eq!(last.msg.stream_seq, (MEM_JS_MAX_MSGS + 5) as u64);
+
+    let big = InMemoryNatsCluster::get("edge-test\nnats://memory/js_bytes");
+    let mib = Bytes::from(vec![b'x'; 1 << 20]);
+    for _ in 0..70 {
+        big.publish_jetstream("s".into(), BTreeMap::new(), mib.clone());
+    }
+    let (msgs, bytes) = big.js_retained();
+    assert!(bytes <= MEM_JS_MAX_BYTES, "{bytes}");
+    assert_eq!(msgs, 63);
+    // The next sequence carries on after the dropped ones.
+    assert_eq!(
+        big.publish_jetstream("s".into(), BTreeMap::new(), Bytes::new()),
+        71
+    );
+}
+
+#[test]
+fn a_closed_core_subscription_leaves_the_cluster() {
+    let cl = InMemoryNatsCluster::get("edge-test\nnats://memory/core_closed");
+    let kept = cl.subscribe_core("a", None, 1);
+    for _ in 0..100 {
+        drop(cl.subscribe_core("b", None, 1));
+    }
+    let _again = cl.subscribe_core("b", None, 1);
+    assert_eq!(cl.core_subscriptions(), 2);
+    drop(kept);
+    cl.publish_core("a".into(), None, BTreeMap::new(), Bytes::new());
+    assert_eq!(cl.core_subscriptions(), 1);
+}
+
 #[tokio::test]
 async fn a_waiter_wakes_on_jetstream_activity() {
     let cl = InMemoryNatsCluster::get("edge-test\nnats://memory/wake");
@@ -621,6 +680,7 @@ async fn a_waiter_wakes_on_jetstream_activity() {
 #[test]
 fn the_memory_kv_keeps_history_and_refuses_stale_writes() {
     let cl = InMemoryNatsCluster::get("edge-test\nnats://memory/kv");
+    cl.kv_set_history("b", 5).unwrap();
     let not_found = |r: Result<_, CoreError>| matches!(r, Err(CoreError::KeyNotFound(_)));
     assert!(not_found(cl.kv_get("nobucket", "k")));
     assert!(not_found(cl.kv_get_revision("nobucket", "k", 1)));
@@ -639,11 +699,11 @@ fn the_memory_kv_keeps_history_and_refuses_stale_writes() {
     assert_eq!(&cl.kv_get_revision("b", "k", r1).unwrap().value[..], b"v1");
     let missing_rev = cl.kv_get_revision("b", "k", 999).unwrap_err();
     assert!(missing_rev.to_string().contains("k@999"), "{missing_rev}");
-    cl.kv_put("b", "k2", Bytes::from_static(b"x"));
+    cl.kv_put("b", "k2", Bytes::from_static(b"x")).unwrap();
     let mut keys = cl.kv_keys("b", ">");
     keys.sort();
     assert_eq!(keys, ["k", "k2"]);
-    let r3 = cl.kv_delete("b", "k");
+    let r3 = cl.kv_delete("b", "k").unwrap();
     assert!(r3 > r2);
     assert!(not_found(cl.kv_get("b", "k")));
     assert_eq!(cl.kv_keys("b", ">"), ["k2"]);
@@ -663,7 +723,7 @@ fn the_memory_kv_keeps_history_and_refuses_stale_writes() {
             "KeyValuePutOp"
         ]
     );
-    cl.kv_purge("b", "k");
+    cl.kv_purge("b", "k").unwrap();
     let ops: Vec<&str> = cl
         .kv_history("b", "k")
         .iter()
@@ -675,10 +735,74 @@ fn the_memory_kv_keeps_history_and_refuses_stale_writes() {
     assert!(cl.kv_keys("b", "z.*").is_empty());
 }
 
+#[test]
+fn a_memory_kv_bucket_keeps_its_history_depth() {
+    let cl = InMemoryNatsCluster::get("edge-test\nnats://memory/kv_depth");
+    let put = |b: &str, i: u32| cl.kv_put(b, "k", Bytes::from(i.to_string())).unwrap();
+    // Default depth 1, as a NATS KV bucket made without `history`.
+    let last = (0..20).map(|i| put("one", i)).last().unwrap();
+    let hist = cl.kv_history("one", "k");
+    assert_eq!(hist.len(), 1);
+    assert_eq!(hist[0].revision, last);
+    assert_eq!(&hist[0].value[..], b"19");
+    cl.kv_set_history("three", 3).unwrap();
+    for i in 0..20 {
+        put("three", i);
+    }
+    let values: Vec<_> = cl
+        .kv_history("three", "k")
+        .iter()
+        .map(|e| e.value.clone())
+        .collect();
+    assert_eq!(values, ["17", "18", "19"]);
+    // A delete marker is a revision of its own and pushes the oldest out.
+    cl.kv_delete("three", "k").unwrap();
+    assert_eq!(cl.kv_history("three", "k").len(), 3);
+    for bad in [0, 65] {
+        let err = cl.kv_set_history("x", bad).unwrap_err().to_string();
+        assert!(err.contains("history"), "{err}");
+    }
+    cl.kv_set_history("x", 64).unwrap();
+}
+
+#[test]
+fn a_memory_cluster_refuses_kv_writes_past_its_byte_limit() {
+    use ekiben_io_nats::broker_mem::MEM_KV_MAX_BYTES;
+    let cl = InMemoryNatsCluster::get("edge-test\nnats://memory/kv_bytes");
+    let mib = Bytes::from(vec![b'x'; 1 << 20]);
+    let mut stored = 0;
+    let err = loop {
+        match cl.kv_put("b", &format!("k{stored}"), mib.clone()) {
+            Ok(_) => stored += 1,
+            Err(e) => break e.to_string(),
+        }
+        assert!(stored <= 64, "no refusal after {stored} MiB");
+    };
+    assert!(err.contains("maximum bytes exceeded"), "{err}");
+    assert!(cl.kv_retained_bytes() <= MEM_KV_MAX_BYTES);
+    // Overwriting a key at depth 1 replaces its revision, so it still fits.
+    cl.kv_put("b", "k0", mib.clone()).unwrap();
+    // Small writes fill what is left; then a new key's delete marker is refused too.
+    let mut i = 0;
+    while cl.kv_put("b", &format!("f{i}"), Bytes::new()).is_ok() {
+        i += 1;
+    }
+    assert!(cl.kv_retained_bytes() <= MEM_KV_MAX_BYTES);
+    assert!(cl.kv_delete("b", &"n".repeat(100)).is_err());
+    // A purge frees the key's values.
+    let before = cl.kv_retained_bytes();
+    cl.kv_purge("b", "k0").unwrap();
+    assert!(cl.kv_retained_bytes() < before - (1 << 19));
+    cl.kv_put("b", "small", Bytes::from_static(b"v")).unwrap();
+}
+
 #[tokio::test]
 async fn the_kv_processor_reads_revisions_updates_and_reports_missing_keys() {
     let c = ctx("org-kvp", None);
     let url = "nats://memory/kvp";
+    InMemoryNatsCluster::get(&format!("org-kvp\n{url}"))
+        .kv_set_history("org-kvp::bk", 2)
+        .unwrap();
     let proc = |op: &str, extra: serde_json::Value| {
         let mut v =
             json!({"urls": [url], "bucket": "bk", "operation": op, "key": "${! meta(\"k\") }"});
