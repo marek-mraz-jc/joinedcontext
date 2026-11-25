@@ -54,13 +54,9 @@ pub fn compile_scope_q(scope_q: &str, col: &'static str, first_bind: usize) -> O
             ));
             binds.push(re);
         }
-        if and_parts.is_empty() {
-            return None;
-        }
+        // `scope_groups` yields at least one group of at least one pattern
+        // (`str::split` never yields nothing), so neither list is empty
         or_parts.push(format!("({})", and_parts.join(" AND ")));
-    }
-    if or_parts.is_empty() {
-        return None;
     }
     Some(CompiledSql {
         sql: format!("({})", or_parts.join(" OR ")),
@@ -305,7 +301,7 @@ mod tests {
     #[test]
     fn degenerate_groups_widen_instead_of_narrowing() {
         for q in ["", "/", "/A,", ";/A"] {
-            let c = compile_scope_q(q, "scopes", 1).unwrap_or_else(|| panic!("{q} compiles"));
+            let c = compile_scope_q(q, "scopes", 1).expect("a degenerate group compiles");
             assert!(
                 c.binds.iter().any(|b| b == "^.*$"),
                 "{q} must widen, not narrow: {:?}",

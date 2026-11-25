@@ -403,8 +403,7 @@ mod tests {
         assert!(!html.contains("data:"), "{html}");
         assert!(html.contains("c <a href=\"/dataset/\">d</a>"), "{html}");
         assert!(
-            html.contains("<a href=\"https://other.example/?q=&quot;x&quot;\" rel=\"noopener nofollow\">e</a>")
-                || html.contains("<a href=\"https://other.example/?q=%22x%22\" rel=\"noopener nofollow\">e</a>"),
+            html.contains("<a href=\"https://other.example/?q=&quot;x&quot;\" rel=\"noopener nofollow\">e</a>"),
             "{html}"
         );
         assert!(html.contains("<a href=\"mailto:a@b.sk\">f</a>"), "{html}");

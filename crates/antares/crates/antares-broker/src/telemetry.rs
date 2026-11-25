@@ -38,7 +38,7 @@ pub fn enabled() -> bool {
 /// Strip `user:password@` userinfo (RFC 3986 clause 3.2.1) out of a URL before
 /// it is logged. A string without an authority component — no scheme, or an
 /// `@` that belongs to the path — comes back byte-identical.
-fn redact_url(url: &str) -> String {
+pub(crate) fn redact_url(url: &str) -> String {
     let Some((scheme, rest)) = url.split_once("://") else {
         return url.to_owned();
     };
@@ -57,7 +57,7 @@ fn redact_url(url: &str) -> String {
 /// (RFC 3986 clause 3.2.1) reaches the startup error the way it would reach a
 /// log line. The endpoint is known at the call site, so the failure carries
 /// its redacted form instead.
-fn no_userinfo(message: String, endpoint: &str) -> String {
+pub(crate) fn no_userinfo(message: String, endpoint: &str) -> String {
     let safe = redact_url(endpoint);
     if safe == endpoint {
         message
@@ -66,14 +66,24 @@ fn no_userinfo(message: String, endpoint: &str) -> String {
     }
 }
 
+/// [`no_userinfo`] as a `map_err` argument, built where the endpoint is known.
+fn redacting<E: std::fmt::Display>(endpoint: &str) -> impl Fn(E) -> String + '_ {
+    move |e| no_userinfo(e.to_string(), endpoint)
+}
+
 /// The OTLP/HTTP logs endpoint paired with a traces endpoint: the standard
 /// `v1/traces` suffix becomes `v1/logs`; any other URL is used as given.
-fn logs_endpoint(traces: &str) -> String {
+pub(crate) fn logs_endpoint(traces: &str) -> String {
     match traces.strip_suffix("/v1/traces") {
         Some(base) => format!("{base}/v1/logs"),
         None => traces.to_owned(),
     }
 }
+
+const EXPORT_OFF: &str =
+    "ANTARES_OTLP_ENDPOINT is set but ANTARES_TELEMETRY is off — no spans or logs are exported";
+const HOST_RECORDER: &str = "a metrics recorder was already installed; antares_ metrics go to \
+    it and /q/metrics is not served";
 
 /// Install the tracing subscriber stack and (ANTARES_TELEMETRY=1) the
 /// Prometheus recorder. Call once, before the runtime spins up anything
@@ -104,7 +114,7 @@ pub fn init() -> Result<Option<MetricsRender>, Box<dyn std::error::Error>> {
                 .with_http()
                 .with_endpoint(endpoint.clone())
                 .build()
-                .map_err(|e| no_userinfo(e.to_string(), &endpoint))?;
+                .map_err(redacting(&endpoint))?;
             let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
                 .with_batch_exporter(exporter)
                 .with_resource(resource.clone())
@@ -119,7 +129,7 @@ pub fn init() -> Result<Option<MetricsRender>, Box<dyn std::error::Error>> {
                 .with_http()
                 .with_endpoint(logs_endpoint.clone())
                 .build()
-                .map_err(|e| no_userinfo(e.to_string(), &logs_endpoint))?;
+                .map_err(redacting(&logs_endpoint))?;
             let logger_provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
                 .with_batch_exporter(log_exporter)
                 .with_resource(resource)
@@ -132,10 +142,8 @@ pub fn init() -> Result<Option<MetricsRender>, Box<dyn std::error::Error>> {
                     .iter()
                     .any(|t| m.target().starts_with(t))
             }));
-            tracing::info!(
-                endpoint = redact_url(&endpoint),
-                "OTLP span and log export enabled"
-            );
+            let endpoint = redact_url(&endpoint);
+            tracing::info!(endpoint, "OTLP span and log export enabled");
             (
                 Some(tracing_opentelemetry::layer().with_tracer(tracer)),
                 Some(bridge),
@@ -169,34 +177,24 @@ pub fn init() -> Result<Option<MetricsRender>, Box<dyn std::error::Error>> {
         // believes is exporting: say so rather than drop it silently. Logged
         // here because the subscriber above is what makes a log visible.
         if let Ok(endpoint) = std::env::var("ANTARES_OTLP_ENDPOINT") {
-            tracing::warn!(
-                endpoint = redact_url(&endpoint),
-                "ANTARES_OTLP_ENDPOINT is set but ANTARES_TELEMETRY is off — \
-                 no spans or logs are exported"
-            );
+            let endpoint = redact_url(&endpoint);
+            tracing::warn!(endpoint, "{EXPORT_OFF}");
         }
         return Ok(None); // the recorder, registry and sampler are never built
     }
-    let handle = match metrics_exporter_prometheus::PrometheusBuilder::new()
+    let answers = metrics_exporter_prometheus::Matcher::Full("antares_answer_bytes".into());
+    let builder = metrics_exporter_prometheus::PrometheusBuilder::new()
         .set_buckets(LATENCY_BUCKETS_SECONDS)?
-        .set_buckets_for_metric(
-            metrics_exporter_prometheus::Matcher::Full("antares_answer_bytes".into()),
-            ANSWER_BUCKETS_BYTES,
-        )?
-        .install_recorder()
-    {
-        Ok(handle) => handle,
+        .set_buckets_for_metric(answers, ANSWER_BUCKETS_BYTES)?;
+    let handle = match builder.install_recorder() {
         Err(metrics_exporter_prometheus::BuildError::FailedToSetGlobalRecorder(_)) => {
             // Another recorder owns the `metrics` facade (a host process):
             // the broker records into it and its /q/metrics answers 404.
-            tracing::warn!(
-                "a metrics recorder was already installed; antares_ metrics go to it \
-                 and /q/metrics is not served"
-            );
+            tracing::warn!("{HOST_RECORDER}");
             describe();
             return Ok(None);
         }
-        Err(e) => return Err(e.into()),
+        installed => installed?,
     };
     describe();
     Ok(Some(Arc::new(move || handle.render())))
@@ -397,17 +395,11 @@ pub fn spawn_sampler(state: antares_api::AppState) {
             // Limit counters live in LimitStats (incremented at rejection
             // sites); exported here so the wall is observable BEFORE users
             // hit it.
-            if let Some(map) = state.limits.snapshot().as_object() {
-                for (key, n) in map {
-                    if let Some(limit) = key.strip_prefix("rejected") {
-                        if let Some(n) = n.as_u64() {
-                            metrics::gauge!(
-                                "antares_limit_rejections_total",
-                                "limit" => limit.to_owned()
-                            )
-                            .set(n as f64);
-                        }
-                    }
+            let limits = state.limits.snapshot();
+            for (key, n) in limits.as_object().into_iter().flatten() {
+                if let (Some(limit), Some(n)) = (key.strip_prefix("rejected"), n.as_u64()) {
+                    metrics::gauge!("antares_limit_rejections_total", "limit" => limit.to_owned())
+                        .set(n as f64);
                 }
             }
         }
@@ -479,6 +471,16 @@ mod tests {
         ] {
             assert_eq!(redact_url(plain), plain, "rewrote a credential-free URL");
         }
+        // An authority with no path after it still loses its userinfo.
+        assert_eq!(
+            redact_url("http://otel:s3cr3t@collector:4318"),
+            "http://collector:4318"
+        );
+        // A message about an endpoint without userinfo is returned as it was.
+        assert_eq!(
+            no_userinfo("invalid URI http://c:4318".into(), "http://c:4318"),
+            "invalid URI http://c:4318"
+        );
     }
 
     /// An exporter that refuses its endpoint prints the endpoint back
@@ -492,21 +494,17 @@ mod tests {
         // A space is not a legal URI character, so the build fails with no
         // collector to reach — and the rejected endpoint rides the error.
         let endpoint = "http://otel:s3cr3t@collector .internal:4318/v1/traces";
-        let Err(spans) = opentelemetry_otlp::SpanExporter::builder()
+        let spans = opentelemetry_otlp::SpanExporter::builder()
             .with_http()
             .with_endpoint(endpoint)
             .build()
-        else {
-            panic!("a URI carrying a space is rejected")
-        };
+            .expect_err("a URI carrying a space is rejected");
         let logs_endpoint = logs_endpoint(endpoint);
-        let Err(logs) = opentelemetry_otlp::LogExporter::builder()
+        let logs = opentelemetry_otlp::LogExporter::builder()
             .with_http()
             .with_endpoint(logs_endpoint.clone())
             .build()
-        else {
-            panic!("a URI carrying a space is rejected")
-        };
+            .expect_err("a URI carrying a space is rejected");
         for (raw, needle) in [
             (spans.to_string(), endpoint),
             (logs.to_string(), logs_endpoint.as_str()),

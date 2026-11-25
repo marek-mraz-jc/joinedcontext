@@ -225,27 +225,27 @@ pub fn entities(
     }
 
     let mut out = BTreeMap::new();
-    for (slug, list) in &records {
+    // A slug's list holds at least the record that created it.
+    let firsts = records
+        .iter()
+        .filter_map(|(slug, list)| Some((slug, list, *list.first()?)));
+    for (slug, list, (first_name, first)) in firsts {
         let place = &places[*slug];
-        let Some(&(first_name, first)) = list.first() else {
-            continue;
-        };
         let service = first
             .get("@id")
             .and_then(Value::as_str)
             .map(|id| endpoint_iri(id, first_name))
             .and_then(|id| services.get(format!("{id}#service").as_str()).copied());
         // The service is the Endpoint, titled as the Endpoint, whichever dataset names it.
-        let mut described = first.clone();
+        // A record is a JSON-LD node, an object.
+        let mut described = first.as_object().cloned().unwrap_or_default();
         if first_name.is_some() {
             if let Some(title) = service.and_then(|s| s.get("dct:title")) {
-                described["dct:title"] = title.clone();
+                described.insert("dct:title".to_owned(), title.clone());
             }
-            if let Some(record) = described.as_object_mut() {
-                record.remove("dct:description");
-            }
+            described.remove("dct:description");
         }
-        let (id, entity) = data_service(slug, &described, service, place);
+        let (id, entity) = data_service(slug, &Value::Object(described), service, place);
         out.insert(id, entity);
         // Until a CKAN dataset names the Endpoint, it is a dataset of its own; [`link`] drops
         // this one once one does. Each dataset of a list is one of its own by its name.
@@ -262,16 +262,17 @@ pub fn entities(
             let Some(place) = places.get(&package.slug).filter(|place| place.is_public()) else {
                 continue;
             };
-            let Some(list) = records.get(package.slug.as_str()) else {
+            let Some((list, first)) = records
+                .get(package.slug.as_str())
+                .and_then(|list| Some((list, list.first()?)))
+            else {
                 continue;
             };
             // The dataset of a list a CKAN dataset publishes by its name, else the Endpoint's.
             let slice = list
                 .iter()
                 .find(|(name, _)| *name == Some(package.name.as_str()));
-            let Some(&(_, record)) = slice.or_else(|| list.first()) else {
-                continue;
-            };
+            let &(_, record) = slice.unwrap_or(first);
             // A CKAN name equal to another Endpoint's slug replaces that Endpoint's own Dataset:
             // the published dataset wins, and [`link`] clears the DataService's `refDataset`.
             out.insert(
@@ -330,9 +331,9 @@ pub fn link(catalog: &mut BTreeMap<String, Value>) {
         if let Some(publisher) = target(entity, "refPublisher") {
             *published.entry(publisher).or_default() += 1;
         }
-        if let Some(service) = target(entity, "refDataService") {
-            served.entry(service).or_default().push(id.clone());
-        }
+        // Every Dataset the retain above kept names its DataService.
+        let service = target(entity, "refDataService").unwrap_or_default();
+        served.entry(service).or_default().push(id.clone());
     }
     catalog.retain(|id, entity| entity["type"] != "Organization" || published.contains_key(id));
     for (id, entity) in catalog.iter_mut() {

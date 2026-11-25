@@ -632,6 +632,15 @@ async fn a_pipeline_sink_whose_store_is_down_answers_503() {
             "rejected",
             r#"{"record":{"id":"urn:ngsi-ld:Thing:1"},"error":"no","step":"2"}"#,
         ),
+        // A step as the runner's number, or as no step at all (T-7835).
+        (
+            "rejected",
+            r#"{"record":{"id":"urn:ngsi-ld:Thing:1"},"error":"no","step":2}"#,
+        ),
+        (
+            "rejected",
+            r#"{"record":{"id":"urn:ngsi-ld:Thing:1"},"error":"no","step":true}"#,
+        ),
         ("outcomes", r#"{"sent":["urn:ngsi-ld:Thing:1"]}"#),
         (
             "source-deletes",

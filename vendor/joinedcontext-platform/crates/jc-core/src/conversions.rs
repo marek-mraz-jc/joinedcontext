@@ -38,16 +38,14 @@ pub fn to_latest(body: &mut Value) {
     if second || !spec.contains_key("source") || !spec.contains_key("targetEndpoint") {
         return;
     }
-    if let Some(source) = spec.remove("source") {
-        spec.insert("sources".to_owned(), Value::Array(vec![source]));
-    }
+    let source = spec.remove("source").unwrap_or_default();
+    spec.insert("sources".to_owned(), Value::Array(vec![source]));
     if let Some(compute) = spec.remove("compute") {
         spec.insert("steps".to_owned(), Value::Array(vec![compute]));
     }
     let mut output = Map::new();
-    if let Some(target) = spec.remove("targetEndpoint") {
-        output.insert("targetEndpoint".to_owned(), target);
-    }
+    let target = spec.remove("targetEndpoint").unwrap_or_default();
+    output.insert("targetEndpoint".to_owned(), target);
     if let Some(Value::Object(written)) = spec.remove("output") {
         output.extend(written);
     }

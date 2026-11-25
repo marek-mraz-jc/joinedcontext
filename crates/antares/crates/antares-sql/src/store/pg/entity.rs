@@ -3039,14 +3039,14 @@ mod tests {
     /// index's order; no prefix selects nothing.
     #[test]
     fn id_prefixes_are_byte_ranges_in_byte_order() {
-        let mut binds = vec![Bind::Text("t".to_owned())];
+        let mut binds = vec![Bind::Text("t".to_owned()), Bind::Int(1)];
         let ps = ["b:".to_owned(), "a:".to_owned(), "z\0".to_owned()];
         let w = prefix_ranges(&ps, &mut binds);
         let c = "id COLLATE \"C\"";
         assert_eq!(
             w,
             format!(
-                "({c} >= $2 AND {c} < $3 AND (({c} >= $4 AND {c} < $5) OR ({c} >= $6 AND {c} < $7)))"
+                "({c} >= $3 AND {c} < $4 AND (({c} >= $5 AND {c} < $6) OR ({c} >= $7 AND {c} < $8)))"
             )
         );
         let texts: Vec<&str> = binds
@@ -3059,6 +3059,18 @@ mod tests {
         assert_eq!(texts, ["t", "a:", "b;", "a:", "a;", "b:", "b;"]);
         assert_eq!(prefix_ranges(&[], &mut binds), "false");
         assert_eq!(prefix_ranges(&["\0".to_owned()], &mut binds), "false");
+        // a prefix of the last code points has no end: its range is open above
+        let mut open = Vec::new();
+        assert_eq!(
+            prefix_ranges(&["\u{10FFFF}".to_owned()], &mut open),
+            format!("({c} >= $1 AND (({c} >= $2)))")
+        );
+        // a document that is no object holds no instance to expire
+        assert_eq!(first_instance_expiry(&serde_json::json!("x")), None);
+        assert_eq!(
+            first_instance_expiry(&serde_json::json!({"https://a": [7]})),
+            None
+        );
         let mut binds = vec![Bind::Text("t".to_owned())];
         let (sql, _) = query_sql(
             "entity",

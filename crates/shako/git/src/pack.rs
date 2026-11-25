@@ -2,6 +2,7 @@
 //! Pack writing one object at a time (T-7522): gix's own entry iterator encodes a chunk of
 //! objects per step, so its memory follows the objects in the chunk, whatever their size.
 
+use crate::git_err;
 use crate::pktline::write_sideband_chunks;
 use gix_hash::ObjectId;
 use gix_pack::Find as _;
@@ -17,6 +18,11 @@ pub type Admit<'a> = &'a mut dyn FnMut(u64) -> ShakoResult<()>;
 
 /// What an id costs while a pack is counted and written: the id, its location and offsets.
 pub const BYTES_PER_OBJECT: u64 = 128;
+
+/// The refusal of a pack past the format's 2^32 entries: its count field is a u32.
+pub(crate) fn too_many_objects<E>(_: E) -> ShakoError {
+    ShakoError::BadRequest("pack object count exceeds u32".into())
+}
 
 /// What a job over `count` objects holds when the largest inflates to `largest` bytes: that
 /// object, its compressed form, and the ids.
@@ -36,11 +42,14 @@ pub fn write_pack(
     admit: Admit<'_>,
 ) -> ShakoResult<()> {
     let failed = |e: &dyn std::fmt::Display| ShakoError::Git(format!("pack writing failed: {e}"));
-    let num_entries = u32::try_from(ids.len())
-        .map_err(|_| ShakoError::BadRequest("pack object count exceeds u32".into()))?;
+    let num_entries = u32::try_from(ids.len()).map_err(too_many_objects)?;
     let mut largest = 0;
     for id in ids {
-        largest = largest.max(repo.find_header(*id).map_err(|e| failed(&e))?.size());
+        largest = largest.max(
+            repo.find_header(*id)
+                .map_err(git_err("pack writing failed"))?
+                .size(),
+        );
     }
     admit(job_bytes(largest, ids.len() as u64))?;
 
@@ -50,7 +59,9 @@ pub fn write_pack(
     let mut buf = Vec::new();
     let mut counts = Vec::with_capacity(ids.len());
     for id in ids {
-        let at = odb.location_by_oid(id, &mut buf).map_err(|e| failed(&e))?;
+        let at = odb
+            .location_by_oid(id, &mut buf)
+            .map_err(git_err("pack writing failed"))?;
         counts.push(output::Count::from_data(*id, at));
     }
     // Loose objects first, then each pack's in its own order, so a base precedes its deltas.
@@ -94,7 +105,7 @@ pub fn write_pack(
         gix_hash::Kind::Sha1,
     );
     for step in written {
-        step.map_err(|e| failed(&e))?;
+        step.map_err(git_err("pack writing failed"))?;
         if missing.get() {
             return Err(failed(&"an object left the repository"));
         }
@@ -148,6 +159,91 @@ impl<W: Write> Write for Sideband<W> {
 mod tests {
     use super::*;
     use crate::testutil::{Refusing, pack_count, put, repo};
+
+    #[test]
+    fn a_pack_past_the_u32_entry_count_is_a_bad_request() {
+        let refused = too_many_objects(());
+        assert_eq!(refused.to_string(), "pack object count exceeds u32");
+        assert_eq!(refused.status_code(), 400);
+    }
+
+    #[test]
+    fn an_object_that_leaves_while_the_pack_is_written_fails_the_pack() {
+        use crate::testutil::raw;
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, false);
+        let blob = raw(&path, gix::objs::Kind::Blob, b"short-lived\n");
+        let hex = blob.to_string();
+        let file = path.join("objects").join(&hex[..2]).join(&hex[2..]);
+        let handle = crate::repo::open_isolated(&path).expect("open");
+        let mut out = Vec::new();
+        let err = write_pack(&handle, &[blob], &mut out, &mut |_| {
+            std::fs::remove_file(&file).map_err(crate::storage_err("remove"))
+        })
+        .expect_err("the blob is gone");
+        assert_eq!(
+            err.to_string(),
+            "git error: pack writing failed: an object left the repository"
+        );
+    }
+
+    #[test]
+    fn a_delta_whose_base_stays_out_of_the_pack_goes_whole() {
+        use std::io::Write as _;
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, false);
+        // A blob, then an ofs-delta on it: copy the 12 base bytes, insert "again\n".
+        let base = b"hello world\n";
+        let delta = [&[12u8, 18, 0x90, 12, 6][..], b"again\n"].concat();
+        let entry = |kind: u8, data: &[u8], extra: &[u8]| {
+            let mut out = vec![(kind << 4) | data.len() as u8];
+            out.extend_from_slice(extra);
+            let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+            z.write_all(data).expect("deflate");
+            out.extend(z.finish().expect("deflate"));
+            out
+        };
+        let first = entry(3, base, &[]);
+        let second = entry(6, &delta, &[first.len() as u8]);
+        let mut bytes = b"PACK\0\0\0\x02\0\0\0\x02".to_vec();
+        bytes.extend(first);
+        bytes.extend(second);
+        let mut hasher = gix_hash::hasher(gix_hash::Kind::Sha1);
+        hasher.update(&bytes);
+        bytes.extend_from_slice(hasher.try_finalize().expect("sha1").as_bytes());
+        gix_pack::Bundle::write_to_directory(
+            &mut std::io::BufReader::new(&bytes[..]),
+            Some(&path.join("objects/pack")),
+            &mut gix::progress::Discard,
+            &std::sync::atomic::AtomicBool::new(false),
+            None::<gix_odb::Handle>,
+            gix_hash::Kind::Sha1,
+            gix_pack::bundle::write::Options::default(),
+        )
+        .expect("index");
+        let handle = crate::repo::open_isolated(&path).expect("open");
+        let hash = |data: &[u8]| {
+            gix_object::compute_hash(gix_hash::Kind::Sha1, gix_object::Kind::Blob, data)
+                .expect("hash")
+        };
+        let newer = hash(b"hello world\nagain\n");
+        let older = hash(base);
+        for alone in [newer, older] {
+            let mut out = Vec::new();
+            write_pack(&handle, &[alone], &mut out, &mut crate::testutil::admit_all)
+                .expect("pack of one");
+            assert_eq!(pack_count(&out), Some(1));
+        }
+        let mut both = Vec::new();
+        write_pack(
+            &handle,
+            &[older, newer],
+            &mut both,
+            &mut crate::testutil::admit_all,
+        )
+        .expect("pack of both");
+        assert_eq!(pack_count(&both), Some(2));
+    }
 
     #[test]
     fn the_job_size_counts_two_of_the_largest_object_and_saturates() {

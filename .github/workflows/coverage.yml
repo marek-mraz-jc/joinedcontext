@@ -6,8 +6,9 @@ name: coverage
 # floor (`.github/scripts/coverage-ratchet.py update <export>`). A failing test does not stop the
 # measurement (ci.yml is the test gate): its lost coverage shows in the table and the ratchet.
 # The mutation run takes one workspace per night by weekday, in four shards; its missed mutants
-# per crate join the table. Runs on the default branch's schedule, on dispatch, and on a push to
-# coverage/** (a branch's proof run before it merges).
+# per crate join the table (schedule only: a dispatched or pushed run measures coverage alone and
+# the table shows mutants "not run", T-7836). Runs on the default branch's schedule, on dispatch,
+# and on a push to coverage/** (a branch's proof run before it merges).
 on:
   schedule: [{ cron: "37 0 * * *" }]
   push:
@@ -55,11 +56,12 @@ jobs:
           # every lib, bin and tests/ binary but two (PLATFORM_TESTS, set below); jc-core in a second
           # pass (`then`), so jcctl's --skip filters below do not reach its `it` binary, which reads
           # the schemas and examples vendored beside it (T-7766). The features: jc-dcat's profiles
-          # and jc-manifest's OpenAPI derive, measured as T-7794 set their floors
+          # and jc-manifest's OpenAPI derive, measured as T-7794 set their floors; jc-core's own, so
+          # its auth, outbound and logs tests run (alone, -p compiles none of them; T-7831)
           - ws: platform
             dir: vendor/joinedcontext-platform
             args: "--workspace --exclude jc-core --lib --bins $PLATFORM_TESTS --features jc-dcat/dcat-ap-sk,jc-dcat/dcat-ap-cz,jc-manifest/utoipa"
-            then: "-p jc-core --lib --bins --test it"
+            then: "-p jc-core --all-features --lib --bins --test it"
             # jcctl's `it` modules that read examples/ingestion and library/blueprints, not vendored
             # either (ci.yml runs only its portal_api_drift_tests::)
             testargs: "-- --skip ingestion_examples_tests:: --skip library_blueprints_tests::"
@@ -275,7 +277,7 @@ jobs:
   # comes back from the cache, so a night re-tests only the mutants whose module or tests changed; the
   # report is the mutants-ui artifact. Red when a mutant survives (the config's break threshold).
   mutants-ui:
-    if: github.event_name != 'push'
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     defaults: { run: { working-directory: crates/portal } }
@@ -304,7 +306,7 @@ jobs:
   # it finished (a partial outcomes.json counts what ran). ekiben is not in the rotation: its
   # baseline needs the six services of coverage-ekiben; its mutants run per crate in T-7531.
   mutants-plan:
-    if: github.event_name != 'push'
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     outputs: { ws: "${{ steps.pick.outputs.ws }}", dir: "${{ steps.pick.outputs.dir }}" }
     steps:

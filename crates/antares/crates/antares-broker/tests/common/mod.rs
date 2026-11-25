@@ -44,3 +44,32 @@ pub fn free_port() -> u16 {
         }
     }
 }
+
+/// Stops a spawned broker the way an orchestrator does: SIGTERM, the drain,
+/// a clean exit; a SIGKILL only when it is still running after `GRACE`.
+///
+/// A killed child never reaches its exit, so its coverage profile is never
+/// written and every line only a spawned broker runs (the Postgres boot, the
+/// NATS wiring, the drain itself) read as untested (T-7829). A broker that
+/// exited already (a refused boot, a test's own SIGKILL) is only reaped.
+pub fn stop(child: &mut std::process::Child) {
+    /// The drain's notice window (2 s) plus its deadline (20 s), and slack.
+    const GRACE: std::time::Duration = std::time::Duration::from_secs(25);
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return;
+    }
+    let term = std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    if term.is_ok_and(|s| s.success()) {
+        let deadline = std::time::Instant::now() + GRACE;
+        while std::time::Instant::now() < deadline {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}

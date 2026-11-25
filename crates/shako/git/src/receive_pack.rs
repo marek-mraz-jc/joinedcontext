@@ -8,7 +8,10 @@ use crate::pktline::{
     MAX_SIDEBAND_1K_DATA, MAX_SIDEBAND_64K_DATA, PktLine, read_pkt_line_from, write_flush,
     write_sideband_chunks, write_text_line,
 };
-use crate::repo::{collect_changed_blobs, collect_tree_blobs, is_ancestor, open_isolated};
+use crate::repo::{
+    collect_changed_blobs, collect_tree_blobs, full_ref, is_ancestor, open_isolated,
+};
+use crate::storage_err;
 use gix_hash::ObjectId;
 use gix_object::tree::EntryKind;
 use gix_pack::data::input::{BytesToEntriesIter, EntryDataMode, Mode as InputMode};
@@ -20,7 +23,7 @@ use gix_ref::{
 use regex::Regex;
 use shako_core::{
     Authorizer, MAX_DELTA_CHAIN_DEPTH, MAX_REFS_PER_PUSH, MAX_SINGLE_OBJECT_BYTES, RefPolicy,
-    RefUpdate, RequestCtx, ShakoError, ShakoResult, validate_full_ref_name, validate_tree_path,
+    RefUpdate, RequestCtx, ShakoError, ShakoResult, validate_tree_path,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -103,8 +106,7 @@ impl QuarantineDir {
     fn create(repo_path: &Path) -> ShakoResult<Self> {
         let id = uuid::Uuid::now_v7();
         let path = repo_path.join("objects").join(format!("incoming-{id}"));
-        std::fs::create_dir_all(&path)
-            .map_err(|e| ShakoError::Storage(format!("failed to create quarantine dir: {e}")))?;
+        std::fs::create_dir_all(&path).map_err(storage_err("failed to create quarantine dir"))?;
         Ok(Self {
             path,
             disarmed: false,
@@ -293,8 +295,8 @@ pub fn handle_receive_pack(
     admit: Admit<'_>,
 ) -> ShakoResult<ReceivePackOutcome> {
     // 1. Parse command list up to Flush (0000), leaving `body` at the start of the raw PACK stream
-    let unreadable = |e: std::io::Error| ShakoError::Storage(format!("read push: {e}"));
-    body.seek(SeekFrom::Start(0)).map_err(unreadable)?;
+    body.seek(SeekFrom::Start(0))
+        .map_err(storage_err("read push"))?;
     let mut read = 0usize;
     let mut commands = Vec::new();
     let mut caps = BTreeSet::new();
@@ -358,7 +360,7 @@ pub fn handle_receive_pack(
         }
     }
 
-    let body_len = body.metadata().map_err(unreadable)?.len();
+    let body_len = body.metadata().map_err(storage_err("read push"))?.len();
     if commands.is_empty() {
         // git asks with a lone flush packet before it sends a push over http.postBuffer.
         if read == 4 && body_len == 4 {
@@ -390,17 +392,21 @@ pub fn handle_receive_pack(
     // 3. Unpack and validate incoming packfile in quarantine (`objects/incoming-<uuid>/`)
     if has_non_delete || pack_len > 0 {
         let mut magic = Vec::new();
-        body.take(4).read_to_end(&mut magic).map_err(unreadable)?;
+        body.take(4)
+            .read_to_end(&mut magic)
+            .map_err(storage_err("read push"))?;
         if magic != b"PACK" {
             return format_unpack_error("missing PACK header", &commands, &caps);
         }
-        body.seek(SeekFrom::Start(pack_start)).map_err(unreadable)?;
+        body.seek(SeekFrom::Start(pack_start))
+            .map_err(storage_err("read push"))?;
         let (held, count) = match scan_pack(body, pack_start) {
             Ok(scanned) => scanned,
             Err(reason) => return format_unpack_error(&reason, &commands, &caps),
         };
         admit(held.saturating_add(count.saturating_mul(BYTES_PER_OBJECT)))?;
-        body.seek(SeekFrom::Start(pack_start)).map_err(unreadable)?;
+        body.seek(SeekFrom::Start(pack_start))
+            .map_err(storage_err("read push"))?;
         if let Err(reason) = index_pack_in_quarantine(
             repo_path,
             &quarantine.path,
@@ -420,8 +426,7 @@ pub fn handle_receive_pack(
     let mut installed_files = Vec::new();
     if let (Some(p_src), Some(i_src)) = (&written_pack_path, &written_idx_path) {
         let pack_dir = repo_path.join("objects/pack");
-        std::fs::create_dir_all(&pack_dir)
-            .map_err(|e| ShakoError::Storage(format!("mkdir pack: {e}")))?;
+        std::fs::create_dir_all(&pack_dir).map_err(storage_err("mkdir pack"))?;
         for (what, src) in [("pack", p_src), ("idx", i_src)] {
             let dst = pack_dir.join(src.file_name().unwrap_or_default());
             let stored = dst
@@ -441,7 +446,7 @@ pub fn handle_receive_pack(
 
     // 5. Evaluate each command: ref validation, old_oid CAS check, connectivity check,
     //    fast-forward check, tree path validation (T1), secret scan (T9), and `RefPolicy` (S5)
-    let mut cmd_results: Vec<(RefUpdateCommand, Result<(), String>)> =
+    let mut cmd_results: Vec<(RefUpdateCommand, Result<RefEdit, String>)> =
         Vec::with_capacity(commands.len());
 
     for cmd in &commands {
@@ -473,10 +478,7 @@ pub fn handle_receive_pack(
 
     if atomic {
         if cmd_results.iter().all(|(_, r)| r.is_ok()) {
-            let edits: Vec<RefEdit> = cmd_results
-                .iter()
-                .filter_map(|(c, _)| build_ref_edit(c).ok())
-                .collect();
+            let edits: Vec<RefEdit> = cmd_results.iter().flat_map(|(_, r)| r.clone()).collect();
             match repo
                 .refs
                 .transaction()
@@ -501,20 +503,16 @@ pub fn handle_receive_pack(
                 }
             }
         } else {
-            final_results = cmd_results;
+            final_results = cmd_results
+                .into_iter()
+                .map(|(c, r)| (c, r.map(drop)))
+                .collect();
         }
     } else {
         for (c, pre_res) in cmd_results {
             match pre_res {
                 Err(reason) => final_results.push((c, Err(reason))),
-                Ok(()) => {
-                    let edit = match build_ref_edit(&c) {
-                        Ok(e) => e,
-                        Err(reason) => {
-                            final_results.push((c, Err(reason)));
-                            continue;
-                        }
-                    };
+                Ok(edit) => {
                     match repo
                         .refs
                         .transaction()
@@ -653,7 +651,7 @@ fn index_pack_in_quarantine(
     out_pack: &mut Option<PathBuf>,
     out_idx: &mut Option<PathBuf>,
 ) -> Result<(), String> {
-    let repo = open_isolated(repo_path).map_err(|e| e.to_string())?;
+    let repo = open_isolated(repo_path).map_err(reason)?;
     let odb = repo.objects.clone();
     let mut pack_reader = BufReader::new(pack);
     let mut progress = gix::progress::Discard;
@@ -676,9 +674,7 @@ fn index_pack_in_quarantine(
     )
     .map_err(|e| format!("index-pack failed: {e}"))?;
 
-    if let Some(keep) = outcome.keep_path {
-        let _ = std::fs::remove_file(keep);
-    }
+    let _ = outcome.keep_path.map(std::fs::remove_file);
     *out_pack = outcome.data_path;
     *out_idx = outcome.index_path;
     Ok(())
@@ -688,7 +684,7 @@ fn evaluate_single_command(
     repo: &gix::Repository,
     guard: &PushGuard<'_>,
     cmd: &RefUpdateCommand,
-) -> Result<(), String> {
+) -> Result<RefEdit, String> {
     let PushGuard {
         ctx,
         authorizer,
@@ -701,13 +697,13 @@ fn evaluate_single_command(
     {
         return Err("refusing to update non-branch/tag ref".into());
     }
-    validate_full_ref_name(&cmd.refname).map_err(|e| e.to_string())?;
+    let name = full_ref(&cmd.refname).map_err(reason)?;
 
     // Check current ref value for CAS (`fetch first` on race)
     let current_oid = repo
         .refs
         .try_find(cmd.refname.as_str())
-        .map_err(|e| e.to_string())?
+        .map_err(reason)?
         .and_then(|r| r.target.try_id().map(ToOwned::to_owned));
 
     match (cmd.is_create(), current_oid) {
@@ -745,7 +741,7 @@ fn evaluate_single_command(
         )
         .map_err(|e| e.public_detail())?;
 
-    Ok(())
+    Ok(build_ref_edit(cmd, name))
 }
 
 /// Verifies that `new_oid` exists, peels to a valid commit and tree whose every referenced
@@ -756,18 +752,12 @@ fn verify_tip_connectivity_and_tree(
     new_oid: ObjectId,
     changed_paths: &mut Vec<String>,
 ) -> Result<(), String> {
-    let obj = repo
-        .find_object(new_oid)
-        .map_err(|_| "missing necessary objects".to_owned())?;
+    let obj = repo.find_object(new_oid).map_err(missing)?;
     let commit_obj = obj
         .peel_to_kind(gix_object::Kind::Commit)
-        .map_err(|_| "missing necessary objects".to_owned())?;
-    let commit = repo
-        .find_commit(commit_obj.id)
-        .map_err(|_| "missing necessary objects".to_owned())?;
-    let tree = commit
-        .tree()
-        .map_err(|_| "missing necessary objects".to_owned())?;
+        .map_err(missing)?;
+    let commit = repo.find_commit(commit_obj.id).map_err(missing)?;
+    let tree = commit.tree().map_err(missing)?;
 
     let mut new_blobs = BTreeMap::new();
     collect_tree_blobs(repo, &tree, "", &mut new_blobs).map_err(|e| match e {
@@ -784,14 +774,14 @@ fn verify_tip_connectivity_and_tree(
     }
 
     for (path, (kind, blob_oid)) in &new_blobs {
-        validate_tree_path(path).map_err(|e| e.to_string())?;
+        validate_tree_path(path).map_err(reason)?;
         // A gitlink's commit lives in the submodule's repository, not in this pack.
         if *kind != EntryKind::Commit {
             // The header answers: the index pass verified the bytes.
             repo.find_header(*blob_oid)
                 .ok()
                 .filter(|h| h.kind() == gix_object::Kind::Blob)
-                .ok_or_else(|| "missing necessary objects".to_owned())?;
+                .ok_or_else(|| missing(()))?;
         }
         let old_entry = old_blobs.get(path);
         if old_entry.map(|(_, o)| o) != Some(blob_oid) {
@@ -815,8 +805,17 @@ fn verify_tip_connectivity_and_tree(
 /// How every secret-scan refusal starts.
 const SECRET_REFUSAL: &str = "pre-receive secret scan blocked";
 
+/// The refusal of a push whose objects do not all arrive or do not peel as named.
+fn missing<E>(_: E) -> String {
+    "missing necessary objects".to_owned()
+}
+
+/// A gix or validation failure as the reason line of a refused command.
+fn reason<E: std::fmt::Display>(e: E) -> String {
+    e.to_string()
+}
+
 fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), String> {
-    let missing = |_| "missing necessary objects".to_owned();
     let tip = repo
         .find_object(new_oid)
         .map_err(missing)?
@@ -825,9 +824,9 @@ fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), Str
         .id;
     let held: Vec<ObjectId> = repo
         .references()
-        .map_err(|e| e.to_string())?
+        .map_err(reason)?
         .local_branches()
-        .map_err(|e| e.to_string())?
+        .map_err(reason)?
         .flatten()
         .filter_map(|r| r.try_id().map(|id| id.detach()))
         .collect();
@@ -835,7 +834,7 @@ fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), Str
         .rev_walk([tip])
         .with_hidden(held)
         .all()
-        .map_err(|e| e.to_string())?;
+        .map_err(reason)?;
     let mut scanned = BTreeSet::new();
     for info in walk {
         let commit = info.map_err(missing)?.object().map_err(missing)?;
@@ -846,7 +845,7 @@ fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), Str
             .collect();
         // A blob a parent holds at the same path was scanned when that parent came in.
         let mut blobs = BTreeMap::new();
-        collect_changed_blobs(repo, &tree, &parents, &mut blobs).map_err(|e| e.to_string())?;
+        collect_changed_blobs(repo, &tree, &parents, &mut blobs).map_err(reason)?;
         for (path, blob_oid) in &blobs {
             if !scanned.insert(*blob_oid) {
                 continue;
@@ -860,28 +859,24 @@ fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), Str
     Ok(())
 }
 
-fn build_ref_edit(cmd: &RefUpdateCommand) -> Result<RefEdit, String> {
-    let full_name: FullName = cmd
-        .refname
-        .clone()
-        .try_into()
-        .map_err(|e: gix_validate::reference::name::Error| e.to_string())?;
+/// The ref edit of an admitted command under its validated `full_name`.
+fn build_ref_edit(cmd: &RefUpdateCommand, full_name: FullName) -> RefEdit {
     if cmd.is_delete() {
-        Ok(RefEdit {
+        RefEdit {
             change: Change::Delete {
                 expected: PreviousValue::MustExistAndMatch(Target::Object(cmd.old_oid)),
                 log: RefLog::AndReference,
             },
             name: full_name,
             deref: false,
-        })
+        }
     } else {
         let expected = if cmd.is_create() {
             PreviousValue::MustNotExist
         } else {
             PreviousValue::MustExistAndMatch(Target::Object(cmd.old_oid))
         };
-        Ok(RefEdit {
+        RefEdit {
             change: Change::Update {
                 log: LogChange {
                     mode: RefLog::AndReference,
@@ -893,7 +888,7 @@ fn build_ref_edit(cmd: &RefUpdateCommand) -> Result<RefEdit, String> {
             },
             name: full_name,
             deref: false,
-        })
+        }
     }
 }
 
@@ -1097,6 +1092,190 @@ mod tests {
         let probe = receive(&p.dest, &RefPolicy::default(), b"0000").expect("probe");
         assert!(probe.response_bytes.is_empty() && probe.updated_refs.is_empty());
         assert!(!crate::compact::has_active_quarantine(&p.dest));
+    }
+
+    #[test]
+    fn a_delimiter_among_the_commands_is_skipped() {
+        let p = push();
+        let pack = pack_of(&p.source, &p.c1.to_string());
+        let mut raw = b"0001".to_vec();
+        raw.extend(body(
+            &[format!("{ZERO} {} refs/heads/main", p.c1)],
+            "report-status",
+            &pack,
+        ));
+        let out = text(
+            &receive(&p.dest, &RefPolicy::default(), &raw)
+                .expect("receive")
+                .response_bytes,
+        );
+        assert!(out.contains("ok refs/heads/main"), "{out}");
+    }
+
+    #[test]
+    fn a_thin_pack_whose_base_is_nowhere_fails_indexing_and_leaves_nothing() {
+        use std::io::Read as _;
+        let p = push();
+        // A ref-delta on a base neither the pack nor the repository holds.
+        let delta = [&[12u8, 18, 0x90, 12, 6][..], b"again\n"].concat();
+        let gone = crate::testutil::oid(crate::testutil::GONE);
+        let mut file = raw_pack(&[entry(7, &delta, gone.as_bytes())]);
+        let mut pack = Vec::new();
+        file.read_to_end(&mut pack).expect("pack");
+        let one = [format!("{ZERO} {} refs/heads/main", p.c1)];
+        let out = report(&p, &one, "report-status", &pack);
+        assert!(out.contains("unpack error index-pack failed"), "{out}");
+        assert!(out.contains("ng refs/heads/main unpacker error"), "{out}");
+        assert_eq!(pack_files(&p.dest), 0, "no pack stays behind");
+    }
+
+    /// How many files `repo`'s `objects/pack` holds.
+    fn pack_files(repo: &Path) -> usize {
+        std::fs::read_dir(repo.join("objects/pack")).map_or(0, Iterator::count)
+    }
+
+    /// Runs one push of `c1` to `main` while `objects/pack` has `mode`, then restores it.
+    fn push_into_pack_dir_with_mode(mode: u32) -> ShakoResult<ReceivePackOutcome> {
+        use std::os::unix::fs::PermissionsExt as _;
+        let p = push();
+        let pack_dir = p.dest.join("objects/pack");
+        std::fs::create_dir_all(&pack_dir).expect("pack dir");
+        std::fs::set_permissions(&pack_dir, std::fs::Permissions::from_mode(mode)).expect("chmod");
+        let pack = pack_of(&p.source, &p.c1.to_string());
+        let out = receive(
+            &p.dest,
+            &RefPolicy::default(),
+            &body(&[format!("{ZERO} {} refs/heads/main", p.c1)], "", &pack),
+        );
+        std::fs::set_permissions(&pack_dir, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod back");
+        out
+    }
+
+    #[test]
+    fn a_pack_directory_that_cannot_be_searched_or_written_is_a_storage_error() {
+        let unsearchable = push_into_pack_dir_with_mode(0o600).expect_err("no search right");
+        assert!(
+            unsearchable.to_string().contains("look up pack: "),
+            "{unsearchable}"
+        );
+        assert_eq!(unsearchable.status_code(), 500);
+        let read_only = push_into_pack_dir_with_mode(0o500).expect_err("no write right");
+        assert!(read_only.to_string().contains("move pack: "), "{read_only}");
+    }
+
+    #[test]
+    fn a_held_ref_lock_refuses_an_atomic_and_a_plain_update() {
+        let p = push();
+        crate::testutil::lock(&p.dest, "refs/heads/main");
+        let pack = pack_of(&p.source, &p.c1.to_string());
+        let one = [format!("{ZERO} {} refs/heads/main", p.c1)];
+        let atomic = report(&p, &one, "report-status atomic", &pack);
+        assert!(
+            atomic.contains("ng refs/heads/main failed to lock/update ref (fetch first)"),
+            "{atomic}"
+        );
+        let plain = report(&p, &one, "report-status", &pack);
+        assert!(plain.contains("ng refs/heads/main fetch first"), "{plain}");
+        assert_eq!(pack_files(&p.dest), 0, "a refused push leaves no pack");
+    }
+
+    /// Pushes the crafted `objects` of `p.source` with `tip` as the new `refs/heads/main`.
+    fn push_crafted(p: &Push, tip: ObjectId, objects: &[ObjectId]) -> String {
+        let pack = crate::testutil::pack_of_ids(&p.source, objects);
+        report(
+            p,
+            &[format!("{ZERO} {tip} refs/heads/main")],
+            "report-status",
+            &pack,
+        )
+    }
+
+    #[test]
+    fn a_tip_that_is_no_commit_or_misses_its_tree_or_blobs_is_refused() {
+        use crate::testutil::{GONE, commit, oid, raw, tree};
+        use gix_object::{Kind, tree::EntryKind};
+        let p = push();
+        let refused = "ng refs/heads/main missing necessary objects";
+
+        let blob = raw(&p.source, Kind::Blob, b"plain\n");
+        assert!(push_crafted(&p, blob, &[blob]).contains(refused));
+
+        let no_tree = commit(&p.source, oid(GONE), &[]);
+        assert!(push_crafted(&p, no_tree, &[no_tree]).contains(refused));
+
+        let lost_dir = tree(&p.source, &[(EntryKind::Tree, "dir", oid(GONE))]);
+        let c = commit(&p.source, lost_dir, &[]);
+        assert!(push_crafted(&p, c, &[c, lost_dir]).contains(refused));
+
+        // A blob entry naming a tree: the header says tree, so the push lacks that blob.
+        let empty = tree(&p.source, &[]);
+        let wrong = tree(&p.source, &[(EntryKind::Blob, "file", empty)]);
+        let c = commit(&p.source, wrong, &[]);
+        assert!(push_crafted(&p, c, &[c, wrong, empty]).contains(refused));
+        assert_eq!(pack_files(&p.dest), 0, "every refused push left nothing");
+
+        // A gitlink names a commit of another repository: no object of it travels.
+        let blob = raw(&p.source, Kind::Blob, b"kept\n");
+        let linked = tree(
+            &p.source,
+            &[
+                (EntryKind::Blob, "kept.txt", blob),
+                (EntryKind::Commit, "vendor", oid(GONE)),
+            ],
+        );
+        let c = commit(&p.source, linked, &[]);
+        let out = push_crafted(&p, c, &[c, linked, blob]);
+        assert!(out.contains("ok refs/heads/main"), "{out}");
+    }
+
+    #[test]
+    fn a_tree_nested_past_the_depth_limit_is_refused_with_the_limit() {
+        use crate::repo::MAX_TREE_DEPTH;
+        use crate::testutil::{commit, raw, tree};
+        use gix_object::{Kind, tree::EntryKind};
+        let p = push();
+        let blob = raw(&p.source, Kind::Blob, b"deep\n");
+        let mut objects = vec![blob];
+        let mut at = tree(&p.source, &[(EntryKind::Blob, "f", blob)]);
+        objects.push(at);
+        for _ in 0..=MAX_TREE_DEPTH {
+            at = tree(&p.source, &[(EntryKind::Tree, "d", at)]);
+            objects.push(at);
+        }
+        let c = commit(&p.source, at, &[]);
+        objects.push(c);
+        let out = push_crafted(&p, c, &objects);
+        assert!(
+            out.contains(&format!("tree nesting deeper than {MAX_TREE_DEPTH} levels")),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_delta_header_that_is_unreadable_or_never_ends_is_refused() {
+        use std::io::Write as _;
+        let mut file = tempfile::tempfile().expect("spool");
+        file.write_all(b"not a zlib stream").expect("write");
+        let past_end = delta_sizes(&file, 64, 8).expect_err("read past the end");
+        assert!(
+            past_end.starts_with("unreadable delta at 64: "),
+            "{past_end}"
+        );
+        let garbage = delta_sizes(&file, 0, 17).expect_err("no zlib");
+        assert!(garbage.starts_with("unreadable delta at 0: "), "{garbage}");
+
+        // Ten continuation bytes: a size past 64 bits that never ends.
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        z.write_all(&[0xff; 20]).expect("deflate");
+        let endless = z.finish().expect("deflate");
+        let mut file = tempfile::tempfile().expect("spool");
+        file.write_all(&endless).expect("write");
+        let err = delta_sizes(&file, 0, endless.len() as u64).expect_err("endless size");
+        assert!(err.ends_with("truncated delta header"), "{err}");
+        // The test pack builder's distances: one 7-bit group, then two.
+        assert_eq!(distance(127), [0x7f]);
+        assert_eq!(distance(128), [0x80, 0x00]);
     }
 
     #[test]

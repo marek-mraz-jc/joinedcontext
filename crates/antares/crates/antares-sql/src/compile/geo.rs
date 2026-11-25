@@ -230,9 +230,7 @@ pub fn geohash(lon: f64, lat: f64, chars: usize) -> String {
             on_lon = !on_lon;
         }
         // five bits: always inside the alphabet
-        if let Some(b) = BASE32.get(ch) {
-            out.push(char::from(*b));
-        }
+        out.extend(BASE32.get(ch).map(|b| char::from(*b)));
     }
     out
 }
@@ -1039,5 +1037,38 @@ mod tests {
             extract_location(&collection).is_none(),
             "a GeometryCollection must not reach a PostGIS relate predicate"
         );
+    }
+
+    /// A compacted document holds one instance bare, not in an array, and a
+    /// member without `value` falls back to `object`; an empty array is no
+    /// single instance.
+    #[test]
+    fn location_extraction_reads_a_bare_instance_and_its_object() {
+        let bare = json!({
+            LOCATION_IRI: {"type": "GeoProperty", "object": {"type": "Point", "coordinates": [5, 6]}}
+        });
+        assert_eq!(
+            extract_location(&bare).expect("extracted"),
+            "{\"coordinates\":[5,6],\"type\":\"Point\"}"
+        );
+        assert!(extract_location(&json!({ LOCATION_IRI: [] })).is_none());
+        assert!(extract_location(&json!({ LOCATION_IRI: {"type": "GeoProperty"} })).is_none());
+    }
+
+    /// `near` needs a Point with two numbers; anything shorter or non-numeric
+    /// has no box, so no cover and no `&&` probe narrow the query.
+    #[test]
+    fn near_box_refuses_a_point_it_cannot_read() {
+        for c in [
+            json!([1.0]),
+            json!([]),
+            json!("2,48"),
+            json!(["2", 48.0]),
+            json!([2.0, null]),
+        ] {
+            assert!(near_box(&c, 100.0).is_none(), "{c}");
+        }
+        let (x0, y0, x1, y1) = near_box(&json!([2.0, 48.0, 7.0]), 100.0).expect("a box");
+        assert!(x0 < 2.0 && 2.0 < x1 && y0 < 48.0 && 48.0 < y1);
     }
 }

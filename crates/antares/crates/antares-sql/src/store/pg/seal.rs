@@ -67,15 +67,14 @@ impl SecretKey {
                     .to_owned()
             })?,
         };
-        if bytes.len() != 32 {
-            return Err(format!(
+        // AES-256 refuses a key of any length but 32 bytes, and nothing else
+        let unbound = UnboundKey::new(&AES_256_GCM, &bytes).map_err(|_| {
+            format!(
                 "ANTARES_SECRET_KEY must be 32 bytes in base64 (got {} bytes; \
                  openssl rand -base64 32)",
                 bytes.len()
-            ));
-        }
-        let unbound = UnboundKey::new(&AES_256_GCM, &bytes)
-            .map_err(|_| "ANTARES_SECRET_KEY: the key was refused".to_owned())?;
+            )
+        })?;
         Ok(Self {
             key: LessSafeKey::new(unbound),
             rng: SystemRandom::new(),
@@ -92,7 +91,7 @@ impl SecretKey {
                 Aad::from(aad),
                 &mut buf,
             )
-            .map_err(|_| Unreadable)?;
+            .or(Err(Unreadable))?;
         let mut out = nonce.to_vec();
         out.append(&mut buf);
         Ok(format!("{PREFIX}{}", B64.encode(out)))
@@ -549,9 +548,8 @@ mod tests {
         assert!(k.open(&B64.encode([1u8; 5]), &aad).is_err());
         assert!(k.open(&B64.encode([1u8; NONCE_LEN + 3]), &aad).is_err());
         let mut raw = B64.decode(body).expect("b64");
-        if let Some(last) = raw.last_mut() {
-            *last ^= 1;
-        }
+        let last = raw.last_mut().expect("a sealed value ends in its tag");
+        *last ^= 1;
         assert!(k.open(&B64.encode(raw), &aad).is_err());
     }
 
@@ -615,5 +613,62 @@ mod tests {
             &mut stored.clone()
         )
         .is_ok());
+    }
+
+    /// Only a credential string is sealed: a dead letter that is no object,
+    /// a pair value that is no string and a kind without credentials are
+    /// written as they came; rename and the boot filter leave them alone too.
+    #[test]
+    fn what_holds_no_credential_string_is_left_as_it_came() {
+        let k = key(3);
+        let letter = json!(["not", "an", "object"]);
+        let out = sealed(Some(&k), row(DocKind::DeadLetter), &letter).expect("seal");
+        assert_eq!(*out, letter);
+        let numeric = json!({"notification": {"endpoint": {"receiverInfo": [
+            {"key": "Authorization", "value": 42}
+        ]}}});
+        let out = sealed(Some(&k), row(DocKind::Subscription), &numeric).expect("seal");
+        assert_eq!(*out, numeric);
+
+        let mut reg = json!({"contextSourceInfo": [{"key": "NGSILD-Tenant", "value": "old"}]});
+        let before = reg.clone();
+        rename_tenant_header(DocKind::Registration, &mut reg, &["old".into()], "new");
+        assert_eq!(reg, before, "a registration has no receiverInfo header");
+        let mut bare = json!({"notification": {"endpoint": {"uri": "http://x"}}});
+        let before = bare.clone();
+        rename_tenant_header(DocKind::Subscription, &mut bare, &["old".into()], "new");
+        assert_eq!(bare, before);
+        for kind in [
+            DocKind::Snapshot,
+            DocKind::EntityMap,
+            DocKind::DistSub,
+            DocKind::View,
+        ] {
+            assert_eq!(plaintext_path(kind), None, "{kind:?}");
+        }
+    }
+
+    /// A key of any length but 32 bytes is refused with its length, never
+    /// its text; 64 hex digits and padded base64 both read.
+    #[test]
+    fn a_key_of_the_wrong_length_names_its_length_only() {
+        for (raw, got) in [
+            (B64.encode([7u8; 16]), 16),
+            (B64.encode([7u8; 33]), 33),
+            (String::new(), 0),
+        ] {
+            let err = SecretKey::from_base64(&raw).map(drop).expect_err("refused");
+            assert!(err.contains(&format!("got {got} bytes")), "{err}");
+            assert!(
+                raw.is_empty() || !err.contains(&raw),
+                "the key text leaked: {err}"
+            );
+        }
+        assert!(SecretKey::from_base64(&"ab".repeat(32)).is_ok());
+        assert!(SecretKey::from_base64(&format!(" {} ", B64.encode([1u8; 32]))).is_ok());
+        let err = SecretKey::from_base64("not base64 !")
+            .map(drop)
+            .expect_err("refused");
+        assert!(err.contains("openssl rand -hex 32"), "{err}");
     }
 }

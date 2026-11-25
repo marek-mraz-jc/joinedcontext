@@ -1,0 +1,1 @@
+{"apiVersion":"joinedcontext.com/v1alpha1","kind":"Pipeline","metadata":{"name":"p","namespace":"{project}"},"spec":{"source":{"type":"http"},"compute":{"x":1},"targetEndpoint":"ep","output":{"mode":"upsert"}}}
