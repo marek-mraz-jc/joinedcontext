@@ -2700,11 +2700,11 @@ mod tests {
         assert!(sent[1].contains("asked for a pipeline"), "{}", sent[1]);
     }
 
-    /// A compute_kpi or draft_kpi_pipeline call that does not parse goes back with its reason,
-    /// and the answer after it is the person's.
+    /// A compute_kpi, draft_kpi_pipeline or write_entities call that does not parse goes back
+    /// with its reason, and the answer after it is the person's.
     #[tokio::test]
     async fn a_broken_indicator_call_goes_back_with_its_reason() {
-        for tool in ["compute_kpi", "draft_kpi_pipeline"] {
+        for tool in ["compute_kpi", "draft_kpi_pipeline", "write_entities"] {
             let model = wiremock::MockServer::start().await;
             let call = fenced(json!({ "tool": tool }));
             scripted(&model, &[&call, "Which endpoint?"]).await;
@@ -2774,6 +2774,32 @@ mod tests {
         let sent = sent(&model).await;
         assert_eq!(sent.len(), data_query::MAX_DRAFTS);
         assert!(sent[1].contains("'nowhere' is not a path"), "{}", sent[1]);
+    }
+
+    /// A start of work the model routes to a page opens that page and says where, even when
+    /// the model said nothing around the call.
+    #[tokio::test]
+    async fn a_route_to_a_page_opens_it_with_a_default_word() {
+        let model = wiremock::MockServer::start().await;
+        let route = fenced(json!({ "tool": "navigate", "route": "/projects/helsinki/assistant" }));
+        scripted(&model, &[&route]).await;
+        let (driver, state) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver.turn(&mut conversation, "build me an app".into()).await;
+        assert_eq!(
+            conversation[0].1,
+            "You can start that work from the Assistant page."
+        );
+        let events = state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events");
+        assert!(
+            events.iter().any(|event| event.kind == "navigate"
+                && event.payload["route"] == "/projects/helsinki/assistant"),
+            "{events:?}"
+        );
     }
 
     /// A question to the person that asks nothing goes back with the reason.
