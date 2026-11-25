@@ -221,10 +221,11 @@ pub(super) mod tests {
                 continue;
             };
             let shadow = Shadow { db };
-            let rows: [(Table, &[u8], Option<&[u8]>); 3] = [
-                (T_ENTITIES, b"t\0a", Some(b"{}")),
-                (T_VIEWS, b"t\0v", Some(b"{}")),
-                (T_ENTITIES, b"t\0a", None),
+            let doc: &[u8] = b"{}";
+            let rows = [
+                (T_ENTITIES, &b"t\0a"[..], Some(doc)),
+                (T_VIEWS, &b"t\0v"[..], Some(doc)),
+                (T_ENTITIES, &b"t\0a"[..], None),
             ];
             match shadow.try_write_many(rows) {
                 Ok(()) => committed = true,

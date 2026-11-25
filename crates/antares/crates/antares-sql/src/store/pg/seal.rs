@@ -657,7 +657,7 @@ mod tests {
             (B64.encode([7u8; 33]), 33),
             (String::new(), 0),
         ] {
-            let err = SecretKey::from_base64(&raw).err().expect("refused");
+            let err = SecretKey::from_base64(&raw).map(drop).expect_err("refused");
             assert!(err.contains(&format!("got {got} bytes")), "{err}");
             assert!(
                 raw.is_empty() || !err.contains(&raw),
@@ -667,8 +667,8 @@ mod tests {
         assert!(SecretKey::from_base64(&"ab".repeat(32)).is_ok());
         assert!(SecretKey::from_base64(&format!(" {} ", B64.encode([1u8; 32]))).is_ok());
         let err = SecretKey::from_base64("not base64 !")
-            .err()
-            .expect("refused");
+            .map(drop)
+            .expect_err("refused");
         assert!(err.contains("openssl rand -hex 32"), "{err}");
     }
 }
