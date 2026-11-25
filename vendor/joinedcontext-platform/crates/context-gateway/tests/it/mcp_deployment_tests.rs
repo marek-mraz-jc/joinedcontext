@@ -167,6 +167,63 @@ fn the_store_serves_each_enabled_deployment_with_its_connectors_and_sources() {
     );
 }
 
+/// EP-122: a deployment reading `org/all` reads the Organization's every Endpoint without a
+/// manifest for it; one naming an McpServer nobody declares reads no Endpoint through it; one
+/// whose mcpServer is no `{project}/{name}` is not served; a theme title names a deployment
+/// whose manifest has no title.
+#[test]
+fn a_deployment_reads_org_all_or_nothing_from_an_undeclared_server() {
+    let deployment = |name: &str, server: &str| {
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: AssistantDeployment\nmetadata:\n  \
+             name: {name}\n  namespace: bbsk\nspec:\n  publicId: bbsk-{name}\n  channel: internal\n  \
+             mcpServer: {server}\n  theme: {{ title: Kraj }}\n  allowedOrigins: [https://www.bbsk.sk]\n  \
+             rateLimit: {{ requestsPerMinute: 60, perClientPerMinute: 10 }}\n  \
+             budget: {{ tokensPerDay: 1000000, tokensPerConversation: 20000 }}\n"
+        )
+    };
+    let dir = std::env::temp_dir().join(format!(
+        "gw-mcp-deployment-org-all-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create the repository");
+    for (file, body) in [
+        (
+            "space.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: data\n  \
+             namespace: bbsk\nspec:\n  isSandbox: false\n"
+                .to_owned(),
+        ),
+        (
+            "air.yaml",
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: air\n  \
+                 namespace: bbsk\nspec:\n  contextSpaceRef: data\n  slug: {AIR}\n  \
+                 audience: public\n  enabledRepresentations: [\"ngsi-ld\", \"mcp\"]\n"
+            ),
+        ),
+        ("org.yaml", deployment("org", "org/all")),
+        ("ghost.yaml", deployment("ghost", "bbsk/nobody")),
+        ("bad.yaml", deployment("bad", "nonsense")),
+    ] {
+        std::fs::write(dir.join(file), body).expect("write a manifest");
+    }
+    let servers = context_gateway::store::load(&dir)
+        .expect("the repository loads")
+        .6;
+    std::fs::remove_dir_all(&dir).expect("clean up");
+    let named = |path: &str| servers.iter().find(|s| s.path() == path);
+    assert!(
+        named("/api/mcp/d/bbsk-bad").is_none(),
+        "an invalid mcpServer"
+    );
+    let org = named("/api/mcp/d/bbsk-org").expect("the org/all deployment");
+    assert_eq!(org.title.as_deref(), Some("Kraj"));
+    assert!(named("/api/mcp/d/bbsk-ghost").is_none_or(|ghost| ghost.members.is_empty()));
+}
+
 /// A stand-in `jc-assistant` answering the sources summary, one search and `bbsk-data`'s context.
 async fn assistant() -> String {
     let stub = Router::new().fallback(|request: axum::extract::Request| async move {

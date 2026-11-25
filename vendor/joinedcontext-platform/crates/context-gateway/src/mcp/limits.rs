@@ -198,6 +198,8 @@ mod tests {
         assert!(refused.contains("503"), "{refused}");
         let (garbled, _) = broker(vec![(200, "not json")]).await;
         assert!(read(&garbled).await.is_err());
+        let (huge, _) = broker(vec![(200, "x".repeat(HEALTH_BYTES + 1).leak())]).await;
+        assert!(read(&huge).await.is_err(), "a health past its byte cap");
         let (silent, _) = broker(vec![(200, r#"{"status":"UP"}"#)]).await;
         assert_eq!(
             read(&silent).await,

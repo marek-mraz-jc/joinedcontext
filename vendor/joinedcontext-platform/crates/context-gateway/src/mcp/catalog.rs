@@ -796,6 +796,138 @@ pub(crate) mod tests {
         assert!(query(&catalog, wrong.as_object().expect("object")).is_err());
     }
 
+    fn catalog_of(entities: Vec<Value>) -> Catalog {
+        let entities = entities
+            .into_iter()
+            .map(|entity| {
+                let expanded = entity
+                    .as_object()
+                    .and_then(|members| expand_entity(members, core(), ExpandOpts::default()).ok())
+                    .unwrap_or(Value::Null);
+                (entity, expanded)
+            })
+            .collect();
+        Catalog {
+            built_from: Vec::new(),
+            built_for: Vec::new(),
+            public: Arc::new(Vec::new()),
+            entities,
+            index: super::super::search::Index::build(std::iter::empty(), &HashMap::new()),
+        }
+    }
+
+    fn asked(catalog: &Catalog, arguments: Value) -> Result<Value, String> {
+        query(catalog, arguments.as_object().expect("object"))
+    }
+
+    fn ids_of(answer: &Value) -> Vec<&str> {
+        answer["structuredContent"]["entities"]
+            .as_array()
+            .map(|found| found.iter().filter_map(|e| e["id"].as_str()).collect())
+            .unwrap_or_default()
+    }
+
+    /// `get_entity` on the catalogue: by id, keyValues when asked, and an error naming what is
+    /// wrong for a missing id, an unknown one and a format the catalogue does not answer.
+    #[test]
+    fn get_on_the_catalog_answers_one_entity_or_says_why_not() {
+        let catalog = catalog_of(vec![
+            json!({ "id": "urn:ngsi-ld:Dataset:a", "type": "Dataset",
+                "title": { "type": "Property", "value": "Air" } }),
+        ]);
+        let got = |arguments: Value| get(&catalog, arguments.as_object().expect("object"));
+        let normalized = got(json!({ "id": "urn:ngsi-ld:Dataset:a" })).expect("the entity");
+        assert_eq!(
+            normalized["structuredContent"]["entity"]["title"]["value"],
+            "Air"
+        );
+        let plain = got(json!({ "id": "urn:ngsi-ld:Dataset:a", "format": "keyValues" }))
+            .expect("the entity");
+        assert_eq!(plain["structuredContent"]["entity"]["title"], "Air");
+        assert!(got(json!({})).is_err_and(|e| e.contains("takes the `id`")));
+        assert!(got(json!({ "id": "urn:ngsi-ld:Dataset:zz" }))
+            .is_err_and(|e| e.contains("holds no entity `urn:ngsi-ld:Dataset:zz`")));
+        assert!(
+            got(json!({ "id": "urn:ngsi-ld:Dataset:a", "format": "geojson" }))
+                .is_err_and(|e| e.contains("not geojson"))
+        );
+    }
+
+    /// The catalogue's query arguments, each edge: an unknown argument, a type that is no name,
+    /// a type expression and `*`, an idPattern alone, with a type and malformed, an id as a
+    /// string, a list and neither, and the limit and cursor bounds with nextCursor and total.
+    #[test]
+    fn the_catalog_query_checks_each_argument_and_pages() {
+        let catalog = catalog_of(
+            (0..3)
+                .map(|n| json!({ "id": format!("urn:ngsi-ld:Dataset:d{n}"), "type": "Dataset" }))
+                .chain([json!({ "id": "urn:ngsi-ld:Organization:o", "type": "Organization" })])
+                .collect(),
+        );
+        assert!(asked(&catalog, json!({ "local": true }))
+            .is_err_and(|e| e.contains("does not take `local`")));
+        assert!(asked(&catalog, json!({ "type": 5 }))
+            .is_err_and(|e| e.contains("`type` is a name or a list of names")));
+        assert!(asked(&catalog, json!({ "type": "not a type" }))
+            .is_err_and(|e| e.contains("is not a type name")));
+        let either = asked(&catalog, json!({ "type": "Dataset,Organization" })).expect("answer");
+        assert_eq!(ids_of(&either).len(), 4, "{either}");
+        let all = asked(&catalog, json!({ "type": "*" })).expect("answer");
+        assert_eq!(ids_of(&all).len(), 4, "{all}");
+
+        let patterned = asked(&catalog, json!({ "idPattern": ".*:d[12]$" })).expect("answer");
+        assert_eq!(
+            ids_of(&patterned),
+            ["urn:ngsi-ld:Dataset:d1", "urn:ngsi-ld:Dataset:d2"]
+        );
+        let typed = asked(
+            &catalog,
+            json!({ "type": "Organization", "idPattern": ".*:d1$" }),
+        )
+        .expect("answer");
+        assert!(ids_of(&typed).is_empty(), "{typed}");
+        assert!(asked(&catalog, json!({ "idPattern": "(" }))
+            .is_err_and(|e| e.starts_with("idPattern: ")));
+
+        let listed = asked(
+            &catalog,
+            json!({ "id": "urn:ngsi-ld:Dataset:d0, urn:ngsi-ld:Organization:o" }),
+        )
+        .expect("answer");
+        assert_eq!(ids_of(&listed).len(), 2, "{listed}");
+        let array =
+            asked(&catalog, json!({ "id": ["urn:ngsi-ld:Dataset:d2", 7] })).expect("answer");
+        assert_eq!(ids_of(&array), ["urn:ngsi-ld:Dataset:d2"]);
+        assert!(asked(&catalog, json!({ "id": 7 }))
+            .is_err_and(|e| e.contains("one id or a comma-separated list")));
+
+        for limit in [json!(0), json!(1001), json!("2"), json!(-1)] {
+            assert!(
+                asked(&catalog, json!({ "limit": limit })).is_err_and(|e| e.contains("1 to 1000")),
+                "{limit}"
+            );
+        }
+        let first = asked(&catalog, json!({ "limit": 2, "count": true })).expect("answer");
+        assert_eq!(first["structuredContent"]["nextCursor"], "2", "{first}");
+        assert_eq!(first["structuredContent"]["total"], 4, "{first}");
+        for cursor in [json!("2"), json!(2)] {
+            let next = asked(&catalog, json!({ "limit": 2, "cursor": cursor })).expect("answer");
+            assert_eq!(ids_of(&next).len(), 2, "{next}");
+            assert!(
+                next["structuredContent"].get("nextCursor").is_none(),
+                "{next}"
+            );
+            assert!(next["structuredContent"].get("total").is_none(), "{next}");
+        }
+        for cursor in [json!("x"), json!(-3), json!(true)] {
+            assert!(
+                asked(&catalog, json!({ "cursor": cursor }))
+                    .is_err_and(|e| e.contains("nextCursor")),
+                "{cursor}"
+            );
+        }
+    }
+
     #[test]
     fn a_search_pattern_is_folded_as_search_text_is_but_its_escapes_are_not() {
         assert_eq!(

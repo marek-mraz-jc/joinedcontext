@@ -25,7 +25,7 @@
 "antares-wasm" = { lines = 97.53, functions = 100.00 }
 "antares-ws" = { lines = 99.04, functions = 99.19 }
 "assistant" = { lines = 96.30, functions = 96.40 }
-"context-gateway" = { lines = 95.80, functions = 96.00 }
+"context-gateway" = { lines = 97.00, functions = 97.40 }
 "daiya-api" = { lines = 99.31, functions = 99.12 }
 "daiya-expr" = { lines = 99.25, functions = 100.00 }
 "daiya-import" = { lines = 99.29, functions = 99.29 }

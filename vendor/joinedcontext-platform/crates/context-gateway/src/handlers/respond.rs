@@ -24,20 +24,14 @@ pub(crate) fn broker_speaks_json(request: &mut Request) {
 
 /// A JSON body under a media type of its own, for the representations that have one.
 pub(crate) fn typed_json_response(payload: &Value, media_type: &'static str) -> Response<Body> {
-    match serde_json::to_vec(payload) {
-        Ok(bytes) => (
-            [(
-                axum::http::header::CONTENT_TYPE,
-                HeaderValue::from_static(media_type),
-            )],
-            bytes,
-        )
-            .into_response(),
-        Err(error) => {
-            tracing::error!(%error, "the answer does not serialize");
-            ProblemDetails::internal().into_response()
-        }
-    }
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            HeaderValue::from_static(media_type),
+        )],
+        payload.to_string(),
+    )
+        .into_response()
 }
 
 /// A text body under its own media type.

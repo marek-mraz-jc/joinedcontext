@@ -238,11 +238,7 @@ pub(crate) fn revalidated(
     media_type: &str,
     headers: &HeaderMap,
 ) -> Response<Body> {
-    let Ok(bytes) = serde_json::to_vec(document) else {
-        tracing::error!("a schema document does not serialize");
-        return ProblemDetails::internal().into_response();
-    };
-    revalidated_text(bytes, media_type, headers)
+    revalidated_text(document.to_string().into_bytes(), media_type, headers)
 }
 
 /// The same, for a document that is already the bytes the caller receives (T-0284). Shared

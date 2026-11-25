@@ -1937,6 +1937,76 @@ mod tests {
         assert_eq!(names("events-b"), ["b-read"]);
     }
 
+    /// MP-02: an Endpoint's projectionRef narrows it only by a ModelProjection of its own space;
+    /// one of another space, and a name no manifest declares, leave the Endpoint unprojected
+    /// (it is still served, as it was before the reference).
+    #[test]
+    fn a_projection_ref_applies_only_a_projection_of_the_endpoints_own_space() {
+        let dir = std::env::temp_dir().join(format!(
+            "gw-mp02-projection-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a repository");
+        let header = "apiVersion: joinedcontext.com/v1alpha1\nkind:";
+        let space = |name: &str| {
+            format!(
+                "{header} ContextSpace\nmetadata:\n  name: {name}\n  namespace: helsinki\n\
+                 spec:\n  isSandbox: false\n  urnSegment: {name}\n"
+            )
+        };
+        let projection = |name: &str, space: &str| {
+            format!(
+                "{header} ModelProjection\nmetadata:\n  name: {name}\n  namespace: helsinki\n\
+                 spec:\n  contextSpaceRef: {space}\n  dataModelRef: {{ name: events, version: 1.0.0 }}\n  \
+                 classes:\n    - name: Event\n      slots: [title]\n"
+            )
+        };
+        let endpoint = |name: &str, slug: &str, projection: &str| {
+            format!(
+                "{header} Endpoint\nmetadata:\n  name: {name}\n  namespace: helsinki\nspec:\n  \
+                 contextSpaceRef: events\n  slug: {slug}\n  audience: public\n  \
+                 projectionRef: {{ kind: ModelProjection, name: {projection} }}\n  \
+                 enabledRepresentations: [ngsi-ld]\n"
+            )
+        };
+        for (file, body) in [
+            ("events.yaml", space("events")),
+            ("parks.yaml", space("parks")),
+            ("own.yaml", projection("own", "events")),
+            ("other.yaml", projection("other", "parks")),
+            (
+                "a.yaml",
+                endpoint("projected", "aaaaaaaaaaaaaaaaaaaaaaaaaa", "own"),
+            ),
+            (
+                "b.yaml",
+                endpoint("foreign", "bbbbbbbbbbbbbbbbbbbbbbbbbb", "other"),
+            ),
+            (
+                "c.yaml",
+                endpoint("dangling", "cccccccccccccccccccccccccc", "missing"),
+            ),
+        ] {
+            std::fs::write(dir.join(file), body).expect("a manifest");
+        }
+        let (endpoints, ..) = super::load(&dir).expect("the repository loads");
+        let _ = std::fs::remove_dir_all(&dir);
+        let projected = |name: &str| {
+            endpoints
+                .iter()
+                .find(|endpoint| endpoint.manifest_name == name)
+                .expect("the endpoint is in the table")
+                .projection
+                .as_ref()
+                .map(|projection| projection.context_space_ref.clone())
+        };
+        assert_eq!(projected("projected").as_deref(), Some("events"));
+        assert_eq!(projected("foreign"), None);
+        assert_eq!(projected("dangling"), None);
+    }
+
     /// ISO-01: a Policy the gateway cannot read may be a prohibition, so its space grants
     /// nothing in the gateway's table; another space of the project keeps its grants, and a
     /// Policy without a readable space empties its whole project.
