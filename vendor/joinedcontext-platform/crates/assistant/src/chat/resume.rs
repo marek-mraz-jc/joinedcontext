@@ -131,7 +131,9 @@ impl Turn {
     pub async fn cancelled(&self) {
         let mut stop = self.stop.subscribe();
         // The sender lives in `self`, so `wait_for` ends only on a cancel.
-        let _ = stop.wait_for(|stopped| *stopped).await;
+        if stop.wait_for(|stopped| *stopped).await.is_err() {
+            std::future::pending::<()>().await;
+        }
     }
 
     fn done(&self) -> Option<Instant> {
