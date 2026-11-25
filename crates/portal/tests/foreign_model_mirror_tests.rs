@@ -649,3 +649,34 @@ async fn a_shared_endpoint_is_read_in_process_and_proposed_in_the_project_reposi
     );
     assert_eq!(recorded.pulls.lock().expect("the pull log").len(), 1);
 }
+
+/// DM-49: before the first sync there is no tree to mirror; after it, the timer's pass reads the
+/// accepted tree, and a reference no Endpoint of the mirror shares is flagged and never read.
+#[tokio::test]
+async fn the_timer_mirrors_the_tree_the_last_sync_accepted() {
+    use joinedcontext_portal::reconciler::Syncer;
+    use joinedcontext_portal::store::Mirror;
+    let files = [reference()];
+    let (server, recorded) = forge(&files).await;
+    let shako = Arc::new(client(&server));
+    let mirror = Arc::new(Mirror::new());
+    let syncer = Arc::new(Syncer::new(Arc::clone(&shako), Arc::clone(&mirror)));
+    assert!(Tree::of(&syncer, &mirror).is_none(), "no sync, no tree");
+    syncer.sync_once().await.expect("the repository loads");
+    let tree = Tree::of(&syncer, &mirror).expect("the accepted tree");
+    assert!(tree.admitted.is_empty(), "{:?}", tree.admitted);
+
+    let peer = Arc::new(FakePeer::new());
+    let task = joinedcontext_portal::sync::mirror::spawn_periodic(
+        shako,
+        syncer,
+        mirror,
+        PUBLIC_URL.to_owned(),
+        peers(&peer),
+        peers(&peer),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    task.abort();
+    assert_eq!(peer.fetches.load(Ordering::Relaxed), 0, "nothing was read");
+    assert!(recorded.writes.lock().expect("the write log").is_empty());
+}
