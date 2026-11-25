@@ -420,6 +420,27 @@ mod tests {
         assert!(admin.iter().all(|op| op.name != crate::connectors::APPLY));
     }
 
+    /// An operation whose input schema is no object, or one without a `type`, still reaches the
+    /// provider as an object schema (T-7818).
+    #[test]
+    fn a_schema_without_an_object_or_a_type_is_offered_as_an_object() {
+        let (driver, _) = as_segment("http://localhost:1", "data-read");
+        let (_, offered) = driver.connector_offered("data-read");
+        let mut odd = offered.first().expect("an operation").clone();
+        odd.input_schema = json!("no schema");
+        let mut untyped = odd.clone();
+        untyped.input_schema = json!({ "properties": { "project": {}, "q": {} } });
+        let specs = tool_specs(&[odd, untyped]);
+        assert_eq!(
+            specs[0].input_schema,
+            json!({ "type": "object", "properties": {} })
+        );
+        assert_eq!(
+            specs[1].input_schema,
+            json!({ "type": "object", "properties": { "q": {} } })
+        );
+    }
+
     /// A tool the conversation was not given, a decision door here, is refused as a problem
     /// document the model reads in its next round; the turn then ends in the model's answer.
     #[tokio::test]

@@ -197,3 +197,41 @@ fn revision_of(root: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
         .filter(|sha| !sha.is_empty())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::InMemory;
+
+    fn change(action: Action) -> ResourceChange {
+        ResourceChange {
+            id: ResourceId {
+                group: "joinedcontext.com".to_owned(),
+                kind: "ContextSpace".to_owned(),
+                namespace: Some("ovzdusie".to_owned()),
+                name: "ovzdusie".to_owned(),
+            },
+            action,
+            diff: Vec::new(),
+            declared: None,
+            live: None,
+        }
+    }
+
+    /// A deletion handed to the write phase is left to the prune phase, and a create without a
+    /// manifest writes nothing: neither reaches the platform.
+    #[test]
+    fn a_deletion_or_a_create_without_a_manifest_is_skipped() {
+        let mut platform = InMemory::new();
+        for action in [Action::Delete, Action::Create] {
+            assert!(
+                matches!(
+                    converge(&mut platform, &change(action)),
+                    Outcome::Skipped(_)
+                ),
+                "{action:?}"
+            );
+        }
+        assert!(platform.is_empty());
+    }
+}

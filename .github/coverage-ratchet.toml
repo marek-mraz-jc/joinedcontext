@@ -24,8 +24,8 @@
 "antares-views" = { lines = 99.88, functions = 99.30 }
 "antares-wasm" = { lines = 97.53, functions = 100.00 }
 "antares-ws" = { lines = 99.04, functions = 99.19 }
-"assistant" = { lines = 95.30, functions = 95.49 }
-"context-gateway" = { lines = 95.80, functions = 96.00 }
+"assistant" = { lines = 96.30, functions = 96.40 }
+"context-gateway" = { lines = 97.00, functions = 97.40 }
 "daiya-api" = { lines = 99.31, functions = 99.12 }
 "daiya-expr" = { lines = 99.25, functions = 100.00 }
 "daiya-import" = { lines = 99.29, functions = 99.29 }
@@ -66,7 +66,7 @@
 "ekiben-server" = { lines = 99.55, functions = 96.85 }
 "ekiben-testkit" = { lines = 100.00, functions = 100.00 }
 "ekiben-text" = { lines = 99.95, functions = 100.00 }
-"jc" = { lines = 89.83, functions = 83.79 }
+"jc" = { lines = 96.89, functions = 94.68 }
 "jc-audit" = { lines = 100.00, functions = 100.00 }
 "jc-chart" = { lines = 100.00, functions = 100.00 }
 "jc-core" = { lines = 99.85, functions = 99.75 }
@@ -84,9 +84,9 @@
 "jc-tabular" = { lines = 100.00, functions = 100.00 }
 "jc-time" = { lines = 100.00, functions = 100.00 }
 "jc-types" = { lines = 100.00, functions = 100.00 }
-"jcctl" = { lines = 92.00, functions = 86.80 }
+"jcctl" = { lines = 95.80, functions = 89.60 }
 "joinedcontext-policy" = { lines = 99.00, functions = 99.40 }
-"joinedcontext-portal" = { lines = 94.03, functions = 91.55 }
+"joinedcontext-portal" = { lines = 95.49, functions = 93.39 }
 "kaisatsu-admin" = { lines = 98.52, functions = 99.41 }
 "kaisatsu-core" = { lines = 99.98, functions = 99.73 }
 "kaisatsu-crypto" = { lines = 99.70, functions = 100.00 }

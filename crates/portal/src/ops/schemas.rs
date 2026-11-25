@@ -799,11 +799,76 @@ mod tests {
         assert!(output_schema()["properties"]["note"].is_object());
     }
 
-    fn invalid_at(result: Result<Value, OpError>) -> (String, String) {
-        match result {
-            Err(OpError::InvalidInput { path, message }) => (path, message),
-            other => panic!("expected a refusal, got {other:?}"),
+    /// T-7817: what a schema line says for a constant, a deep or nested choice, many values and
+    /// a reference cycle, and the example each format and type gives.
+    #[test]
+    fn a_field_line_names_constants_choices_and_cut_lists() {
+        let defs: Defs = serde_json::from_value(json!({
+            "Loop": { "type": "object", "properties": { "next": { "$ref": "#/definitions/Loop" } } },
+            "Mode": { "oneOf": [{ "const": "a" }, { "oneOf": [{ "enum": ["b", 3] }] }] }
+        }))
+        .expect("defs");
+        assert_eq!(type_text(&defs, &json!({ "const": 7 }), 0), "one of 7");
+        assert_eq!(
+            type_text(&defs, &json!({ "$ref": "#/definitions/Mode" }), 0),
+            "one of a|b|3"
+        );
+        assert_eq!(
+            type_text(&defs, &json!({ "type": "string" }), MAX_DEPTH + 1),
+            "any"
+        );
+        let many: Vec<Value> = (0..MAX_ENUM + 2).map(|n| json!(n)).collect();
+        assert!(one_of(&many).ends_with("|…"), "{}", one_of(&many));
+        assert_eq!(
+            type_text(
+                &defs,
+                &json!({ "anyOf": [{ "type": "null" }, { "type": "integer" }, { "type": "integer" }] }),
+                0
+            ),
+            "integer"
+        );
+        assert_eq!(
+            example_of(&defs, &json!({ "$ref": "#/definitions/Loop" }), 9),
+            Value::Null
+        );
+        for (format, example) in [
+            ("date-time", "2026-01-01T00:00:00Z"),
+            ("date", "2026-01-01"),
+            ("uri", "https://example.org/"),
+            ("email", "person@example.org"),
+            ("other", "example"),
+        ] {
+            assert_eq!(
+                example_of(&defs, &json!({ "type": "string", "format": format }), 0),
+                json!(example)
+            );
         }
+        assert_eq!(
+            example_of(&defs, &json!({ "type": "boolean" }), 0),
+            json!(false)
+        );
+        assert_eq!(example_of(&defs, &json!({ "const": "c" }), 0), json!("c"));
+        assert_eq!(
+            example_of(
+                &defs,
+                &json!({ "anyOf": [{ "type": "null" }, { "type": "integer" }] }),
+                0
+            ),
+            json!(1)
+        );
+        let mut seen = Vec::new();
+        collect_refs(
+            &json!([{ "$ref": "#/definitions/Loop" }, { "$ref": "https://elsewhere" }, 5]),
+            &mut |name| seen.push(name.to_owned()),
+        );
+        assert_eq!(seen, ["Loop"]);
+    }
+
+    fn invalid_at(result: Result<Value, OpError>) -> (String, String) {
+        let Err(OpError::InvalidInput { path, message }) = result else {
+            panic!("expected a refusal, got {result:?}")
+        };
+        (path, message)
     }
 
     #[test]
@@ -867,11 +932,11 @@ mod tests {
         for v1 in ["source", "targetEndpoint", "output"] {
             assert!(example["spec"].get(v1).is_none(), "{v1}: {example}");
         }
-        let pipeline = jc_core::kinds::Pipeline::from_yaml(&example.to_string())
-            .unwrap_or_else(|err| panic!("{err}: {example}"));
-        pipeline
-            .validate()
-            .unwrap_or_else(|err| panic!("{err}: {example}"));
+        let pipeline = jc_core::kinds::Pipeline::from_yaml(&example.to_string());
+        assert!(pipeline.is_ok(), "{pipeline:?}: {example}");
+        let pipeline = pipeline.expect("checked above");
+        let valid = pipeline.validate();
+        assert!(valid.is_ok(), "{valid:?}: {example}");
         let outputs = pipeline.spec.outputs();
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].target_endpoint.local_id(), "example");

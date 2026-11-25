@@ -997,7 +997,7 @@ impl Driver {
             .unwrap_or_default()
             .to_owned();
         let info = crate::resource::by_kind("RoleBinding")
-            .ok_or_else(|| "RoleBinding is not a kind of this Portal".to_owned())?;
+            .ok_or("RoleBinding is not a kind of this Portal")?;
         // Project settings → Members holds the grant form since T-2606 (Architecture/09 §14.3);
         // the page keys the hand-off by the address it opens on, so it names that one.
         let route = format!("/projects/{}/settings/members?grant={name}", self.project);
@@ -1954,6 +1954,182 @@ mod new_dashboard_tests {
         });
     }
 
+    fn proposes_dashboards(driver: &mut Driver) {
+        let operations: Vec<&str> = crate::ops::registry().iter().map(|op| op.name).collect();
+        driver.access = crate::agents::access::Access::from_spec(&json!({ "access": {
+            "operations": operations,
+            "kinds": [
+                { "kind": "Dashboard", "verbs": ["read", "propose"] },
+                { "kind": "Layer", "verbs": ["read", "propose"] },
+            ],
+        } }));
+    }
+
+    async fn dashboard(driver: &Driver, params: &ChangeResource, last: bool) -> Worked {
+        driver
+            .create_dashboard(
+                "Dashboard",
+                params,
+                "",
+                json!({}),
+                std::time::Instant::now(),
+                last,
+            )
+            .await
+            .expect("the run goes on")
+    }
+
+    /// A run that may not propose Layers drafts no dashboard; one the platform's check refuses
+    /// goes back with the manifest; one the store cannot keep ends the tool (T-7818).
+    #[tokio::test]
+    async fn a_new_dashboard_is_refused_checked_or_lost_with_the_reason() {
+        let (mut driver, _forge) = world().await;
+        let private = create(
+            "project",
+            &["staff", "staff-stations"],
+            vec![layer("staff", "bikes-staff", json!({}))],
+        );
+        let prose = dashboard(&driver, &private, false)
+            .await
+            .done()
+            .expect("refused");
+        assert!(
+            prose.contains("outside what this assistant may do"),
+            "{prose}"
+        );
+
+        proposes_dashboards(&mut driver);
+        let public = create(
+            "public",
+            &["new"],
+            vec![layer("new", "bikes-staff", json!({}))],
+        );
+        let reason = dashboard(&driver, &public, false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(
+            reason.starts_with("error: ") && reason.contains("UI-19"),
+            "{reason}"
+        );
+        let prose = dashboard(&driver, &public, true)
+            .await
+            .done()
+            .expect("ends");
+        assert!(
+            prose.starts_with("The dashboard could not be drafted: "),
+            "{prose}"
+        );
+
+        let nothing = ChangeResource {
+            patch: None,
+            ..private.clone()
+        };
+        let prose = dashboard(&driver, &nothing, true)
+            .await
+            .done()
+            .expect("ends");
+        assert!(
+            prose.starts_with("The dashboard could not be drafted: "),
+            "{prose}"
+        );
+
+        let dead = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        placed(&driver.state);
+        driver.state.drafts =
+            crate::ops::drafts::DraftStore::new(Some(dead), driver.state.mirror.clone());
+        let prose = dashboard(&driver, &private, false)
+            .await
+            .done()
+            .expect("ends");
+        assert!(
+            prose.contains("could not be saved") && !prose.contains("127.0.0.1"),
+            "{prose}"
+        );
+    }
+
+    async fn model_change(
+        driver: &Driver,
+        name: &str,
+        operations: &[crate::agents::model_change::Operation],
+        last: bool,
+    ) -> Worked {
+        driver
+            .change_model(
+                name,
+                operations,
+                "",
+                json!({}),
+                std::time::Instant::now(),
+                last,
+                "/projects/helsinki/datamodels".to_owned(),
+            )
+            .await
+            .expect("the run goes on")
+    }
+
+    /// A model change without operations reads the outline back; a source the forge does not
+    /// hold and operations the model refuses go back with the reason (T-7818).
+    #[tokio::test]
+    async fn a_model_change_reads_the_outline_or_says_why_it_cannot_change() {
+        let (driver, _forge) = world().await;
+        let reason = model_change(&driver, "bikes", &[], false)
+            .await
+            .again()
+            .expect("the outline goes back");
+        assert!(
+            reason.contains("the classes of data model 'bikes' and their slots")
+                && reason.contains("BikeHireDockingStation"),
+            "{reason}"
+        );
+        let prose = model_change(&driver, "bikes", &[], true)
+            .await
+            .done()
+            .expect("ends");
+        assert_eq!(prose, "What should change in the data model 'bikes'?");
+
+        let reason = model_change(&driver, "trams", &[], false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(
+            reason.contains("the source of data model 'trams' could not be read"),
+            "{reason}"
+        );
+        let prose = model_change(&driver, "trams", &[], true)
+            .await
+            .done()
+            .expect("ends");
+        assert!(
+            prose.starts_with("The data model 'trams' could not be changed: "),
+            "{prose}"
+        );
+
+        let unknown: Vec<crate::agents::model_change::Operation> = serde_json::from_value(json!([
+            { "op": "setSlot", "name": "nowhere", "field": "description", "value": "x" }
+        ]))
+        .expect("operations");
+        let reason = model_change(&driver, "bikes", &unknown, false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(
+            reason.starts_with("error: ") && reason.contains("nowhere"),
+            "{reason}"
+        );
+        let prose = model_change(&driver, "bikes", &unknown, true)
+            .await
+            .done()
+            .expect("ends");
+        assert!(
+            prose.starts_with("The data model 'bikes' could not be changed: "),
+            "{prose}"
+        );
+    }
+
     /// The forge serving the `bikes` model's source, and the project around it: a public and a
     /// private endpoint over the space, one existing layer on each, one existing dashboard.
     async fn world() -> (Driver, MockServer) {
@@ -2455,6 +2631,89 @@ mod model_create_tests {
             .collect()
     }
 
+    fn two_operations() -> Value {
+        json!([
+            { "op": "addClass", "name": "BikeLane", "is_a": "Entity" },
+            { "op": "addSlot", "name": "widthMeters", "class": "BikeLane", "range": "float" },
+        ])
+    }
+
+    /// Without words of its own the run says what it opened; a taken name, a source the check
+    /// refuses and a store that cannot keep the draft say why nothing opened (T-7818).
+    #[tokio::test]
+    async fn a_new_model_says_what_opened_or_why_nothing_did() {
+        let (driver, state, _tools) = steward().await;
+        let prose = driver
+            .change_resource(Ok(lanes(two_operations())), "", false)
+            .await
+            .expect("worked")
+            .done()
+            .expect("opened");
+        assert_eq!(
+            prose,
+            "Opened the new data model 'bike-lanes' in the editor; review it and save it."
+        );
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "DataModel".into(),
+            metadata: crate::resource::ObjectMeta::new("bike-lanes", "helsinki"),
+            spec: json!({}),
+            status: None,
+        });
+        let reason = driver
+            .change_resource(Ok(lanes(two_operations())), "", false)
+            .await
+            .expect("worked")
+            .again()
+            .expect("goes back");
+        assert!(reason.contains("already exists"), "{reason}");
+
+        let (mut driver, _state, tools) = steward().await;
+        tools.reset().await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "errors": ["slot range unknown"] })),
+            )
+            .mount(&tools)
+            .await;
+        let prose = driver
+            .change_resource(Ok(lanes(two_operations())), "", true)
+            .await
+            .expect("worked")
+            .done()
+            .expect("ends");
+        assert!(
+            prose.starts_with("The new data model could not be drafted: "),
+            "{prose}"
+        );
+
+        tools.reset().await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "errors": [] })))
+            .mount(&tools)
+            .await;
+        let dead = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        placed(&driver.state);
+        driver.state.drafts =
+            crate::ops::drafts::DraftStore::new(Some(dead), driver.state.mirror.clone());
+        let prose = driver
+            .change_resource(Ok(lanes(two_operations())), "", false)
+            .await
+            .expect("worked")
+            .done()
+            .expect("ends");
+        assert!(
+            prose.starts_with("The new data model 'bike-lanes' could not be kept: "),
+            "{prose}"
+        );
+    }
+
     #[tokio::test]
     async fn a_new_data_model_is_drafted_and_its_editor_opens_on_the_draft() {
         let (driver, state, tools) = steward().await;
@@ -2628,9 +2887,10 @@ mod unparsed_tests {
             params
         };
 
-        let Worked::Again(reason) = call(&driver, wrong(), true).await else {
-            panic!("the schema goes back instead of ending the turn");
-        };
+        let reason = call(&driver, wrong(), true)
+            .await
+            .again()
+            .expect("the schema goes back instead of ending the turn");
         assert!(reason.contains("manifest does not parse"), "{reason}");
         assert!(reason.contains("authorization"), "the schema: {reason}");
         assert!(reason.len() < 16_000, "a turn's worth: {}", reason.len());
@@ -2640,9 +2900,10 @@ mod unparsed_tests {
         assert_eq!(tools[1]["input"]["kind"], "DataSource");
 
         // Once: the second refusal on the last draft ends on the form with its link.
-        let Worked::Done(prose) = call(&driver, wrong(), true).await else {
-            panic!("the schema goes back once");
-        };
+        let prose = call(&driver, wrong(), true)
+            .await
+            .done()
+            .expect("the schema goes back once");
         let route = "/projects/helsinki/datasources";
         assert!(prose.contains(&format!("]({route}")), "{prose}");
         let opened = logged(&state, "navigate").await;
@@ -2663,19 +2924,20 @@ mod unparsed_tests {
     #[tokio::test]
     async fn another_refusal_brings_no_schema() {
         let (driver, state) = steward();
-        let Worked::Again(reason) = call(&driver, source(json!({ "type": "http" })), false).await
-        else {
-            panic!("the refusal goes back");
-        };
+        let reason = call(&driver, source(json!({ "type": "http" })), false)
+            .await
+            .again()
+            .expect("the refusal goes back");
         assert!(!reason.contains("read for you"), "{reason}");
         let read = logged(&state, "tool").await;
         assert!(read.iter().all(|e| e["tool"] != crate::ops::schemas::GET));
 
         // That refusal spent nothing: the first parse refusal still reads the schema.
         let guess = source(json!({ "type": "http", "guess": true }));
-        let Worked::Again(reason) = call(&driver, guess, true).await else {
-            panic!("the schema goes back");
-        };
+        let reason = call(&driver, guess, true)
+            .await
+            .again()
+            .expect("the schema goes back");
         assert!(reason.contains("read for you"), "{reason}");
     }
 
@@ -2722,9 +2984,10 @@ mod unparsed_tests {
             ..Default::default()
         };
         let guess = patch(json!({ "exclude": ["ownerEmail"] }));
-        let Worked::Again(reason) = call(&driver, guess, false).await else {
-            panic!("the guess goes back");
-        };
+        let reason = call(&driver, guess, false)
+            .await
+            .again()
+            .expect("the guess goes back");
         assert!(reason.contains("hiddenAttributes"), "{reason}");
         let named = patch(json!({ "hiddenAttributes": ["ownerEmail"] }));
         let _ = call(&driver, named, true).await;
@@ -2758,21 +3021,537 @@ mod unparsed_tests {
             .change_asked(Ok(analyst()), asked, "", false)
             .await
             .expect("no event failed");
-        let Worked::Again(reason) = again else {
-            panic!("the Role was drafted");
-        };
+        let reason = again.again().expect("the Role was drafted");
         assert!(reason.contains("approve on Pipeline"), "{reason}");
         let done = driver
             .change_asked(Ok(analyst()), asked, "", true)
             .await
             .expect("no event failed");
-        let Worked::Done(prose) = done else {
-            panic!("the last draft went back to the model");
-        };
+        let prose = done.done().expect("the last draft went back to the model");
         assert!(prose.contains("you asked for no writes"), "{prose}");
         assert!(logged(&state, "navigate").await.is_empty());
         let failed = logged(&state, "tool").await;
         assert_eq!(failed.len(), 2, "{failed:?}");
         assert!(failed.iter().all(|step| step["status"] == "failed"));
+    }
+}
+
+#[cfg(test)]
+mod change_resource_tests {
+    //! The refusals of `change_resource` the model reads back, the removal and the page a
+    //! pipeline draft is tested on (T-7818).
+
+    use super::*;
+    use crate::agents::change::ChangeResource;
+    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+    use crate::state::AppState;
+
+    fn steward() -> (Driver, AppState) {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.identity.roles = vec![state.config.bootstrap_admins.clone()];
+        let operations: Vec<&str> = crate::ops::registry().iter().map(|op| op.name).collect();
+        driver.access = crate::agents::access::Access::from_spec(&json!({ "access": {
+            "operations": operations,
+            "kinds": [
+                { "kind": "DataSource", "verbs": ["read", "propose"] },
+                { "kind": "Endpoint", "verbs": ["read", "propose"] },
+            ],
+        } }));
+        (driver, state)
+    }
+
+    fn put(state: &AppState, kind: &str, name: &str, spec: Value) {
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: kind.into(),
+            metadata: ObjectMeta {
+                name: name.into(),
+                namespace: Some("helsinki".into()),
+                ..Default::default()
+            },
+            spec,
+            status: serde_json::from_value(json!({ "sourceUrl": "https://forge.invalid/Ready" }))
+                .ok(),
+        });
+    }
+
+    fn endpoint(extra: Value) -> ChangeResource {
+        let mut call = json!({ "kind": "Endpoint", "name": "counters" });
+        crate::plan::merge_patch(&mut call, &extra);
+        serde_json::from_value(call).expect("a call")
+    }
+
+    async fn events(state: &AppState, kind: &str) -> Vec<Value> {
+        state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|event| event.kind == kind)
+            .map(|event| event.payload)
+            .collect()
+    }
+
+    async fn worked(driver: &Driver, call: ChangeResource, last: bool) -> Worked {
+        driver
+            .change_resource(Ok(call), "", last)
+            .await
+            .expect("no event failed")
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_change_goes_back_then_ends_on_the_last_draft() {
+        let (driver, state) = steward();
+        let reason = driver
+            .change_resource(Err("expected a string".into()), "", false)
+            .await
+            .expect("the run goes on")
+            .again()
+            .expect("goes back");
+        assert_eq!(reason, "error: expected a string");
+        let prose = driver
+            .change_resource(Err("expected a string".into()), "", true)
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("ends");
+        assert_eq!(prose, "The change could not be read: expected a string");
+        assert_eq!(events(&state, "tool").await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_grant_goes_back_then_ends_on_the_last_draft() {
+        let (driver, state) = steward();
+        let reason = driver
+            .grant_role(Err("missing field `role`".into()), "", false)
+            .await
+            .expect("the run goes on")
+            .again()
+            .expect("goes back");
+        assert_eq!(reason, "error: missing field `role`");
+        let prose = driver
+            .grant_role(Err("missing field `role`".into()), "", true)
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("ends");
+        assert_eq!(prose, "The grant could not be read: missing field `role`");
+        assert!(events(&state, "tool")
+            .await
+            .iter()
+            .all(|e| e["status"] == "failed"));
+    }
+
+    /// A data source without a probe and a kind with no test pass untested; a pipeline with no
+    /// page to test on carries why on its card (T-7818).
+    #[tokio::test]
+    async fn a_draft_with_nothing_to_test_on_passes_untested() {
+        let (driver, _state) = steward();
+        let source = driver
+            .tested("DataSource", &json!({}), None)
+            .await
+            .expect("untested");
+        assert!(source.card.is_none() && source.verdict.is_none());
+        let other = driver
+            .tested("Endpoint", &json!({}), None)
+            .await
+            .expect("untested");
+        assert!(other.card.is_none());
+        let pipeline = driver
+            .tested("Pipeline", &sourced(json!({})), None)
+            .await
+            .expect("untested");
+        assert_eq!(
+            pipeline.card,
+            Some(json!({ "untested": "it names no source to test on" }))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_kind_lists_the_kinds_the_run_may_change() {
+        let (driver, state) = steward();
+        put(
+            &state,
+            "Endpoint",
+            "counters",
+            json!({ "contextSpaceRef": "air" }),
+        );
+        let reason = worked(&driver, endpoint(json!({ "kind": "Spaceship" })), false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(
+            reason.contains("'Spaceship' is not a kind of this project")
+                && reason.contains("Endpoint"),
+            "{reason}"
+        );
+        let prose = worked(&driver, endpoint(json!({ "kind": "Spaceship" })), true)
+            .await
+            .done()
+            .expect("ends");
+        assert!(prose.starts_with("That could not be changed: "), "{prose}");
+    }
+
+    #[tokio::test]
+    async fn a_kind_outside_the_profile_is_refused_before_anything_is_read() {
+        let (driver, state) = steward();
+        let prose = worked(&driver, endpoint(json!({ "kind": "Pipeline" })), false)
+            .await
+            .done()
+            .expect("a refusal ends the step");
+        assert!(
+            prose.contains("outside what this assistant may do"),
+            "{prose}"
+        );
+        assert_eq!(events(&state, "tool").await[0]["status"], "failed");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_name_says_what_the_project_has() {
+        let (driver, state) = steward();
+        let reason = worked(&driver, endpoint(json!({})), false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(reason.contains("the project has no Endpoint"), "{reason}");
+        put(
+            &state,
+            "Endpoint",
+            "bikes",
+            json!({ "contextSpaceRef": "air" }),
+        );
+        let prose = worked(&driver, endpoint(json!({})), true)
+            .await
+            .done()
+            .expect("ends");
+        assert!(prose.contains("the project's are bikes"), "{prose}");
+    }
+
+    #[tokio::test]
+    async fn a_removal_opens_the_page_with_the_way_to_propose_it() {
+        let (driver, state) = steward();
+        put(
+            &state,
+            "Endpoint",
+            "counters",
+            json!({ "contextSpaceRef": "air" }),
+        );
+        let prose = worked(&driver, endpoint(json!({ "delete": true })), false)
+            .await
+            .done()
+            .expect("a removal ends the step");
+        assert!(
+            prose.contains("Opened the removal of 'counters'"),
+            "{prose}"
+        );
+        let opened = events(&state, "navigate").await;
+        assert!(
+            opened[0]["route"]
+                .as_str()
+                .is_some_and(|route| route.contains("endpoints")),
+            "{opened:?}"
+        );
+        let tools = events(&state, "tool").await;
+        assert_eq!(tools[0]["output"]["delete"], true);
+        let said = driver
+            .change_resource(
+                Ok(endpoint(json!({ "delete": true }))),
+                "Removing it.",
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("ends");
+        assert_eq!(said, "Removing it.");
+    }
+
+    #[tokio::test]
+    async fn a_change_without_a_patch_reads_the_manifest_without_its_status() {
+        let (driver, state) = steward();
+        put(
+            &state,
+            "Endpoint",
+            "counters",
+            json!({ "contextSpaceRef": "air" }),
+        );
+        let reason = worked(&driver, endpoint(json!({})), false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(
+            reason.contains("the manifest of Endpoint 'counters' as it is"),
+            "{reason}"
+        );
+        assert!(!reason.contains("Ready"), "the status stays out: {reason}");
+        let prose = worked(&driver, endpoint(json!({})), true)
+            .await
+            .done()
+            .expect("ends");
+        assert_eq!(
+            prose,
+            "Which field of 'counters' should change, and to what value?"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_patch_the_check_refuses_goes_back_with_the_manifest() {
+        let (driver, state) = steward();
+        put(
+            &state,
+            "Endpoint",
+            "counters",
+            json!({ "contextSpaceRef": "air" }),
+        );
+        let reason = worked(&driver, endpoint(json!({ "patch": [1] })), false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(
+            reason.contains("JSON merge patch") && reason.contains("as it is"),
+            "{reason}"
+        );
+        let prose = worked(
+            &driver,
+            endpoint(json!({ "patch": { "metadata": { "name": "other" } } })),
+            true,
+        )
+        .await
+        .done()
+        .expect("ends");
+        assert!(
+            prose.contains("could not be made") && prose.contains("/metadata/name"),
+            "{prose}"
+        );
+    }
+
+    /// A patch the platform's check refuses is a failed step and opens nothing; a store that
+    /// cannot keep the changed manifest ends the tool (T-7818).
+    #[tokio::test]
+    async fn a_change_the_check_refuses_or_the_store_loses_opens_nothing() {
+        let (mut driver, state) = steward();
+        put(
+            &state,
+            "Endpoint",
+            "counters",
+            json!({ "contextSpaceRef": "air" }),
+        );
+        let call = || endpoint(json!({ "patch": { "spec": { "audience": "galaxy" } } }));
+        let (Worked::Again(said) | Worked::Done(said)) = worked(&driver, call(), true).await;
+        assert!(!said.is_empty());
+        let tools = events(&state, "tool").await;
+        assert!(tools.iter().any(|t| t["status"] == "failed"), "{tools:?}");
+        assert!(events(&state, "navigate")
+            .await
+            .iter()
+            .all(|e| e.get("prefill").is_none()));
+
+        placed(&state);
+        let dead = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        driver.state.drafts = crate::ops::drafts::DraftStore::new(Some(dead), state.mirror.clone());
+        let public = endpoint(json!({ "patch": { "spec": { "audience": "public" } } }));
+        let (Worked::Again(said) | Worked::Done(said)) = worked(&driver, public, true).await;
+        assert!(!said.contains("127.0.0.1"), "{said}");
+    }
+
+    #[tokio::test]
+    async fn a_create_of_a_taken_name_goes_back_as_a_patch() {
+        let (driver, state) = steward();
+        put(
+            &state,
+            "Endpoint",
+            "counters",
+            json!({ "contextSpaceRef": "air" }),
+        );
+        let reason = worked(&driver, endpoint(json!({ "create": true })), false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(reason.contains("already exists"), "{reason}");
+        let prose = worked(&driver, endpoint(json!({ "create": true })), true)
+            .await
+            .done()
+            .expect("ends");
+        assert!(
+            prose.starts_with("The new Endpoint could not be drafted: "),
+            "{prose}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_resource_outside_a_copy_goes_back_to_the_model() {
+        let (driver, state) = steward();
+        put(
+            &state,
+            "Endpoint",
+            "counters",
+            json!({ "contextSpaceRef": "air" }),
+        );
+        state
+            .drafts
+            .put(
+                "helsinki",
+                "DataSource",
+                "feed",
+                json!({}),
+                None,
+                "test-user@hel.fi",
+                "assistant",
+            )
+            .await
+            .expect("a draft");
+        let call = || endpoint(json!({ "patch": { "spec": { "audience": "public" } } }));
+        let reason = worked(&driver, call(), false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(reason.contains("DataSource 'feed'"), "{reason}");
+        let prose = worked(&driver, call(), true).await.done().expect("ends");
+        assert!(
+            prose.starts_with("That needs a copy of the project first: "),
+            "{prose}"
+        );
+    }
+
+    fn run_endpoint(driver: &mut Driver, base: String) {
+        driver.endpoints = vec![crate::agents::endpoints::RunEndpoint {
+            name: "counters".into(),
+            slug: "cslug".into(),
+            space: "air".into(),
+        }];
+        driver.proxy_base = base;
+    }
+
+    fn sourced(source: Value) -> Value {
+        json!({ "kind": "Pipeline", "spec": { "source": source } })
+    }
+
+    #[tokio::test]
+    async fn a_draft_without_a_page_to_test_on_says_why() {
+        let (driver, state) = steward();
+        let page = |source: Value| {
+            let driver = &driver;
+            async move { driver.page_of(&sourced(source)).await.expect_err("no page") }
+        };
+        assert!(page(json!({})).await.contains("names no source"));
+        assert!(page(json!({ "dataSourceRef": { "name": "feed" } }))
+            .await
+            .contains("data source 'feed' does not exist"));
+        put(
+            &state,
+            "DataSource",
+            "feed",
+            json!({ "type": "mqtt", "mqtt": { "topic": "a" } }),
+        );
+        assert!(!page(json!({ "dataSourceRef": { "name": "feed" } }))
+            .await
+            .is_empty());
+        assert!(page(json!({ "endpointRef": { "name": "counters" } }))
+            .await
+            .contains("does not read its endpoint 'counters'"));
+    }
+
+    #[tokio::test]
+    async fn a_page_of_the_read_endpoint_carries_the_sources_query() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path_regex("/ngsi-ld/v1/types$"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(json!({ "typeList": ["BikeCounter"] })),
+            )
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::path_regex("/ngsi-ld/v1/entities$"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("[]"))
+            .mount(&server)
+            .await;
+        let (mut driver, _state) = steward();
+        run_endpoint(&mut driver, server.uri());
+        let (page, source) = driver
+            .page_of(&sourced(json!({
+                "endpointRef": { "name": "counters" },
+                "query": { "q": "n>1", "attrs": ["n", "at"] },
+            })))
+            .await
+            .expect("a page");
+        assert_eq!(page, json!({ "text": "[]", "format": "text" }));
+        assert_eq!(source, json!({ "endpoint": "counters" }));
+        let asked = server.received_requests().await.unwrap_or_default();
+        let read = asked.last().expect("a read").url.to_string();
+        assert!(
+            read.contains("type=BikeCounter")
+                && read.contains("q=n%3E1")
+                && read.contains("attrs=n%2Cat"),
+            "{read}"
+        );
+        driver
+            .page_of(&sourced(json!({
+                "endpointRef": { "name": "counters" },
+                "query": { "type": "Named", "attrs": [] },
+            })))
+            .await
+            .expect("a page");
+        let asked = server.received_requests().await.unwrap_or_default();
+        let read = asked.last().expect("a read").url.to_string();
+        assert!(
+            read.contains("type=Named") && !read.contains("attrs="),
+            "{read}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_serving_no_type_has_no_page() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path_regex("/ngsi-ld/v1/types$"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(json!({ "typeList": [] })),
+            )
+            .mount(&server)
+            .await;
+        let (mut driver, _state) = steward();
+        run_endpoint(&mut driver, server.uri());
+        let reason = driver
+            .page_of(&sourced(json!({ "endpointRef": { "name": "counters" } })))
+            .await
+            .expect_err("no type");
+        assert!(reason.contains("names no type to read"), "{reason}");
+    }
+
+    #[tokio::test]
+    async fn the_earlier_edit_endpoint_call_is_read_refused_or_opened() {
+        let (mut driver, state) = steward();
+        let prose = driver
+            .edit_endpoint(Err("bad".into()), "")
+            .await
+            .expect("the run goes on");
+        assert_eq!(prose, "The change could not be read: bad");
+        let call: crate::agents::share::EditEndpoint =
+            serde_json::from_value(json!({ "name": "nowhere" })).expect("a call");
+        let prose = driver
+            .edit_endpoint(Ok(call.clone()), "")
+            .await
+            .expect("the run goes on");
+        assert!(
+            prose.starts_with("The endpoint could not be changed: "),
+            "{prose}"
+        );
+        assert!(events(&state, "tool")
+            .await
+            .iter()
+            .all(|event| event["status"] == "failed"));
+        driver.access = crate::agents::access::Access::default();
+        let prose = driver
+            .edit_endpoint(Ok(call), "")
+            .await
+            .expect("the run goes on");
+        assert!(
+            prose.contains("outside what this assistant may do"),
+            "{prose}"
+        );
     }
 }

@@ -835,6 +835,73 @@ mod tests {
     use super::bounds::serde_error_path_and_message;
     use super::*;
 
+    /// T-7817: each error reaches its REST answer with the words a client acts on, and a
+    /// bearer never prints its token.
+    #[test]
+    fn each_operation_error_is_its_rest_answer() {
+        let status = |err: ApiError| err.into_response().status().as_u16();
+        assert_eq!(
+            status(ApiError::from(OpError::Forbidden("portal-admin".into()))),
+            403
+        );
+        assert_eq!(
+            status(OpError::Forbidden("portal-admin".into()).into_api_error()),
+            403
+        );
+        assert_eq!(status(ApiError::from(invalid_at("/name"))), 400);
+        let other = ApiError::from(OpError::Conflict(json!({ "error": "stale_plan" })));
+        assert!(
+            matches!(&other, ApiError::Conflict(text) if text == "stale_plan"),
+            "{other:?}"
+        );
+        let bare = ApiError::from(OpError::Conflict(json!({})));
+        assert!(
+            matches!(&bare, ApiError::Conflict(text) if text == "conflict"),
+            "{bare:?}"
+        );
+        let gate = ApiError::from(OpError::Conflict(json!({ "error": "verdict_required" })));
+        assert!(matches!(gate, ApiError::VerdictRequired(_)));
+        assert_eq!(
+            OpError::Conflict(json!({ "error": "x" }))
+                .into_response()
+                .status()
+                .as_u16(),
+            409
+        );
+        assert_eq!(format!("{:?}", Bearer("secret-token".into())), "Bearer(..)");
+    }
+
+    fn invalid_at(path: &str) -> OpError {
+        OpError::InvalidInput {
+            path: path.into(),
+            message: "m".into(),
+        }
+    }
+
+    #[test]
+    fn an_example_takes_the_first_choice_and_the_first_type() {
+        assert_eq!(
+            example_of(&json!({ "oneOf": [{ "type": "integer" }, { "type": "string" }] })),
+            json!(1)
+        );
+        assert_eq!(
+            example_of(&json!({ "anyOf": [{ "const": "a" }] })),
+            json!("a")
+        );
+        assert_eq!(
+            example_of(&json!({ "type": ["boolean", "null"] })),
+            json!(false)
+        );
+        assert_eq!(example_of(&json!({ "type": [] })), json!({}));
+        assert_eq!(
+            example_of(
+                &json!({ "type": "object", "required": ["n", 5], "properties": { "n": { "type": "null" } } })
+            ),
+            json!({ "n": null }),
+            "a required entry that is no name is skipped"
+        );
+    }
+
     /// JC2-22: a dry run of jc_model_source_put proposes nothing, so it is Green and the MCP
     /// door asks the person nothing; the write itself stays Yellow.
     #[test]
@@ -993,17 +1060,16 @@ mod tests {
         assert!(within_schema(op, &json!({ "q": "air quality" })).is_ok());
 
         let long = "x".repeat(bounds::QUERY as usize + 1);
-        match within_schema(op, &json!({ "q": long })) {
-            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/q"),
-            other => panic!("an over-long query went through: {other:?}"),
-        }
-        match within_schema(op, &json!({ "q": "a", "sql": "drop table" })) {
-            Err(OpError::InvalidInput { path, message }) => {
-                assert_eq!(path, "/sql", "the member itself is named");
-                assert!(message.contains("sql"), "{message}");
-            }
-            other => panic!("an unnamed member went through: {other:?}"),
-        }
+        let long = within_schema(op, &json!({ "q": long }));
+        assert!(
+            matches!(&long, Err(OpError::InvalidInput { path, .. }) if path == "/q"),
+            "an over-long query went through: {long:?}"
+        );
+        let unnamed = within_schema(op, &json!({ "q": "a", "sql": "drop table" }));
+        assert!(
+            matches!(&unnamed, Err(OpError::InvalidInput { path, message }) if path == "/sql" && message.contains("sql")),
+            "the member itself is named: {unnamed:?}"
+        );
     }
 
     /// Every published input schema compiles, or every call of that operation would fail.
@@ -1205,13 +1271,10 @@ mod tests {
 
         let invalid = json!({ "q": "traffic", "extraField": 123 });
         let err = (op.validate)(&invalid).expect_err("should reject unknown field");
-        match err {
-            OpError::InvalidInput { path, message } => {
-                assert_eq!(path, "/extraField");
-                assert!(message.contains("unknown field `extraField`"));
-            }
-            other => panic!("expected InvalidInput, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, OpError::InvalidInput { path, message } if path == "/extraField" && message.contains("unknown field `extraField`")),
+            "{err:?}"
+        );
     }
 
     /// T-5971: a key pasted into any argument is refused by path, before a permission or a

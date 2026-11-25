@@ -339,6 +339,52 @@ mod tests {
         "/../ekiben/crates/ekiben-io-http/tests/fixtures/presets"
     );
 
+    /// T-7817: a read past the guess's bytes, one that answered no JSON or nothing, and a body
+    /// whose records sit one level down each give the guess they can.
+    #[test]
+    fn a_read_too_large_or_without_json_says_why_and_nested_records_are_found() {
+        let url = Url::parse("https://api.example/items").expect("url");
+        let read = |sample: Option<Value>, bytes: usize| {
+            let mut trace = TestTrace::default();
+            trace.input.events = 1;
+            trace.input.sample = sample;
+            trace.mapping = vec![json!({ "bytes": bytes, "link": "" })];
+            guess_of(&url, trace)
+        };
+        let large = read(Some(json!({ "items": [] })), PAGE_BYTES + 1);
+        assert!(
+            large
+                .skipped
+                .as_deref()
+                .is_some_and(|s| s.contains("set the paging under Advanced")),
+            "{large:?}"
+        );
+        for sample in [None, Some(json!("<html>")), Some(Value::Null)] {
+            let none = read(sample, 10);
+            assert!(
+                none.skipped
+                    .as_deref()
+                    .is_some_and(|s| s.contains("no JSON")),
+                "{none:?}"
+            );
+        }
+        let text = read(
+            Some(json!(
+                r#"{"result": {"results": [{"id": 1}, {"id": 2}]}, "links": [{"rel": "next"}]}"#
+            )),
+            80,
+        );
+        assert_eq!(text.records.as_deref(), Some("result.results"), "{text:?}");
+        assert_eq!(records_path(&json!([1])), None);
+        assert_eq!(
+            records_path(
+                &json!({ "links": [{ "a": 1 }, { "a": 2 }, { "a": 3 }], "data": [{ "id": 1 }] })
+            ),
+            Some("data".to_owned()),
+            "links are never the records"
+        );
+    }
+
     fn recorded(folder: &str) -> (Value, Value) {
         let read = |file: &str| -> Value {
             let text =

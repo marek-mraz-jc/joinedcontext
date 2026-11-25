@@ -246,12 +246,7 @@ fn spec_of(input: &Value) -> Result<Request, OpError> {
 /// A `jc_data_query` input for a chart, each refusal under `at`; the rows come in the shape the
 /// flattening below reads.
 fn query_of(query: &Value, at: &str) -> Result<DataQueryInput, OpError> {
-    let mut query: DataQueryInput = parse_input(query.clone()).map_err(|err| match err {
-        OpError::InvalidInput { path, message } => {
-            invalid(format!("{at}{}", path.trim_end_matches('/')), message)
-        }
-        other => other,
-    })?;
+    let mut query: DataQueryInput = parse_input(query.clone()).map_err(|err| under(at, err))?;
     if query.count {
         return Err(invalid(
             format!("{at}/count"),
@@ -267,11 +262,24 @@ fn query_of(query: &Value, at: &str) -> Result<DataQueryInput, OpError> {
     } else if query.temporal.is_none() {
         query.format = Some("keyValues".into());
     }
-    data_query::request_of(&query).map_err(|err| match err {
-        OpError::InvalidInput { path, message } => invalid(format!("{at}{path}"), message),
-        other => other,
-    })?;
+    data_query::request_of(&query).map_err(|err| under(at, err))?;
     Ok(query)
+}
+
+/// `err` with its member put under `at` (a whole-input `/` as `at` itself); any other error as
+/// it is.
+fn under(at: &str, err: OpError) -> OpError {
+    match err {
+        OpError::InvalidInput { path, message } => {
+            invalid(format!("{at}{}", path.trim_end_matches('/')), message)
+        }
+        other => other,
+    }
+}
+
+/// A blocking render that did not come back (it panicked) as the platform's 500.
+fn stopped(err: tokio::task::JoinError) -> ApiError {
+    ApiError::Internal(format!("the render stopped: {err}"))
 }
 
 fn limited() -> OpError {
@@ -305,7 +313,7 @@ async fn prepare(spec: &Spec, rows: Vec<Map<String, Value>>) -> Result<Prepared,
         }
     })
     .await
-    .map_err(|err| OpError::Api(ApiError::Internal(format!("the render stopped: {err}"))))
+    .map_err(|err| OpError::Api(stopped(err)))
 }
 
 /// The PNG of `tiles` within `deadline` in a blocking thread ([`chart::montage`]); `limited`
@@ -313,7 +321,7 @@ async fn prepare(spec: &Spec, rows: Vec<Map<String, Value>>) -> Result<Prepared,
 async fn paint(tiles: Vec<chart::Tile>, deadline: Instant, at: &str) -> Result<Vec<u8>, OpError> {
     let png = tokio::task::spawn_blocking(move || chart::montage(&tiles, deadline))
         .await
-        .map_err(|err| ApiError::Internal(format!("the render stopped: {err}")))?
+        .map_err(stopped)?
         .map_err(|chart::Limited| limited())?;
     if png.len() > MAX_PNG {
         return Err(invalid(
@@ -414,14 +422,12 @@ async fn run(
             Request::Query(spec, query) => {
                 let source = json!({ "endpoint": query.endpoint, "type": query.entity_type, "temporal": query.temporal.is_some() });
                 let mut read = data_query::run(caller, state, project, *query).await?;
-                let entities = match read["entities"].take() {
-                    Value::Array(entities) => entities,
-                    _ => Vec::new(),
-                };
+                let entities: Vec<Value> =
+                    serde_json::from_value(read["entities"].take()).unwrap_or_default();
                 // An 8 MiB history is ~150 ms of rows: off the async thread (P-1-01).
                 let rows = tokio::task::spawn_blocking(move || rows_of(&entities))
                     .await
-                    .map_err(|err| ApiError::Internal(format!("the render stopped: {err}")))?;
+                    .map_err(stopped)?;
                 let count = rows.len();
                 let prepared = prepare(&spec, rows).await?;
                 Picture {
@@ -456,10 +462,8 @@ async fn run(
             }
         };
         // The slot is taken after the read, so a slow gateway holds no canvas.
-        let _slot = SLOTS
-            .acquire()
-            .await
-            .map_err(|_| ApiError::Unavailable("the renderer is shutting down".into()))?;
+        // SLOTS is never closed, so the permit is always there.
+        let _slot = SLOTS.acquire().await.ok();
         let chart = picture.prepared.chart.clone();
         let png = paint(vec![chart::Tile::Chart(chart)], deadline, "/width").await?;
         let (mut answer, view) = picture.parts();
@@ -613,10 +617,7 @@ async fn whole_dashboard(
             }
         }
     }
-    let _slot = SLOTS
-        .acquire()
-        .await
-        .map_err(|_| ApiError::Unavailable("the renderer is shutting down".into()))?;
+    let _slot = SLOTS.acquire().await.ok();
     let png = paint(tiles, deadline, "/data/dashboard").await?;
     let side = |at: usize| {
         png.get(at..at + 4)
@@ -868,8 +869,8 @@ async fn widget_rows(
             aggr_period,
             ..
         } => {
-            let window = duration_seconds(last)
-                .ok_or_else(|| invalid(format!("{AT}/last"), "an ISO 8601 duration, e.g. P7D"))?;
+            // check_source took `last` by the same grammar, up to P31D.
+            let window = duration_seconds(last).unwrap_or_default();
             let method = aggr_method
                 .and_then(|m| serde_json::to_value(m).ok())
                 .and_then(|m| m.as_str().map(str::to_owned));
@@ -898,10 +899,8 @@ async fn widget_rows(
                 ..DataQueryInput::default()
             };
             let mut read = data_query::run(caller, state, project, query).await?;
-            let entities = match read["entities"].take() {
-                Value::Array(entities) => entities,
-                _ => Vec::new(),
-            };
+            let entities: Vec<Value> =
+                serde_json::from_value(read["entities"].take()).unwrap_or_default();
             let mut rows = temporal_rows(&entities, attrs, method.is_some());
             let cut = rows.len() > WIDGET_ROWS;
             rows.truncate(WIDGET_ROWS);
@@ -1009,10 +1008,8 @@ async fn widget_rows(
 /// receives the caller's token; one that leaves the path stops the chart, as the Portal's own
 /// widget does.
 fn next_page(next: &str, path: &str) -> Result<Vec<(String, String)>, OpError> {
-    let base = url::Url::parse("http://gateway.invalid/")
-        .map_err(|err| ApiError::Internal(err.to_string()))?;
-    let url = base
-        .join(next)
+    let url = url::Url::parse("http://gateway.invalid/")
+        .and_then(|base| base.join(next))
         .ok()
         .filter(|url| url.path().ends_with(&format!("/{path}")))
         .ok_or_else(|| ApiError::Unavailable("the next page is not on the Endpoint".into()))?;
@@ -1281,9 +1278,42 @@ mod tests {
     }
 
     fn refused_at(input: &Value) -> String {
-        match spec_of(input) {
-            Err(OpError::InvalidInput { path, .. }) => path,
-            other => panic!("not refused: {other:?}"),
+        path_of(spec_of(input))
+    }
+
+    /// The member a refusal names; another error's whole text, which no path equals.
+    fn path_of<T: std::fmt::Debug>(result: Result<T, OpError>) -> String {
+        let text = result.expect_err("refused").to_string();
+        text.strip_prefix("invalid input at ")
+            .and_then(|rest| rest.split_once(": "))
+            .map_or(text.clone(), |(path, _)| path.to_owned())
+    }
+
+    /// The words of a 404, after checking it is one.
+    fn missing<T: std::fmt::Debug>(result: Result<T, OpError>) -> String {
+        let err = result.expect_err("missing");
+        assert!(
+            matches!(&err, OpError::Api(ApiError::NotFound(_))),
+            "{err:?}"
+        );
+        err.to_string()
+    }
+
+    /// The spec of a checked `jc_data_query` call.
+    fn query_spec(input: &Value) -> Box<Spec> {
+        let Ok(Request::Query(parsed, _)) = spec_of(input) else {
+            panic!("a spec: {input}")
+        };
+        parsed
+    }
+
+    /// Writes the answer's PNG as `name` into `dir`, when one is given (JC_RENDER_EVIDENCE).
+    fn save_png(dir: Option<std::ffi::OsString>, name: &str, answer: &Value) {
+        if let Some(dir) = dir {
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(answer["image"]["data"].as_str().expect("data"))
+                .expect("base64");
+            std::fs::write(std::path::Path::new(&dir).join(name), png).expect("evidence");
         }
     }
 
@@ -1412,9 +1442,7 @@ mod tests {
             if mark == "bar" || mark == "arc" {
                 input["encoding"]["x"] = json!({ "field": "id", "type": "nominal" });
             }
-            let Ok(Request::Query(parsed, _)) = spec_of(&input) else {
-                panic!("a spec")
-            };
+            let parsed = query_spec(&input);
             let Drawn {
                 png, categories, ..
             } = draw(&parsed, rows.clone(), Instant::now() + TIME_CAP)
@@ -1451,9 +1479,7 @@ mod tests {
     /// other members, a personal one among them, never reach the view.
     #[test]
     fn chart_points_hold_only_channel_fields() {
-        let Ok(Request::Query(parsed, _)) = spec_of(&spec("point")) else {
-            panic!("a spec")
-        };
+        let parsed = query_spec(&spec("point"));
         let values: Vec<Value> = (0..2_100)
             .map(|i| {
                 json!([
@@ -1510,9 +1536,7 @@ mod tests {
     /// spec again in `structuredContent` or the text (T-6866).
     #[tokio::test]
     async fn chart_points_are_in_meta_not_in_text_or_structured_content() {
-        let Ok(Request::Query(parsed, _)) = spec_of(&spec("line")) else {
-            panic!("a spec")
-        };
+        let parsed = query_spec(&spec("line"));
         let rows = rows_of(&[json!({
             "id": "urn:x", "type": "T",
             "pm10": { "values": [[7, "2026-11-13T00:00:00Z"], [9, "2026-11-13T01:00:00Z"]] }
@@ -1552,9 +1576,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_render_over_the_time_cap_is_limited() {
-        let Ok(Request::Query(parsed, _)) = spec_of(&spec("line")) else {
-            panic!("a spec")
-        };
+        let parsed = query_spec(&spec("line"));
         let rows = rows_of(&[
             json!({ "id": "urn:x", "type": "T", "pm10": { "values": [[1, "2026-11-13T00:00:00Z"]] } }),
         ]);
@@ -1720,6 +1742,11 @@ mod tests {
         (state, caller, realm)
     }
 
+    /// Whether `request` read an Endpoint at the gateway.
+    fn endpoint_read(request: &wiremock::Request) -> bool {
+        request.url.path().starts_with("/api/endpoint/")
+    }
+
     fn the_widget() -> Value {
         json!({ "width": 400, "height": 240,
                 "data": { "widget": { "dashboard": "air-quality", "page": 0, "widget": 1 } } })
@@ -1766,19 +1793,18 @@ mod tests {
             answer["categories"]["color"][1]["value"],
             "urn:ngsi-ld:AirQualityObserved:vallila"
         );
-        if let Ok(dir) = std::env::var("JC_RENDER_EVIDENCE") {
-            let png = base64::engine::general_purpose::STANDARD
-                .decode(answer["image"]["data"].as_str().expect("data"))
-                .expect("base64");
-            std::fs::write(std::path::Path::new(&dir).join("widget.png"), png).expect("evidence");
-        }
+        save_png(
+            std::env::var_os("JC_RENDER_EVIDENCE"),
+            "widget.png",
+            &answer,
+        );
         // The rows went as ana, with the token exchanged for the Endpoint, never her own.
         let reads: Vec<_> = server
             .received_requests()
             .await
             .expect("recorded")
             .into_iter()
-            .filter(|r| r.url.path().starts_with("/api/endpoint/"))
+            .filter(endpoint_read)
             .collect();
         assert_eq!(reads.len(), 1);
         assert_eq!(reads[0].headers["authorization"], "Bearer endpoint-token");
@@ -1788,12 +1814,10 @@ mod tests {
             kind: "RoleBinding".into(),
             name: "ana".into(),
         });
-        match run(&caller, &state, "helsinki", the_widget()).await {
-            Err(OpError::Api(ApiError::NotFound(text))) => {
-                assert_eq!(text, "no Dashboard air-quality in project helsinki")
-            }
-            other => panic!("not missing: {other:?}"),
-        }
+        assert!(
+            missing(run(&caller, &state, "helsinki", the_widget()).await)
+                .ends_with("no Dashboard air-quality in project helsinki")
+        );
     }
 
     #[tokio::test]
@@ -1801,10 +1825,7 @@ mod tests {
         let server = wiremock::MockServer::start().await;
         pm10(&server).await;
         let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
-        let words = |result: Result<Value, OpError>| match result {
-            Err(OpError::Api(ApiError::NotFound(text))) => text,
-            other => panic!("not missing: {other:?}"),
-        };
+        let words = |result: Result<Value, OpError>| missing(result);
         let foreign = words(run(&caller, &state, "bratislava", the_widget()).await);
         let mut unknown = the_widget();
         unknown["data"]["widget"]["dashboard"] = json!("nobody");
@@ -1812,9 +1833,7 @@ mod tests {
         assert_eq!(foreign, missing.replace("nobody", "air-quality"));
         let reads = server.received_requests().await.expect("recorded");
         assert!(
-            reads
-                .iter()
-                .all(|r| !r.url.path().starts_with("/api/endpoint/")),
+            !reads.iter().any(endpoint_read),
             "nothing of Bratislava was read"
         );
     }
@@ -1827,13 +1846,11 @@ mod tests {
         let withheld = run(&caller, &state, "helsinki", the_widget())
             .await
             .expect("drawn");
-        if let Ok(dir) = std::env::var("JC_RENDER_EVIDENCE") {
-            let png = base64::engine::general_purpose::STANDARD
-                .decode(withheld["image"]["data"].as_str().expect("data"))
-                .expect("base64");
-            std::fs::write(std::path::Path::new(&dir).join("widget-withheld.png"), png)
-                .expect("evidence");
-        }
+        save_png(
+            std::env::var_os("JC_RENDER_EVIDENCE"),
+            "widget-withheld.png",
+            &withheld,
+        );
         assert_eq!(
             withheld["withheld"],
             json!({ "title": "PM10 by Olga", "encoding.y.title": "Olga's axis title" })
@@ -1865,10 +1882,7 @@ mod tests {
 
     #[test]
     fn a_widget_whose_spec_holds_an_expression_is_refused() {
-        let refused = |spec: Value| match widget_look(Some(&spec)) {
-            Err(OpError::InvalidInput { path, .. }) => path,
-            other => panic!("not refused: {other:?}"),
-        };
+        let refused = |spec: Value| path_of(widget_look(Some(&spec)));
         let mut transform = olga_s_spec();
         transform["transform"] = json!([{ "calculate": "datum.value * 2", "as": "v" }]);
         assert_eq!(refused(transform), "/data/widget/spec/transform");
@@ -1970,7 +1984,7 @@ mod tests {
             .await
             .expect("recorded")
             .into_iter()
-            .filter(|r| r.url.path().starts_with("/api/endpoint/"))
+            .filter(endpoint_read)
             .collect();
         assert_eq!(reads.len(), 3);
         assert!(reads
@@ -2038,18 +2052,13 @@ mod tests {
         let server = wiremock::MockServer::start().await;
         pm10(&server).await;
         let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
-        let words = |result: Result<Value, OpError>| match result {
-            Err(OpError::Api(ApiError::NotFound(text))) => text,
-            other => panic!("not missing: {other:?}"),
-        };
+        let words = |result: Result<Value, OpError>| missing(result);
         let foreign = words(run(&caller, &state, "bratislava", whole("air-quality")).await);
         let missing = words(run(&caller, &state, "bratislava", whole("nobody")).await);
         assert_eq!(foreign, missing.replace("nobody", "air-quality"));
         let reads = server.received_requests().await.expect("recorded");
         assert!(
-            reads
-                .iter()
-                .all(|r| !r.url.path().starts_with("/api/endpoint/")),
+            !reads.iter().any(endpoint_read),
             "nothing of Bratislava was read"
         );
     }
@@ -2060,20 +2069,15 @@ mod tests {
         let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
         // Twelve on the first page and one on the second: thirteen.
         board(&state, "crowded", vec![pm10_widget("air"); MAX_TILES]);
-        match run(&caller, &state, "helsinki", whole("crowded")).await {
-            Err(OpError::InvalidInput { path, message }) => {
-                assert_eq!(path, "/data/dashboard");
-                assert!(
-                    message.contains("13 widgets") && message.contains("at most 12"),
-                    "{message}"
-                );
-            }
-            other => panic!("not refused: {other:?}"),
-        }
+        let err = run(&caller, &state, "helsinki", whole("crowded"))
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&err, OpError::InvalidInput { path, message } if path == "/data/dashboard" && message.contains("13 widgets") && message.contains("at most 12")),
+            "{err:?}"
+        );
         let reads = server.received_requests().await.expect("recorded");
-        assert!(reads
-            .iter()
-            .all(|r| !r.url.path().starts_with("/api/endpoint/")));
+        assert!(reads.is_empty(), "nothing was read: {reads:?}");
         // Eleven and one draw.
         board(&state, "full", vec![pm10_widget("air"); MAX_TILES - 1]);
         assert!(spec_of(&whole("full")).is_ok());
@@ -2156,5 +2160,647 @@ mod tests {
         ] {
             assert!(next_page(elsewhere, path).is_err(), "{elsewhere}");
         }
+    }
+
+    #[test]
+    fn each_refusal_of_the_call_names_its_member() {
+        let widget = json!({ "dashboard": "air-quality", "page": 0, "widget": 1 });
+        let cases = [
+            (
+                json!({ "data": { "dashboard": "a", "query": {} } }),
+                "/data/query",
+            ),
+            (
+                json!({ "data": { "dashboard": "a", "widget": {} } }),
+                "/data/widget",
+            ),
+            (
+                json!({ "title": "t", "data": { "dashboard": "a" } }),
+                "/title",
+            ),
+            (
+                json!({ "description": 5, "data": { "dashboard": "a" } }),
+                "/description",
+            ),
+            (
+                json!({ "data": { "dashboard": "Not_A_Name" } }),
+                "/data/dashboard",
+            ),
+            (json!({ "data": { "dashboard": 5 } }), "/data/dashboard"),
+            (
+                json!({ "data": { "widget": widget, "query": {} } }),
+                "/data/query",
+            ),
+            (
+                json!({ "encoding": {}, "data": { "widget": widget } }),
+                "/encoding",
+            ),
+            (
+                json!({ "description": 5, "data": { "widget": widget } }),
+                "/description",
+            ),
+            (
+                json!({ "width": 99_999, "data": { "widget": widget } }),
+                "/width",
+            ),
+            (
+                json!({ "height": 99_999, "data": { "widget": widget } }),
+                "/height",
+            ),
+            (
+                json!({ "data": { "widget": { "dashboard": "Bad Name", "page": 0, "widget": 0 } } }),
+                "/data/widget/dashboard",
+            ),
+            (
+                json!({ "data": { "widget": { "dashboard": "a", "page": 100, "widget": 0 } } }),
+                "/data/widget/page",
+            ),
+            (
+                json!({ "data": { "widget": { "dashboard": "a", "page": 0, "widget": "x" } } }),
+                "/data/widget/widget",
+            ),
+            (
+                json!({ "data": { "widget": { "dashboard": "a", "page": 0, "widget": 0, "x": 1 } } }),
+                "/data/widget/x",
+            ),
+        ];
+        for (input, at) in cases {
+            assert_eq!(refused_at(&input), at, "{input}");
+        }
+        let mut no_query = spec("line");
+        no_query["data"] = json!({});
+        assert_eq!(refused_at(&no_query), "/data/query");
+        let with_query = |key: &str, value: Value| {
+            let mut input = spec("line");
+            input["data"]["query"][key] = value;
+            refused_at(&input)
+        };
+        assert_eq!(with_query("count", json!(true)), "/data/query/count");
+        assert_eq!(with_query("bogus", json!(1)), "/data/query/bogus");
+        // What a valid call sets comes through.
+        let call = json!({ "title": "Mine", "description": "d", "width": 300, "height": 200,
+                           "data": { "widget": widget } });
+        let Ok(Request::Widget {
+            at,
+            title,
+            width,
+            height,
+        }) = spec_of(&call)
+        else {
+            unreachable!("{call}")
+        };
+        assert_eq!(
+            (at.dashboard.as_str(), at.page, at.widget),
+            ("air-quality", 0, 1)
+        );
+        assert_eq!(
+            (title.as_deref(), width, height),
+            (Some("Mine"), Some(300), Some(200))
+        );
+        let whole = json!({ "description": "all", "data": { "dashboard": "air-quality" } });
+        let Ok(Request::Dashboard(name)) = spec_of(&whole) else {
+            unreachable!("a dashboard")
+        };
+        assert_eq!(name, "air-quality");
+        // A member put under its place; another error passes as it is.
+        let moved = under("/data/query", invalid("/", "whole"));
+        assert_eq!(moved.to_string(), "invalid input at /data/query: whole");
+        let kept = under("/data/query", OpError::Forbidden("r".into()));
+        assert!(matches!(kept, OpError::Forbidden(role) if role == "r"));
+    }
+
+    #[tokio::test]
+    async fn a_blocking_render_that_panicked_is_a_500() {
+        let err = tokio::task::spawn_blocking(|| std::panic::panic_any("boom"))
+            .await
+            .expect_err("panicked");
+        let stopped = stopped(err);
+        assert!(
+            matches!(&stopped, ApiError::Internal(text) if text.starts_with("the render stopped")),
+            "{stopped:?}"
+        );
+    }
+
+    #[test]
+    fn a_tile_error_says_the_platforms_words() {
+        let (status, words) = tile_error(invalid("/x", "outside the subset"));
+        assert_eq!((status, words.as_str()), (422, "outside the subset"));
+        let (status, words) = tile_error(limited());
+        assert_eq!(status, 429);
+        assert!(words.contains("data.widget"), "{words}");
+        for hidden in [
+            OpError::Api(ApiError::NotFound("gateway said slug x".into())),
+            OpError::Api(ApiError::Forbidden),
+            OpError::Forbidden("policy p".into()),
+        ] {
+            let (status, words) = tile_error(hidden);
+            assert_eq!(status, 404);
+            assert!(
+                !words.contains("slug") && !words.contains("policy"),
+                "{words}"
+            );
+        }
+        let (status, words) = tile_error(OpError::Api(ApiError::Unavailable(
+            "gw down at 10.0.0.1".into(),
+        )));
+        assert_eq!(status, 503);
+        assert!(!words.contains("10.0.0.1"), "{words}");
+    }
+
+    #[test]
+    fn a_widget_place_off_the_dashboard_or_of_another_type_is_refused() {
+        let board = manifest(
+            "Dashboard",
+            "b",
+            "helsinki",
+            json!({ "pages": [{ "widgets": [
+                { "widgetType": "grid", "endpointRef": "air", "entityType": "T" },
+                { "widgetType": "vega-lite", "endpointRef": 5 },
+                pm10_widget("air"),
+            ] }] }),
+        );
+        let at = |page, widget| WidgetRef {
+            dashboard: "b".into(),
+            page,
+            widget,
+        };
+        let words = |page, widget| {
+            widget_at(&board, &at(page, widget))
+                .expect_err("refused")
+                .to_string()
+        };
+        assert!(
+            words(1, 0).contains("has no widget 0 on page 1"),
+            "{}",
+            words(1, 0)
+        );
+        assert!(words(0, 9).contains("has no widget 9 on page 0"));
+        assert!(words(0, 1).contains("does not read as a Dashboard widget"));
+        assert!(words(0, 0).contains("a grid widget; jc_render draws vega-lite"));
+        assert!(widget_at(&board, &at(0, 2)).is_ok());
+        assert_eq!(places(&board, "b").len(), 3);
+        let empty = manifest("Dashboard", "e", "helsinki", json!({ "pages": "none" }));
+        assert!(places(&empty, "e").is_empty());
+        // A spec that names other data than its source is refused at its data.
+        let mut other = olga_s_spec();
+        other["data"] = json!({ "name": "elsewhere" });
+        assert_eq!(path_of(widget_look(Some(&other))), "/data/widget/spec/data");
+        assert_eq!(path_of(widget_look(None)), "/data/widget/spec");
+    }
+
+    #[test]
+    fn a_widget_window_reads_weeks_days_and_times_only() {
+        for (text, seconds) in [
+            ("P1W", Some(604_800)),
+            ("P1D", Some(86_400)),
+            ("PT6H", Some(21_600)),
+            ("P1DT1H30M15S", Some(91_815)),
+            ("PT90M", Some(5_400)),
+            ("P", None),
+            ("PT", None),
+            ("P1DT", None),
+            ("PT1HT1M", None),
+            ("P1H", None),
+            ("PT1D", None),
+            ("P1Y", None),
+            ("P1", None),
+            ("PXD", None),
+            ("1D", None),
+            ("", None),
+            ("P99999999999999999W", None),
+            ("P9223372036854775807D", None),
+            ("P1é", None),
+        ] {
+            assert_eq!(duration_seconds(text), seconds, "{text}");
+        }
+    }
+
+    #[test]
+    fn history_rows_skip_what_is_not_a_series() {
+        let entities = [
+            json!({ "pm10": { "values": [[1, "t"]] } }),
+            json!({ "id": 5, "pm10": { "values": [[1, "t"]] } }),
+            json!({ "id": "urn:a", "pm10": { "values": [[1, "2026-11-13T00:00:00Z"], "x", []] } }),
+            json!({ "id": "urn:b", "pm10": [{ "values": [[2, "t2"]] }, 7] }),
+            json!({ "id": "urn:c" }),
+        ];
+        let rows = temporal_rows(&entities, &["pm10".to_owned()], false);
+        assert_eq!(rows.len(), 3, "{rows:?}");
+        assert_eq!(rows[1]["value"], Value::Null, "an empty pair has no value");
+        assert_eq!(rows[1]["observedAt"], Value::Null);
+        assert_eq!(rows[2]["id"], "urn:b");
+        let aggregated = [
+            json!({ "id": "urn:a", "pm10": { "type": "Property", "avg": [[3, "t"]], "max": [[9, "t"]] } }),
+        ];
+        let rows = temporal_rows(&aggregated, &["pm10".to_owned()], true);
+        let methods: Vec<_> = rows.iter().map(|r| r["method"].clone()).collect();
+        assert_eq!(methods, [json!("avg"), json!("max")]);
+        assert!(temporal_rows(&[], &["pm10".to_owned()], false).is_empty());
+    }
+
+    #[test]
+    fn csv_text_without_a_last_newline_or_rows_reads_as_it_is() {
+        assert!(csv_rows("").is_empty());
+        assert!(csv_rows("id,n").is_empty(), "a header alone is no row");
+        let rows = csv_rows("id,n\r\n\r\na,1\rb,\"2\"");
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(rows[1]["n"], json!(2.0));
+        let short = csv_rows("id,n,o\nx\n");
+        assert_eq!(short[0]["o"], json!(""), "a missing cell is empty");
+        assert_eq!(
+            csv_rows("v\nNaN\ninf\n")[0]["v"],
+            json!("NaN"),
+            "not a finite number"
+        );
+        assert!(
+            next_page("http://[::1", "odata/v4/X").is_err(),
+            "a next link that is no URL"
+        );
+    }
+
+    #[test]
+    fn a_widget_door_names_the_widgets_read_and_a_missing_one_names_none() {
+        let caller = Caller {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "sub".into(),
+                username: "u".into(),
+                email: None,
+                name: None,
+                roles: vec![],
+                groups: vec![],
+                second_factor: false,
+            },
+            via: super::super::Via::Mcp,
+            access: None,
+            bearer: None,
+        };
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let args =
+            json!({ "data": { "widget": { "dashboard": "nobody", "page": 0, "widget": 0 } } });
+        assert_eq!(
+            door_args(&caller, &state, "helsinki", &args),
+            Some(json!({ "data": { "query": {} } }))
+        );
+        assert_eq!(
+            door_args(&caller, &state, "helsinki", &json!({ "data": {} })),
+            None
+        );
+        let widget: Widget = serde_json::from_value(pm10_widget("air")).expect("a widget");
+        let door = widget_door(&widget);
+        assert_eq!(door["data"]["query"]["endpoint"], "air");
+        assert!(door["data"]["query"]["q"]
+            .as_str()
+            .is_some_and(|q| q.contains("pm10")));
+    }
+
+    #[test]
+    fn evidence_is_written_only_where_asked() {
+        let dir = std::env::temp_dir().join(format!("jc-render-evidence-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let answer = json!({ "image": image(b"png") });
+        save_png(Some(dir.clone().into_os_string()), "x.png", &answer);
+        assert_eq!(std::fs::read(dir.join("x.png")).expect("written"), b"png");
+        save_png(None, "y.png", &answer);
+        assert!(!dir.join("y.png").exists());
+        std::fs::remove_dir_all(&dir).expect("cleaned");
+    }
+
+    /// Dashboard `name` in Helsinki whose one widget reads `data` of Endpoint air.
+    fn sourced(state: &AppState, name: &str, data: Value) {
+        let mut widget = pm10_widget("air");
+        widget["data"] = data;
+        state.mirror.upsert(manifest(
+            "Dashboard",
+            name,
+            "helsinki",
+            json!({ "title": "Board", "pages": [{ "widgets": [widget] }] }),
+        ));
+    }
+
+    fn first(name: &str) -> Value {
+        json!({ "data": { "widget": { "dashboard": name, "page": 0, "widget": 0 } } })
+    }
+
+    fn reading(n: usize) -> Value {
+        json!({ "id": format!("urn:ngsi-ld:BikeCounter:c{}", n % 3), "value": n % 17,
+                "observedAt": format!("2026-11-13T{:02}:00:00Z", n % 24) })
+    }
+
+    #[tokio::test]
+    async fn an_odata_widget_reads_each_page_on_its_set_and_stops_at_the_cap() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = wiremock::MockServer::start().await;
+        let set = format!("/api/endpoint/{AIR}/odata/v4/BikeCounter");
+        let next = format!("https://portal.example{set}?$skiptoken=2");
+        Mock::given(method("GET"))
+            .and(path(set.clone()))
+            .and(query_param("$skiptoken", "2"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "value": [reading(3), 5] })),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(set.clone()))
+            .and(query_param("$select", "id,value,observedAt"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [reading(0), reading(1), reading(2)], "@odata.nextLink": next
+            })))
+            .mount(&server)
+            .await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        sourced(
+            &state,
+            "bikes",
+            json!({ "source": "odata", "entitySet": "BikeCounter", "$select": "id,value,observedAt" }),
+        );
+        let answer = run(&caller, &state, "helsinki", first("bikes"))
+            .await
+            .expect("drawn");
+        assert_eq!(answer["rows"], 4, "two pages, the number dropped: {answer}");
+        assert_eq!(answer["sources"][0]["cut"], false);
+        // A set that pages past the widget's rows is cut at them.
+        let full: Vec<Value> = (0..WIDGET_PAGE).map(reading).collect();
+        Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{AIR}/odata/v4/Endless")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": full,
+                "@odata.nextLink": format!("/api/endpoint/{AIR}/odata/v4/Endless?$skiptoken=n")
+            })))
+            .mount(&server)
+            .await;
+        sourced(
+            &state,
+            "endless",
+            json!({ "source": "odata", "entitySet": "Endless" }),
+        );
+        let answer = run(&caller, &state, "helsinki", first("endless"))
+            .await
+            .expect("drawn");
+        assert_eq!(answer["rows"], WIDGET_ROWS);
+        assert_eq!(answer["sources"][0]["cut"], true);
+        assert_eq!(answer["truncated"], true);
+        // A next link off the set stops the chart; so does a page that is not JSON.
+        Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{AIR}/odata/v4/Leaky")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [reading(0)], "@odata.nextLink": "https://evil.example/odata/v4/Person"
+            })))
+            .mount(&server)
+            .await;
+        sourced(
+            &state,
+            "leaky",
+            json!({ "source": "odata", "entitySet": "Leaky" }),
+        );
+        let err = run(&caller, &state, "helsinki", first("leaky"))
+            .await
+            .expect_err("stopped");
+        assert!(
+            matches!(&err, OpError::Api(ApiError::Unavailable(t)) if t.contains("not on the Endpoint")),
+            "{err:?}"
+        );
+        Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{AIR}/odata/v4/Garbled")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>"))
+            .mount(&server)
+            .await;
+        sourced(
+            &state,
+            "garbled",
+            json!({ "source": "odata", "entitySet": "Garbled" }),
+        );
+        let err = run(&caller, &state, "helsinki", first("garbled"))
+            .await
+            .expect_err("stopped");
+        assert!(
+            matches!(&err, OpError::Api(ApiError::Unavailable(t)) if t.contains("not JSON")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_ogc_widget_reads_feature_properties_and_follows_next() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = wiremock::MockServer::start().await;
+        let items = format!("/api/endpoint/{AIR}/ogc/features/collections/BikeCounter/items");
+        let feature = |n: usize| {
+            let mut properties = reading(n);
+            let id = properties["id"].take();
+            json!({ "type": "Feature", "id": id, "properties": properties })
+        };
+        Mock::given(method("GET"))
+            .and(path(items.clone()))
+            .and(query_param("offset", "3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "features": [feature(3), { "type": "Feature", "id": "x" }], "links": [{ "rel": "self", "href": "x" }]
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(items.clone()))
+            .and(query_param("filter", "value>1"))
+            .and(query_param("limit", "1000"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "features": [feature(0), feature(1), feature(2)],
+                "links": [{ "rel": "next", "href": format!("{items}?offset=3&filter=value>1") }]
+            })))
+            .mount(&server)
+            .await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        sourced(
+            &state,
+            "features",
+            json!({ "source": "ogc", "collection": "BikeCounter", "filter": "value>1", "properties": "value,observedAt" }),
+        );
+        let answer = run(&caller, &state, "helsinki", first("features"))
+            .await
+            .expect("drawn");
+        assert_eq!(
+            answer["rows"], 4,
+            "a feature without properties is no row: {answer}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_csv_widget_reads_its_file_and_a_bad_source_is_refused() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{AIR}/file.csv")))
+            .and(query_param("type", "BikeCounter"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "id,value,observedAt\nurn:a,3,2026-11-13T00:00:00Z\nurn:b,4,2026-11-13T01:00:00Z\n",
+            ))
+            .mount(&server)
+            .await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        sourced(
+            &state,
+            "file",
+            json!({ "source": "csv", "type": "BikeCounter" }),
+        );
+        let answer = run(&caller, &state, "helsinki", first("file"))
+            .await
+            .expect("drawn");
+        assert_eq!(answer["rows"], 2);
+        sourced(
+            &state,
+            "bad",
+            json!({ "source": "csv", "type": "not a type" }),
+        );
+        let err = run(&caller, &state, "helsinki", first("bad"))
+            .await
+            .expect_err("refused");
+        assert_eq!(path_of(Err::<(), _>(err)), "/data/widget/data");
+        // A vega-lite widget without an Endpoint has nothing to draw.
+        state.mirror.upsert(manifest(
+            "Dashboard",
+            "loose",
+            "helsinki",
+            json!({ "pages": [{ "widgets": [{ "widgetType": "vega-lite", "spec": olga_s_spec() }] }] }),
+        ));
+        let err = run(&caller, &state, "helsinki", first("loose"))
+            .await
+            .expect_err("refused");
+        assert!(
+            err.to_string().contains("names no Endpoint source"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_aggregated_widget_reads_each_methods_values() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{AIR}/ngsi-ld/v1/temporal/entities")))
+            .and(query_param("format", "aggregatedValues"))
+            .and(query_param("aggrMethods", "avg"))
+            .and(query_param("aggrPeriodDuration", "PT1H"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "urn:ngsi-ld:AirQualityObserved:kallio", "type": "AirQualityObserved",
+                  "pm10": { "type": "Property", "avg": [[12.5, "2026-11-13T00:00:00Z"], [14.0, "2026-11-13T01:00:00Z"]] } }
+            ])))
+            .mount(&server)
+            .await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        sourced(
+            &state,
+            "hourly",
+            json!({ "source": "temporal", "type": "AirQualityObserved", "attrs": ["pm10"],
+                                          "last": "P1D", "aggrMethod": "avg", "aggrPeriod": "PT1H" }),
+        );
+        let answer = run(&caller, &state, "helsinki", first("hourly"))
+            .await
+            .expect("drawn");
+        assert_eq!(answer["rows"], 2, "{answer}");
+        // Another person's spec without a title has no title to withhold.
+        let mut untitled = query_spec(&spec("line"));
+        untitled.title = String::new();
+        let withheld = withhold(&mut untitled);
+        assert!(!withheld.contains_key("title"), "{withheld:?}");
+    }
+
+    #[tokio::test]
+    async fn the_callers_own_title_replaces_the_widgets() {
+        let server = wiremock::MockServer::start().await;
+        pm10(&server).await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        let mut call = the_widget();
+        call["title"] = json!("Kallio this week");
+        let answer = run(&caller, &state, "helsinki", call).await.expect("drawn");
+        assert!(
+            answer["view"].to_string().contains("Kallio this week"),
+            "{}",
+            answer["view"]
+        );
+    }
+
+    #[tokio::test]
+    async fn whatever_the_forge_cannot_say_is_not_the_callers_change() {
+        let server = wiremock::MockServer::start().await;
+        let (state, mut caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        let board = state
+            .mirror
+            .get("helsinki", "Dashboard", "air-quality")
+            .expect("fixture");
+        assert!(proposed_by_caller(&caller, &state, "helsinki", &board).await);
+        // Another Dashboard's history is not mocked: the forge answers 404.
+        let other = manifest("Dashboard", "other", "helsinki", json!({}));
+        assert!(!proposed_by_caller(&caller, &state, "helsinki", &other).await);
+        // A forge that does not answer at all.
+        let silent = wiremock::MockServer::start().await;
+        let forge = crate::forge::ShakoClient::new(
+            url::Url::parse(&silent.uri()).expect("url"),
+            "o",
+            "r",
+            "t",
+        )
+        .expect("a forge client");
+        let deaf = state.clone().with_shako(std::sync::Arc::new(forge));
+        assert!(!proposed_by_caller(&caller, &deaf, "helsinki", &board).await);
+        // No forge.
+        let none = AppState::new(crate::config::Config::for_tests(), None);
+        assert!(!proposed_by_caller(&caller, &none, "helsinki", &board).await);
+        // A Dashboard whose space does not name a place in the repository.
+        let nowhere = manifest(
+            "Dashboard",
+            "other",
+            "helsinki",
+            json!({ "contextSpaceRef": { "name": "../x" } }),
+        );
+        assert!(!proposed_by_caller(&caller, &state, "helsinki", &nowhere).await);
+        // The door of a widget that is there names its Endpoint.
+        let door = door_args(&caller, &state, "helsinki", &the_widget()).expect("a widget call");
+        assert_eq!(door["data"]["query"]["endpoint"], "air");
+        // No e-mail, or a blank one.
+        for email in [None, Some(" ".to_owned())] {
+            caller.identity.email = email;
+            assert!(!proposed_by_caller(&caller, &state, "helsinki", &board).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn dashboard_widgets_past_their_share_of_the_cap_are_429_tiles() {
+        let server = wiremock::MockServer::start().await;
+        pm10(&server).await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        // The widgets' share ends now: the grid widget fails at once, the pm10 one runs out.
+        let deadline = Instant::now() + MONTAGE_RESERVE;
+        let answer = whole_dashboard(&caller, &state, "helsinki", "air-quality", deadline)
+            .await
+            .expect("the montage still draws");
+        assert_eq!(answer["widgets"][0]["error"]["status"], 422);
+        assert_eq!(answer["widgets"][1]["error"]["status"], 429, "{answer}");
+    }
+
+    #[tokio::test]
+    async fn a_render_past_the_time_cap_is_limited() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, ResponseTemplate};
+        let server = wiremock::MockServer::start().await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(60)))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        // The clock jumps to the cap while the gateway is still answering.
+        tokio::time::pause();
+        let err = run(&caller, &state, "helsinki", the_widget())
+            .await
+            .expect_err("limited");
+        assert!(
+            matches!(&err, OpError::Api(ApiError::TooManyRequests(t)) if t.starts_with("limited")),
+            "{err:?}"
+        );
     }
 }

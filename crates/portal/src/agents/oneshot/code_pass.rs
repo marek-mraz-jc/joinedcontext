@@ -2083,7 +2083,7 @@ mod repository_tests {
         let refusal = said
             .iter()
             .find(|text| text.contains("could not be set up"))
-            .unwrap_or_else(|| panic!("the run says nothing about GitHub: {said:?}"));
+            .expect("the run says nothing about GitHub");
         assert!(refusal.contains("Bad credentials"), "{refusal}");
         assert!(
             said.iter().all(|text| !text.contains("ghp_secret")),
@@ -2609,5 +2609,55 @@ mod jc_types_tests {
         let kinds: Vec<&str> = events.iter().map(|event| event.kind.as_str()).collect();
         assert_eq!(kinds, ["thought", "preview"]);
         assert_eq!(events[1].seq, shown.seq);
+    }
+}
+
+#[cfg(test)]
+mod store_edge_tests {
+    //! What a code run does when the store cannot answer, and the timings its first version
+    //! closes (T-7818).
+
+    use super::*;
+    use crate::state::AppState;
+
+    fn dead_store(driver: &mut Driver) {
+        let dead = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        driver.state.agents = std::sync::Arc::new(crate::agents::store::AgentStore::new(
+            Some(dead),
+            driver.state.mirror.clone(),
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_store_that_cannot_answer_compares_no_design_and_records_no_timing() {
+        let mut driver = Driver::for_tests(
+            AppState::new(crate::config::Config::for_tests(), None),
+            "helsinki",
+        );
+        dead_store(&mut driver);
+        assert!(driver.design_advice(&[]).await.is_none());
+        driver.first_version().await;
+    }
+
+    #[tokio::test]
+    async fn the_first_version_records_its_timings() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let driver = Driver::for_tests(state.clone(), "helsinki");
+        let mut run =
+            crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        run.first_frame_ms = Some(5);
+        run.first_version_ms = Some(7);
+        state.agents.create_run(&run).await.expect("a run");
+        driver.first_version().await;
+        let after = state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("the run");
+        assert!(after.first_version_ms.is_some());
     }
 }

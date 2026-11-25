@@ -2014,6 +2014,50 @@ mod tests {
         );
     }
 
+    /// A full store drops its oldest plan for a new one, and a store whose lock a panicking
+    /// thread poisoned still keeps, takes and shows plans (T-7817).
+    #[test]
+    fn a_full_or_poisoned_store_still_keeps_its_newest_plans() {
+        let now = TimestampTz::now();
+        let store = PlanStore::default();
+        let plan = |owner: &str, minutes: i64| Plan {
+            owner: owner.into(),
+            connector: None,
+            project: "helsinki".into(),
+            workspace: None,
+            items: Vec::new(),
+            expires_at: now + jiff::SignedDuration::from_mins(minutes),
+        };
+        for n in 0..MAX_PLANS {
+            store.keep(format!("p{n}"), plan("ana", 10 + n as i64), now);
+        }
+        store.keep("newest".into(), plan("ana", 5_000), now);
+        assert!(
+            store.peek("p0", "ana", "helsinki", now).is_none(),
+            "the oldest went"
+        );
+        assert!(store.peek("p1", "ana", "helsinki", now).is_some());
+        let poisoned = std::thread::scope(|s| {
+            s.spawn(|| {
+                let _held = store.plans.lock().expect("lock");
+                std::panic::panic_any("a panic while holding the plans");
+            })
+            .join()
+        });
+        assert!(poisoned.is_err() && store.plans.is_poisoned());
+        store.keep("after".into(), plan("eva", 30), now);
+        assert!(store.peek("after", "eva", "helsinki", now).is_some());
+        assert!(
+            store.take("after", "ana", "helsinki", None, now).is_none(),
+            "not ana's"
+        );
+        assert!(store.take("after", "eva", "helsinki", None, now).is_some());
+        assert!(
+            store.take("after", "eva", "helsinki", None, now).is_none(),
+            "applied once"
+        );
+    }
+
     /// S-10: a breaking change counts the stored entities of the class it touches, also for a
     /// top-level slot a class lists.
     #[test]

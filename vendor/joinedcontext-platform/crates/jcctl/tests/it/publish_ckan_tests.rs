@@ -267,6 +267,71 @@ fn a_dead_datastore_resource_leaves_with_the_next_publish() {
     assert_eq!(api.actions().len(), writes, "nothing left to drop");
 }
 
+/// The command over a reviewed checkout: an instance whose token is not in the environment
+/// fails each of its Endpoints by name, and a catalogue that does not answer fails the publish
+/// and the withdrawal; the summary counts the failures and the run exits 1.
+#[test]
+fn the_command_counts_each_endpoint_that_failed() {
+    let dir = repo("publish-cli");
+    common::write(
+        &dir,
+        "projects/ovzdusie/ckan/open-data.yaml",
+        &INSTANCE.replace("https://data.banskabystrica.sk", "https://127.0.0.1:9"),
+    );
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["add", "-A"],
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.org",
+            "commit",
+            "-qm",
+            "reviewed",
+        ],
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    ] {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    }
+    let run = |token: Option<&str>, extra: &[&str]| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_jcctl"));
+        command
+            .args(["publish", "ckan", "--repo-dir"])
+            .arg(&dir)
+            .args(["--project", "ovzdusie", "--host", "api.example.org"])
+            .args([
+                "--organization-title",
+                "Mesto",
+                "--docs-url",
+                "https://docs.example.org",
+            ])
+            .args(extra)
+            .env_remove("CKAN_OPEN_DATA_TOKEN");
+        if let Some(token) = token {
+            command.env("CKAN_OPEN_DATA_TOKEN", token);
+        }
+        command.output().expect("jcctl runs")
+    };
+    let no_token = run(None, &[]);
+    assert_eq!(no_token.status.code(), Some(1), "{no_token:?}");
+    let said = String::from_utf8_lossy(&no_token.stderr);
+    assert!(said.contains("3 of 3 endpoints failed"), "{said}");
+    for extra in [&[][..], &["--withdraw"]] {
+        let dead = run(Some("a-token"), extra);
+        assert_eq!(dead.status.code(), Some(1), "{dead:?}");
+        let said = String::from_utf8_lossy(&dead.stderr);
+        assert!(said.contains("endpoints failed"), "{said}");
+        assert!(!said.contains("a-token"), "{said}");
+    }
+}
+
 /// CC-19: a withdrawal removes the dataset; a second one changes nothing.
 #[test]
 fn a_withdrawal_removes_the_dataset_once() {

@@ -1277,6 +1277,88 @@ async fn a_taken_email_is_a_conflict_and_bad_input_a_bad_request() {
     assert_eq!(paged.status, StatusCode::BAD_REQUEST, "{}", paged.text);
 }
 
+/// A list names only the parameters it takes and bounds the search; an edit changes the last
+/// name and the language, and an address another person holds is a conflict naming it (T-7813).
+#[tokio::test]
+async fn a_list_takes_its_own_parameters_and_an_edit_keeps_the_address_unique() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    ola(&kc, &state, None).await;
+    for query in [
+        "?sort=name".to_owned(),
+        "?first=one".to_owned(),
+        "?max=0".to_owned(),
+        format!("?search={}", "a".repeat(256)),
+    ] {
+        let refused = send(
+            &state,
+            person("pia"),
+            "GET",
+            &format!("{PEOPLE}{query}"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::BAD_REQUEST,
+            "{query}: {}",
+            refused.text
+        );
+    }
+    Mock::given(method("PUT"))
+        .and(path(format!("{ADMIN}/users/ola-id")))
+        .respond_with(ResponseTemplate::new(204))
+        .with_priority(1)
+        .expect(1)
+        .mount(&kc)
+        .await;
+    let edited = send(
+        &state,
+        person("pia"),
+        "PATCH",
+        &format!("{PEOPLE}/ola-id"),
+        Some(json!({ "lastName": "Koski", "locale": "sk" })),
+    )
+    .await;
+    assert_eq!(edited.status, StatusCode::OK, "{}", edited.text);
+    let sent = received(&kc, "PUT", "/users/ola-id").await;
+    let rep: Value = serde_json::from_slice(&sent[0].body).expect("a representation");
+    assert_eq!(rep["lastName"], json!("Koski"));
+    assert_eq!(rep["attributes"]["locale"], json!(["sk"]));
+
+    let (kc, shako) = (realm(true).await, forge().await);
+    Mock::given(method("PUT"))
+        .and(path(format!("{ADMIN}/users/ola-id")))
+        .respond_with(
+            ResponseTemplate::new(409)
+                .set_body_json(json!({ "errorMessage": "User exists with same email" })),
+        )
+        .with_priority(1)
+        .mount(&kc)
+        .await;
+    let state = state_with(&kc, &shako);
+    ola(&kc, &state, None).await;
+    let taken = send(
+        &state,
+        person("pia"),
+        "PATCH",
+        &format!("{PEOPLE}/ola-id"),
+        Some(json!({ "email": "ada@hel.fi" })),
+    )
+    .await;
+    assert_eq!(taken.status, StatusCode::CONFLICT, "{}", taken.text);
+    assert!(taken.text.contains("ada@hel.fi"), "{}", taken.text);
+    let empty = send(
+        &state,
+        person("pia"),
+        "PATCH",
+        &format!("{PEOPLE}/ola-id"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(empty.status, StatusCode::BAD_REQUEST, "{}", empty.text);
+}
+
 /// PF-94: a person's page lists their groups, platform roles with scope and way, and app roles.
 #[tokio::test]
 async fn a_persons_page_names_their_groups_and_roles() {
@@ -2383,4 +2465,36 @@ async fn the_migration_dry_run_plans_the_rewrite_and_proposes_nothing() {
     )
     .await;
     assert_eq!(jana.status, StatusCode::FORBIDDEN, "{}", jana.text);
+}
+
+/// ADR-N-061 (T-7815): without `dryRun` the migration proposes one Change for the
+/// organization's repository, writing every rewritten manifest in one commit; its title and
+/// body name counts, never a person.
+#[tokio::test]
+async fn the_migration_proposes_one_change_naming_counts_alone() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    let mut pia = person("pia");
+    pia.second_factor = true;
+    let answer = send(&state, pia, "POST", &format!("{PEOPLE}/name-by-id"), None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let plan: Value = serde_json::from_str(&answer.text).expect("json");
+    let organization = &plan["repositories"][0];
+    assert_eq!(organization["repository"], "organization");
+    assert!(organization["change"].is_string(), "{}", answer.text);
+    let opened: Vec<String> = shako
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.url.path().ends_with("/Shako.OpenPullRequest"))
+        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+        .collect();
+    assert_eq!(opened.len(), 1, "one Change per repository");
+    assert!(opened[0].contains("1 address(es)"), "{}", opened[0]);
+    assert!(
+        !opened[0].contains("eva@hel.fi"),
+        "the Change names no person: {}",
+        opened[0]
+    );
 }

@@ -472,6 +472,55 @@ mod tests {
             .is_empty());
     }
 
+    /// A path that is a file is a directory the Portal cannot read: the route says to check the
+    /// mount instead of answering an empty health; a file over the cap is no digest (T-7813).
+    #[tokio::test]
+    async fn an_unreadable_results_directory_is_a_503_naming_the_mount() {
+        let dir = tempdir("not-a-dir");
+        let file = dir.join("budgets.json");
+        write(dir.as_path(), "budgets.json", &body("budgets", NOW, 0));
+        assert!(read_dir(&file, now()).is_err());
+        let big = dir.join("big.json");
+        std::fs::write(
+            &big,
+            vec![b' '; usize::try_from(MAX_FILE).expect("fits") + 1],
+        )
+        .expect("a big file");
+        assert!(read_capped(&big).is_none());
+        let mut config = crate::config::Config::for_tests();
+        config.health_dir = Some(file.to_string_lossy().into_owned());
+        let state = AppState::new(config, None);
+        let admin = CurrentUser(crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "f:1:ada".into(),
+                username: "ada".into(),
+                email: Some("ada@hel.fi".into()),
+                name: None,
+                roles: vec!["portal-approver".into()],
+                groups: vec!["portal-approver".into()],
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: "dummy".into(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        });
+        match get_health(admin, State(state)).await {
+            Err(ApiError::Unavailable(why)) => {
+                assert!(why.contains("jc-validation-results"), "{why}")
+            }
+            other => assert!(
+                other.is_err(),
+                "an unreadable directory answered {:?}",
+                other.map(|_| ())
+            ),
+        }
+    }
+
     #[test]
     fn task_ids_are_the_boards() {
         assert!(valid_task("T-2901") && valid_task("T-123456"));

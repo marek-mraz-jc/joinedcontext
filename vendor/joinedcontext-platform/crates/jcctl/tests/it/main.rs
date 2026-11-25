@@ -12,6 +12,7 @@ mod ckan_http_tests;
 mod ckan_publisher_tests;
 mod ckan_visualization_views_tests;
 mod cli_layout_tests;
+mod cli_paths_tests;
 mod common;
 mod csr_reconcile_tests;
 mod deletion_tests;

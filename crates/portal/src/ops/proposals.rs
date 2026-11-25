@@ -1086,6 +1086,42 @@ mod tests {
 
     /// JC2-38: a proposal from a draft the caller may not read answers 404, the answer of a draft
     /// that is not there, and leaves the draft in place.
+    /// T-7817: a proposal naming neither a manifest nor a draft is refused at the manifest, and a
+    /// check error that is no judgement on the manifest stays the error it was.
+    #[tokio::test]
+    async fn a_proposal_without_a_manifest_or_draft_is_refused_and_other_errors_stay() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let caller = super::super::testkit::admin(&state);
+        let empty = ManifestInput {
+            manifest: None,
+            draft: None,
+        };
+        let refused = propose_with_optional_draft(
+            &caller,
+            &state,
+            "p",
+            "endpoints",
+            "jc_manifest_dry_run",
+            empty,
+        )
+        .await;
+        assert!(
+            matches!(&refused, Err(OpError::InvalidInput { path, .. }) if path == "/manifest"),
+            "{refused:?}"
+        );
+        let kept = refused_check_output(
+            &state,
+            "p",
+            &json!({}),
+            OpError::Forbidden("portal-admin".into()),
+        )
+        .await;
+        assert!(
+            matches!(&kept, Err(OpError::Forbidden(role)) if role == "portal-admin"),
+            "{kept:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_proposal_from_an_unreadable_draft_is_not_found() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
