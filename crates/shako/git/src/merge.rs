@@ -470,6 +470,39 @@ mod tests {
     }
 
     #[test]
+    fn a_held_base_branch_lock_turns_each_merge_into_a_conflict() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, true);
+        create_branch(&path, "head", "main").expect("head");
+        put(&path, "head", "feature.txt", b"feature\n");
+        let ff_lock = path.join("refs/heads/main.lock");
+        crate::testutil::lock(&path, "refs/heads/main");
+        let fast = execute_pr_merge(
+            &path,
+            "main",
+            "head",
+            &opts(MergeStyle::FastForwardOnly, None),
+        )
+        .expect_err("main is locked");
+        assert!(
+            fast.to_string().contains("concurrent update on main: "),
+            "{fast}"
+        );
+        assert_eq!(fast.status_code(), 409);
+        // main moves on, so a merge writes a merge commit of its own.
+        std::fs::remove_file(&ff_lock).expect("unlock");
+        put(&path, "main", "main.txt", b"main\n");
+        crate::testutil::lock(&path, "refs/heads/main");
+        let merged = execute_pr_merge(&path, "main", "head", &opts(MergeStyle::Merge, None))
+            .expect_err("main is locked");
+        assert!(
+            merged.to_string().contains("concurrent update on main: "),
+            "{merged}"
+        );
+        assert_eq!(merged.status_code(), 409);
+    }
+
+    #[test]
     fn a_merge_style_parses_by_name_and_refuses_rebase_and_unknown_ones() {
         assert_eq!(
             MergeStyle::parse("merge").expect("merge"),

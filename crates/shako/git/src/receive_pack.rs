@@ -1095,6 +1095,185 @@ mod tests {
     }
 
     #[test]
+    fn a_delimiter_among_the_commands_is_skipped() {
+        let p = push();
+        let pack = pack_of(&p.source, &p.c1.to_string());
+        let mut raw = b"0001".to_vec();
+        raw.extend(body(
+            &[format!("{ZERO} {} refs/heads/main", p.c1)],
+            "report-status",
+            &pack,
+        ));
+        let out = text(
+            &receive(&p.dest, &RefPolicy::default(), &raw)
+                .expect("receive")
+                .response_bytes,
+        );
+        assert!(out.contains("ok refs/heads/main"), "{out}");
+    }
+
+    #[test]
+    fn a_thin_pack_whose_base_is_nowhere_fails_indexing_and_leaves_nothing() {
+        use std::io::Read as _;
+        let p = push();
+        // A ref-delta on a base neither the pack nor the repository holds.
+        let delta = [&[12u8, 18, 0x90, 12, 6][..], b"again\n"].concat();
+        let gone = crate::testutil::oid(crate::testutil::GONE);
+        let mut file = raw_pack(&[entry(7, &delta, gone.as_bytes())]);
+        let mut pack = Vec::new();
+        file.read_to_end(&mut pack).expect("pack");
+        let one = [format!("{ZERO} {} refs/heads/main", p.c1)];
+        let out = report(&p, &one, "report-status", &pack);
+        assert!(out.contains("unpack error index-pack failed"), "{out}");
+        assert!(out.contains("ng refs/heads/main unpacker error"), "{out}");
+        assert!(list_pack(&p.dest).is_empty(), "no pack stays behind");
+    }
+
+    /// The pack files of `repo`'s `objects/pack`.
+    fn list_pack(repo: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(repo.join("objects/pack"))
+            .map(|rd| rd.flatten().map(|e| e.path()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Runs one push of `c1` to `main` while `objects/pack` has `mode`, then restores it.
+    fn push_into_pack_dir_with_mode(mode: u32) -> ShakoResult<ReceivePackOutcome> {
+        use std::os::unix::fs::PermissionsExt as _;
+        let p = push();
+        let pack_dir = p.dest.join("objects/pack");
+        std::fs::create_dir_all(&pack_dir).expect("pack dir");
+        std::fs::set_permissions(&pack_dir, std::fs::Permissions::from_mode(mode)).expect("chmod");
+        let pack = pack_of(&p.source, &p.c1.to_string());
+        let out = receive(
+            &p.dest,
+            &RefPolicy::default(),
+            &body(&[format!("{ZERO} {} refs/heads/main", p.c1)], "", &pack),
+        );
+        std::fs::set_permissions(&pack_dir, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod back");
+        out
+    }
+
+    #[test]
+    fn a_pack_directory_that_cannot_be_searched_or_written_is_a_storage_error() {
+        let unsearchable = push_into_pack_dir_with_mode(0o600).expect_err("no search right");
+        assert!(
+            unsearchable.to_string().contains("look up pack: "),
+            "{unsearchable}"
+        );
+        assert_eq!(unsearchable.status_code(), 500);
+        let read_only = push_into_pack_dir_with_mode(0o500).expect_err("no write right");
+        assert!(read_only.to_string().contains("move pack: "), "{read_only}");
+    }
+
+    #[test]
+    fn a_held_ref_lock_refuses_an_atomic_and_a_plain_update() {
+        let p = push();
+        crate::testutil::lock(&p.dest, "refs/heads/main");
+        let pack = pack_of(&p.source, &p.c1.to_string());
+        let one = [format!("{ZERO} {} refs/heads/main", p.c1)];
+        let atomic = report(&p, &one, "report-status atomic", &pack);
+        assert!(
+            atomic.contains("ng refs/heads/main failed to lock/update ref (fetch first)"),
+            "{atomic}"
+        );
+        let plain = report(&p, &one, "report-status", &pack);
+        assert!(plain.contains("ng refs/heads/main fetch first"), "{plain}");
+        assert!(
+            list_pack(&p.dest).is_empty(),
+            "a refused push leaves no pack"
+        );
+    }
+
+    /// Pushes the crafted `objects` of `p.source` with `tip` as the new `refs/heads/main`.
+    fn push_crafted(p: &Push, tip: ObjectId, objects: &[ObjectId]) -> String {
+        let pack = crate::testutil::pack_of_ids(&p.source, objects);
+        report(
+            p,
+            &[format!("{ZERO} {tip} refs/heads/main")],
+            "report-status",
+            &pack,
+        )
+    }
+
+    #[test]
+    fn a_tip_that_is_no_commit_or_misses_its_tree_or_blobs_is_refused() {
+        use crate::testutil::{GONE, commit, oid, raw, tree};
+        use gix_object::{Kind, tree::EntryKind};
+        let p = push();
+        let refused = "ng refs/heads/main missing necessary objects";
+
+        let blob = raw(&p.source, Kind::Blob, b"plain\n");
+        assert!(push_crafted(&p, blob, &[blob]).contains(refused));
+
+        let no_tree = commit(&p.source, oid(GONE), &[]);
+        assert!(push_crafted(&p, no_tree, &[no_tree]).contains(refused));
+
+        let lost_dir = tree(&p.source, &[(EntryKind::Tree, "dir", oid(GONE))]);
+        let c = commit(&p.source, lost_dir, &[]);
+        assert!(push_crafted(&p, c, &[c, lost_dir]).contains(refused));
+
+        // A blob entry naming a tree: the header says tree, so the push lacks that blob.
+        let empty = tree(&p.source, &[]);
+        let wrong = tree(&p.source, &[(EntryKind::Blob, "file", empty)]);
+        let c = commit(&p.source, wrong, &[]);
+        assert!(push_crafted(&p, c, &[c, wrong, empty]).contains(refused));
+        assert!(
+            list_pack(&p.dest).is_empty(),
+            "every crafted push left nothing"
+        );
+    }
+
+    #[test]
+    fn a_tree_nested_past_the_depth_limit_is_refused_with_the_limit() {
+        use crate::repo::MAX_TREE_DEPTH;
+        use crate::testutil::{commit, raw, tree};
+        use gix_object::{Kind, tree::EntryKind};
+        let p = push();
+        let blob = raw(&p.source, Kind::Blob, b"deep\n");
+        let mut objects = vec![blob];
+        let mut at = tree(&p.source, &[(EntryKind::Blob, "f", blob)]);
+        objects.push(at);
+        for _ in 0..=MAX_TREE_DEPTH {
+            at = tree(&p.source, &[(EntryKind::Tree, "d", at)]);
+            objects.push(at);
+        }
+        let c = commit(&p.source, at, &[]);
+        objects.push(c);
+        let out = push_crafted(&p, c, &objects);
+        assert!(
+            out.contains(&format!("tree nesting deeper than {MAX_TREE_DEPTH} levels")),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_delta_header_that_is_unreadable_or_never_ends_is_refused() {
+        use std::io::Write as _;
+        let mut file = tempfile::tempfile().expect("spool");
+        file.write_all(b"not a zlib stream").expect("write");
+        let past_end = delta_sizes(&file, 64, 8).expect_err("read past the end");
+        assert!(
+            past_end.starts_with("unreadable delta at 64: "),
+            "{past_end}"
+        );
+        let garbage = delta_sizes(&file, 0, 17).expect_err("no zlib");
+        assert!(garbage.starts_with("unreadable delta at 0: "), "{garbage}");
+
+        // Ten continuation bytes: a size past 64 bits that never ends.
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        z.write_all(&[0xff; 20]).expect("deflate");
+        let endless = z.finish().expect("deflate");
+        let mut file = tempfile::tempfile().expect("spool");
+        file.write_all(&endless).expect("write");
+        let err = delta_sizes(&file, 0, endless.len() as u64).expect_err("endless size");
+        assert!(err.ends_with("truncated delta header"), "{err}");
+        // The test pack builder's distances: one 7-bit group, then two.
+        assert_eq!(distance(127), [0x7f]);
+        assert_eq!(distance(128), [0x80, 0x00]);
+    }
+
+    #[test]
     fn a_push_past_the_ref_limit_or_with_a_bad_pack_is_an_unpack_error() {
         let p = push();
         let many: Vec<String> = (0..=MAX_REFS_PER_PUSH)

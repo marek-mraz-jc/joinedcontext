@@ -487,6 +487,34 @@ mod tests {
     }
 
     #[test]
+    fn a_tag_of_a_blob_alone_sends_the_tag_and_blob_without_a_walk() {
+        use crate::testutil::{annotated_tag, raw, repo};
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, false);
+        let blob = raw(&path, gix_object::Kind::Blob, b"key\n");
+        let tag = annotated_tag(&path, "key", blob, gix_object::Kind::Blob);
+        let handle = open_isolated(&path).expect("open");
+        let mut sent = objects_to_send(&handle, &[tag], &[]).expect("plan");
+        sent.sort();
+        let mut want = vec![tag, blob];
+        want.sort();
+        assert_eq!(sent, want);
+    }
+
+    #[test]
+    fn a_remote_refusal_shows_as_is_when_no_secret_is_set() {
+        let mut resp = Vec::new();
+        write_text_line(&mut resp, "unpack ok").expect("pkt");
+        write_text_line(&mut resp, "ng refs/heads/main denied").expect("pkt");
+        write_flush(&mut resp).expect("flush");
+        let id = ObjectId::null(gix_hash::Kind::Sha1);
+        let commands = [(id, id, "refs/heads/main".to_owned())];
+        let err = verify_remote_report_status(&resp, &commands, "").expect_err("refused");
+        assert!(err.to_string().contains("refs/heads/main denied"), "{err}");
+        assert!(!err.to_string().contains("[REDACTED]"), "{err}");
+    }
+
+    #[test]
     fn nothing_but_main_is_pushed() {
         let tmp = tempfile::tempdir().expect("tmp");
         let (repo, ..) = repository(tmp.path());

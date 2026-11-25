@@ -157,6 +157,27 @@ mod tests {
     use crate::testutil::{annotated_tag, put, repo};
 
     #[test]
+    fn the_tree_walk_keeps_blobs_and_trees_but_not_a_submodule_commit() {
+        use crate::testutil::{GONE, oid, raw, tree};
+        use gix_object::tree::EntryKind;
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, false);
+        let blob = raw(&path, gix_object::Kind::Blob, b"a\n");
+        let root = tree(
+            &path,
+            &[
+                (EntryKind::Blob, "a.txt", blob),
+                (EntryKind::Commit, "vendor", oid(GONE)),
+            ],
+        );
+        let handle = crate::repo::open_isolated(&path).expect("open");
+        let mut out = BTreeSet::new();
+        collect_all_tree_objects(&handle, &handle.find_tree(root).expect("tree"), &mut out)
+            .expect("walk");
+        assert_eq!(out, BTreeSet::from([root, blob]));
+    }
+
+    #[test]
     fn a_full_backup_restores_every_branch_and_tag_into_an_empty_repository() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let source = repo(tmp.path(), 1, true);

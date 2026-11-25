@@ -453,6 +453,44 @@ mod tests {
     }
 
     #[test]
+    fn refused_seen_times_take_the_cruft_pack_with_them() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let pack = tmp.path().join("pack-x.pack");
+        std::fs::write(&pack, b"pack").expect("pack");
+        std::fs::write(pack.with_extension("idx"), b"idx").expect("idx");
+        // A directory with an entry stands where the times would go, so the rename fails.
+        std::fs::create_dir_all(pack.with_extension(SEEN).join("held")).expect("seen dir");
+        let seen = BTreeMap::from([(ObjectId::null(gix_hash::Kind::Sha1), SystemTime::now())]);
+        let err = write_seen(&pack, &seen).expect_err("seen path is a directory");
+        assert!(err.to_string().contains("compact seen times: "), "{err}");
+        assert!(!pack.exists() && !pack.with_extension("idx").exists());
+    }
+
+    #[test]
+    fn a_symbolic_branch_and_an_unreadable_young_pack_do_not_stop_compaction() {
+        use crate::testutil::{point, put, repo};
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, true);
+        put(&path, "main", "a.txt", b"a\n");
+        point(&path, "refs/heads/alias", "ref: refs/heads/main");
+        let handle = open_isolated(&path).expect("open");
+        let targets = ref_targets_strict(&handle).expect("targets");
+        let main = handle
+            .find_reference("refs/heads/main")
+            .expect("main")
+            .id()
+            .detach();
+        assert!(targets.iter().all(|t| *t == main), "only direct targets");
+
+        let broken = path.join(format!("objects/pack/pack-{}.pack", "0".repeat(40)));
+        std::fs::write(&broken, b"PACK broken").expect("pack");
+        std::fs::write(broken.with_extension("idx"), b"no index").expect("idx");
+        let outcome = compact_repository(&path, DAY, &mut crate::testutil::admit_all)
+            .expect("compact skips the unreadable pack");
+        assert!(outcome.objects_packed > 0);
+    }
+
+    #[test]
     fn compacting_again_keeps_an_unreachable_objects_first_seen_time() {
         let tmp = tempfile::tempdir().expect("tmp");
         let repo = init_bare_repo(

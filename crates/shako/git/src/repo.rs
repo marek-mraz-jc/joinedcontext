@@ -981,9 +981,7 @@ pub struct CommitInfo {
 pub fn read_commit_info(repo_path: &Path, sha_or_ref: &str) -> ShakoResult<CommitInfo> {
     let repo = open_isolated(repo_path)?;
     let oid = resolve_commit_oid(&repo, sha_or_ref)?;
-    let commit = repo
-        .find_commit(oid)
-        .map_err(|e| ShakoError::NotFound(format!("commit '{sha_or_ref}' not found: {e}")))?;
+    let commit = repo.find_commit(oid).map_err(git_err("find commit"))?;
     decode_commit_info(&commit)
 }
 
@@ -1044,10 +1042,8 @@ pub fn list_commits(
         if walked >= max_walk || out.len() >= limit {
             break;
         }
-        let Ok(info) = item else {
-            continue;
-        };
-        let Ok(commit) = info.object() else {
+        // A commit whose parent is gone ends its line of history; the walk goes on elsewhere.
+        let Some(commit) = item.ok().and_then(|info| info.object().ok()) else {
             continue;
         };
         if let Some(ref fpath) = filter_path
@@ -1275,6 +1271,180 @@ mod tests {
                 .collect(),
         };
         repo.write_object(&tree).expect("write tree").detach()
+    }
+
+    #[test]
+    fn a_repository_under_a_file_or_with_a_held_ref_lock_refuses_each_write() {
+        use crate::testutil::{author, lock, put, repo};
+        let tmp = tempfile::tempdir().expect("tmp");
+        let file = tmp.path().join("plain");
+        std::fs::write(&file, "x").expect("file");
+        let under_file = init_bare_repo(
+            &file,
+            InstanceId::from_u128(1),
+            RepoId::from_u128(1),
+            "main",
+            false,
+            "",
+        )
+        .expect_err("root is a file");
+        assert!(
+            under_file
+                .to_string()
+                .contains("failed to create instance dir: "),
+            "{under_file}"
+        );
+
+        let path = repo(tmp.path(), 1, true);
+        put(&path, "main", "a.txt", b"a\n");
+        lock(&path, "refs/heads/main");
+        let change = FileChangeOp {
+            operation: FileOpKind::Create,
+            path: "b.txt".into(),
+            content: Some(b"b\n".to_vec()),
+            sha: None,
+        };
+        let commit = commit_file_changes(&path, "main", "add b", &author(), &author(), &[change])
+            .expect_err("main is locked");
+        assert!(
+            commit
+                .to_string()
+                .contains("concurrent ref update on main: "),
+            "{commit}"
+        );
+        assert_eq!(commit.status_code(), 409);
+        let deleted = delete_branch(&path, "main").expect_err("main is locked");
+        assert!(deleted.to_string().contains("delete branch: "), "{deleted}");
+
+        lock(&path, "refs/heads/next");
+        let created = create_branch(&path, "next", "main").expect_err("next is locked");
+        assert_eq!(created.status_code(), 409);
+        let tip = resolve_commit_oid(&open_isolated(&path).expect("open"), "main").expect("tip");
+        let set =
+            set_ref_direct(&path, "refs/heads/next", &tip.to_string()).expect_err("next is locked");
+        assert!(set.to_string().contains("set ref: "), "{set}");
+    }
+
+    #[test]
+    fn an_unreadable_ref_file_fails_branch_lookups_and_dangling_refs_are_not_listed() {
+        use crate::testutil::{GONE, point, repo};
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, true);
+        point(&path, "refs/heads/broken", "not a ref");
+        let created = create_branch(&path, "broken", "main").expect_err("unreadable ref");
+        assert!(created.to_string().contains("find ref: "), "{created}");
+        let deleted = delete_branch(&path, "broken").expect_err("unreadable ref");
+        assert!(deleted.to_string().contains("find ref: "), "{deleted}");
+        std::fs::remove_file(path.join("refs/heads/broken")).expect("rm");
+
+        point(&path, "refs/heads/dangling", GONE);
+        point(&path, "refs/tags/dangling", GONE);
+        let branches = list_branches(&path).expect("branches");
+        assert_eq!(
+            branches.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            ["main"]
+        );
+        assert!(list_tags(&path).expect("tags").is_empty());
+        let missing = read_commit_info(&path, GONE).expect_err("no such commit");
+        assert_eq!(missing.status_code(), 404);
+    }
+
+    #[test]
+    fn a_copy_leaves_out_a_symbolic_branch() {
+        use crate::testutil::{point, repo};
+        let tmp = tempfile::tempdir().expect("tmp");
+        let origin = repo(tmp.path(), 1, true);
+        point(&origin, "refs/heads/alias", "ref: refs/heads/main");
+        let dest = repo(tmp.path(), 2, false);
+        copy_bare_repo(&origin, &dest, "main").expect("copy");
+        let names: Vec<String> = list_branches(&dest)
+            .expect("branches")
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(names, ["main"]);
+    }
+
+    #[test]
+    fn the_history_skips_commits_it_cannot_read_or_decode() {
+        use crate::testutil::{GONE, commit, oid, point, raw, repo, tree};
+        use gix_object::Kind;
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, false);
+        let blob = raw(&path, Kind::Blob, b"a\n");
+        let files = tree(&path, &[(EntryKind::Blob, "a.txt", blob)]);
+        let empty = tree(&path, &[]);
+
+        // A parent that is gone: the child cannot compare, the parent is not walked.
+        let orphan = commit(&path, files, &[oid(GONE)]);
+        point(&path, "refs/heads/orphan", &orphan.to_string());
+        assert!(
+            list_commits(&path, "orphan", Some("a.txt"), 10, 100)
+                .expect("log")
+                .is_empty()
+        );
+        assert_eq!(
+            list_commits(&path, "orphan", None, 10, 100)
+                .expect("log")
+                .len(),
+            1
+        );
+
+        // A tree that is gone, in the commit itself and in its parent.
+        let treeless = commit(&path, oid(GONE), &[]);
+        let child = commit(&path, files, &[treeless]);
+        point(&path, "refs/heads/treeless", &child.to_string());
+        assert!(
+            list_commits(&path, "treeless", Some("a.txt"), 10, 100)
+                .expect("log")
+                .is_empty()
+        );
+
+        // An author line that does not parse: the walk reads it, the log leaves it out.
+        let sig = "t <t@example.org> 1700000000 +0000";
+        let bad = format!("tree {empty}\nauthor {sig}\ncommitter {sig}\nbadheader\n\nbad\n");
+        let undecodable = raw(&path, Kind::Commit, bad.as_bytes());
+        point(&path, "refs/heads/bad", &undecodable.to_string());
+        assert!(
+            list_commits(&path, "bad", None, 10, 100)
+                .expect("log")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_tree_walks_keep_links_and_fail_on_trees_they_cannot_read() {
+        use crate::testutil::{GONE, oid, raw, repo, tree};
+        use gix_object::Kind;
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, false);
+        let handle = open_isolated(&path).expect("open");
+        let target = raw(&path, Kind::Blob, b"a.txt");
+        let linked = tree(&path, &[(EntryKind::Link, "link", target)]);
+        let mut blobs = BTreeMap::new();
+        collect_tree_blobs(
+            &handle,
+            &handle.find_tree(linked).expect("tree"),
+            "",
+            &mut blobs,
+        )
+        .expect("walk");
+        assert_eq!(blobs["link"], (EntryKind::Link, target));
+
+        let garbage = raw(&path, Kind::Tree, b"not a tree");
+        let new_dir = tree(&path, &[(EntryKind::Blob, "f", target)]);
+        let new = tree(&path, &[(EntryKind::Tree, "d", new_dir)]);
+        let new = handle.find_tree(new).expect("tree");
+        let mut changed = BTreeMap::new();
+        let unreadable_parent = handle.find_tree(garbage).expect("garbage tree");
+        let err = collect_changed_blobs(&handle, &new, &[unreadable_parent], &mut changed)
+            .expect_err("parent tree does not decode");
+        assert!(err.to_string().contains("decode tree: "), "{err}");
+        let lost = tree(&path, &[(EntryKind::Tree, "d", oid(GONE))]);
+        let lost = handle.find_tree(lost).expect("tree");
+        let err = collect_changed_blobs(&handle, &new, &[lost], &mut changed)
+            .expect_err("parent subtree is gone");
+        assert!(err.to_string().contains("find subtree: "), "{err}");
     }
 
     #[test]
