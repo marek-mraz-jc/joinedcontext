@@ -326,11 +326,7 @@ pub(crate) fn buffer_change(change: crate::mirror::Change) -> Option<crate::mirr
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut slot = Some(change);
-        let _ = CHANGES.try_with(|b| {
-            if let Some(c) = slot.take() {
-                lock(b).push(c);
-            }
-        });
+        let _ = CHANGES.try_with(|b| lock(b).extend(slot.take()));
         slot
     }
     #[cfg(target_arch = "wasm32")]
@@ -342,21 +338,13 @@ pub(crate) fn buffer_change(change: crate::mirror::Change) -> Option<crate::mirr
 pub(crate) async fn push(st: &AppState, ev: TemporalEvent) {
     #[cfg(not(target_arch = "wasm32"))]
     let ev = {
+        // taken into the request's buffer when one is in flight
         let mut slot = Some(ev);
-        let buffered = BUFFER
-            .try_with(|b| {
-                if let Some(ev) = slot.take() {
-                    lock(b).push(ev);
-                }
-            })
-            .is_ok();
-        if buffered {
+        let _ = BUFFER.try_with(|b| lock(b).extend(slot.take()));
+        let Some(ev) = slot else {
             return;
-        }
-        match slot {
-            Some(ev) => ev,
-            None => return,
-        }
+        };
+        ev
     };
     drain(st, vec![ev]).await;
 }
@@ -1195,6 +1183,308 @@ mod tests {
         assert_eq!(ids, ["urn:b"]);
     }
 
+    /// A hosting process's default is taken once; with no environment
+    /// value it decides, and only `on` turns backfill on.
+    #[test]
+    fn the_hosted_default_is_set_once() {
+        default_backfill("off");
+        default_backfill("on");
+        assert_eq!(HOSTED_BACKFILL.get().map(String::as_str), Some("off"));
+        assert!(!backfill_from(
+            None,
+            HOSTED_BACKFILL.get().map(String::as_str)
+        ));
+    }
+
+    /// A change outside any request is handed back to the caller, and an
+    /// event outside any request is drained on the spot.
+    #[tokio::test]
+    async fn outside_a_request_changes_return_and_events_drain() {
+        assert!(buffer_change(("urn:x".to_owned(), None, Some(serde_json::json!({})))).is_some());
+        let mut st = AppState::new("antares-history-spot".into());
+        st.temporal_record = crate::state::TemporalRecord::All;
+        let tenant = TenantId::new("t").expect("tenant");
+        const ID: &str = "urn:ngsi-ld:T:spot";
+        st.store
+            .create(
+                &tenant,
+                antares_store::Kind::Entity,
+                ID,
+                serde_json::json!({"id": ID, "type": "T"}),
+            )
+            .await
+            .expect("create");
+        let mut event = ev(ID);
+        event.op = antares_store::TemporalOp::AttrCreated;
+        push(&st, event).await;
+        assert!(st.temporal.get(&tenant, ID).await.expect("read").is_some());
+    }
+
+    fn audited_provenance() -> Value {
+        serde_json::json!({"channel": "api", crate::provenance::AUDIT: true})
+    }
+
+    /// DM-145: on an audited change the value it replaces goes to history
+    /// first, once; with no prior value, or a prior value that is not an
+    /// instance, nothing extra is kept.
+    #[tokio::test]
+    async fn an_audited_change_keeps_the_replaced_value_once() {
+        let mut st = AppState::new("antares-history-keep".into());
+        st.temporal_record = crate::state::TemporalRecord::All;
+        let tenant = TenantId::new("t").expect("tenant");
+        const ID: &str = "urn:ngsi-ld:T:keep";
+        const LEVEL: &str = "https://example.org/level";
+        st.store
+            .create(
+                &tenant,
+                antares_store::Kind::Entity,
+                ID,
+                serde_json::json!({"id": ID, "type": "T"}),
+            )
+            .await
+            .expect("create");
+        let shell = serde_json::json!({"id": ID, "type": "T"});
+        let was = serde_json::json!({"type": "Property", "value": 1,
+            "modifiedAt": "2026-01-01T00:00:00Z",
+            antares_jsonld::compact::MODIFIED_BY_KEY: {"sub": "writer-1"}});
+        let now = serde_json::json!({"type": "Property", "value": 2});
+        PROVENANCE
+            .scope(audited_provenance(), async {
+                assert!(audited());
+                keep_replaced(&st, &tenant, &shell, LEVEL, None, &now).await;
+                keep_replaced(
+                    &st,
+                    &tenant,
+                    &shell,
+                    LEVEL,
+                    Some(&serde_json::json!(5)),
+                    &now,
+                )
+                .await;
+                assert!(
+                    st.temporal.get(&tenant, ID).await.expect("read").is_none(),
+                    "nothing kept yet"
+                );
+                let before = serde_json::json!([was.clone()]);
+                keep_replaced(&st, &tenant, &shell, LEVEL, Some(&before), &now).await;
+                keep_replaced(&st, &tenant, &shell, LEVEL, Some(&was), &now).await;
+            })
+            .await;
+        let doc = st
+            .temporal
+            .get(&tenant, ID)
+            .await
+            .expect("read")
+            .expect("kept");
+        let rows = doc[LEVEL].as_array().expect("rows");
+        assert_eq!(rows.len(), 1, "kept once: {doc}");
+        // the old value as it was, with an instanceId minted for it; its
+        // provenance travels beside the row, not in the document
+        assert_eq!(rows[0]["value"], 1);
+        assert_eq!(rows[0]["modifiedAt"], "2026-01-01T00:00:00Z");
+        assert!(rows[0]["instanceId"]
+            .as_str()
+            .is_some_and(|i| i.starts_with("urn:ngsi-ld:Instance:")));
+        assert!(rows[0]
+            .get(antares_jsonld::compact::MODIFIED_BY_KEY)
+            .is_none());
+    }
+
+    /// Gate 4 and the recording rules read nothing of an audited write: it
+    /// is kept whatever they say.
+    #[tokio::test]
+    async fn an_audited_change_is_always_admitted() {
+        let st = AppState::new("antares-history-admit".into());
+        let tenant = TenantId::new("t").expect("tenant");
+        let inst = serde_json::json!({"type": "Property", "value": 1});
+        PROVENANCE
+            .scope(audited_provenance(), async {
+                assert!(admits_change(
+                    &st,
+                    &tenant,
+                    &["T"],
+                    "urn:a",
+                    "https://example.org/l",
+                    None,
+                    &inst
+                ));
+                assert!(records_history(
+                    &st,
+                    &tenant,
+                    &serde_json::json!({"id": "urn:a"})
+                ));
+            })
+            .await;
+        assert!(held_attrs(&st, &tenant, &serde_json::json!({"id": "urn:a"})).is_empty());
+    }
+
+    /// 4.5.7/4.5.8: the deletion tombstone takes the null shape of its
+    /// attribute type, a mirror over an empty instance list or a document
+    /// that is not an object writes nothing.
+    #[tokio::test]
+    async fn the_deletion_tombstone_takes_its_attribute_type_shape() {
+        let st = AppState::new("antares-history-tomb".into());
+        let tenant = TenantId::new("t").expect("tenant");
+        const ID: &str = "urn:ngsi-ld:T:tomb";
+        let doc = serde_json::json!({"id": ID,
+            "lp": [{"type": "LanguageProperty", "languageMap": {"en": "x"}}],
+            "vl": [{"type": "ListProperty", "valueList": [1]}],
+            "ol": [{"type": "ListRelationship", "objectList": ["urn:a"]}],
+            "empty": []});
+        assert!(st.temporal.create(&tenant, ID, doc).await.expect("seed"));
+        for attr in ["lp", "vl", "ol", "empty"] {
+            mirror_delete_attr(
+                &st,
+                &tenant,
+                ID,
+                attr,
+                Some("urn:d:1"),
+                "2026-01-01T00:00:00Z",
+            )
+            .await;
+        }
+        let doc = st
+            .temporal
+            .get(&tenant, ID)
+            .await
+            .expect("read")
+            .expect("doc");
+        assert_eq!(
+            doc["lp"][1]["languageMap"],
+            serde_json::json!({"@none": "urn:ngsi-ld:null"})
+        );
+        assert_eq!(doc["vl"][1]["valueList"], "urn:ngsi-ld:null");
+        assert_eq!(doc["ol"][1]["objectList"], "urn:ngsi-ld:null");
+        assert_eq!(doc["ol"][1]["datasetId"], "urn:d:1");
+        assert_eq!(doc["empty"], serde_json::json!([]));
+        const BAD: &str = "urn:ngsi-ld:T:bad";
+        assert!(st
+            .temporal
+            .create(&tenant, BAD, serde_json::json!("bad"))
+            .await
+            .expect("seed"));
+        mirror_delete_attr(&st, &tenant, BAD, "lp", None, "2026-01-01T00:00:00Z").await;
+        assert_eq!(
+            st.temporal.get(&tenant, BAD).await.expect("read"),
+            Some(serde_json::json!("bad"))
+        );
+    }
+
+    /// A temporal driver that refuses every call.
+    struct Refusing;
+
+    #[async_trait::async_trait]
+    impl antares_store::TemporalDriver for Refusing {
+        async fn temporal_append(
+            &self,
+            _: &TenantId,
+            _: &str,
+            _: &Value,
+            _: &Value,
+        ) -> Result<(), antares_model::NgsiError> {
+            Err(refused())
+        }
+        async fn query_temporal(
+            &self,
+            _: &TenantId,
+            _: &antares_store::filter::TemporalFilter<'_>,
+        ) -> Result<antares_store::filter::TemporalOutcome, antares_model::NgsiError> {
+            Err(refused())
+        }
+        async fn get_temporal(
+            &self,
+            _: &TenantId,
+            _: &str,
+            _: &antares_store::filter::TemporalFilter<'_>,
+        ) -> Result<Option<Value>, antares_model::NgsiError> {
+            Err(refused())
+        }
+        async fn get(
+            &self,
+            _: &TenantId,
+            _: &str,
+        ) -> Result<Option<Value>, antares_model::NgsiError> {
+            Err(refused())
+        }
+        async fn create(
+            &self,
+            _: &TenantId,
+            _: &str,
+            _: Value,
+        ) -> Result<bool, antares_model::NgsiError> {
+            Err(refused())
+        }
+        async fn upsert(
+            &self,
+            _: &TenantId,
+            _: &str,
+            _: Value,
+        ) -> Result<bool, antares_model::NgsiError> {
+            Err(refused())
+        }
+        async fn delete(&self, _: &TenantId, _: &str) -> Result<bool, antares_model::NgsiError> {
+            Err(refused())
+        }
+        async fn list(&self, _: &TenantId) -> Result<Vec<Value>, antares_model::NgsiError> {
+            Err(refused())
+        }
+        async fn mutate_boxed<'a>(
+            &self,
+            _: &TenantId,
+            _: &str,
+            _: antares_store::MutateFn<'a>,
+        ) -> Result<Option<Result<(), ()>>, antares_model::NgsiError> {
+            Err(refused())
+        }
+    }
+
+    fn refused() -> antares_model::NgsiError {
+        antares_model::NgsiError::InternalError("refused".into())
+    }
+
+    /// A temporal store that fails every attempt costs the mirror its
+    /// history, never the write: each failure is counted as a lost drain;
+    /// an audited change whose history cannot be read keeps nothing extra.
+    #[tokio::test]
+    async fn a_failing_temporal_store_is_counted_not_raised() {
+        let store = std::sync::Arc::new(antares_sql::store::any::AnyStore::Mem(
+            antares_sql::store::Store::default(),
+        ));
+        let st = AppState::with_drivers(
+            "antares-history-fail".into(),
+            store,
+            std::sync::Arc::new(Refusing),
+            "memory",
+        );
+        let tenant = TenantId::new("t").expect("tenant");
+        let before = drain_errors();
+        mirror_delete_entity(&st, &tenant, "urn:ngsi-ld:T:f").await;
+        mirror_delete_attr(
+            &st,
+            &tenant,
+            "urn:ngsi-ld:T:f",
+            "a",
+            None,
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+        assert!(drain_errors() >= before.saturating_add(2));
+        let was = serde_json::json!([{"type": "Property", "value": 1}]);
+        PROVENANCE
+            .scope(audited_provenance(), async {
+                keep_replaced(
+                    &st,
+                    &tenant,
+                    &serde_json::json!({"id": "urn:ngsi-ld:T:f"}),
+                    "a",
+                    Some(&was),
+                    &serde_json::json!({"type": "Property", "value": 2}),
+                )
+                .await;
+            })
+            .await;
+    }
+
     /// The caller's task-locals reach the handler through the layer: a
     /// view's policy scope and an in-process call's depth are read there.
     #[tokio::test(flavor = "multi_thread")]
@@ -1204,13 +1494,7 @@ mod tests {
         let app = axum::Router::new()
             .route(
                 "/r",
-                axum::routing::get(|| async {
-                    if crate::state::in_process_depth() == 1 {
-                        axum::http::StatusCode::NO_CONTENT
-                    } else {
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-                    }
-                }),
+                axum::routing::get(|| async { crate::state::in_process_depth().to_string() }),
             )
             .layer(axum::middleware::from_fn_with_state(st, layer));
         let req = axum::http::Request::get("/r")
@@ -1220,7 +1504,11 @@ mod tests {
             .scope(1, app.oneshot(req))
             .await
             .expect("infallible");
-        assert_eq!(resp.status(), axum::http::StatusCode::NO_CONTENT);
+        let body = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .expect("body")
+            .to_bytes();
+        assert_eq!(&body[..], b"1", "the handler ran at the caller's depth");
     }
 
     /// S4-07: a client that hangs up after the store committed its write
@@ -1260,11 +1548,10 @@ mod tests {
                         buffer_change((ID.to_owned(), None, Some(serde_json::json!({})))).is_none()
                     );
                     // the write is committed; the client goes before the reply
-                    if let Some(tx) = committed_tx.lock().ok().and_then(|mut g| g.take()) {
-                        let _ = tx.send(());
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    axum::http::StatusCode::NO_CONTENT
+                    let tx = committed_tx.lock().ok().and_then(|mut g| g.take());
+                    let _ = tx.map(|tx| tx.send(()));
+                    // never answers: the client is gone first
+                    std::future::pending::<axum::http::StatusCode>().await
                 }),
             )
             .layer(axum::middleware::from_fn_with_state(st.clone(), layer));
