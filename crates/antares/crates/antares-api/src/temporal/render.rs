@@ -683,6 +683,220 @@ fn compact_vocab(vv: &Value, ctx: &Context) -> Value {
     }
 }
 
+/// One instance in the normalized representation, its system attributes
+/// gone unless sysAttrs asked for them.
+fn normalized_instance(inst: &Value, ctx: &Context, sys: bool) -> Value {
+    let mut ci = inst.clone();
+    if let Some(o) = ci.as_object_mut().filter(|_| !sys) {
+        o.remove("createdAt");
+        o.remove("modifiedAt");
+        // 6.3.11: expiresAt is sysAttrs-gated too
+        o.remove("expiresAt");
+        // ... and so are the sub-Attributes' own (4.8)
+        for sub in o.values_mut() {
+            let subs = match sub {
+                Value::Array(a) => a.iter_mut().collect(),
+                other => vec![other],
+            };
+            for so in subs.into_iter().filter_map(Value::as_object_mut) {
+                if so.contains_key("type") {
+                    so.remove("createdAt");
+                    so.remove("modifiedAt");
+                }
+            }
+        }
+    }
+    compact_instance(&ci, ctx)
+}
+
+pub(crate) fn parse_aggr_period(s: &str) -> Option<AggrPeriod> {
+    let d = antares_model::parse_iso_duration(s)?;
+    // Buckets are whole seconds and whole months: a fraction (PT0.5S, P1.5M)
+    // would be truncated, and PT0.5S would turn into one bucket for the whole
+    // range. Refused instead of answered with other buckets than asked.
+    if !d.whole {
+        return None;
+    }
+    // saturating: an absurd magnitude must not panic (debug) or wrap
+    // (release) — f64→int `as` casts already saturate, guard the ops.
+    let months = (d.years as u32)
+        .saturating_mul(12)
+        .saturating_add(d.months as u32);
+    let secs = [
+        (d.weeks, 604_800.0),
+        (d.days, 86_400.0),
+        (d.hours, 3_600.0),
+        (d.minutes, 60.0),
+        (d.seconds, 1.0),
+    ]
+    .into_iter()
+    .fold(0i64, |acc, (n, per)| acc.saturating_add((n * per) as i64));
+    Some(match (months, secs) {
+        (0, 0) => AggrPeriod::Whole,
+        (0, sc) => AggrPeriod::Seconds(sc),
+        (m, sc) => AggrPeriod::Months(m, sc),
+    })
+}
+
+pub(super) const AGGR_METHODS: &[&str] = &[
+    "totalCount",
+    "distinctCount",
+    "sum",
+    "avg",
+    "min",
+    "max",
+    "stddev",
+    "sumsq",
+];
+
+/// 5.7.3.4 / 5.7.4.4: "If projection attributes are present and indicate the
+/// use of Linked Entity retrieval, an error of type BadRequestData shall be
+/// raised." Unconditional on both temporal consumption operations, because
+/// neither defines a join; only the clause number in the message differs.
+pub(super) fn reject_linked_projection(trepr: &TRepr, clause: &str) -> Result<(), NgsiError> {
+    let depth = |p: &Option<Vec<crate::repr::ProjNode>>| {
+        p.as_deref().map(crate::repr::proj_depth).unwrap_or(0)
+    };
+    // attrs=owner{object} names a Linked Entity projection too (4.21)
+    let linked_attrs = trepr
+        .attrs
+        .as_ref()
+        .is_some_and(|a| a.iter().any(|t| t.contains('{')));
+    if depth(&trepr.pick) > 0 || depth(&trepr.omit) > 0 || linked_attrs {
+        return Err(NgsiError::BadRequestData(format!(
+            "temporal projection must not use Linked Entity selection ({clause})"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn parse_trepr(
+    params: &HashMap<String, String>,
+    ctx: &Context,
+) -> Result<TRepr, NgsiError> {
+    let mut r = TRepr {
+        lang: params.get("lang").cloned(),
+        ..TRepr::default()
+    };
+    if let Some(opts) = params.get("options") {
+        apply_options(&mut r, opts)?;
+    }
+    // format wins over options on conflict (6.3.7)
+    if let Some(f) = params.get("format") {
+        apply_format(&mut r, f)?;
+    }
+    crate::repr::check_projection_exclusive(params)?;
+    if let Some(pck) = params.get("pick") {
+        r.pick = Some(crate::repr::parse_projection(pck, ctx)?);
+    }
+    if let Some(o) = params.get("omit") {
+        r.omit = Some(crate::repr::parse_projection(o, ctx)?);
+    }
+    if let Some(a) = params.get("attrs") {
+        r.attrs = Some(a.split(',').map(|t| ctx.expand_key(t.trim())).collect());
+    }
+    r.dataset_id = params
+        .get("datasetId")
+        .map(|s| s.split(',').map(|d| d.trim().to_owned()).collect());
+    r.page = InstancePage::parse(params)?;
+    if let Some(m) = params.get("aggrMethods") {
+        r.aggr_methods = parse_aggr_methods(m)?;
+        // aggrMethods implies aggregation UNLESS an explicit format says otherwise
+        if !params.contains_key("format") {
+            r.aggregated = true;
+        }
+    }
+    if r.aggregated && r.aggr_methods.is_empty() {
+        return Err(NgsiError::BadRequestData(
+            "aggregatedValues requires aggrMethods (4.5.19)".into(),
+        ));
+    }
+    if let Some(d) = params.get("aggrPeriodDuration") {
+        r.aggr_period = checked_aggr_period(d)?;
+    }
+    Ok(r)
+}
+
+fn apply_options(r: &mut TRepr, opts: &str) -> Result<(), NgsiError> {
+    for o in opts.split(',') {
+        match o.trim() {
+            "sysAttrs" => r.sys = true,
+            "temporalValues" => r.temporal_values = true,
+            "aggregatedValues" => r.aggregated = true,
+            "normalized" => {}
+            other => {
+                return Err(NgsiError::InvalidRequest(format!(
+                    "unsupported options value {other:?}"
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_format(r: &mut TRepr, f: &str) -> Result<(), NgsiError> {
+    (r.temporal_values, r.aggregated) = match f {
+        "temporalValues" => (true, false),
+        "aggregatedValues" => (false, true),
+        "normalized" => (false, false),
+        other => {
+            return Err(NgsiError::InvalidRequest(format!(
+                "unsupported format value {other:?}"
+            )))
+        }
+    };
+    Ok(())
+}
+
+fn parse_aggr_methods(m: &str) -> Result<Vec<String>, NgsiError> {
+    m.split(',')
+        .map(|method| {
+            let method = method.trim();
+            if !AGGR_METHODS.contains(&method) {
+                return Err(NgsiError::BadRequestData(format!(
+                    "invalid aggrMethods value {method:?} (4.5.19)"
+                )));
+            }
+            Ok(method.to_owned())
+        })
+        .collect()
+}
+
+/// 4.11: the value space ends where duration arithmetic does —
+/// beyond ~100 years chrono::Duration::seconds is out of bounds
+/// (a panic, i.e. a remote 500), so such periods are rejected.
+/// Both components are bounded at ~100 years, the months in their own
+/// unit since a month is not a fixed number of seconds.
+fn checked_aggr_period(d: &str) -> Result<AggrPeriod, NgsiError> {
+    let p = parse_aggr_period(d)
+        .ok_or_else(|| NgsiError::BadRequestData(format!("invalid aggrPeriodDuration {d:?}")))?;
+    let (months, secs) = match p {
+        AggrPeriod::Whole => (0, 0),
+        AggrPeriod::Seconds(sc) => (0, sc),
+        AggrPeriod::Months(m, sc) => (m, sc),
+    };
+    if months > 1200 || secs > 86_400 * 366 * 100 {
+        return Err(NgsiError::BadRequestData(format!(
+            "aggrPeriodDuration {d:?} is out of range"
+        )));
+    }
+    Ok(p)
+}
+
+/// The attribute-selection set for windowing: attrs= or pick=.
+pub(super) fn selection(r: &TRepr) -> Option<Vec<String>> {
+    if let Some(a) = &r.attrs {
+        return Some(a.clone());
+    }
+    // core-member picks (id/type/…) are presentation-only, not attr selection
+    r.pick.as_ref().map(|p| {
+        p.iter()
+            .filter(|n| !is_meta(&n.raw))
+            .map(|n| n.iri.clone())
+            .collect()
+    })
+}
+
 #[cfg(test)]
 mod edges {
     use super::*;
@@ -902,218 +1116,4 @@ mod edges {
             "{e:?}"
         );
     }
-}
-
-/// One instance in the normalized representation, its system attributes
-/// gone unless sysAttrs asked for them.
-fn normalized_instance(inst: &Value, ctx: &Context, sys: bool) -> Value {
-    let mut ci = inst.clone();
-    if let Some(o) = ci.as_object_mut().filter(|_| !sys) {
-        o.remove("createdAt");
-        o.remove("modifiedAt");
-        // 6.3.11: expiresAt is sysAttrs-gated too
-        o.remove("expiresAt");
-        // ... and so are the sub-Attributes' own (4.8)
-        for sub in o.values_mut() {
-            let subs = match sub {
-                Value::Array(a) => a.iter_mut().collect(),
-                other => vec![other],
-            };
-            for so in subs.into_iter().filter_map(Value::as_object_mut) {
-                if so.contains_key("type") {
-                    so.remove("createdAt");
-                    so.remove("modifiedAt");
-                }
-            }
-        }
-    }
-    compact_instance(&ci, ctx)
-}
-
-pub(crate) fn parse_aggr_period(s: &str) -> Option<AggrPeriod> {
-    let d = antares_model::parse_iso_duration(s)?;
-    // Buckets are whole seconds and whole months: a fraction (PT0.5S, P1.5M)
-    // would be truncated, and PT0.5S would turn into one bucket for the whole
-    // range. Refused instead of answered with other buckets than asked.
-    if !d.whole {
-        return None;
-    }
-    // saturating: an absurd magnitude must not panic (debug) or wrap
-    // (release) — f64→int `as` casts already saturate, guard the ops.
-    let months = (d.years as u32)
-        .saturating_mul(12)
-        .saturating_add(d.months as u32);
-    let secs = [
-        (d.weeks, 604_800.0),
-        (d.days, 86_400.0),
-        (d.hours, 3_600.0),
-        (d.minutes, 60.0),
-        (d.seconds, 1.0),
-    ]
-    .into_iter()
-    .fold(0i64, |acc, (n, per)| acc.saturating_add((n * per) as i64));
-    Some(match (months, secs) {
-        (0, 0) => AggrPeriod::Whole,
-        (0, sc) => AggrPeriod::Seconds(sc),
-        (m, sc) => AggrPeriod::Months(m, sc),
-    })
-}
-
-pub(super) const AGGR_METHODS: &[&str] = &[
-    "totalCount",
-    "distinctCount",
-    "sum",
-    "avg",
-    "min",
-    "max",
-    "stddev",
-    "sumsq",
-];
-
-/// 5.7.3.4 / 5.7.4.4: "If projection attributes are present and indicate the
-/// use of Linked Entity retrieval, an error of type BadRequestData shall be
-/// raised." Unconditional on both temporal consumption operations, because
-/// neither defines a join; only the clause number in the message differs.
-pub(super) fn reject_linked_projection(trepr: &TRepr, clause: &str) -> Result<(), NgsiError> {
-    let depth = |p: &Option<Vec<crate::repr::ProjNode>>| {
-        p.as_deref().map(crate::repr::proj_depth).unwrap_or(0)
-    };
-    // attrs=owner{object} names a Linked Entity projection too (4.21)
-    let linked_attrs = trepr
-        .attrs
-        .as_ref()
-        .is_some_and(|a| a.iter().any(|t| t.contains('{')));
-    if depth(&trepr.pick) > 0 || depth(&trepr.omit) > 0 || linked_attrs {
-        return Err(NgsiError::BadRequestData(format!(
-            "temporal projection must not use Linked Entity selection ({clause})"
-        )));
-    }
-    Ok(())
-}
-
-pub(crate) fn parse_trepr(
-    params: &HashMap<String, String>,
-    ctx: &Context,
-) -> Result<TRepr, NgsiError> {
-    let mut r = TRepr {
-        lang: params.get("lang").cloned(),
-        ..TRepr::default()
-    };
-    if let Some(opts) = params.get("options") {
-        apply_options(&mut r, opts)?;
-    }
-    // format wins over options on conflict (6.3.7)
-    if let Some(f) = params.get("format") {
-        apply_format(&mut r, f)?;
-    }
-    crate::repr::check_projection_exclusive(params)?;
-    if let Some(pck) = params.get("pick") {
-        r.pick = Some(crate::repr::parse_projection(pck, ctx)?);
-    }
-    if let Some(o) = params.get("omit") {
-        r.omit = Some(crate::repr::parse_projection(o, ctx)?);
-    }
-    if let Some(a) = params.get("attrs") {
-        r.attrs = Some(a.split(',').map(|t| ctx.expand_key(t.trim())).collect());
-    }
-    r.dataset_id = params
-        .get("datasetId")
-        .map(|s| s.split(',').map(|d| d.trim().to_owned()).collect());
-    r.page = InstancePage::parse(params)?;
-    if let Some(m) = params.get("aggrMethods") {
-        r.aggr_methods = parse_aggr_methods(m)?;
-        // aggrMethods implies aggregation UNLESS an explicit format says otherwise
-        if !params.contains_key("format") {
-            r.aggregated = true;
-        }
-    }
-    if r.aggregated && r.aggr_methods.is_empty() {
-        return Err(NgsiError::BadRequestData(
-            "aggregatedValues requires aggrMethods (4.5.19)".into(),
-        ));
-    }
-    if let Some(d) = params.get("aggrPeriodDuration") {
-        r.aggr_period = checked_aggr_period(d)?;
-    }
-    Ok(r)
-}
-
-fn apply_options(r: &mut TRepr, opts: &str) -> Result<(), NgsiError> {
-    for o in opts.split(',') {
-        match o.trim() {
-            "sysAttrs" => r.sys = true,
-            "temporalValues" => r.temporal_values = true,
-            "aggregatedValues" => r.aggregated = true,
-            "normalized" => {}
-            other => {
-                return Err(NgsiError::InvalidRequest(format!(
-                    "unsupported options value {other:?}"
-                )))
-            }
-        }
-    }
-    Ok(())
-}
-
-fn apply_format(r: &mut TRepr, f: &str) -> Result<(), NgsiError> {
-    (r.temporal_values, r.aggregated) = match f {
-        "temporalValues" => (true, false),
-        "aggregatedValues" => (false, true),
-        "normalized" => (false, false),
-        other => {
-            return Err(NgsiError::InvalidRequest(format!(
-                "unsupported format value {other:?}"
-            )))
-        }
-    };
-    Ok(())
-}
-
-fn parse_aggr_methods(m: &str) -> Result<Vec<String>, NgsiError> {
-    m.split(',')
-        .map(|method| {
-            let method = method.trim();
-            if !AGGR_METHODS.contains(&method) {
-                return Err(NgsiError::BadRequestData(format!(
-                    "invalid aggrMethods value {method:?} (4.5.19)"
-                )));
-            }
-            Ok(method.to_owned())
-        })
-        .collect()
-}
-
-/// 4.11: the value space ends where duration arithmetic does —
-/// beyond ~100 years chrono::Duration::seconds is out of bounds
-/// (a panic, i.e. a remote 500), so such periods are rejected.
-/// Both components are bounded at ~100 years, the months in their own
-/// unit since a month is not a fixed number of seconds.
-fn checked_aggr_period(d: &str) -> Result<AggrPeriod, NgsiError> {
-    let p = parse_aggr_period(d)
-        .ok_or_else(|| NgsiError::BadRequestData(format!("invalid aggrPeriodDuration {d:?}")))?;
-    let (months, secs) = match p {
-        AggrPeriod::Whole => (0, 0),
-        AggrPeriod::Seconds(sc) => (0, sc),
-        AggrPeriod::Months(m, sc) => (m, sc),
-    };
-    if months > 1200 || secs > 86_400 * 366 * 100 {
-        return Err(NgsiError::BadRequestData(format!(
-            "aggrPeriodDuration {d:?} is out of range"
-        )));
-    }
-    Ok(p)
-}
-
-/// The attribute-selection set for windowing: attrs= or pick=.
-pub(super) fn selection(r: &TRepr) -> Option<Vec<String>> {
-    if let Some(a) = &r.attrs {
-        return Some(a.clone());
-    }
-    // core-member picks (id/type/…) are presentation-only, not attr selection
-    r.pick.as_ref().map(|p| {
-        p.iter()
-            .filter(|n| !is_meta(&n.raw))
-            .map(|n| n.iri.clone())
-            .collect()
-    })
 }

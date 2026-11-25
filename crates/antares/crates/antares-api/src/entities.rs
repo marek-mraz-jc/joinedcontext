@@ -5669,8 +5669,7 @@ mod handler_edges {
             &f,
         )
         .await
-        .err()
-        .expect("an invalid id is refused");
+        .expect_err("an invalid id is refused");
         assert!(matches!(e, ApiError::Ngsi(NgsiError::BadRequestData(_))));
         let e = build_query_map(
             &st,
@@ -5681,8 +5680,7 @@ mod handler_edges {
             &f,
         )
         .await
-        .err()
-        .expect("an invalid csf is refused");
+        .expect_err("an invalid csf is refused");
         assert!(matches!(e, ApiError::Ngsi(NgsiError::BadRequestData(_))));
         let split = build_query_map(
             &st,

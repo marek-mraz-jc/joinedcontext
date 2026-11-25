@@ -2499,7 +2499,7 @@ mod shaping_edges {
             ("-a", "starts with a special character"),
             ("a,a", "duplicate projection member"),
         ] {
-            let e = parse_projection(bad, &ctx).err().expect("refused");
+            let e = parse_projection(bad, &ctx).expect_err("refused");
             assert!(e.to_string().contains(why), "{bad}: {e}");
         }
     }
