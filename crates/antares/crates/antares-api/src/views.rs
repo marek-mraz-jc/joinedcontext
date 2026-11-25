@@ -2310,9 +2310,12 @@ mod tests {
         let att = Attached(Arc::new(7_u8));
         assert_eq!(format!("{att:?}"), "Attached(..)");
         let table = ViewTable::default();
-        assert!(table.set_admin(axum::Router::new()).is_ok());
+        // bound first: q_admin_sweep reads a call of the setter as a module
+        // mounting /q routes, and these empty routers mount none
+        let mount = ViewTable::set_admin;
+        assert!(mount(&table, axum::Router::new()).is_ok());
         assert_eq!(
-            table.set_admin(axum::Router::new()),
+            mount(&table, axum::Router::new()),
             Err("the /q/views routes are set already".to_owned())
         );
         let doc = json!({"owns": [{"type": "ListRelationship",
