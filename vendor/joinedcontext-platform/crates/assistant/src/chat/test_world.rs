@@ -27,7 +27,7 @@ impl Parts {
         let closed = "http://127.0.0.1:9";
         Self {
             // A store that is down: every query fails within a fifth of a second.
-            pool: sqlx::postgres::PgPoolOptions::new()
+            pool: jc_pool::options::<sqlx::Postgres>()
                 .acquire_timeout(Duration::from_millis(200))
                 .connect_lazy("postgres://nobody@127.0.0.1:9/none")
                 .expect("a lazy pool"),
