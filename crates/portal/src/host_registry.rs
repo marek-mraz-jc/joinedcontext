@@ -629,29 +629,9 @@ mod tests {
 
     /// What `run` logs, as the operators read it.
     async fn logged<F: std::future::Future>(run: F) -> String {
-        #[derive(Clone, Default)]
-        struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-        impl std::io::Write for Sink {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().expect("sink").extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let sink = Sink::default();
-        let writer = sink.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .finish();
-        assert!(std::io::Write::flush(&mut sink.clone()).is_ok());
-        let guard = tracing::subscriber::set_default(subscriber);
-        run.await;
-        drop(guard);
-        let text = String::from_utf8_lossy(&sink.0.lock().expect("sink")).into_owned();
-        text
+        crate::test_log::logged(tracing::level_filters::LevelFilter::INFO, run)
+            .await
+            .1
     }
 
     /// T-7816: a report round stays quiet before the first sync and logs each report it could

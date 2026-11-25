@@ -375,31 +375,22 @@ mod tests {
     /// A refused pipeline sink logs the client it saw, the project and the pipeline, and never the
     /// token.
     #[tokio::test]
-    #[ignore = "flaky on dev: T-7613, run 45500747555 (thread-local log capture races the callsite interest cache)"]
     async fn a_refused_pipeline_sink_logs_the_client_and_never_the_token() {
-        let log = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
-        let writer = {
-            let log = Arc::clone(&log);
-            move || Captured(Arc::clone(&log))
-        };
-        let _logging = tracing::subscriber::set_default(
-            tracing_subscriber::fmt()
-                .with_writer(writer)
-                .with_ansi(false)
-                .finish(),
-        );
         let (state, token) = world();
-        let mut tokens = Vec::new();
-        for client in ["zilina-pipelines", "praha-pl-other"] {
-            let headers = token(INTERNAL_AUDIENCE, client);
-            tokens.push(presented(&headers).expect("token").to_owned());
-            assert!(matches!(
-                authenticate_pipeline_of(&state, &headers, "praha", "odpad").await,
-                Err(ApiError::Unauthorized)
-            ));
-        }
-        std::io::Write::flush(&mut Captured(Arc::clone(&log))).expect("flush");
-        let logged = String::from_utf8(log.lock().expect("log").clone()).expect("utf-8");
+        let (tokens, logged) =
+            crate::test_log::logged(tracing::level_filters::LevelFilter::INFO, async {
+                let mut tokens = Vec::new();
+                for client in ["zilina-pipelines", "praha-pl-other"] {
+                    let headers = token(INTERNAL_AUDIENCE, client);
+                    tokens.push(presented(&headers).expect("token").to_owned());
+                    assert!(matches!(
+                        authenticate_pipeline_of(&state, &headers, "praha", "odpad").await,
+                        Err(ApiError::Unauthorized)
+                    ));
+                }
+                tokens
+            })
+            .await;
         assert!(logged.contains("a pipeline sink was refused"), "{logged}");
         for needle in [
             "client=zilina-pipelines",
@@ -411,20 +402,6 @@ mod tests {
         }
         for token in tokens {
             assert!(!logged.contains(&token), "the token is logged");
-        }
-    }
-
-    /// A log sink the test reads back.
-    struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Captured {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().expect("log").extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
         }
     }
 

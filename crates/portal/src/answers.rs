@@ -246,57 +246,35 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "forgotten": 2 })))
             .mount(&assistant)
             .await;
-        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let writer = Log(log.clone());
-        let _guard = tracing::subscriber::set_default(
-            tracing_subscriber::fmt()
-                .with_ansi(false)
-                .with_max_level(tracing::Level::INFO)
-                .with_writer(move || writer.clone())
-                .finish(),
-        );
-        spawn_periodic(state.clone(), std::time::Duration::from_millis(10));
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        assert_eq!(
-            deletes(&assistant).await,
-            0,
-            "nothing changed, nothing purged"
-        );
-        state
-            .mirror
-            .upsert(envelope("Policy", "read", json!({ "rules": [] })));
-        assert_eq!(
-            until(&assistant, 2).await,
-            2,
-            "the refused purge is tried again"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        assert_eq!(
-            deletes(&assistant).await,
-            2,
-            "a landed purge is not repeated"
-        );
-        std::io::Write::flush(&mut Log(log.clone())).expect("an in-memory log flushes");
-        let text = String::from_utf8(log.lock().expect("log").clone()).expect("utf-8");
+        let ((), text) =
+            crate::test_log::logged(tracing::level_filters::LevelFilter::INFO, async {
+                spawn_periodic(state.clone(), std::time::Duration::from_millis(10));
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                assert_eq!(
+                    deletes(&assistant).await,
+                    0,
+                    "nothing changed, nothing purged"
+                );
+                state
+                    .mirror
+                    .upsert(envelope("Policy", "read", json!({ "rules": [] })));
+                assert_eq!(
+                    until(&assistant, 2).await,
+                    2,
+                    "the refused purge is tried again"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                assert_eq!(
+                    deletes(&assistant).await,
+                    2,
+                    "a landed purge is not repeated"
+                );
+            })
+            .await;
         assert!(
             text.contains("forgotten=2") && text.contains("kept answers forgotten"),
             "{text}"
         );
-    }
-
-    /// The log the purge loop writes, kept for the test to read.
-    #[derive(Clone)]
-    struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Log {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().expect("log").extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
     }
 
     /// A follower replica never purges: the leader does it once for every replica.
