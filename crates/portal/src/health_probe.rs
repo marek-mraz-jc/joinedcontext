@@ -775,35 +775,9 @@ mod tests {
         assert_eq!(check(&second, "air", "entities"), Some(Status::Ok));
     }
 
-    /// What `run` logs. Every test that runs a round captures: a round run with no subscriber
-    /// lets tracing-core take its one-dispatcher fast path and a capturing test misses lines.
+    /// What `run` logs at info and above.
     async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {
-        #[derive(Clone, Default)]
-        struct Sink(Arc<std::sync::Mutex<Vec<u8>>>);
-        impl std::io::Write for Sink {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let sink = Sink::default();
-        let writer = sink.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .finish();
-        assert!(
-            std::io::Write::flush(&mut sink.clone()).is_ok(),
-            "a sink keeps no buffer"
-        );
-        let guard = tracing::subscriber::set_default(subscriber);
-        let out = run.await;
-        drop(guard);
-        let text = String::from_utf8_lossy(&sink.0.lock().unwrap()).into_owned();
-        (out, text)
+        crate::test_log::logged(tracing::level_filters::LevelFilter::INFO, run).await
     }
 
     #[tokio::test(flavor = "current_thread")]

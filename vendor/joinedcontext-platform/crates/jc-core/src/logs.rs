@@ -8,11 +8,16 @@ use tracing_subscriber::EnvFilter;
 /// Installs the JSON subscriber on stdout, filtered by `RUST_LOG` or by `default` when it is
 /// unset, empty or unreadable. Fails only when a subscriber is already installed.
 pub fn init(default: &str) -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
-    let filter = EnvFilter::builder().parse_lossy(match std::env::var("RUST_LOG") {
+    let filter = EnvFilter::builder().parse_lossy(directives(std::env::var("RUST_LOG"), default));
+    tracing::subscriber::set_global_default(subscriber(std::io::stdout, filter))
+}
+
+/// The filter directives: `RUST_LOG`'s value, or `default` when it is unset, blank or not UTF-8.
+fn directives(rust_log: Result<String, std::env::VarError>, default: &str) -> String {
+    match rust_log {
         Ok(value) if !value.trim().is_empty() => value,
         _ => default.to_owned(),
-    });
-    tracing::subscriber::set_global_default(subscriber(std::io::stdout, filter))
+    }
 }
 
 /// The subscriber [`init`] installs, writing to `writer`.
@@ -36,7 +41,20 @@ mod tests {
     use serde_json::Value;
     use tracing_subscriber::EnvFilter;
 
-    use super::subscriber;
+    use super::{directives, subscriber};
+
+    #[test]
+    fn rust_log_wins_unless_it_is_unset_blank_or_unreadable() {
+        use std::env::VarError;
+        assert_eq!(
+            directives(Ok("hyper=warn".to_owned()), "info"),
+            "hyper=warn"
+        );
+        assert_eq!(directives(Ok(" \t".to_owned()), "info"), "info");
+        assert_eq!(directives(Err(VarError::NotPresent), "info"), "info");
+        let unreadable = VarError::NotUnicode(std::ffi::OsString::from("x"));
+        assert_eq!(directives(Err(unreadable), "debug"), "debug");
+    }
 
     #[derive(Clone, Default)]
     struct Buffer(Arc<Mutex<Vec<u8>>>);
@@ -63,10 +81,11 @@ mod tests {
             tracing::debug!(target: "context_gateway", "not written at info");
             tracing::info!(target: "hyper", "not a target the filter names");
         });
+        buffer.clone().flush().expect("a buffer flushes");
         let written = String::from_utf8(buffer.0.lock().expect("buffer").clone()).expect("utf-8");
         let lines: Vec<Value> = written
             .lines()
-            .map(|line| serde_json::from_str(line).unwrap_or_else(|e| panic!("{e}: {line}")))
+            .map(|line| serde_json::from_str(line).expect(line))
             .collect();
         assert_eq!(lines.len(), 1, "{written}");
         assert_eq!(lines[0]["level"], "INFO");

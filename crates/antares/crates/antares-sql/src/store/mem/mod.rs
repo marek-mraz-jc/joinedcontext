@@ -1936,15 +1936,11 @@ mod tests {
         );
         let db = Database::create(&path).expect("reopen after the refusal");
         let rt = db.begin_read().expect("read tx");
-        let stamped = match rt.open_table(T_META) {
-            Ok(m) => m.get("format").expect("get").is_some(),
-            Err(e) => {
-                assert!(matches!(e, ::redb::TableError::TableDoesNotExist(_)), "{e}");
-                false
-            }
-        };
         assert!(
-            !stamped,
+            matches!(
+                rt.open_table(T_META),
+                Err(::redb::TableError::TableDoesNotExist(_))
+            ),
             "a file the guard could not read must not carry this binary's format marker"
         );
     }
@@ -2388,10 +2384,7 @@ mod tests {
             "unexpired entity must outlive the sweep"
         );
         assert!(
-            !inner
-                .entities
-                .get("plain")
-                .is_some_and(|d| d.contains_key("urn:e:3")),
+            !inner.entities.contains_key("plain"),
             "swept entity resurrected on reopen"
         );
         drop(inner);
@@ -2501,11 +2494,10 @@ mod tests {
             s.context_put(Some(&beta), "h", hosted).is_err(),
             "and a foreign write does not overwrite it either"
         );
-        assert!(
-            s.context_list_meta(Some(&beta))
-                .iter()
-                .all(|r| r["localId"] != "h"),
-            "another Tenant's row is not listed"
+        assert_eq!(
+            s.context_list_meta(Some(&beta)),
+            Vec::<Value>::new(),
+            "another Tenant's row is not listed, nor a Cached copy it never used"
         );
         assert!(
             s.context_get(Some(&alpha), "h").is_some(),
@@ -2636,6 +2628,290 @@ mod tests {
         let s = Store::open_file(&dir).expect("reopen");
         assert!(!s.tenant_exists(&a), "purge must be persisted");
         assert!(s.tenant_exists(&b));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A `type` that is neither a string nor a list names no type: the type
+    /// listings, the per-type size and the type-scoped retention pass it by;
+    /// a single string type counts as that type.
+    #[test]
+    fn a_type_member_of_another_shape_names_no_type() {
+        let s = Store::default();
+        let t = TenantId::new("oddtype").expect("tenant");
+        let now = "2026-01-01T00:00:00Z";
+        let a = "https://a";
+        let inst = |at: &str| json!({"type": "Property", "value": 1, "observedAt": at});
+        {
+            let mut inner = s.write_inner();
+            let docs = inner.entities.entry("oddtype".into()).or_default();
+            docs.insert(
+                "urn:e:n".into(),
+                json!({"id": "urn:e:n", "type": 7, a: [inst(now)]}),
+            );
+            docs.insert(
+                "urn:e:s".into(),
+                json!({"id": "urn:e:s", "type": "https://T", a: [inst(now)]}),
+            );
+            let hist = inner.temporal.entry("oddtype".into()).or_default();
+            hist.insert(
+                "urn:e:n".into(),
+                json!({"id": "urn:e:n", "type": 7, a: [inst("2000-01-01T00:00:00Z")]}),
+            );
+            hist.insert(
+                "urn:e:s".into(),
+                json!({"id": "urn:e:s", "type": "https://T", a: [inst("2000-01-01T00:00:00Z")]}),
+            );
+        }
+        assert_eq!(s.entity_type_names(&t, now), vec!["https://T".to_owned()]);
+        let pairs = s.entity_attr_pairs(&t, now);
+        assert!(pairs.iter().all(|(ty, _)| ty == "https://T"), "{pairs:?}");
+        let bytes = s.tenant_bytes(&t);
+        assert_eq!(bytes.by_type.values().sum::<u64>(), bytes.entities);
+        assert!(bytes.by_type.contains_key("https://T") && bytes.by_type.contains_key(""));
+        let scope = antares_store::HistoryScope::Type {
+            type_iri: "https://T",
+            except_ids: &[],
+        };
+        assert_eq!(
+            s.retain_history(&t, scope, now, 10, false),
+            1,
+            "only the typed history"
+        );
+    }
+
+    /// Retention passes a history document that is no object and an
+    /// Attribute that is no instance list, and drops the old instances beside
+    /// them.
+    #[test]
+    fn retention_passes_history_it_cannot_read() {
+        let s = Store::default();
+        let t = TenantId::new("oddhist").expect("tenant");
+        {
+            let mut inner = s.write_inner();
+            let hist = inner.temporal.entry("oddhist".into()).or_default();
+            hist.insert("urn:e:a".into(), json!("not a document"));
+            hist.insert(
+                "urn:e:b".into(),
+                json!({"id": "urn:e:b", "type": "T",
+                       "https://one": {"type": "Property", "value": 1},
+                       "https://old": [{"type": "Property", "value": 1,
+                                         "observedAt": "2000-01-01T00:00:00Z"}]}),
+            );
+        }
+        let rest = antares_store::HistoryScope::Rest {
+            except_types: &[],
+            except_ids: &[],
+        };
+        assert_eq!(
+            s.retain_history(&t, rest, "2026-01-01T00:00:00Z", 10, false),
+            1
+        );
+        assert_eq!(
+            s.write_inner().temporal["oddhist"]["urn:e:a"],
+            json!("not a document")
+        );
+    }
+
+    /// An expired Entity goes with its history, and a Tenant whose other
+    /// Entities keep theirs loses nothing else.
+    #[test]
+    fn the_sweep_takes_an_expired_entity_without_history_alone() {
+        let s = Store::default();
+        let t = TenantId::new("sweepalone").expect("tenant");
+        {
+            let mut inner = s.write_inner();
+            let docs = inner.entities.entry("sweepalone".into()).or_default();
+            docs.insert(
+                "urn:e:old".into(),
+                json!({"id": "urn:e:old", "type": "T", "expiresAt": "2000-01-01T00:00:00Z"}),
+            );
+            docs.insert(
+                "urn:e:live".into(),
+                json!({"id": "urn:e:live", "type": "T"}),
+            );
+            let hist = inner.temporal.entry("sweepalone".into()).or_default();
+            hist.insert(
+                "urn:e:live".into(),
+                json!({"id": "urn:e:live", "type": "T"}),
+            );
+        }
+        assert_eq!(s.sweep_expired("2026-01-01T00:00:00Z"), 1);
+        let inner = s.write_inner();
+        assert!(inner.temporal["sweepalone"].contains_key("urn:e:live"));
+        assert!(!inner.entities["sweepalone"].contains_key("urn:e:old"));
+        drop(inner);
+        assert_eq!(
+            s.entity_type_names(&t, "2026-01-01T00:00:00Z"),
+            vec!["T".to_owned()]
+        );
+    }
+
+    /// A refused @context change writes nothing; a stored row that is no
+    /// object is listed as it is; a purge forgets the Tenant's uses of a
+    /// shared Cached copy and keeps the copy.
+    #[test]
+    fn context_rows_refuse_list_and_forget_uses() {
+        let s = Store::default();
+        let t = TenantId::new("ctxuse").expect("tenant");
+        let hosted = json!({"localId": "h", "kind": "Hosted", "owner": "ctxuse", "body": {}});
+        s.context_put(Some(&t), "h", hosted.clone()).expect("put");
+        assert_eq!(
+            s.context_mutate(Some(&t), "h", |d| {
+                d["body"] = json!({"changed": true});
+                Err(())
+            }),
+            Some(Err(()))
+        );
+        assert_eq!(
+            s.context_get(Some(&t), "h").expect("kept")["body"],
+            json!({})
+        );
+        s.write_inner()
+            .contexts
+            .insert("raw".into(), json!("a bare string"));
+        assert!(
+            s.context_list_meta(None).is_empty(),
+            "no Tenant reaches a Tenant's row"
+        );
+        let listed = s.context_list_meta(Some(&TenantId::default()));
+        assert!(listed.contains(&json!("a bare string")), "{listed:?}");
+
+        s.write_inner().contexts.insert(
+            "c".into(),
+            json!({"localId": "c", "kind": "Cached", "body": {},
+                   CONTEXT_USAGE: {"ctxuse": {"numberOfHits": 3}, "other": {"numberOfHits": 1}}}),
+        );
+        s.purge_tenant(&t);
+        let inner = s.write_inner();
+        assert_eq!(
+            inner.contexts["c"][CONTEXT_USAGE],
+            json!({"other": {"numberOfHits": 1}})
+        );
+        assert!(!inner.contexts.contains_key("h"));
+    }
+
+    /// An Attribute that is no instance list is held as it is; an
+    /// instance list holds it while one instance is live or it is empty; a
+    /// member without `:` is no Attribute and is held whatever it holds.
+    #[test]
+    fn a_live_attribute_is_any_shape_but_an_expired_instance_list() {
+        let now = "2026-01-01T00:00:00Z";
+        let old = json!({"value": 1, "expiresAt": "2000-01-01T00:00:00Z"});
+        let doc = json!({
+            "https://single": {"value": 1},
+            "https://gone": [old.clone()],
+            "https://empty": [],
+            "plain": [old]
+        });
+        assert!(has_live_attr(&doc, "https://single", now));
+        assert!(!has_live_attr(&doc, "https://gone", now));
+        assert!(has_live_attr(&doc, "https://empty", now));
+        assert!(has_live_attr(&doc, "plain", now));
+        assert!(!has_live_attr(&doc, "https://absent", now));
+    }
+
+    /// The file `rows` writes in one commit, as bytes: `marked` adds this
+    /// binary's format marker.
+    fn redb_file(marked: bool, rows: &[(Table, &[u8], &[u8])]) -> Vec<u8> {
+        let fault = self::redb::tests::Fault::new(Vec::new(), i64::MAX, i64::MAX);
+        let bytes = fault.bytes.clone();
+        let db = Database::builder()
+            .create_with_backend(fault)
+            .expect("in-memory db");
+        let tx = db.begin_write().expect("tx");
+        if marked {
+            tx.open_table(T_META)
+                .expect("meta")
+                .insert("format", FORMAT_VERSION)
+                .expect("marker");
+        }
+        for (table, k, v) in rows {
+            tx.open_table(*table)
+                .expect("table")
+                .insert(*k, *v)
+                .expect("row");
+        }
+        tx.commit().expect("commit");
+        drop(db);
+        let out = bytes.read().expect("bytes").clone();
+        out
+    }
+
+    /// A disk that fails a write of the boot refuses the start with the
+    /// error, never a store without its marker; a file on a disk that
+    /// answers boots whole.
+    #[test]
+    fn a_disk_fault_anywhere_in_the_boot_refuses_the_start() {
+        let entity = br#"{"id":"urn:e:1","type":"T"}"#;
+        let marked = redb_file(
+            true,
+            &[
+                (T_ENTITIES, b"t\0urn:e:1", entity),
+                (
+                    T_JSONLD_CONTEXTS,
+                    b"https://ctx",
+                    br#"{"kind":"Cached","body":{}}"#,
+                ),
+            ],
+        );
+        let fault = self::redb::tests::Fault::new(marked, i64::MAX, i64::MAX);
+        let db = Database::builder()
+            .create_with_backend(fault)
+            .expect("open");
+        let s = Store::from_database(db, "whole").expect("boots");
+        let inner = s.inner.read().expect("lock");
+        assert!(inner.entities["t"].contains_key("urn:e:1"));
+        assert!(inner.contexts.contains_key("https://ctx"));
+        drop(inner);
+        // redb reads a file whole when it opens it, so the faults that reach
+        // the boot are the writes of the marker an empty file gets
+        let unmarked = redb_file(false, &[]);
+        let mut refused = 0usize;
+        let booted = (0..400).any(|writes| {
+            let fault = self::redb::tests::Fault::new(unmarked.clone(), i64::MAX, writes);
+            let Ok(db) = Database::builder().create_with_backend(fault) else {
+                return false;
+            };
+            let boot = Store::from_database(db, "fault");
+            refused = refused.saturating_add(usize::from(boot.is_err()));
+            boot.is_ok()
+        });
+        assert!(booted, "the file boots once the disk answers");
+        assert!(refused > 0, "no fault reached the boot");
+    }
+
+    /// A conditional delete of an Entity that expired takes nothing, as a
+    /// read of it finds nothing.
+    #[tokio::test]
+    async fn a_conditional_delete_of_an_expired_entity_takes_nothing() {
+        let s = Store::default();
+        let t = TenantId::new("delexpired").expect("tenant");
+        s.write_inner()
+            .entities
+            .entry("delexpired".into())
+            .or_default()
+            .insert(
+                "urn:e:old".into(),
+                json!({"id": "urn:e:old", "type": "T", "expiresAt": "2000-01-01T00:00:00Z"}),
+            );
+        assert_eq!(s.delete_if(&t, "urn:e:old", &|_| true).await, None);
+        assert!(s.write_inner().entities["delexpired"].contains_key("urn:e:old"));
+    }
+
+    /// A data directory that cannot be made, or a data file that is a
+    /// directory, refuses the start and names the path.
+    #[test]
+    fn a_data_path_that_cannot_hold_the_file_refuses_the_start() {
+        let dir = tempdir("unopenable");
+        let file = dir.join("plain-file");
+        std::fs::write(&file, b"x").expect("a file");
+        let err = Store::open_file(&file.join("sub"))
+            .map(drop)
+            .expect_err("refused");
+        assert!(err.starts_with("create "), "{err}");
+        std::fs::create_dir_all(dir.join("antares.redb")).expect("a directory");
+        let err = Store::open_file(&dir).map(drop).expect_err("refused");
+        assert!(err.starts_with("open "), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

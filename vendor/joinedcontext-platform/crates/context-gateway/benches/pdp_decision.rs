@@ -83,6 +83,7 @@ fn endpoint() -> Endpoint {
         tenant: context_gateway::middleware::tenancy::Tenant::segment("bench").ok(),
         project: "bench".to_owned(),
         audience: Audience::Public,
+        open_data: false,
         allowed_projects: Vec::new(),
         representations: vec![Representation::NgsiLd],
         rate_limit: None,

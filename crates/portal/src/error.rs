@@ -698,6 +698,8 @@ mod tests {
     #[test]
     fn a_503_logs_its_detail() {
         let buffer = Buffer::default();
+        // The global test subscriber keeps a callsite another test registers from caching `never`.
+        crate::test_log::install();
         let writer = buffer.clone();
         tracing::subscriber::with_default(
             crate::telemetry::log_subscriber(

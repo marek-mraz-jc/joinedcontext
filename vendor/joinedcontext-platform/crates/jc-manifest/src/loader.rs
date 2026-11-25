@@ -1031,8 +1031,8 @@ impl Repository {
             let bento = resource
                 .path
                 .parent()
-                .map(|dir| dir.join("bento.yaml"))
-                .unwrap_or_else(|| PathBuf::from("bento.yaml"));
+                .unwrap_or(Path::new(""))
+                .join("bento.yaml");
             let Ok(text) = std::fs::read_to_string(self.root.join(&bento)) else {
                 continue;
             };

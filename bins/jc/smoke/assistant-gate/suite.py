@@ -10,18 +10,19 @@ candidate image, then a verdict a prod pin of that digest needs (.github/scripts
 `ask` holds no key and no person's token: it asks as a visitor does (challenge, SHA-256 proof,
 token, POST /api/v1/d/gate/chat) in one conversation, each data question right after its own
 anonymous MCP read of the Endpoint (the expected facts), and checks per answer: HTTP 200, no
-`error` event, `done` within 15 s of the POST, every [n] cited, not served from the cache, then the
+`error` event, the answer with its sources within 15 s of the POST and `done` within 30 s (the
+widget takes the next question only after `done`), every [n] cited, not cached, then the
 deterministic judge (judge.py, the answer evals' judge). It writes <out>/answers.json (the answer
 evals' recording format plus the timings) and a first verdict. With --widget-url one Chromium
-journey asks question 1 again in the public widget (the answer cache serves it: no model cost)
-and checks a table, a source and the progress line in the browser.
+journey asks the fixture's `widget` question again in the public widget (a paid turn of its own:
+jc keeps no answer cache since T-7789) and checks a table, a source and the progress line.
 
 `verdict` adds what a visitor cannot see: the conversation's cost (the Portal's
 GET /api/v1/projects/helsinki/knowledge/conversations/{id}, saved by the deployer: costUsd, and
 tokensIn/tokensOut priced by the fixture when `uncosted` > 0) and one model judge call over all
 ten answers plus the fixture's known-bad ones, quoted as data. A judge that passes a known-bad
 answer is unfit: the run is red. Pass: 10/10 mechanical, at least 9/10 judged correct (both
-judges) and no wrong fact, p50 to done at most 10 s, total cost (judge included) at most
+judges) and no wrong fact, p50 to the answer at most 10 s, total cost (judge included) at most
 0.10 USD. A run stopped by a budget is red (its `error` event fails the mechanical check).
 Writes evidence to <out>/verdict.json; copy it to evidence/assistant-gate/<sha>/verdict.json."""
 
@@ -177,8 +178,11 @@ def answer_of(evs) -> dict:
     return {"text": text, "citations": cites}
 
 
-def mechanical(got: dict, limit_ms: int) -> list[str]:
-    """Why an answer fails the runner's own checks; empty when it passes."""
+def mechanical(got: dict, lim: dict) -> list[str]:
+    """Why an answer fails the runner's own checks; empty when it passes. `answerMs` bounds the
+    answer event, which carries the text and is followed at once by its citations (routed.rs), so
+    it is when the visitor reads the answer with its sources; `doneMs` bounds `done`, before which
+    the widget takes no next question."""
     why = []
     if got["status"] != 200:
         return [f"HTTP {got['status']} {got.get('raw', '')}".strip()]
@@ -187,12 +191,16 @@ def mechanical(got: dict, limit_ms: int) -> list[str]:
         if n == "error":
             why.append(f"error event: {json.dumps(d, ensure_ascii=False)[:200]}")
     done = next((d for n, d in evs if n == "done"), None)
+    if got.get("msAnswer") is None:
+        why.append("no answer")
+    elif got["msAnswer"] > lim["answerMs"]:
+        why.append(f"answer after {got['msAnswer']} ms, over {lim['answerMs']} ms")
     if done is None or got["msDone"] is None:
         why.append("no done event")
-    elif got["msDone"] > limit_ms:
-        why.append(f"done after {got['msDone']} ms, over {limit_ms} ms")
+    elif got["msDone"] > lim["doneMs"]:
+        why.append(f"done after {got['msDone']} ms, over {lim['doneMs']} ms")
     if isinstance(done, dict) and done.get("cached"):
-        why.append("served from the answer cache: the run measured nothing (wait 10 min after the last run)")
+        why.append("served from a cache: the run measured nothing")
     a = answer_of(evs)
     cited = {c.get("n") for c in a["citations"] if isinstance(c, dict)}
     for n in sorted(dj.markers(a["text"])):
@@ -235,7 +243,7 @@ def ask_all(args, fx: dict) -> dict:
         ans = answer_of(got["events"])
         row.update(facts=q.get("facts", []), evidence=q.get("evidence", ""), refuse=bool(q.get("refuse")),
                    msAnswer=got["msAnswer"], msDone=got["msDone"], text=ans["text"], citations=ans["citations"],
-                   mechanical=mechanical(got, fx["limits"]["answerMs"]),
+                   mechanical=mechanical(got, fx["limits"]),
                    judged=dj.judge(q | {"facts": q.get("facts", []), "evidence": q.get("evidence", "")}, row["hosts"], ans))
         rows.append(row)
     return {"conversation": v.conversation, "rows": rows}
@@ -244,8 +252,9 @@ def ask_all(args, fx: dict) -> dict:
 # ------------------------------------------------------------------ the browser journey
 
 def widget_check(url: str, question: str, timeout_ms: int = 30000) -> list[str]:
-    """Ask `question` in the public widget at `url`; why the answer lacks a table, a source or
-    the progress line, empty when it shows all three."""
+    """Ask `question` in the public widget at `url` and wait until it is answered (the answer
+    shown, Stop gone); why the answer lacks a table, a source or the steps, empty when it shows
+    all three. Each missing piece is named on its own, so a red says what the browser lacked."""
     from playwright.sync_api import Error, sync_playwright
 
     try:
@@ -256,14 +265,17 @@ def widget_check(url: str, question: str, timeout_ms: int = 30000) -> list[str]:
                 page.goto(url, timeout=timeout_ms)
                 page.locator("textarea").first.fill(question)
                 page.locator("textarea").first.press("Enter")
-                bot = page.locator(".jc-bot").last
-                bot.wait_for(timeout=timeout_ms)
+                page.locator(".jc-you").last.wait_for(timeout=timeout_ms)
                 page.wait_for_function("() => { const b = [...document.querySelectorAll('.jc-bot')].pop();"
-                                       " return b && b.querySelector('table') && b.querySelector('a[href]'); }",
-                                       timeout=timeout_ms)
-                why = []
-                if page.locator(".jc-steps, .jc-status").count() == 0:
-                    why.append("no progress line (.jc-steps or .jc-status)")
+                                       " const stop = document.querySelector('.jc-stop');"
+                                       " return b && (b.querySelector('.jc-answer') || b.classList.contains('jc-error'))"
+                                       " && (!stop || stop.hidden); }", timeout=timeout_ms)
+                bot = page.locator(".jc-bot").last
+                why = ["an error instead of the answer"] if "jc-error" in (bot.get_attribute("class") or "") else []
+                for sel, w in (("table", "no table"), (".jc-sources, .jc-cite a[href]", "no source"),
+                               (".jc-steps", "no steps (.jc-steps)")):
+                    if bot.locator(sel).count() == 0:
+                        why.append(w)
                 return why
             finally:
                 browser.close()
@@ -390,10 +402,10 @@ def decide(rows: list[dict], fx: dict, verdicts: dict, cost_usd: float | None, j
         why.append(f"judged correct {correct}/{len(rows)}, under {lim['judgedMin']}")
     if wrong:
         why.append("a wrong fact in " + ", ".join(wrong))
-    done = [r["msDone"] for r in rows if isinstance(r.get("msDone"), int)]
-    p50 = statistics.median(done) if done else None
+    answered = [r["msAnswer"] for r in rows if isinstance(r.get("msAnswer"), int)]
+    p50 = statistics.median(answered) if answered else None
     if p50 is None or p50 > lim["p50Ms"]:
-        why.append(f"p50 to done {p50} ms, over {lim['p50Ms']} ms")
+        why.append(f"p50 to the answer {p50} ms, over {lim['p50Ms']} ms")
     if cost_usd is None:
         why.append("cost unknown: give --conversation and the judge's cost")
     elif cost_usd > lim["costUsd"]:
@@ -450,7 +462,7 @@ def main(argv=None) -> int:
             return 2
         run = ask_all(args, fx)
         if args.widget_url:
-            run["widget"] = widget_check(args.widget_url, fx["questions"][0]["ask"])
+            run["widget"] = widget_check(args.widget_url, next(q["ask"] for q in fx["questions"] if q["id"] == fx["widget"]))
         run.update(sha=args.sha, digest=args.digest, deployment=fx["deployment"],
                    answers={r["id"]: {"text": r.get("text", ""), "citations": r.get("citations", [])} for r in run["rows"]})
         (args.out / "answers.json").write_text(json.dumps(run, ensure_ascii=False, indent=1))

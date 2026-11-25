@@ -2498,3 +2498,174 @@ async fn the_migration_proposes_one_change_naming_counts_alone() {
         opened[0]
     );
 }
+
+/// A person of the realm `id`/`email`, readable through its own user route.
+async fn realm_person(kc: &MockServer, id: &str, email: &str) {
+    Mock::given(method("GET"))
+        .and(path(format!("{ADMIN}/users/{id}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(user(id, email)))
+        .with_priority(1)
+        .mount(kc)
+        .await;
+}
+
+/// PF-93, T-7835: a grant naming a person through a Portal Group or a realm role, or the
+/// bootstrap administrators' realm role, holds a people administrator to what PF-93 leaves open.
+#[tokio::test]
+async fn a_grant_through_a_group_or_a_realm_role_and_the_bootstrap_role_hold_the_admin_back() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    realm_person(&kc, "gus-id", "gus@hel.fi").await;
+    realm_person(&kc, "rho-id", "rho@hel.fi").await;
+    realm_person(&kc, "boss-id", "boss@hel.fi").await;
+    for (id, role) in [("rho-id", "air-analyst"), ("boss-id", "portal-approver")] {
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{ADMIN}/users/{id}/role-mappings/realm/composite"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "name": role }])))
+            .with_priority(1)
+            .mount(&kc)
+            .await;
+    }
+    state.mirror.upsert(envelope(
+        "Group",
+        "crew",
+        ORG_NAMESPACE,
+        json!({ "members": [{ "user": "gus@hel.fi" }] }),
+    ));
+    for (name, assignee) in [
+        ("crew-read", json!({ "kind": "group", "id": "crew" })),
+        (
+            "analyst-read",
+            json!({ "kind": "role", "id": "air-analyst" }),
+        ),
+    ] {
+        state.mirror.upsert(envelope(
+            "Policy",
+            name,
+            "air",
+            json!({ "contextSpaceRef": "air", "assignee": assignee, "operations": ["queryEntity"] }),
+        ));
+    }
+    for (id, grant) in [("gus-id", "crew-read"), ("rho-id", "analyst-read")] {
+        let refused = send(
+            &state,
+            person("pia"),
+            "POST",
+            &format!("{PEOPLE}/{id}/disable"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::FORBIDDEN,
+            "{id}: {}",
+            refused.text
+        );
+        assert!(refused.text.contains(grant), "{id}: {}", refused.text);
+    }
+    let boss = send(
+        &state,
+        person("pia"),
+        "POST",
+        &format!("{PEOPLE}/boss-id/disable"),
+        None,
+    )
+    .await;
+    assert_eq!(boss.status, StatusCode::FORBIDDEN, "{}", boss.text);
+    assert!(boss.text.contains("portal-approver"), "{}", boss.text);
+    assert!(received(&kc, "PUT", "/boss-id").await.is_empty());
+}
+
+/// T-7835: an edit refuses a blank first or last name before the realm is asked; a realm that
+/// fails a create, an edit or a read is a 503 naming the realm, never a success.
+#[tokio::test]
+async fn bad_names_are_refused_and_a_failing_realm_is_unavailable() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    realm_person(&kc, "brk-id", "brk@hel.fi").await;
+    for body in [json!({ "firstName": " " }), json!({ "lastName": " " })] {
+        let refused = send(
+            &state,
+            person("pia"),
+            "PATCH",
+            &format!("{PEOPLE}/brk-id"),
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::BAD_REQUEST,
+            "{body}: {}",
+            refused.text
+        );
+    }
+    assert!(received(&kc, "PUT", "/brk-id").await.is_empty());
+    let failing = ResponseTemplate::new(500).set_body_json(json!({ "errorMessage": "boom" }));
+    for (verb, route) in [
+        ("PUT", format!("{ADMIN}/users/brk-id")),
+        ("POST", format!("{ADMIN}/users")),
+        ("GET", format!("{ADMIN}/users/gone-id")),
+    ] {
+        Mock::given(method(verb))
+            .and(path(route))
+            .respond_with(failing.clone())
+            .with_priority(1)
+            .mount(&kc)
+            .await;
+    }
+    let edit = send(
+        &state,
+        person("pia"),
+        "PATCH",
+        &format!("{PEOPLE}/brk-id"),
+        Some(json!({ "lastName": "Broken" })),
+    )
+    .await;
+    let create = send(
+        &state,
+        person("pia"),
+        "POST",
+        PEOPLE,
+        Some(json!({ "email": "new@example.org", "firstName": "N", "lastName": "W" })),
+    )
+    .await;
+    let remove = send(
+        &state,
+        person("ada"),
+        "POST",
+        &format!("{PEOPLE}/remove"),
+        Some(json!({ "ids": ["gone-id"] })),
+    )
+    .await;
+    for answer in [&edit, &create, &remove] {
+        assert_eq!(
+            answer.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{}",
+            answer.text
+        );
+        assert!(answer.text.contains("realm refused"), "{}", answer.text);
+    }
+}
+
+/// PF-108, T-7835: a realm that cannot send mail answers a resent invitation with 200 and
+/// `emailSent: false`, so the administrator knows the person got no link.
+#[tokio::test]
+async fn without_mail_a_resent_invitation_says_no_email_went_out() {
+    let (kc, shako) = (realm(false).await, forge().await);
+    let state = state_with(&kc, &shako);
+    let waiting = pending_person(&kc).await;
+    let resent = send(
+        &state,
+        person("pia"),
+        "POST",
+        &format!("{PEOPLE}/{waiting}/resend-invitation"),
+        None,
+    )
+    .await;
+    assert_eq!(resent.status, StatusCode::OK, "{}", resent.text);
+    let answer: Value = serde_json::from_str(&resent.text).expect("json");
+    assert_eq!(answer["emailSent"], false, "{}", resent.text);
+}

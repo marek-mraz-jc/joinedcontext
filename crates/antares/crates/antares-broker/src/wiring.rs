@@ -231,10 +231,7 @@ pub async fn wire_nats(
                             }
                         }
                     }
-                    tracing::error!(
-                        "sub KV sync gave up for {key} — this subscription is not mirrored \
-                     until the next restart"
-                    );
+                    tracing::error!("sub KV sync gave up for {key} — {SUB_UNMIRRORED}");
                 }
             },
         );
@@ -266,18 +263,13 @@ pub async fn wire_nats(
                         match bus.publish_registry(&tenant, &delta).await {
                             Ok(()) => return,
                             Err(e) => {
-                                tracing::warn!(
-                                    "registry delta publish attempt {} failed: {e}",
-                                    attempt + 1
-                                );
+                                let n = attempt + 1;
+                                tracing::warn!("registry delta publish attempt {n} failed: {e}");
                                 tokio::time::sleep(mirror_sync_backoff(attempt)).await;
                             }
                         }
                     }
-                    tracing::error!(
-                        "registry delta publish gave up for {id} — this registration is not \
-                     mirrored until the next restart"
-                    );
+                    tracing::error!("registry delta publish gave up for {id} — {REG_UNMIRRORED}");
                 }
             },
         );
@@ -323,10 +315,7 @@ pub async fn wire_nats(
         .await
         {
             Ok(()) => state.reg_mirror = Some(reg_mirror.clone()),
-            Err(e) => tracing::error!(
-                "registration mirror hydrate failed ({e}); \
-                 federation matching falls back to a store read per request"
-            ),
+            Err(e) => tracing::error!("registration mirror hydrate failed ({e}); {REG_FALLBACK}"),
         }
         let egress_for_cool = state.egress.clone();
         let store_for_reg = state.store.clone();
@@ -386,10 +375,7 @@ pub async fn wire_nats(
                 )
                 .await
                 {
-                    tracing::error!(
-                        "registration mirror re-hydrate failed ({e}); \
-                         this pod is matching against registrations from before the gap"
-                    );
+                    tracing::error!("registration mirror re-hydrate failed ({e}); {REG_STALE}");
                 }
             }
         });
@@ -453,10 +439,8 @@ pub async fn wire_nats(
                     // the outbox and is retried from there next round.
                     let (published, failed) = bus_for_drain.publish_all(&events).await;
                     if let Some(e) = failed {
-                        tracing::warn!(
-                            "outbox publish failed after {published} of {}: {e}",
-                            events.len()
-                        );
+                        let of = events.len();
+                        tracing::warn!("outbox publish failed after {published} of {of}: {e}");
                     }
                     for ev in events.into_iter().take(published) {
                         if ev.claim_checked_at(antares_bus::CLAIM_CHECK_BYTES) {
@@ -504,10 +488,7 @@ pub async fn wire_nats(
         .await
         {
             Ok(()) => state.sub_mirror = Some(sub_mirror.clone()),
-            Err(e) => tracing::error!(
-                "subscription mirror hydrate failed ({e}); \
-                 matching falls back to a store scan per change"
-            ),
+            Err(e) => tracing::error!("subscription mirror hydrate failed ({e}); {SUB_FALLBACK}"),
         }
         let store = state.store.clone();
         tokio::spawn(async move {
@@ -633,6 +614,15 @@ const MIRROR_SYNC_ATTEMPTS: u32 = 5;
 /// write is dropped and logged, the divergence a give-up already names.
 const MIRROR_SYNC_QUEUE: usize = 4096;
 
+// What a mirror that fell behind means for the pod, in its log lines.
+const SUB_UNMIRRORED: &str = "this subscription is not mirrored until the next restart";
+const REG_UNMIRRORED: &str = "this registration is not mirrored until the next restart";
+const QUEUE_FULL: &str = "a write is not mirrored until the next restart";
+const REG_FALLBACK: &str = "federation matching falls back to a store read per request";
+const REG_STALE: &str = "this pod is matching against registrations from before the gap";
+const SUB_FALLBACK: &str = "matching falls back to a store scan per change";
+const SUB_STALE: &str = "this pod may notify subscriptions deleted during the gap";
+
 /// One worker per mirror hook, fed through a bounded queue of keys (S5-13):
 /// the writes of one row reach the bus in the order they committed, retries
 /// included, so an older put can no longer land after a newer one or a
@@ -689,10 +679,7 @@ where
                 {
                     metrics::counter!("antares_mirror_sync_dropped_total", "mirror" => what)
                         .increment(1);
-                    tracing::error!(
-                        "{what} mirror sync queue is full: a write is not mirrored until the \
-                         next restart"
-                    );
+                    tracing::error!("{what} mirror sync queue is full: {QUEUE_FULL}");
                     return;
                 }
                 std::collections::hash_map::Entry::Vacant(e) => {
@@ -714,14 +701,14 @@ fn mirror_sync_backoff(attempt: u32) -> std::time::Duration {
 
 /// What one mirror delta asks for.
 #[derive(Debug, PartialEq)]
-enum Delta<'a> {
+pub(crate) enum Delta<'a> {
     /// A Context Source Registration Subscription was written: it is matched
     /// against registrations rather than entities, so the delta only wakes
     /// the interval sweep (5.11.7).
     Csub,
     /// The row `id` of `tenant` was written (`present`) or deleted.
     Row {
-        tenant: &'a str,
+        tenant: TenantId,
         id: &'a str,
         present: bool,
     },
@@ -730,7 +717,7 @@ enum Delta<'a> {
 /// Decode one `{tenant, id, present, csub}` delta. A delta from a pod that
 /// predates `present` carries `doc` (null for a tombstone) and is read as
 /// present when that is not null; its document is not used either.
-fn decode_delta(delta: &serde_json::Value) -> Option<Delta<'_>> {
+pub(crate) fn decode_delta(delta: &serde_json::Value) -> Option<Delta<'_>> {
     if delta.get("csub").and_then(serde_json::Value::as_bool) == Some(true) {
         return Some(Delta::Csub);
     }
@@ -748,7 +735,7 @@ fn decode_delta(delta: &serde_json::Value) -> Option<Delta<'_>> {
     // (5.5.15) carries the synthetic tenant a client may not name — refusing
     // that one would drop the mirror delta the snapshot-scoped subscription
     // matches on.
-    TenantId::new_internal(tenant).ok()?;
+    let tenant = TenantId::new_internal(tenant).ok()?;
     let present = delta
         .get("present")
         .and_then(serde_json::Value::as_bool)
@@ -773,10 +760,7 @@ async fn reopen_sub_watch(
 ) -> Result<nats::KvWatch, nats::KvWatchError> {
     let watch = kv.watch_all().await?;
     if let Err(e) = antares_api::notify::reseed_mirror(store, mirror, Kind::Subscription).await {
-        tracing::error!(
-            "subscription mirror re-hydrate failed ({e}); \
-             this pod may notify subscriptions deleted during the gap"
-        );
+        tracing::error!("subscription mirror re-hydrate failed ({e}); {SUB_STALE}");
     }
     Ok(watch)
 }
@@ -805,17 +789,14 @@ async fn apply_delta(
             present,
         }) => (tenant, id, present),
     };
-    let Ok(t) = TenantId::new_internal(tenant) else {
-        return;
-    };
+    let t = &tenant;
+    let tenant = t.as_str();
     for attempt in 0..MIRROR_SYNC_ATTEMPTS {
-        match store.get(&t, kind, id).await {
+        match store.get(t, kind, id).await {
             Ok(doc) => return mirror.apply(tenant, id, doc),
             Err(e) => {
-                tracing::warn!(
-                    "mirror read of {kind:?} {id} attempt {} failed: {e}",
-                    attempt + 1
-                );
+                let n = attempt + 1;
+                tracing::warn!("mirror read of {kind:?} {id} attempt {n} failed: {e}");
                 tokio::time::sleep(mirror_sync_backoff(attempt)).await;
             }
         }
@@ -883,11 +864,8 @@ async fn resolve_payloads(
     };
     if ev.prev_payload_ref.is_some() {
         metrics::counter!("antares_claim_check_unresolved_total").increment(1);
-        tracing::warn!(
-            "claim-check row for seq {} is gone: the change to {} notifies nobody",
-            ev.seq,
-            ev.entity_id.as_str()
-        );
+        let (seq, id) = (ev.seq, ev.entity_id.as_str());
+        tracing::warn!("claim-check row for seq {seq} is gone: the change to {id} notifies nobody");
     }
     Some((ev.prev_payload.clone(), after))
 }
@@ -895,10 +873,46 @@ async fn resolve_payloads(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env;
     use antares_api::mirror::DocMirror;
     use antares_bus::{ChangeOp, PayloadRef};
     use antares_model::EntityId;
     use serde_json::json;
+
+    /// What this thread logs while the guard lives: the bus and mirror paths
+    /// report through `tracing` alone, so a test reads the line they owe.
+    #[derive(Clone, Default)]
+    struct Logged(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Logged {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log").extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Logged {
+        fn start() -> (Self, tracing::subscriber::DefaultGuard) {
+            let log = Self::default();
+            let writer = log.clone();
+            let guard = tracing::subscriber::set_default(
+                tracing_subscriber::fmt()
+                    .with_ansi(false)
+                    .with_max_level(tracing::Level::DEBUG)
+                    .with_writer(move || writer.clone())
+                    .finish(),
+            );
+            (log, guard)
+        }
+
+        fn text(&self) -> String {
+            std::io::Write::flush(&mut self.clone()).expect("flush");
+            String::from_utf8_lossy(&self.0.lock().expect("log")).into_owned()
+        }
+    }
 
     /// The mirror-sync retry waits 0.2 s and doubles to 3.2 s, where it stays
     /// however many attempts follow (no shift overflow at u32::MAX).
@@ -1086,6 +1100,7 @@ mod tests {
     /// queue refuses a new row instead of growing.
     #[tokio::test]
     async fn mirror_sync_keeps_order_coalesces_and_bounds_its_queue() {
+        let (log, _guard) = Logged::start();
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let sync = {
@@ -1120,6 +1135,12 @@ mod tests {
         let mut want: Vec<(usize, usize)> = (0..=MIRROR_SYNC_QUEUE).map(|k| (k, k)).collect();
         want[1] = (1, 999);
         assert_eq!(seen, want, "in order, coalesced, the overflow refused");
+        assert!(
+            log.text()
+                .contains("test mirror sync queue is full: a write is not mirrored"),
+            "a refused row is logged: {}",
+            log.text()
+        );
     }
 
     /// The KV/registry mirrors are fed from the bus. A malformed or hostile
@@ -1259,6 +1280,89 @@ mod tests {
         assert!(before.is_none() && after.is_none(), "no payload, no fetch");
     }
 
+    /// A before-image that only a claim check carried, with no outbox row
+    /// left to read it from, cannot be guessed: the after-image still
+    /// resolves (inline, or nothing when the event carried none), the
+    /// before-image stays empty, and the loss is counted and logged.
+    #[tokio::test]
+    async fn a_before_image_past_the_outbox_is_left_empty_and_logged() {
+        let (log, _guard) = Logged::start();
+        let st = state_with(None).await;
+        let r = PayloadRef {
+            entity_id: EntityId::new("urn:ngsi-ld:T:1").expect("id"),
+            version: 1,
+        };
+        let mut ev = event(Some(json!({"inline": true})), None);
+        ev.prev_payload_ref = Some(r.clone());
+        let (before, after) = resolve_payloads(&st, &ev).await.expect("resolved");
+        assert_eq!(before, None, "no guessed before-image");
+        assert_eq!(
+            after,
+            Some(json!({"inline": true})),
+            "inline after-image kept"
+        );
+
+        let mut ev = event(None, None);
+        ev.prev_payload_ref = Some(r);
+        let (before, after) = resolve_payloads(&st, &ev).await.expect("resolved");
+        assert!(before.is_none() && after.is_none(), "nothing to resolve");
+        assert!(
+            log.text().contains(
+                "claim-check row for seq 0 is gone: the change to urn:ngsi-ld:T:1 notifies nobody"
+            ),
+            "{}",
+            log.text()
+        );
+    }
+
+    /// A store that keeps failing the mirror's read: the delta is retried
+    /// on the backoff ladder, then a tombstone still removes its entry (the
+    /// safe side) while a written row leaves the entry as it was, each with
+    /// the line that names the divergence.
+    #[tokio::test]
+    async fn a_failing_store_retries_then_a_tombstone_still_removes_the_entry() {
+        let (log, _guard) = Logged::start();
+        let pool = antares_sql::sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@localhost:1/antares_no_such_db")
+            .expect("lazy pool");
+        let store =
+            antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(pool));
+        let m = DocMirror::default();
+        m.apply("default", "urn:x:1", Some(json!({"id": "urn:x:1"})));
+        m.apply("default", "urn:x:2", Some(json!({"id": "urn:x:2"})));
+        // both ladders at once: 6.2 s of backoff each
+        let written = json!({"tenant": "default", "id": "urn:x:2", "present": true});
+        let tombstone = json!({"tenant": "default", "id": "urn:x:1", "present": false});
+        tokio::join!(
+            apply_delta(&m, &store, Kind::Registration, &written),
+            apply_delta(&m, &store, Kind::Registration, &tombstone),
+        );
+        let left: Vec<_> = m
+            .docs("default")
+            .into_iter()
+            .map(|d| d["id"].clone())
+            .collect();
+        assert_eq!(
+            left,
+            [json!("urn:x:2")],
+            "the tombstone removed its entry though no read answered; the written row's stays"
+        );
+        let text = log.text();
+        assert!(
+            text.contains("mirror read of Registration urn:x:2 attempt 5 failed"),
+            "{text}"
+        );
+        assert!(
+            text.contains("urn:x:2 gave up: its entry is stale until a restart"),
+            "{text}"
+        );
+        assert!(
+            text.contains("urn:x:1 gave up: the tombstone removes it"),
+            "{text}"
+        );
+    }
+
     /// A store fault while resolving a claim check is not a row that is
     /// gone: the change must come back (no ack), not notify nobody.
     #[tokio::test]
@@ -1314,10 +1418,7 @@ mod tests {
     /// Postgres table, and the memory arm has none.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_retained_row_gives_the_matcher_the_before_image_the_write_replaced() {
-        let Ok(url) = std::env::var("ANTARES_TEST_DATABASE_URL") else {
-            eprintln!("SKIP: ANTARES_TEST_DATABASE_URL not set");
-            return;
-        };
+        let Some(url) = test_env::db() else { return };
         let pool = antares_sql::store::pg::connect(&url, 5)
             .await
             .expect("connect");
@@ -1406,10 +1507,7 @@ mod tests {
     /// that mirror alone, so an empty candidate set is A sending nothing.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_watch_reopened_past_the_grace_drops_a_subscription_deleted_meanwhile() {
-        let Ok(url) = std::env::var("ANTARES_TEST_NATS_URL") else {
-            eprintln!("SKIP: ANTARES_TEST_NATS_URL not set");
-            return;
-        };
+        let Some(url) = test_env::nats() else { return };
         const VEHICLE: &str = "https://example.org/Vehicle";
         let bus = NatsBus::connect(&url).await.expect("connect");
         let kv = bus.subs_kv().await.expect("kv bucket");
@@ -1483,6 +1581,16 @@ mod tests {
             let err = outbox_drain_enabled()
                 .expect_err(&format!("ANTARES_OUTBOX_DRAIN={bad:?} must be fatal"));
             assert!(err.contains("ANTARES_OUTBOX_DRAIN"), "{err}");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            std::env::set_var("ANTARES_OUTBOX_DRAIN", std::ffi::OsStr::from_bytes(&[0xff]));
+            let err = outbox_drain_enabled().expect_err("a non-UTF-8 value is fatal");
+            assert!(
+                err.starts_with("ANTARES_OUTBOX_DRAIN is unreadable"),
+                "{err}"
+            );
         }
         std::env::remove_var("ANTARES_OUTBOX_DRAIN");
     }

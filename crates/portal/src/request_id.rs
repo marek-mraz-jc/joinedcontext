@@ -190,28 +190,6 @@ mod tests {
     /// request resolves it; another project's key, resolved in the same request, never.
     #[tokio::test]
     async fn the_request_span_carries_the_addressed_projects_key_by_id() {
-        use std::sync::{Arc, Mutex};
-        use tracing_subscriber::layer::SubscriberExt;
-
-        #[derive(Clone, Default)]
-        struct Lines(Arc<Mutex<Vec<u8>>>);
-        impl std::io::Write for Lines {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().expect("lines").extend_from_slice(buf);
-                Ok(buf.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let lines = Lines::default();
-        let writer = lines.clone();
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(move || writer.clone()),
-        );
-        let _guard = tracing::subscriber::set_default(subscriber);
         let mine = jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint());
         let other = jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint());
         // A fallback, not a route: openapi_tests reads every mounted route of the crate.
@@ -226,12 +204,12 @@ mod tests {
             .uri("/api/v1/projects/helsinki/endpoints")
             .body(axum::body::Body::empty())
             .expect("request");
-        let response = tower::ServiceExt::oneshot(app, request)
-            .await
-            .expect("answer");
-        assert!(response.status().is_success());
-        std::io::Write::flush(&mut lines.clone()).expect("an in-memory log flushes");
-        let text = String::from_utf8(lines.0.lock().expect("lines").clone()).expect("utf-8");
+        let (response, text) = crate::test_log::logged(
+            tracing::level_filters::LevelFilter::TRACE,
+            tower::ServiceExt::oneshot(app, request),
+        )
+        .await;
+        assert!(response.expect("answer").status().is_success());
         assert!(
             text.contains(&format!("project={}", mine.project)),
             "{text}"

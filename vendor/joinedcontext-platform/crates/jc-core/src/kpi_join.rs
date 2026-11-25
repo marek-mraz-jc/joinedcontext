@@ -27,6 +27,9 @@ pub const MAX_SOURCES: usize = 5;
 pub const MAX_FORMULA_CHARS: usize = 512;
 /// The most aggregate terms in one formula (PL-103).
 pub const MAX_TERMS: usize = 64;
+// The character cap holds the terms under MAX_TERMS: the shortest aggregate, `count(a)`, is 8
+// characters and the next one is an operator away.
+const _: () = assert!((MAX_FORMULA_CHARS + 1) / 9 <= MAX_TERMS);
 /// The most pairs of source and period one formula reads back (PL-117).
 pub const MAX_EARLIER_READS: usize = 3;
 /// The most indicators one run of an entity or area join writes (PL-104).
@@ -403,9 +406,6 @@ pub fn parse(formula: &str) -> Result<Expr> {
     }
     if parser.terms == 0 {
         return Err(invalid("a formula reads at least one source"));
-    }
-    if parser.terms > MAX_TERMS {
-        return Err(invalid(format!("a formula has at most {MAX_TERMS} terms")));
     }
     Ok(expr)
 }
@@ -830,7 +830,7 @@ pub fn slug(key: &str) -> String {
 
 /// A Bloblang string literal.
 fn lit(text: &str) -> String {
-    serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_owned())
+    serde_json::Value::from(text).to_string()
 }
 
 /// The Bloblang query reading `attr` of row `e` as a key; the name is read as a quoted path.

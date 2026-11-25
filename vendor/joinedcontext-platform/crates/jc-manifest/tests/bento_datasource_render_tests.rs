@@ -27,6 +27,48 @@ fn rendered(spec: &DataSourceSpec, name: &str) -> String {
     serde_norway::to_string(&input_of(spec, &context(name))).expect("serializes")
 }
 
+/// A source of a type whose connection block is missing renders an empty input of that type
+/// (validation refuses it before any runner sees it); a runner source without `input` renders
+/// an empty mapping under the runner's name.
+#[test]
+fn a_source_without_its_connection_block_renders_an_empty_input() {
+    for (kind, input) in [
+        ("mqtt", "mqtt"),
+        ("http", "http_client"),
+        ("websocket", "websocket"),
+        ("gtfs-rt", "http_client"),
+        ("webhook", "http_server"),
+        ("kafka", "kafka"),
+    ] {
+        let yaml = format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata: {{ name: bare, namespace: bb-ovzdusie }}\nspec:\n  type: {kind}\n"
+        );
+        let spec = ResourceEnvelope::<DataSourceSpec>::from_yaml(&yaml)
+            .expect("parses")
+            .spec;
+        let value = input_of(&spec, &context("bare"));
+        let inner = value
+            .get(input)
+            .unwrap_or_else(|| panic!("{kind}: {value:?}"));
+        assert_eq!(
+            inner.as_mapping().map(|m| m.len()),
+            Some(0),
+            "{kind}: {value:?}"
+        );
+    }
+}
+
+/// `inject_space` and `inject_owner` leave a string without the variable, a number and a
+/// boolean as they are.
+#[test]
+fn injection_leaves_values_without_the_variable_alone() {
+    let mut value = serde_json::json!({ "a": "plain", "n": 3, "b": [true, "x"] });
+    let before = value.clone();
+    jc_manifest::bento::inject_space(&mut value, &["air".to_owned()]);
+    jc_manifest::bento::inject_owner(&mut value, "city.example");
+    assert_eq!(value, before);
+}
+
 const MQTT: &str = r#"apiVersion: joinedcontext.com/v1alpha1
 kind: DataSource
 metadata: { name: mqtt-mesto, namespace: bb-ovzdusie }

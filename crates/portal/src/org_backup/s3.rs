@@ -820,7 +820,10 @@ pub(crate) mod tests {
     }
 
     fn scratch(name: &str) -> (std::path::PathBuf, std::fs::File) {
-        let path = std::env::temp_dir().join(format!("s3-{name}-{}", std::process::id()));
+        // One path per call: parallel tests of one name would truncate each other's file.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("s3-{name}-{}-{call}", std::process::id()));
         let file = std::fs::OpenOptions::new()
             .create(true)
             .truncate(true)

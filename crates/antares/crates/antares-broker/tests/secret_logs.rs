@@ -28,14 +28,36 @@ fn get(port: u16, path: &str, bearer: &str) -> String {
     out
 }
 
-/// Everything the child printed on stdout and stderr.
+/// Everything the child printed on stdout and stderr, its drain included:
+/// the pipes are read while [`common::stop`] runs the shutdown, so its log
+/// lines are searched for the token too.
 fn output(mut child: std::process::Child) -> String {
-    let _ = child.kill();
-    let out = child.wait_with_output().expect("wait");
+    let read = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut text = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut text);
+            }
+            String::from_utf8_lossy(&text).into_owned()
+        })
+    };
+    let out = read(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let err = read(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    common::stop(&mut child);
     format!(
         "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        out.join().expect("stdout reader"),
+        err.join().expect("stderr reader")
     )
 }
 

@@ -30,10 +30,12 @@ macro_rules! require_db {
 
 /// A TCP relay to the database whose open streams can be frozen: it keeps
 /// both sockets open and stops forwarding, as a stalled mesh stream does.
-/// Streams opened after the freeze relay normally.
+/// Streams opened after the freeze relay normally, until it refuses them.
 struct Relay {
     url: String,
     open: Arc<Mutex<Vec<Arc<AtomicBool>>>>,
+    /// New streams are closed at once: a database that is gone.
+    refusing: Arc<AtomicBool>,
     /// ReadyForQuery messages the server sent: one per round trip.
     ready: Arc<AtomicUsize>,
 }
@@ -57,8 +59,14 @@ impl Relay {
         let streams = open.clone();
         let ready: Arc<AtomicUsize> = Arc::default();
         let counted = ready.clone();
+        let refusing: Arc<AtomicBool> = Arc::default();
+        let refused = refusing.clone();
         tokio::spawn(async move {
             while let Ok((client, _)) = listener.accept().await {
+                if refused.load(Ordering::SeqCst) {
+                    drop(client);
+                    continue;
+                }
                 let Ok(server) = TcpStream::connect(&upstream).await else {
                     continue;
                 };
@@ -73,8 +81,13 @@ impl Relay {
         Self {
             url: through,
             open,
+            refusing,
             ready,
         }
+    }
+
+    fn refuse(&self) {
+        self.refusing.store(true, Ordering::SeqCst);
     }
 
     fn freeze(&self) {
@@ -522,6 +535,10 @@ async fn a_pool_held_past_the_bound_is_wedged_until_a_slot_returns() {
     assert!(!store.wedged().await, "a serving pool is not wedged");
     let held = pool.acquire().await.expect("the only slot");
     assert!(store.ping().await.is_err(), "not ready without a slot");
+    assert!(
+        store.ping().await.is_err(),
+        "the exhausted clock keeps running"
+    );
     assert!(store.wedged().await, "every slot held past the bound");
     drop(held);
     tokio::time::timeout(Duration::from_secs(8), async {
@@ -532,6 +549,37 @@ async fn a_pool_held_past_the_bound_is_wedged_until_a_slot_returns() {
     .await
     .expect("ready again once the slot returns");
     assert!(!store.wedged().await, "a slot came back: not wedged");
+}
+
+/// A pool whose every slot is held while the database refuses a fresh
+/// connection is not a leak either: liveness stays green. A pooled
+/// connection whose stream stalls on release is closed even when no fresh
+/// one opens in its place.
+#[tokio::test]
+async fn a_held_pool_behind_a_lost_database_is_not_wedged() {
+    use antares_sql::store::any::{AnyStore, PgBackend};
+    let url = require_db!();
+    let relay = Relay::start(&url).await;
+    let pool = antares_sql::store::pg::connect_with(&relay.url, 1, Duration::from_secs(30))
+        .await
+        .expect("pool through the relay");
+    let store = AnyStore::Pg(PgBackend::new(pool.clone()).with_wedged_after(Duration::ZERO));
+    let held = pool.acquire().await.expect("the only slot");
+    assert!(store.ping().await.is_err(), "not ready without a slot");
+    relay.refuse();
+    assert!(
+        !store.wedged().await,
+        "the database answers no fresh connection"
+    );
+    relay.freeze();
+    drop(held);
+    // the release ping waits its bound, then the fresh connection is refused
+    tokio::time::sleep(antares_sql::store::pg::RELEASE_PING * 3).await;
+    assert_eq!(
+        pool.size(),
+        0,
+        "the stalled connection was closed, not pooled"
+    );
 }
 
 /// A lost database is not a leak: a restart fixes nothing, so liveness

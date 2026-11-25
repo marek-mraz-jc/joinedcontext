@@ -1713,6 +1713,7 @@ async fn a_preview_observation_lands_once_per_version_within_its_bounds() {
         json!({ "version": 1, "pages": [{ "label": "Stations", "text": "ok", "h1": 51 }] }),
         json!({ "version": 1, "pages": [page("ok".into())], "failedRequests": [{ "path": "/functions/summary", "status": 200 }] }),
         json!({ "version": 1, "pages": [page("ok".into())], "failedRequests": [{ "path": "p".repeat(257), "status": 500 }] }),
+        json!({ "version": 1, "pages": [page("ok".into())], "failedRequests": vec![json!({ "path": "/f", "status": 500 }); 51] }),
     ] {
         let (status, problem) = call(&app, &cookie, Method::POST, &uri, Some(refused)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
@@ -1858,7 +1859,10 @@ async fn a_code_run_previews_its_files_as_one_document() {
             assert!(body.contains("\"transport\":\"bridge\""));
         }
         // A Portal built without sdk/dist/runtime says so rather than serving half a document.
-        StatusCode::SERVICE_UNAVAILABLE => assert!(body.contains("SDK runtime"), "{body}"),
+        StatusCode::SERVICE_UNAVAILABLE => {
+            assert!(body.contains("SDK runtime"), "{body}");
+            joinedcontext_portal::agents::kit::sdk_built_or_skip(false, "runtime/runtime.json");
+        }
         other => panic!("{other}: {body}"),
     }
 
@@ -2018,7 +2022,7 @@ async fn a_function_of_the_run_answers_through_jc_functions() {
 
     let summary = format!("{}?types=Station", uri("summary"));
     let (status, answer) = call(&app, &cookie, Method::POST, &summary, body.clone()).await;
-    if kit::functions_server().is_none() {
+    if !kit::sdk_built_or_skip(kit::functions_server().is_some(), "functions-server.js") {
         // A Portal built without sdk/dist says so rather than invoking without the SDK.
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
         return;

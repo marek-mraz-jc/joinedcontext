@@ -3,6 +3,7 @@
 # crate commits the new line with it. Lowering a floor is a hand edit with its reason in the commit.
 [crates]
 "agent-proxy" = { lines = 99.79, functions = 99.81 }
+"antares-broker" = { lines = 96.00, functions = 98.00 }
 "antares-bus" = { lines = 99.69, functions = 100.00 }
 "antares-export" = { lines = 100.00, functions = 100.00 }
 "antares-feed" = { lines = 99.80, functions = 99.37 }
@@ -18,7 +19,7 @@
 "antares-odata" = { lines = 99.58, functions = 99.12 }
 "antares-ogc" = { lines = 99.76, functions = 99.52 }
 "antares-ops" = { lines = 99.00, functions = 99.00 }
-"antares-sql" = { lines = 94.31, functions = 93.08 }
+"antares-sql" = { lines = 98.00, functions = 97.50 }
 "antares-sta" = { lines = 100.00, functions = 100.00 }
 "antares-store" = { lines = 99.00, functions = 96.50 }
 "antares-views" = { lines = 99.88, functions = 99.30 }
@@ -69,13 +70,13 @@
 "jc" = { lines = 96.89, functions = 94.68 }
 "jc-audit" = { lines = 100.00, functions = 100.00 }
 "jc-chart" = { lines = 100.00, functions = 100.00 }
-"jc-core" = { lines = 99.85, functions = 99.75 }
+"jc-core" = { lines = 99.95, functions = 99.80 }
 "jc-dcat" = { lines = 97.56, functions = 97.76 }
 "jc-door" = { lines = 97.78, functions = 100.00 }
 "jc-embedder" = { lines = 96.08, functions = 87.50 }
 "jc-http" = { lines = 100.00, functions = 100.00 }
 "jc-limits" = { lines = 100.00, functions = 100.00 }
-"jc-manifest" = { lines = 94.69, functions = 91.11 }
+"jc-manifest" = { lines = 96.87, functions = 94.52 }
 "jc-ngsi-input" = { lines = 100.00, functions = 100.00 }
 "jc-pool" = { lines = 100.00, functions = 100.00 }
 "jc-relationships" = { lines = 100.00, functions = 100.00 }
@@ -84,7 +85,7 @@
 "jc-tabular" = { lines = 100.00, functions = 100.00 }
 "jc-time" = { lines = 100.00, functions = 100.00 }
 "jc-types" = { lines = 100.00, functions = 100.00 }
-"jcctl" = { lines = 95.80, functions = 89.60 }
+"jcctl" = { lines = 97.14, functions = 91.18 }
 "joinedcontext-policy" = { lines = 99.00, functions = 99.40 }
 "joinedcontext-portal" = { lines = 96.50, functions = 95.20 }
 "kaisatsu-admin" = { lines = 98.52, functions = 99.41 }
@@ -112,7 +113,7 @@
 "ogc-cql2" = { lines = 100.00, functions = 100.00 }
 "shako-api" = { lines = 99.58, functions = 99.72 }
 "shako-core" = { lines = 99.53, functions = 96.45 }
-"shako-git" = { lines = 97.12, functions = 77.31 }
+"shako-git" = { lines = 99.90, functions = 99.80 }
 "shako-mcp" = { lines = 100.00, functions = 100.00 }
 "shako-registry" = { lines = 100.00, functions = 100.00 }
 "shako-server" = { lines = 99.54, functions = 100.00 }

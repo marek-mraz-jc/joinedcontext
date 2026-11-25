@@ -114,6 +114,100 @@ fn each_ref_is_checked_out_at_its_commit() {
     assert!(missing.contains("v9.9.9"), "{missing}");
 }
 
+/// An entry outside the forge is cloned with no credential or with the one its secretRef
+/// resolves to; a URL that answers nothing, a mirror that is no git repository and a forge
+/// that went away are refused by the git step that failed.
+#[test]
+fn an_external_repository_is_cloned_and_each_failed_git_step_is_named() {
+    let (forge, _work) = forge("git-anon");
+    let external = |url: &str, secret: &str| {
+        Project::from_yaml(&format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata: {{ name: air, namespace: org }}\n\
+             spec:\n  organizationRef: banskabystrica\n  repository: {{ url: \"{url}\"{secret} }}\n  ref: main\n"
+        ))
+        .expect("parses")
+    };
+    let url = format!("file://{}", forge.join("ovzdusie.git").display());
+    let resolver = checkouts(
+        Path::new("/nonexistent"),
+        temp_dir("git-anon-cache"),
+        &no_secrets,
+    );
+    let tree = resolver
+        .checkout("air", &external(&url, "").spec)
+        .expect("an anonymous clone");
+    assert!(tree.join("project.yaml").is_file());
+
+    let granting = |_: &jc_core::SecretRef| -> Result<jc_manifest::assemble::Basic, String> {
+        Ok(("reader".into(), jc_core::Secret::new("region-read-token")))
+    };
+    let resolver = checkouts(
+        Path::new("/nonexistent"),
+        temp_dir("git-secret-cache"),
+        &granting,
+    );
+    let tree = resolver
+        .checkout(
+            "air",
+            &external(&url, ", secretRef: { name: region-git-ro }").spec,
+        )
+        .expect("a clone with the entry's own credential");
+    assert!(tree.join("project.yaml").is_file());
+
+    let gone = format!(
+        "file://{}",
+        temp_dir("git-anon-gone").join("none.git").display()
+    );
+    let refused = resolver
+        .checkout("gone", &external(&gone, "").spec)
+        .expect_err("nothing answers");
+    assert!(refused.starts_with("git clone"), "{refused}");
+
+    let cache = temp_dir("git-not-a-mirror-cache");
+    std::fs::create_dir_all(cache.join("air.git")).expect("an empty folder for a mirror");
+    let resolver = checkouts(Path::new("/nonexistent"), cache, &no_secrets);
+    let refused = resolver
+        .checkout("air", &external(&url, "").spec)
+        .expect_err("the mirror is no repository");
+    assert!(refused.starts_with("git --git-dir"), "{refused}");
+
+    let cache = temp_dir("git-forge-gone-cache");
+    let resolver = checkouts(&forge, cache, &no_secrets);
+    resolver
+        .checkout("ovzdusie", &entry("main").spec)
+        .expect("the first fetch");
+    std::fs::remove_dir_all(forge.join("ovzdusie.git")).expect("the forge loses the repository");
+    let refused = resolver
+        .checkout("ovzdusie", &entry("main").spec)
+        .expect_err("the update fails");
+    assert!(refused.starts_with("git --git-dir"), "{refused}");
+}
+
+/// An entry naming both a forge repository and a URL, or no repository at all, has no
+/// credential to read it with (CC-89).
+#[test]
+fn an_entry_naming_both_or_no_repository_has_no_credential() {
+    let spec = |repository: &str| {
+        Project::from_yaml(&format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata: {{ name: air, namespace: org }}\n\
+             spec:\n  organizationRef: banskabystrica\n{repository}  ref: main\n"
+        ))
+        .expect("parses")
+        .spec
+    };
+    let both = spec("  repository: { name: air, url: \"https://git.region.sk/air.git\" }\n");
+    assert!(GitCheckouts::credential(&both).is_err_and(|e| e.contains("either")));
+    assert!(GitCheckouts::credential(&spec("")).is_err());
+    let resolver = checkouts(
+        Path::new("/nonexistent"),
+        temp_dir("git-both-cache"),
+        &no_secrets,
+    );
+    assert!(resolver
+        .checkout("air", &both)
+        .is_err_and(|e| e.contains("either")));
+}
+
 /// CC-89: a repository of the forge is read with the forge's credential; one outside it with
 /// its own secretRef or none, and the forge's credential never goes to it.
 #[test]

@@ -16,10 +16,10 @@ use crate::bundle::{collect_all_objects_from_tips, collect_all_tree_objects};
 use crate::pack::{Admit, write_pack};
 use crate::repo::open_isolated;
 use crate::upload_pack::collect_advertised_refs;
+use crate::{git_err, storage_err};
 use gix_hash::ObjectId;
 use shako_core::{ShakoError, ShakoResult};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fmt::Display;
 use std::io::{Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -166,10 +166,9 @@ fn write_bundle(
     pack_dir: &Path,
     admit: Admit<'_>,
 ) -> ShakoResult<Option<PathBuf>> {
-    let spooled = |e: std::io::Error| ShakoError::Storage(format!("compact spool: {e}"));
-    let mut spool = tempfile::tempfile_in(pack_dir).map_err(spooled)?;
+    let mut spool = tempfile::tempfile_in(pack_dir).map_err(storage_err("compact spool"))?;
     write_pack(repo, ids, &mut spool, admit)?;
-    spool.rewind().map_err(spooled)?;
+    spool.rewind().map_err(storage_err("compact spool"))?;
     let mut reader = std::io::BufReader::new(spool);
     let mut progress = gix::progress::Discard;
     let should_interrupt = AtomicBool::new(false);
@@ -185,16 +184,14 @@ fn write_bundle(
             ..Default::default()
         },
     )
-    .map_err(|e| ShakoError::Git(format!("compact write bundle failed: {e}")))?;
-    if let Some(keep) = outcome.keep_path {
-        let _ = std::fs::remove_file(keep);
-    }
-    if let Some(pack) = &outcome.data_path {
-        for file in [pack.clone(), pack.with_extension("idx")] {
-            std::fs::File::open(&file)
-                .and_then(|f| f.sync_all())
-                .map_err(|e| ShakoError::Storage(format!("compact sync: {e}")))?;
-        }
+    .map_err(git_err("compact write bundle failed"))?;
+    let _ = outcome.keep_path.map(std::fs::remove_file);
+    // Given a directory, gix always answers the data path; the index lies beside it.
+    let written = outcome.data_path.iter();
+    for file in written.flat_map(|pack| [pack.clone(), pack.with_extension("idx")]) {
+        std::fs::File::open(&file)
+            .and_then(|f| f.sync_all())
+            .map_err(storage_err("compact sync"))?;
     }
     Ok(outcome.data_path)
 }
@@ -224,14 +221,13 @@ fn write_seen(pack: &Path, seen: &BTreeMap<ObjectId, SystemTime>) -> ShakoResult
 /// keep set. Unlike the advertisement, which skips a ref it cannot load, any ref that fails to
 /// load aborts, since a skipped ref would let compaction drop its history.
 fn ref_targets_strict(repo: &gix::Repository) -> ShakoResult<Vec<ObjectId>> {
-    let unreadable = |e: &dyn Display| ShakoError::Git(format!("compact refs: {e}"));
     let mut targets = Vec::new();
-    if let Some(id) = repo.head().map_err(|e| unreadable(&e))?.id() {
+    if let Some(id) = repo.head().map_err(git_err("compact refs"))?.id() {
         targets.push(id.detach());
     }
-    let platform = repo.references().map_err(|e| unreadable(&e))?;
-    for r in platform.all().map_err(|e| unreadable(&e))? {
-        let r = r.map_err(|e| unreadable(&e))?;
+    let platform = repo.references().map_err(git_err("compact refs"))?;
+    for r in platform.all().map_err(git_err("compact refs"))? {
+        let r = r.map_err(git_err("compact refs"))?;
         if let Some(id) = r.target().try_id() {
             targets.push(id.to_owned());
         }
@@ -275,23 +271,22 @@ pub fn compact_repository(
     let mut objects_to_keep: BTreeSet<ObjectId> = BTreeSet::new();
 
     // Every ref peeled to its end: each tag of a chain, and a tree or blob a tag names.
-    let unreadable = |e: &dyn Display| ShakoError::Git(format!("compact walk: {e}"));
     for &target in &refs {
         let mut at = target;
         loop {
-            let object = repo.find_object(at).map_err(|e| unreadable(&e))?;
+            let object = repo.find_object(at).map_err(git_err("compact walk"))?;
             match object.kind {
                 gix_object::Kind::Tag => {
                     objects_to_keep.insert(at);
-                    let tag = object.try_into_tag().map_err(|e| unreadable(&e))?;
-                    at = tag.target_id().map_err(|e| unreadable(&e))?.detach();
+                    let tag = object.try_into_tag().map_err(git_err("compact walk"))?;
+                    at = tag.target_id().map_err(git_err("compact walk"))?.detach();
                 }
                 gix_object::Kind::Commit => {
                     tips.push(at);
                     break;
                 }
                 gix_object::Kind::Tree => {
-                    let tree = object.try_into_tree().map_err(|e| unreadable(&e))?;
+                    let tree = object.try_into_tree().map_err(git_err("compact walk"))?;
                     collect_all_tree_objects(&repo, &tree, &mut objects_to_keep)?;
                     break;
                 }
@@ -360,7 +355,7 @@ pub fn compact_repository(
     // The new packs reach the disk before an old one leaves what git reads.
     std::fs::File::open(&pack_dir)
         .and_then(|dir| dir.sync_all())
-        .map_err(|e| ShakoError::Storage(format!("compact sync: {e}")))?;
+        .map_err(storage_err("compact sync"))?;
     for old_pack in &old_packs {
         if !written.contains(old_pack) {
             supersede(old_pack);
@@ -455,6 +450,44 @@ mod tests {
             gix_pack::Bundle::at(p, gix_hash::Kind::Sha1)
                 .is_ok_and(|b| b.index.lookup(id).is_some())
         })
+    }
+
+    #[test]
+    fn refused_seen_times_take_the_cruft_pack_with_them() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let pack = tmp.path().join("pack-x.pack");
+        std::fs::write(&pack, b"pack").expect("pack");
+        std::fs::write(pack.with_extension("idx"), b"idx").expect("idx");
+        // A directory with an entry stands where the times would go, so the rename fails.
+        std::fs::create_dir_all(pack.with_extension(SEEN).join("held")).expect("seen dir");
+        let seen = BTreeMap::from([(ObjectId::null(gix_hash::Kind::Sha1), SystemTime::now())]);
+        let err = write_seen(&pack, &seen).expect_err("seen path is a directory");
+        assert!(err.to_string().contains("compact seen times: "), "{err}");
+        assert!(!pack.exists() && !pack.with_extension("idx").exists());
+    }
+
+    #[test]
+    fn a_symbolic_branch_and_an_unreadable_young_pack_do_not_stop_compaction() {
+        use crate::testutil::{point, put, repo};
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = repo(tmp.path(), 1, true);
+        put(&path, "main", "a.txt", b"a\n");
+        point(&path, "refs/heads/alias", "ref: refs/heads/main");
+        let handle = open_isolated(&path).expect("open");
+        let targets = ref_targets_strict(&handle).expect("targets");
+        let main = handle
+            .find_reference("refs/heads/main")
+            .expect("main")
+            .id()
+            .detach();
+        assert!(targets.iter().all(|t| *t == main), "only direct targets");
+
+        let broken = path.join(format!("objects/pack/pack-{}.pack", "0".repeat(40)));
+        std::fs::write(&broken, b"PACK broken").expect("pack");
+        std::fs::write(broken.with_extension("idx"), b"no index").expect("idx");
+        let outcome = compact_repository(&path, DAY, &mut crate::testutil::admit_all)
+            .expect("compact skips the unreadable pack");
+        assert!(outcome.objects_packed > 0);
     }
 
     #[test]

@@ -1048,6 +1048,82 @@ async fn restore_refuses_a_binary_change_and_a_build_equal_to_the_default_branch
     assert!(dispatches(&shako).await.is_empty());
 }
 
+/// T-7827: a forge that loses a file of the build's commit, or fails reading it, gets a 503 naming
+/// the App, and nothing is proposed.
+#[tokio::test]
+async fn restore_is_503_when_the_forge_loses_or_refuses_a_file_of_the_build() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    builds_recorded(&db).await;
+    const URI: &str = "/api/v1/projects/helsinki/apps/bikes/restore";
+    for answer in [404, 500] {
+        let shako = forge_with_builds().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", "'src/App.tsx'"))
+            .respond_with(ResponseTemplate::new(answer))
+            .with_priority(1)
+            .mount(&shako)
+            .await;
+        let state = lane_state(&shako, true, &db, &work);
+        let refused = send(
+            &state,
+            person("jana"),
+            "POST",
+            URI,
+            Some(json!({ "commit": OLD })),
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{answer}: {}",
+            refused.text
+        );
+        assert!(
+            refused.text.contains("did not restore 'bikes'"),
+            "{answer}: {}",
+            refused.text
+        );
+        assert!(posted(&shako, "Shako.OpenPullRequest").await.is_empty());
+    }
+}
+
+/// T-7827: Rebuild against a forge that does not say where the default branch stands is a 503
+/// naming the App, and nothing is queued.
+#[tokio::test]
+async fn rebuild_is_503_when_the_forge_does_not_answer_for_the_head() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let shako = forge_with_a_run().await;
+    let state = lane_state(&shako, true, &db, &work);
+    let refused = send(
+        &state,
+        person("jana"),
+        "POST",
+        "/api/v1/projects/helsinki/apps/bikes/rebuild",
+        None,
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        refused.text
+    );
+    assert!(
+        refused
+            .text
+            .contains("did not answer for the build of 'bikes'"),
+        "{}",
+        refused.text
+    );
+    assert!(build_records::next_pending(&db)
+        .await
+        .expect("read")
+        .is_none());
+}
+
 /// F-POR1-005: Rebuild is judged on the App itself. A grant that proposes only the App `trams`
 /// reads `bikes` but does not rebuild or restore it.
 #[tokio::test]

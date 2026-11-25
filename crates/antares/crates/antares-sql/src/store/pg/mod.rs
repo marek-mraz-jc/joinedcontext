@@ -453,6 +453,11 @@ pub(crate) async fn begin(
     tx
 }
 
+/// A stored value this release cannot read, as sqlx's decode error.
+pub(crate) fn undecodable(e: impl std::error::Error + Send + Sync + 'static) -> sqlx::Error {
+    sqlx::Error::Decode(Box::new(e))
+}
+
 fn bypasses(probe: Result<bool, sqlx::Error>) -> bool {
     probe.unwrap_or_else(|e| {
         tracing::error!(

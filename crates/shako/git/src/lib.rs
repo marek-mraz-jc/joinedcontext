@@ -42,6 +42,21 @@ pub use upload_pack::{
     collect_advertised_refs, handle_upload_pack, read_negotiation,
 };
 
+/// Maps a failed gix call to `ShakoError::Git` with `what` naming the step: one error arm for
+/// every call site, so the arm is the same code wherever a repository read fails.
+pub(crate) fn git_err<E: std::fmt::Display>(
+    what: &'static str,
+) -> impl FnOnce(E) -> shako_core::ShakoError {
+    move |e| shako_core::ShakoError::Git(format!("{what}: {e}"))
+}
+
+/// Maps a failed file system call to `ShakoError::Storage` with `what` naming the step.
+pub(crate) fn storage_err<E: std::fmt::Display>(
+    what: &'static str,
+) -> impl FnOnce(E) -> shako_core::ShakoError {
+    move |e| shako_core::ShakoError::Storage(format!("{what}: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,6 +150,13 @@ mod tests {
 
     /// Contract S4: a pack is named by its content, so a refused repeat of an accepted push
     /// carries the stored pack's name. Refusing it keeps what the accepted push stored.
+    #[test]
+    fn the_refusing_writer_refuses_a_flush_too() {
+        use std::io::Write as _;
+        let err = testutil::Refusing.flush().expect_err("disk full");
+        assert_eq!(err.to_string(), "disk full");
+    }
+
     #[test]
     fn a_refused_repeat_of_a_push_keeps_the_accepted_objects() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -685,6 +707,7 @@ pub(crate) mod testutil {
         read_file_at_ref, set_ref_direct,
     };
     use gix_hash::ObjectId;
+    use gix_object::tree::EntryKind;
     use shako_core::{
         Action, InstanceId, LocalAuthorizer, OrgId, Principal, RefPolicy, RepoId, RequestCtx,
         RoleBinding, ShakoResult, Subject,
@@ -864,6 +887,83 @@ pub(crate) mod testutil {
             &spooled(body),
             &mut admit_all,
         )
+    }
+
+    /// An object id no repository holds.
+    pub(crate) const GONE: &str = "1111111111111111111111111111111111111111";
+
+    /// Writes `bytes` as a loose object of `kind`, unchecked: a malformed tree or commit stays one.
+    pub(crate) fn raw(repo: &Path, kind: gix_object::Kind, bytes: &[u8]) -> ObjectId {
+        let handle = open_isolated(repo).expect("open");
+        gix_object::Write::write_buf(&handle, kind, bytes).expect("write object")
+    }
+
+    /// Writes a tree of `(mode, name, id)` entries; no id is checked.
+    pub(crate) fn tree(repo: &Path, entries: &[(EntryKind, &str, ObjectId)]) -> ObjectId {
+        let mut tree = gix_object::Tree {
+            entries: entries
+                .iter()
+                .map(|&(kind, name, oid)| gix_object::tree::Entry {
+                    mode: kind.into(),
+                    filename: name.into(),
+                    oid,
+                })
+                .collect(),
+        };
+        tree.entries.sort();
+        let handle = open_isolated(repo).expect("open");
+        handle.write_object(&tree).expect("write tree").detach()
+    }
+
+    /// Writes a commit of `tree` on `parents`; no id is checked.
+    pub(crate) fn commit(repo: &Path, tree: ObjectId, parents: &[ObjectId]) -> ObjectId {
+        let sig = gix::actor::Signature {
+            name: "t".into(),
+            email: "t@example.org".into(),
+            time: gix::date::Time::new(1_700_000_000, 0),
+        };
+        let commit = gix_object::Commit {
+            tree,
+            parents: parents.iter().copied().collect(),
+            author: sig.clone(),
+            committer: sig,
+            encoding: None,
+            message: "crafted\n".into(),
+            extra_headers: Vec::new(),
+        };
+        let handle = open_isolated(repo).expect("open");
+        handle.write_object(&commit).expect("write commit").detach()
+    }
+
+    /// Writes the loose ref file `refname` holding `content` (an id or `ref: <target>`), so no
+    /// check of the target runs.
+    pub(crate) fn point(repo: &Path, refname: &str, content: &str) {
+        let file = repo.join(refname);
+        std::fs::create_dir_all(file.parent().expect("ref dir")).expect("mkdir");
+        std::fs::write(file, format!("{content}\n")).expect("ref");
+    }
+
+    /// Holds `refname`'s lock file as a concurrent writer would.
+    pub(crate) fn lock(repo: &Path, refname: &str) {
+        let file = repo.join(format!("{refname}.lock"));
+        std::fs::create_dir_all(file.parent().expect("ref dir")).expect("mkdir");
+        std::fs::write(file, "").expect("lock");
+    }
+
+    /// Replaces the loose object `id` with bytes that do not inflate.
+    pub(crate) fn corrupt(repo: &Path, id: ObjectId) {
+        let hex = id.to_string();
+        let file = repo.join("objects").join(&hex[..2]).join(&hex[2..]);
+        std::fs::remove_file(&file).expect("loose object");
+        std::fs::write(&file, b"not zlib").expect("garbage");
+    }
+
+    /// The raw pack of exactly `ids` from `repo`, so a crafted graph travels as it is.
+    pub(crate) fn pack_of_ids(repo: &Path, ids: &[ObjectId]) -> Vec<u8> {
+        let handle = open_isolated(repo).expect("open");
+        let mut out = Vec::new();
+        crate::write_pack(&handle, ids, &mut out, &mut admit_all).expect("pack");
+        out
     }
 
     /// A writer that refuses every byte, for the error arm of each pkt-line and pack write.

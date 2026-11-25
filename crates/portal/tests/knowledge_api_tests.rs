@@ -416,6 +416,16 @@ async fn reads_and_an_inclusion_are_forwarded_and_bounded() {
     )
     .await;
     assert_eq!(bad_name.status, 404);
+    // A project name that is no DNS label is no project, even to an administrator (T-7827).
+    let bad_project = common::send(
+        &r.state,
+        admin(),
+        "GET",
+        "/api/v1/projects/Not_A_Project/knowledge/conversations",
+        None,
+    )
+    .await;
+    assert_eq!(bad_project.status, 404, "{}", bad_project.text);
     assert_eq!(
         asked(&r.assistant).await,
         before,

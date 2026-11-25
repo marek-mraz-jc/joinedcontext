@@ -201,7 +201,7 @@ async fn invocations(runtime: &MockServer) -> Vec<Value> {
 /// The server module is embedded from `sdk/dist`; a Portal built without it says 503, which the
 /// preview's own case covers, and nothing below would reach the runtime.
 fn runs_functions() -> bool {
-    kit::functions_server().is_some()
+    kit::sdk_built_or_skip(kit::functions_server().is_some(), "functions-server.js")
 }
 
 /// AP-84, SDK-23: the build's own `functions.js` runs, with the caller's edge token and the

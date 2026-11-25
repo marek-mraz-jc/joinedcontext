@@ -382,18 +382,47 @@ impl axum::response::IntoResponse for ProblemDetails {
         let status = axum::http::StatusCode::from_u16(self.status)
             .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
         let headers = [(axum::http::header::CONTENT_TYPE, PROBLEM_JSON)];
-        let body = serde_json::to_string(&self).unwrap_or_else(|_| {
-            format!(
-                "{{\"type\":\"{PROBLEM_TYPE_BASE}internal-error\",\"title\":\"Internal Server Error\",\"status\":500}}"
-            )
-        });
-        (status, headers, body).into_response()
+        // The header after the body: problem+json replaces Json's application/json.
+        (status, headers, axum::Json(self)).into_response()
     }
 }
 
 #[cfg(test)]
 mod edge_tests {
     use super::*;
+
+    #[cfg(feature = "axum")]
+    #[tokio::test]
+    async fn a_problem_answers_problem_json_with_its_status_and_body() {
+        use axum::response::IntoResponse;
+        let response = ProblemDetails::forbidden()
+            .with_detail("not yours")
+            .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(
+            response.headers()[axum::http::header::CONTENT_TYPE],
+            PROBLEM_JSON
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1 << 16)
+            .await
+            .expect("a body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
+        assert_eq!(json["status"], 403);
+        assert_eq!(json["detail"], "not yours");
+    }
+
+    #[cfg(feature = "axum")]
+    #[test]
+    fn a_problem_with_a_status_http_lacks_answers_500() {
+        use axum::response::IntoResponse;
+        let mut problem = ProblemDetails::internal();
+        problem.status = 1000;
+        let response = problem.into_response();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+        );
+    }
 
     #[test]
     fn an_unknown_slug_carries_no_hint() {

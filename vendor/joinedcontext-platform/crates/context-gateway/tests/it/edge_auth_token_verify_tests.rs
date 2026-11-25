@@ -380,6 +380,38 @@ fn a_token_without_an_aud_claim_is_refused() {
     );
 }
 
+/// Identifying for an Organization with its own realm (T-7131) reads that realm's tokens there
+/// and nowhere else, and still reads this realm's tokens for it; the audience is not asked.
+#[test]
+fn identifying_for_an_organization_reads_its_own_realm_and_this_one() {
+    const OWN_ISSUER: &str = "https://sign-in.acme.example/realms/acme";
+    let realm = Realm::new();
+    let own_realm = Realm::new();
+    let verifier = realm.verifier().with_organization("acme", OWN_ISSUER);
+    let held = verifier.organizations();
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].1.replace_keys(own_realm.published_jwks()), 1);
+
+    let ours = realm.mint(&claims(json!("another-endpoint"), 300));
+    assert!(verifier.identify_for(Some("acme"), &ours).is_ok());
+    assert!(verifier.identify_for(None, &ours).is_ok());
+    assert!(verifier.identify_for(Some("unknown-org"), &ours).is_ok());
+
+    let mut own_claims = claims(json!(SLUG), 300);
+    own_claims["iss"] = json!(OWN_ISSUER);
+    let theirs = own_realm.mint(&own_claims);
+    assert!(verifier.identify_for(Some("acme"), &theirs).is_ok());
+    assert!(
+        verifier.identify_for(None, &theirs).is_err(),
+        "another realm's token is read only for its own Organization"
+    );
+    assert!(verifier.identify_for(Some("other"), &theirs).is_err());
+    assert_eq!(
+        refusal(verifier.identify_for(Some("acme"), "not-a-jwt")),
+        Err(Rejected::Malformed)
+    );
+}
+
 /// A signature is checked once per token (T-5290); what a remembered token is still checked
 /// for on every call is the audience asked for.
 #[test]

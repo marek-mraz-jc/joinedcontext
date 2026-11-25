@@ -1246,29 +1246,7 @@ mod tests {
 
     /// Everything the Portal logs while `run` runs, as text.
     async fn logged<F: std::future::Future>(run: F) -> (F::Output, String) {
-        #[derive(Clone, Default)]
-        struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-        impl std::io::Write for Sink {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let sink = Sink::default();
-        let writer = sink.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_writer(move || writer.clone())
-            .finish();
-        let guard = tracing::subscriber::set_default(subscriber);
-        let out = run.await;
-        drop(guard);
-        std::io::Write::flush(&mut sink.clone()).expect("a sink in memory flushes");
-        let text = String::from_utf8_lossy(&sink.0.lock().unwrap()).into_owned();
-        (out, text)
+        crate::test_log::logged(tracing::level_filters::LevelFilter::TRACE, run).await
     }
 
     async fn render_answering(server: &MockServer) {
@@ -1780,6 +1758,18 @@ mod tests {
             "var-run"
         );
         assert_eq!(refused_field(&[("var-run", "a\nb")]), "var-run");
+        // T-7835: a constant is no variable a person picks; All only where the variable offers it.
+        assert_eq!(refused_field(&[("var-zone", "$__all")]), "var-zone");
+        let mut constant = board();
+        if let Some(list) = constant["templating"]["list"].as_array_mut() {
+            list.push(json!({ "name": "env", "type": "constant", "query": "prod",
+                              "current": { "value": "prod" } }));
+        }
+        assert!(matches!(
+            checked_query(&constant, &asked(&[("var-env", "test")]).0),
+            Err(ApiError::Unprocessable { errors, .. }) if errors[0].starts_with("var-env")
+        ));
+        assert_eq!(current_of(&constant["templating"]["list"][4]), ["prod"]);
         let all = checked_query(
             &dashboard,
             &asked(&[("var-station", "$__all"), ("var-run", "r.1")]).0,
@@ -1788,6 +1778,24 @@ mod tests {
         // All and each value go to daiya as asked; daiya formats them from the saved variable.
         assert!(all.contains(&("var-station".into(), "$__all".into())));
         assert!(all.contains(&("var-run".into(), "r.1".into())));
+    }
+
+    /// T-7835: one panel reads one members-only Endpoint with the person's token; two at once
+    /// is the panel's error line, sent before any exchange.
+    #[tokio::test]
+    async fn a_panel_reading_two_members_only_endpoints_is_refused_before_any_exchange() {
+        let state = AppState::new(Config::for_tests(), None);
+        let refused = person_for(
+            &state,
+            &HeaderMap::new(),
+            &["closedslug".to_owned(), "otherslug".to_owned()],
+        )
+        .await;
+        assert!(
+            matches!(&refused, Err(line) if line.contains("2 members-only Endpoints")),
+            "{refused:?}"
+        );
+        assert_eq!(person_for(&state, &HeaderMap::new(), &[]).await, Ok(None));
     }
 
     #[test]

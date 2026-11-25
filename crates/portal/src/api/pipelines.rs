@@ -2077,6 +2077,27 @@ uptime_seconds 900
         assert!((p99 - 19.8).abs() < 1e-9, "{p99}");
     }
 
+    /// T-7835: two drop series of one stream (two fallback paths) add up; a bucket line with no
+    /// `le` bound is no bucket; the rules of a step and of the runner are fixed there.
+    #[test]
+    fn drops_add_up_a_bucket_without_a_bound_is_ignored_and_rules_name_their_fix() {
+        let drops = concat!(
+            "output_sent{label=\"outcome_drop\",path=\"a\",stream=\"p-a\"} 2\n",
+            "output_sent{label=\"outcome_drop\",path=\"b\",stream=\"p-a\"} 3\n",
+        );
+        assert_eq!(dropped_reports(drops, "p-a"), Some(5));
+        let body = concat!(
+            "output_latency_ns_bucket{stream=\"aq\"} 7\n",
+            "output_latency_ns_bucket{stream=\"aq\",le=\"0.02\"} 10\n",
+            "output_latency_ns_bucket{stream=\"aq\",le=\"+Inf\"} 10\n",
+        );
+        let p99 = scrape(body, "aq", String::new()).latency_p99_ms;
+        assert!(p99.is_some_and(|p99| (p99 - 19.8).abs() < 1e-9), "{p99:?}");
+        assert_eq!(fix_of("step"), "step");
+        assert_eq!(fix_of("runner"), "runner");
+        assert_eq!(fix_of("sh:in"), "mapping");
+    }
+
     #[test]
     fn a_rank_past_the_last_finite_bound_answers_that_bound() {
         let body = concat!(

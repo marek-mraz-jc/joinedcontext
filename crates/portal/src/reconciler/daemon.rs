@@ -4938,6 +4938,8 @@ output_error{stream="kpi"} 6
             .with_ansi(false)
             .with_writer(move || writer.clone())
             .finish();
+        // The global test subscriber keeps a callsite another test registers from caching `never`.
+        crate::test_log::install();
         let staged =
             tracing::subscriber::with_default(subscriber, || stageable(content).expect("YAML"));
         std::io::Write::flush(&mut log.clone()).expect("an in-memory log flushes");

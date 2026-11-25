@@ -1,8 +1,9 @@
 # Fuzzing jc-core's outside inputs under libFuzzer (T-7745, T-7766): manifests of every kind, names,
-# URNs and hosts, cron expressions, the manifest formatter, KPI formulas, LinkML models and the
-# Portal stylesheet. `cargo +nightly fuzz run <target> --target x86_64-unknown-linux-gnu
-# fuzz/corpus/<target> fuzz/seeds/<target> -- -max_total_time=300 -rss_limit_mb=2048`; seeds/ is the
-# committed seed corpus. Not a workspace member.
+# URNs and hosts, cron expressions, the manifest formatter, KPI formulas, LinkML models, the Portal
+# stylesheet and a project repository's manifests as they are mounted (T-7831).
+# `cargo +nightly fuzz run <target> --target x86_64-unknown-linux-gnu fuzz/corpus/<target>
+# fuzz/seeds/<target> -- -max_total_time=300 -rss_limit_mb=2048`; seeds/ is the committed seed
+# corpus. Not a workspace member.
 [package]
 name = "jc-core-fuzz"
 version = "0.0.0"
@@ -17,6 +18,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 jc-core = { path = ".." }
+serde_json = "1"
 
 [[bin]]
 name = "portal_css"
@@ -66,3 +68,21 @@ path = "fuzz_targets/linkml.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "project_mount"
+path = "fuzz_targets/project_mount.rs"
+test = false
+doc = false
+bench = false
+
+# The platform workspace's patches (its Cargo.toml), from here: without them jc-core links the
+# released ngsild-ql of the git tag, which lacks what jc-core calls (T-7831).
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../../../../crates/antares/crates/antares-ql" }
+ngsild-jsonld = { path = "../../../../../crates/antares/crates/antares-jsonld" }
+ngsild-model = { path = "../../../../../crates/antares/crates/antares-model" }
+
+[patch.crates-io]
+rstar = { path = "../../../../../crates/antares/vendor/rstar" }
+geo-types = { path = "../../../../../crates/antares/vendor/geo-types" }
