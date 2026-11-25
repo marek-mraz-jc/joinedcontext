@@ -313,6 +313,40 @@ fn plan_reports_what_apply_would_do_and_writes_nothing() {
     assert!(after.render().contains("unchanged ovzdusie"));
 }
 
+/// `plan` and `drift` with --gateway-url compare the seed entities through the gateway: exit 2
+/// while one is missing (text or JSON), 0 once the replay wrote them.
+#[test]
+fn plan_and_drift_commands_compare_the_seeds_through_the_gateway() {
+    let platform = Arc::new(Mutex::new(Platform::default()));
+    let base = spawn(Arc::clone(&platform));
+    let repo = checkout("seed-cli");
+    let token = common::temp_dir("seed-cli-token").join("token");
+    std::fs::write(&token, format!("{TOKEN}\n")).expect("the token file");
+    let run = |verb: &str, extra: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .args([verb, "--repo-dir"])
+            .arg(&repo)
+            .args(["--gateway-url", &base, "--token-file"])
+            .arg(&token)
+            .args(extra)
+            .output()
+            .expect("jcctl runs")
+    };
+    let planned = run("plan", &[]);
+    assert_eq!(planned.status.code(), Some(2), "{planned:?}");
+    assert!(String::from_utf8_lossy(&planned.stdout).contains("create "));
+    let drifted = run("drift", &[]);
+    assert_eq!(drifted.status.code(), Some(2), "{drifted:?}");
+    let drifted = run("drift", &["--json"]);
+    assert_eq!(drifted.status.code(), Some(2), "{drifted:?}");
+    let report: serde_json::Value = serde_json::from_slice(&drifted.stdout).expect("JSON");
+    assert_eq!(report["summary"]["drifted"], 3);
+
+    seed::apply(&repo, &gateway_at(&base)).expect("the replay runs");
+    assert_eq!(run("plan", &["--json"]).status.code(), Some(0));
+    assert_eq!(run("drift", &[]).status.code(), Some(0));
+}
+
 #[test]
 fn an_entity_changed_in_the_repository_is_the_only_one_written_again() {
     let (platform, gateway) = platform();

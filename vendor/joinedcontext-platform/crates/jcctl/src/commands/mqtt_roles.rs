@@ -206,4 +206,66 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// An account two roles list is read once and bound twice; a binding it already holds is not
+    /// added again; an account without a role list gets one; a broker without roles and other
+    /// kinds are left alone; an account file of several documents is refused by name.
+    #[test]
+    fn bindings_are_added_once_and_a_multi_document_file_is_refused() {
+        let dir = std::env::temp_dir().join(format!("jcctl-mqtt-roles-2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let held = account("held").replace(
+            "    - role: space-writer\n      scope:\n        project: air\n",
+            "    - role: mqtt/air/sensor\n      scope:\n        project: air\n",
+        );
+        write(&dir, "projects/air/access/serviceaccounts/held.yaml", &held);
+        let bare = account("bare").replace(
+            "  roles:\n    - role: space-writer\n      scope:\n        project: air\n",
+            "",
+        );
+        write(&dir, "projects/air/access/serviceaccounts/bare.yaml", &bare);
+        write(
+            &dir,
+            "projects/air/spaces/air/space.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: air\n  namespace: air\nspec:\n  isSandbox: false\n",
+        );
+        write(
+            &dir,
+            "projects/air/mqttbrokers/quiet.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: quiet\n  namespace: air\nspec: {}\n",
+        );
+        write(
+            &dir,
+            "projects/air/mqttbrokers/air.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: air\n  namespace: air\nspec:\n  roles:\n    - name: sensor\n      serviceAccounts: [held, bare]\n      publish: [\"air/${clientid}/pm10\"]\n    - name: camera\n      serviceAccounts: [bare]\n      publish: [\"cams/${clientid}\"]\n",
+        );
+        let outcome = run(&dir).expect("runs");
+        assert!(outcome.left.is_empty(), "{outcome:?}");
+        let read = |name: &str| {
+            std::fs::read_to_string(
+                dir.join(format!("projects/air/access/serviceaccounts/{name}.yaml")),
+            )
+            .expect("read")
+        };
+        assert_eq!(read("held").matches("mqtt/air/sensor").count(), 1);
+        let bare = read("bare");
+        assert!(
+            bare.contains("mqtt/air/sensor") && bare.contains("mqtt/air/camera"),
+            "{bare}"
+        );
+
+        write(
+            &dir,
+            "projects/air/mqttbrokers/air.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: air\n  namespace: air\nspec:\n  roles:\n    - name: sensor\n      serviceAccounts: [held]\n      publish: [\"air/${clientid}/pm10\"]\n",
+        );
+        write(
+            &dir,
+            "projects/air/access/serviceaccounts/held.yaml",
+            &format!("{held}---\n{}", account("other")),
+        );
+        let refused = run(&dir).expect_err("several documents");
+        assert!(refused.contains("migrated by hand"), "{refused}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

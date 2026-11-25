@@ -84,6 +84,20 @@ fn a_changed_member_is_an_update_carrying_its_field_diff() {
     );
     assert!(text.contains("  unchanged "), "{text}");
 
+    let bare = ENDPOINT.replace("  enabledRepresentations: [\"ngsi-ld\", \"csv\"]\n", "");
+    let platform = InMemory::new()
+        .with(manifest(ORG))
+        .with(manifest(PROJECT))
+        .with(manifest(SPACE))
+        .with(manifest(&bare));
+    let text = compute(&load(&dir), &platform)
+        .expect("plan computes")
+        .render();
+    assert!(
+        text.contains("      spec.enabledRepresentations: (absent) -> "),
+        "{text}"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 

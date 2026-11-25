@@ -166,6 +166,70 @@ fn the_organisation_domain_of_every_entity_urn_is_rewritten() {
     let _ = std::fs::remove_dir_all(&dest);
 }
 
+/// Each conflict policy has its name and its outcome: an existing space is replaced, renamed
+/// or skipped as asked, and an unknown policy name is refused.
+#[test]
+fn each_conflict_policy_says_what_it_did() {
+    assert_eq!(Conflict::parse("fail"), Some(Conflict::Fail));
+    assert_eq!(Conflict::parse("overwrite"), None);
+    for (name, word) in [
+        ("replace", "REPLACED"),
+        ("rename", "RENAMED"),
+        ("skip", "SKIPPED"),
+    ] {
+        let source = temp_dir(&format!("import-policy-{name}"));
+        write_file(
+            &source,
+            "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+            common::SPACE,
+        );
+        let dest = destination(&format!("import-policy-{name}-dest"));
+        let options = Options {
+            namespace: Some("ovzdusie".to_owned()),
+            conflict: Conflict::parse(name).expect("a policy"),
+            ..Options::default()
+        };
+        let report = collect(&source, &dest, &options).expect("import collects");
+        let outcomes: Vec<&str> = report.imported.iter().map(|i| i.outcome.as_str()).collect();
+        assert_eq!(outcomes, [word], "{name}");
+        let _ = std::fs::remove_dir_all(&source);
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+}
+
+/// One file is a bundle too; its empty documents are skipped, a document that is no manifest
+/// is a rejection the JSON report lists with its source, and the same resource twice is an
+/// error naming it.
+#[test]
+fn a_single_file_bundle_with_a_broken_document_is_rejected_by_source() {
+    let dir = temp_dir("import-file");
+    let file = dir.join("bundle.yaml");
+    std::fs::write(
+        &file,
+        format!("---\n---\n{}---\nkind: [unclosed\n", common::SPACE),
+    )
+    .expect("bundle");
+    let dest = destination("import-file-dest");
+    let report = collect(&file, &dest, &options("ovzdusie")).expect("import collects");
+    assert!(!report.is_acceptable());
+    let json = report.to_json();
+    let rejections = json["rejections"].as_array().expect("a list");
+    assert!(
+        rejections.iter().any(|r| r["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("does not parse"))
+            && r["source"]
+                .as_str()
+                .is_some_and(|s| s.ends_with("bundle.yaml:10"))),
+        "{json}"
+    );
+
+    std::fs::write(&file, format!("{}---\n{}", common::SPACE, common::SPACE)).expect("twice");
+    assert!(collect(&file, &dest, &options("ovzdusie")).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&dest);
+}
+
 #[test]
 fn an_anchored_id_pattern_moves_to_the_importing_organisation() {
     // T-0826: a registration and a Policy anchor their coverage with a pattern, which is a URN
