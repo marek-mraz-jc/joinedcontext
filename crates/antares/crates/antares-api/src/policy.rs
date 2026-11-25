@@ -2891,12 +2891,11 @@ mod tests {
             ))))
         }
         fn pre_notify(&self, _s: &Subject, _sub: &Value, n: &mut Value) -> NotifyDecision {
-            if let Some(data) = n.get_mut("data").and_then(Value::as_array_mut) {
-                for entity in data {
-                    if let Some(o) = entity.as_object_mut() {
-                        o.remove("brand");
-                    }
-                }
+            let data = n.get_mut("data").and_then(Value::as_array_mut);
+            for entity in data.into_iter().flatten() {
+                entity.as_object_mut().into_iter().for_each(|o| {
+                    o.remove("brand");
+                });
             }
             NotifyDecision::Filter(Box::new(Filter {
                 omit: vec!["brand".into()],
@@ -2922,9 +2921,7 @@ mod tests {
             Box::pin(std::future::ready(Decision::Allow))
         }
         fn pre_notify(&self, _s: &Subject, _sub: &Value, n: &mut Value) -> NotifyDecision {
-            if let Some(o) = n.as_object_mut() {
-                o.insert("stowaway".into(), json!(true));
-            }
+            n["stowaway"] = json!(true);
             NotifyDecision::Deliver
         }
     }
@@ -3341,6 +3338,47 @@ mod tests {
             Some("true")
         );
         assert!(headers.get("NGSILD-Warning").is_none(), "only when set");
+    }
+
+    /// G6: a bare `timeproperty=observedAt` asks no window of its own, so
+    /// the narrowing's window is the whole of it.
+    #[test]
+    fn a_bare_timeproperty_takes_the_narrowings_window() {
+        let t = |s: &str| TimeBound::At(s.parse().expect("instant"));
+        let between = Filter {
+            temporal: Box::new([Window {
+                from: Some(t("2026-01-01T01:00:00Z")),
+                to: Some(t("2026-01-01T02:00:00Z")),
+            }]),
+            ..Filter::default()
+        };
+        let params =
+            std::collections::HashMap::from([("timeproperty".to_owned(), "observedAt".to_owned())]);
+        let out = between.narrow_window(&params, false).expect("a window");
+        assert_eq!(out["timerel"], "between");
+        assert_eq!(out["timeAt"], "2026-01-01T01:00:00.000Z");
+        assert_eq!(out["endTimeAt"], "2026-01-01T02:00:00.000Z");
+    }
+
+    /// The seam's small defaults: no identity unless an engine names one,
+    /// a rule selects nothing without a type, and stripping a document that
+    /// is no object leaves it.
+    #[test]
+    fn the_seams_defaults_name_nobody_and_select_nothing() {
+        let subject = Subject {
+            tenant: antares_model::TenantId::default(),
+            headers: Vec::new(),
+        };
+        assert_eq!(Widening.identity(&subject), None);
+        let rule = Rule {
+            types: vec!["Car".into()],
+            ..Rule::default()
+        };
+        assert!(!rule.selects(&json!({"id": "urn:ngsi-ld:Car:1"})));
+        assert!(rule.selects(&json!({"id": "urn:ngsi-ld:Car:1", "type": "Car"})));
+        let mut scalar = json!(5);
+        strip_internal(&mut scalar);
+        assert_eq!(scalar, json!(5));
     }
 
     /// G6: the request's window clamped to the narrowing's, written back
@@ -3872,9 +3910,7 @@ mod tests {
             ],
         };
         let mut doc = json!({"id": "urn:ngsi-ld:Subscription:1", "type": "Subscription"});
-        if let (Some(o), Some(member)) = (doc.as_object_mut(), subject_member(&subject)) {
-            o.insert(SUBJECT_MEMBER.into(), member);
-        }
+        doc[SUBJECT_MEMBER] = subject_member(&subject).expect("a subject member");
         let stored = stored_subject(&tenant, &doc);
         assert_eq!(stored.view(), Some("ana"));
         assert!(belongs_to(&doc, &subject));
