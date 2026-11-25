@@ -399,6 +399,36 @@ async fn the_page_is_escaped_holds_nothing_internal_and_comes_from_the_minute_s_
     drop(database).await;
 }
 
+/// The page in English, its stylesheet, and a 503 that names no internal error when the store
+/// cannot be read.
+#[tokio::test]
+async fn the_page_speaks_english_has_its_stylesheet_and_says_when_the_store_is_down() {
+    let (router, _gateway, _realm, database) = app("context_style").await;
+    let (status, headers, css) = get(&router, "/d/context.css", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("text/css; charset=utf-8")
+    );
+    assert!(!css.is_empty());
+    let (status, _, page) = get(&router, "/d/bb-doprava/context?lang=en", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("What this assistant knows"), "{page}");
+    drop(database).await;
+
+    let (app, _gateway, _realm, database) = app("context_down").await;
+    database.1.close().await;
+    for uri in ["/d/bb-doprava/context", "/api/v1/d/bb-doprava/context"] {
+        let (status, _, problem) = get(&app, uri, None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {problem}");
+        assert!(problem.contains("try again shortly"), "{problem}");
+        assert!(!problem.contains("pool"), "{problem}");
+    }
+    drop(database).await;
+}
+
 #[tokio::test]
 async fn an_internal_disabled_or_unknown_deployment_has_no_public_context() {
     let (app, _gateway, _realm, database) = app("context_missing").await;

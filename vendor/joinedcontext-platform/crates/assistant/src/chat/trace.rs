@@ -491,6 +491,27 @@ impl Trace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A long text is cut on a character boundary, a long array whose first rows still do not fit
+    /// is cut as text, and each says its whole size.
+    #[test]
+    fn kept_cuts_on_a_character_boundary_and_says_the_whole_size() {
+        let short = "ok";
+        assert_eq!(kept(short), (short.to_owned(), None));
+        // "é" is two bytes, straddling the limit.
+        let text = format!("{}é{}", "a".repeat(KEPT_BYTES - 1), "b".repeat(10));
+        let (cut, whole) = kept(&text);
+        assert_eq!(cut.len(), KEPT_BYTES - 1);
+        assert_eq!(whole, Some(text.len() as u64));
+        let big = format!("\"{}\"", "x".repeat(KEPT_BYTES));
+        let rows = format!("[{big},{big}]");
+        let (cut, whole) = kept(&rows);
+        assert_eq!(cut.len(), KEPT_BYTES);
+        assert!(cut.starts_with("[\"x"));
+        assert_eq!(whole, Some(rows.len() as u64));
+        assert_eq!(cut_chars("žltý", 2), "žl…");
+        assert_eq!(cut_chars("ok", 2), "ok");
+    }
     use serde_json::json;
 
     fn completion(cost: Option<u64>) -> Completion {
@@ -758,6 +779,7 @@ mod tests {
         }
         let lines = Lines::default();
         let writer = lines.clone();
+        std::io::Write::flush(&mut lines.clone()).expect("the log flushes");
         let subscriber = tracing_subscriber::fmt()
             .with_ansi(false)
             .with_writer(move || writer.clone())
