@@ -371,6 +371,53 @@ async fn a_name_that_gives_no_public_id_is_refused_naming_the_domain() {
     }
 }
 
+/// A body that is no mint request is the caller's 400; a Portal without a database answers 503
+/// that says where ids are kept (T-7813).
+#[tokio::test]
+async fn a_body_that_is_no_request_and_a_portal_without_a_store_are_refused() {
+    let (state, _) = world().await;
+    for uri in [CHALLENGE, MINT] {
+        let refused = send(
+            &state,
+            operator(&state.config),
+            "POST",
+            uri,
+            Some(json!({ "name": "bbsk.sk" })),
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::BAD_REQUEST,
+            "{uri}: {}",
+            refused.text
+        );
+    }
+    let mut config = Config::for_tests();
+    config.decisions_need_second_factor = true;
+    let storeless = AppState::new(config, None);
+    for uri in [CHALLENGE, MINT] {
+        let refused = send(
+            &storeless,
+            operator(&storeless.config),
+            "POST",
+            uri,
+            Some(json!({ "domain": "bbsk.sk" })),
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{uri}: {}",
+            refused.text
+        );
+        assert!(
+            refused.text.contains("kept in the database"),
+            "{uri}: {}",
+            refused.text
+        );
+    }
+}
+
 // The Organization page's Addresses (T-7013): what jc's host registry routes for each
 // Organization, to the people of that Organization alone, with where they sign in.
 

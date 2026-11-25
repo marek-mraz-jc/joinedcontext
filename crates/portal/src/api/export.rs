@@ -1224,6 +1224,22 @@ pub fn router() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
+    /// A value YAML cannot hold is a 500 the operator reads, never a panic or a half bundle.
+    #[test]
+    fn a_value_that_does_not_serialise_is_an_internal_error() {
+        struct Refuses;
+        impl serde::Serialize for Refuses {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("no YAML form"))
+            }
+        }
+        let got = super::yaml(&Refuses);
+        assert!(
+            matches!(&got, Err(crate::error::ApiError::Internal(why)) if why.contains("no YAML form")),
+            "{got:?}"
+        );
+    }
+
     #[test]
     fn a_reference_to_this_organization_is_exported_by_name_and_another_instance_keeps_its_slug() {
         let endpoints = HashMap::from([(

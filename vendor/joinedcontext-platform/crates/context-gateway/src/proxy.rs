@@ -562,6 +562,25 @@ mod tests {
         assert!(headers.is_empty());
     }
 
+    /// A path no URI can carry is refused before any hop, and a caller's own JSON-LD context is
+    /// the caller's `400`, never the platform's `502`.
+    #[tokio::test]
+    async fn an_unparsable_path_and_a_foreign_context_are_refused_before_the_hop() {
+        let broker = Broker::new("http://127.0.0.1:1");
+        let sent = broker
+            .send(
+                Method::GET,
+                "/ngsi-ld/v1/entities?q=a b",
+                HeaderMap::new(),
+                Body::empty(),
+            )
+            .await;
+        assert!(matches!(sent, Err(ProxyError::Uri(_))), "{sent:?}");
+        let problem = ProblemDetails::from(ProxyError::Context("only the core context"));
+        assert_eq!(problem.status, 400);
+        assert_eq!(problem.detail.as_deref(), Some("only the core context"));
+    }
+
     #[test]
     fn hop_by_hop_headers_do_not_cross_the_gateway() {
         let mut from = HeaderMap::new();

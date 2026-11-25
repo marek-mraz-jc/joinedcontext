@@ -1,0 +1,1 @@
+{"grid":{"source":"s","type":"T","columns":[{"attr":"occ","formula":"a / b * 100"}],"pageSize":50},"filters":[{"attr":"a","op":">=","value":3}],"colour":{"attr":"a","bands":[{"below":1,"tone":"good","label":"low"},{"tone":"bad","label":"high"}]},"chart":{"x":"a","agg":"count"},"kpis":[{"label":"N","agg":"count","where":"a > 1 ? b : 0"}]}

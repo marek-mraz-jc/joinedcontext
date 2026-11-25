@@ -196,6 +196,88 @@ fn the_minutes_a_long_crawl_ran_past_are_queued_after_it() {
     assert_eq!((day.len(), day.last()), (360, Some(&now)));
 }
 
+/// The snapshot keeps each valid AssistantDeployment and McpServer, leaves out a broken
+/// deployment and an Endpoint with no slug, names a publicId two deployments claim, and reads
+/// layout 2's project directories without the hidden ones.
+#[test]
+fn the_snapshot_keeps_valid_deployments_and_servers_and_names_a_claimed_public_id() {
+    let dir = std::env::temp_dir().join(format!("jc-assistant-snapshot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let manifest = |kind: &str, name: &str, spec: &str| {
+        format!("apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: bb\nspec:\n{spec}")
+    };
+    write(&dir, "org/projects/bb/project.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: bb\n  namespace: org\nspec:\n  organizationRef: org\n");
+    write(
+        &dir,
+        "org/projects/bb/assistant/a.yaml",
+        &manifest(
+            "AssistantDeployment",
+            "a",
+            "  publicId: bb-shared\n  channel: internal\n  sources: [web]\n  languages: [sk, en]\n",
+        ),
+    );
+    write(
+        &dir,
+        "org/projects/bb/assistant/b.yaml",
+        &manifest(
+            "AssistantDeployment",
+            "b",
+            "  publicId: bb-shared\n  channel: internal\n  sources: [web]\n  languages: [sk]\n",
+        ),
+    );
+    write(
+        &dir,
+        "org/projects/bb/assistant/broken.yaml",
+        &manifest(
+            "AssistantDeployment",
+            "broken",
+            "  publicId: bb-broken\n  channel: nowhere\n",
+        ),
+    );
+    write(
+        &dir,
+        "org/projects/bb/endpoints/noslug.yaml",
+        &manifest(
+            "Endpoint",
+            "noslug",
+            "  contextSpaceRef: ovzdusie\n  enabledRepresentations: [ngsi-ld]\n",
+        ),
+    );
+    write(
+        &dir,
+        "org/projects/bb/mcp/tools.yaml",
+        &manifest("McpServer", "tools", "  audience: organization\n"),
+    );
+    std::fs::create_dir_all(dir.join("layout2/.hidden")).expect("hidden directory");
+    std::fs::create_dir_all(dir.join("layout2/empty")).expect("project directory");
+    std::fs::write(dir.join("layout2/README"), "not a project").expect("a plain file");
+    let snapshot = worker::snapshot(&Checkout {
+        organization: dir.join("org"),
+        projects: Some(dir.join("layout2")),
+        assembly: dir.join(".assembly"),
+    })
+    .expect("the checkout reads");
+    let names: Vec<&str> = snapshot
+        .deployments
+        .iter()
+        .map(|d| d.name.as_str())
+        .collect();
+    assert_eq!(names, ["a", "b"], "the broken deployment is left out");
+    assert_eq!(
+        snapshot.claimed_twice(),
+        vec![(
+            "bb-shared".to_owned(),
+            vec!["bb/a".to_owned(), "bb/b".to_owned()]
+        )]
+    );
+    assert!(snapshot.endpoints.is_empty(), "no slug, no connection");
+    assert!(snapshot
+        .servers
+        .contains_key(&("bb".to_owned(), "tools".to_owned())));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_sources_are_read_from_the_organizations_checkout_and_a_broken_one_is_left_out() {
     let dir = std::env::temp_dir().join(format!("jc-assistant-worker-{}", std::process::id()));

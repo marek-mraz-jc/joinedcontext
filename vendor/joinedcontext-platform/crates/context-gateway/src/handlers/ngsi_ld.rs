@@ -1450,10 +1450,7 @@ fn judged_write(
                 return Err(Box::new(batch_result(Vec::new(), refusal_entries(refused))));
             }
             let ids = permitted.iter().filter_map(batch_entry_id).collect();
-            *sent = serde_json::to_vec(&permitted).map_err(|error| {
-                tracing::error!(%error, "the permitted part of a batch does not serialize");
-                Box::new(ProblemDetails::internal().into_response())
-            })?;
+            *sent = Value::from(permitted).to_string().into_bytes();
             *divided = Some((ids, refused));
             Ok(())
         }

@@ -104,12 +104,6 @@ pub fn extract_links(base_url: &Url, html_text: &str, site_host: &str) -> Vec<Ex
         };
 
         resolved.set_fragment(None);
-        if resolved.scheme() == "http" && resolved.port() == Some(80) {
-            let _ = resolved.set_port(None);
-        }
-        if resolved.scheme() == "https" && resolved.port() == Some(443) {
-            let _ = resolved.set_port(None);
-        }
 
         let kind = if is_document_url(&resolved) {
             LinkKind::Document

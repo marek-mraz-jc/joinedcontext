@@ -1418,6 +1418,152 @@ async fn the_reconciler_provisions_approved_files_keeps_equal_ones_and_removes_o
     let _ = std::fs::remove_dir_all(&root);
 }
 
+fn sync_to(service: &MockServer) -> DashboardSync {
+    DashboardSync::new(GrafanaConfig {
+        url: service.uri(),
+        public_url: "https://dev.example/grafana".into(),
+        user: "grafana_admin".into(),
+        password: "unused".into(),
+    })
+}
+
+/// T-7816: each refusal of the dashboards service costs only its own project. A service that
+/// derives organizations gets one made for a project it lacks, a failed make skips that
+/// project, a held dashboard that differs and cannot be saved is refused naming the cause, and
+/// a search that fails removes nothing.
+#[tokio::test]
+async fn the_reconciler_skips_a_project_the_service_refuses_and_keeps_going() {
+    let text = std::fs::read_to_string(FIXTURE).expect("the fixture");
+    let service = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "commit": "daiya" })))
+        .mount(&service)
+        .await;
+    for project in ["made", "broken"] {
+        Mock::given(method("GET"))
+            .and(path(format!("/api/orgs/name/{project}")))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&service)
+            .await;
+    }
+    Mock::given(method("POST"))
+        .and(path("/api/orgs"))
+        .and(wiremock::matchers::body_partial_json(
+            json!({ "name": "made" }),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "orgId": 5 })))
+        .mount(&service)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/orgs"))
+        .and(wiremock::matchers::body_partial_json(
+            json!({ "name": "broken" }),
+        ))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&service)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/folders"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(&service)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/dashboards/uid/{FIXTURE_UID}")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "dashboard": { "uid": FIXTURE_UID, "title": "older" } })),
+        )
+        .mount(&service)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/dashboards/db"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&service)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/search"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&service)
+        .await;
+    let root = staged("refusals", &[("made", FIXTURE_UID, &text)]);
+    let outcomes = sync_to(&service)
+        .converge(&root, &["made".to_owned(), "broken".to_owned()], &[])
+        .await;
+    assert!(
+        matches!(&outcomes[..], [Outcome::Refused(p, u, why)]
+            if p == "made" && u == FIXTURE_UID && !why.is_empty()),
+        "{outcomes:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// T-7816: a service that makes no organizations skips a project it does not hold, a delete
+/// it refuses is not reported as a removal, and a staged tree's stray entries (a project with
+/// no dashboards folder, a folder named like a file) are passed over. A service that is down
+/// stops the pass before it writes anything.
+#[tokio::test]
+async fn an_unknown_project_a_refused_delete_and_a_down_service_remove_nothing() {
+    let service = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/health"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "commit": "grafana" })))
+        .mount(&service)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/orgs/name/gone"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&service)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/orgs/name/kept"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": 3 })))
+        .mount(&service)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/search"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!([{ "uid": "jcd-00000000000000bb" }])),
+        )
+        .mount(&service)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/dashboards/uid/jcd-00000000000000bb"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&service)
+        .await;
+    let root = staged("strays", &[]);
+    std::fs::create_dir_all(root.join("projects/gone")).expect("a project without grafana/");
+    std::fs::create_dir_all(root.join("projects/kept/grafana/jcd-00000000000000cc.json"))
+        .expect("a folder named like a file");
+    let outcomes = sync_to(&service)
+        .converge(&root, &["gone".to_owned(), "kept".to_owned()], &[])
+        .await;
+    assert!(outcomes.is_empty(), "{outcomes:?}");
+    assert!(builder::files_in(&root).is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+
+    let down = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&down)
+        .await;
+    let nowhere = std::env::temp_dir().join(format!("jc-dashboards-none-{}", std::process::id()));
+    assert!(
+        builder::files_in(&nowhere).is_empty(),
+        "no projects/ at all"
+    );
+    let outcomes = sync_to(&down)
+        .converge(&nowhere, &["a".to_owned(), "b".to_owned()], &[])
+        .await;
+    assert!(outcomes.is_empty(), "{outcomes:?}");
+    let written = down.received_requests().await.unwrap_or_default();
+    assert!(written
+        .iter()
+        .all(|r| r.method == wiremock::http::Method::GET));
+    assert_eq!(written.len(), 1, "the pass stops at the first refusal");
+}
+
 #[tokio::test]
 async fn a_preview_of_a_bar_chart_reads_one_row_per_entity_and_a_text_panel_reads_nothing() {
     let shako = common::forge().await;
