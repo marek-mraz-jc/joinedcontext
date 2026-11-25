@@ -1133,6 +1133,7 @@ mod tests {
     #[test]
     fn a1_json_ld_limits_and_context_guards() {
         let d = RdfLimits::default();
+        assert_eq!(kind(&DataroomError::NotFound("x".into())), "other");
         assert_eq!(kind(&refused("{not json", &d)), "rdf");
         assert_eq!(
             kind(&refused("{}", &RdfLimits { max_bytes: 1, ..d })),
