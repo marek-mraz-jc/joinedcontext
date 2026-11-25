@@ -355,8 +355,8 @@ mod tests {
     fn an_expanded_type_equal_to_a_granted_type_passes_both_checks() {
         let model = model();
         for kind in ["AirQualityObserved", MODEL_IRI, CORE_IRI] {
-            check_in(&entity(ID, kind), &grant(), &[&model])
-                .unwrap_or_else(|refusal| panic!("{kind}: {refusal}"));
+            let checked = check_in(&entity(ID, kind), &grant(), &[&model]);
+            assert!(checked.is_ok(), "{kind}: {checked:?}");
         }
         // The core reading needs no model.
         check(&entity(ID, CORE_IRI), &grant()).expect("the core context's IRI");
