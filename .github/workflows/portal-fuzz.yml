@@ -2,7 +2,8 @@
 # `bin` entries of crates/portal/fuzz/Cargo.toml, read by the `targets` job, so a new target needs
 # no line here. On demand only, an hour per target by default. A crash uploads its input as an
 # artifact; add it as a named regression test with the fix, and to fuzz/seeds/<target> so the next
-# run starts from it.
+# run starts from it. --codegen-units 16: with cargo-fuzz's default of 1 the Portal lib's release
+# ASan build outgrows the runner's 16 GB (run 45522220685: every target lost its runner mid-build).
 name: portal-fuzz
 on:
   workflow_dispatch:
@@ -39,7 +40,7 @@ jobs:
         run: |
           case "$SECONDS_TO_FUZZ" in ''|*[!0-9]*) echo "seconds: a whole number" >&2; exit 1 ;; esac
           mkdir -p "fuzz/corpus/$TARGET"
-          cargo +nightly fuzz run "$TARGET" --release --target x86_64-unknown-linux-gnu "fuzz/corpus/$TARGET" "fuzz/seeds/$TARGET" -- -max_total_time="$SECONDS_TO_FUZZ" -timeout=10 -rss_limit_mb=2048
+          cargo +nightly fuzz run "$TARGET" --release --codegen-units 16 --target x86_64-unknown-linux-gnu "fuzz/corpus/$TARGET" "fuzz/seeds/$TARGET" -- -max_total_time="$SECONDS_TO_FUZZ" -timeout=10 -rss_limit_mb=2048
       - if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "portal-fuzz-${{ matrix.target }}", path: crates/portal/fuzz/artifacts }
