@@ -66,7 +66,7 @@
 "ekiben-server" = { lines = 99.55, functions = 96.85 }
 "ekiben-testkit" = { lines = 100.00, functions = 100.00 }
 "ekiben-text" = { lines = 99.95, functions = 100.00 }
-"jc" = { lines = 89.83, functions = 83.79 }
+"jc" = { lines = 96.89, functions = 94.68 }
 "jc-audit" = { lines = 100.00, functions = 100.00 }
 "jc-chart" = { lines = 100.00, functions = 100.00 }
 "jc-core" = { lines = 99.85, functions = 99.75 }

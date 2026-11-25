@@ -924,10 +924,7 @@ pub async fn build(
     {
         filled.insert("JC_OIDC_ORGANIZATION_REALMS".to_owned(), realms);
     }
-    tracing::info!(
-        keys = ?filled.keys().collect::<Vec<_>>(),
-        "gateway: settings filled from sibling modules"
-    );
+    tracing::info!(keys = ?filled.keys().collect::<Vec<_>>(), "gateway: settings filled from sibling modules");
     if wire
         && ctx.siblings.get(Module::Kaisatsu).is_some()
         && !filled.contains_key("JC_OIDC_ISSUER")
