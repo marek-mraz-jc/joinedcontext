@@ -5164,9 +5164,18 @@ async fn a_data_question_reads_again_until_the_model_answers() {
         named("citations")[0],
         json!([{"n": 2, "tool": "query_entities", "endpoint": "ovzdusie"}])
     );
-    // T-4654: a visitor's `done` carries no call count; the proxy saw the four.
+    // T-4654: a visitor's `done` carries no call count; the proxy saw the four. The side round
+    // finishes beside the loop and can reach the proxy after `done` (ci 45484290683, 45533424430).
     assert!(named("done")[0].get("modelCalls").is_none());
-    assert_eq!(model_calls(&w.proxy).await.len(), 4);
+    let mut seen = 0;
+    for _ in 0..50 {
+        seen = model_calls(&w.proxy).await.len();
+        if seen >= 4 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(seen, 4);
 
     let all = model_calls(&w.proxy).await;
     let calls = calls_of(&all, None);
