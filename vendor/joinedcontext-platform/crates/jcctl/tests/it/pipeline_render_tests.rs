@@ -38,6 +38,19 @@ fn a_paused_pipeline_renders_a_suspended_cron_job() {
     assert!(!running.suspend);
 }
 
+/// A scheduled class that names neither a period nor a schedule (refused by validate, so built
+/// without it) still runs, once a minute, and carries the pause.
+#[test]
+fn a_scheduled_pipeline_without_a_period_runs_once_a_minute() {
+    let yaml = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: x\n  namespace: ovzdusie\nspec:\n  class: scheduled\n  enabled: false\n  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:ovzdusie:public-air\n";
+    let spec = Pipeline::from_yaml(yaml).expect("parses").spec;
+    let Runtime::Scheduled(job) = runtime_of(&spec) else {
+        panic!("the scheduled class is a CronJob")
+    };
+    assert_eq!(job.schedule, "* * * * *");
+    assert_eq!((job.interval, job.count, job.suspend), (None, 1, true));
+}
+
 /// PL-26: at fifteen seconds a pod start would cost more than the period itself, so the
 /// pipeline stays in the project's resident runner.
 #[test]

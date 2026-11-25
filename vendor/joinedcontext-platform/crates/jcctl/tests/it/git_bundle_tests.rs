@@ -115,6 +115,78 @@ fn a_project_round_trips_with_its_history_and_equal_heads() {
     assert!(landed.join("projects/ovzdusie.yaml").is_file());
 }
 
+/// The commands: `export --format git` lists each bundle with its head, `import --format git`
+/// says each landed equal, an --app-dir that is no repository fails the export, and an
+/// --app-dir without `<name>=` is usage.
+#[test]
+fn the_commands_list_each_repository_and_its_head() {
+    let project = project_repository("bundle-cli-project");
+    let app = app_repository("bundle-cli-app");
+    let org = temp_dir("bundle-cli-org");
+    let out = temp_dir("bundle-cli-out");
+    let run = |args: &[&std::ffi::OsStr]| {
+        Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .args(args)
+            .output()
+            .expect("jcctl runs")
+    };
+    let app_dir = format!("app-air={}", app.display());
+    let exported = run(&[
+        "export".as_ref(),
+        "--format".as_ref(),
+        "git".as_ref(),
+        "--repo-dir".as_ref(),
+        project.as_os_str(),
+        "--project".as_ref(),
+        "ovzdusie".as_ref(),
+        "--out-dir".as_ref(),
+        out.as_os_str(),
+        "--app-dir".as_ref(),
+        app_dir.as_ref(),
+    ]);
+    assert_eq!(exported.status.code(), Some(0), "{exported:?}");
+    let said = String::from_utf8_lossy(&exported.stdout);
+    assert!(said.contains(" ovzdusie at "), "{said}");
+    assert!(said.contains(" app-air at "), "{said}");
+
+    let landed = temp_dir("bundle-cli-in");
+    let imported = run(&[
+        "import".as_ref(),
+        "--format".as_ref(),
+        "git".as_ref(),
+        out.as_os_str(),
+        "--out-dir".as_ref(),
+        landed.as_os_str(),
+    ]);
+    assert_eq!(imported.status.code(), Some(0), "{imported:?}");
+    assert!(String::from_utf8_lossy(&imported.stdout).contains(", equal"));
+
+    let broken = run(&[
+        "export".as_ref(),
+        "--format".as_ref(),
+        "git".as_ref(),
+        "--repo-dir".as_ref(),
+        project.as_os_str(),
+        "--project".as_ref(),
+        "ovzdusie".as_ref(),
+        "--out-dir".as_ref(),
+        temp_dir("bundle-cli-out-2").as_os_str(),
+        "--org-dir".as_ref(),
+        org.as_os_str(),
+        "--app-dir".as_ref(),
+        "app-air=/nonexistent/app".as_ref(),
+    ]);
+    assert_eq!(broken.status.code(), Some(1), "{broken:?}");
+    let bare = run(&[
+        "export".as_ref(),
+        "--format".as_ref(),
+        "git".as_ref(),
+        "--app-dir".as_ref(),
+        "bare".as_ref(),
+    ]);
+    assert!(String::from_utf8_lossy(&bare.stderr).starts_with("usage:"));
+}
+
 /// MF-46: a bundle that is not the file the index names, and a head that is not the one it
 /// lists, refuse the import before anything is taken for verified.
 #[test]

@@ -310,9 +310,7 @@ pub fn seed(repo_dir: &Path) -> std::io::Result<Vec<PathBuf>> {
         if path.exists() {
             continue;
         }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        std::fs::create_dir_all(path.parent().unwrap_or(repo_dir))?;
         std::fs::write(&path, content)?;
         written.push(PathBuf::from(rel));
     }

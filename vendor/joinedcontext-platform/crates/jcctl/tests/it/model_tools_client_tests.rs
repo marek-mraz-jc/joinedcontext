@@ -152,6 +152,21 @@ fn an_answer_that_is_not_an_object_or_names_no_generator_is_refused() {
         .is_empty());
 }
 
+/// An answer larger than the cap is refused before it is read whole, and a service with no
+/// address behind its name is a connect error naming host and port.
+#[test]
+fn an_oversized_answer_is_refused() {
+    let (url, _) = stub(|_| {
+        let body = "x".repeat(8 * 1024 * 1024 + 1);
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+    });
+    let refused = jcctl::model::http::request(&url, "/big", None).expect_err("too large");
+    assert!(refused.to_string().contains("larger than"), "{refused}");
+}
+
 #[test]
 fn a_status_that_is_not_a_result_carries_what_the_service_said() {
     let (url, _) = stub(|path| match path {

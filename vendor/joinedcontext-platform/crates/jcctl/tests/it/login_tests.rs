@@ -328,6 +328,68 @@ fn the_command_needs_an_issuer_and_takes_no_client_flags() {
     assert!(String::from_utf8_lossy(&stray.stderr).contains("jcctl login --idm <issuer url>"));
 }
 
+/// The command itself: a sign-in names the file and how long the token lasts, or only the file
+/// when the realm says nothing about it; a refused one exits 1 in the provider's words.
+#[test]
+fn the_command_reports_where_the_token_went_and_how_long_it_lasts() {
+    let run = |url: &str, path: &std::path::Path, extra: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .args(extra)
+            .args(["--idm", url, "--token-file"])
+            .arg(path)
+            .env_remove("JC_IDM")
+            .output()
+            .expect("jcctl runs")
+    };
+    let (url, _) = stub(Some(0), vec![granted()]);
+    let path = target("cli-granted");
+    let out = run(&url, &path, &["login"]);
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{said}");
+    assert!(said.contains("(valid 300s)"), "{said}");
+    assert_eq!(std::fs::read_to_string(&path).expect("the token"), TOKEN);
+
+    let (url, _) = stub(Some(0), vec![(200, json!({ "access_token": TOKEN }))]);
+    let path = target("cli-no-expiry");
+    let out = run(
+        &url,
+        &path,
+        &[
+            "token",
+            "--resource",
+            "https://api.example.org/api/endpoint/a7nalystq2mzt6vhx3nbwrs5cj",
+        ],
+    );
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{said}");
+    assert!(
+        said.contains("token written to") && !said.contains("valid"),
+        "{said}"
+    );
+
+    let (url, _) = stub(Some(0), vec![(400, json!({ "error": "access_denied" }))]);
+    let path = target("cli-denied");
+    let out = run(&url, &path, &["login"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!path.exists());
+}
+
+/// With neither --token-file nor HOME nor XDG_CONFIG_HOME there is nowhere to keep the token:
+/// the command says which flag or variable gives it one, before it asks the realm anything.
+#[test]
+fn the_command_without_a_place_for_the_token_names_the_flag() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["login", "--idm", "http://127.0.0.1:9/realms/city"])
+        .env_remove("JC_IDM")
+        .env_remove("HOME")
+        .env_remove("XDG_CONFIG_HOME")
+        .output()
+        .expect("jcctl runs");
+    assert_eq!(out.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("--token-file <path>"), "{said}");
+}
+
 /// T-5614: the realm refuses a device authorization without a proof key, so each sign-in sends a
 /// fresh S256 challenge and the verifier that hashes to it, and never the same one twice.
 #[test]
