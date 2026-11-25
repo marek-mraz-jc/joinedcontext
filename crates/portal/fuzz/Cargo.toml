@@ -73,6 +73,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 serde_json = "1"
+tokio = { version = "1", features = ["rt"] }
 axum = "0.8"
 cookie = { version = "0.18", features = ["percent-encode"] }
 url = "2"
