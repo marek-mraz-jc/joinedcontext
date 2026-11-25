@@ -618,10 +618,16 @@ async fn undoing_a_native_file_is_held_to_its_folder_and_a_file_of_no_kind_to_no
     .await;
     let (status, body) = undo(&state, "reader", "chg-0000000d").await;
     assert_eq!(status, 403, "{body}");
-    assert!(detail(&body).contains("needs `propose` on Pipeline"), "{body}");
+    assert!(
+        detail(&body).contains("needs `propose` on Pipeline"),
+        "{body}"
+    );
     let (status, body) = undo(&state, "restorer", "chg-0000000d").await;
     assert_eq!(status, 409, "{body}");
-    assert!(detail(&body).contains("no kind this platform serves"), "{body}");
+    assert!(
+        detail(&body).contains("no kind this platform serves"),
+        "{body}"
+    );
     assert!(writes(&shako).await.is_empty(), "nothing is written");
 }
 

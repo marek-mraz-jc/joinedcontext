@@ -472,6 +472,62 @@ mod tests {
             .is_empty());
     }
 
+    fn admin() -> CurrentUser {
+        CurrentUser(crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "f:1:ada".into(),
+                username: "ada".into(),
+                email: Some("ada@hel.fi".into()),
+                name: None,
+                roles: vec!["portal-approver".into()],
+                groups: vec!["portal-approver".into()],
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: "dummy".into(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        })
+    }
+
+    /// A results entry that is a folder cannot be read as a digest: it shows as unreadable
+    /// (T-7827).
+    #[test]
+    fn a_folder_named_like_a_digest_is_unreadable() {
+        let dir = tempdir("folder");
+        std::fs::create_dir(dir.join("budgets.json")).expect("a folder");
+        assert_eq!(
+            states(&read_dir(dir.as_path(), now()).unwrap()),
+            [("budgets", CheckState::Unreadable)]
+        );
+    }
+
+    /// With the configuration mirror on, the health carries its own check beside the published
+    /// ones; a mirror that has pushed nothing yet has nothing failed (T-6892, T-7827).
+    #[tokio::test]
+    async fn the_configuration_mirror_is_a_check_of_the_health() {
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.config_mirror = Some(std::sync::Arc::new(
+            crate::forge::config_mirror::ConfigMirror::new(
+                "http://mirror.invalid/jc-{repo}.git",
+                tempdir("mirror").join("token"),
+            )
+            .expect("a mirror"),
+        ));
+        let health = get_health(admin(), State(state)).await;
+        let checks = health.as_ref().map(|Json(h)| states(&h.checks));
+        assert_eq!(
+            checks.as_deref().ok(),
+            Some(&[("configuration-mirror", CheckState::Green)][..]),
+            "{:?}",
+            health.as_ref().err()
+        );
+    }
+
     /// A path that is a file is a directory the Portal cannot read: the route says to check the
     /// mount instead of answering an empty health; a file over the cap is no digest (T-7813).
     #[tokio::test]
@@ -490,25 +546,7 @@ mod tests {
         let mut config = crate::config::Config::for_tests();
         config.health_dir = Some(file.to_string_lossy().into_owned());
         let state = AppState::new(config, None);
-        let admin = CurrentUser(crate::auth::session::Session {
-            identity: crate::auth::session::Identity {
-                client: None,
-                subject: "f:1:ada".into(),
-                username: "ada".into(),
-                email: Some("ada@hel.fi".into()),
-                name: None,
-                roles: vec!["portal-approver".into()],
-                groups: vec!["portal-approver".into()],
-                second_factor: false,
-            },
-            expires_at: 9_999_999_999,
-            issued_at: 1000,
-            signed_in_at: None,
-            stepped_up_at: None,
-            id_token: "dummy".into(),
-            access_expires_at: 9_999_999_999,
-            refresh_token: None,
-        });
+        let admin = admin();
         match get_health(admin, State(state)).await {
             Err(ApiError::Unavailable(why)) => {
                 assert!(why.contains("jc-validation-results"), "{why}")
