@@ -22,7 +22,10 @@ fuzz_target!(|data: &[u8]| {
         for whole in [true, false] {
             if let Ok((found, _cut)) = choices(kind, &answer, whole) {
                 assert!(found.len() <= MAX_CHOICES, "the choices stay capped");
-                assert!(found.iter().all(|c| c.value.chars().count() <= 300), "each name is cut");
+                assert!(
+                    found.iter().all(|c| c.value.chars().count() <= 300),
+                    "each name is cut"
+                );
             }
         }
     }
