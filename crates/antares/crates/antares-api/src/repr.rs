@@ -2454,6 +2454,311 @@ mod type_rules_memo_tests {
 }
 
 #[cfg(test)]
+mod shaping_edges {
+    use super::*;
+    use antares_jsonld::Loader;
+    use serde_json::json;
+
+    const T: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+
+    fn nodes(s: &str) -> Vec<ProjNode> {
+        parse_projection(s, &Loader::new().core()).expect("projection")
+    }
+
+    /// ADR-0020: the engine's omit joins the request's own, and its pick
+    /// intersects the request's, the Entity frame surviving it.
+    #[test]
+    fn a_policy_projection_joins_omit_and_intersects_pick() {
+        let ctx = Loader::new().core();
+        let f = crate::policy::Filter {
+            omit: vec![format!("{T}secret")],
+            pick: vec![format!("{T}speed"), format!("{T}id")],
+            ..Default::default()
+        };
+        let mut pick = Some(nodes("speed,colour"));
+        let mut omit = Some(nodes("brand"));
+        narrow_projection(&mut pick, &mut omit, &f, &ctx).expect("narrowed");
+        let raws = |n: &Option<Vec<ProjNode>>| -> Vec<String> {
+            n.iter().flatten().map(|n| n.raw.clone()).collect()
+        };
+        assert_eq!(raws(&omit), vec!["brand".to_owned(), format!("{T}secret")]);
+        assert_eq!(
+            raws(&pick),
+            vec!["speed", "id", "type"],
+            "colour is not allowed; the frame comes back"
+        );
+    }
+
+    /// 4.21: a term opening a brace it does not close at its end, a term
+    /// starting with a special character and a repeated term are refused.
+    #[test]
+    fn malformed_projection_terms_say_what_is_wrong() {
+        let ctx = Loader::new().core();
+        for (bad, why) in [
+            ("a{b}c", "unclosed brace"),
+            ("-a", "starts with a special character"),
+            ("a,a", "duplicate projection member"),
+        ] {
+            let e = parse_projection(bad, &ctx).err().expect("refused");
+            assert!(e.to_string().contains(why), "{bad}: {e}");
+        }
+    }
+
+    /// A document or instance that is not a JSON object is shaped as it
+    /// is, under the narrowing too.
+    #[test]
+    fn non_object_documents_and_instances_pass_unchanged() {
+        assert_eq!(apply(&json!("x"), &Repr::default()), json!("x"));
+        let narrowed = Repr {
+            policy_pick: Some(nodes("speed")),
+            ..Default::default()
+        };
+        assert_eq!(policy_view(&json!([1]), &narrowed), json!([1]));
+        let doc = json!({"id": "urn:a", "type": "T", "speed": [5]});
+        assert_eq!(apply(&doc, &Repr::default())["speed"], json!([5]));
+    }
+
+    /// datasetId= keeps no instance whose datasetId is not a string.
+    #[test]
+    fn a_non_string_dataset_id_is_never_selected() {
+        let doc = json!({"id": "urn:a", "type": "T",
+            "speed": [{"type": "Property", "value": 1, "datasetId": 4},
+                      {"type": "Property", "value": 2, "datasetId": "urn:d:1"}]});
+        let r = Repr {
+            dataset_id: Some(vec!["urn:d:1".into()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            apply(&doc, &r)["speed"],
+            json!([{"type": "Property", "value": 2, "datasetId": "urn:d:1"}])
+        );
+    }
+
+    /// DM-138: an instance's modifiedBy is answered only under sysAttrs
+    /// with the grant to see it, and never under its internal key.
+    #[test]
+    fn modified_by_needs_sys_attrs_and_the_grant() {
+        let by = antares_jsonld::compact::MODIFIED_BY_KEY;
+        let doc = json!({"id": "urn:a", "type": "T",
+            "speed": [{"type": "Property", "value": 1, by: {"sub": "u1"}}]});
+        let shown = apply(
+            &doc,
+            &Repr {
+                sys_attrs: true,
+                modified_by: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            shown["speed"][0][antares_jsonld::compact::MODIFIED_BY],
+            json!({"sub": "u1"})
+        );
+        let hidden = apply(
+            &doc,
+            &Repr {
+                sys_attrs: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(hidden["speed"], json!([{"type": "Property", "value": 1}]));
+    }
+
+    /// 4.15: an instance without a languageMap, or with an empty one, is
+    /// left a LanguageProperty; an empty range is skipped; a range no tag
+    /// matches even by truncation takes "@none", then the first entry.
+    #[test]
+    fn the_language_filter_falls_back_in_order() {
+        let mut no_map = Map::from_iter([("type".to_owned(), json!("LanguageProperty"))]);
+        apply_lang(&mut no_map, "en");
+        assert_eq!(no_map["type"], "LanguageProperty");
+        let mut empty = Map::from_iter([
+            ("type".to_owned(), json!("LanguageProperty")),
+            ("languageMap".to_owned(), json!({})),
+        ]);
+        apply_lang(&mut empty, "en");
+        assert_eq!(empty["type"], "LanguageProperty");
+        let lm = json!({"de": "Hallo", "@none": "hello"});
+        let lm = lm.as_object().expect("map");
+        assert_eq!(
+            select_lang(lm, ",zh-Hant-TW"),
+            Some(("@none".to_owned(), json!("hello")))
+        );
+        let first = json!({"de": "Hallo"});
+        assert_eq!(
+            select_lang(first.as_object().expect("map"), "fr-CH"),
+            Some(("de".to_owned(), json!("Hallo")))
+        );
+    }
+
+    /// 4.5.4: an instance holding none of the value members simplifies to
+    /// itself.
+    #[test]
+    fn a_member_less_instance_simplifies_to_itself() {
+        let doc =
+            json!({"id": "urn:a", "type": "T", "speed": [{"type": "Property", "unitCode": "KMH"}]});
+        let r = Repr {
+            key_values: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            apply(&doc, &r)["speed"],
+            json!({"type": "Property", "unitCode": "KMH"})
+        );
+    }
+
+    /// 4.21: a pick naming nothing under the join key leaves the joined
+    /// level unprojected.
+    #[test]
+    fn a_pick_without_the_join_key_projects_nothing_below() {
+        let parent = Repr {
+            pick: Some(nodes("speed,owner{name}")),
+            ..Default::default()
+        };
+        assert!(joined_repr(&parent, "brand", &format!("{T}brand"))
+            .pick
+            .is_none());
+        assert_eq!(
+            joined_repr(&parent, "owner", &format!("{T}owner"))
+                .pick
+                .map(|p| p.len()),
+            Some(1)
+        );
+    }
+
+    /// 4.5.23: join slots are found in every instance of a multi-instance
+    /// Relationship, in objectList entries written either way, and, in the
+    /// simplified form, as the bare URI; anything else is no slot.
+    #[test]
+    fn join_slots_cover_every_relationship_shape() {
+        let ctx = Loader::new().core();
+        assert!(slots_of(&ctx, &Repr::default(), &json!("x"), "").is_empty());
+        let doc = json!({"id": "urn:a", "type": "T",
+            "owner": [{"type": "Relationship", "object": "urn:o:1"},
+                      {"type": "Relationship", "object": ["urn:o:2", 3], "objectType": "Person"},
+                      {"type": "Relationship", "objectType": 5, "object": "urn:o:4"},
+                      {"type": "Property", "value": 1}],
+            "fleet": {"type": "ListRelationship", "objectList": ["urn:f:1", {"object": "urn:f:2"}, 7]},
+            "flag": true});
+        let slots = slots_of(&ctx, &Repr::default(), &doc, "");
+        let seen: Vec<(String, Vec<String>, Option<String>)> = slots
+            .iter()
+            .map(|s| (s.at.clone(), s.targets.clone(), s.object_type.clone()))
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                (
+                    "/fleet".to_owned(),
+                    vec!["urn:f:1".to_owned(), "urn:f:2".to_owned()],
+                    None
+                ),
+                ("/owner/0".to_owned(), vec!["urn:o:1".to_owned()], None),
+                (
+                    "/owner/1".to_owned(),
+                    vec!["urn:o:2".to_owned()],
+                    Some("Person".to_owned())
+                ),
+                ("/owner/2".to_owned(), vec!["urn:o:4".to_owned()], None),
+            ]
+        );
+        let kv = Repr {
+            key_values: true,
+            ..Default::default()
+        };
+        let simple = slots_of(
+            &ctx,
+            &kv,
+            &json!({"id": "urn:a", "owner": "urn:o:1", "o2": {"x": 1}}),
+            "",
+        );
+        assert_eq!(simple.len(), 1);
+        assert!(matches!(simple[0].kind, SlotKind::Replace));
+    }
+
+    /// RFC 7946 3.1.6: a GeometryCollection's polygons are rewound, a ring
+    /// that is not an array or holds a point without numbers is passed by,
+    /// and a Polygon without coordinates stays as it is.
+    #[test]
+    fn rewinding_walks_collections_and_passes_malformed_rings() {
+        let cw = json!([[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
+        let mut ccw = cw.clone();
+        if let Some(a) = ccw.as_array_mut() {
+            a.reverse();
+        }
+        let gc = json!({"type": "GeometryCollection", "geometries": [
+            {"type": "Polygon", "coordinates": [cw.clone()]},
+            {"type": "Point", "coordinates": [1, 2]}]});
+        let out = rewound(gc);
+        assert_eq!(out["geometries"][0]["coordinates"][0], ccw);
+        assert_eq!(
+            out["geometries"][1],
+            json!({"type": "Point", "coordinates": [1, 2]})
+        );
+        let odd = json!({"type": "Polygon", "coordinates": ["ring", [["a", 0], [0, 1]]]});
+        assert_eq!(rewound(odd.clone()), odd);
+        let bare = json!({"type": "Polygon"});
+        assert_eq!(rewound(bare.clone()), bare);
+    }
+
+    /// 4.5.16.1: several instances, none the default, select no geometry.
+    #[test]
+    fn several_dataset_instances_without_a_default_have_no_geometry() {
+        let e = json!({"location": [
+            {"type": "GeoProperty", "datasetId": "urn:d:1", "value": {"type": "Point", "coordinates": [1, 2]}},
+            {"type": "GeoProperty", "datasetId": "urn:d:2", "value": {"type": "Point", "coordinates": [3, 4]}}]});
+        assert_eq!(geometry_of(&e, None), Value::Null);
+    }
+
+    async fn seeded() -> (AppState, TenantId) {
+        let st = AppState::new("repr-flat".into());
+        let t = TenantId::default();
+        for id in ["urn:ngsi-ld:P:1", "urn:ngsi-ld:P:2"] {
+            st.store
+                .create(
+                    &t,
+                    Kind::Entity,
+                    id,
+                    json!({"id": id, "type": [format!("{T}P")]}),
+                )
+                .await
+                .expect("seed");
+        }
+        (st, t)
+    }
+
+    /// 4.5.23.3 + 4.21: the flat walk follows only the Relationships the
+    /// projection keeps, skips members that hold no instance array, takes
+    /// a Relationship naming several objects, and steps over a target that
+    /// does not exist.
+    #[tokio::test]
+    async fn the_flat_walk_follows_only_projected_existing_targets() {
+        let (st, t) = seeded().await;
+        let ctx = Loader::new().core();
+        let doc = json!({"id": "urn:ngsi-ld:R:1", "type": [format!("{T}R")],
+            format!("{T}a"): [{"type": "Relationship", "object": ["urn:ngsi-ld:P:1", "urn:ngsi-ld:P:gone"]}],
+            format!("{T}b"): [{"type": "Relationship", "object": "urn:ngsi-ld:P:2"}],
+            format!("{T}c"): {"type": "Relationship", "object": "urn:ngsi-ld:P:2"}});
+        let picked = Repr {
+            pick: Some(nodes("a,c")),
+            ..Default::default()
+        };
+        let mut out = std::collections::BTreeMap::new();
+        assert!(collect_flat(&st, &t, &ctx, &picked, &doc, 1, &mut out).await);
+        assert_eq!(out.keys().collect::<Vec<_>>(), vec!["urn:ngsi-ld:P:1"]);
+        let omitted = Repr {
+            omit: Some(nodes("a")),
+            ..Default::default()
+        };
+        let mut out = std::collections::BTreeMap::new();
+        assert!(collect_flat(&st, &t, &ctx, &omitted, &doc, 1, &mut out).await);
+        assert_eq!(out.keys().collect::<Vec<_>>(), vec!["urn:ngsi-ld:P:2"]);
+        let mut out = std::collections::BTreeMap::new();
+        assert!(collect_flat(&st, &t, &ctx, &Repr::default(), &json!("x"), 1, &mut out).await);
+        assert!(out.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod t3932_projection_edges {
     use super::*;
     use antares_jsonld::Loader;
