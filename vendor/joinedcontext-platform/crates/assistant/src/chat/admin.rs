@@ -385,7 +385,7 @@ async fn scoped<'c>(
 async fn site(state: &ChatState, project: &str, source: &str) -> Result<i64, Refusal> {
     let mut tx = scoped(state, project).await?;
     let id = site_in(&mut tx, project, source).await?;
-    tx.rollback().await.map_err(|err| Box::new(failed(err)))?;
+    let _ = tx.rollback().await;
     Ok(id)
 }
 
@@ -743,13 +743,11 @@ async fn search(
         return *refused;
     }
     let scope = [(project, vec![source])];
-    let found = match state.embedder.query(q).await {
-        Ok(vector) => {
-            super::documents::ranked(&state, &scope, q, &vector, (None, &[]), limit, false).await
-        }
-        Err(err) => Err(err),
+    let found = async {
+        let vector = state.embedder.query(q).await?;
+        super::documents::ranked(&state, &scope, q, &vector, (None, &[]), limit, false).await
     };
-    match found {
+    match found.await {
         Ok(hits) => Json(json!({"hits": hits})).into_response(),
         Err(err) => failed(err),
     }

@@ -150,6 +150,42 @@ async fn world(test: &str) -> World {
                 ckan_url: None,
                 catalogue: Vec::new(),
             },
+            // Internal files of no one language, and a declared source under a name that is no
+            // project (the store refuses it as one).
+            Source {
+                project: "hronov".into(),
+                name: "intern".into(),
+                spec: KnowledgeSourceSpec {
+                    source: SourceType::Upload,
+                    categories: Vec::new(),
+                    start_urls: Vec::new(),
+                    upload: Some(UploadLimits {
+                        max_bytes: 64 * 1024,
+                        max_files: 2,
+                    }),
+                    visibility: Visibility::Internal,
+                    languages: Vec::new(),
+                    ..source_spec()
+                },
+                ckan_url: None,
+                catalogue: Vec::new(),
+            },
+            Source {
+                project: "Not_A_Project".into(),
+                name: "subory".into(),
+                spec: KnowledgeSourceSpec {
+                    source: SourceType::Upload,
+                    categories: Vec::new(),
+                    start_urls: Vec::new(),
+                    upload: Some(UploadLimits {
+                        max_bytes: 64 * 1024,
+                        max_files: 2,
+                    }),
+                    ..source_spec()
+                },
+                ckan_url: None,
+                catalogue: Vec::new(),
+            },
         ],
         ..Snapshot::default()
     };
@@ -541,6 +577,39 @@ async fn table_away(w: &World, table: &str) -> PgPool {
     owner
 }
 
+/// Makes every insert into `table` fail until [`writes_back`], while reads of it still answer.
+async fn writes_refused(w: &World, table: &str) -> PgPool {
+    let url = std::env::var("JC_ASSISTANT_TEST_DATABASE_URL").expect("the test server");
+    let options: sqlx::postgres::PgConnectOptions = url.parse().expect("the URL parses");
+    let owner = PgPool::connect_with(options.database(&w.name))
+        .await
+        .expect("the owner connects");
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION refuse_write() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$",
+    )
+    .execute(&owner)
+    .await
+    .expect("the refusing function");
+    let statement = format!(
+        "CREATE TRIGGER refuse_write BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION refuse_write()"
+    );
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(&owner)
+        .await
+        .expect("the refusing trigger");
+    owner
+}
+
+async fn writes_back(owner: PgPool, table: &str) {
+    let statement = format!("DROP TRIGGER refuse_write ON {table}");
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(&owner)
+        .await
+        .expect("the trigger is dropped");
+    owner.close().await;
+}
+
 async fn table_back(owner: PgPool, table: &str) {
     let statement = format!("ALTER TABLE {table}_gone RENAME TO {table}");
     sqlx::query(sqlx::AssertSqlSafe(statement))
@@ -613,6 +682,66 @@ async fn a_store_failing_mid_handler_is_a_503_on_every_path() {
             "upload without {table}: {problem}"
         );
     }
+    // A queue that reads but takes no job.
+    let owner = writes_refused(&w, "crawl_jobs").await;
+    let (status, problem) = call(
+        &w.app,
+        "POST",
+        &format!("{BASE}/sources/web/recrawl"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    writes_back(owner, "crawl_jobs").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    // A source that was never crawled, and files asked of a source that takes none.
+    for (verb, uri, expected) in [
+        ("GET", format!("{BASE}/sources/nikde/documents"), StatusCode::NOT_FOUND),
+        ("GET", format!("{BASE}/sources/nikde/pages/{}/links", w.root), StatusCode::NOT_FOUND),
+        ("GET", format!("{BASE}/sources/nikde/passages?page={}", w.root), StatusCode::NOT_FOUND),
+        ("GET", format!("{BASE}/sources/web/files"), StatusCode::CONFLICT),
+        ("DELETE", format!("{BASE}/sources/web/files/{file}"), StatusCode::CONFLICT),
+    ] {
+        let (status, problem) = call(&w.app, verb, &uri, Some(PORTAL_TOKEN), None).await;
+        assert_eq!(status, expected, "{verb} {uri}: {problem}");
+    }
+    // An internal source of no one language takes a file; a declared source under a name that
+    // is no project is refused as no project.
+    let (status, internal) =
+        send_file(&w.app, "intern", "pravidla.md", b"# Pravidla\n\nInterne.".to_vec()).await;
+    assert_eq!(status, StatusCode::CREATED, "{internal}");
+    let request = Request::builder()
+        .method("POST")
+        .uri("/internal/v1/projects/Not_A_Project/knowledge/sources/subory/files?name=a.md")
+        .header("authorization", format!("Bearer {PORTAL_TOKEN}"))
+        .body(Body::from("# A\n\nText."))
+        .expect("a request");
+    let response = w.app.clone().oneshot(request).await.expect("an answer");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    // A crawled source with no passages lists no languages.
+    let mut tx = assistant::project_scope(&w.pool, "hronov")
+        .await
+        .expect("scope");
+    sqlx::query("INSERT INTO sites (organization, project, source, visibility) VALUES ('hronov.example', 'hronov', 'prazdny', 'public')")
+        .execute(&mut *tx)
+        .await
+        .expect("an empty site");
+    tx.commit().await.expect("commit");
+    let (status, sources) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/sources"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sources}");
+    let empty = sources["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|i| i["source"] == "prazdny"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(empty["languages"], json!({}), "{sources}");
     // The store is whole again: the file is still listed.
     let (status, listed) = call(
         &w.app,

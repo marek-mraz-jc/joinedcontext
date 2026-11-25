@@ -887,6 +887,127 @@ async fn a_superlative_shows_its_entity_and_a_count_no_page_of_the_register() {
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// A count split by an attribute reads every page of that attribute alone (a cursor followed to
+/// the last page) and shows the split; a history the answer model asks for is a table of its
+/// series, its places named by one read of the same entities.
+#[tokio::test]
+async fn a_split_count_reads_every_page_and_a_history_names_its_places() {
+    let mut d = deployment(Channel::Public, 50_000, 10);
+    d.spec.connectors[0].tools = vec!["query_entities".into(), "query_temporal".into()];
+    let w = world("chatsplit", d).await;
+    let mcp = || Mock::given(method("POST")).and(path(format!("/api/endpoint/{SLUG}/mcp")));
+    let said = |text: Value| {
+        ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {
+            "content": [{"type": "text", "text": text.to_string()}]
+        }}))
+    };
+    mcp().and(body_string_contains("tools/list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": [
+            {"name": "query_entities", "description": "Reads entities.", "inputSchema": {"type": "object", "properties": {
+                "type": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "id": {"type": "array", "items": {"type": "string"}},
+                "attrs": {"type": "array", "items": {"enum": ["name", "managerName", "bridgedLength"]}},
+                "q": {"type": "string"}, "count": {"type": "boolean"}, "cursor": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 0, "maximum": 1000}}}},
+            {"name": "query_temporal", "description": "Reads the history of entities.", "inputSchema": {"type": "object", "properties": {
+                "type": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                "attrs": {"type": "array", "items": {"type": "string"}},
+                "timerel": {"type": "string"}, "timeAt": {"type": "string"}}}}
+        ]}})))
+        .with_priority(1).mount(&w.gateway).await;
+    let bridge = |name: &str, manager: &str| json!({"id": format!("urn:ngsi-ld:Bridge:{name}"), "type": "Bridge", "name": name, "managerName": manager});
+    // The split's pages: the first names a cursor, the second is the last.
+    mcp()
+        .and(body_string_contains("\"cursor\":\"c2\""))
+        .respond_with(said(json!({"entities": [{"managerName": "SSC"}, {"managerName": "BBSK"}]})))
+        .with_priority(1)
+        .mount(&w.gateway)
+        .await;
+    mcp()
+        .and(body_string_contains("\"limit\":1000"))
+        .respond_with(said(json!({"entities": [{"managerName": "BBSK"}, {"managerName": "BBSK"}, {}], "nextCursor": "c2"})))
+        .with_priority(2)
+        .mount(&w.gateway)
+        .await;
+    let length = |name: &str, metres: [f64; 2]| json!({"id": format!("urn:ngsi-ld:Bridge:{name}"), "type": "Bridge",
+        "bridgedLength": [{"type": "Property", "value": metres[0], "observedAt": "2026-10-01T08:00:00Z"},
+                          {"type": "Property", "value": metres[1], "observedAt": "2026-10-02T08:00:00Z"}]});
+    mcp()
+        .and(body_string_contains("\"query_temporal\""))
+        .respond_with(said(json!([length("M21", [9.0, 9.5]), length("M22", [4.0, 4.5])])))
+        .with_priority(2)
+        .mount(&w.gateway)
+        .await;
+    mcp()
+        .and(body_string_contains("\"query_entities\""))
+        .respond_with(said(json!({"entities": [bridge("M21", "BBSK"), bridge("M22", "SSC")], "total": 5})))
+        .with_priority(3)
+        .mount(&w.gateway)
+        .await;
+    let routed = |read: Value| {
+        completion(
+            json!({"role": "assistant", "content": json!({"route": "data", "queries": [], "data": [read]}).to_string()}),
+            400,
+        )
+    };
+    let judged = || {
+        completion(
+            json!({"role": "assistant", "content": "{\"answers\": true}"}),
+            100,
+        )
+    };
+    script_routed(
+        &w.proxy,
+        vec![
+            routed(json!({"endpoint": "ovzdusie", "type": "Bridge", "group": "managerName"})),
+            routed(json!({"endpoint": "ovzdusie", "type": "Bridge"})),
+        ],
+        vec![judged(), judged()],
+        vec![
+            completion(json!({"role": "assistant", "content": "BBSK spravuje 3 z 5 mostov [1]."}), 300),
+            completion(
+                tool_call("c1", "query_temporal", json!({"endpoint": "ovzdusie", "type": ["Bridge"], "attrs": ["bridgedLength"]})),
+                300,
+            ),
+            completion(json!({"role": "assistant", "content": "Most M21 sa predĺžil na 9,5 m [2]."}), 300),
+        ],
+    )
+    .await;
+    let mut shown = Vec::new();
+    for question in [
+        "Koľko mostov spravuje ktorý správca?",
+        "Ako sa menila dĺžka mostov?",
+    ] {
+        let (status, events, _) =
+            answer_of(&w.app, ask(json!({"message": question}), Some(ORIGIN))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(events.iter().any(|(n, _)| n == "answer"), "{events:?}");
+        let tables: Vec<Value> = events
+            .into_iter()
+            .filter(|(n, _)| n == "data")
+            .map(|(_, d)| d)
+            .collect();
+        shown.push(tables);
+    }
+    let asked: Vec<String> = w
+        .gateway
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+        .collect();
+    assert!(
+        asked.iter().any(|b| b.contains("\"cursor\":\"c2\"")),
+        "the split follows the cursor: {asked:?}"
+    );
+    let split = shown[0].iter().map(Value::to_string).collect::<String>();
+    assert!(split.contains("BBSK"), "{:?}", shown[0]);
+    let history = shown[1].iter().map(Value::to_string).collect::<String>();
+    assert!(history.contains("M21") && history.contains("M22"), "{:?}", shown[1]);
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// T-4746: "which organizations publish?" reads the catalogue's Organizations; a catalogue that
 /// lists none answers "none" in the question's language, and no answer call guesses at it.
 #[tokio::test]
