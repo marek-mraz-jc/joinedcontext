@@ -3875,6 +3875,95 @@ mod tests {
         );
     }
 
+    /// 5.6.17.3: the common observedAt goes to each live object instance
+    /// that has none; members that hold no instances, deletions and
+    /// non-object entries are passed by.
+    #[test]
+    fn the_common_observed_at_reaches_only_live_instances() {
+        let ts = "2026-01-01T00:00:00Z";
+        let mut frag = json!({"id": "urn:x", "a": {"value": 1},
+            "b": [5, {"type": "Property", "value": "urn:ngsi-ld:null"}, {"value": 2},
+                  {"value": 3, "observedAt": "2020-01-01T00:00:00Z"}]});
+        super::apply_common_observed_at(&mut frag, Some(ts));
+        assert_eq!(frag["a"], json!({"value": 1}));
+        assert_eq!(frag["b"][0], 5);
+        assert!(
+            frag["b"][1].get("observedAt").is_none(),
+            "a deletion takes none"
+        );
+        assert_eq!(frag["b"][2]["observedAt"], ts);
+        assert_eq!(frag["b"][3]["observedAt"], "2020-01-01T00:00:00Z");
+    }
+
+    /// 5.6.17.4: under a common lang only a string value of an Attribute
+    /// that already holds a languageMap becomes a one-key languageMap patch.
+    #[test]
+    fn the_common_lang_rewrites_only_string_values_over_a_language_map() {
+        let target = json!({"id": "urn:x",
+            "n": [{"type": "LanguageProperty", "languageMap": {"en": "car"}}],
+            "o": [{"type": "LanguageProperty", "languageMap": {"en": "car"}}],
+            "p": [{"type": "Property", "value": "plain"}]});
+        let mut frag = json!({"id": "urn:x",
+            "n": [{"type": "Property", "value": "urn:ngsi-ld:null"}, 5, {"type": "Property", "value": 3},
+                  {"type": "Property", "value": "auto"}],
+            "o": {"type": "Property", "value": "x"},
+            "p": [{"type": "Property", "value": "q"}]});
+        super::apply_common_lang(&target, &mut frag, Some("de"));
+        assert_eq!(frag["n"][0]["value"], "urn:ngsi-ld:null");
+        assert_eq!(frag["n"][1], 5);
+        assert_eq!(frag["n"][2]["value"], 3);
+        assert_eq!(
+            frag["n"][3],
+            json!({"type": "LanguageProperty", "languageMap": {"de": "auto"}})
+        );
+        assert_eq!(frag["o"], json!({"type": "Property", "value": "x"}));
+        assert_eq!(frag["p"][0]["value"], "q");
+    }
+
+    /// 5.5.12/5.6.18: merging into what is not an object changes nothing; a
+    /// deletion for a datasetId the target lacks is a no-op; a replaced
+    /// instance without a createdAt gets none carried over, a non-object
+    /// replacement is dropped, a non-object stored instance takes no patch,
+    /// and a compound value merges to any depth.
+    #[test]
+    fn merge_edges_leave_what_they_cannot_merge() {
+        let ts = "2026-01-01T00:00:00Z";
+        let mut bare = json!("x");
+        merge_into(&mut bare, &json!({"a": [{"value": 1}]}), ts);
+        assert_eq!(bare, json!("x"));
+        let mut doc = json!({"id": "urn:x",
+            "a": [{"type": "Property", "value": 1}],
+            "b": [7],
+            "c": [{"type": "Property", "value": {"o": {"k": 1, "j": 2}}}]});
+        merge_into(
+            &mut doc,
+            &json!({
+            "a": [{"type": "Property", "value": "urn:ngsi-ld:null", "datasetId": "urn:d:9"}],
+            "b": [{"type": "Property", "value": 2}],
+            "c": [{"type": "Property", "value": {"o": {"k": 9}}}]}),
+            ts,
+        );
+        assert_eq!(doc["a"][0]["value"], 1, "nothing of urn:d:9 to delete");
+        assert_eq!(doc["b"], json!([7]));
+        assert_eq!(doc["c"][0]["value"], json!({"o": {"k": 9, "j": 2}}));
+        let mut doc = json!({"id": "urn:x", "a": [{"type": "Property", "value": 1}],
+            "b": [{"type": "Property", "value": 1, "createdAt": "2020-01-01T00:00:00Z"}]});
+        super::update_into(
+            &mut doc,
+            &json!({"a": [{"type": "Property", "value": 2}], "b": [5]}),
+            ts,
+        );
+        assert_eq!(doc["a"][0]["value"], 2);
+        assert_eq!(
+            doc["a"][0]["createdAt"], ts,
+            "a new stamp, no old one carried"
+        );
+        assert_eq!(
+            doc["b"][0]["value"], 1,
+            "a non-object replacement is dropped"
+        );
+    }
+
     /// 5.5.12: merge "merges the provided information with the existing
     /// information up to an arbitrary depth, e.g. including going into JSON
     /// objects representing a Property value" (RFC 7396 with the NGSI-LD
