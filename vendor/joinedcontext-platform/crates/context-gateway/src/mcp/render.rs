@@ -405,4 +405,52 @@ mod tests {
         assert_eq!(personal_named(&asked, &personal), ["rider"]);
         assert_eq!(asked.arguments["format"], "keyValues");
     }
+
+    fn call(endpoint: Value, data: Value) -> Map<String, Value> {
+        let mut arguments = Map::new();
+        arguments.insert("endpoint".into(), endpoint);
+        arguments.insert(
+            "spec".into(),
+            json!({ "mark": "bar", "encoding": {
+            "x": { "field": "stationName", "type": "nominal" },
+            "y": { "field": "pm10", "type": "quantitative" } } }),
+        );
+        arguments.insert("data".into(), data);
+        arguments
+    }
+
+    /// Each malformed call is refused by the path of what is wrong; a read without arguments is
+    /// an empty read of the tool's format.
+    #[test]
+    fn a_malformed_call_is_refused_by_its_path() {
+        for (endpoint, data, path) in [
+            (json!(""), json!({"tool": "query_entities"}), "/endpoint"),
+            (json!(7), json!({"tool": "query_entities"}), "/endpoint"),
+            (json!("air"), json!({"tool": "get_entity"}), "/data/tool"),
+            (json!("air"), json!({"tool": 3}), "/data/tool"),
+            (
+                json!("air"),
+                json!({"tool": "query_entities", "arguments": []}),
+                "/data/arguments",
+            ),
+            (
+                json!("air"),
+                json!({"tool": "query_entities", "arguments": {"endpoint": "x"}}),
+                "/data/arguments/endpoint",
+            ),
+            (
+                json!("air"),
+                json!({"tool": "query_entities", "arguments": {"count": true}}),
+                "/data/arguments/count",
+            ),
+        ] {
+            let refused = asked(&call(endpoint, data.clone()))
+                .err()
+                .unwrap_or_default();
+            assert!(refused.starts_with(path), "{data}: {refused}");
+        }
+        let empty =
+            asked(&call(json!("air"), json!({"tool": "query_temporal"}))).expect("an empty read");
+        assert_eq!(empty.tool, "query_temporal");
+    }
 }

@@ -918,13 +918,7 @@ async fn auth(
         );
     }
     // The client id and the outcome, never the password.
-    tracing::info!(
-        broker = release,
-        clientid = %connect.clientid,
-        result = answer.result,
-        why = why.text,
-        "mqtt connect"
-    );
+    tracing::info!(broker = release, clientid = %connect.clientid, result = answer.result, why = why.text, "mqtt connect");
     Json(answer)
 }
 
@@ -961,12 +955,7 @@ async fn acl(
         }
     }
     if !allowed {
-        tracing::info!(
-            broker = caller.map(broker_of).unwrap_or_default(),
-            clientid = %access.clientid,
-            why,
-            "mqtt publish refused"
-        );
+        tracing::info!(broker = caller.map(broker_of).unwrap_or_default(), clientid = %access.clientid, why, "mqtt publish refused");
     }
     let result = if allowed { "allow" } else { "deny" };
     Json(serde_json::json!({ "result": result }))

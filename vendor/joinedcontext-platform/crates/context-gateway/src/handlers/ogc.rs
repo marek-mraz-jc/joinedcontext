@@ -421,14 +421,7 @@ async fn read_surface(
         return unpinned.problem().into_response();
     }
     // GET and HEAD only: jc's door counts answered reads and writes every refusal (T-7474).
-    tracing::debug!(
-        slug = %endpoint.slug,
-        space = %endpoint.space,
-        %view,
-        principal = %principal_of(&subject),
-        surface = surface.name,
-        "request forwarded to the broker's view"
-    );
+    tracing::debug!(slug = %endpoint.slug, space = %endpoint.space, %view, principal = %principal_of(&subject), surface = surface.name, "request forwarded to the broker's view");
     let (parts, _) = request.into_parts();
     let query = parts.uri.query().map(str::to_owned);
     // A HEAD is the GET without its body (RFC 9110 9.3.2): the broker's GET is read and its
@@ -807,15 +800,7 @@ async fn odata_write(
         Ok(reserved) => reserved,
         Err(answer) => return *answer,
     };
-    tracing::info!(
-        slug = %endpoint.slug,
-        space = %endpoint.space,
-        %view,
-        principal = %principal_of(&subject),
-        surface = ODATA.name,
-        operation = %write.operation.as_str(),
-        "write forwarded to the broker's view"
-    );
+    tracing::info!(slug = %endpoint.slug, space = %endpoint.space, %view, principal = %principal_of(&subject), surface = ODATA.name, operation = %write.operation.as_str(), "write forwarded to the broker's view");
     let answer = gateway
         .broker
         .send(method, &target, headers, Body::from(sent))

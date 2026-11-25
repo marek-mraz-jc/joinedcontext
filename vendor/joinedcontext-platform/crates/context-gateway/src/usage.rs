@@ -104,7 +104,9 @@ pub fn count(endpoint: &str, route: &str, status: u16, caller: &'static str) {
         return;
     }
     add(
-        &mut tally().lock().unwrap_or_else(|e| e.into_inner()),
+        &mut tally()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
         endpoint,
         surface,
         caller,
@@ -123,7 +125,11 @@ fn add(tally: &mut Tally, endpoint: &str, surface: &'static str, caller: &'stati
 
 /// Everything counted since the last take, sorted, and an empty tally behind it.
 pub fn take() -> Vec<Count> {
-    let taken = std::mem::take(&mut *tally().lock().unwrap_or_else(|e| e.into_inner()));
+    let taken = std::mem::take(
+        &mut *tally()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
     let mut counts: Vec<Count> = taken
         .into_iter()
         .map(|((endpoint, surface, caller), count)| Count {
@@ -141,7 +147,9 @@ pub fn take() -> Vec<Count> {
 
 /// Puts counts a failed post did not deliver back, so the next post carries them.
 pub fn restore(counts: Vec<Count>) {
-    let mut tally = tally().lock().unwrap_or_else(|e| e.into_inner());
+    let mut tally = tally()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     for count in counts {
         add(
             &mut tally,

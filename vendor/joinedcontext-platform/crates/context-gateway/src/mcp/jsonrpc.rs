@@ -17,7 +17,7 @@ pub(crate) fn answered(payload: &Value, result_key: &str) -> Value {
         "isError": false,
         "content": [{
             "type": "text",
-            "text": serde_json::to_string(payload).unwrap_or_else(|_| "null".to_owned()),
+            "text": payload.to_string(),
         }],
         "structuredContent": { result_key: payload },
     })
@@ -60,11 +60,36 @@ pub fn parse_error() -> Response<Body> {
 
 /// A JSON-RPC message as the HTTP answer Streamable HTTP expects.
 pub fn json_response(status: StatusCode, body: &Value) -> Response<Body> {
-    Response::builder()
-        .status(status)
-        .header(axum::http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            serde_json::to_vec(body).unwrap_or_else(|_| b"{}".to_vec()),
-        ))
-        .unwrap_or_else(|_| Response::new(Body::empty()))
+    let mut response = Response::new(Body::from(body.to_string()));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A refusal carries the problem document as `structuredContent` only when it is an object.
+    #[test]
+    fn a_refusal_carries_only_an_object_as_its_structured_content() {
+        let with = refused("refused", &json!({"status": 403}));
+        assert_eq!(with["isError"], json!(true));
+        assert_eq!(with["structuredContent"], json!({"status": 403}));
+        assert!(refused("refused", &Value::Null)
+            .get("structuredContent")
+            .is_none());
+        assert!(refused("refused", &json!([1]))
+            .get("structuredContent")
+            .is_none());
+        let ok = answered(&json!([1, 2]), "items");
+        assert_eq!(ok["content"][0]["text"], json!("[1,2]"));
+        assert_eq!(ok["structuredContent"]["items"], json!([1, 2]));
+        let answer = json_response(StatusCode::ACCEPTED, &json!({"a": 1}));
+        assert_eq!(answer.status(), StatusCode::ACCEPTED);
+        assert_eq!(answer.headers()["content-type"], "application/json");
+    }
 }

@@ -100,7 +100,10 @@ impl DailyCreates {
         let day = now / DAY;
         let wait = DAY - now % DAY;
         let key = (slug.to_owned(), caller.to_owned());
-        let mut callers = self.callers.lock().unwrap_or_else(|e| e.into_inner());
+        let mut callers = self
+            .callers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let used = callers
             .get(&key)
             .filter(|(when, _)| *when == day)
@@ -116,7 +119,10 @@ impl DailyCreates {
         if callers.len() >= MAX_CALLERS && !callers.contains_key(&key) {
             return Err((wait, Spent::Form));
         }
-        let mut counts = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut counts = self
+            .counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let entry = counts.entry(slug.to_owned()).or_insert((day, 0));
         if entry.0 != day {
             *entry = (day, 0);
@@ -133,13 +139,19 @@ impl DailyCreates {
     /// Gives back a slot `reserve` took at `now` whose create the broker did not make.
     pub fn release(&self, slug: &str, caller: &str, now: u64) {
         let day = now / DAY;
-        let mut callers = self.callers.lock().unwrap_or_else(|e| e.into_inner());
+        let mut callers = self
+            .callers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(mine) = callers.get_mut(&(slug.to_owned(), caller.to_owned())) {
             if mine.0 == day {
                 mine.1 = mine.1.saturating_sub(1);
             }
         }
-        let mut counts = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut counts = self
+            .counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(entry) = counts.get_mut(slug) {
             if entry.0 == day {
                 entry.1 = entry.1.saturating_sub(1);
