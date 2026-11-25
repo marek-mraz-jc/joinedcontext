@@ -6290,6 +6290,103 @@ output_error{stream="kpi"} 6
         );
     }
 
+    /// EP-67: a secrets copy names the root it could not open and the file it could not read;
+    /// a path that is no UTF-8 is no secrets file and is left out.
+    #[test]
+    fn a_secrets_copy_names_what_it_could_not_read() {
+        use std::os::unix::ffi::OsStrExt;
+        let missing = std::env::temp_dir().join("t7806-no-such-root");
+        let err = secrets_copy(&missing)
+            .err()
+            .expect("a missing root is refused");
+        assert!(err.contains("t7806-no-such-root"), "{err}");
+
+        let dir = Scratch::new("t7806-secrets").expect("a scratch directory");
+        write_tree(
+            dir.path(),
+            &[(
+                "projects/hel/secrets/ckan.enc.yaml",
+                "ckan-api-token: ENC[x]\n",
+            )],
+        );
+        std::fs::write(
+            dir.path()
+                .join("projects/hel/secrets")
+                .join(std::ffi::OsStr::from_bytes(b"\xff.enc.yaml")),
+            "not read\n",
+        )
+        .expect("a file whose name is no UTF-8");
+        let unreadable = dir.path().join("projects/hel/secrets/broken.enc.yaml");
+        std::fs::write(&unreadable, [0xff, 0xfe, 0x00]).expect("a file that is no text");
+        let err = secrets_copy(dir.path())
+            .err()
+            .expect("an unreadable file is refused");
+        assert!(err.contains("broken.enc.yaml"), "{err}");
+
+        std::fs::remove_file(&unreadable).expect("removed");
+        let copy = secrets_copy(dir.path()).expect("the secrets copy");
+        let copied: Vec<_> = std::fs::read_dir(copy.path().join("projects/hel/secrets"))
+            .expect("the copied directory")
+            .map(|entry| entry.expect("an entry").file_name())
+            .collect();
+        assert_eq!(copied, [std::ffi::OsString::from("ckan.enc.yaml")]);
+    }
+
+    /// T-6455: a merge before the first run, or on a follower, takes nothing live and asks the
+    /// forge nothing.
+    #[tokio::test]
+    async fn a_merge_goes_live_only_on_a_leader_that_has_run() {
+        bare_syncer()
+            .go_live()
+            .await
+            .expect("before the first run nothing goes live");
+        let follower = Syncer::new(forge_at_dead(), Arc::new(Mirror::new()))
+            .with_leadership(Arc::new(Leadership::reconciler(dead_pool())));
+        follower
+            .status
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .revision = Some("rev-1".to_owned());
+        follower
+            .go_live()
+            .await
+            .expect("a follower converges nothing");
+    }
+
+    fn edge_settings() -> crate::apps::reconciler::Settings {
+        crate::apps::reconciler::Settings {
+            host: "portal.bb.sk".to_owned(),
+            apex: "apps.bb.sk".to_owned(),
+            gateway_url: None,
+            service_url: None,
+            namespace: "jc-apps".to_owned(),
+            release: None,
+            service_account: None,
+            org_domain: "bb.sk".to_owned(),
+            apisix_namespace: "jc-edge".to_owned(),
+            image_repository: None,
+            pull_secret: None,
+            basemap_base: None,
+        }
+    }
+
+    /// AP-112: the edge file a cluster refuses is said, and the edge keeps the file it read;
+    /// without an edge file nothing is composed and the registry's hosts wait.
+    #[tokio::test]
+    async fn an_edge_file_the_cluster_refuses_is_said_and_not_current() {
+        let mirror = Mirror::new();
+        assert!(!bare_syncer().converge_edge_file(&mirror).await);
+        let kube = answering(500).await;
+        let edge = super::super::edge_file::EdgeFile::new(
+            crate::apps::kube::KubeClient::with_token(&kube.uri(), "kube-token").expect("kube"),
+            "jc-edge".to_owned(),
+        );
+        let syncer = bare_syncer().with_edge_file(Arc::new(edge), edge_settings());
+        let (current, log) = crate::reconciler::logged(syncer.converge_edge_file(&mirror)).await;
+        assert!(!current);
+        assert!(log.contains("edge file not written"), "{log}");
+    }
+
     #[test]
     fn candidate_manifest_path_filtering() {
         assert!(is_candidate_manifest("org.yaml"));
