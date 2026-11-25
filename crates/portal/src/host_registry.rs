@@ -667,43 +667,49 @@ mod tests {
             drift.contains("the Organization drift could not be read"),
             "{drift}"
         );
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        // The database part runs where JC_PORTAL_TEST_DATABASE_URL names a PostgreSQL.
+        if let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
-        crate::db::connect(&url).await.expect("migrate");
-        // A session whose project_ids is a temporary table of another shape: the drift reads the
-        // organizations, the project key lookup fails.
-        let shadowed = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .after_connect(|conn, _| {
-                Box::pin(async move {
-                    sqlx::query("CREATE TEMP TABLE project_ids (shadow int)")
-                        .execute(conn)
-                        .await
-                        .map(|_| ())
+        {
+            let pool = crate::db::connect(&url).await.expect("migrate");
+            let organizations_only = Mirror::new();
+            organization(&organizations_only, "smartcity");
+            let read = logged(report_round(&pool, &organizations_only)).await;
+            assert!(!read.contains("could not be read"), "{read}");
+            // A session whose project_ids is a temporary table of another shape: the drift
+            // reads the organizations, the project key lookup fails.
+            let shadowed = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .after_connect(|conn, _| {
+                    Box::pin(async move {
+                        sqlx::query("CREATE TEMP TABLE project_ids (shadow int)")
+                            .execute(conn)
+                            .await
+                            .map(|_| ())
+                    })
                 })
-            })
-            .connect(&url)
-            .await
-            .expect("a pool");
-        pipeline(&mirror, "zilina");
-        mirror.upsert(crate::resource::ResourceEnvelope {
-            api_version: crate::resource::API_VERSION.to_owned(),
-            kind: "Project".to_owned(),
-            metadata: crate::resource::ObjectMeta::new("zilina", crate::permissions::ORG_NAMESPACE),
-            spec: serde_json::json!({ "organizationRef": "smartcity" }),
-            status: None,
-        });
-        let unplaced = logged(report_round(&shadowed, &mirror)).await;
-        assert!(
-            unplaced.contains("the unplaced projects could not be read")
-                && !unplaced.contains("drift could not be read"),
-            "{unplaced}"
-        );
+                .connect(&url)
+                .await
+                .expect("a pool");
+            pipeline(&mirror, "zilina");
+            mirror.upsert(crate::resource::ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: "Project".to_owned(),
+                metadata: crate::resource::ObjectMeta::new(
+                    "zilina",
+                    crate::permissions::ORG_NAMESPACE,
+                ),
+                spec: serde_json::json!({ "organizationRef": "smartcity" }),
+                status: None,
+            });
+            let unplaced = logged(report_round(&shadowed, &mirror)).await;
+            assert!(
+                unplaced.contains("the unplaced projects could not be read")
+                    && !unplaced.contains("drift could not be read"),
+                "{unplaced}"
+            );
+        }
     }
 
     /// The drift and unplaced-pipeline reports read the database only when the mirror holds

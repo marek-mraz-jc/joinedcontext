@@ -2051,36 +2051,35 @@ mod tests {
     /// changes.
     #[tokio::test]
     async fn an_approved_look_that_fails_its_check_shows_the_file() {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        // The database part runs where JC_PORTAL_TEST_DATABASE_URL names a PostgreSQL.
+        if let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .after_connect(|conn, _| {
-                Box::pin(async move {
-                    sqlx::raw_sql(
-                        "CREATE TEMP TABLE operator_changes \
-                           (kind text, state text, decided_at timestamptz, payload jsonb); \
-                         INSERT INTO operator_changes VALUES \
-                           ('BrandingSet', 'applied', now(), '{\"branding\": 42}')",
-                    )
-                    .execute(conn)
-                    .await
-                    .map(|_| ())
+        {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .after_connect(|conn, _| {
+                    Box::pin(async move {
+                        sqlx::raw_sql(
+                            "CREATE TEMP TABLE operator_changes \
+                               (kind text, state text, decided_at timestamptz, payload jsonb); \
+                             INSERT INTO operator_changes VALUES \
+                               ('BrandingSet', 'applied', now(), '{\"branding\": 42}')",
+                        )
+                        .execute(conn)
+                        .await
+                        .map(|_| ())
+                    })
                 })
-            })
-            .connect(&url)
-            .await
-            .expect("a pool");
-        let mut state = AppState::new(Config::for_tests(), None);
-        state.db = Some(pool);
-        state.load_installation_look().await;
-        assert!(state.installation_look().is_none());
-        assert_eq!(state.installation_branding(), Branding::load(None));
+                .connect(&url)
+                .await
+                .expect("a pool");
+            let mut state = AppState::new(Config::for_tests(), None);
+            state.db = Some(pool);
+            state.load_installation_look().await;
+            assert!(state.installation_look().is_none());
+            assert_eq!(state.installation_branding(), Branding::load(None));
+        }
     }
 
     /// T-7816: an SDM mirror directory that does not read leaves the Portal without one, and a
