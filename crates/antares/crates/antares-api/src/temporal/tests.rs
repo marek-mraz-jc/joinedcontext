@@ -40,6 +40,39 @@ mod clause_4_11 {
         assert_eq!(default_slot[0]["value"], 11, "newer modifiedAt wins");
     }
 
+    /// The merge leaves documents that are no objects alone, takes a single
+    /// instance as a one-element list, keeps an older conflicting instance
+    /// over a stale remote one, and appends instances without the
+    /// timeproperty beside the ones that have it.
+    #[tokio::test]
+    async fn merge_edges_keep_what_they_cannot_slot() {
+        let mut odd = json!("x");
+        merge_temporal_docs(&mut odd, &json!({"id": "urn:e"}), false, "observedAt");
+        assert_eq!(odd, json!("x"));
+        let mut base = json!({"id": "urn:e", "type": "T", "speed": [
+            {"type": "Property", "value": 1},
+            {"type": "Property", "value": 10, "observedAt": "2026-05-01T00:00:00Z",
+             "modifiedAt": "2026-06-01T00:00:00Z"}]});
+        let add = json!({"id": "urn:e", "name": {"type": "Property", "value": "n"},
+            "speed": [
+                {"type": "Property", "value": 9, "observedAt": "2026-05-01T00:00:00Z",
+                 "modifiedAt": "2026-05-01T00:00:00Z"},
+                {"type": "Property", "value": 2}]});
+        merge_temporal_docs(&mut base, &add, false, "observedAt");
+        assert_eq!(base["name"], json!([{"type": "Property", "value": "n"}]));
+        let values: Vec<&Value> = base["speed"]
+            .as_array()
+            .expect("speed")
+            .iter()
+            .map(|i| &i["value"])
+            .collect();
+        assert_eq!(
+            values,
+            [&json!(1), &json!(10), &json!(2)],
+            "the newer local 10 stays"
+        );
+    }
+
     /// 4.3.6.2: "An auxiliary Context Source Registration never overrides
     /// data held directly within a Context Broker. […] Context data from
     /// auxiliary context sources is only included if it is supplementary to
@@ -1221,6 +1254,143 @@ mod clause_4_21 {
         assert!(!crate::repr::meta_projected(None, Some(&omit), "type"));
         assert!(crate::repr::meta_projected(None, Some(&omit), "id"));
         assert!(crate::repr::meta_projected(None, None, "type"));
+    }
+}
+
+/// 5.7.3 / 5.7.4 / 5.14.5 at the request: the refusals before any read,
+/// an absent Entity under `local`, a projection that keeps nothing, and a
+/// temporal EntityMap over split Entities.
+#[cfg(test)]
+mod temporal_requests {
+    use crate::state::AppState;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+
+    async fn call(
+        st: &AppState,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let mut req = Request::builder().method(method).uri(uri);
+        let body = match body {
+            Some(b) => {
+                let s = b.to_string();
+                req = req
+                    .header("Content-Type", "application/json")
+                    .header("Content-Length", s.len());
+                Body::from(s)
+            }
+            None => Body::empty(),
+        };
+        let resp = crate::router(st.clone())
+            .oneshot(req.body(body).expect("request"))
+            .await
+            .expect("response");
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    async fn vehicle(st: &AppState, id: &str) {
+        let (status, body) = call(
+            st,
+            "POST",
+            "/ngsi-ld/v1/entities",
+            Some(json!({"id": id, "type": "Vehicle",
+                        "speed": {"type": "Property", "value": 10}})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+
+    /// 5.7.4.4: an idPattern that does not compile, and a Query body of
+    /// another type, are BadRequestData.
+    #[tokio::test]
+    async fn malformed_temporal_queries_are_refused() {
+        let st = AppState::new("antares-temporal-req".into());
+        let (status, body) = call(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/temporal/entities?type=Vehicle&idPattern=%28&timerel=before&timeAt=2999-01-01T00:00:00Z",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("idPattern")),
+            "{body}"
+        );
+        let (status, body) = call(
+            &st,
+            "POST",
+            "/ngsi-ld/v1/temporal/entityOperations/query",
+            Some(json!({"type": "Subscription", "entities": [{"type": "Vehicle"}]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["detail"], "body type must be Query", "{body}");
+    }
+
+    /// 5.7.3.4: an Entity with no history here is 404 when the request
+    /// keeps to this broker, and so is a projection that keeps nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn absent_or_projected_away_evolutions_are_not_found() {
+        let st = crate::wired_state("antares-temporal-req-2").await;
+        let (status, body) = call(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:Vehicle:none?local=true",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        vehicle(&st, "urn:ngsi-ld:Vehicle:p1").await;
+        let (status, body) = call(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:Vehicle:p1?omit=id,type,speed",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("projection matches nothing")),
+            "{body}"
+        );
+    }
+
+    /// 5.14.5.4 with splitEntities: the map is built from the query's
+    /// selection members alone and still holds the Entity.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_split_temporal_map_keeps_the_selection() {
+        let st = crate::wired_state("antares-temporal-req-3").await;
+        vehicle(&st, "urn:ngsi-ld:Vehicle:s1").await;
+        let (status, map) = call(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/temporal/entityMaps?type=Vehicle&attrs=speed&splitEntities=true&timerel=before&timeAt=2999-01-01T00:00:00Z&timeproperty=createdAt",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{map}");
+        assert!(
+            map["entityMap"]
+                .as_object()
+                .is_some_and(|o| o.contains_key("urn:ngsi-ld:Vehicle:s1")),
+            "{map}"
+        );
     }
 }
 
