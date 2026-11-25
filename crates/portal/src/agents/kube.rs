@@ -111,10 +111,8 @@ pub async fn schedule_workspace_job(
     ttl_secs: i64,
 ) -> Result<bool, String> {
     let Some(kube) = kube else {
-        tracing::info!(
-            run_id = %run.id,
-            "no cluster: the workspace is not scheduled and the ticket goes to the caller"
-        );
+        let run_id = &run.id;
+        tracing::info!(%run_id, "no cluster: the workspace is not scheduled and the ticket goes to the caller");
         return Ok(false);
     };
 

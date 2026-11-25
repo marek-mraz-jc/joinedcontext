@@ -205,10 +205,13 @@ mod tests {
     }
 
     fn errors(result: Result<bool, ApiError>) -> Vec<String> {
-        match result {
-            Err(ApiError::Invalid { errors, .. }) => errors,
-            other => panic!("not an Invalid: {other:?}"),
-        }
+        result
+            .err()
+            .and_then(|error| match error {
+                ApiError::Invalid { errors, .. } => Some(errors),
+                _ => None,
+            })
+            .expect("an Invalid")
     }
 
     #[test]
