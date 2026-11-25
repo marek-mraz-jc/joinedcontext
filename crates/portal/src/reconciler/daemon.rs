@@ -4923,7 +4923,7 @@ output_error{stream="kpi"} 6
             fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
                 self.0
                     .lock()
-                    .map_err(|_| std::io::Error::other("poisoned"))?
+                    .unwrap_or_else(PoisonError::into_inner)
                     .extend_from_slice(bytes);
                 Ok(bytes.len())
             }
@@ -4940,6 +4940,7 @@ output_error{stream="kpi"} 6
             .finish();
         let staged =
             tracing::subscriber::with_default(subscriber, || stageable(content).expect("YAML"));
+        std::io::Write::flush(&mut log.clone()).expect("an in-memory log flushes");
         let said = String::from_utf8_lossy(&log.0.lock().expect("log")).into_owned();
         (staged, said)
     }
@@ -6115,11 +6116,14 @@ output_error{stream="kpi"} 6
     async fn until_the_feed_is_asked(gateway: &MockServer, times: usize) {
         for _ in 0..200 {
             if feeds_read(gateway).await >= times {
-                return;
+                break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        panic!("the catalogue wave never asked the gateway");
+        assert!(
+            feeds_read(gateway).await >= times,
+            "the catalogue wave never asked the gateway"
+        );
     }
 
     /// T-5519: a catalogue that answers after seconds no longer holds the mirror swap. On dev one
@@ -7073,15 +7077,10 @@ output_error{stream="kpi"} 6
             .await;
 
         let err = syncer.sync_once().await.unwrap_err();
-        match err {
-            SyncError::Empty(message) => {
-                assert!(
-                    message.contains("none of the 1 candidate files"),
-                    "{message}"
-                );
-            }
-            other => panic!("expected an empty-repository error, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, SyncError::Empty(message) if message.contains("none of the 1 candidate files")),
+            "expected an empty-repository error, got {err:?}"
+        );
 
         // Mirror still holds the pre-seeded resource: a repository that does not load leaves
         // the last one that did in place.
@@ -8181,9 +8180,8 @@ output_error{stream="kpi"} 6
     fn app(name: &str, lifecycle: &str, build: Option<serde_json::Value>) -> ResourceEnvelope {
         let mut envelope = envelope("App", "city", name);
         envelope.spec = json!({ "lifecycle": lifecycle });
-        if let Some(status) = envelope.status.as_mut() {
-            status.build = build.map(|build| serde_json::from_value(build).expect("a build"));
-        }
+        envelope.status.as_mut().expect("a status").build =
+            build.map(|build| serde_json::from_value(build).expect("a build"));
         envelope
     }
 
@@ -8379,6 +8377,932 @@ output_error{stream="kpi"} 6
         let asked = forge.received_requests().await.unwrap_or_default().len();
         syncer.protect_repositories(&fresh).await;
         assert!(forge.received_requests().await.unwrap_or_default().len() > asked);
+    }
+
+    // T-7806, second batch: the waves that need a part answering (a runner, a cluster, a forge
+    // with history), each driven through what that part can answer.
+
+    /// A state directory that cannot be created is said and its paths still taken; the quality
+    /// scanner and the App converger a deployment wires are kept as given.
+    #[tokio::test]
+    async fn a_state_directory_under_a_file_is_said_and_the_parts_are_kept() {
+        let scratch = Scratch::new("t7806-state").expect("scratch");
+        let file = scratch.path().join("a-file");
+        std::fs::write(&file, "not a directory").expect("a file");
+        let (syncer, log) =
+            crate::reconciler::logged(async { bare_syncer().with_state_dir(Some(file.join("s"))) })
+                .await;
+        assert!(
+            log.contains("the reconciler's state directory was not created"),
+            "{log}"
+        );
+        assert_eq!(syncer.assembly, file.join("s").join("assembly"));
+        let mirror = Arc::new(Mirror::new());
+        let syncer = syncer
+            .with_converger(Arc::new(Converger::new(dead_kube(), edge_settings())))
+            .with_quality(Arc::new(crate::quality::Scanner {
+                watch: Arc::new(super::super::drift::Watch::new(
+                    DEAD,
+                    &format!("{DEAD}/realms/bb"),
+                    reconciler_id(),
+                    auth(),
+                )),
+                schemas: Arc::new(crate::pipeline_validation::ModelSchemas::default()),
+                mirror: Arc::clone(&mirror),
+                org_domain: "bb.sk".to_owned(),
+                store: Arc::new(crate::quality::Store::new(None, Arc::clone(&mirror))),
+            }))
+            .with_activity(ActivityStore::new(Some(dead_pool()), keyed_mirror("city")))
+            .with_audit(
+                Arc::new(crate::connectors::ConnectorStore::new(None, None)),
+                30,
+            );
+        assert!(syncer.converger.is_some() && syncer.quality.is_some());
+        let render = render_of(scratch.path(), 1, BTreeMap::new());
+        let (_, log) = crate::reconciler::logged(async {
+            syncer.scan_and_start_background(&render).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        })
+        .await;
+        assert!(log.contains("the activity trim failed"), "{log}");
+        assert!(log.contains("audit trimmed rows=0"), "{log}");
+        let (_, log) = crate::reconciler::logged(syncer.record(vec![refused_event("city")])).await;
+        assert!(log.contains("the run is not in the activity feed"), "{log}");
+    }
+
+    /// A mirror whose project `project` belongs to an Organization, so the keyed stores ask
+    /// their database for it.
+    fn keyed_mirror(project: &str) -> Arc<Mirror> {
+        let mirror = Arc::new(Mirror::new());
+        let mut organization = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        organization.spec = json!({});
+        mirror.upsert(organization);
+        let mut registered = envelope("Project", crate::permissions::ORG_NAMESPACE, project);
+        registered.spec = json!({ "organization": "bbsk" });
+        mirror.upsert(registered);
+        mirror
+    }
+
+    fn refused_event(project: &str) -> ActivityEvent {
+        ActivityEvent {
+            time: jc_time::TimestampTz::now(),
+            project: project.to_owned(),
+            space: None,
+            kind: "config.refused".to_owned(),
+            source: "reconciler".to_owned(),
+            summary: "refused".to_owned(),
+            severity: "error".to_owned(),
+            correlation_id: None,
+            details: json!({}),
+        }
+    }
+
+    fn render_of(
+        root: &Path,
+        layout: u32,
+        projects: BTreeMap<String, (ShakoClient, String)>,
+    ) -> Render {
+        Render {
+            layout,
+            root: root.to_path_buf(),
+            _staged: Vec::new(),
+            projects,
+            unstaged: Vec::new(),
+            unloaded: Vec::new(),
+            refused: Vec::new(),
+            listings: BTreeMap::new(),
+        }
+    }
+
+    fn client_at(uri: &str) -> ShakoClient {
+        ShakoClient::new(uri.parse().expect("url"), "o", "p", "token").expect("a forge client")
+    }
+
+    /// A follower stops its MQTT subscribers, so the leader's keep the brokers' client ids; a
+    /// merged change on a replica whose forge is down is said and waits for the whole run.
+    #[tokio::test]
+    async fn a_follower_stops_its_capture_and_a_merge_on_a_dead_forge_is_said() {
+        let mirror = Arc::new(Mirror::new());
+        let syncer = Arc::new(
+            Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+                .with_leadership(Arc::new(Leadership::reconciler(dead_pool())))
+                .with_mqtt_capture(Arc::new(crate::mqtt_capture::Capture::new(
+                    Arc::new(crate::mqtt_capture::CaptureStore::new(
+                        None,
+                        Arc::clone(&mirror),
+                    )),
+                    "jc-mqtt".to_owned(),
+                ))),
+        );
+        let (outcome, _) = crate::reconciler::logged(syncer.sync_once()).await;
+        assert!(outcome.is_err(), "a follower with no forge loads nothing");
+        assert!(!syncer.is_leader());
+
+        let leader = Arc::new(Syncer::new(forge_at_dead(), Arc::new(Mirror::new())));
+        let (_, log) = crate::reconciler::logged(async {
+            Arc::clone(&leader).merged();
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while leader.status().last_error.is_none() && std::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        })
+        .await;
+        assert!(log.contains("sync after a merge failed"), "{log}");
+    }
+
+    /// T-7213: a first run that reads nothing from the forge serves the last assembly on the
+    /// state directory when it loads, says so when it does not, and leaves a replica that
+    /// serves something alone.
+    #[tokio::test]
+    async fn the_last_assembly_serves_a_first_run_that_reads_nothing() {
+        let dir = state_dir("t7806-assembly");
+        let assembly = dir.join("assembly");
+        write_tree(
+            &assembly,
+            &[
+                (".jc/layout", "2\n"),
+                (
+                    "projects/city/spaces/air/space.yaml",
+                    &manifest("ContextSpace", "air", json!({})),
+                ),
+            ],
+        );
+        let mirror = Arc::new(Mirror::new());
+        let syncer =
+            Syncer::new(forge_at_dead(), Arc::clone(&mirror)).with_state_dir(Some(dir.clone()));
+        let (_, log) =
+            crate::reconciler::logged(async { syncer.serve_last_assembly(&SyncError::Superseded) })
+                .await;
+        assert!(
+            log.contains("the first run read nothing from the forge"),
+            "{log}"
+        );
+        assert!(mirror.get("city", "ContextSpace", "air").is_some(), "{log}");
+
+        // A replica that serves something keeps it.
+        let (_, again) =
+            crate::reconciler::logged(async { syncer.serve_last_assembly(&SyncError::Superseded) })
+                .await;
+        assert!(!again.contains("the first run read nothing"), "{again}");
+
+        // An assembly of layout 2 that holds no manifest does not load either.
+        std::fs::remove_dir_all(assembly.join("projects")).expect("emptied");
+        let empty = Arc::new(Mirror::new());
+        let syncer =
+            Syncer::new(forge_at_dead(), Arc::clone(&empty)).with_state_dir(Some(dir.clone()));
+        let (_, log) =
+            crate::reconciler::logged(async { syncer.serve_last_assembly(&SyncError::Superseded) })
+                .await;
+        assert!(
+            log.contains("the last assembly does not load either"),
+            "{log}"
+        );
+        assert!(empty.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// CC-08: a refused project is told once per commit and reason: a forge that cannot say who
+    /// changed it is tried next run, a project with no commit at the path names its ref, a
+    /// reason that quotes a credential is not repeated, and with nobody named the project's
+    /// approvers are told; a notice that cannot be stored is said.
+    #[tokio::test]
+    async fn a_refused_project_is_told_once_and_never_quotes_a_secret() {
+        let history = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"Shako\.History"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .mount(&history)
+            .await;
+        let refusing = answering(500).await;
+        let unread = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"Shako\.History"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [{ "Sha": "feedbeef00", "Message": "edit" }]
+            })))
+            .mount(&unread)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"Commits\("))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&unread)
+            .await;
+        let token = format!("ghp_{}", "0123456789abcdef".repeat(3));
+        let scratch = Scratch::new("t7806-refused").expect("scratch");
+        let mut render = render_of(
+            scratch.path(),
+            2,
+            BTreeMap::from([
+                (
+                    "quiet".to_owned(),
+                    (client_at(&history.uri()), "main".to_owned()),
+                ),
+                (
+                    "down".to_owned(),
+                    (client_at(&refusing.uri()), "main".to_owned()),
+                ),
+                (
+                    "unread".to_owned(),
+                    (client_at(&unread.uri()), "main".to_owned()),
+                ),
+            ]),
+        );
+        let refusal = |slug: &str, path: Option<&str>, reason: &str| ProjectRefusal {
+            slug: slug.to_owned(),
+            path: path.map(PathBuf::from),
+            reason: reason.to_owned(),
+        };
+        render.refused = vec![
+            refusal("quiet", None, &format!("rotated {token} after the leak")),
+            refusal("down", Some("spaces/air.yaml"), "a bad indent"),
+            refusal("unread", Some("spaces/air.yaml"), "a bad indent"),
+            refusal("unregistered", None, "not staged"),
+        ];
+        let activity = ActivityStore::new(None, Default::default());
+        let mirror = Arc::new(Mirror::new());
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+            .with_activity(activity.clone())
+            .with_notices(Arc::new(crate::entity_comments::CommentStore::new(
+                Some(dead_pool()),
+                Arc::clone(&mirror),
+            )));
+        let (_, log) = crate::reconciler::logged(syncer.tell_refused(&render)).await;
+        assert_eq!(
+            log.matches("who changed the refused project is not known yet")
+                .count(),
+            2,
+            "{log}"
+        );
+        assert!(
+            log.contains("the proposer of a refused change is not notified"),
+            "{log}"
+        );
+        assert!(!log.contains(&token), "{log}");
+        let told = activity
+            .list("quiet", &feed_filter())
+            .await
+            .expect("the feed");
+        assert_eq!(told.items.len(), 1, "{:?}", told.items);
+        let summary = &told.items[0].summary;
+        assert!(
+            summary.contains("project.yaml does not load; open it in the repository"),
+            "{summary}"
+        );
+        assert!(summary.starts_with("Commit main was refused"), "{summary}");
+        assert!(!summary.contains(&token), "{summary}");
+
+        // Told once: the next run with the same refusal says nothing of it again.
+        let (_, again) = crate::reconciler::logged(syncer.tell_refused(&render)).await;
+        assert!(!again.contains("not notified"), "{again}");
+        let told = activity
+            .list("quiet", &feed_filter())
+            .await
+            .expect("the feed");
+        assert_eq!(told.items.len(), 1);
+    }
+
+    /// A project whose removal is held is confirmed only by a destructive approval: a project
+    /// the render did not stage, a forge with no default branch or no branch head, and a head
+    /// whose message carries no approval all hold it.
+    #[tokio::test]
+    async fn a_held_removal_needs_a_confirmed_head_of_the_projects_own_branch() {
+        let forge = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"Branches\("))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "abc" })))
+            .mount(&forge)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"Commits\("))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "Message": "a plain edit" })),
+            )
+            .mount(&forge)
+            .await;
+        let refusing = answering(500).await;
+        let scratch = Scratch::new("t7806-held").expect("scratch");
+        let render = render_of(
+            scratch.path(),
+            2,
+            BTreeMap::from([
+                (
+                    "named".to_owned(),
+                    (client_at(&forge.uri()), "main".to_owned()),
+                ),
+                (
+                    "nobranch".to_owned(),
+                    (client_at(&refusing.uri()), String::new()),
+                ),
+                (
+                    "nohead".to_owned(),
+                    (client_at(&refusing.uri()), "main".to_owned()),
+                ),
+            ]),
+        );
+        let syncer = Syncer::new(forge_at_dead(), Arc::new(Mirror::new()));
+        for project in ["named", "nobranch", "nohead", "unstaged"] {
+            assert!(
+                !syncer.removal_confirmed(&render, "rev", project).await,
+                "{project}"
+            );
+        }
+        let asked = forge.received_requests().await.unwrap_or_default();
+        assert!(asked
+            .iter()
+            .any(|request| request.url.path().contains("Commits('abc')")));
+    }
+
+    fn stream_world() -> Mirror {
+        let mirror = Mirror::new();
+        let source = |name: &str, spec: serde_json::Value| {
+            let mut envelope = envelope("DataSource", "helsinki", name);
+            envelope.spec = spec;
+            envelope.status = None;
+            envelope
+        };
+        mirror.upsert(source(
+            "bikes",
+            json!({ "type": "websocket", "webSocket": { "url": "wss://gbfs.example.org/status" } }),
+        ));
+        mirror.upsert(source(
+            "harvest-src",
+            json!({ "type": "http", "http": { "url": "https://example.org/data.json" } }),
+        ));
+        let mut endpoint = envelope("Endpoint", "helsinki", "helsinki-all");
+        endpoint.spec = json!({
+            "contextSpaceRef": "helsinki",
+            "slug": "abc123456789012345678901234",
+            "audience": "public",
+            "enabledRepresentations": ["ngsi-ld"]
+        });
+        mirror.upsert(endpoint);
+        let pipeline = |name: &str, source: &str, status: bool| {
+            let mut envelope = envelope("Pipeline", "helsinki", name);
+            envelope.spec = json!({
+                "class": "resident",
+                "source": { "dataSourceRef": { "kind": "DataSource", "name": source } },
+                "compute": { "kind": "bloblang", "bloblang": "root = this" },
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:example.org:helsinki:helsinki-all"
+            });
+            if !status {
+                envelope.status = None;
+            }
+            envelope
+        };
+        let mut silent = pipeline("silent", "bikes", true);
+        silent.spec["expiry"] = json!({ "after": "30m", "types": ["Vehicle"] });
+        mirror.upsert(silent);
+        mirror.upsert(pipeline("bare", "bikes", false));
+        mirror.upsert(pipeline("refused", "bikes", false));
+        let mut off = pipeline("off", "bikes", true);
+        off.spec["enabled"] = json!(false);
+        mirror.upsert(off);
+        let mut harvest = pipeline("harvest", "harvest-src", true);
+        harvest.spec["class"] = json!("scheduled");
+        harvest.spec["schedule"] = json!("0 5 * * *");
+        mirror.upsert(harvest);
+        mirror
+    }
+
+    /// T-0914, PL-64, PL-78: the stream wave against a runner that takes every stream: a Live
+    /// stream that only errors reads `StreamWriting` false, a sweep the door refuses is said on
+    /// its pipeline, a refused credential is `Error`, a disabled stream `Pending` and a
+    /// scheduled poll `Scheduled`; a run log that cannot be read is said for each of its reads
+    /// and the wave goes on.
+    #[tokio::test]
+    async fn the_stream_wave_says_each_outcome_on_its_pipeline() {
+        let runner = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/metrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "input_received{stream=\"helsinki.silent\"} 6\n\
+                 output_error{stream=\"helsinki.silent\"} 6\n",
+            ))
+            .mount(&runner)
+            .await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "active": true })))
+            .mount(&runner)
+            .await;
+        let deployer = Arc::new(
+            StreamDeployer::new(runner.uri())
+                .with_models(Arc::new(crate::pipeline_validation::ModelSchemas::default())),
+        );
+        let store_mirror = Arc::new(Mirror::new());
+        let mut organization = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        organization.spec = json!({});
+        store_mirror.upsert(organization);
+        let mut project = envelope("Project", crate::permissions::ORG_NAMESPACE, "helsinki");
+        project.spec = json!({ "organization": "bbsk" });
+        store_mirror.upsert(project);
+        let scratch = Scratch::new("t7806-streams").expect("scratch");
+        write_tree(scratch.path(), &[("README.md", "nothing here\n")]);
+        let repository = Repository::load(scratch.path()).expect("an empty repository loads");
+        let render = render_of(scratch.path(), 1, BTreeMap::new());
+        let refused = BTreeMap::from([(
+            ("helsinki".to_owned(), "refused".to_owned()),
+            "the secret `city-key` did not resolve".to_owned(),
+        )]);
+        let mut said = Vec::new();
+        for pool in [None, Some(dead_pool())] {
+            let syncer = Syncer::new(forge_at_dead(), Arc::new(Mirror::new()))
+                .with_streams(Arc::clone(&deployer))
+                .with_pipeline_outcomes(
+                    Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+                        pool.clone(),
+                        Arc::clone(&store_mirror),
+                    )),
+                    Arc::new(crate::pipeline_log::LogStore::new(
+                        pool,
+                        Arc::clone(&store_mirror),
+                    )),
+                );
+            let fresh = stream_world();
+            let (_, log) = crate::reconciler::logged(async {
+                syncer
+                    .converge_streams(&fresh, &repository, &render, &Bentos::new(), &refused)
+                    .await;
+                // The same refusal next run is not news.
+                syncer
+                    .converge_streams(&fresh, &repository, &render, &Bentos::new(), &refused)
+                    .await;
+            })
+            .await;
+            let silent = status_of_in(&fresh, "Pipeline", "silent");
+            assert_eq!(silent.phase, crate::resource::Phase::Live);
+            let types: Vec<&str> = silent
+                .conditions
+                .iter()
+                .map(|condition| condition.r#type.as_str())
+                .collect();
+            assert!(types.contains(&"StreamWriting"), "{types:?}");
+            assert!(types.contains(&"ExpirySweep"), "{types:?}");
+            let off = status_of_in(&fresh, "Pipeline", "off");
+            assert_eq!(off.phase, crate::resource::Phase::Pending);
+            assert_eq!(off.conditions[0].r#type, "StreamDeployed");
+            let harvest = status_of_in(&fresh, "Pipeline", "harvest");
+            assert_eq!(harvest.conditions[0].r#type, "Scheduled");
+            assert!(fresh
+                .get("helsinki", "Pipeline", "refused")
+                .is_some_and(|envelope| envelope.status.is_none()));
+            assert_eq!(log.matches("pipeline not run").count(), 2, "{log}");
+            said.push(log);
+        }
+        assert!(!said[0].contains("the run log was not read"), "{}", said[0]);
+        for line in [
+            "new scheduled pipelines wait for their clock",
+            "changed replace pipelines wait for their clock",
+            "failed runs wait for their clock",
+        ] {
+            assert!(said[1].contains(line), "{line} in {}", said[1]);
+        }
+    }
+
+    /// PL-93: a run log that cannot be read pauses nothing and says so.
+    #[tokio::test]
+    async fn an_unread_run_log_pauses_no_pipeline() {
+        let mirror = keyed_mirror("city");
+        let syncer = bare_syncer().with_pipeline_outcomes(
+            Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+                Some(dead_pool()),
+                Arc::clone(&mirror),
+            )),
+            Arc::new(crate::pipeline_log::LogStore::new(
+                Some(dead_pool()),
+                Arc::clone(&mirror),
+            )),
+        );
+        let lost = BTreeMap::from([(
+            ("city".to_owned(), "hsl".to_owned()),
+            "an author lost a reference".to_owned(),
+        )]);
+        let (kept, log) =
+            crate::reconciler::logged(syncer.paused_for_access(&Mirror::new(), lost.clone())).await;
+        assert_eq!(kept, lost);
+        assert!(
+            log.contains("no pipeline is paused for refused access this run"),
+            "{log}"
+        );
+    }
+
+    /// T-2976: a pipeline whose spec does not read, a disabled one and one with no status are
+    /// passed over by the phases a leader shares, a follower serves and a Portal with no runner
+    /// marks; an eligible one with a status gets each.
+    #[test]
+    fn the_shared_stream_phases_pass_over_what_is_not_a_stream() {
+        let mirror = stream_world();
+        let mut unreadable = envelope("Pipeline", "helsinki", "unreadable");
+        unreadable.spec = json!({ "class": 7 });
+        mirror.upsert(unreadable);
+        let phases = stream_phases(&mirror);
+        let mut names: Vec<&str> = phases.keys().map(|(_, name)| name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["harvest", "silent"]);
+        serve_leaders_phases(&mirror, &HashMap::new(), FOLLOWER);
+        assert_eq!(
+            status_of_in(&mirror, "Pipeline", "silent").conditions[0]
+                .reason
+                .as_deref(),
+            Some("Follower")
+        );
+        mark_streams_pending(&mirror, "NoRunner", "no runner");
+        assert_eq!(
+            status_of_in(&mirror, "Pipeline", "silent").conditions[0]
+                .reason
+                .as_deref(),
+            Some("NoRunner")
+        );
+        assert_eq!(
+            status_of_in(&mirror, "Pipeline", "off").conditions[0]
+                .reason
+                .as_deref(),
+            Some("Before"),
+            "a disabled stream is passed over"
+        );
+        assert!(mirror
+            .get("helsinki", "Pipeline", "bare")
+            .is_some_and(|envelope| envelope.status.is_none()));
+    }
+
+    fn app_manifest(name: &str, kind: &str, lifecycle: &str) -> String {
+        serde_json::to_string(&json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "App",
+            "metadata": { "name": name, "namespace": "city" },
+            "spec": {
+                "kind": kind,
+                "source": { "path": "./src" },
+                "build": { "rust": "1.90", "node": "22" },
+                "visibility": "project",
+                "lifecycle": lifecycle,
+                "dataNeeds": [{
+                    "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+                    "types": ["AirQualityObserved"],
+                    "attrs": ["pm10"],
+                    "operations": ["queryEntity"],
+                    "representations": ["ngsi-ld"]
+                }]
+            }
+        }))
+        .expect("JSON")
+    }
+
+    /// T-0411, AP-116: the App wave on a cluster that cannot be reached: the project's namespace
+    /// fails, so its App waits for it, each said; with a converger and no App nothing is said.
+    #[tokio::test]
+    async fn the_app_wave_says_what_each_app_did() {
+        let scratch = Scratch::new("t7806-apps").expect("scratch");
+        write_tree(
+            scratch.path(),
+            &[(
+                "projects/city/apps/web/app.yaml",
+                &app_manifest("web", "fullstack", "published"),
+            )],
+        );
+        let repository = Repository::load(scratch.path()).expect("the repository loads");
+        let syncer =
+            bare_syncer().with_converger(Arc::new(Converger::new(dead_kube(), edge_settings())));
+        let (_, log) = crate::reconciler::logged(syncer.converge_apps(&repository)).await;
+        assert!(log.contains("app did not converge"), "{log}");
+
+        let kube = answering(200).await;
+        let syncer = bare_syncer().with_converger(Arc::new(Converger::new(
+            crate::apps::kube::KubeClient::with_token(&kube.uri(), "kube-token").expect("kube"),
+            edge_settings(),
+        )));
+        let (_, log) = crate::reconciler::logged(syncer.converge_apps(&repository)).await;
+        assert!(log.contains("app=namespace city"), "{log}");
+        let empty = Scratch::new("t7806-noapps").expect("scratch");
+        write_tree(empty.path(), &[("README.md", "nothing\n")]);
+        let none = Repository::load(empty.path()).expect("an empty repository loads");
+        let (_, log) = crate::reconciler::logged(syncer.converge_apps(&none)).await;
+        assert!(!log.contains("app="), "{log}");
+    }
+
+    fn published_wasm(name: &str, jobs: bool) -> ResourceEnvelope {
+        let mut app = envelope("App", "city", name);
+        app.spec = json!({ "kind": "wasm", "lifecycle": "published" });
+        if jobs {
+            app.spec["server"] = json!({ "jobs": [{ "name": "nightly", "schedule": "0 3 * * *", "export": "run" }] });
+        }
+        if let Some(status) = app.status.as_mut() {
+            status.shard = Some(0);
+            status.build = Some(
+                serde_json::from_value(json!({
+                    "digest": format!("sha256:{}", "0".repeat(64)),
+                    "commit": "abc123",
+                    "sdkVersion": "1.0.0",
+                    "builtAt": "2026-11-24T10:00:00Z",
+                    "component": format!("sha256:{}", "1".repeat(64)),
+                }))
+                .expect("a build"),
+            );
+        }
+        app
+    }
+
+    /// AP-133, AP-154: published Apps on a cluster whose edge Ingress cannot be read are each
+    /// `HostRefused`; with the wildcard certificate issued and on the edge every App is served.
+    /// A run where a project did not stage retires no host. A WASM App's job runs come from its
+    /// shard, the artifact store passed along.
+    #[tokio::test]
+    async fn the_app_host_wave_marks_each_app_it_cannot_serve() {
+        let mirror = Arc::new(Mirror::new());
+        mirror.upsert(published_wasm("parking", true));
+        mirror.upsert(published_wasm("map", false));
+        let store = crate::artifact_store::Client::new(crate::artifact_store::Settings {
+            endpoint: DEAD.to_owned(),
+            bucket: "artifacts".to_owned(),
+            region: "eu".to_owned(),
+            root_access_key: "root".to_owned(),
+            root_secret_key: "root-secret".to_owned(),
+        })
+        .expect("a store client");
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+            .with_edge_file(
+                Arc::new(super::super::edge_file::EdgeFile::new(
+                    dead_kube(),
+                    "jc-edge".to_owned(),
+                )),
+                edge_settings(),
+            )
+            .with_app_hosts(Arc::new(super::super::app_hosts::AppHosts::new(
+                dead_kube(),
+                "jc".to_owned(),
+            )))
+            .with_wasm_shards(Arc::new(super::super::wasm_shards::WasmShards::new(
+                dead_kube(),
+                "jc-apps".to_owned(),
+                1,
+                "apps".to_owned(),
+            )))
+            .with_artifact_store(Arc::new(store), None);
+        let scratch = Scratch::new("t7806-hosts").expect("scratch");
+        let mut render = render_of(scratch.path(), 2, BTreeMap::new());
+        let transitions = super::super::transitions::Transitions::of(&mirror);
+        let (_, log) = crate::reconciler::logged(async {
+            syncer.converge_app_hosts(&render, &transitions).await;
+            syncer.converge_wasm_shards().await;
+        })
+        .await;
+        assert!(log.contains("the App's host is not served yet"), "{log}");
+        assert!(!log.contains("no App host is retired this run"), "{log}");
+        let refused = status_of_in(&mirror, "App", "parking");
+        assert_eq!(refused.conditions[0].reason.as_deref(), Some("HostRefused"));
+        assert!(refused.jobs.is_empty(), "no shard answered");
+        render.unstaged = vec!["other".to_owned()];
+        let (_, log) =
+            crate::reconciler::logged(syncer.converge_app_hosts(&render, &transitions)).await;
+        assert!(log.contains("no App host is retired this run"), "{log}");
+
+        let kube = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/apis/networking.k8s.io/v1/namespaces/jc/ingresses/apisix",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "spec": { "tls": [{
+                    "hosts": ["*.apps.apps.bb.sk"],
+                    "secretName": "apisix-apps-wildcard-tls"
+                }] }
+            })))
+            .mount(&kube)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/apis/cert-manager.io/v1/namespaces/jc/certificates/apisix-apps-wildcard",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "spec": {
+                    "secretName": "apisix-apps-wildcard-tls",
+                    "dnsNames": ["*.apps.apps.bb.sk"]
+                },
+                "status": { "conditions": [{ "type": "Ready", "status": "True" }] }
+            })))
+            .mount(&kube)
+            .await;
+        let served = Arc::new(Mirror::new());
+        served.upsert(published_wasm("parking", true));
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&served))
+            .with_edge_file(
+                Arc::new(super::super::edge_file::EdgeFile::new(
+                    dead_kube(),
+                    "jc-edge".to_owned(),
+                )),
+                edge_settings(),
+            )
+            .with_app_hosts(Arc::new(super::super::app_hosts::AppHosts::new(
+                crate::apps::kube::KubeClient::with_token(&kube.uri(), "kube-token").expect("kube"),
+                "jc".to_owned(),
+            )));
+        render.unstaged.clear();
+        let (_, log) =
+            crate::reconciler::logged(syncer.converge_app_hosts(&render, &transitions)).await;
+        assert!(!log.contains("the App's host is not served yet"), "{log}");
+        assert_ne!(
+            status_of_in(&served, "App", "parking").conditions[0]
+                .reason
+                .as_deref(),
+            Some("HostRefused")
+        );
+    }
+
+    /// T-5874: a broker whose spec does not read is `Invalid` with its release unchanged, one
+    /// that reads waits on nothing; a cluster that cannot be reached is one line for every broker.
+    #[tokio::test]
+    async fn an_mqtt_broker_that_does_not_read_is_invalid() {
+        let mirror = Arc::new(Mirror::new());
+        let mut organization = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        organization.spec = json!({ "domain": "bb.sk", "limits": { "mqtt": {
+            "enabled": true, "brokers": 2, "connections": 20000, "messagesPerSecond": 100000,
+            "addresses": ["platform"]
+        } } });
+        mirror.upsert(organization);
+        let mut account = envelope("ServiceAccount", "city", "camera-1");
+        account.spec = json!({});
+        mirror.upsert(account);
+        let mut good = envelope("MqttBroker", "city", "cameras");
+        good.spec = json!({
+            "roles": [{
+                "name": "camera",
+                "serviceAccounts": ["camera-1"],
+                "publish": ["cameras/${clientid}/#"]
+            }],
+            "limits": { "maxMessageBytes": 2048 }
+        });
+        mirror.upsert(good);
+        let mut bad = envelope("MqttBroker", "city", "broken");
+        bad.spec = json!({ "roles": "not a list" });
+        mirror.upsert(bad);
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+            .with_mqtt_brokers(Arc::new(super::super::mqtt_brokers::MqttBrokers::new(
+                dead_kube(),
+                "jc-mqtt".to_owned(),
+            )))
+            .with_mqtt_capture(Arc::new(crate::mqtt_capture::Capture::new(
+                Arc::new(crate::mqtt_capture::CaptureStore::new(
+                    None,
+                    Arc::clone(&mirror),
+                )),
+                "jc-mqtt".to_owned(),
+            )));
+        let scratch = Scratch::new("t7806-mqtt").expect("scratch");
+        let render = render_of(scratch.path(), 2, BTreeMap::new());
+        let transitions = super::super::transitions::Transitions::of(&mirror);
+        let (_, log) =
+            crate::reconciler::logged(syncer.converge_mqtt_brokers(&render, &transitions)).await;
+        assert!(log.contains("the MQTT brokers did not converge"), "{log}");
+        let broken = status_of_in(&mirror, "MqttBroker", "broken");
+        assert_eq!(broken.conditions[0].reason.as_deref(), Some("Invalid"));
+        assert!(broken.conditions[0]
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("running release, if any, is unchanged")));
+        let cameras = status_of_in(&mirror, "MqttBroker", "cameras");
+        assert_ne!(
+            cameras.conditions[0].reason.as_deref(),
+            Some("Invalid"),
+            "{:?}",
+            cameras.conditions[0].message
+        );
+    }
+
+    /// PL-95: each Pipeline of the render is asked of its own repository: one under a staged
+    /// project of that project's forge and ref, one elsewhere of the organization's; a
+    /// manifest with no namespace takes its path's.
+    #[tokio::test]
+    async fn lost_authors_reads_each_pipeline_from_its_own_repository() {
+        let scratch = Scratch::new("t7806-authors").expect("scratch");
+        let spec = json!({
+            "class": "resident",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "bikes" } },
+            "compute": { "kind": "bloblang", "bloblang": "root = this" },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:example.org:city:all"
+        });
+        let unplaced = serde_json::to_string(&json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Pipeline",
+            "metadata": { "name": "org-wide" },
+            "spec": spec,
+        }))
+        .expect("JSON");
+        write_tree(
+            scratch.path(),
+            &[
+                (
+                    "projects/b/pipelines/bikes.yaml",
+                    &manifest("Pipeline", "bikes", spec.clone()),
+                ),
+                ("projects/city/pipelines/org-wide.yaml", &unplaced),
+                (
+                    "projects/city/spaces/air/space.yaml",
+                    &manifest("ContextSpace", "air", json!({})),
+                ),
+            ],
+        );
+        let repository = Repository::load(scratch.path()).expect("the repository loads");
+        let project_forge = answering(500).await;
+        let render = render_of(
+            scratch.path(),
+            2,
+            BTreeMap::from([(
+                "b".to_owned(),
+                (client_at(&project_forge.uri()), "main".to_owned()),
+            )]),
+        );
+        let syncer = bare_syncer();
+        assert!(syncer
+            .lost_authors(&Mirror::new(), &repository, &render, "rev")
+            .await
+            .is_empty());
+        let syncer = Syncer::new(forge_at_dead(), Arc::new(Mirror::new())).with_author_rights(
+            super::super::pipeline_authors::AuthorRights::new("jc-admins".to_owned(), None),
+        );
+        let lost = syncer
+            .lost_authors(&Mirror::new(), &repository, &render, "rev")
+            .await;
+        assert!(lost.is_empty(), "{lost:?}");
+        assert!(
+            !project_forge
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .is_empty(),
+            "the staged project's pipeline is read from its own forge"
+        );
+    }
+
+    /// T-5305: an Endpoint naming a retired representation is rewritten in its own repository:
+    /// the organization's on its default branch, a project's at its ref or its default branch;
+    /// a project the render did not stage, a forge with no default branch and a forge that
+    /// refuses the file leave it, each said.
+    #[tokio::test]
+    async fn retired_representations_are_dropped_in_each_repository() {
+        let scratch = Scratch::new("t7806-retired").expect("scratch");
+        let endpoint = |space: &str| {
+            manifest(
+                "Endpoint",
+                &format!("{space}-all"),
+                json!({
+                    "contextSpaceRef": space,
+                    "slug": "abc123456789012345678901234",
+                    "audience": "public",
+                    "enabledRepresentations": ["ngsi-ld", "xlsx"]
+                }),
+            )
+        };
+        write_tree(
+            scratch.path(),
+            &[
+                ("endpoints/org.yaml", &endpoint("org")),
+                ("projects/gone/endpoints/e.yaml", &endpoint("gone")),
+                ("projects/nobranch/endpoints/e.yaml", &endpoint("nobranch")),
+                ("projects/refusing/endpoints/e.yaml", &endpoint("refusing")),
+            ],
+        );
+        let repository = Repository::load(scratch.path()).expect("the repository loads");
+        let refusing = answering(500).await;
+        let missing = answering(404).await;
+        let render = render_of(
+            scratch.path(),
+            2,
+            BTreeMap::from([
+                (
+                    "nobranch".to_owned(),
+                    (client_at(&refusing.uri()), String::new()),
+                ),
+                (
+                    "refusing".to_owned(),
+                    (client_at(&refusing.uri()), "main".to_owned()),
+                ),
+            ]),
+        );
+        let syncer = Syncer::new(forge_at(&missing), Arc::new(Mirror::new()));
+        let (_, log) = crate::reconciler::logged(syncer.drop_retired_representations(
+            &render,
+            &repository,
+            "main",
+        ))
+        .await;
+        assert!(
+            log.contains("retired representations stay: no default branch"),
+            "{log}"
+        );
+        assert!(
+            log.contains("retired representations stay in the repository"),
+            "{log}"
+        );
+        assert!(!log.contains("project=gone"), "{log}");
+        assert!(
+            !log.contains("dropped from Endpoint and App manifests"),
+            "{log}"
+        );
+        assert!(!missing
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
     }
 
     const PIPELINE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: NAME\n  namespace: ovzdusie\nspec:\n  class: auto\n  period: 60s\n  source:\n    dataSourceRef:\n      kind: DataSource\n      name: hsl\n  compute:\n    kind: bloblang\n    bloblang: root = this\n  targetEndpoint: urn:ngsi-ld:Endpoint:example.org:ovzdusie:all\n";
@@ -8683,11 +9607,7 @@ output_error{stream="kpi"} 6
             .expect("the Endpoint Change binding the refused Policy passes the door");
 
         let refusals = run(&files(LIVE), "bbbb2222");
-        assert!(
-            refusals.is_empty(),
-            "{:?}",
-            refusals.values().map(|r| &r.reason).collect::<Vec<_>>()
-        );
+        assert!(refusals.is_empty(), "{:?}", refusals.keys());
         assert!(syncer
             .mirror
             .get("city", "Policy", "sensors-write")
@@ -8722,10 +9642,7 @@ output_error{stream="kpi"} 6
             *syncer.accepted.lock().expect("lock") = Some(Arc::clone(&served));
             let (fresh, _) = syncer
                 .load_mirror(&render(dir.path()), &served, &refusals, revision, "main")
-                .unwrap_or_else(|e| {
-                    let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
-                    panic!("the mirror loads: {e:?} {reasons:?}")
-                });
+                .expect("the mirror loads");
             syncer.mirror.replace_all(&fresh);
             refusals
         };
@@ -8842,8 +9759,7 @@ output_error{stream="kpi"} 6
         assert_eq!(planned, ["air-a"]);
 
         let (refusals, planned) = run(&files(2), "bbbb2222");
-        let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
-        assert!(reasons.is_empty(), "{reasons:?}");
+        assert!(refusals.is_empty(), "{:?}", refusals.keys());
         assert_eq!(planned, ["air-a", "air-b"]);
         let (refusals, planned) = run(&files(2), "cccc3333");
         assert!(refusals.is_empty(), "the next run keeps it");
@@ -8918,8 +9834,7 @@ output_error{stream="kpi"} 6
         let loaded = Repository::load(dir.path()).expect("the repository loads");
         let (served, refusals) =
             syncer.refuse_invalid(&render, Arc::new(loaded), "aaaa1111", "main");
-        let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
-        assert!(refusals.is_empty(), "{reasons:?}");
+        assert!(refusals.is_empty(), "{:?}", refusals.keys());
         let (fresh, _) = syncer
             .load_mirror(&render, &served, &refusals, "aaaa1111", "main")
             .expect("the mirror loads");
@@ -8977,10 +9892,7 @@ output_error{stream="kpi"} 6
             *syncer.accepted.lock().expect("lock") = Some(Arc::clone(&served));
             let (fresh, _) = syncer
                 .load_mirror(&render(dir.path()), &served, &refusals, revision, "main")
-                .unwrap_or_else(|e| {
-                    let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
-                    panic!("the mirror loads: {e:?} {reasons:?}")
-                });
+                .expect("the mirror loads");
             syncer.mirror.replace_all(&fresh);
             (served, refusals)
         };
@@ -9219,11 +10131,12 @@ output_error{stream="kpi"} 6
         use super::super::views::{Owner, ViewOutcome, CONDITION};
         let mirror = Mirror::new();
         let mut endpoint = envelope("Endpoint", "p", "e");
-        if let Some(status) = endpoint.status.as_mut() {
-            status
-                .conditions
-                .push(make_condition(CONDITION, "True", "Written", "a run ago"));
-        }
+        endpoint
+            .status
+            .as_mut()
+            .expect("a status")
+            .conditions
+            .push(make_condition(CONDITION, "True", "Written", "a run ago"));
         mirror.upsert(endpoint);
         mirror.upsert(envelope("ContextSpace", "p", "s"));
         let owner = |kind, name: &str| Owner {
