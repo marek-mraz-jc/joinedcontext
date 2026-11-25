@@ -404,34 +404,188 @@ mod clause_5_3_3 {
         };
         let hit = reg("Building");
         let miss = reg("Vehicle");
+        let reason = |before: Option<&Value>, after: Option<&Value>| {
+            csource_trigger(&sub, before, after, &ctx).map(|(r, _)| r)
+        };
+        assert_eq!(reason(None, Some(&hit)), Some("newlyMatching"));
         assert_eq!(
-            csource_trigger(&sub, None, Some(&hit), &ctx),
-            Some("newlyMatching")
-        );
-        assert_eq!(
-            csource_trigger(&sub, Some(&miss), Some(&hit), &ctx),
+            reason(Some(&miss), Some(&hit)),
             Some("newlyMatching"),
             "an update that STARTS matching is newlyMatching"
         );
+        assert_eq!(reason(Some(&hit), Some(&hit)), Some("updated"));
         assert_eq!(
-            csource_trigger(&sub, Some(&hit), Some(&hit), &ctx),
-            Some("updated")
-        );
-        assert_eq!(
-            csource_trigger(&sub, Some(&hit), None, &ctx),
+            reason(Some(&hit), None),
             Some("noLongerMatching"),
             "deletion of a matching registration"
         );
         assert_eq!(
-            csource_trigger(&sub, Some(&hit), Some(&miss), &ctx),
+            reason(Some(&hit), Some(&miss)),
             Some("noLongerMatching"),
             "an update that STOPS matching"
         );
         assert_eq!(
-            csource_trigger(&sub, Some(&miss), Some(&miss), &ctx),
+            reason(Some(&miss), Some(&miss)),
             None,
             "never-matching changes produce no notification"
         );
+        // the notification presents the registration after the change, or
+        // the one before it when it stopped matching
+        let moved = reg("Building");
+        let presented = |before: Option<&Value>, after: Option<&Value>| {
+            csource_trigger(&sub, before, after, &ctx).map(|(_, d)| std::ptr::from_ref(d))
+        };
+        assert_eq!(
+            presented(Some(&hit), Some(&moved)),
+            Some(std::ptr::from_ref(&moved))
+        );
+        assert_eq!(
+            presented(Some(&hit), Some(&miss)),
+            Some(std::ptr::from_ref(&hit))
+        );
+    }
+}
+
+/// 5.11.7 / 5.11.2.4 around the trigger: the registration shapes the
+/// presentation steps over, the subscriptions a change does not reach, and
+/// an initial notification for a subscription that is gone or paused.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod csource_edges {
+    use super::*;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const D: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+
+    fn reg(id: &str, ty: &str) -> Value {
+        json!({"id": id, "type": "ContextSourceRegistration", "endpoint": "http://peer:9090",
+               "information": [{"entities": [{"type": format!("{D}{ty}")}]}]})
+    }
+
+    fn csub(id: &str, uri: &str, extra: Value) -> Value {
+        let mut s = json!({"id": id, "type": "Subscription",
+                           "entities": [{"type": format!("{D}Building")}],
+                           "notification": {"endpoint": {"uri": uri}}});
+        if let (Some(o), Some(more)) = (s.as_object_mut(), extra.as_object()) {
+            o.extend(more.clone());
+        }
+        s
+    }
+
+    /// EntityInfo.type becomes an array where there is one to wrap; an
+    /// information without entities, an entry that is no object and a
+    /// registration without information are left as they are.
+    #[test]
+    fn entity_types_are_arrayed_where_there_are_some() {
+        let mut none = json!({"id": "urn:csr:1"});
+        arrayify_entity_types(&mut none);
+        assert_eq!(none, json!({"id": "urn:csr:1"}));
+        let mut mixed = json!({"information": [
+            {"propertyNames": ["p"]},
+            {"entities": ["odd", {"type": "T"}, {"type": ["U"]}, {"id": "urn:x"}]}]});
+        arrayify_entity_types(&mut mixed);
+        assert_eq!(
+            mixed["information"][1]["entities"],
+            json!(["odd", {"type": ["T"]}, {"type": ["U"]}, {"id": "urn:x"}])
+        );
+        assert_eq!(mixed["information"][0], json!({"propertyNames": ["p"]}));
+    }
+
+    /// 5.10.2.5: a registration none of whose RegistrationInfo the query
+    /// selects keeps its information as it is.
+    #[test]
+    fn a_registration_no_info_of_which_matches_is_kept_whole() {
+        let ctx = antares_jsonld::Loader::new().core();
+        let spec = crate::registry::CsrSpec {
+            types: Some(vec![format!("{D}Vehicle")]),
+            ..Default::default()
+        };
+        let r = reg("urn:csr:1", "Building");
+        assert_eq!(filter_csr(&spec, &r, &ctx), r);
+    }
+
+    /// 5.11.7: a paused subscription and a periodic one get no job from a
+    /// registration change; an active one does.
+    #[tokio::test]
+    async fn only_active_change_driven_subscriptions_get_a_job() {
+        let st = AppState::new("antares-csource-jobs".into());
+        let t = TenantId::default();
+        for s in [
+            csub("urn:cs:paused", "http://h/n", json!({"isActive": false})),
+            csub("urn:cs:periodic", "http://h/n", json!({"timeInterval": 60})),
+            csub("urn:cs:live", "http://h/n", json!({})),
+        ] {
+            let id = s["id"].as_str().expect("id").to_owned();
+            st.store
+                .create(&t, Kind::CSourceSubscription, &id, s)
+                .await
+                .expect("csub row");
+        }
+        let jobs = prepare_csource_jobs(&st, &t, None, Some(reg("urn:csr:1", "Building"))).await;
+        let what: Vec<(Option<&str>, &str)> = jobs
+            .iter()
+            .map(|j| (sub_str(j.what().0, "id"), j.what().1))
+            .collect();
+        assert_eq!(what, [(Some("urn:cs:live"), "newlyMatching")]);
+    }
+
+    /// 5.11.2.4: no initial notification for a subscription that is gone
+    /// or paused; one for an active one with a matching registration.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_initial_notification_needs_a_live_subscription() {
+        crate::allow_private();
+        let hits: Arc<AtomicUsize> = Arc::default();
+        let seen = hits.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let app = axum::Router::new().route(
+            "/notify",
+            axum::routing::post(move || {
+                let seen = seen.clone();
+                async move {
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let uri = format!("http://{addr}/notify");
+        let st = AppState::new("antares-csource-initial".into());
+        let t = TenantId::default();
+        st.store
+            .create(
+                &t,
+                Kind::Registration,
+                "urn:csr:1",
+                reg("urn:csr:1", "Building"),
+            )
+            .await
+            .expect("registration");
+        csource_initial(&st, &t, "urn:cs:missing").await;
+        st.store
+            .create(
+                &t,
+                Kind::CSourceSubscription,
+                "urn:cs:1",
+                csub("urn:cs:1", &uri, json!({"isActive": false})),
+            )
+            .await
+            .expect("csub row");
+        csource_initial(&st, &t, "urn:cs:1").await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        st.store
+            .upsert(
+                &t,
+                Kind::CSourceSubscription,
+                "urn:cs:1",
+                csub("urn:cs:1", &uri, json!({})),
+            )
+            .await
+            .expect("csub row");
+        csource_initial(&st, &t, "urn:cs:1").await;
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "positive control");
     }
 }
 

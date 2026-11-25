@@ -3,21 +3,22 @@
 
 use super::*;
 
-/// 5.11.7: which csource subs care about a registration change, and why.
-pub(super) fn csource_trigger(
+/// 5.11.7: which csource subs care about a registration change, and why,
+/// with the registration the notification presents: the one after the
+/// change, or for `noLongerMatching` the one before it.
+pub(super) fn csource_trigger<'a>(
     sub: &Value,
-    before: Option<&Value>,
-    after: Option<&Value>,
+    before: Option<&'a Value>,
+    after: Option<&'a Value>,
     ctx: &Context,
-) -> Option<&'static str> {
-    let m = |d: Option<&Value>| {
-        d.is_some_and(|d| crate::registry::csr_matches_subscription(sub, d, ctx))
-    };
+) -> Option<(&'static str, &'a Value)> {
+    let m =
+        |d: Option<&'a Value>| d.filter(|d| crate::registry::csr_matches_subscription(sub, d, ctx));
     match (m(before), m(after)) {
-        (false, true) => Some("newlyMatching"),
-        (true, true) => Some("updated"),
-        (true, false) => Some("noLongerMatching"),
-        (false, false) => None,
+        (None, Some(a)) => Some(("newlyMatching", a)),
+        (Some(_), Some(a)) => Some(("updated", a)),
+        (Some(b), None) => Some(("noLongerMatching", b)),
+        (None, None) => None,
     }
 }
 
@@ -31,11 +32,9 @@ pub(super) fn arrayify_entity_types(reg: &mut Value) {
         let Some(es) = info.get_mut("entities").and_then(Value::as_array_mut) else {
             continue;
         };
-        for e in es {
-            if let Some(t) = e.get("type").filter(|t| t.is_string()).cloned() {
-                if let Some(o) = e.as_object_mut() {
-                    o.insert("type".into(), Value::Array(vec![t]));
-                }
+        for o in es.iter_mut().filter_map(Value::as_object_mut) {
+            if let Some(t) = o.get("type").filter(|t| t.is_string()).cloned() {
+                o.insert("type".into(), Value::Array(vec![t]));
             }
         }
     }
@@ -47,6 +46,14 @@ pub struct CsourceJob {
     presented: Value,
     ctx: std::sync::Arc<antares_jsonld::Context>,
     reason: &'static str,
+}
+
+#[cfg(test)]
+impl CsourceJob {
+    /// The subscription and the trigger reason a job was prepared for.
+    pub(super) fn what(&self) -> (&Value, &'static str) {
+        (&self.sub, self.reason)
+    }
 }
 
 /// Registration create/update/delete → CSourceNotification fan-out (5.11.7),
@@ -89,18 +96,11 @@ pub(crate) async fn prepare_csource_jobs(
             continue;
         }
         let ctx = sub_context(st, tenant, &sub).await;
-        let Some(reason) = csource_trigger(&sub, before.as_ref(), after.as_ref(), &ctx) else {
+        let Some((reason, reg)) = csource_trigger(&sub, before.as_ref(), after.as_ref(), &ctx)
+        else {
             continue;
         };
         let spec = crate::registry::spec_for_subscription(&sub);
-        let source = if reason == "noLongerMatching" {
-            &before
-        } else {
-            &after
-        };
-        let Some(reg) = source.as_ref().or(before.as_ref()) else {
-            continue;
-        };
         let filtered = filter_csr(&spec, reg, &ctx);
         let mut presented = crate::registry::present_registration(&filtered, &ctx, false);
         arrayify_entity_types(&mut presented);
@@ -280,10 +280,8 @@ pub(super) fn filter_csr(spec: &crate::registry::CsrSpec, reg: &Value, ctx: &Con
         .into_iter()
         .cloned()
         .collect();
-    if !matching.is_empty() {
-        if let Some(o) = out.as_object_mut() {
-            o.insert("information".into(), Value::Array(matching));
-        }
+    if let (false, Some(o)) = (matching.is_empty(), out.as_object_mut()) {
+        o.insert("information".into(), Value::Array(matching));
     }
     out
 }
