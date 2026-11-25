@@ -615,7 +615,7 @@ mod tests {
     }
 
     /// A layout of more than 64 entries is refused before it is read; a directory entry is
-    /// skipped; an entry cut short is refused as unreadable; no index.json is named.
+    /// skipped; a layout cut short is no tar; no index.json is named.
     #[test]
     fn a_layout_too_big_cut_short_or_without_an_index_is_refused() {
         let many: Vec<(String, Vec<u8>)> =
@@ -645,10 +645,8 @@ mod tests {
         let mut cut = tar_of(&[("index.json".to_owned(), vec![b' '; 1000])]);
         cut.truncate(512 + 10);
         let err = image_of(&cut, &digest).expect_err("cut short");
-        assert!(
-            err.contains("index.json of the layout is not readable"),
-            "{err}"
-        );
+        // The tar reader hands over what the entry holds; the cut shows at the next header.
+        assert!(err.contains("the layout is not a tar"), "{err}");
 
         let no_index = tar_of(&[("oci-layout".to_owned(), b"{}".to_vec())]);
         assert_eq!(
