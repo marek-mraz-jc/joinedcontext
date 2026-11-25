@@ -1836,6 +1836,27 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// A pipeline's bento.yaml is read from the forge: with none configured the read answers 503
+    /// naming the forge, for a manifest at the root or in a folder.
+    #[tokio::test]
+    async fn a_bento_read_without_a_forge_is_unavailable() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let pipeline = crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Pipeline".into(),
+            metadata: crate::resource::ObjectMeta::new("air", "helsinki"),
+            spec: serde_json::json!({}),
+            status: None,
+        };
+        let refused = read_bento(&state, "helsinki", &pipeline)
+            .await
+            .expect_err("no forge");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("forge")),
+            "{refused:?}"
+        );
+    }
+
     const BODY: &str = r#"
 # HELP input_received Benthos Counter metric
 # TYPE input_received counter

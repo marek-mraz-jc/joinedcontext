@@ -1034,6 +1034,25 @@ mod tests {
     use jcctl::pipeline_test::harness;
     use serde_json::json;
 
+    /// A test that panicked while holding the running list poisons it: the next test still takes
+    /// its slot and gives it back, and a second one in the same project waits.
+    #[test]
+    fn a_poisoned_running_list_still_hands_out_and_takes_back_slots() {
+        let _ = std::thread::spawn(|| {
+            let _held = RUNNING.lock();
+            panic!("a test panicked holding the running list");
+        })
+        .join();
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        let project = "poisoned-running-list";
+        let slot = Slot::take(project, "poisoned-1", sender.clone()).expect("a slot");
+        let busy = Slot::take(project, "poisoned-2", sender.clone());
+        assert!(matches!(busy, Err(ApiError::Conflict(_))), "one test a project");
+        drop(slot);
+        let again = Slot::take(project, "poisoned-3", sender).expect("the slot came back");
+        drop(again);
+    }
+
     /// T-6832: a project made after the runner started named an undefined variable; the answer
     /// names the cause, and every other refusal stays as the runner wrote it.
     #[test]

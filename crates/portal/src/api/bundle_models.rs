@@ -449,6 +449,20 @@ pub(crate) async fn land(
 mod tests {
     use super::rewrite_imports;
 
+    /// An export of a project with no model still asks the organization's forge for its models'
+    /// index: with no forge configured it answers 503 naming the forge.
+    #[tokio::test]
+    async fn an_export_without_a_forge_carries_no_model() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let refused = super::carry(&state, "helsinki", "helsinki")
+            .await
+            .expect_err("no forge");
+        assert!(
+            matches!(&refused, crate::error::ApiError::Unavailable(m) if m.contains("forge")),
+            "{refused:?}"
+        );
+    }
+
     /// A carried model whose source the archive lacks, or whose source is not the one the
     /// index's SHA-256 names, refuses the import before anything else is read (MF-42, MF-49).
     #[tokio::test]

@@ -2029,6 +2029,49 @@ mod tests {
         }
     }
 
+    /// An installation that lets anyone open a project, but whose Portal runs with no forge: the
+    /// open, the copy and the registry entry answer 503 naming the forge, before any write.
+    #[tokio::test]
+    async fn without_a_forge_a_project_is_neither_opened_copied_nor_read_from_the_registry() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(envelope(
+            "Organization",
+            "aa",
+            json!({ "domain": "aa.sk", "installation": true, "projects": { "creation": "anyone" } }),
+        ));
+        let user = CurrentUser(crate::auth::session::Session {
+            identity: person("sub-jana"),
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: "dummy-token".into(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        });
+        let request: OpenProject =
+            serde_json::from_value(json!({ "name": "zilina" })).expect("a request");
+        let refused = open_project(user.clone(), State(state.clone()), Json(request))
+            .await
+            .expect_err("no forge");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("forge")),
+            "{refused:?}"
+        );
+
+        let mut admin = person("sub-admin");
+        admin.groups = vec![state.config.bootstrap_admins.clone()];
+        state.mirror.set_layout(2);
+        let refused = registered(&state, &admin, "zilina")
+            .await
+            .err()
+            .expect("no forge");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("forge")),
+            "{refused:?}"
+        );
+    }
+
     /// F-R2POR3-004, T-6766: who opens a project is the Organization's it lands in to say, and
     /// the installation's holds none: a second Organization's `anyone` opens nothing for a person
     /// who is not its member.

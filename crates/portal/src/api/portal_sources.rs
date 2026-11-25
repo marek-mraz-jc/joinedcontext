@@ -498,6 +498,45 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    /// With no catalogue handed over, a source is neither tested nor run: 503 saying why; a
+    /// poisoned desk lock is still read.
+    #[test]
+    fn without_a_catalogue_the_desk_answers_unavailable_even_when_poisoned() {
+        let _ = std::thread::spawn(|| {
+            let _held = DESK.write();
+            panic!("a handover panicked holding the desk");
+        })
+        .join();
+        let refused = desk().err().expect("no desk in the lib tests");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("open data catalogue")),
+            "{refused:?}"
+        );
+    }
+
+    /// A full bucket table drops the buckets idle for a minute before a new person gets one; a
+    /// poisoned table is still used.
+    #[test]
+    fn a_full_bucket_table_drops_idle_buckets_and_survives_a_poison() {
+        let now = Instant::now() + Duration::from_secs(600);
+        let idle = now - Duration::from_secs(120);
+        {
+            let mut map = TEST_BUCKETS.lock().unwrap_or_else(|e| e.into_inner());
+            for n in map.len()..MAX_BUCKETS {
+                map.insert(format!("idle-{n}"), Bucket { tokens: 0.0, at: idle });
+            }
+        }
+        let _ = std::thread::spawn(|| {
+            let _held = TEST_BUCKETS.lock();
+            panic!("a test panicked holding the buckets");
+        })
+        .join();
+        assert_eq!(take_test("bucket-newcomer", now), None);
+        let map = TEST_BUCKETS.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(map.len() < MAX_BUCKETS, "the idle buckets went");
+        assert!(map.contains_key("bucket-newcomer"));
+    }
+
     #[test]
     fn a_person_tests_three_at_once_and_six_a_minute() {
         let start = Instant::now();

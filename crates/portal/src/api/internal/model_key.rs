@@ -202,6 +202,23 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// A report that panicked while holding what the replica knows poisons it; the builder's
+    /// answer is still read from it.
+    #[test]
+    fn a_poisoned_key_state_is_still_read() {
+        let _ = std::thread::spawn(|| {
+            let _held = KNOWN.lock();
+            panic!("a report panicked holding the key state");
+        })
+        .join();
+        let known = *KNOWN.lock().unwrap_or_else(|p| p.into_inner());
+        let answers = !matches!(
+            known.map(|known| known.state),
+            Some(KeyState::Invalid | KeyState::OutOfCredit)
+        );
+        assert_eq!(builder_answers(), answers);
+    }
+
     /// Each state has its own name on the activity feed.
     #[test]
     fn each_key_state_has_its_feed_name() {

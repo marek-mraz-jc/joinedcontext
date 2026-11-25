@@ -597,10 +597,9 @@ mod tests {
                 "status block",
             ),
         ] {
-            let why = match accept_rendered(&yaml, "space.yaml", "city") {
-                Err(ApiError::BadRequest(why)) => why,
-                other => format!("{other:?}"),
-            };
+            let why = accept_rendered(&yaml, "space.yaml", "city").expect_err(needle);
+            assert!(matches!(why, ApiError::BadRequest(_)), "{why:?}");
+            let why = why.to_string();
             assert!(
                 why.contains(needle) && why.contains("space.yaml"),
                 "{needle}: {why}"

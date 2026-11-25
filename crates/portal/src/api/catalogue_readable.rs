@@ -621,8 +621,11 @@ mod tests {
             asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             async { Ok(json!({ "admitted": true, "permissions": [{}] })) }
         };
-        readable(&state, None, ask).await;
+        readable(&state, None, &ask).await;
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 0);
+        // The probe counts when it is called, so the zero above is no probe that never counts.
+        let _ = ask(String::new(), Value::Null).await;
+        assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     /// A gateway that does not answer, refuses at the door or only prohibits grants nothing; the

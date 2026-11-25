@@ -675,10 +675,8 @@ mod tests {
     }
 
     fn field(err: ApiError) -> String {
-        match err {
-            ApiError::Unprocessable { errors, .. } => errors.join(" "),
-            other => panic!("not 422: {other:?}"),
-        }
+        assert!(!err.field_errors().is_empty(), "not 422: {err:?}");
+        err.field_errors().join(" ")
     }
 
     #[test]

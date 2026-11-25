@@ -274,10 +274,8 @@ mod tests {
     }
 
     fn field_of(err: ApiError) -> Vec<String> {
-        match err {
-            ApiError::Unprocessable { errors, .. } => errors,
-            other => panic!("unexpected {other:?}"),
-        }
+        assert!(!err.field_errors().is_empty(), "unexpected {err:?}");
+        err.field_errors().to_vec()
     }
 
     const CODE: &str = "bento.v0_msg_set_structured({ ok: true })";

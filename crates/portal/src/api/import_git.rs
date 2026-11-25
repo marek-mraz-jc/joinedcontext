@@ -680,11 +680,10 @@ mod tests {
     }
 
     fn refusal(bytes: &[u8]) -> String {
-        match check(bytes) {
-            Err(ApiError::BadRequest(why)) => why,
-            Err(other) => format!("refused as {other:?}"),
-            Ok(_) => "accepted".to_owned(),
-        }
+        check(bytes).map_or_else(
+            |err| err.to_string().replacen("bad request: ", "", 1),
+            |_| "accepted".to_owned(),
+        )
     }
 
     /// MF-42, MF-45, MF-46, MF-47: each archive a format=git export would not write is refused
