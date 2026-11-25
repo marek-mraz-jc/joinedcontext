@@ -172,12 +172,7 @@ pub async fn model_key(
             severity: severity.to_owned(),
             correlation_id: None,
             details: serde_json::json!({
-                "state": match report.state {
-                    KeyState::Valid => "valid",
-                    KeyState::Invalid => "invalid",
-                    KeyState::OutOfCredit => "out_of_credit",
-                    KeyState::Unreachable => "unreachable",
-                },
+                "state": label(report.state),
                 "limit": report.limit,
                 "remaining": report.remaining,
             }),
@@ -189,6 +184,16 @@ pub async fn model_key(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The key's state as the activity feed names it.
+fn label(state: KeyState) -> &'static str {
+    match state {
+        KeyState::Valid => "valid",
+        KeyState::Invalid => "invalid",
+        KeyState::OutOfCredit => "out_of_credit",
+        KeyState::Unreachable => "unreachable",
+    }
+}
+
 pub fn router() -> Router<AppState> {
     Router::new().route("/internal/model-key", post(model_key))
 }
@@ -196,6 +201,21 @@ pub fn router() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each state has its own name on the activity feed.
+    #[test]
+    fn each_key_state_has_its_feed_name() {
+        let names: Vec<&str> = [
+            KeyState::Valid,
+            KeyState::Invalid,
+            KeyState::OutOfCredit,
+            KeyState::Unreachable,
+        ]
+        .into_iter()
+        .map(label)
+        .collect();
+        assert_eq!(names, ["valid", "invalid", "out_of_credit", "unreachable"]);
+    }
 
     fn report(state: KeyState, limit: Option<f64>, remaining: Option<f64>) -> KeyReport {
         KeyReport {

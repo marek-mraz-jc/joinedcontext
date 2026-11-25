@@ -230,6 +230,96 @@ fn a_second_run_over_an_unchanged_repository_writes_nothing() {
     assert_eq!(api.actions(), vec!["package_create"]);
 }
 
+/// A gateway on loopback whose answer to a path is `answer(path)`, a whole raw response.
+fn gateway(answer: fn(&str) -> String) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("an address").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut raw = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            while let Ok(read) = stream.read(&mut chunk) {
+                raw.extend_from_slice(&chunk[..read]);
+                if read == 0 || raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let text = String::from_utf8_lossy(&raw).into_owned();
+            let path = text.split_whitespace().nth(1).unwrap_or("/").to_owned();
+            let _ = stream.write_all(answer(&path).as_bytes());
+        }
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+fn answer(status: u16, body: &str) -> String {
+    format!(
+        "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+/// EP-27, EP-66, DM-98: the record and the models are read through the Endpoint's own
+/// gateway address; a model without LinkML still charts its series, and the dataset is
+/// published with them.
+#[test]
+fn the_record_and_models_are_read_from_the_gateway_and_published_with_their_charts() {
+    let url = gateway(|path| {
+        let rest = path.trim_start_matches("/api/endpoint/zt4qm7ge2xdv6ksb3ncf5arw2y");
+        match rest {
+            "/" => answer(200, &record("air-public").to_string()),
+            "/ngsi-ld/v1/types" => answer(200, r#"{"typeList":["AirQualityObserved"]}"#),
+            "/schema/v1/model.schema.json" => answer(
+                200,
+                r#"{"definitions":{"AirQualityObserved":{"properties":{"pm10":{"type":"number"}}},"Bare":{}}}"#,
+            ),
+            _ => answer(404, ""),
+        }
+    });
+    let dir = repo("gateway-read");
+    let repo = Repository::load(&dir).expect("the repository loads");
+    let found = targets(&repo, "ovzdusie").expect("the walk");
+    let target = found
+        .iter()
+        .find(|t| t.slug == "zt4qm7ge2xdv6ksb3ncf5arw2y")
+        .expect("the public air target");
+    let settings = Settings::new(url.as_str());
+    let record = jcctl::commands::publish_ckan::record(target, &settings).expect("the record");
+    assert_eq!(record["dct:identifier"], json!("air-public"));
+    let models = jcctl::commands::publish_ckan::models(target, &settings).expect("the models");
+    assert!(models.linkml.is_none());
+    let mut api = InMemoryCkan::new().with_organization("mesto-banska-bystrica");
+    let line = publish_one(&mut api, target, &record, Some(&models), &settings).expect("published");
+    assert_eq!(line.outcome, Outcome::Created);
+}
+
+/// A gateway answering something that is not JSON for the record or the schema is an error
+/// naming the address it read.
+#[test]
+fn a_record_or_schema_that_is_not_json_names_the_address() {
+    let url = gateway(|_| answer(200, "<html>a login page</html>"));
+    let dir = repo("gateway-html");
+    let repo = Repository::load(&dir).expect("the repository loads");
+    let found = targets(&repo, "ovzdusie").expect("the walk");
+    let settings = Settings::new(url.as_str());
+    match jcctl::commands::publish_ckan::record(&found[0], &settings) {
+        Err(Error::Gateway { url: at, message }) => {
+            assert!(at.starts_with(&url), "{at}");
+            assert!(message.contains("not JSON"), "{message}");
+        }
+        other => panic!("expected a gateway error, got {other:?}"),
+    }
+    match jcctl::commands::publish_ckan::models(&found[0], &settings) {
+        Err(Error::Gateway { url: at, message }) => {
+            assert!(at.ends_with("model.schema.json"), "{at}");
+            assert!(message.contains("not JSON"), "{message}");
+        }
+        other => panic!("expected a gateway error, got {other:?}"),
+    }
+}
+
 /// T-5060: CKAN holds no rows. A dataset an older run left with a DataStore table resource is
 /// drift: the next publish writes the dataset without it, and the run after writes nothing.
 #[test]
@@ -265,6 +355,71 @@ fn a_dead_datastore_resource_leaves_with_the_next_publish() {
         publish_one(&mut api, target, &record("air-public"), None, &settings()).expect("third");
     assert_eq!(third.outcome, Outcome::Unchanged);
     assert_eq!(api.actions().len(), writes, "nothing left to drop");
+}
+
+/// The command over a reviewed checkout: an instance whose token is not in the environment
+/// fails each of its Endpoints by name, and a catalogue that does not answer fails the publish
+/// and the withdrawal; the summary counts the failures and the run exits 1.
+#[test]
+fn the_command_counts_each_endpoint_that_failed() {
+    let dir = repo("publish-cli");
+    common::write(
+        &dir,
+        "projects/ovzdusie/ckan/open-data.yaml",
+        &INSTANCE.replace("https://data.banskabystrica.sk", "https://127.0.0.1:9"),
+    );
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["add", "-A"],
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.org",
+            "commit",
+            "-qm",
+            "reviewed",
+        ],
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    ] {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    }
+    let run = |token: Option<&str>, extra: &[&str]| {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_jcctl"));
+        command
+            .args(["publish", "ckan", "--repo-dir"])
+            .arg(&dir)
+            .args(["--project", "ovzdusie", "--host", "api.example.org"])
+            .args([
+                "--organization-title",
+                "Mesto",
+                "--docs-url",
+                "https://docs.example.org",
+            ])
+            .args(extra)
+            .env_remove("CKAN_OPEN_DATA_TOKEN");
+        if let Some(token) = token {
+            command.env("CKAN_OPEN_DATA_TOKEN", token);
+        }
+        command.output().expect("jcctl runs")
+    };
+    let no_token = run(None, &[]);
+    assert_eq!(no_token.status.code(), Some(1), "{no_token:?}");
+    let said = String::from_utf8_lossy(&no_token.stderr);
+    assert!(said.contains("3 of 3 endpoints failed"), "{said}");
+    for extra in [&[][..], &["--withdraw"]] {
+        let dead = run(Some("a-token"), extra);
+        assert_eq!(dead.status.code(), Some(1), "{dead:?}");
+        let said = String::from_utf8_lossy(&dead.stderr);
+        assert!(said.contains("endpoints failed"), "{said}");
+        assert!(!said.contains("a-token"), "{said}");
+    }
 }
 
 /// CC-19: a withdrawal removes the dataset; a second one changes nothing.

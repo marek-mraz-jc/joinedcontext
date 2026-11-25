@@ -526,6 +526,44 @@ async fn a_pipeline_without_a_kpi_step_gets_no_record_check_here() {
     assert!(records_verdict(&rig.state, "city", &manifest).is_none());
 }
 
+/// T-7815: a draft of another kind or another project's, a project name that is none and a KPI
+/// pipeline of two kpi steps are each refused, and the broker previews nothing.
+#[tokio::test]
+async fn a_draft_the_check_does_not_take_is_refused_and_previews_nothing() {
+    let rig = rig().await;
+    let good = || draft("sum(parking.occupied) / count(stops)", "stops");
+    let mut other_kind = good();
+    other_kind["pipeline"]["kind"] = json!("DataSource");
+    let mut other_project = good();
+    other_project["pipeline"]["metadata"]["namespace"] = json!("town");
+    for (body, needle) in [
+        (other_kind, "pipeline.kind must be 'Pipeline'"),
+        (other_project, "'town' is not the project 'city'"),
+    ] {
+        let answer = send(&rig.state, member("jana"), "POST", ROUTE, Some(body)).await;
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+        assert!(answer.text.contains(needle), "{needle}: {}", answer.text);
+    }
+    let answer = send(
+        &rig.state,
+        member("jana"),
+        "POST",
+        "/api/v1/projects/Not_A_Project/kpis/check",
+        Some(good()),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::NOT_FOUND, "{}", answer.text);
+    let mut two = good();
+    let step = two["pipeline"]["spec"]["steps"][0].clone();
+    two["pipeline"]["spec"]["steps"] = json!([step.clone(), step]);
+    let verdict = checked(&rig, two).await;
+    assert!(
+        verdict.to_string().contains("the pipeline's only step"),
+        "{verdict}"
+    );
+    assert_eq!(previews(&rig.broker).await, 0);
+}
+
 /// A source with no rows gives no value and says so; a sum over nothing must not read as 0.
 #[tokio::test]
 async fn an_empty_source_gives_no_value_and_says_why() {

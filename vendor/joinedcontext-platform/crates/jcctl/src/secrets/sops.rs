@@ -686,3 +686,18 @@ mod minted_tests {
         assert_eq!(format!("{held:?}"), "SecretValue(redacted)");
     }
 }
+
+#[cfg(test)]
+mod key_length_tests {
+    /// A data key of any length but 32 bytes is refused before AES-GCM sees it.
+    #[test]
+    fn a_short_data_key_is_refused() {
+        let parts = super::Parts {
+            data: "AAAA",
+            iv: "AAAA",
+            tag: "AAAA",
+        };
+        let refused = super::decrypt_parts(&parts, "aad", &[0_u8; 16]).expect_err("16 bytes");
+        assert_eq!(refused, "the file's data key is not 32 bytes");
+    }
+}

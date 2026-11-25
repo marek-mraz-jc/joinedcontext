@@ -422,6 +422,20 @@ pub fn type_uri(slug: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// Only a `422` names fields.
+    #[test]
+    fn only_a_422_names_fields() {
+        let named = super::ApiError::Unprocessable {
+            detail: "d".into(),
+            errors: vec!["smtp.host: no host".into()],
+        };
+        assert_eq!(named.first_field(), "smtp.host");
+        assert!(super::ApiError::NotFound("x".into())
+            .field_errors()
+            .is_empty());
+        assert_eq!(super::ApiError::NotFound("x".into()).first_field(), "");
+    }
+
     use super::*;
     use http_body_util::BodyExt;
 
@@ -703,5 +717,24 @@ mod tests {
         let line: serde_json::Value = serde_json::from_str(written.trim()).expect(&written);
         assert_eq!(line["level"], "WARN");
         assert_eq!(line["detail"], "the realm could not be reached: timed out");
+    }
+
+    // Inside the tests module: the slug scan reads each file up to its first `#[cfg(test)]`.
+    impl super::ApiError {
+        /// The field errors of a `422`, none for any other answer: what a test names.
+        pub(crate) fn field_errors(&self) -> &[String] {
+            match self {
+                Self::Unprocessable { errors, .. } => errors,
+                _ => &[],
+            }
+        }
+
+        /// The field a `422` names first (`smtp.host: …` names `smtp.host`), empty for any other.
+        pub(crate) fn first_field(&self) -> &str {
+            self.field_errors()
+                .first()
+                .and_then(|e| e.split(':').next())
+                .unwrap_or_default()
+        }
     }
 }

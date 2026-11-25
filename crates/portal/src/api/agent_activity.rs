@@ -188,13 +188,8 @@ pub async fn list_agent_activity(
 ) -> Result<Json<AgentActivity>, ApiError> {
     let filter = Filter::parse(&query)?;
     let answer = activity(&state, &user, &filter, TimestampTz::now()).await?;
-    tracing::info!(
-        target: "audit",
-        user = %user.0.identity.subject,
-        project = ?query.project, profile = ?query.profile, run = ?query.run,
-        runs = answer.runs.len(),
-        "agent activity read"
-    );
+    let (subject, runs) = (&user.0.identity.subject, answer.runs.len());
+    tracing::info!(target: "audit", user = %subject, project = ?query.project, profile = ?query.profile, run = ?query.run, runs, "agent activity read");
     Ok(Json(answer))
 }
 

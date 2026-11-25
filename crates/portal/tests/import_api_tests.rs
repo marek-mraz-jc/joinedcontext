@@ -1057,6 +1057,166 @@ async fn a_manifest_posted_as_json_is_imported_too() {
     assert_eq!(written(&server).await.len(), 1);
 }
 
+/// MF-23, PF-10 (T-7815): each import option a person can get wrong is refused with a 400
+/// naming the option, before the dry run records a check or anything is written.
+#[tokio::test]
+async fn each_wrong_import_option_is_refused_naming_it() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import?dryRun=All");
+    for (field, value, needle) in [
+        ("conflictPolicy", "merge", "conflictPolicy 'merge'"),
+        ("targetNamespace", "Not_A_Label", "is not a DNS-1123 label"),
+        ("targetNamespace", "another-project", "must be the project"),
+        ("orgDomain", "not a domain", "orgDomain 'not a domain'"),
+        ("orgDomain", "-bad.example", "is not a domain name"),
+        ("spaceMapping", "{", "spaceMapping is a list"),
+    ] {
+        let (content_type, body) = multipart(&bundle_archive(), &[(field, value)]);
+        let (status, problem) = send(state.clone(), &cookie, &content_type, body, &uri).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{field}={value}: {problem}"
+        );
+        assert!(problem.to_string().contains(needle), "{needle}: {problem}");
+    }
+    assert!(written(&server).await.is_empty());
+}
+
+/// The options a person may send beside the archive all reach the plan: a domain of their
+/// own, the source URL, an empty space mapping and a field the form does not know, ignored.
+#[tokio::test]
+async fn the_import_options_reach_the_dry_run() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![]);
+    let (content_type, body) = multipart(
+        &bundle_archive(),
+        &[
+            ("orgDomain", "staging.example.org"),
+            ("targetNamespace", PROJECT),
+            ("spaceMapping", "[]"),
+            ("conflictPolicy", "rename"),
+            ("color", "blue"),
+        ],
+    );
+    let uri = format!("/api/v1/projects/{PROJECT}/import?dryRun=All");
+    let (status, report) = send(state, &cookie, &content_type, body, &uri).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["created"], json!(["ovzdusie", "public-air"]));
+    let (fresh, cookie) = self::state(&server, vec![]);
+    let (content_type, body) = multipart(
+        &bundle_archive(),
+        &[("url", "https://git.example.org/helsinki.git")],
+    );
+    let uri = format!("/api/v1/projects/{PROJECT}/import?dryRun=All");
+    let (status, problem) = send(fresh, &cookie, &content_type, body, &uri).await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{problem}");
+    assert!(
+        problem.to_string().contains("upload the bundle instead"),
+        "{problem}"
+    );
+    assert!(written(&server).await.is_empty());
+}
+
+/// An upload that is neither a zip archive nor text, an archive that does not open and a
+/// format the import does not know are each a 400 a person can act on.
+#[tokio::test]
+async fn an_upload_or_format_the_import_cannot_read_is_a_bad_request() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import?dryRun=All");
+    for (file, needle) in [
+        (
+            vec![0xffu8, 0xfe, 0x00, 0x01],
+            "neither a zip archive nor text",
+        ),
+        (
+            b"PK\x03\x04 not really".to_vec(),
+            "the archive did not open",
+        ),
+        (b"kind: [unclosed".to_vec(), "did not parse"),
+    ] {
+        let (content_type, body) = multipart(&file, &[]);
+        let (status, problem) = send(state.clone(), &cookie, &content_type, body, &uri).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{needle}: {problem}");
+        assert!(problem.to_string().contains(needle), "{needle}: {problem}");
+    }
+    let (content_type, body) = multipart(&bundle_archive(), &[]);
+    let (status, problem) = send(
+        state.clone(),
+        &cookie,
+        &content_type,
+        body,
+        &format!("/api/v1/projects/{PROJECT}/import?format=tarball"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem.to_string().contains("format 'tarball'"),
+        "{problem}"
+    );
+    let (content_type, body) = multipart(&files_archive(), &[("displayName", "Air")]);
+    let (status, problem) = send(
+        state,
+        &cookie,
+        &content_type,
+        body,
+        &format!("/api/v1/projects/{PROJECT}/import?format=files&dryRun=All"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(problem.to_string().contains("nothing else"), "{problem}");
+}
+
+/// PF-50: who holds no propose role is refused a files import before the upload is read.
+#[tokio::test]
+async fn a_files_import_without_a_propose_role_is_refused_before_the_upload_is_read() {
+    let server = forge().await;
+    let (state, cookie) = state_as(&server, vec![], &[], vec![]);
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let (status, problem) = send(
+        state,
+        &cookie,
+        &content_type,
+        body,
+        &format!("/api/v1/projects/{PROJECT}/import?format=files"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+    assert!(
+        problem
+            .to_string()
+            .contains("propose on the kinds of the files"),
+        "{problem}"
+    );
+}
+
+/// A manifest of another apiVersion, one the catalogue refuses and one carrying the build
+/// lane's own annotation are each refused by name, and nothing is written.
+#[tokio::test]
+async fn a_manifest_this_instance_would_not_write_is_refused_by_name() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import?dryRun=All");
+    for (manifest, needle) in [
+        (
+            SPACE.replace("v1alpha1", "v9"),
+            "is not served for this kind",
+        ),
+        (
+            ENDPOINT.replace("audience: public", "audience: everybody"),
+            "spec is not a valid Endpoint",
+        ),
+    ] {
+        let (content_type, body) = multipart(&archive(&[("space.yaml", &manifest)]), &[]);
+        let (status, problem) = send(state.clone(), &cookie, &content_type, body, &uri).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{needle}: {problem}");
+        assert!(problem.to_string().contains(needle), "{needle}: {problem}");
+    }
+    assert!(written(&server).await.is_empty());
+}
+
 /// T-1226: `?dryRun=All` is the spelling the OpenAPI document, the endpoint form's **Check** and
 /// the generated client all use. `ImportQuery` bound `dry_run` instead, so the parameter was
 /// silently ignored: a button that says "check" committed a change and opened a merge request,

@@ -29,6 +29,24 @@ pub fn functions_server() -> Option<String> {
     Some(String::from_utf8_lossy(&module.data).into_owned())
 }
 
+/// For a test that needs `file` of the SDK's build: `built` back, with a printed reason when it
+/// skips. Under CI (`CI=true`, as GitHub Actions sets it) a missing build fails instead, since a
+/// test that returns early there passes without testing anything (T-7826).
+#[doc(hidden)]
+pub fn sdk_built_or_skip(built: bool, file: &str) -> bool {
+    built || skip_unless_ci(file, std::env::var("CI").as_deref() == Ok("true"))
+}
+
+fn skip_unless_ci(file: &str, ci: bool) -> bool {
+    let build = "cd crates/portal/sdk && pnpm install --frozen-lockfile && pnpm build";
+    assert!(
+        !ci,
+        "sdk/dist/{file} is missing in CI: run `{build}` before cargo test"
+    );
+    eprintln!("skipped: sdk/dist/{file} is not built (`{build}`)");
+    false
+}
+
 /// The CSP source of one inline script: its SHA-256, so the policy needs no `'unsafe-inline'`.
 pub fn script_hash(js: &str) -> String {
     format!(
@@ -63,6 +81,20 @@ mod tests {
         assert_eq!(
             script_hash(""),
             "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='"
+        );
+    }
+
+    /// A missing build skips locally and fails under CI, naming the file and the build step.
+    #[test]
+    fn a_missing_sdk_build_skips_locally_and_fails_in_ci() {
+        assert!(sdk_built_or_skip(true, "functions-server.js"));
+        assert!(!skip_unless_ci("functions-server.js", false));
+        let failed = std::panic::catch_unwind(|| skip_unless_ci("functions-server.js", true))
+            .expect_err("a missing build fails in CI");
+        let message = failed.downcast_ref::<String>().expect("a message");
+        assert!(
+            message.contains("sdk/dist/functions-server.js") && message.contains("pnpm build"),
+            "{message}"
         );
     }
 }

@@ -103,10 +103,7 @@ pub async fn build(
         &mut siblings,
         env,
     );
-    tracing::info!(
-        keys = ?siblings.keys().collect::<Vec<_>>(),
-        "portal: settings filled from sibling modules"
-    );
+    tracing::info!(keys = ?siblings.keys().collect::<Vec<_>>(), "portal: settings filled from sibling modules");
     let mut config = config(&mount, env, siblings)?;
     // The internal listener opens with a realm (`server::spawn_internal_listener`). It is bound
     // before the state is built: the stream deployer is wired from the config, and its
@@ -611,8 +608,7 @@ fn organization_realm_vars(
     if env("JC_PORTAL_REACH").is_some() || env("JC_PORTAL_REACH_HOSTS").is_some() {
         if !sign_ins.is_empty() {
             tracing::warn!(
-                "portal: JC_PORTAL_REACH is set, so no Organization signs in through its own \
-                 realm; set JC_PORTAL_ORGANIZATION_REALMS beside it"
+                "portal: JC_PORTAL_REACH is set, so no Organization signs in through its own realm; set JC_PORTAL_ORGANIZATION_REALMS beside it"
             );
         }
         return None;
@@ -1779,9 +1775,67 @@ mod tests {
             );
             assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_REALMS"), "{set}");
         }
+        // Without the installation's own reach, jc's sibling listener is the reach and the
+        // realms' sign-in hosts start the list.
+        let mut bare = installation();
+        bare.remove("JC_PORTAL_REACH");
+        bare.remove("JC_PORTAL_REACH_HOSTS");
+        let reach = organization_realm_vars(&sign_ins, &siblings, "https", &mut bare, none)
+            .expect("a reach");
+        assert_eq!(bare["JC_PORTAL_REACH"], reach.to_string());
+        assert_eq!(bare["JC_PORTAL_REACH_HOSTS"], "idm.bbsk.sk");
         let mut operator_realm = installation();
         operator_realm.remove("JC_OIDC_ISSUER");
         organization_realm_vars(&sign_ins, &siblings, "https", &mut operator_realm, none);
         assert!(!operator_realm.contains_key("JC_PORTAL_ORGANIZATION_REALMS"));
+    }
+}
+
+/// The Portal's request extensions from jc's router (T-7820): the mount's host and the
+/// Organization the host table found, each only when jc set it.
+#[cfg(test)]
+mod request_host_tests {
+    use super::*;
+    use joinedcontext_portal::organization_host::{RequestHost, RequestOrganization};
+    use tower::ServiceExt;
+
+    async fn seen(req: axum::extract::Request) -> String {
+        let router = with_request_host(Router::new().route(
+            "/",
+            axum::routing::get(|req: axum::extract::Request| async move {
+                let host = req.extensions().get::<RequestHost>().map(|h| h.0.clone());
+                let org = req
+                    .extensions()
+                    .get::<RequestOrganization>()
+                    .map(|o| o.0.clone());
+                format!("{host:?} {org:?}")
+            }),
+        ));
+        let answer = router.oneshot(req).await.expect("answers");
+        let body = axum::body::to_bytes(answer.into_body(), 1024)
+            .await
+            .unwrap();
+        String::from_utf8(body.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_mount_host_and_organization_reach_the_portal_only_when_set() {
+        let bare = axum::extract::Request::builder()
+            .uri("/")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(seen(bare).await, "None None");
+        let mut req = axum::extract::Request::builder()
+            .uri("/")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(Mount::new("portal", "https", "portal.city.example", "/portal").unwrap());
+        req.extensions_mut()
+            .insert(jc_router::Organization("city".into()));
+        assert_eq!(
+            seen(req).await,
+            "Some(\"portal.city.example\") Some(\"city\")"
+        );
     }
 }

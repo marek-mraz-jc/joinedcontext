@@ -3787,6 +3787,42 @@ mod tests {
         assert!(parse_change_ref("chg-ORG-0000002a").is_err());
     }
 
+    /// A branch with no resource name between its kind and its hash names no Change (T-7815).
+    #[test]
+    fn a_branch_with_an_empty_resource_name_names_nothing() {
+        assert!(parse_branch_name("portal/create-contextspace--12345678").is_none());
+    }
+
+    /// A deleted native file is named by its directory and the kind its path holds; a bare
+    /// `pipeline.yaml` outside any directory names nothing (T-7815).
+    #[test]
+    fn a_native_file_is_named_by_its_directory_and_the_kind_of_its_path() {
+        assert_eq!(
+            named_by_path("projects/city/pipelines/air/pipeline.yaml"),
+            Some(("Pipeline".to_owned(), "air".to_owned()))
+        );
+        assert_eq!(
+            named_by_path("projects/city/apps/map/app.yml"),
+            Some(("App".to_owned(), "map".to_owned()))
+        );
+        assert_eq!(named_by_path("pipeline.yaml"), None);
+        assert_eq!(named_by_path("projects/city/README.md"), None);
+    }
+
+    /// T-6552: an approval line naming no connector after the marker names none.
+    #[test]
+    fn an_approval_line_with_an_empty_connector_names_none() {
+        assert_eq!(
+            connector_in("Approved in the Portal by jana, via connector  ,x"),
+            None
+        );
+        assert_eq!(
+            connector_in("x\nApproved in the Portal by jana, via connector air-feed, at noon"),
+            Some("air-feed".to_owned())
+        );
+        assert_eq!(connector_in("Merged by jana"), None);
+    }
+
     #[test]
     fn test_parse_branch_name() {
         // A restore names no one resource: its files head it, as a bundle's do (T-3247).

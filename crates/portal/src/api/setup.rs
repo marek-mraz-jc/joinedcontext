@@ -201,6 +201,28 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// A realm that does not answer reads as not done, never as a failed page (T-7815).
+    #[tokio::test]
+    async fn a_realm_that_does_not_answer_reads_as_not_done() {
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        assert!(
+            !smtp_set(&state).await && !a_second_person(&state).await,
+            "no admin client"
+        );
+        state.people = crate::people::People::new(
+            "http://127.0.0.1:9/realms/hel",
+            "portal".into(),
+            crate::config::ClientAuth::Secret("secret".into()),
+        )
+        .map(std::sync::Arc::new);
+        assert!(state.people.is_some());
+        assert!(!smtp_set(&state).await, "no answer, no e-mail server");
+        assert!(
+            !a_second_person(&state).await,
+            "no answer, no second person"
+        );
+    }
+
     #[test]
     fn the_operator_part_is_done_only_where_it_was_said() {
         let stock = operator(
