@@ -85,7 +85,7 @@ mod tests {
         let written = String::from_utf8(buffer.0.lock().expect("buffer").clone()).expect("utf-8");
         let lines: Vec<Value> = written
             .lines()
-            .map(|line| serde_json::from_str(line).unwrap_or_else(|e| panic!("{e}: {line}")))
+            .map(|line| serde_json::from_str(line).expect(line))
             .collect();
         assert_eq!(lines.len(), 1, "{written}");
         assert_eq!(lines[0]["level"], "INFO");

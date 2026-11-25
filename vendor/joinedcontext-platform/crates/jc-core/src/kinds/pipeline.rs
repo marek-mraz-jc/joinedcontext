@@ -2607,6 +2607,22 @@ mod edge_tests {
     use super::*;
 
     #[test]
+    fn a_replace_conflict_over_every_type_says_so() {
+        let conflict = ReplaceConflict {
+            pipeline: "lights".to_owned(),
+            space: "city".to_owned(),
+            entity_type: None,
+            others: vec!["lamps".to_owned()],
+        };
+        let text = conflict.to_string();
+        assert!(
+            text.starts_with("Pipeline lights writes every type into space city"),
+            "{text}"
+        );
+        assert!(text.contains("Pipeline lamps"), "{text}");
+    }
+
+    #[test]
     fn output_mode_display() {
         assert_eq!(format!("{}", OutputMode::Upsert), "upsert");
         assert_eq!(format!("{}", OutputMode::Replace), "replace");

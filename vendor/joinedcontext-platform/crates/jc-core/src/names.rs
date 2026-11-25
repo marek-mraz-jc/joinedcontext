@@ -922,8 +922,9 @@ mod edge_tests {
             "{mapped:?}"
         );
         let other = Error::ApiVersion("joinedcontext.com/v9".to_owned());
-        let passed = map_reason(other.clone(), |_| Error::ApiVersion("never".to_owned()));
-        assert_eq!(passed, other);
+        let never = |_: &'static str| Error::ApiVersion("never".to_owned());
+        assert_eq!(map_reason(other.clone(), never), other);
+        assert_eq!(never("x"), Error::ApiVersion("never".to_owned()));
     }
 
     #[test]
