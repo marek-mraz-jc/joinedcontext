@@ -1696,7 +1696,9 @@ async fn an_application_is_written_in_one_call_and_the_template_never_reaches_th
             assert!(String::from_utf8_lossy(&body).contains("importmap"));
             assert!(headers.contains_key(header::CONTENT_SECURITY_POLICY));
         }
-        StatusCode::SERVICE_UNAVAILABLE => {}
+        StatusCode::SERVICE_UNAVAILABLE => {
+            joinedcontext_portal::agents::kit::sdk_built_or_skip(false, "runtime/runtime.json");
+        }
         other => panic!(
             "the preview answered {other}: {}",
             String::from_utf8_lossy(&body)
@@ -2542,7 +2544,10 @@ async fn preview_errors_and_call_function_answer_the_model_as_tool_results() {
         "the frame's error reaches the model: {}",
         tools[0].2
     );
-    if joinedcontext_portal::agents::kit::functions_server().is_some() {
+    if joinedcontext_portal::agents::kit::sdk_built_or_skip(
+        joinedcontext_portal::agents::kit::functions_server().is_some(),
+        "functions-server.js",
+    ) {
         assert_eq!(tools[1].1, "ok", "{}", tools[1].2);
         assert!(
             tools[1].2.starts_with("status 201") && tools[1].2.contains("summary 1 types"),
