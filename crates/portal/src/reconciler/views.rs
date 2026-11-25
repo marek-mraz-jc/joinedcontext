@@ -4425,7 +4425,7 @@ mod tests {
             "city",
             "air",
             "air",
-            "  isSandbox: false\n  brokerRef: edge\n  quality:\n    - {name: stale, entityType: Car, kind: freshness, attribute: location, maxAge: PT10M}\n",
+            "  isSandbox: false\n  brokerRef: edge\n  retention: [{entityType: Car, history: P30D}]\n  quality:\n    - {name: stale, entityType: Car, kind: freshness, attribute: location, maxAge: PT10M}\n",
         );
         put_manifest(
             &dir,
@@ -4523,8 +4523,9 @@ mod tests {
         assert!(read.quality.contains_key(&air) && !read.quality.contains_key(&plain));
         assert!(!read.retention.contains_key(&plain));
         assert!(
-            !read.retention[&air].is_empty(),
-            "the Pipeline's Car history is the space's retention"
+            read.retention[&air][0].attributes.contains_key("speed"),
+            "the Pipeline's Car history is recorded in the space's retention: {:?}",
+            read.retention[&air]
         );
         let endpoints: Vec<&str> = read.endpoints.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(endpoints, ["air-public"]);
