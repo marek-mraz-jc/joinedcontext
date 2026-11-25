@@ -213,14 +213,19 @@ fn check(bytes: &[u8]) -> Result<Checked, ApiError> {
         ));
     }
     verify_files(&index, &files)?;
-    if !index.spec.files.iter().any(|f| f.path == MANIFEST) {
-        return Err(ApiError::BadRequest(
-            "bundle.yaml carries no checksum of app.yaml; export again (MF-42)".into(),
-        ));
-    }
-    let text = files.get(MANIFEST).ok_or_else(|| {
-        ApiError::BadRequest("the archive has no app.yaml beside its bundle".into())
-    })?;
+    // verify_files checked every listed file is there, so a listed app.yaml is in the archive.
+    let text = index
+        .spec
+        .files
+        .iter()
+        .any(|f| f.path == MANIFEST)
+        .then(|| files.get(MANIFEST))
+        .flatten()
+        .ok_or_else(|| {
+            ApiError::BadRequest(
+                "bundle.yaml carries no checksum of app.yaml; export again (MF-42)".into(),
+            )
+        })?;
     let text = String::from_utf8_lossy(text);
     let app: ResourceEnvelope = serde_norway::from_str(&text)
         .map_err(|err| ApiError::BadRequest(format!("app.yaml is not a manifest: {err}")))?;

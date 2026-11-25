@@ -886,7 +886,11 @@ async fn a_bundle_that_is_not_this_organizations_plans_no_restore() {
     for (version, bundle, says) in [
         ("no-index", no_index, "no index.yaml"),
         ("other-org", other_org, "of Organization 'bravo'"),
-        ("moved", moved, "'bravo-town'"),
+        (
+            "moved",
+            moved,
+            "Project/bravo-town belongs to another Organization",
+        ),
     ] {
         world
             .bucket
@@ -2645,6 +2649,28 @@ async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_pe
     .await;
     assert_eq!(again.status, StatusCode::NOT_FOUND, "{}", again.text);
 
+    // A second request is declined by another administrator and writes nothing.
+    let asked = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&ids[0]), "request": true })),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.text);
+    let id = body(&asked)["request"]["id"].as_i64().expect("a request");
+    let declined = send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &format!("{DATA_DOOR}/restores/{id}/decline"),
+        None,
+    )
+    .await;
+    assert_eq!(declined.status, StatusCode::OK, "{}", declined.text);
+    assert_eq!(body(&declined)["state"], "declined", "{}", declined.text);
+
     let overview = send(&world.state, person("ada"), "GET", DATA_DOOR, None).await;
     let requests = send(
         &world.state,
@@ -2678,7 +2704,12 @@ async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_pe
             );
         }
     }
-    for action in ["restore-plan", "restore-request", "restore"] {
+    for action in [
+        "restore-plan",
+        "restore-request",
+        "restore",
+        "restore-decline",
+    ] {
         assert!(
             body(&overview)["log"]
                 .as_array()

@@ -646,6 +646,11 @@ async fn each_path_shape_answers_its_status() {
             StatusCode::NOT_FOUND,
         ),
         ("/api/v1/spaces('air')", StatusCode::BAD_REQUEST),
+        ("/api/v1/projects(1)/spaces", StatusCode::BAD_REQUEST),
+        (
+            "/api/v1/projects('helsinki')/nothings",
+            StatusCode::BAD_REQUEST,
+        ),
         ("/api/v1/projects('helsinki')/spaces/$count", StatusCode::OK),
         ("/api/v1/projects/$count", StatusCode::OK),
         ("/api/v1/spaces/$count", StatusCode::OK),
@@ -666,6 +671,19 @@ async fn each_path_shape_answers_its_status() {
             );
         }
     }
+    // A keyed project expands its kinds and still carries its ETag.
+    let one = send(
+        &state,
+        mode,
+        &cookie,
+        "/api/v1/projects('helsinki')?$expand=spaces",
+        &[],
+    )
+    .await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.text);
+    let body = one.json();
+    assert!(body["spaces"].is_array(), "{body}");
+    assert!(body["@odata.etag"].is_string(), "{body}");
 }
 
 /// The `portals` set (ODP-08): 401 to nobody, refused to a reader without a Portal rule, and

@@ -618,6 +618,24 @@ async fn an_archive_that_does_not_check_creates_nothing() {
     no_index.remove("bundle.yaml");
     let mut garbled = files.clone();
     garbled.insert("bundle.yaml".into(), b"spec: [".to_vec());
+    let index_edit = |edit: &dyn Fn(&mut Value)| {
+        let mut edited = files.clone();
+        let mut index: Value =
+            serde_norway::from_slice(&edited["bundle.yaml"]).expect("bundle.yaml reads");
+        edit(&mut index);
+        let text = serde_norway::to_string(&index).expect("bundle.yaml writes");
+        edited.insert("bundle.yaml".into(), text.into_bytes());
+        edited
+    };
+    let unsummed = index_edit(&|index| {
+        index["spec"]["files"]
+            .as_array_mut()
+            .expect("files")
+            .retain(|file| file["path"] != "app.yaml");
+    });
+    let two_items = index_edit(&|index| {
+        index["spec"]["items"][0]["kind"] = json!("Dashboard");
+    });
     let mut broken_app = files.clone();
     let digest = format!("{:x}", Sha256::digest(b"kind: [".as_slice()));
     broken_app.insert("app.yaml".into(), b"kind: [".to_vec());
@@ -656,6 +674,18 @@ async fn an_archive_that_does_not_check_creates_nothing() {
             "format=git",
         ),
         (zip_of(&newer), vec![], StatusCode::BAD_REQUEST, "v1beta1"),
+        (
+            zip_of(&unsummed),
+            vec![],
+            StatusCode::BAD_REQUEST,
+            "no checksum of app.yaml",
+        ),
+        (
+            zip_of(&two_items),
+            vec![],
+            StatusCode::BAD_REQUEST,
+            "one App as its item",
+        ),
         (
             zip_of(&files),
             vec![("name", "Not_A_Name")],
