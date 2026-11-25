@@ -820,10 +820,8 @@ fn append_new_instances(doc: &mut Value, expanded: &Value, ts: &str) -> Result<b
         // stamped as every other write path stamps a new instance
         let mut incoming = v.clone();
         crate::stamp::stamp_instances(&mut incoming, ts);
-        let incoming: Vec<Value> = match incoming {
-            Value::Array(a) => a,
-            _ => Vec::new(),
-        };
+        // an expanded Attribute is an instance array (stamp_instances keeps it one)
+        let incoming: Vec<Value> = serde_json::from_value(incoming).unwrap_or_default();
         match target.get_mut(k).and_then(Value::as_array_mut) {
             None => {
                 target.insert(k.clone(), Value::Array(incoming));
@@ -953,11 +951,7 @@ async fn upsert_in_view(
                     g.pre_whole(id, doc)?;
                 }
             }
-            let Some(&src) = docs.get(id) else {
-                return Err(NgsiError::InternalError(format!(
-                    "batch member {id} lost its document"
-                )));
-            };
+            let src = member(&docs, id)?;
             if update_mode {
                 crate::entities::update_into(doc, src, ts);
             } else {
@@ -1086,5 +1080,130 @@ pub(super) fn same_but_stamps(a: &Value, b: &Value) -> bool {
     match (a.as_object(), b.as_object()) {
         (Some(a), Some(b)) => same_obj(a, b, instances),
         _ => a == b,
+    }
+}
+
+#[cfg(test)]
+mod write_edges {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    async fn post(st: &AppState, uri: &str, body: Value) -> (StatusCode, Value) {
+        let text = body.to_string();
+        let res = crate::router(st.clone())
+            .oneshot(
+                Request::post(uri)
+                    .header("Content-Type", "application/json")
+                    .header("Content-Length", text.len())
+                    .body(Body::from(text))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// 5.6.7.4: each member is judged alone — one that is no JSON object
+    /// is an error entry and the rest are created.
+    #[tokio::test]
+    async fn clause_5_6_7_a_member_that_is_no_object_fails_alone() {
+        let st = AppState::new("batch-write-edges".into());
+        let (status, body) = post(
+            &st,
+            "/ngsi-ld/v1/entityOperations/create",
+            json!([7, {"id": "urn:ngsi-ld:Car:1", "type": "Car"}]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::MULTI_STATUS, "{body}");
+        assert_eq!(body["success"], json!(["urn:ngsi-ld:Car:1"]), "{body}");
+        assert_eq!(body["errors"].as_array().map(Vec::len), Some(1), "{body}");
+        assert_eq!(
+            body["errors"][0]["error"]["type"],
+            "https://uri.etsi.org/ngsi-ld/errors/BadRequestData",
+            "{body}"
+        );
+    }
+
+    /// 5.6.9 with noOverwrite is instance-level: an instance under a
+    /// datasetId the Attribute does not hold yet is appended beside the
+    /// stored one, an instance the Attribute holds is kept as stored.
+    #[tokio::test]
+    async fn clause_5_6_9_no_overwrite_appends_only_new_dataset_ids() {
+        let st = AppState::new("batch-write-noov".into());
+        let (status, body) = post(
+            &st,
+            "/ngsi-ld/v1/entityOperations/create",
+            json!([{"id": "urn:ngsi-ld:Car:2", "type": "Car",
+                    "speed": {"type": "Property", "value": 1}}]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let (status, body) = post(
+            &st,
+            "/ngsi-ld/v1/entityOperations/update?options=noOverwrite",
+            json!([{"id": "urn:ngsi-ld:Car:2", "type": "Car", "speed": [
+                {"type": "Property", "value": 9},
+                {"type": "Property", "value": 2, "datasetId": "urn:ngsi-ld:Dataset:gps"}
+            ]}]),
+        )
+        .await;
+        assert!(status.is_success(), "{status} {body}");
+        let res = crate::router(st.clone())
+            .oneshot(
+                Request::get("/ngsi-ld/v1/entities/urn:ngsi-ld:Car:2")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let got: Value = serde_json::from_slice(&bytes).expect("entity");
+        assert_eq!(
+            got["speed"],
+            json!([
+                {"type": "Property", "value": 1},
+                {"type": "Property", "value": 2, "datasetId": "urn:ngsi-ld:Dataset:gps"}
+            ]),
+            "the default instance stays, the new dataset is appended: {got}"
+        );
+    }
+
+    /// A member that fails before it reaches the engine fails as one entry:
+    /// its error keeps its own type, a bare status reads as BadRequestData
+    /// naming it, a full pool as the overload detail, and a refusal as 422.
+    #[test]
+    fn a_member_error_is_one_problem_details() {
+        assert!(matches!(
+            ngsi_of(ApiError::Ngsi(NgsiError::LdContextNotAvailable("c".into()))),
+            NgsiError::LdContextNotAvailable(m) if m == "c"
+        ));
+        assert!(matches!(
+            ngsi_of(ApiError::Bare(StatusCode::UNSUPPORTED_MEDIA_TYPE)),
+            NgsiError::BadRequestData(m) if m == "HTTP 415 Unsupported Media Type"
+        ));
+        assert!(matches!(
+            ngsi_of(ApiError::NotAcceptable(&[])),
+            NgsiError::BadRequestData(m) if m == "HTTP 406"
+        ));
+        assert!(matches!(
+            ngsi_of(ApiError::Overloaded(1)),
+            NgsiError::InternalError(m) if m == antares_model::error::DB_OVERLOADED
+        ));
+        assert!(matches!(
+            ngsi_of(ApiError::Denied("no".into())),
+            NgsiError::OperationNotSupported(m) if m == "no"
+        ));
     }
 }
