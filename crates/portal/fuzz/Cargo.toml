@@ -45,6 +45,7 @@ bin = [
   { name = "export_query", path = "fuzz_targets/export_query.rs", test = false, doc = false, bench = false },
   { name = "export_secrets", path = "fuzz_targets/export_secrets.rs", test = false, doc = false, bench = false },
   { name = "grafana_title", path = "fuzz_targets/grafana_title.rs", test = false, doc = false, bench = false },
+  { name = "dashboard_answers", path = "fuzz_targets/dashboard_answers.rs", test = false, doc = false, bench = false },
 ]
 
 [package]
@@ -66,6 +67,7 @@ cookie = { version = "0.18", features = ["percent-encode"] }
 url = "2"
 joinedcontext-portal = { path = ".." }
 jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
+jcctl = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0", default-features = false, features = ["utoipa"] }
 
 # The Portal's own patches (../Cargo.toml), one directory deeper: the vendored platform, ngsild
 # and the patched rstar and geo-types, so the targets link the code the Portal ships.
