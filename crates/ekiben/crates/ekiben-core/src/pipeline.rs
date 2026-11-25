@@ -617,10 +617,11 @@ impl Batcher {
             return;
         };
         let ticks = self.last_batch.elapsed().as_nanos() / p.as_nanos();
-        let step = u32::try_from(ticks).ok().and_then(|n| p.checked_mul(n));
-        if let Some(at) = step.and_then(|s| self.last_batch.checked_add(s)) {
-            self.last_batch = at;
-        }
+        self.last_batch = u32::try_from(ticks)
+            .ok()
+            .and_then(|n| p.checked_mul(n))
+            .and_then(|s| self.last_batch.checked_add(s))
+            .unwrap_or(self.last_batch);
     }
 
     pub fn until_next(&self) -> Option<Duration> {

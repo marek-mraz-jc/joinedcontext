@@ -541,7 +541,8 @@ impl UnarchiveProcessor {
                     })
                     .collect())
             }
-            "xml_documents_to_json" | "xml_documents_to_json:cast" => {
+            // `xml_documents_to_json` and its `:cast` form, the last formats `new` accepts.
+            _ => {
                 let cast = self.format.ends_with(":cast");
                 let bytes = part.as_bytes();
                 let val = parse_xml_to_value(&bytes, cast)?;
@@ -549,7 +550,6 @@ impl UnarchiveProcessor {
                 np.set_structured(val);
                 Ok(vec![np])
             }
-            _ => unreachable!(),
         }
     }
 }

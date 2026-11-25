@@ -741,13 +741,15 @@ impl PromExporter {
             self.evict_deleted();
             if self.total.load(Ordering::Relaxed) > self.config.max_series {
                 let mut families = write(&self.families);
-                if let Some(fam) = families.get_mut(name) {
-                    if fam.series.remove(&labels).is_some() {
-                        self.total.fetch_sub(1, Ordering::Relaxed);
-                    }
-                    if fam.series.is_empty() {
-                        families.remove(name);
-                    }
+                // Another caller may have evicted or dropped the family since the insert above.
+                let (removed, emptied) = families
+                    .get_mut(name)
+                    .map(|fam| (fam.series.remove(&labels).is_some(), fam.series.is_empty()))
+                    .unwrap_or_default();
+                self.total
+                    .fetch_sub(usize::from(removed), Ordering::Relaxed);
+                if emptied {
+                    families.remove(name);
                 }
                 return None;
             }
@@ -914,7 +916,17 @@ impl PromExporter {
 /// `add_process_metrics`: the process collector's main series, read from `/proc/self` (absent
 /// on systems without it).
 fn render_process_metrics(out: &mut String) {
-    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    write_process_metrics(
+        out,
+        &std::fs::read_to_string("/proc/self/status").unwrap_or_default(),
+        &std::fs::read_to_string("/proc/self/stat").unwrap_or_default(),
+        std::fs::read_dir("/proc/self/fd").ok().map(Iterator::count),
+    );
+}
+
+/// The process series from the text of `/proc/self/status` and `/proc/self/stat` and the number
+/// of open descriptors; a value the text lacks leaves its series out.
+fn write_process_metrics(out: &mut String, status: &str, stat: &str, open_fds: Option<usize>) {
     let kb = |key: &str| -> Option<f64> {
         status
             .lines()
@@ -943,7 +955,7 @@ fn render_process_metrics(out: &mut String) {
         let _ = writeln!(out, "# TYPE process_virtual_memory_bytes gauge");
         let _ = writeln!(out, "process_virtual_memory_bytes {}", format_go_float(vsz));
     }
-    if let Ok(stat) = std::fs::read_to_string("/proc/self/stat") {
+    {
         // Fields after the command name (which may hold spaces) start at ") ": utime is field 14,
         // stime 15 of the whole line, so 12 and 13 after the state field. Ticks are 100 per second
         // on Linux (USER_HZ).
@@ -965,8 +977,7 @@ fn render_process_metrics(out: &mut String) {
             );
         }
     }
-    if let Ok(dir) = std::fs::read_dir("/proc/self/fd") {
-        let n = dir.count();
+    if let Some(n) = open_fds {
         let _ = writeln!(
             out,
             "# HELP process_open_fds Number of open file descriptors."
@@ -1167,6 +1178,62 @@ mod tests {
         scalar.observe_ns(5);
         scalar.add(1.5);
         assert_eq!(scalar.value(), 1.5);
+    }
+
+    #[test]
+    fn process_metrics_leave_out_what_proc_lacks() {
+        let mut out = String::new();
+        write_process_metrics(&mut out, "", "", None);
+        assert_eq!(out, "");
+        write_process_metrics(&mut out, "VmRSS: x kB\n", "1 (a b) S 1 2", None);
+        assert_eq!(out, "");
+        let stat = "1 (a b) S 1 2 3 4 5 6 7 8 9 10 250 150 0";
+        write_process_metrics(&mut out, "VmRSS:\t2 kB\nVmSize:\t4 kB\n", stat, Some(3));
+        for line in [
+            "process_resident_memory_bytes 2048",
+            "process_virtual_memory_bytes 4096",
+            "process_cpu_seconds_total 4",
+            "process_open_fds 3",
+        ] {
+            assert!(out.lines().any(|l| l == line), "{line} missing from {out}");
+        }
+    }
+
+    #[test]
+    fn concurrent_callers_share_one_series_and_one_kind_per_name() {
+        let exp = Arc::new(PromExporter::with_defaults());
+        let threads = 8;
+        for round in 0..200 {
+            let name = format!("race_{round}");
+            let gate = Arc::new(std::sync::Barrier::new(threads));
+            let handles: Vec<_> = (0..threads)
+                .map(|i| {
+                    let (exp, gate, name) = (exp.clone(), gate.clone(), name.clone());
+                    std::thread::spawn(move || {
+                        let kind = if i % 2 == 0 {
+                            FamilyKind::Counter
+                        } else {
+                            FamilyKind::Gauge
+                        };
+                        gate.wait();
+                        (kind, exp.get_or_create(&name, kind, Vec::new(), None))
+                    })
+                })
+                .collect();
+            let got: Vec<_> = handles
+                .into_iter()
+                .map(|h| h.join().expect("thread"))
+                .collect();
+            let winners: Vec<_> = got.iter().filter(|(_, s)| s.is_some()).collect();
+            let (kind, first) = (winners[0].0, winners[0].1.clone().expect("series"));
+            for (k, s) in &got {
+                match s {
+                    Some(s) => assert!(*k == kind && Arc::ptr_eq(s, &first), "{name}"),
+                    None => assert_ne!(*k, kind, "{name}"),
+                }
+            }
+        }
+        assert_eq!(exp.total.load(Ordering::Relaxed), 200);
     }
 
     #[test]
