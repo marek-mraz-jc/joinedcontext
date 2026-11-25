@@ -988,3 +988,130 @@ fn defaults_are_bentos() {
     assert!(!conf.prefix_metadata_keys);
     assert!(conf.auth.is_none());
 }
+
+/// Two paths of one stream: closing one keeps the other served.
+#[tokio::test]
+async fn closing_one_path_of_a_stream_keeps_the_other() {
+    let root = serve_ingest().await;
+    let (reg, ctx, _stop) = context("twopaths", ResourceManager::new());
+    let mut a = reg
+        .build_input(&component(json!({"path": "/a"})), &ctx)
+        .unwrap();
+    let mut b = reg
+        .build_input(&component(json!({"path": "/b"})), &ctx)
+        .unwrap();
+    a.connect(&ctx).await.unwrap();
+    b.connect(&ctx).await.unwrap();
+    assert_eq!(a.input_type(), "http_server");
+    assert_eq!(a.label(), "");
+    assert!(a.is_connected());
+    a.close().await.unwrap();
+    assert!(!a.is_connected());
+    let base = format!("{root}/{ORG}/twopaths");
+    let gone = http()
+        .post(format!("{base}/a"))
+        .body("x")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+    let c = http();
+    let pending = tokio::spawn(async move { c.post(format!("{base}/b")).body("y").send().await });
+    let (batch, ack) = b
+        .read_batch(&ctx)
+        .await
+        .expect("the other path still serves");
+    assert_eq!(batch[0].as_bytes_ref().as_ref(), b"y");
+    ack.ack();
+    assert_eq!(pending.await.unwrap().unwrap().status(), StatusCode::OK);
+    b.close().await.unwrap();
+    let err = b.read_batch(&ctx).await.err().expect("closed");
+    assert!(matches!(err, ekiben_core::CoreError::NotConnected), "{err}");
+}
+
+/// An own listener: a taken address is named, and close stops the server.
+#[tokio::test]
+async fn an_own_listener_names_a_taken_address_and_stops_on_close() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = taken.local_addr().unwrap();
+    let (reg, ctx, _stop) = context("ownbusy", ResourceManager::new());
+    let mut input = reg
+        .build_input(&component(json!({"address": addr.to_string()})), &ctx)
+        .unwrap();
+    let err = input.connect(&ctx).await.expect_err("address in use");
+    assert!(
+        err.to_string()
+            .contains(&format!("failed to listen on {addr}")),
+        "{err}"
+    );
+
+    let conf = ekiben_core::ComponentConfig {
+        label: "own".into(),
+        ..component(json!({"address": format!("127.0.0.1:{}", free_port())}))
+    };
+    let mut own = ekiben_io_http::http_server::HttpServerInput::from_config(&conf, &ctx).unwrap();
+    assert_eq!(own.conf().path.as_str(), "/post");
+    use ekiben_core::Input as _;
+    assert_eq!(own.label(), "own");
+    own.connect(&ctx).await.unwrap();
+    own.connect(&ctx)
+        .await
+        .expect("a second connect is a no-op");
+    let url = format!("http://{}/post", own.conf().address);
+    own.close().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        http().post(&url).body("x").send().await.is_err(),
+        "the listener is gone"
+    );
+}
+
+/// Header and cookie values that are not text, a cookie without a name and one without a value
+/// are skipped; the rest reach the metadata.
+#[tokio::test]
+async fn odd_headers_and_cookies_are_skipped_and_the_rest_kept() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut h = start("oddheaders", json!({"path": "/in"}), echo()).await;
+    let host = h.root.trim_start_matches("http://").to_string();
+    let mut s = tokio::net::TcpStream::connect(&host).await.unwrap();
+    let req = format!(
+        "POST /{ORG}/oddheaders/in HTTP/1.1\r\nHost: {host}\r\nX-Text: kept\r\nCookie: =v; flag; a=\"b\"\r\nContent-Length: 1\r\nConnection: close\r\n"
+    );
+    let mut raw = req.into_bytes();
+    raw.extend_from_slice(b"X-Bin: \xff\xfe\r\nCookie: \xfe\r\n\r\nx");
+    s.write_all(&raw).await.unwrap();
+    let mut answer = Vec::new();
+    s.read_to_end(&mut answer).await.unwrap();
+    assert!(
+        answer.starts_with(b"HTTP/1.1 200"),
+        "{}",
+        String::from_utf8_lossy(&answer)
+    );
+    let p = &next_batch(&mut h).await[0];
+    assert_eq!(p.meta_get_str("X-Text"), "kept");
+    assert_eq!(p.meta_get_str("X-Bin"), "");
+    assert_eq!(p.meta_get_str("a"), "b");
+    assert_eq!(p.meta_get_str("flag"), "");
+}
+
+/// Served without connect info, a request has no remote address and no remote-ip metadata.
+#[tokio::test]
+async fn a_request_without_a_peer_address_has_no_remote_ip() {
+    let mut h = start("nopeer", json!({"path": "/in"}), echo()).await;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, ingest::router()).await;
+    });
+    let res = http()
+        .post(format!("http://{addr}/{ORG}/nopeer/in"))
+        .body("x")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        next_batch(&mut h).await[0].meta_get_str("http_server_remote_ip"),
+        ""
+    );
+}

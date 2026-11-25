@@ -698,19 +698,15 @@ impl HttpClient {
             }
         }
 
-        if let Some(ref ba) = self.basic_auth {
-            if ba.enabled {
-                req = req.basic_auth(&ba.username, Some(ba.password.expose()));
-            }
+        if let Some(ba) = self.basic_auth.as_ref().filter(|ba| ba.enabled) {
+            req = req.basic_auth(&ba.username, Some(ba.password.expose()));
         }
 
         let mut bearer = None;
-        if let Some(ref oa) = self.oauth2 {
-            if oa.enabled {
-                let token = self.fetch_oauth2_token(oa, org).await?;
-                req = req.bearer_auth(&token);
-                bearer = Some(token);
-            }
+        if let Some(oa) = self.oauth2.as_ref().filter(|oa| oa.enabled) {
+            let token = self.fetch_oauth2_token(oa, org).await?;
+            req = req.bearer_auth(&token);
+            bearer = Some(token);
         }
 
         // Body construction
@@ -865,13 +861,12 @@ impl HttpClient {
                         return Err(CoreError::other(status_err.to_string()));
                     }
 
-                    let sleep_dur = match retry_strat {
-                        RetryStrategy::Linear => self.retry_period,
-                        RetryStrategy::Exponential => {
-                            let mult = 2u32.saturating_pow((attempt - 1) as u32);
-                            self.retry_period.saturating_mul(mult).min(self.max_backoff)
-                        }
-                        RetryStrategy::NoRetry => unreachable!(),
+                    // NoRetry returned above: Exponential doubles per attempt, Linear waits the period.
+                    let sleep_dur = if retry_strat == RetryStrategy::Exponential {
+                        let mult = 2u32.saturating_pow((attempt - 1) as u32);
+                        self.retry_period.saturating_mul(mult).min(self.max_backoff)
+                    } else {
+                        self.retry_period
                     };
                     tokio::time::sleep(sleep_dur).await;
                 }
@@ -968,16 +963,18 @@ pub fn validate_resolved_url(url_str: &str, org: &OrgContext) -> Result<Url, Cor
     let parsed = Url::parse(url_str).map_err(|e| {
         CoreError::config(format!("invalid URL '{}': {e}", redact_url_str(url_str)))
     })?;
-    let scheme = parsed.scheme();
-    if scheme != "http" && scheme != "https" {
-        return Err(CoreError::AccessDenied {
-            org: org.org_id.0.clone(),
-            reason: format!("refused URL scheme '{scheme}': only 'http' and 'https' are allowed"),
-        });
-    }
-    let host = parsed.host_str().ok_or_else(|| {
-        CoreError::config(format!("URL '{}' has no host", redact_url_str(url_str)))
-    })?;
+    // The url crate gives every http(s) URL a host, so only another scheme lands in the refusal.
+    let host = match (parsed.scheme(), parsed.host_str()) {
+        ("http" | "https", Some(host)) => host,
+        (scheme, _) => {
+            return Err(CoreError::AccessDenied {
+                org: org.org_id.0.clone(),
+                reason: format!(
+                    "refused URL scheme '{scheme}': only 'http' and 'https' URLs with a host are allowed"
+                ),
+            })
+        }
+    };
 
     let allow_private =
         org.get_quotas().allow_private_ips || org.host_target().is_some_and(|t| t.admits(&parsed));
@@ -1045,41 +1042,43 @@ enum Reach {
     Open,
 }
 
+/// Why a redirect from the hops in `previous` to `next` is refused, or `None` to follow it.
+fn redirect_refusal(previous: &[Url], next: &Url, reach: Reach) -> Option<String> {
+    if previous.len() >= MAX_REDIRECTS {
+        return Some(format!("exceeded maximum redirects ({MAX_REDIRECTS})"));
+    }
+    let next_scheme = next.scheme();
+    if next_scheme != "http" && next_scheme != "https" {
+        return Some(format!("redirect to unsupported scheme '{next_scheme}'"));
+    }
+    let next_peer = (next.host_str(), next.port_or_known_default());
+    if reach != Reach::Open && next_peer.0.is_some_and(is_private_or_loopback_host) {
+        return Some("SSRF protection: redirect to a private/loopback host is refused".into());
+    }
+    let first_peer = previous
+        .first()
+        .map(|u| (u.host_str(), u.port_or_known_default()));
+    if reach == Reach::PrivateHost && first_peer != Some(next_peer) {
+        return Some(
+            "SSRF protection: a private host's redirect to another host is refused".into(),
+        );
+    }
+    None
+}
+
+/// The error of a client builder that refused its settings.
+fn build_failed(e: reqwest::Error) -> CoreError {
+    CoreError::config(format!("failed to build HTTP client: {e}"))
+}
+
 fn build_http(timeout: Duration, reach: Reach) -> Result<reqwest::Client, CoreError> {
-    let guard = reach != Reach::Open;
     // Cap hops, keep http(s), and on the guarded client refuse a literal private host on every hop
     // (a DNS name is checked by the resolver, which reqwest uses for each hop's connection).
     let redirect_policy = RedirectPolicy::custom(move |attempt| {
-        if attempt.previous().len() >= MAX_REDIRECTS {
-            return attempt.error(format!("exceeded maximum redirects ({MAX_REDIRECTS})"));
+        match redirect_refusal(attempt.previous(), attempt.url(), reach) {
+            Some(refusal) => attempt.error(refusal),
+            None => attempt.follow(),
         }
-        let next_scheme = attempt.url().scheme().to_owned();
-        if next_scheme != "http" && next_scheme != "https" {
-            return attempt.error(format!("redirect to unsupported scheme '{next_scheme}'"));
-        }
-        if guard
-            && attempt
-                .url()
-                .host_str()
-                .is_some_and(is_private_or_loopback_host)
-        {
-            return attempt
-                .error("SSRF protection: redirect to a private/loopback host is refused");
-        }
-        if reach == Reach::PrivateHost
-            && attempt
-                .previous()
-                .first()
-                .map(|u| (u.host_str(), u.port_or_known_default()))
-                != Some((
-                    attempt.url().host_str(),
-                    attempt.url().port_or_known_default(),
-                ))
-        {
-            return attempt
-                .error("SSRF protection: a private host's redirect to another host is refused");
-        }
-        attempt.follow()
     });
     let connect_timeout = timeout
         .min(Duration::from_secs(5))
@@ -1104,9 +1103,7 @@ fn build_http(timeout: Duration, reach: Reach) -> Result<reqwest::Client, CoreEr
     if !timeout.is_zero() {
         builder = builder.timeout(timeout);
     }
-    builder
-        .build()
-        .map_err(|e| CoreError::config(format!("failed to build HTTP client: {e}")))
+    builder.build().map_err(build_failed)
 }
 
 /// The client for [`ekiben_core::HostTarget`]: a literal address, so no resolver, and no redirect.
@@ -1121,9 +1118,7 @@ fn build_host_http(timeout: Duration) -> Result<reqwest::Client, CoreError> {
     if !timeout.is_zero() {
         builder = builder.timeout(timeout);
     }
-    builder
-        .build()
-        .map_err(|e| CoreError::config(format!("failed to build HTTP client: {e}")))
+    builder.build().map_err(build_failed)
 }
 
 /// Resolves through the system resolver and drops private addresses, so a public name that
@@ -1207,4 +1202,236 @@ pub fn extract_status_code_from_err(err_msg: &str) -> Option<i64> {
     let start = err_msg.find(marker)? + marker.len();
     let end = err_msg[start..].find(')')? + start;
     err_msg[start..end].parse::<i64>().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+    use std::str::FromStr as _;
+
+    fn url(s: &str) -> Url {
+        Url::parse(s).expect("test url")
+    }
+
+    fn org(quotas: ekiben_core::OrgQuotas) -> Arc<OrgContext> {
+        let resources = ResourceManager::new();
+        let id = ekiben_core::OrgId::new("org-client-unit");
+        resources.set_org_quotas(&id, quotas);
+        resources.get_or_create_org(&id)
+    }
+
+    fn oauth(token_url: &str) -> OAuth2Config {
+        OAuth2Config {
+            enabled: true,
+            client_key: "k".into(),
+            client_secret: SecretString::new("s"),
+            token_url: token_url.into(),
+            scopes: Vec::new(),
+            endpoint_params: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_redirect_is_followed_or_refused_by_the_clients_reach() {
+        let a = url("https://a.example.org/x");
+        let a_port = url("https://a.example.org:8443/x");
+        let b = url("https://b.example.org/y");
+        let full = vec![a.clone(); MAX_REDIRECTS];
+        let private = Url::parse(&format!("http://{}/", Ipv4Addr::from([10, 1, 2, 3]))).unwrap();
+        for (previous, next, reach, want) in [
+            (
+                &full[..],
+                &b,
+                Reach::Open,
+                Some("exceeded maximum redirects (5)"),
+            ),
+            (&full[..MAX_REDIRECTS - 1], &b, Reach::Open, None),
+            (
+                &[a.clone()][..],
+                &url("ftp://b.example.org/"),
+                Reach::Open,
+                Some("unsupported scheme 'ftp'"),
+            ),
+            (
+                &[a.clone()][..],
+                &url("http://localhost/"),
+                Reach::Public,
+                Some("private/loopback host"),
+            ),
+            (
+                &[a.clone()][..],
+                &private,
+                Reach::PrivateHost,
+                Some("private/loopback host"),
+            ),
+            (&[a.clone()][..], &private, Reach::Open, None),
+            (&[a.clone()][..], &b, Reach::Public, None),
+            (
+                &[a.clone()][..],
+                &b,
+                Reach::PrivateHost,
+                Some("another host"),
+            ),
+            (
+                &[a.clone()][..],
+                &a_port,
+                Reach::PrivateHost,
+                Some("another host"),
+            ),
+            (
+                &[a.clone()][..],
+                &url("https://a.example.org/z"),
+                Reach::PrivateHost,
+                None,
+            ),
+            (&[][..], &a, Reach::PrivateHost, Some("another host")),
+        ] {
+            let got = redirect_refusal(previous, next, reach);
+            match want {
+                None => assert_eq!(got, None, "{next}"),
+                Some(w) => assert!(
+                    got.as_deref().is_some_and(|g| g.contains(w)),
+                    "{next}: {got:?}"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn a_refused_client_build_names_the_builder_error() {
+        let e = reqwest::Client::new()
+            .get("not a url")
+            .build()
+            .expect_err("bad url");
+        let msg = build_failed(e).to_string();
+        assert!(msg.contains("failed to build HTTP client: "), "{msg}");
+        // A zero timeout builds a client without a whole-request timeout.
+        assert!(build_http(Duration::ZERO, Reach::Public).is_ok());
+        assert!(build_host_http(Duration::ZERO).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_full_slot_table_drops_only_the_slots_no_fetch_holds() {
+        let org = org(Default::default());
+        let held = oauth_slot(&org, &oauth("https://held.example.org/token"));
+        for n in 0..=MAX_OAUTH_SLOTS {
+            oauth_slot(&org, &oauth(&format!("https://t{n}.example.org/token")));
+        }
+        // The held slot survived the sweep: asking again answers the same slot.
+        let again = oauth_slot(&org, &oauth("https://held.example.org/token"));
+        assert!(Arc::ptr_eq(&held, &again));
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_token_keeps_a_newer_one() {
+        let org = org(Default::default());
+        let oa = oauth("https://forget.example.org/token");
+        forget_oauth2_token(&org, &oa, "stale").await;
+        let slot = oauth_slot(&org, &oa);
+        slot.lock().await.cached = Some(CachedOAuthToken {
+            access_token: SecretString::new("fresh"),
+            expires_at: Instant::now() + Duration::from_secs(60),
+        });
+        forget_oauth2_token(&org, &oa, "stale").await;
+        assert!(slot.lock().await.cached.is_some(), "a newer token stays");
+        forget_oauth2_token(&org, &oa, "fresh").await;
+        assert!(slot.lock().await.cached.is_none(), "the refused token goes");
+    }
+
+    #[tokio::test]
+    async fn the_resolvers_keep_the_addresses_their_reach_allows() {
+        use reqwest::dns::{Name, Resolve as _};
+        let public = Ipv4Addr::from([8, 8, 8, 8]).to_string();
+        let private = Ipv4Addr::from([10, 0, 0, 7]).to_string();
+        let got: Vec<_> = PublicOnlyResolver
+            .resolve(Name::from_str(&public).unwrap())
+            .await
+            .expect("public literal")
+            .collect();
+        assert_eq!(got[0].ip().to_string(), public);
+        let err = PublicOnlyResolver
+            .resolve(Name::from_str(&private).unwrap())
+            .await
+            .err()
+            .expect("private refused");
+        assert!(
+            err.to_string().contains("only to private/loopback"),
+            "{err}"
+        );
+        let got: Vec<_> = PrivateHostResolver
+            .resolve(Name::from_str(&private).unwrap())
+            .await
+            .expect("private literal")
+            .collect();
+        assert_eq!(got[0].ip().to_string(), private);
+        let err = PrivateHostResolver
+            .resolve(Name::from_str("127.0.0.1").unwrap())
+            .await
+            .err()
+            .expect("loopback refused");
+        assert!(
+            err.to_string().contains("loopback, link-local or metadata"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_url_prefix_is_checked_only_when_it_is_written_out() {
+        assert!(validate_url_scheme_prefix("${! meta(\"target\") }").is_ok());
+        assert!(validate_url_scheme_prefix(" https://a.example.org").is_ok());
+        let err = validate_url_scheme_prefix("a.example.org/x")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("must use 'http://' or 'https://' scheme"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_resolved_url_without_http_or_a_host_is_refused() {
+        let org = org(Default::default());
+        for (raw, want) in [
+            ("::not a url", "invalid URL"),
+            ("ftp://a.example.org/x", "refused URL scheme 'ftp'"),
+            ("file:///etc/passwd", "refused URL scheme 'file'"),
+            ("http://localhost:1/x", "SSRF protection"),
+        ] {
+            let err = validate_resolved_url(raw, &org).unwrap_err().to_string();
+            assert!(err.contains(want), "{raw}: {err}");
+        }
+        assert!(validate_resolved_url("https://a.example.org/x", &org).is_ok());
+    }
+
+    #[test]
+    fn a_guarded_client_is_chosen_by_the_organizations_rule() {
+        let guarded = GuardedHttp::new(Duration::from_secs(1)).expect("clients");
+        let public = org(Default::default());
+        let (u, c) = guarded
+            .for_url(&public, "https://a.example.org/x")
+            .expect("public");
+        assert_eq!(u.host_str(), Some("a.example.org"));
+        assert!(std::ptr::eq(c, &guarded.public));
+        let err = guarded
+            .for_url(&public, "http://127.0.0.1:9/x")
+            .expect_err("loopback");
+        assert!(err.to_string().contains("SSRF protection"), "{err}");
+        let listed = org(ekiben_core::OrgQuotas {
+            private_hosts: vec!["db.internal.example".into()],
+            ..Default::default()
+        });
+        let (_, c) = guarded
+            .for_url(&listed, "http://db.internal.example:5432/")
+            .expect("listed");
+        assert!(std::ptr::eq(c, &guarded.private_host));
+        let open = org(ekiben_core::OrgQuotas {
+            allow_private_ips: true,
+            ..Default::default()
+        });
+        let (_, c) = guarded
+            .for_url(&open, "http://127.0.0.1:9/x")
+            .expect("open");
+        assert!(std::ptr::eq(c, &guarded.open));
+    }
 }

@@ -1062,4 +1062,240 @@ mod tests {
         assert!(out.topics.is_empty());
         assert!(MqttConf::from_json(&json!({"urls": ["tcp://x:1"]})).is_err());
     }
+
+    use crate::test_io::{Broken, Unreadable};
+
+    /// Runs one connection over `wire` with `buf` already read; the reason it ended, if any.
+    async fn run(wire: Wire, buf: Vec<u8>, drop_acks: bool) -> Option<String> {
+        let (events, mut rx) = mpsc::channel(4);
+        let (acks_tx, acks) = mpsc::unbounded_channel();
+        let keep = (!drop_acks).then_some(acks_tx);
+        run_connection(wire, buf, 1, events, acks).await;
+        drop(keep);
+        // These connections carry no PUBLISH to the input: only a Lost event can arrive.
+        let mut lost = None;
+        while let Ok(Event::Lost(reason)) = rx.try_recv() {
+            lost = Some(reason);
+        }
+        lost
+    }
+
+    #[tokio::test]
+    async fn a_connection_ends_naming_the_wire_or_packet_that_failed() {
+        // An oversized length in the buffer.
+        let (a, _b) = tokio::io::duplex(64);
+        let lost = run(
+            Wire::Stream(Box::new(a)),
+            vec![0x30, 0xff, 0xff, 0xff, 0xff, 0x01],
+            false,
+        )
+        .await;
+        assert!(lost.is_some_and(|r| r.contains("malformed remaining length")));
+        // A QoS 2 PUBLISH or a PUBREL whose answer cannot be written.
+        let mut qos2 = Vec::new();
+        put_str(&mut qos2, b"t");
+        qos2.extend_from_slice(&9u16.to_be_bytes());
+        for buf in [packet(0x34, &qos2), packet(0x62, &[0, 9])] {
+            let lost = run(Wire::Stream(Box::new(Broken)), buf, false).await;
+            assert!(lost.is_some_and(|r| r.contains("mqtt: write failed: pipe broke")));
+        }
+        // A write whose flush fails, and a read that fails.
+        let err = Wire::Stream(Box::new(Unreadable))
+            .send(vec![0xc0, 0x00])
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("mqtt: write failed: flush failed"),
+            "{err}"
+        );
+        let lost = run(Wire::Stream(Box::new(Unreadable)), Vec::new(), false).await;
+        assert!(lost.is_some_and(|r| r.contains("mqtt: read failed: reset")));
+        // An unknown packet is skipped; the broker closing ends the connection.
+        let (a, b) = tokio::io::duplex(64);
+        drop(b);
+        let lost = run(Wire::Stream(Box::new(a)), vec![0xd0, 0x00], false).await;
+        assert_eq!(lost.as_deref(), Some("the broker closed the connection"));
+    }
+
+    #[tokio::test]
+    async fn a_closed_input_disconnects_without_a_lost_event() {
+        // The input dropped its acks: DISCONNECT, and no Lost event.
+        let (a, mut b) = tokio::io::duplex(64);
+        assert_eq!(run(Wire::Stream(Box::new(a)), Vec::new(), true).await, None);
+        let mut sent = [0u8; 2];
+        tokio::io::AsyncReadExt::read_exact(&mut b, &mut sent)
+            .await
+            .unwrap();
+        assert_eq!(sent, [0xe0, 0x00]);
+        // The input dropped its events: the PUBLISH has nowhere to go.
+        let (a, _b) = tokio::io::duplex(64);
+        let (events, rx) = mpsc::channel(1);
+        drop(rx);
+        let (_acks_tx, acks) = mpsc::unbounded_channel();
+        run_connection(
+            Wire::Stream(Box::new(a)),
+            publish_packet("t", b"x", 0, false, 0),
+            1,
+            events,
+            acks,
+        )
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_keepalive_ping_that_cannot_be_written_ends_the_connection() {
+        let lost = run(Wire::Stream(Box::new(Broken)), Vec::new(), false).await;
+        assert!(lost.is_some_and(|r| r.contains("write failed")));
+    }
+
+    async fn ws_pair() -> (Wire, WebSocketStream<tokio::io::DuplexStream>) {
+        let (a, b) = tokio::io::duplex(4096);
+        let client = async {
+            let uri: Uri = "ws://localhost/mqtt".parse().unwrap();
+            ClientBuilder::from_uri(uri)
+                .connect_on(Box::new(a) as Box<dyn Io>)
+                .await
+                .unwrap()
+                .0
+        };
+        let server = async {
+            tokio_websockets::ServerBuilder::new()
+                .accept(b)
+                .await
+                .unwrap()
+                .1
+        };
+        let (client, server) = tokio::join!(client, server);
+        (Wire::Ws(Box::new(client)), server)
+    }
+
+    #[tokio::test]
+    async fn a_websocket_that_breaks_or_ends_is_named() {
+        let (mut wire, server) = ws_pair().await;
+        let mut raw = server.into_inner();
+        // An unmasked frame with a reserved opcode is a protocol error.
+        tokio::io::AsyncWriteExt::write_all(&mut raw, &[0x83, 0x00])
+            .await
+            .unwrap();
+        let err = wire.recv(&mut Vec::new()).await.unwrap_err().to_string();
+        assert!(err.contains("mqtt: read failed"), "{err}");
+
+        let (mut wire, server) = ws_pair().await;
+        drop(server);
+        let got = wire.recv(&mut Vec::new()).await;
+        assert!(
+            !matches!(got, Ok(true)),
+            "an ended websocket reads no packet"
+        );
+        let err = wire.send(vec![0xc0, 0x00]).await.unwrap_err().to_string();
+        assert!(err.contains("mqtt: write failed"), "{err}");
+    }
+
+    #[test]
+    fn small_packets_and_odd_bytes_read_as_go_reads_them() {
+        let conf = MqttConf::from_json(&json!({
+            "urls": ["tcp://broker:1883"], "topics": ["a"], "clean_session": false
+        }))
+        .unwrap();
+        assert_eq!(connect_packet(&conf)[9] & 0x02, 0, "no clean session flag");
+        let mut short = vec![0x30, 0x05, b'a'];
+        assert!(
+            take_packet(&mut short).unwrap().is_none(),
+            "a packet still arriving"
+        );
+        let mut body = Vec::new();
+        put_str(&mut body, &[0xff, 0xfe]);
+        assert!(
+            parse_publish(0x30, &body).is_err(),
+            "a topic that is not UTF-8"
+        );
+    }
+
+    fn stream_ctx() -> StreamContext {
+        let resources = ekiben_core::ResourceManager::new();
+        let org = resources.set_org_quotas(
+            &ekiben_core::OrgId::new("org-mqtt-unit"),
+            ekiben_core::OrgQuotas {
+                allow_private_ips: true,
+                ..Default::default()
+            },
+        );
+        StreamContext {
+            stream_id: "s".into(),
+            org,
+            resources,
+            registry: Arc::new(Registry::new()),
+            blobl_env: ekiben_bloblang::Environment::new(),
+            metrics: ekiben_core::StreamMetrics::new("s", "org-mqtt-unit"),
+            label: String::new(),
+            path: "input".into(),
+            file_root: None,
+            env_vars: Arc::new(std::collections::HashMap::new()),
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_url_dial_cannot_use_or_a_handshake_that_stalls_is_named() {
+        let ctx = stream_ctx();
+        let conf = MqttConf::from_json(&json!({
+            "urls": ["tcp://x:1"], "topics": ["a"], "connect_timeout": "200ms"
+        }))
+        .unwrap();
+        for (url, want) in [
+            ("::bad", "mqtt.urls: "),
+            ("tcp:broker", "a url has no host"),
+            ("tcp://a%20b:1883", "mqtt.urls: "),
+            ("ws://127.0.0.1/mqtt", "connect failed"),
+        ] {
+            let err = dial(&conf, url, &ctx)
+                .await
+                .err()
+                .expect("refused")
+                .to_string();
+            assert!(err.contains(want), "{url}: {err}");
+        }
+        // A websocket server that never answers, and one that answers with a refusal.
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = silent.local_addr().unwrap();
+        // The task's output, the accepted stream, stays open until the handle drops.
+        let held = tokio::spawn(async move { silent.accept().await });
+        let err = dial(&conf, &format!("ws://{addr}/mqtt"), &ctx)
+            .await
+            .err()
+            .expect("timeout")
+            .to_string();
+        assert!(err.contains("websocket handshake timed out"), "{err}");
+        drop(held);
+        // A TCP peer that never answers CONNECT.
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = silent.local_addr().unwrap();
+        // The task's output, the accepted stream, stays open until the handle drops.
+        let held = tokio::spawn(async move { silent.accept().await });
+        let err = dial(&conf, &format!("tcp://{addr}"), &ctx)
+            .await
+            .err()
+            .expect("timeout")
+            .to_string();
+        assert!(err.contains("mqtt: connect timed out"), "{err}");
+        drop(held);
+        let refusing = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = refusing.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = refusing.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut s, &mut buf).await;
+            let _ = tokio::io::AsyncWriteExt::write_all(
+                &mut s,
+                b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .await;
+        });
+        let err = dial(&conf, &format!("ws://{addr}/mqtt"), &ctx)
+            .await
+            .err()
+            .expect("refused")
+            .to_string();
+        assert!(err.contains("websocket handshake failed"), "{err}");
+    }
 }

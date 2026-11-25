@@ -167,7 +167,6 @@ pub fn desired(
     }
     let preferred: Vec<String> = settings.language.iter().cloned().collect();
     let title = dashboard.spec.title.resolve(&preferred, "en").to_owned();
-    let text = |value: &Value| serde_json::to_string(value).map_err(|e| e.to_string());
     let mut pages = Vec::new();
     let mut views = Vec::new();
     for (p, page) in dashboard.spec.pages.iter().enumerate() {
@@ -182,7 +181,12 @@ pub fn desired(
             };
             match widget.widget_type.as_str() {
                 VEGA_LITE_WIDGET => {
-                    let (Some(data), Some(spec)) = (&widget.data, &widget.spec) else {
+                    // Data that does not serialize reads as none: the chart has nothing to draw.
+                    let data = widget
+                        .data
+                        .as_ref()
+                        .and_then(|d| serde_json::to_value(d).ok());
+                    let (Some(data), Some(spec)) = (data, &widget.spec) else {
                         continue;
                     };
                     let jc_name = format!("p{p}w{w}");
@@ -201,8 +205,8 @@ pub fn desired(
                             "title": chart_title,
                             "description": description,
                             "jc_name": jc_name,
-                            "spec": text(spec)?,
-                            "source": text(&serde_json::to_value(data).map_err(|e| e.to_string())?)?,
+                            "spec": spec.to_string(),
+                            "source": data.to_string(),
                             "endpoint": slug,
                         }),
                     ));
@@ -245,7 +249,7 @@ pub fn desired(
     let mut extras = vec![
         json!({ "key": "generated_by", "value": GENERATOR }),
         json!({ "key": ENDPOINTS_EXTRA, "value": urls.join(" ") }),
-        json!({ "key": LAYOUT_EXTRA, "value": text(&json!({ "pages": pages }))? }),
+        json!({ "key": LAYOUT_EXTRA, "value": json!({ "pages": pages }).to_string() }),
     ];
     // The keys the publisher writes beside every other dataset (ckanext-dcat's), so the
     // dashboard names its project's publisher, not the organization it is filed under.

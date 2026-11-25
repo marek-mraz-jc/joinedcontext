@@ -145,6 +145,28 @@ mod tests {
         assert!(held().is_empty(), "install(&[]) clears every reached host");
     }
 
+    /// A poisoned list (a panic while a writer held it) leaves every caller working: nothing is
+    /// added or installed, and a client still builds, resolving through DNS as before.
+    #[tokio::test]
+    async fn a_poisoned_reach_list_adds_nothing_and_still_builds_a_client() {
+        let _turn = SERIAL.lock().await;
+        let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        install(&[("kept.example".to_owned(), addr)]);
+        let poisoned = std::panic::catch_unwind(|| {
+            let _held = REACH.write().unwrap();
+            panic!("a writer fails while it holds the list");
+        });
+        assert!(poisoned.is_err() && REACH.is_poisoned());
+        install(&[("new.example".to_owned(), addr)]);
+        add("added.example", addr);
+        let client = builder().build();
+        let kept = REACH.read().unwrap_or_else(|e| e.into_inner()).clone();
+        REACH.clear_poison();
+        install(&[]);
+        assert!(client.is_ok(), "a client builds from a poisoned list");
+        assert_eq!(kept, vec![("kept.example".to_owned(), addr)]);
+    }
+
     fn lookup(reach: Option<&str>, hosts: Option<&str>) -> impl Fn(&str) -> Option<String> {
         let (reach, hosts) = (reach.map(str::to_owned), hosts.map(str::to_owned));
         move |k| match k {
@@ -172,14 +194,21 @@ mod tests {
             vec![("a.example".to_owned(), v6), ("b-1.example".to_owned(), v6)],
             "empty names between commas are skipped"
         );
-        let Err(ConfigError::Invalid { var, reason }) = from_env(&lookup(
+        let underscore = from_env(&lookup(
             Some("127.0.0.1:1"),
             Some("ok.example,bad_name.example"),
-        )) else {
-            panic!("an underscore is no plain host name")
-        };
-        assert_eq!(var, "JC_PORTAL_REACH_HOSTS");
-        assert_eq!(reason, "`bad_name.example` is not a plain host name");
+        ));
+        assert!(
+            matches!(&underscore, Err(ConfigError::Invalid { var, reason })
+                if *var == "JC_PORTAL_REACH_HOSTS"
+                    && reason == "`bad_name.example` is not a plain host name"),
+            "an underscore is no plain host name: {underscore:?}"
+        );
+        assert_eq!(
+            lookup(Some("127.0.0.1:1"), Some("a.example"))("JC_PORTAL_OTHER"),
+            None,
+            "the lookup answers only the two reach variables"
+        );
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
         assert_eq!(
             from_env(&lookup(

@@ -9,7 +9,7 @@ use jc_core::kinds::mqtt_broker::release_name;
 use jc_core::kinds::MqttBrokerSpec;
 use joinedcontext_portal::apps::kube::KubeClient;
 use joinedcontext_portal::reconciler::mqtt_brokers::{
-    Broker, MqttBrokers, HOSTNAME_KEY, PORT_KEY, TEMPLATE_KEY,
+    Broker, Door, MqttBrokers, CERTIFICATE_KEY, HOSTNAME_KEY, PORT_KEY, TEMPLATE_KEY,
 };
 use serde_json::{json, Value};
 use wiremock::matchers::{method, path};
@@ -282,6 +282,229 @@ async fn without_the_template_nothing_is_applied_or_removed_and_the_run_says_why
     let received = server.received_requests().await.expect("recorded");
     assert!(calls(&received, "PATCH").is_empty());
     assert!(calls(&received, "DELETE").is_empty());
+}
+
+/// An API server that will not answer for the template applies and removes nothing either.
+#[tokio::test]
+async fn an_unreadable_template_applies_nothing_and_names_the_template() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "etcd" })))
+        .mount(&server)
+        .await;
+    let failed = reconciler(&server)
+        .converge(&[broker("helsinki", "cameras", 10)], true)
+        .await;
+    assert!(
+        failed["*"].starts_with("reading broker-template: "),
+        "{failed:?}"
+    );
+    let received = server.received_requests().await.expect("recorded");
+    assert_eq!(received.len(), 1, "one read, no write");
+}
+
+const DOOR: &str = "\
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: __RELEASE__
+  namespace: jc-mqtt
+  labels:
+    app.kubernetes.io/instance: __RELEASE__
+data:
+  ca: \"__CLIENT_CA__/__CLIENT_CA_KEY__\"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: __RELEASE__
+  namespace: jc-mqtt
+  labels:
+    app.kubernetes.io/instance: __RELEASE__
+spec:
+  template:
+    metadata:
+      annotations:
+        joinedcontext.com/tls-revision: \"__TLS_REVISION__\"
+";
+
+fn with_door(project: &str, name: &str) -> Broker {
+    let mut broker = broker(project, name, 10);
+    broker.door = Some(Door {
+        release: format!("{}-cert", broker.release),
+        ca_secret: format!("{project}-device-ca"),
+        ca_key: "ca.crt".to_owned(),
+    });
+    broker
+}
+
+async fn door_template(server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/api/v1/namespaces/{NAMESPACE}/configmaps/broker-template"
+        )))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                json!({ "data": { TEMPLATE_KEY: TEMPLATE, CERTIFICATE_KEY: DOOR } }),
+            ),
+        )
+        .mount(server)
+        .await;
+}
+
+async fn certificates(server: &MockServer, status: u16, items: Value) {
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/apis/cert-manager.io/v1/namespaces/{NAMESPACE}/certificates"
+        )))
+        .respond_with(ResponseTemplate::new(status).set_body_json(json!({ "items": items })))
+        .mount(server)
+        .await;
+}
+
+/// T-5875: a certificate broker's door is applied with the project's CA and its Certificate's
+/// revision, and a refused manifest keeps both its releases. A kind that cannot be listed, an
+/// object without a name and a removal the API server refuses each leave the rest of the
+/// retirement running, and the last of them is the run's failure.
+#[tokio::test]
+async fn a_door_is_applied_beside_its_broker_and_a_retirement_outlives_a_refusal() {
+    let server = MockServer::start().await;
+    door_template(&server).await;
+    certificates(
+        &server,
+        200,
+        json!([{ "metadata": { "name": "mqtt-helsinki-cameras-cert" }, "status": { "revision": 3 } }]),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/apis/apps/v1/namespaces/{NAMESPACE}/deployments"
+        )))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "etcd" })))
+        .mount(&server)
+        .await;
+    let mut maps = held(
+        "ConfigMap",
+        &[
+            "mqtt-helsinki-cameras",
+            "mqtt-helsinki-cameras-cert",
+            "mqtt-helsinki-doors",
+            "mqtt-helsinki-doors-cert",
+            "mqtt-helsinki-gone",
+        ],
+    );
+    maps["items"]
+        .as_array_mut()
+        .expect("items")
+        .push(json!({ "metadata": { "labels": { "app.kubernetes.io/instance": "mqtt-x" } } }));
+    Mock::given(method("GET"))
+        .and(path(format!("/api/v1/namespaces/{NAMESPACE}/configmaps")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(maps))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "busy" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&server)
+        .await;
+    let brokers = [
+        with_door("helsinki", "cameras"),
+        refused("helsinki", "doors"),
+    ];
+    let reconciler = reconciler(&server);
+    let failed = reconciler.converge(&brokers, true).await;
+    assert_eq!(failed.keys().collect::<Vec<_>>(), ["*"], "{failed:?}");
+    assert!(
+        failed["*"].starts_with("removing ConfigMap mqtt-helsinki-gone: "),
+        "{failed:?}"
+    );
+
+    let received = server.received_requests().await.expect("recorded");
+    assert_eq!(
+        calls(&received, "DELETE"),
+        [format!(
+            "/api/v1/namespaces/{NAMESPACE}/configmaps/mqtt-helsinki-gone"
+        )]
+    );
+    let patched = |suffix: &str| -> Value {
+        let request = received
+            .iter()
+            .find(|r| r.method.as_str() == "PATCH" && r.url.path().ends_with(suffix))
+            .unwrap_or_else(|| panic!("{suffix} applied"));
+        serde_json::from_slice(&request.body).expect("json")
+    };
+    assert_eq!(
+        patched("/configmaps/mqtt-helsinki-cameras-cert")["data"]["ca"],
+        "helsinki-device-ca/ca.crt"
+    );
+    assert_eq!(
+        patched("/deployments/mqtt-helsinki-cameras-cert")["spec"]["template"]["metadata"]
+            ["annotations"]["joinedcontext.com/tls-revision"],
+        "3"
+    );
+    assert!(patched("/configmaps/mqtt-helsinki-cameras")["data"].is_object());
+    assert!(
+        reconciler.waiting_for_dns(&brokers).await.is_empty(),
+        "no broker here serves a custom hostname"
+    );
+}
+
+/// A door whose Certificate cannot be read, or whose objects the API server refuses, is that
+/// broker's failure; its plain release is applied all the same, and a broker waiting on a
+/// Certificate that cannot be read is left for the next wave.
+#[tokio::test]
+async fn a_door_that_cannot_be_read_or_applied_is_that_brokers_failure() {
+    let server = MockServer::start().await;
+    door_template(&server).await;
+    certificates(&server, 500, json!([])).await;
+    Mock::given(method("PATCH"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&server)
+        .await;
+    let mut lights = broker("helsinki", "lights", 10);
+    if let Ok(spec) = lights.spec.as_mut() {
+        spec.hostname = Some("lights.helsinki.example".to_owned());
+    }
+    let brokers = [with_door("helsinki", "cameras"), lights];
+    let sync = reconciler(&server);
+    let failed = sync.converge(&brokers, false).await;
+    assert!(
+        failed["helsinki/cameras"]
+            .starts_with("reading the Certificate of mqtt-helsinki-cameras-cert: "),
+        "{failed:?}"
+    );
+    assert!(sync.waiting_for_dns(&brokers).await.is_empty());
+    let received = server.received_requests().await.expect("recorded");
+    assert!(calls(&received, "PATCH").contains(&format!(
+        "/api/v1/namespaces/{NAMESPACE}/configmaps/mqtt-helsinki-cameras"
+    )));
+
+    let server = MockServer::start().await;
+    door_template(&server).await;
+    certificates(&server, 200, json!([])).await;
+    Mock::given(method("PATCH"))
+        .and(path(format!(
+            "/api/v1/namespaces/{NAMESPACE}/configmaps/mqtt-helsinki-cameras-cert"
+        )))
+        .respond_with(ResponseTemplate::new(422).set_body_json(json!({ "message": "invalid" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+        .mount(&server)
+        .await;
+    let failed = reconciler(&server)
+        .converge(&[with_door("helsinki", "cameras")], false)
+        .await;
+    assert_eq!(
+        failed.keys().collect::<Vec<_>>(),
+        ["helsinki/cameras"],
+        "{failed:?}"
+    );
 }
 
 #[tokio::test]
