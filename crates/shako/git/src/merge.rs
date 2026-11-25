@@ -3,6 +3,7 @@
 //! Pull Request merge (`merge`, `squash`, `fast-forward-only`), `update-branch`, and tree diffing
 //! (Contract S10, Threat T10).
 
+use crate::git_err;
 use crate::repo::{
     CommitAuthor, build_nested_trees, collect_tree_blobs, is_ancestor, open_isolated,
     resolve_commit_oid, sanitize_actor_field, write_objects_as_pack,
@@ -114,19 +115,15 @@ fn merge_trees_in_memory(
 
     let our_commit = repo
         .find_commit(our_oid)
-        .map_err(|e| ShakoError::Git(format!("find our commit: {e}")))?;
-    let our_tree = our_commit
-        .tree()
-        .map_err(|e| ShakoError::Git(format!("find our tree: {e}")))?;
+        .map_err(git_err("find our commit"))?;
+    let our_tree = our_commit.tree().map_err(git_err("find our tree"))?;
     let mut our_files = BTreeMap::new();
     collect_tree_blobs(repo, &our_tree, "", &mut our_files)?;
 
     let their_commit = repo
         .find_commit(their_oid)
-        .map_err(|e| ShakoError::Git(format!("find their commit: {e}")))?;
-    let their_tree = their_commit
-        .tree()
-        .map_err(|e| ShakoError::Git(format!("find their tree: {e}")))?;
+        .map_err(git_err("find their commit"))?;
+    let their_tree = their_commit.tree().map_err(git_err("find their tree"))?;
     let mut their_files = BTreeMap::new();
     collect_tree_blobs(repo, &their_tree, "", &mut their_files)?;
 
@@ -296,10 +293,10 @@ pub fn execute_pr_merge(
     let mut commit_raw = Vec::new();
     commit_obj
         .write_to(&mut commit_raw)
-        .map_err(|e| ShakoError::Git(format!("serialize merge commit: {e}")))?;
+        .map_err(git_err("serialize merge commit"))?;
     let commit_oid =
         gix_object::compute_hash(gix_hash::Kind::Sha1, gix_object::Kind::Commit, &commit_raw)
-            .map_err(|e| ShakoError::Git(format!("hash merge commit: {e}")))?;
+            .map_err(git_err("hash merge commit"))?;
     new_objects.push((commit_oid, gix_object::Kind::Commit, commit_raw));
 
     write_objects_as_pack(repo_path, &new_objects)?;
@@ -381,19 +378,15 @@ pub fn diff_refs_files(
 
     let base_commit = repo
         .find_commit(merge_base_oid)
-        .map_err(|e| ShakoError::Git(format!("find base commit: {e}")))?;
-    let base_tree = base_commit
-        .tree()
-        .map_err(|e| ShakoError::Git(format!("find base tree: {e}")))?;
+        .map_err(git_err("find base commit"))?;
+    let base_tree = base_commit.tree().map_err(git_err("find base tree"))?;
     let mut base_files = BTreeMap::new();
     collect_tree_blobs(&repo, &base_tree, "", &mut base_files)?;
 
     let head_commit = repo
         .find_commit(head_oid)
-        .map_err(|e| ShakoError::Git(format!("find head commit: {e}")))?;
-    let head_tree = head_commit
-        .tree()
-        .map_err(|e| ShakoError::Git(format!("find head tree: {e}")))?;
+        .map_err(git_err("find head commit"))?;
+    let head_tree = head_commit.tree().map_err(git_err("find head tree"))?;
     let mut head_files = BTreeMap::new();
     collect_tree_blobs(&repo, &head_tree, "", &mut head_files)?;
 

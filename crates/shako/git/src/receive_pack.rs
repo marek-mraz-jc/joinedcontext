@@ -9,6 +9,7 @@ use crate::pktline::{
     write_sideband_chunks, write_text_line,
 };
 use crate::repo::{collect_changed_blobs, collect_tree_blobs, is_ancestor, open_isolated};
+use crate::storage_err;
 use gix_hash::ObjectId;
 use gix_object::tree::EntryKind;
 use gix_pack::data::input::{BytesToEntriesIter, EntryDataMode, Mode as InputMode};
@@ -103,8 +104,7 @@ impl QuarantineDir {
     fn create(repo_path: &Path) -> ShakoResult<Self> {
         let id = uuid::Uuid::now_v7();
         let path = repo_path.join("objects").join(format!("incoming-{id}"));
-        std::fs::create_dir_all(&path)
-            .map_err(|e| ShakoError::Storage(format!("failed to create quarantine dir: {e}")))?;
+        std::fs::create_dir_all(&path).map_err(storage_err("failed to create quarantine dir"))?;
         Ok(Self {
             path,
             disarmed: false,
@@ -293,8 +293,8 @@ pub fn handle_receive_pack(
     admit: Admit<'_>,
 ) -> ShakoResult<ReceivePackOutcome> {
     // 1. Parse command list up to Flush (0000), leaving `body` at the start of the raw PACK stream
-    let unreadable = |e: std::io::Error| ShakoError::Storage(format!("read push: {e}"));
-    body.seek(SeekFrom::Start(0)).map_err(unreadable)?;
+    body.seek(SeekFrom::Start(0))
+        .map_err(storage_err("read push"))?;
     let mut read = 0usize;
     let mut commands = Vec::new();
     let mut caps = BTreeSet::new();
@@ -358,7 +358,7 @@ pub fn handle_receive_pack(
         }
     }
 
-    let body_len = body.metadata().map_err(unreadable)?.len();
+    let body_len = body.metadata().map_err(storage_err("read push"))?.len();
     if commands.is_empty() {
         // git asks with a lone flush packet before it sends a push over http.postBuffer.
         if read == 4 && body_len == 4 {
@@ -390,17 +390,21 @@ pub fn handle_receive_pack(
     // 3. Unpack and validate incoming packfile in quarantine (`objects/incoming-<uuid>/`)
     if has_non_delete || pack_len > 0 {
         let mut magic = Vec::new();
-        body.take(4).read_to_end(&mut magic).map_err(unreadable)?;
+        body.take(4)
+            .read_to_end(&mut magic)
+            .map_err(storage_err("read push"))?;
         if magic != b"PACK" {
             return format_unpack_error("missing PACK header", &commands, &caps);
         }
-        body.seek(SeekFrom::Start(pack_start)).map_err(unreadable)?;
+        body.seek(SeekFrom::Start(pack_start))
+            .map_err(storage_err("read push"))?;
         let (held, count) = match scan_pack(body, pack_start) {
             Ok(scanned) => scanned,
             Err(reason) => return format_unpack_error(&reason, &commands, &caps),
         };
         admit(held.saturating_add(count.saturating_mul(BYTES_PER_OBJECT)))?;
-        body.seek(SeekFrom::Start(pack_start)).map_err(unreadable)?;
+        body.seek(SeekFrom::Start(pack_start))
+            .map_err(storage_err("read push"))?;
         if let Err(reason) = index_pack_in_quarantine(
             repo_path,
             &quarantine.path,
@@ -420,8 +424,7 @@ pub fn handle_receive_pack(
     let mut installed_files = Vec::new();
     if let (Some(p_src), Some(i_src)) = (&written_pack_path, &written_idx_path) {
         let pack_dir = repo_path.join("objects/pack");
-        std::fs::create_dir_all(&pack_dir)
-            .map_err(|e| ShakoError::Storage(format!("mkdir pack: {e}")))?;
+        std::fs::create_dir_all(&pack_dir).map_err(storage_err("mkdir pack"))?;
         for (what, src) in [("pack", p_src), ("idx", i_src)] {
             let dst = pack_dir.join(src.file_name().unwrap_or_default());
             let stored = dst

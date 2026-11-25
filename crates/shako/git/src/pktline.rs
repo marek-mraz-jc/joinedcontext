@@ -2,6 +2,7 @@
 //! Git pkt-line framing and side-band multiplexing on top of `gix-packetline` (S3, S4, T5).
 //! Enforces `MAX_PKT_LINE_LEN` (`65520` bytes: 4-byte hex length + up to 65516 bytes payload).
 
+use crate::git_err;
 use gix_packetline::{Channel, blocking_io::encode};
 use shako_core::{MAX_PKT_LINE_LEN, ShakoError, ShakoResult};
 use std::io::{Read, Write};
@@ -128,22 +129,19 @@ pub fn parse_all_pkt_lines(mut input: &[u8]) -> ShakoResult<Vec<PktLine>> {
 
 /// Writes a text pkt-line (ensuring trailing LF) using `gix-packetline`.
 pub fn write_text_line(mut out: impl Write, text: &str) -> ShakoResult<()> {
-    encode::text_to_write(text.as_bytes(), &mut out)
-        .map_err(|e| ShakoError::Git(format!("pkt-line write failed: {e}")))?;
+    encode::text_to_write(text.as_bytes(), &mut out).map_err(git_err("pkt-line write failed"))?;
     Ok(())
 }
 
 /// Writes `0000` flush-pkt.
 pub fn write_flush(mut out: impl Write) -> ShakoResult<()> {
-    encode::flush_to_write(&mut out)
-        .map_err(|e| ShakoError::Git(format!("pkt-line flush failed: {e}")))?;
+    encode::flush_to_write(&mut out).map_err(git_err("pkt-line flush failed"))?;
     Ok(())
 }
 
 /// Writes `0001` delim-pkt (protocol v2).
 pub fn write_delim(mut out: impl Write) -> ShakoResult<()> {
-    encode::delim_to_write(&mut out)
-        .map_err(|e| ShakoError::Git(format!("pkt-line delim failed: {e}")))?;
+    encode::delim_to_write(&mut out).map_err(git_err("pkt-line delim failed"))?;
     Ok(())
 }
 
@@ -157,7 +155,7 @@ pub fn write_sideband_chunks(
     let chunk_limit = max_chunk.clamp(1, MAX_SIDEBAND_64K_DATA);
     for chunk in data.chunks(chunk_limit) {
         encode::band_to_write(channel, chunk, &mut out)
-            .map_err(|e| ShakoError::Git(format!("sideband write failed: {e}")))?;
+            .map_err(git_err("sideband write failed"))?;
     }
     Ok(())
 }

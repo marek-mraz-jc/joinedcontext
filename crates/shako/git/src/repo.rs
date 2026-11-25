@@ -2,6 +2,7 @@
 //! Isolated bare Git repository lifecycle, per-repository write locks, tree/commit/file reads,
 //! and pack-backed API commits (S2, S11, R§2.4, R§2.5, Threat T1, T2).
 
+use crate::{git_err, storage_err};
 use bstr::{BString, ByteSlice};
 use gix_hash::ObjectId;
 use gix_object::WriteTo;
@@ -84,8 +85,7 @@ pub fn open_isolated(path: &Path) -> ShakoResult<gix::Repository> {
     opts = opts
         .open_path_as_is(true)
         .config_overrides(["gitoxide.core.deltaBaseCacheLimit=8m"]);
-    let repo = gix::open_opts(path, opts)
-        .map_err(|e| ShakoError::Git(format!("failed to open repository: {e}")))?;
+    let repo = gix::open_opts(path, opts).map_err(git_err("failed to open repository"))?;
     // Without a free list a small object never holds a blob's buffer, so a job holds the two
     // largest objects `pack::job_bytes` admitted (+16 MiB on a delta chain, +24 MiB with one).
     Ok(repo.without_freelist())
@@ -104,15 +104,13 @@ pub fn init_bare_repo(
     validate_branch_name(default_branch)?;
     let path = repo_disk_path(root, instance_id, repo_id)?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| ShakoError::Storage(format!("failed to create instance dir: {e}")))?;
+        std::fs::create_dir_all(parent).map_err(storage_err("failed to create instance dir"))?;
     }
-    let repo = gix::init_bare(&path)
-        .map_err(|e| ShakoError::Git(format!("gix::init_bare failed: {e}")))?;
+    let repo = gix::init_bare(&path).map_err(git_err("gix::init_bare failed"))?;
     std::fs::write(path.join("config"), SAFE_BARE_REPO_CONFIG)
-        .map_err(|e| ShakoError::Storage(format!("failed to write repo config: {e}")))?;
+        .map_err(storage_err("failed to write repo config"))?;
     std::fs::write(path.join("description"), description)
-        .map_err(|e| ShakoError::Storage(format!("failed to write repo description: {e}")))?;
+        .map_err(storage_err("failed to write repo description"))?;
 
     let head_target: FullName = format!("refs/heads/{default_branch}")
         .try_into()
@@ -139,9 +137,9 @@ pub fn init_bare_repo(
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(|e| ShakoError::Git(format!("prepare HEAD failed: {e}")))?
+        .map_err(git_err("prepare HEAD failed"))?
         .commit(None)
-        .map_err(|e| ShakoError::Git(format!("commit HEAD failed: {e}")))?;
+        .map_err(git_err("commit HEAD failed"))?;
 
     if auto_init {
         let readme = format!(
@@ -189,8 +187,7 @@ pub fn copy_bare_repo(
     // Copy pack files and loose objects
     let origin_pack_dir = origin_path.join("objects/pack");
     let dest_pack_dir = dest_path.join("objects/pack");
-    std::fs::create_dir_all(&dest_pack_dir)
-        .map_err(|e| ShakoError::Storage(format!("mkdir pack dir: {e}")))?;
+    std::fs::create_dir_all(&dest_pack_dir).map_err(storage_err("mkdir pack dir"))?;
     if origin_pack_dir.is_dir() {
         for entry in std::fs::read_dir(&origin_pack_dir)
             .map_err(|e| ShakoError::Storage(e.to_string()))?
@@ -207,27 +204,21 @@ pub fn copy_bare_repo(
                 .any(|ext| name_str.ends_with(ext));
             if pack_file && served {
                 std::fs::copy(entry.path(), dest_pack_dir.join(&file_name))
-                    .map_err(|e| ShakoError::Storage(format!("copy pack: {e}")))?;
+                    .map_err(storage_err("copy pack"))?;
             }
         }
     }
 
     let mut edits = Vec::new();
-    let platform = origin
-        .references()
-        .map_err(|e| ShakoError::Git(format!("references: {e}")))?;
-    let all_refs = platform
-        .all()
-        .map_err(|e| ShakoError::Git(format!("all refs: {e}")))?;
+    let platform = origin.references().map_err(git_err("references"))?;
+    let all_refs = platform.all().map_err(git_err("all refs"))?;
     for r in all_refs.flatten() {
         let name_str = r.name().as_bstr().to_str_lossy().into_owned();
         if !(name_str.starts_with("refs/heads/") || name_str.starts_with("refs/tags/")) {
             continue;
         }
         if let Some(id) = r.try_id() {
-            let full_name: FullName = name_str
-                .try_into()
-                .map_err(|e| ShakoError::Git(format!("ref name: {e}")))?;
+            let full_name: FullName = name_str.try_into().map_err(git_err("ref name"))?;
             edits.push(RefEdit {
                 change: Change::Update {
                     log: LogChange {
@@ -246,10 +237,8 @@ pub fn copy_bare_repo(
 
     let head_target: FullName = format!("refs/heads/{default_branch}")
         .try_into()
-        .map_err(|e| ShakoError::Git(format!("default branch: {e}")))?;
-    let head_name: FullName = "HEAD"
-        .try_into()
-        .map_err(|e| ShakoError::Git(format!("HEAD: {e}")))?;
+        .map_err(git_err("default branch"))?;
+    let head_name: FullName = "HEAD".try_into().map_err(git_err("HEAD"))?;
     edits.push(RefEdit {
         change: Change::Update {
             log: LogChange {
@@ -271,9 +260,9 @@ pub fn copy_bare_repo(
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(|e| ShakoError::Git(format!("migrate ref prepare: {e}")))?
+        .map_err(git_err("migrate ref prepare"))?
         .commit(None)
-        .map_err(|e| ShakoError::Git(format!("migrate ref commit: {e}")))?;
+        .map_err(git_err("migrate ref commit"))?;
 
     Ok(())
 }
@@ -339,7 +328,7 @@ pub fn write_objects_as_pack(
         let count = output::Count::from_data(*oid, None);
         let data = gix_object::Data::new(raw.as_slice(), *kind, gix_hash::Kind::Sha1);
         let entry = output::Entry::from_data(&count, &data, gix::zlib::Compression::default())
-            .map_err(|e| ShakoError::Git(format!("pack entry deflate failed: {e}")))?;
+            .map_err(git_err("pack entry deflate failed"))?;
         entries.push(entry);
     }
 
@@ -354,12 +343,11 @@ pub fn write_objects_as_pack(
         gix_hash::Kind::Sha1,
     );
     for res in iter {
-        res.map_err(|e| ShakoError::Git(format!("pack encode failed: {e}")))?;
+        res.map_err(git_err("pack encode failed"))?;
     }
 
     let pack_dir = repo_path.join("objects/pack");
-    std::fs::create_dir_all(&pack_dir)
-        .map_err(|e| ShakoError::Storage(format!("mkdir pack dir: {e}")))?;
+    std::fs::create_dir_all(&pack_dir).map_err(storage_err("mkdir pack dir"))?;
     let mut cursor = std::io::Cursor::new(pack_bytes);
     let mut progress = gix::progress::Discard;
     let should_interrupt = AtomicBool::new(false);
@@ -378,7 +366,7 @@ pub fn write_objects_as_pack(
             compression: gix::zlib::Compression::default(),
         },
     )
-    .map_err(|e| ShakoError::Git(format!("write pack bundle failed: {e}")))?;
+    .map_err(git_err("write pack bundle failed"))?;
     if let Some(keep) = outcome.keep_path {
         let _ = std::fs::remove_file(keep);
     }
@@ -391,15 +379,15 @@ fn hash_and_serialize_object(
 ) -> ShakoResult<(ObjectId, Vec<u8>)> {
     let mut raw = Vec::new();
     obj.write_to(&mut raw)
-        .map_err(|e| ShakoError::Git(format!("serialize object: {e}")))?;
+        .map_err(git_err("serialize object"))?;
     let oid = gix_object::compute_hash(gix_hash::Kind::Sha1, kind, &raw)
-        .map_err(|e| ShakoError::Git(format!("compute hash: {e}")))?;
+        .map_err(git_err("compute hash"))?;
     Ok((oid, raw))
 }
 
 fn hash_blob_bytes(bytes: &[u8]) -> ShakoResult<ObjectId> {
     gix_object::compute_hash(gix_hash::Kind::Sha1, gix_object::Kind::Blob, bytes)
-        .map_err(|e| ShakoError::Git(format!("compute blob hash: {e}")))
+        .map_err(git_err("compute blob hash"))
 }
 
 /// Resolves a ref/branch/tag/SHA string to its peeled commit `ObjectId`.
@@ -469,10 +457,8 @@ pub fn commit_file_changes(
     if let Some(parent_oid) = parent_commit_oid {
         let commit = repo
             .find_commit(parent_oid)
-            .map_err(|e| ShakoError::Git(format!("find parent commit: {e}")))?;
-        let tree = commit
-            .tree()
-            .map_err(|e| ShakoError::Git(format!("find parent tree: {e}")))?;
+            .map_err(git_err("find parent commit"))?;
+        let tree = commit.tree().map_err(git_err("find parent tree"))?;
         collect_tree_blobs(&repo, &tree, "", &mut tree_entries)?;
     }
 
@@ -693,9 +679,7 @@ fn walk_tree(
     out: &mut BTreeMap<String, (EntryKind, ObjectId)>,
 ) -> ShakoResult<()> {
     walk.enter(depth)?;
-    let decoded = tree
-        .decode()
-        .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
+    let decoded = tree.decode().map_err(git_err("decode tree"))?;
     for entry in decoded.entries {
         let name = entry.filename.to_str_lossy();
         let full = if prefix.is_empty() {
@@ -705,9 +689,7 @@ fn walk_tree(
         };
         walk.visit(&full)?;
         if entry.mode.is_tree() {
-            let sub = repo
-                .find_tree(entry.oid)
-                .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))?;
+            let sub = repo.find_tree(entry.oid).map_err(git_err("find subtree"))?;
             walk_tree(repo, &sub, &full, depth + 1, walk, out)?;
         } else {
             // A gitlink (submodule) names a commit of another repository: kept as such so a
@@ -752,18 +734,14 @@ fn walk_changed(
     let held = parents
         .iter()
         .map(|t| {
-            let d = t
-                .decode()
-                .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
+            let d = t.decode().map_err(git_err("decode tree"))?;
             Ok(d.entries
                 .into_iter()
                 .map(|e| (e.filename, e))
                 .collect::<BTreeMap<_, _>>())
         })
         .collect::<ShakoResult<Vec<_>>>()?;
-    let decoded = tree
-        .decode()
-        .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
+    let decoded = tree.decode().map_err(git_err("decode tree"))?;
     for entry in decoded.entries {
         let name = entry.filename.to_str_lossy();
         let full = if prefix.is_empty() {
@@ -780,10 +758,7 @@ fn walk_changed(
             continue;
         }
         if entry.mode.is_tree() {
-            let find = |oid| {
-                repo.find_tree(oid)
-                    .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))
-            };
+            let find = |oid| repo.find_tree(oid).map_err(git_err("find subtree"));
             let sub = find(entry.oid)?;
             let subs = same
                 .iter()
@@ -906,10 +881,8 @@ pub fn list_tree_entries(
         let commit_oid = resolve_commit_oid(&repo, git_ref)?;
         let commit = repo
             .find_commit(commit_oid)
-            .map_err(|e| ShakoError::Git(format!("find commit: {e}")))?;
-        commit
-            .tree()
-            .map_err(|e| ShakoError::Git(format!("find tree: {e}")))?
+            .map_err(git_err("find commit"))?;
+        commit.tree().map_err(git_err("find tree"))?
     };
 
     let tree_sha = tree.id.to_hex().to_string();
@@ -929,9 +902,7 @@ fn walk_tree_entries(
     out: &mut Vec<TreeEntryInfo>,
 ) -> ShakoResult<()> {
     walk.enter(depth)?;
-    let decoded = tree
-        .decode()
-        .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
+    let decoded = tree.decode().map_err(git_err("decode tree"))?;
     for entry in decoded.entries {
         let name = entry.filename.to_str_lossy();
         let path = if prefix.is_empty() {
@@ -962,9 +933,7 @@ fn walk_tree_entries(
             sha: entry.oid.to_hex().to_string(),
         });
         if is_tree && recursive {
-            let sub = repo
-                .find_tree(entry.oid)
-                .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))?;
+            let sub = repo.find_tree(entry.oid).map_err(git_err("find subtree"))?;
             walk_tree_entries(repo, &sub, &path, true, depth + 1, walk, out)?;
         }
     }
@@ -983,25 +952,21 @@ pub fn read_file_at_ref(
     let commit_oid = resolve_commit_oid(&repo, git_ref)?;
     let commit = repo
         .find_commit(commit_oid)
-        .map_err(|e| ShakoError::Git(format!("find commit: {e}")))?;
-    let mut tree = commit
-        .tree()
-        .map_err(|e| ShakoError::Git(format!("find tree: {e}")))?;
+        .map_err(git_err("find commit"))?;
+    let mut tree = commit.tree().map_err(git_err("find tree"))?;
     let parts: Vec<&str> = clean.split('/').collect();
-    let Some(entry) = tree
-        .peel_to_entry(parts)
-        .map_err(|e| ShakoError::Git(format!("lookup entry: {e}")))?
-    else {
+    let Some(entry) = tree.peel_to_entry(parts).map_err(git_err("lookup entry"))? else {
         return Ok(None);
     };
     if entry.mode().is_tree() {
         return Ok(None);
     }
-    let failed = |e: &dyn std::fmt::Display| ShakoError::Git(format!("find blob: {e}"));
-    let header = repo.find_header(entry.oid()).map_err(|e| failed(&e))?;
+    let header = repo
+        .find_header(entry.oid())
+        .map_err(git_err("find blob"))?;
     // The blob and the encoded form a caller makes of it.
     admit(header.size().saturating_mul(3))?;
-    let mut blob = repo.find_blob(entry.oid()).map_err(|e| failed(&e))?;
+    let mut blob = repo.find_blob(entry.oid()).map_err(git_err("find blob"))?;
     Ok(Some((
         blob.id.to_hex().to_string(),
         std::mem::take(&mut blob.data),
@@ -1032,9 +997,7 @@ pub fn read_commit_info(repo_path: &Path, sha_or_ref: &str) -> ShakoResult<Commi
 }
 
 fn decode_commit_info(commit: &gix::Commit<'_>) -> ShakoResult<CommitInfo> {
-    let decoded = commit
-        .decode()
-        .map_err(|e| ShakoError::Git(format!("decode commit: {e}")))?;
+    let decoded = commit.decode().map_err(git_err("decode commit"))?;
     let author = decoded.author().unwrap_or_default();
     let committer = decoded.committer().unwrap_or_default();
     let author_dt =
@@ -1083,7 +1046,7 @@ pub fn list_commits(
             gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
         ))
         .all()
-        .map_err(|e| ShakoError::Git(format!("rev_walk failed: {e}")))?;
+        .map_err(git_err("rev_walk failed"))?;
 
     let mut out = Vec::new();
     for (walked, item) in walk.enumerate() {
@@ -1145,12 +1108,10 @@ fn commit_touches_path(repo: &gix::Repository, commit: &gix::Commit<'_>, path: &
 /// Lists all local branches `(name, head_sha)` in the repository.
 pub fn list_branches(repo_path: &Path) -> ShakoResult<Vec<(String, String)>> {
     let repo = open_isolated(repo_path)?;
-    let platform = repo
-        .references()
-        .map_err(|e| ShakoError::Git(format!("references: {e}")))?;
+    let platform = repo.references().map_err(git_err("references"))?;
     let iter = platform
         .local_branches()
-        .map_err(|e| ShakoError::Git(format!("local_branches: {e}")))?;
+        .map_err(git_err("local_branches"))?;
     let mut out = Vec::new();
     for mut r in iter.flatten() {
         let name = r
@@ -1171,12 +1132,8 @@ pub fn list_branches(repo_path: &Path) -> ShakoResult<Vec<(String, String)>> {
 /// Lists all tags `(name, tag_or_ref_oid, target_commit_sha, is_annotated)` in the repository (Row 33).
 pub fn list_tags(repo_path: &Path) -> ShakoResult<Vec<(String, String, String, bool)>> {
     let repo = open_isolated(repo_path)?;
-    let platform = repo
-        .references()
-        .map_err(|e| ShakoError::Git(format!("references: {e}")))?;
-    let iter = platform
-        .tags()
-        .map_err(|e| ShakoError::Git(format!("tags: {e}")))?;
+    let platform = repo.references().map_err(git_err("references"))?;
+    let iter = platform.tags().map_err(git_err("tags"))?;
     let mut out = Vec::new();
     for mut r in iter.flatten() {
         let name = r
@@ -1272,9 +1229,9 @@ pub fn delete_branch(repo_path: &Path, branch: &str) -> ShakoResult<bool> {
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(|e| ShakoError::Git(format!("delete branch prepare: {e}")))?
+        .map_err(git_err("delete branch prepare"))?
         .commit(None)
-        .map_err(|e| ShakoError::Git(format!("delete branch commit: {e}")))?;
+        .map_err(git_err("delete branch commit"))?;
     Ok(true)
 }
 

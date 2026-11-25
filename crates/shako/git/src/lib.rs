@@ -42,6 +42,21 @@ pub use upload_pack::{
     collect_advertised_refs, handle_upload_pack, read_negotiation,
 };
 
+/// Maps a failed gix call to `ShakoError::Git` with `what` naming the step: one error arm for
+/// every call site, so the arm is the same code wherever a repository read fails.
+pub(crate) fn git_err<E: std::fmt::Display>(
+    what: &'static str,
+) -> impl FnOnce(E) -> shako_core::ShakoError {
+    move |e| shako_core::ShakoError::Git(format!("{what}: {e}"))
+}
+
+/// Maps a failed file system call to `ShakoError::Storage` with `what` naming the step.
+pub(crate) fn storage_err<E: std::fmt::Display>(
+    what: &'static str,
+) -> impl FnOnce(E) -> shako_core::ShakoError {
+    move |e| shako_core::ShakoError::Storage(format!("{what}: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,6 +2,7 @@
 //! Pack writing one object at a time (T-7522): gix's own entry iterator encodes a chunk of
 //! objects per step, so its memory follows the objects in the chunk, whatever their size.
 
+use crate::git_err;
 use crate::pktline::write_sideband_chunks;
 use gix_hash::ObjectId;
 use gix_pack::Find as _;
@@ -40,7 +41,11 @@ pub fn write_pack(
         .map_err(|_| ShakoError::BadRequest("pack object count exceeds u32".into()))?;
     let mut largest = 0;
     for id in ids {
-        largest = largest.max(repo.find_header(*id).map_err(|e| failed(&e))?.size());
+        largest = largest.max(
+            repo.find_header(*id)
+                .map_err(git_err("pack writing failed"))?
+                .size(),
+        );
     }
     admit(job_bytes(largest, ids.len() as u64))?;
 
@@ -50,7 +55,9 @@ pub fn write_pack(
     let mut buf = Vec::new();
     let mut counts = Vec::with_capacity(ids.len());
     for id in ids {
-        let at = odb.location_by_oid(id, &mut buf).map_err(|e| failed(&e))?;
+        let at = odb
+            .location_by_oid(id, &mut buf)
+            .map_err(git_err("pack writing failed"))?;
         counts.push(output::Count::from_data(*id, at));
     }
     // Loose objects first, then each pack's in its own order, so a base precedes its deltas.
@@ -94,7 +101,7 @@ pub fn write_pack(
         gix_hash::Kind::Sha1,
     );
     for step in written {
-        step.map_err(|e| failed(&e))?;
+        step.map_err(git_err("pack writing failed"))?;
         if missing.get() {
             return Err(failed(&"an object left the repository"));
         }

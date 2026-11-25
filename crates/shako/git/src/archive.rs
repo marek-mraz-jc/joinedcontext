@@ -2,6 +2,7 @@
 //! Repository archive generation (`.zip` and `.tar.gz`, Row 32, Contract S11, Threat T1).
 //! Prefix is `{repo}-{ref}/`, modification time is the commit timestamp.
 
+use crate::git_err;
 use crate::pack::{Admit, job_bytes};
 use crate::repo::{collect_tree_blobs, open_isolated, resolve_commit_oid};
 use flate2::Compression;
@@ -49,14 +50,12 @@ pub fn create_archive(
     let commit_oid = resolve_commit_oid(&repo, git_ref)?;
     let commit = repo
         .find_commit(commit_oid)
-        .map_err(|e| ShakoError::Git(format!("find commit: {e}")))?;
+        .map_err(git_err("find commit"))?;
     let mtime_secs = commit
         .time()
         .map(|t| u64::try_from(t.seconds.max(0)).unwrap_or(0))
         .unwrap_or(0);
-    let tree = commit
-        .tree()
-        .map_err(|e| ShakoError::Git(format!("find tree: {e}")))?;
+    let tree = commit.tree().map_err(git_err("find tree"))?;
 
     let mut files = BTreeMap::new();
     collect_tree_blobs(&repo, &tree, "", &mut files)?;
@@ -65,9 +64,7 @@ pub fn create_archive(
 
     let mut largest = 0;
     for (_, blob_oid) in files.values() {
-        let header = repo
-            .find_header(*blob_oid)
-            .map_err(|e| ShakoError::Git(format!("find blob: {e}")))?;
+        let header = repo.find_header(*blob_oid).map_err(git_err("find blob"))?;
         largest = largest.max(header.size());
     }
     admit(job_bytes(largest, files.len() as u64))?;
@@ -78,9 +75,7 @@ pub fn create_archive(
                 let mut zip = zip::ZipWriter::new(out);
                 for (rel_path, (kind, blob_oid)) in &files {
                     validate_tree_path(rel_path)?;
-                    let blob = repo
-                        .find_blob(*blob_oid)
-                        .map_err(|e| ShakoError::Git(format!("find blob: {e}")))?;
+                    let blob = repo.find_blob(*blob_oid).map_err(git_err("find blob"))?;
                     let mode = if *kind == EntryKind::BlobExecutable {
                         0o755
                     } else {
@@ -91,12 +86,10 @@ pub fn create_archive(
                         .unix_permissions(mode);
                     let entry_name = format!("{prefix}/{rel_path}");
                     zip.start_file(entry_name, opts)
-                        .map_err(|e| ShakoError::Git(format!("zip start_file: {e}")))?;
-                    zip.write_all(&blob.data)
-                        .map_err(|e| ShakoError::Git(format!("zip write: {e}")))?;
+                        .map_err(git_err("zip start_file"))?;
+                    zip.write_all(&blob.data).map_err(git_err("zip write"))?;
                 }
-                zip.finish()
-                    .map_err(|e| ShakoError::Git(format!("zip finish: {e}")))?;
+                zip.finish().map_err(git_err("zip finish"))?;
             }
             Ok(())
         }
@@ -106,9 +99,7 @@ pub fn create_archive(
                 let mut builder = tar::Builder::new(&mut gz);
                 for (rel_path, (kind, blob_oid)) in &files {
                     validate_tree_path(rel_path)?;
-                    let blob = repo
-                        .find_blob(*blob_oid)
-                        .map_err(|e| ShakoError::Git(format!("find blob: {e}")))?;
+                    let blob = repo.find_blob(*blob_oid).map_err(git_err("find blob"))?;
                     let mut header = tar::Header::new_gnu();
                     header.set_size(blob.data.len() as u64);
                     header.set_mtime(mtime_secs);
@@ -121,15 +112,11 @@ pub fn create_archive(
                     let entry_name = format!("{prefix}/{rel_path}");
                     builder
                         .append_data(&mut header, entry_name, blob.data.as_slice())
-                        .map_err(|e| ShakoError::Git(format!("tar append: {e}")))?;
+                        .map_err(git_err("tar append"))?;
                 }
-                builder
-                    .finish()
-                    .map_err(|e| ShakoError::Git(format!("tar finish: {e}")))?;
+                builder.finish().map_err(git_err("tar finish"))?;
             }
-            gz.finish()
-                .map(drop)
-                .map_err(|e| ShakoError::Git(format!("gzip finish: {e}")))
+            gz.finish().map(drop).map_err(git_err("gzip finish"))
         }
     }
 }

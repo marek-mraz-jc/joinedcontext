@@ -17,6 +17,7 @@ use crate::pktline::{
     write_flush, write_sideband_chunks, write_text_line,
 };
 use crate::repo::open_isolated;
+use crate::{git_err, storage_err};
 use bstr::ByteSlice;
 use gix_hash::ObjectId;
 use gix_packetline::Channel;
@@ -57,12 +58,8 @@ pub fn collect_advertised_refs(
         });
     }
 
-    let platform = repo
-        .references()
-        .map_err(|e| ShakoError::Git(format!("references: {e}")))?;
-    let all_refs = platform
-        .all()
-        .map_err(|e| ShakoError::Git(format!("all refs: {e}")))?;
+    let platform = repo.references().map_err(git_err("references"))?;
+    let all_refs = platform.all().map_err(git_err("all refs"))?;
 
     let mut named: BTreeMap<String, AdvertisedRef> = BTreeMap::new();
     for mut r in all_refs.flatten() {
@@ -212,8 +209,7 @@ pub fn read_negotiation(
 ) -> ShakoResult<Vec<u8>> {
     use std::io::{Read as _, Seek as _};
     const STEP: usize = 1024 * 1024;
-    file.rewind()
-        .map_err(|e| ShakoError::Storage(format!("negotiation spool: {e}")))?;
+    file.rewind().map_err(storage_err("negotiation spool"))?;
     let mut reader: Box<dyn std::io::Read + '_> = if gzip {
         Box::new(flate2::read::GzDecoder::new(file))
     } else {
@@ -266,8 +262,8 @@ pub fn handle_upload_pack(
     } else {
         handle_upload_pack_v0(repo_path, &lines)?
     };
-    let write = |e: std::io::Error| ShakoError::Storage(format!("upload-pack answer: {e}"));
-    out.write_all(&answer.head).map_err(write)?;
+    out.write_all(&answer.head)
+        .map_err(storage_err("upload-pack answer"))?;
     if let Some(Pack {
         repo,
         objects,
@@ -278,14 +274,14 @@ pub fn handle_upload_pack(
             Some(max) => {
                 let mut framed = Sideband::new(&mut out, max);
                 write_pack(&repo, &objects, &mut framed, admit)?;
-                framed.flush().map_err(write)?;
+                framed.flush().map_err(storage_err("upload-pack answer"))?;
                 drop(framed);
                 write_flush(&mut out)?;
             }
             None => write_pack(&repo, &objects, &mut out, admit)?,
         }
     }
-    out.flush().map_err(write)
+    out.flush().map_err(storage_err("upload-pack answer"))
 }
 
 /// An upload-pack answer: the negotiation's lines and the pack that follows them.
@@ -1023,14 +1019,10 @@ fn collect_filtered_tree_objects(
     if !objects.insert(tree.id) {
         return Ok(());
     }
-    let decoded = tree
-        .decode()
-        .map_err(|e| ShakoError::Git(format!("decode tree: {e}")))?;
+    let decoded = tree.decode().map_err(git_err("decode tree"))?;
     for entry in decoded.entries {
         if entry.mode.is_tree() {
-            let sub = repo
-                .find_tree(entry.oid)
-                .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))?;
+            let sub = repo.find_tree(entry.oid).map_err(git_err("find subtree"))?;
             collect_filtered_tree_objects(repo, &sub, depth + 1, filter, objects)?;
         } else if !entry.mode.is_commit() {
             match filter {
