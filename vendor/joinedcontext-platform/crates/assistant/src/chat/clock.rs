@@ -146,6 +146,29 @@ mod tests {
         assert!(now_line(datetime!(2026-10-16 14:17 +2), None).ends_with("(2026-10-16T12:17Z)."));
     }
 
+    #[test]
+    fn every_day_of_a_week_is_named() {
+        let days: Vec<String> = (12..19)
+            .map(|day| {
+                let utc = datetime!(2026-10-01 09:00 UTC)
+                    .replace_day(day)
+                    .expect("a day of October");
+                now_line(utc, None)
+            })
+            .collect();
+        for (line, name) in days.iter().zip([
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ]) {
+            assert!(line.starts_with(&format!("Now: {name} ")), "{line}");
+        }
+    }
+
     /// 2026-10-25, 01:00 UTC: CEST becomes CET, and 02:30 local comes twice, an hour apart.
     #[test]
     fn the_night_summer_time_ends_names_each_02_30_by_its_zone() {

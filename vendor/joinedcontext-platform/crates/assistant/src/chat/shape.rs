@@ -241,12 +241,11 @@ mod tests {
         assert!((330.0..350.0).contains(&perimeter), "{perimeter}");
         // the rings wound the other way measure the same
         let mut reversed = parcel();
-        if let Some(ring) = reversed
+        reversed
             .pointer_mut("/coordinates/0")
             .and_then(Value::as_array_mut)
-        {
-            ring.reverse();
-        }
+            .expect("the parcel's outer ring")
+            .reverse();
         let (again, _) = measure(&reversed).unwrap_or_default();
         assert!((again - area).abs() < 1e-6, "{again} {area}");
     }
@@ -324,6 +323,30 @@ mod tests {
         // a sliver the simplifier would collapse is drawn as it is
         let sliver = json!({"type": "Polygon", "coordinates": [[[19.0, 48.0], [19.1, 48.0], [19.1, 48.000001], [19.0, 48.0]]]});
         assert_eq!(for_display(&sliver), sliver);
+    }
+
+    #[test]
+    fn an_empty_or_invalid_outline_is_drawn_as_given_and_a_multipolygon_stays_one() {
+        let empty = json!({"type": "MultiPolygon", "coordinates": []});
+        assert_eq!(for_display(&empty), empty);
+        // a bow tie crosses itself: no simpler outline of it is valid
+        let bow_tie = json!({"type": "Polygon", "coordinates": [[[19.0, 48.0], [19.1, 48.1], [19.1, 48.0], [19.0, 48.1], [19.0, 48.0]]]});
+        assert_eq!(for_display(&bow_tie), bow_tie);
+        let ring = |n: u32| district(n).pointer("/coordinates").cloned().expect("rings");
+        let two = json!({"type": "MultiPolygon", "coordinates": [ring(4000), ring(400)]});
+        let shown = for_display(&two);
+        assert_eq!(shown.get("type"), Some(&json!("MultiPolygon")));
+        assert_eq!(
+            shown
+                .pointer("/coordinates")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        // a ring that is not a list of positions is no polygon
+        let broken = json!({"type": "Polygon", "coordinates": [[[19.0, "x"]]]});
+        assert_eq!(for_display(&broken), broken);
+        assert_eq!(measure(&broken), None);
     }
 
     fn towns(geometries: Vec<Option<Value>>, modelled: bool) -> Table {

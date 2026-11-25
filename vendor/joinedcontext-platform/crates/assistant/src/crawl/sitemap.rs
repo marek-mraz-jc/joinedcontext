@@ -401,4 +401,18 @@ mod tests {
         assert_eq!(index.sub_sitemaps, ["https://a.test/s.xml"]);
         assert!(index.urls.is_empty());
     }
+
+    #[test]
+    fn a_loc_outside_any_url_an_unknown_reference_and_a_bad_address_are_dropped() {
+        let parsed = parse_sitemap_xml(
+            "<urlset><loc>https://a.test/stray</loc><url><loc>https://a.test/?x=1&bogus;y</loc></url></urlset>",
+        );
+        assert!(parsed.sub_sitemaps.is_empty());
+        assert_eq!(parsed.urls, ["https://a.test/?x=1y"]);
+        let mut kept = Vec::new();
+        let raw = ["not a url".to_owned(), "https://a.test/#top".to_owned()];
+        let policy = CrawlPolicy::default();
+        add_filtered_urls(&mut kept, &raw, "a.test", &policy, 10);
+        assert_eq!(kept, [Url::parse("https://a.test/").expect("url")]);
+    }
 }

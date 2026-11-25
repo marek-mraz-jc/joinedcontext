@@ -291,6 +291,63 @@ async fn a_catalogue_on_a_private_address_is_not_read() {
     db::drop_database(admin, pool, &name).await;
 }
 
+/// A listing the catalogue cannot give is an error naming what it answered, and nothing is
+/// stored: a status, a 304 to a plain GET, a redirect to another host, more than 10 MiB, or a
+/// body that is no CKAN answer.
+#[tokio::test]
+async fn a_listing_the_catalogue_cannot_give_fails_the_run_naming_why() {
+    let (admin, pool, name) = db::database("ckanfails").await;
+    let server = MockServer::start().await;
+    let crawler = Crawler::new(
+        Arc::new(Catalogue1(server.address().port())),
+        CrawlPolicy {
+            allow_plain_http: true,
+            ..CrawlPolicy::default()
+        },
+    )
+    .expect("crawler");
+    let base = format!("http://data.example:{}", server.address().port());
+    let site = upsert_site(
+        &pool,
+        "hronov",
+        "hronov.example",
+        "catalogue",
+        Visibility::Public,
+    )
+    .await
+    .expect("site");
+    let cases = [
+        (ResponseTemplate::new(503), "answered 503"),
+        (ResponseTemplate::new(304), "answered 304 to a plain GET"),
+        (
+            ResponseTemplate::new(302).insert_header("location", "https://elsewhere.example/x"),
+            "redirected to another host",
+        ),
+        (
+            ResponseTemplate::new(200).set_body_bytes(vec![b' '; 11 * 1024 * 1024]),
+            "more than 10 MiB",
+        ),
+        (
+            ResponseTemplate::new(200).set_body_string("<html>no</html>"),
+            "is not a CKAN answer",
+        ),
+    ];
+    for (answer, why) in cases {
+        server.reset().await;
+        Mock::given(method("GET"))
+            .and(path("/api/3/action/package_search"))
+            .respond_with(answer)
+            .mount(&server)
+            .await;
+        let (report, pages) = run(&pool, &crawler, site, &base, 10, &[]).await;
+        let err = report.expect_err(why).to_string();
+        assert!(err.contains(why), "{why}: {err}");
+        assert!(pages.0.is_empty());
+    }
+    assert!(stored(&pool).await.is_empty());
+    db::drop_database(admin, pool, &name).await;
+}
+
 /// T-4747: the how-to each dataset's interfaces repeat is indexed once, at the catalogue's own
 /// address, so a question about connecting cites the catalogue; it is written again only when
 /// it changes and stays while the catalogue lists a dataset with interfaces.
