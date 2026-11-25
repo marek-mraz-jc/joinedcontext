@@ -1,0 +1,1 @@
+{"input":{"http_client":{"url":"${JC_GATEWAY_URL:http://gw}/x","headers":{"A":"${! meta(\"k\") }"}}},"pipeline":{"processors":[{"mapping":"root = this"}]}}

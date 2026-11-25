@@ -59,6 +59,7 @@ bin = [
   { name = "auth_bearer_token", path = "fuzz_targets/auth_bearer_token.rs", test = false, doc = false, bench = false },
   { name = "auth_second_factor", path = "fuzz_targets/auth_second_factor.rs", test = false, doc = false, bench = false },
   { name = "dashboard_answers", path = "fuzz_targets/dashboard_answers.rs", test = false, doc = false, bench = false },
+  { name = "stream_answers", path = "fuzz_targets/stream_answers.rs", test = false, doc = false, bench = false },
 ]
 
 [package]
