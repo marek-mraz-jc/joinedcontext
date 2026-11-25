@@ -2100,6 +2100,32 @@ async fn a_function_of_the_run_answers_through_jc_functions() {
         "{stream}"
     );
 
+    // Each other refusal of the runtime, and an outcome that names no status: a body too large
+    // is the caller's 400, a runtime that answers something else or no outcome is a 503, and an
+    // outcome without a status is the function's 500 with no logs.
+    for (answer, expected) in [
+        (ResponseTemplate::new(413), StatusCode::BAD_REQUEST),
+        (ResponseTemplate::new(502), StatusCode::SERVICE_UNAVAILABLE),
+        (
+            ResponseTemplate::new(200).set_body_string("no outcome"),
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            ResponseTemplate::new(200).set_body_json(json!({ "body": { "late": true } })),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/invoke"))
+            .respond_with(answer)
+            .with_priority(1)
+            .up_to_n_times(1)
+            .mount(&runtime)
+            .await;
+        let (status, answer) = call(&app, &cookie, Method::POST, &summary, body.clone()).await;
+        assert_eq!(status, expected, "{answer}");
+    }
+
     files.insert(
         "functions/broken.ts".to_owned(),
         "export default (".to_owned(),
