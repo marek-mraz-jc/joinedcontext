@@ -108,6 +108,18 @@ async fn the_internal_router_and_the_build_router_refuse_an_unknown_path() {
     assert_eq!(build, StatusCode::NOT_FOUND);
 }
 
+/// Waits until `addr` refuses a connection: the serve ended and its task with it.
+async fn closes(addr: std::net::SocketAddr) {
+    for _ in 0..200 {
+        if tokio::net::TcpStream::connect(addr).await.is_err() {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("{addr} still answers after its shutdown");
+}
+
 #[tokio::test]
 async fn a_portal_without_a_realm_opens_no_internal_listener() {
     let state = AppState::new(Config::for_tests(), None);
@@ -130,6 +142,7 @@ async fn a_portal_with_a_realm_serves_its_internal_listener_until_shutdown() {
         .expect("an answer");
     assert_eq!(answer.status(), reqwest::StatusCode::NOT_FOUND);
     stop.send(()).expect("the listener still waits");
+    closes(addr).await;
 }
 
 #[tokio::test]
@@ -198,6 +211,7 @@ async fn a_portal_that_builds_apps_serves_its_build_listener_until_shutdown() {
         .expect("answer");
     assert_eq!(answer.status(), reqwest::StatusCode::NOT_FOUND);
     stop.send(()).expect("the listener still waits");
+    closes(addr).await;
 }
 
 #[tokio::test]

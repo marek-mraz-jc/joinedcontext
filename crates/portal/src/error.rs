@@ -285,10 +285,9 @@ impl ApiError {
         let (status, slug, title, detail) = match self {
             // The body is the document already, with the problem members added.
             Self::VerdictRequired(body) => {
-                let status = StatusCode::CONFLICT;
                 return (
-                    status,
-                    with_problem_members(body, status, "verdict-required"),
+                    StatusCode::CONFLICT,
+                    with_problem_members(body, StatusCode::CONFLICT, "verdict-required"),
                 );
             }
             Self::NotFound(msg) => (

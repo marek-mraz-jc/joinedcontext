@@ -912,12 +912,15 @@ mod tests {
         }
         let moved = move_one(&state, &reader).await.expect("a move");
         assert_eq!(moved.moved, 1, "{moved:?}");
-        // Back in the registry, the row is read again: the old list stays until a later move.
-        sqlx::query("UPDATE organizations SET state = 'active' WHERE name = 'persons'")
-            .execute(&scratch.pool)
-            .await
-            .expect("active again");
-        assert!(row_of(&state).await.get("connectors").is_some());
+        // A removed Organization stays removed, so the row is read past its key: the old list
+        // stays where it was.
+        let row: Value = sqlx::query_scalar(
+            "SELECT preferences FROM user_preferences WHERE subject = 'sub-reader'",
+        )
+        .fetch_one(&scratch.pool)
+        .await
+        .expect("the row");
+        assert!(row.get("connectors").is_some(), "{row}");
         scratch.remove().await;
     }
 
