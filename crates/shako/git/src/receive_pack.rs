@@ -1220,8 +1220,21 @@ mod tests {
         assert!(push_crafted(&p, c, &[c, wrong, empty]).contains(refused));
         assert!(
             list_pack(&p.dest).is_empty(),
-            "every crafted push left nothing"
+            "every refused push left nothing"
         );
+
+        // A gitlink names a commit of another repository: no object of it travels.
+        let blob = raw(&p.source, Kind::Blob, b"kept\n");
+        let linked = tree(
+            &p.source,
+            &[
+                (EntryKind::Blob, "kept.txt", blob),
+                (EntryKind::Commit, "vendor", oid(GONE)),
+            ],
+        );
+        let c = commit(&p.source, linked, &[]);
+        let out = push_crafted(&p, c, &[c, linked, blob]);
+        assert!(out.contains("ok refs/heads/main"), "{out}");
     }
 
     #[test]

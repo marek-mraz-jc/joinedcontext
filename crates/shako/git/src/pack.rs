@@ -178,7 +178,7 @@ mod tests {
         let handle = crate::repo::open_isolated(&path).expect("open");
         let mut out = Vec::new();
         let err = write_pack(&handle, &[blob], &mut out, &mut |_| {
-            std::fs::remove_file(&file).map_err(|e| ShakoError::Storage(e.to_string()))
+            std::fs::remove_file(&file).map_err(crate::storage_err("remove"))
         })
         .expect_err("the blob is gone");
         assert_eq!(

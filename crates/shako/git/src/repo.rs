@@ -1339,12 +1339,18 @@ mod tests {
 
         point(&path, "refs/heads/dangling", GONE);
         point(&path, "refs/tags/dangling", GONE);
+        point(&path, "refs/tags/alias", "ref: refs/heads/main");
         let branches = list_branches(&path).expect("branches");
         assert_eq!(
             branches.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
             ["main"]
         );
-        assert!(list_tags(&path).expect("tags").is_empty());
+        // A symbolic tag names the commit it resolves to as its own id.
+        let tip = branches[0].1.clone();
+        assert_eq!(
+            list_tags(&path).expect("tags"),
+            [("alias".to_owned(), tip.clone(), tip, false)]
+        );
         let missing = read_commit_info(&path, GONE).expect_err("no such commit");
         assert_eq!(missing.status_code(), 404);
     }

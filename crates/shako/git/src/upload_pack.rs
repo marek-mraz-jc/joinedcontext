@@ -1189,6 +1189,19 @@ mod tests {
     }
 
     #[test]
+    fn an_unborn_head_beside_other_branches_is_listed_and_a_dangling_want_ref_refused() {
+        use crate::testutil::{GONE, point};
+        let f = fixture();
+        point(&f.path, "HEAD", "ref: refs/heads/unborn");
+        let listed = text(&v2(&f.path, "ls-refs", &["symrefs", "unborn"]).expect("ls-refs"));
+        assert!(listed.contains("unborn HEAD"), "{listed}");
+        point(&f.path, "refs/heads/dangling", GONE);
+        let refused = v2(&f.path, "fetch", &["want-ref refs/heads/dangling", "done"])
+            .expect_err("nothing to peel");
+        assert_eq!(refused.to_string(), "cannot peel 'refs/heads/dangling'");
+    }
+
+    #[test]
     fn unknown_and_non_utf8_v2_arguments_are_ignored() {
         let f = fixture();
         let mut body = pkt(&["command=ls-refs", DELIM]);
@@ -1263,7 +1276,13 @@ mod tests {
         let files = tree(path, &[(EntryKind::Blob, "k.txt", blob)]);
         let base = commit(path, files, &[]);
         let left = commit(path, files, &[base]);
-        let other = tree(path, &[(EntryKind::Blob, "other.txt", blob)]);
+        let other = tree(
+            path,
+            &[
+                (EntryKind::Blob, "other.txt", blob),
+                (EntryKind::Commit, "vendor", oid(GONE)),
+            ],
+        );
         let right = commit(path, other, &[base]);
         let merged = commit(path, files, &[left, right]);
         point(path, "refs/heads/diamond", &merged.to_string());
@@ -1303,8 +1322,15 @@ mod tests {
         let f = fixture();
         let want = format!("want {}", f.c3);
         let shallow = format!("shallow {}", f.c2);
-        let answer = text(&v2(&f.path, "fetch", &[&want, &shallow, "done"]).expect("fetch"));
+        // A shallow id the fetch does not reach (here a tag object) stays shallow.
+        let stays = format!("shallow {}", f.tag);
+        let answer =
+            text(&v2(&f.path, "fetch", &[&want, &shallow, &stays, "done"]).expect("fetch"));
         assert!(answer.contains(&format!("unshallow {}", f.c2)), "{answer}");
+        assert!(
+            !answer.contains(&format!("unshallow {}", f.tag)),
+            "{answer}"
+        );
         let limited =
             v2(&f.path, "fetch", &[&want, "filter blob:limit=100", "done"]).expect("fetch");
         assert_eq!(pack_count(&limited), Some(12), "big.bin stays out");
