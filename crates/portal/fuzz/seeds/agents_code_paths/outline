@@ -1,0 +1,12 @@
+/** a */
+export function A(
+  x: number,
+): JSX.Element {
+  return x;
+}
+export interface B {
+  y: string;
+}
+// jc:service ai storage
+ai();
+// jc:end

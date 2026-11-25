@@ -1,0 +1,4 @@
+# A fuzz manifest that lists its targets one per line (bin = [...]) merges by union: parallel
+# branches each add a line and keep both. Only files in that form belong here; a [[bin]] block
+# file would union into a broken table.
+crates/portal/fuzz/Cargo.toml merge=union

@@ -210,17 +210,22 @@ fn no_organization(project: &str) -> String {
     )
 }
 
-/// The organization of `project`, or why there is none to write to.
-pub(crate) async fn organization(state: &AppState, project: &str) -> Result<i64, ApiError> {
+/// The organization of `project` and the client that found it, or why there is none to write to.
+pub(crate) async fn organization<'s>(
+    state: &'s AppState,
+    project: &str,
+) -> Result<(i64, Client<'s>), ApiError> {
     let config = state
         .config
         .grafana
         .as_ref()
         .ok_or_else(|| ApiError::Conflict(no_grafana()))?;
-    Client::new(config)
+    let client = Client::new(config);
+    let org = client
         .organization(project)
         .await?
-        .ok_or_else(|| ApiError::Conflict(no_organization(project)))
+        .ok_or_else(|| ApiError::Conflict(no_organization(project)))?;
+    Ok((org, client))
 }
 
 fn item(
@@ -308,13 +313,7 @@ async fn endpoint_options(
     project: &str,
 ) -> Result<Vec<EndpointOption>, ApiError> {
     let held = match organization(state, project).await {
-        Ok(org) => {
-            let config = state.config.grafana.as_ref();
-            match config {
-                Some(config) => Client::new(config).datasources(org).await?,
-                None => Vec::new(),
-            }
-        }
+        Ok((org, client)) => client.datasources(org).await?,
         Err(ApiError::Conflict(_)) => return Ok(Vec::new()),
         Err(err) => return Err(err),
     };
@@ -394,7 +393,7 @@ pub async fn grafana_options(
 }
 
 /// The title as it is stored, or the refusal that names it.
-fn title_of(raw: &str) -> Result<&str, ApiError> {
+pub fn title_of(raw: &str) -> Result<&str, ApiError> {
     let title = raw.trim();
     if title.is_empty() || title.chars().count() > MAX_TITLE || title.chars().any(char::is_control)
     {
@@ -512,13 +511,7 @@ pub async fn save_visualization(
         ApiError::Unavailable("this Portal has no database to keep visualizations in".into())
     })?;
     let key = project_key(&state, pool, &project).await?;
-    let org = organization(&state, &project).await?;
-    let config = state
-        .config
-        .grafana
-        .as_ref()
-        .ok_or_else(|| ApiError::Conflict(no_grafana()))?;
-    let client = Client::new(config);
+    let (org, client) = organization(&state, &project).await?;
     let row = Visualization {
         id: grafana::new_id(),
         project: project.clone(),
@@ -585,13 +578,8 @@ pub async fn remove_visualization(
         .await
         .map_err(stored)?
         .ok_or_else(|| ApiError::NotFound(format!("visualization {id} not found")))?;
-    let org = organization(&state, &project).await?;
-    let config = state
-        .config
-        .grafana
-        .as_ref()
-        .ok_or_else(|| ApiError::Conflict(no_grafana()))?;
-    Client::new(config).remove(org, &row.uid()).await?;
+    let (org, client) = organization(&state, &project).await?;
+    client.remove(org, &row.uid()).await?;
     grafana::delete(pool, key, &project, &id)
         .await
         .map_err(stored)?;
@@ -843,22 +831,16 @@ mod tests {
             save(admin(), &state, blank).await,
             Err(ApiError::Unprocessable { .. })
         ));
-        let Err(ApiError::Denied(detail)) =
-            save(admin(), &state, new_visualization("elsewhere", "pm25")).await
-        else {
-            panic!("an unknown Endpoint is refused");
-        };
-        assert!(detail.starts_with("endpoint:"), "{detail}");
-        let Err(ApiError::Unprocessable { errors, .. }) =
-            save(admin(), &state, new_visualization("open", "noise")).await
-        else {
-            panic!("an unknown attribute is refused");
-        };
+        let unknown = save(admin(), &state, new_visualization("elsewhere", "pm25")).await;
         assert!(
-            errors[..]
-                .iter()
-                .any(|error| error.starts_with("attribute:")),
-            "{errors:?}"
+            matches!(&unknown, Err(ApiError::Denied(detail)) if detail.starts_with("endpoint:")),
+            "an unknown Endpoint is refused: {unknown:?}"
+        );
+        let attribute = save(admin(), &state, new_visualization("open", "noise")).await;
+        assert!(
+            matches!(&attribute, Err(ApiError::Unprocessable { errors, .. })
+                if errors.iter().any(|error| error.starts_with("attribute:"))),
+            "an unknown attribute is refused: {attribute:?}"
         );
     }
 
