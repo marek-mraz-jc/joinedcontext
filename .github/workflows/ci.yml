@@ -497,6 +497,8 @@ jobs:
       - run: cargo test --workspace --locked --no-fail-fast --lib --bins
       - run: cargo test --locked --no-fail-fast -p context-gateway --test it
         env: { DCAT_RECORDS_DIR: "${{ runner.temp }}/dcat-records" }
+      # Alone in its binary: the activity tally is the process's own (T-7812).
+      - run: cargo test --locked --no-fail-fast -p context-gateway --test mcp_activity_tests
       - run: cargo test --locked --no-fail-fast -p jc-core --test it
       # jcctl's `it`, but for the two modules that read the platform repository's examples/ingestion
       # and library/, which are not vendored.
