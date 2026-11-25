@@ -701,6 +701,49 @@ mod tests {
     }
 
     #[test]
+    fn each_filter_refusal_names_its_parameter() {
+        let refusal = |filter: Filter| filter.refusal();
+        assert_eq!(refusal(Filter::default()), None);
+        let to = Filter {
+            to: Some("yesterday".into()),
+            ..Filter::default()
+        };
+        assert_eq!(refusal(to), Some("to is an RFC 3339 time"));
+        let feedback = Filter {
+            feedback: Some("sideways".into()),
+            ..Filter::default()
+        };
+        assert_eq!(refusal(feedback), Some("feedback is up, down or none"));
+        let both = Filter {
+            from: Some("2026-11-25T00:00:00Z".into()),
+            to: Some("2026-11-26T00:00:00Z".into()),
+            feedback: Some("none".into()),
+            ..Filter::default()
+        };
+        assert_eq!(refusal(both), None);
+    }
+
+    #[test]
+    fn a_script_keeps_its_output_or_its_error() {
+        let mut seen = Seen::default();
+        seen.see(&Event::Script {
+            code: "rows.length".into(),
+            output: Ok("3".into()),
+        });
+        seen.see(&Event::Script {
+            code: "rows.x(".into(),
+            output: Err("SyntaxError".into()),
+        });
+        assert_eq!(
+            seen.blocks,
+            vec![
+                json!({"kind": "script", "code": "rows.length", "output": "3"}),
+                json!({"kind": "script", "code": "rows.x(", "error": "SyntaxError"}),
+            ]
+        );
+    }
+
+    #[test]
     fn seen_keeps_the_answer_the_visitor_read_and_what_it_showed() {
         let mut seen = Seen::default();
         for event in [
