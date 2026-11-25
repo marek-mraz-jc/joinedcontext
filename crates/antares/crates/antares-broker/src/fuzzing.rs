@@ -16,9 +16,11 @@ pub fn mirror_delta(bytes: &[u8]) -> bool {
         None => false,
         Some(crate::wiring::Delta::Csub) => true,
         Some(crate::wiring::Delta::Row { tenant, id, .. }) => {
-            assert!(
-                antares_model::TenantId::new_internal(tenant).is_ok(),
-                "a delta outside the tenant grammar reached the mirror: {tenant:?}"
+            let raw = delta.get("tenant").and_then(|v| v.as_str());
+            assert_eq!(
+                raw,
+                Some(tenant.as_str()),
+                "the mirror keys a tenant it was not sent"
             );
             assert_eq!(delta.get("id").and_then(|v| v.as_str()), Some(id));
             true

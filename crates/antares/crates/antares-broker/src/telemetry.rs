@@ -182,15 +182,11 @@ pub fn init() -> Result<Option<MetricsRender>, Box<dyn std::error::Error>> {
         }
         return Ok(None); // the recorder, registry and sampler are never built
     }
-    let handle = match metrics_exporter_prometheus::PrometheusBuilder::new()
+    let answers = metrics_exporter_prometheus::Matcher::Full("antares_answer_bytes".into());
+    let builder = metrics_exporter_prometheus::PrometheusBuilder::new()
         .set_buckets(LATENCY_BUCKETS_SECONDS)?
-        .set_buckets_for_metric(
-            metrics_exporter_prometheus::Matcher::Full("antares_answer_bytes".into()),
-            ANSWER_BUCKETS_BYTES,
-        )?
-        .install_recorder()
-    {
-        Ok(handle) => handle,
+        .set_buckets_for_metric(answers, ANSWER_BUCKETS_BYTES)?;
+    let handle = match builder.install_recorder() {
         Err(metrics_exporter_prometheus::BuildError::FailedToSetGlobalRecorder(_)) => {
             // Another recorder owns the `metrics` facade (a host process):
             // the broker records into it and its /q/metrics answers 404.
@@ -198,7 +194,7 @@ pub fn init() -> Result<Option<MetricsRender>, Box<dyn std::error::Error>> {
             describe();
             return Ok(None);
         }
-        Err(e) => return Err(e.into()),
+        installed => installed?,
     };
     describe();
     Ok(Some(Arc::new(move || handle.render())))

@@ -30,6 +30,11 @@ const REQUEST: &str = "antares_boot_request";
 const MAINTENANCE: &str = "antares_boot_maintenance";
 /// A role that may log in and read, outside `antares_maintenance`.
 const PLAIN: &str = "antares_boot_plain";
+/// A request role allowed two connections: the boot probes take both, a
+/// second pool cannot open.
+const LIMITED: &str = "antares_boot_limited";
+/// A request role allowed one connection: too few for the boot's probes.
+const SINGLE: &str = "antares_boot_single";
 
 fn rt() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
@@ -86,7 +91,7 @@ impl Db {
             let mut stmts = vec!["DO $$ BEGIN CREATE ROLE antares_maintenance NOLOGIN;
                  EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
                 .to_owned()];
-            for role in [REQUEST, MAINTENANCE, PLAIN] {
+            for role in [REQUEST, MAINTENANCE, PLAIN, LIMITED, SINGLE] {
                 stmts.push(format!(
                     "DO $$ BEGIN CREATE ROLE {role} LOGIN PASSWORD '{PASSWORD}';
                      EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
@@ -100,6 +105,8 @@ impl Db {
                 ));
             }
             stmts.push(format!("GRANT antares_maintenance TO {MAINTENANCE}"));
+            stmts.push(format!("ALTER ROLE {LIMITED} CONNECTION LIMIT 2"));
+            stmts.push(format!("ALTER ROLE {SINGLE} CONNECTION LIMIT 1"));
             for stmt in stmts {
                 sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
                     .execute(&mut *tx)
@@ -415,6 +422,58 @@ fn a_nats_bus_without_its_url_stops_the_boot() {
     let log = refused(&[("ANTARES_DATABASE_URL", &db.owner), ("ANTARES_BUS", "nats")]);
     assert!(
         log.contains("ANTARES_BUS=nats requires ANTARES_NATS_URL"),
+        "{log}"
+    );
+}
+
+/// A maintenance role on a database this release never migrated cannot
+/// answer the escape probe: the boot stops and says the probe failed.
+#[test]
+fn a_maintenance_database_without_the_schema_stops_the_boot() {
+    let Some(db) = Db::new("probe") else { return };
+    let unmigrated = db
+        .role(MAINTENANCE)
+        .replace(&format!("/{}", db.name), "/postgres");
+    let log = refused(&[
+        ("ANTARES_DATABASE_URL", &db.owner),
+        ("ANTARES_MAINTENANCE_DATABASE_URL", &unmigrated),
+    ]);
+    assert!(
+        log.contains("ANTARES_MAINTENANCE_DATABASE_URL: escape probe failed"),
+        "{log}"
+    );
+}
+
+/// A write reserve its role cannot open (the main pool holds the role's
+/// connections) stops the boot naming the reserve.
+#[test]
+fn a_write_reserve_that_cannot_open_stops_the_boot() {
+    let Some(db) = Db::new("reserve") else { return };
+    let limited = db.role(LIMITED);
+    let log = refused(&[
+        ("ANTARES_MIGRATION_DATABASE_URL", &db.owner),
+        ("ANTARES_DATABASE_URL", &limited),
+        ("ANTARES_PG_POOL", "4"),
+        ("ANTARES_PG_WRITE_RESERVE", "1"),
+    ]);
+    assert!(
+        log.contains("ANTARES_PG_WRITE_RESERVE: reserve pool not opened"),
+        "{log}"
+    );
+}
+
+/// A request role the server allows a single connection cannot serve the
+/// boot's probes: the boot stops with the pool's answer under its store mode.
+#[test]
+fn a_request_role_with_one_connection_stops_the_boot() {
+    let Some(db) = Db::new("single") else { return };
+    let single = db.role(SINGLE);
+    let log = refused(&[
+        ("ANTARES_MIGRATION_DATABASE_URL", &db.owner),
+        ("ANTARES_DATABASE_URL", &single),
+    ]);
+    assert!(
+        log.contains("ANTARES_STORE=postgres: pool timed out"),
         "{log}"
     );
 }

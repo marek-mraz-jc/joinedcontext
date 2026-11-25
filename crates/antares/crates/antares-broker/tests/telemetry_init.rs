@@ -95,6 +95,11 @@ async fn the_stack_installs_once_and_the_sampler_feeds_it() {
         || serde_json::json!({"allocatedBytes": 7829}),
     ));
     telemetry::spawn_sampler(file);
+    let mut resident = antares_api::AppState::new("antares".into());
+    resident.mem_stats = Some(std::sync::Arc::new(
+        || serde_json::json!({"residentBytes": 7830}),
+    ));
+    telemetry::spawn_sampler(resident);
     tokio::time::sleep(Duration::from_millis(300)).await;
     let text = render();
     let _ = std::fs::remove_dir_all(&dir);
@@ -103,7 +108,10 @@ async fn the_stack_installs_once_and_the_sampler_feeds_it() {
         text.contains("antares_memory_allocated_bytes 7829"),
         "{text}"
     );
-    assert!(!text.contains("antares_memory_resident_bytes"), "{text}");
+    assert!(
+        text.contains("antares_memory_resident_bytes 7830"),
+        "{text}"
+    );
     assert!(text.contains("antares_commit_queue_depth"), "{text}");
     assert!(text.contains("antares_limit_rejections_total"), "{text}");
 }

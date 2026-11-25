@@ -176,6 +176,7 @@ pub fn begin(draining: &Arc<AtomicBool>, delay: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env;
 
     /// The two drain variables are process-global: every test that sets or
     /// clears them holds this, or a parallel test reads its value (T-3772).
@@ -317,8 +318,13 @@ mod tests {
         off(temporal.upsert(&t, "urn:x", v.clone()).await.map(drop));
         off(temporal.delete(&t, "urn:x").await.map(drop));
         off(temporal.list(&t).await.map(drop));
+        // a mutation the double never runs, run here once
+        fn touch(doc: &mut serde_json::Value) -> Result<(), ()> {
+            doc.as_object().map(drop).ok_or(())
+        }
+        assert_eq!(touch(&mut serde_json::json!({})), Ok(()));
         off(temporal
-            .mutate_boxed(&t, "urn:x", Box::new(|_| Ok(())))
+            .mutate_boxed(&t, "urn:x", Box::new(touch))
             .await
             .map(drop));
     }
@@ -487,6 +493,7 @@ mod tests {
         }
 
         fn text(&self) -> String {
+            std::io::Write::flush(&mut self.clone()).expect("flush");
             String::from_utf8_lossy(&self.0.lock().expect("log")).into_owned()
         }
     }
@@ -636,9 +643,7 @@ mod tests {
     async fn outbox_flush_waits_for_pending_rows_and_only_when_asked() {
         use antares_sql::store::any::{AnyStore, PgBackend};
         use antares_sql::store::Kind;
-        let Some(url) = crate::test_env::db() else {
-            return;
-        };
+        let Some(url) = test_env::db() else { return };
         let (log, _guard) = Logged::start();
         // a nested fn, not a closure: connecting is awaited, and an async
         // closure is not a stable language feature
@@ -743,7 +748,7 @@ mod tests {
                 .await
                 .expect("peek")
                 .into_iter()
-                .all(|(_, t, _)| t != tenant.as_str()),
+                .all(|row| row.1 != tenant.as_str()),
             "the test left its own rows in the shared outbox"
         );
     }

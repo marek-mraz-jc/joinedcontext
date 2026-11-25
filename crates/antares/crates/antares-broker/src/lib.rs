@@ -243,7 +243,7 @@ const SURFACE_KEYS: &[&[&str]] = &[
 fn known_keys() -> impl Iterator<Item = &'static str> {
     KNOWN_KEYS
         .iter()
-        .chain(SURFACE_KEYS.iter().flat_map(|keys| keys.iter()))
+        .chain(SURFACE_KEYS.iter().copied().flatten())
         .copied()
 }
 
@@ -1237,10 +1237,9 @@ async fn build_builtin(
                         let mut version = antares_sql::store::pg::version_info(&pool).await;
                         // the operator sized ANTARES_PG_POOL as a whole: the
                         // reads' pool holds poolSize - poolWriteReserve
-                        if let Some(m) = version.as_object_mut() {
-                            m.insert("poolSize".into(), pool_size.into());
-                            m.insert("poolWriteReserve".into(), write_reserve.into());
-                        }
+                        // version_info answers an object even when its probe fails
+                        version["poolSize"] = pool_size.into();
+                        version["poolWriteReserve"] = write_reserve.into();
                         let mut backend_pg = PgBackend::new(pool).with_version(version);
                         if let Some(owner) = owner {
                             backend_pg = backend_pg.with_owner(owner);
@@ -1354,25 +1353,31 @@ async fn refuse_owning_request_role(pool: &antares_sql::sqlx::PgPool) -> Result<
 
 /// Warn when the data dir shares a device with its parent — i.e. it is
 /// not a mount point, so the redb file dies with the container.
-#[cfg(unix)]
 fn warn_if_not_mount_point(dir: &std::path::Path) {
-    use std::os::unix::fs::MetadataExt;
     let _ = std::fs::create_dir_all(dir);
-    if let (Ok(md), Some(Ok(parent_md))) =
-        (std::fs::metadata(dir), dir.parent().map(std::fs::metadata))
-    {
-        if md.dev() == parent_md.dev() {
-            eprintln!(
-                "WARN: ANTARES_DATA_DIR {} is not a mount point — data will be lost when \
-                 the container is removed",
-                dir.display()
-            );
-        }
+    if shares_device_with_parent(dir) {
+        eprintln!(
+            "WARN: ANTARES_DATA_DIR {} is not a mount point — data will be lost when \
+             the container is removed",
+            dir.display()
+        );
     }
 }
 
+/// Whether `dir` sits on its parent's device; `false` for a mount point, the
+/// root, or a path that cannot be read.
+#[cfg(unix)]
+fn shares_device_with_parent(dir: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let dev = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.dev()).ok();
+    dir.parent()
+        .is_some_and(|parent| dev(dir).is_some() && dev(dir) == dev(parent))
+}
+
 #[cfg(not(unix))]
-fn warn_if_not_mount_point(_dir: &std::path::Path) {}
+fn shares_device_with_parent(_dir: &std::path::Path) -> bool {
+    false
+}
 
 /// A broker whose state is built and not yet served: what
 /// [`spawn_background`] wires and [`router`] turns into the served app.
@@ -1715,13 +1720,13 @@ pub async fn spawn_background(broker: &mut Broker) -> Result<(), Box<dyn std::er
             .await
             .unwrap_or_default()
         {
-            if row.get("kind").and_then(|v| v.as_str()) != Some("Cached") {
+            if row.get("kind").and_then(serde_json::Value::as_str) != Some("Cached") {
                 continue;
             }
             let (Some(url), Some(id), Some(created)) = (
-                row.get("url").and_then(|v| v.as_str()),
-                row.get("localId").and_then(|v| v.as_str()),
-                row.get("createdAt").and_then(|v| v.as_str()),
+                row.get("url").and_then(serde_json::Value::as_str),
+                row.get("localId").and_then(serde_json::Value::as_str),
+                row.get("createdAt").and_then(serde_json::Value::as_str),
             ) else {
                 continue;
             };
@@ -2390,9 +2395,8 @@ mod config_key_tests {
                         let rest = &src[i + needle.len() - "\"ANTARES_".len() + 1..];
                         let Some(end) = rest.find('"') else { continue };
                         let key = &rest[..end];
-                        if unknown_config_key(key) {
-                            missing.push(format!("{key} (read in {})", path.display()));
-                        }
+                        let at = format!("{key} (read in {})", path.display());
+                        missing.extend(unknown_config_key(key).then_some(at));
                     }
                 }
             }
@@ -2632,6 +2636,41 @@ mod metrics_port_tests {
 mod driver_registry_tests {
     use super::{built_with, shared_state, store_shelf, temporal_choice, TemporalChoice};
     use antares_sql::StoreMode;
+
+    /// A data dir on its parent's device dies with the container and is
+    /// warned about; the root and a mount point are not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_a_data_dir_on_its_parents_device_is_warned_about() {
+        let dir = std::env::temp_dir().join(format!("antares-mount-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        assert!(super::shares_device_with_parent(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!super::shares_device_with_parent(std::path::Path::new("/")));
+        assert!(!super::shares_device_with_parent(std::path::Path::new(
+            "/proc"
+        )));
+        assert!(!super::shares_device_with_parent(&dir.join("gone")));
+    }
+
+    /// A host (`jc`) hands the Postgres URL and the pool size in the config
+    /// instead of the environment; a size of 0 still opens one connection.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_host_given_url_and_pool_build_the_postgres_store() {
+        let Some(url) = crate::test_env::db() else {
+            return;
+        };
+        let pg = super::PgSettings {
+            url: Some(super::Secret::new(url)),
+            pool: Some(0),
+            ..Default::default()
+        };
+        let built = super::build_drivers("postgres", &pg).await.expect("built");
+        assert!(!built.maintenance.is_empty(), "the history job runs on it");
+        let version = built.store.version_info();
+        assert_eq!(version["poolSize"], 1, "{version}");
+        built.store.close().await;
+    }
 
     /// A backend name off the shelf, reaching the builder by any path, is
     /// refused with the shelf this binary was built with.

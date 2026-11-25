@@ -708,7 +708,7 @@ pub(crate) enum Delta<'a> {
     Csub,
     /// The row `id` of `tenant` was written (`present`) or deleted.
     Row {
-        tenant: &'a str,
+        tenant: TenantId,
         id: &'a str,
         present: bool,
     },
@@ -735,7 +735,7 @@ pub(crate) fn decode_delta(delta: &serde_json::Value) -> Option<Delta<'_>> {
     // (5.5.15) carries the synthetic tenant a client may not name — refusing
     // that one would drop the mirror delta the snapshot-scoped subscription
     // matches on.
-    TenantId::new_internal(tenant).ok()?;
+    let tenant = TenantId::new_internal(tenant).ok()?;
     let present = delta
         .get("present")
         .and_then(serde_json::Value::as_bool)
@@ -789,11 +789,10 @@ async fn apply_delta(
             present,
         }) => (tenant, id, present),
     };
-    let Ok(t) = TenantId::new_internal(tenant) else {
-        return;
-    };
+    let t = &tenant;
+    let tenant = t.as_str();
     for attempt in 0..MIRROR_SYNC_ATTEMPTS {
-        match store.get(&t, kind, id).await {
+        match store.get(t, kind, id).await {
             Ok(doc) => return mirror.apply(tenant, id, doc),
             Err(e) => {
                 let n = attempt + 1;
@@ -874,6 +873,7 @@ async fn resolve_payloads(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env;
     use antares_api::mirror::DocMirror;
     use antares_bus::{ChangeOp, PayloadRef};
     use antares_model::EntityId;
@@ -909,6 +909,7 @@ mod tests {
         }
 
         fn text(&self) -> String {
+            std::io::Write::flush(&mut self.clone()).expect("flush");
             String::from_utf8_lossy(&self.0.lock().expect("log")).into_owned()
         }
     }
@@ -1417,9 +1418,7 @@ mod tests {
     /// Postgres table, and the memory arm has none.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_retained_row_gives_the_matcher_the_before_image_the_write_replaced() {
-        let Some(url) = crate::test_env::db() else {
-            return;
-        };
+        let Some(url) = test_env::db() else { return };
         let pool = antares_sql::store::pg::connect(&url, 5)
             .await
             .expect("connect");
@@ -1508,9 +1507,7 @@ mod tests {
     /// that mirror alone, so an empty candidate set is A sending nothing.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_watch_reopened_past_the_grace_drops_a_subscription_deleted_meanwhile() {
-        let Some(url) = crate::test_env::nats() else {
-            return;
-        };
+        let Some(url) = test_env::nats() else { return };
         const VEHICLE: &str = "https://example.org/Vehicle";
         let bus = NatsBus::connect(&url).await.expect("connect");
         let kv = bus.subs_kv().await.expect("kv bucket");
@@ -1584,6 +1581,16 @@ mod tests {
             let err = outbox_drain_enabled()
                 .expect_err(&format!("ANTARES_OUTBOX_DRAIN={bad:?} must be fatal"));
             assert!(err.contains("ANTARES_OUTBOX_DRAIN"), "{err}");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            std::env::set_var("ANTARES_OUTBOX_DRAIN", std::ffi::OsStr::from_bytes(&[0xff]));
+            let err = outbox_drain_enabled().expect_err("a non-UTF-8 value is fatal");
+            assert!(
+                err.starts_with("ANTARES_OUTBOX_DRAIN is unreadable"),
+                "{err}"
+            );
         }
         std::env::remove_var("ANTARES_OUTBOX_DRAIN");
     }
