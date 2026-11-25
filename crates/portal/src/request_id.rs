@@ -125,9 +125,9 @@ pub async fn middleware(request: Request, next: Next) -> Response {
         span.in_scope(|| tracing::warn!(status = response.status().as_u16(), "request failed"));
     }
     // `plain` or hex: always a valid header value.
-    if let Ok(value) = HeaderValue::from_str(&id) {
-        response.headers_mut().insert(HEADER, value);
-    }
+    response
+        .headers_mut()
+        .extend(HeaderValue::from_str(&id).ok().map(|value| (HEADER, value)));
     response
 }
 
@@ -230,6 +230,7 @@ mod tests {
             .await
             .expect("answer");
         assert!(response.status().is_success());
+        std::io::Write::flush(&mut lines.clone()).expect("an in-memory log flushes");
         let text = String::from_utf8(lines.0.lock().expect("lines").clone()).expect("utf-8");
         assert!(
             text.contains(&format!("project={}", mine.project)),

@@ -52,7 +52,9 @@ struct Row {
 }
 
 fn utc(at: OffsetDateTime) -> TimestampTz {
-    jiff::Timestamp::from_nanosecond(at.unix_timestamp_nanos())
+    // `from_nanosecond` only debug-asserts its range; `new` checks it.
+    let nanos = i32::try_from(at.nanosecond()).unwrap_or(0);
+    jiff::Timestamp::new(at.unix_timestamp(), nanos)
         .map_or_else(|_| TimestampTz::default(), TimestampTz)
 }
 
@@ -472,5 +474,94 @@ mod tests {
         assert!(same_hash(&token_hash(&a), &token_hash(&a)));
         assert!(!same_hash(&token_hash(&a), &token_hash(&b)));
         assert!(!same_hash(&token_hash(&a), &token_hash(&a)[..31]));
+    }
+
+    /// A time the store can hold and jiff cannot (past 9999-12-30) reads as the default
+    /// timestamp instead of failing the whole record.
+    #[test]
+    fn a_time_beyond_jiffs_range_reads_as_the_default() {
+        let at = time::macros::datetime!(2026-11-25 10:00 UTC);
+        assert_eq!(
+            utc(at),
+            TimestampTz(jiff::Timestamp::from_second(at.unix_timestamp()).expect("in range"))
+        );
+        assert_eq!(
+            utc(time::macros::datetime!(9999-12-31 23:59 UTC)),
+            TimestampTz::default()
+        );
+    }
+
+    /// The pod's log is kept only while its build runs: written while running, read back, and
+    /// left as it was once the build is frozen for verifying; a build of another project or an
+    /// unknown id has none.
+    #[tokio::test]
+    async fn a_log_is_written_only_while_the_build_runs() {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let db = crate::db::connect(&url).await.expect("connect and migrate");
+        let project = format!("t7654-{}", jc_types::ProjectId::mint().path_segment());
+        let id = enqueue(
+            &db,
+            &project,
+            "shop",
+            "c1",
+            Class::Rust,
+            Trigger::Rebuild,
+            Some("ana"),
+        )
+        .await
+        .expect("queued");
+        set_log(&db, &project, id, "too early").await.expect("set");
+        assert_eq!(
+            log(&db, &project, id).await.expect("read"),
+            None,
+            "pending keeps none"
+        );
+        assert!(start(
+            &db,
+            &project,
+            id,
+            "token",
+            jiff::SignedDuration::from_mins(5)
+        )
+        .await
+        .expect("start"));
+        set_log(&db, &project, id, "step 1\nstep 2")
+            .await
+            .expect("set");
+        assert_eq!(
+            log(&db, &project, id).await.expect("read").as_deref(),
+            Some("step 1\nstep 2")
+        );
+        assert!(freeze(&db, &project, id).await.expect("freeze"));
+        set_log(&db, &project, id, "rewritten").await.expect("set");
+        assert_eq!(
+            log(&db, &project, id).await.expect("read").as_deref(),
+            Some("step 1\nstep 2"),
+            "a frozen build's log stays"
+        );
+        assert_eq!(log(&db, "another", id).await.expect("read"), None);
+        assert_eq!(
+            log(&db, &project, id + 1_000_000).await.expect("read"),
+            None
+        );
+        finish(&db, &project, id, Ok("sha256:aa"))
+            .await
+            .expect("finish");
+        let record = get_of(&db, &project, "shop", id)
+            .await
+            .expect("read")
+            .expect("held");
+        assert_eq!(
+            (record.class(), record.state.as_str()),
+            (Class::Rust, "succeeded")
+        );
+        assert_eq!(record.requested_by.as_deref(), Some("ana"));
+        assert!(record.seconds().is_some());
     }
 }

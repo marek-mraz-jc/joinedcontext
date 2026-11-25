@@ -128,11 +128,15 @@ mod tests {
     }
 
     fn refusal(state: &AppState, project: &str, kind: &str, name: &str) -> Option<String> {
-        match check(state, &who("jana@hel.fi"), project, kind, name) {
-            Ok(()) => None,
-            Err(ApiError::Denied(message)) => Some(message),
-            Err(other) => panic!("a clash is a refusal, not {other:?}"),
-        }
+        let refused = check(state, &who("jana@hel.fi"), project, kind, name).err()?;
+        assert!(
+            matches!(refused, ApiError::Denied(_)),
+            "a clash is a refusal, not {refused:?}"
+        );
+        refused
+            .to_string()
+            .strip_prefix("forbidden: ")
+            .map(str::to_owned)
     }
 
     #[test]
