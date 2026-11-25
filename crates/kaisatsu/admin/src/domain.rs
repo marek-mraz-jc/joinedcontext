@@ -65,12 +65,23 @@ pub trait DnsResolver: Send + Sync {
 #[derive(Clone, Default)]
 pub struct HickoryDnsResolver {
     mocks: Arc<RwLock<HashMap<String, Vec<String>>>>,
+    /// The one name server asked instead of the system's (`with_name_server`).
+    name_server: Option<std::net::SocketAddr>,
 }
 
 impl HickoryDnsResolver {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A resolver asking only the name server at `addr` (UDP), not the system's.
+    #[must_use]
+    pub fn with_name_server(addr: std::net::SocketAddr) -> Self {
+        Self {
+            name_server: Some(addr),
+            ..Self::default()
+        }
     }
 
     pub fn insert_mock_txt(&self, fqdn: impl Into<String>, records: Vec<String>) {
@@ -92,8 +103,21 @@ impl DnsResolver for HickoryDnsResolver {
                 return Ok(mocked);
             }
 
-            let resolver = hickory_resolver::Resolver::builder_tokio()
-                .map_err(|e| KaisatsuError::OutboundRefused(format!("DNS resolver init: {e}")))?
+            let builder = match self.name_server {
+                Some(addr) => {
+                    use hickory_resolver::config::{NameServerConfig, ResolverConfig};
+                    let mut server = NameServerConfig::udp(addr.ip());
+                    server.connections[0].port = addr.port();
+                    hickory_resolver::Resolver::builder_with_config(
+                        ResolverConfig::from_name_servers(vec![server]),
+                        Default::default(),
+                    )
+                }
+                None => hickory_resolver::Resolver::builder_tokio().map_err(|e| {
+                    KaisatsuError::OutboundRefused(format!("DNS resolver init: {e}"))
+                })?,
+            };
+            let resolver = builder
                 .build()
                 .map_err(|e| KaisatsuError::OutboundRefused(format!("DNS resolver build: {e}")))?;
             let response = resolver

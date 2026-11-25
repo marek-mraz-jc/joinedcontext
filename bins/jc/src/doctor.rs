@@ -1659,12 +1659,38 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
         let port = dns(
             vec![
                 ("zone.test.", RecordType::NS, "", ns("ns.zone.test.")),
-                // An NS record another name owns is not this name's zone.
+                // An alias answers every question with its CNAME first: no NS, no CNAME of the
+                // asked type first, no A or CAA of its own; the adapter skips those records.
+                ("odd.zone.test.", RecordType::NS, "", cname("a.zone.test.")),
+                ("odd.zone.test.", RecordType::A, "", cname("a.zone.test.")),
                 (
                     "odd.zone.test.",
-                    RecordType::NS,
-                    "elsewhere.test.",
-                    ns("ns.zone.test."),
+                    RecordType::A,
+                    "a.zone.test.",
+                    RData::A(A([192, 0, 2, 1].into())),
+                ),
+                ("odd.zone.test.", RecordType::CAA, "", cname("zone.test.")),
+                (
+                    "odd.zone.test.",
+                    RecordType::CAA,
+                    "zone.test.",
+                    RData::CAA(CAA::new_issue(
+                        false,
+                        Some(name("letsencrypt.org.")),
+                        vec![],
+                    )),
+                ),
+                (
+                    "twisty.zone.test.",
+                    RecordType::CNAME,
+                    "a.zone.test.",
+                    RData::A(A([192, 0, 2, 1].into())),
+                ),
+                (
+                    "twisty.zone.test.",
+                    RecordType::CNAME,
+                    "",
+                    cname("a.zone.test."),
                 ),
                 (
                     "ns.zone.test.",
@@ -1720,7 +1746,8 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
         let v6: IpAddr = "2001:db8::1".parse().unwrap();
         assert_eq!(net.addresses("a.zone.test"), Ok(vec![v4, v6]));
         assert_eq!(net.addresses("alias.zone.test."), Ok(vec![v4, v6]));
-        assert_eq!(net.addresses("odd.zone.test"), Ok(vec![]));
+        assert_eq!(net.addresses("odd.zone.test"), Ok(vec![v4]));
+        assert_eq!(net.addresses("twisty.zone.test"), Ok(vec![v4, v6]));
         let err = |r: Result<Vec<IpAddr>, String>| r.expect_err("refused");
         assert!(err(net.addresses("loop.zone.test")).contains("CNAME chain longer than 8"));
         assert!(err(net.addresses("fail.zone.test")).starts_with("CNAME of fail.zone.test"));
@@ -1736,6 +1763,7 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
             "{caa:?}"
         );
         assert_eq!(net.caa("a.zone.test"), Ok(vec![]));
+        assert_eq!(net.caa("odd.zone.test"), Ok(caa.clone()));
         assert!(net.caa("caafail.test").is_err());
     }
 
