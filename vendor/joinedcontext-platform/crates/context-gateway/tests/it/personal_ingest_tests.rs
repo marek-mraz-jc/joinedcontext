@@ -45,12 +45,12 @@ fn schema() -> Arc<ModelSchema> {
     ))
 }
 
-fn endpoint() -> Endpoint {
+fn endpoint(schema: Arc<ModelSchema>) -> Endpoint {
     let slug = SLUG;
     let hidden: &[&str] = &[];
     let grant: PolicySpec = serde_norway::from_str(
         "contextSpaceRef: trips\nassigner: did:web:banskabystrica.sk\n\
-         assignee: { kind: role, id: steward }\noperations: [createEntity]\n",
+         assignee: { kind: role, id: steward }\noperations: [createEntity, updateAttrs]\n",
     )
     .expect("the policy spec parses");
     Endpoint {
@@ -60,7 +60,7 @@ fn endpoint() -> Endpoint {
             units: Default::default(),
             relationships: Default::default(),
             quality: Vec::new(),
-            schema: Some(schema()),
+            schema: Some(schema),
         })),
         roles: Default::default(),
         slug: slug.to_owned(),
@@ -94,6 +94,31 @@ fn endpoint() -> Endpoint {
 }
 
 async fn write(keys: Option<PathBuf>) -> (StatusCode, Value, Vec<common::Hop>) {
+    let trip = json!({
+        "id": "urn:ngsi-ld:BikeTrip:t1", "type": "BikeTrip",
+        "rider": { "type": "Property", "value": RIDER },
+        "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [19.15, 48.74] } },
+        "startStation": { "type": "Property", "value": "Namestie SNP" }
+    });
+    write_with(keys, schema(), trip).await
+}
+
+/// [`write`] of `trip` against an Endpoint whose model is `schema`, created at `/entities`.
+async fn write_with(
+    keys: Option<PathBuf>,
+    schema: Arc<ModelSchema>,
+    trip: Value,
+) -> (StatusCode, Value, Vec<common::Hop>) {
+    send_with(keys, schema, ("POST", "/entities"), trip).await
+}
+
+/// `trip` sent as `(method, path)` of the NGSI-LD API against an Endpoint whose model is `schema`.
+async fn send_with(
+    keys: Option<PathBuf>,
+    schema: Arc<ModelSchema>,
+    (method, path): (&str, &str),
+    trip: Value,
+) -> (StatusCode, Value, Vec<common::Hop>) {
     let broker = common::BrokerStub::start(vec![json!([])]).await;
     let realm = common::Realm::new();
     let gateway = Gateway::new(
@@ -102,7 +127,7 @@ async fn write(keys: Option<PathBuf>) -> (StatusCode, Value, Vec<common::Hop>) {
         "banskabystrica.sk",
     )
     .with_provenance(context_gateway::store::Provenance::without_organizations())
-    .serve(vec![endpoint()])
+    .serve(vec![endpoint(schema)])
     .authenticate(
         Arc::new(realm.verifier()),
         ServiceAccounts::new(),
@@ -122,17 +147,11 @@ async fn write(keys: Option<PathBuf>) -> (StatusCode, Value, Vec<common::Hop>) {
         "exp": common::in_seconds(300),
         "iat": common::in_seconds(-10),
     }));
-    let trip = json!({
-        "id": "urn:ngsi-ld:BikeTrip:t1", "type": "BikeTrip",
-        "rider": { "type": "Property", "value": RIDER },
-        "location": { "type": "GeoProperty", "value": { "type": "Point", "coordinates": [19.15, 48.74] } },
-        "startStation": { "type": "Property", "value": "Namestie SNP" }
-    });
     let response = router(Arc::new(gateway))
         .oneshot(
             Request::builder()
-                .method("POST")
-                .uri(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/entities"))
+                .method(method)
+                .uri(format!("/api/endpoint/{SLUG}/ngsi-ld/v1{path}"))
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(trip.to_string()))
@@ -201,4 +220,50 @@ async fn without_the_spaces_key_nothing_reaches_the_broker() {
         );
     }
     let _ = std::fs::remove_dir_all(short);
+}
+
+/// A `drop` slot written as the whole body of its attribute leaves nothing to store: a 400 naming
+/// the attribute and never a value, and nothing is stored.
+#[tokio::test]
+async fn a_dropped_slot_written_as_the_whole_body_is_a_400_naming_only_the_attribute() {
+    let location = json!({ "type": "GeoProperty", "value": { "type": "Point", "coordinates": [19.15, 48.74] } });
+    let (status, problem, hops) = send_with(
+        None,
+        schema(),
+        ("PATCH", "/entities/urn:ngsi-ld:BikeTrip:t1/attrs/location"),
+        location,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(problem.to_string().contains("`location`"), "{problem}");
+    assert!(!problem.to_string().contains("19.15"), "{problem}");
+    assert!(
+        hops.iter().all(|hop| hop.body.is_empty()),
+        "nothing was stored"
+    );
+}
+
+/// A model naming an ingest the gateway does not know is the gateway's own failure: a bare 500
+/// that names nothing, and nothing is stored.
+#[tokio::test]
+async fn a_model_naming_an_unknown_ingest_is_a_500_that_stores_nothing() {
+    let odd = Arc::new(ModelSchema::compile(
+        "bike-trips",
+        "1.0.0",
+        &json!({ "definitions": { "BikeTrip": { "properties": {
+            "rider": { "type": "string", "x-personal-data": true, "x-ingest": "hash" } } } } }),
+        &["BikeTrip".to_owned()],
+        true,
+    ));
+    let trip = json!({
+        "id": "urn:ngsi-ld:BikeTrip:t1", "type": "BikeTrip",
+        "rider": { "type": "Property", "value": RIDER }
+    });
+    let (status, problem, hops) = write_with(None, odd, trip).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{problem}");
+    assert!(!problem.to_string().contains(RIDER), "{problem}");
+    assert!(
+        hops.iter().all(|hop| hop.body.is_empty()),
+        "nothing was stored"
+    );
 }
