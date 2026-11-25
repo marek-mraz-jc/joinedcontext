@@ -489,9 +489,10 @@ impl Capture {
     }
 }
 
-/// One broker's subscriber: dials the internal listener on `port` (tests pass their own), subscribes after every CONNACK (a clean
-/// session forgets them) and writes what arrived once per [`FLUSH`]. The buffer holds at most
-/// what the broker's capture could keep, so a burst costs no more memory than that.
+/// One broker's subscriber: dials the internal listener on `port` (tests pass their own),
+/// subscribes after every CONNACK (a clean session forgets them) and writes what arrived once
+/// per [`FLUSH`]. The buffer holds at most what the broker's capture could keep, so a burst
+/// costs no more memory than that.
 async fn subscribe(store: Arc<CaptureStore>, target: Target, host: String, port: u16) {
     let mut options = MqttOptions::new(format!("{USERNAME}-{}", target.release), host, port);
     options
