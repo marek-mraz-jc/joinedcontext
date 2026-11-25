@@ -3312,27 +3312,42 @@ async fn route_call(ask: &Ask<'_>, router: &Call<'_>, messages: &[Value]) -> Rou
         ask.model
             .ask(ask.deployment, ask.tokens_per_day, router, messages)
     };
-    let (reply, left) = hedged(ask_once, ROUTER_HEDGE, |started, second_won, left| {
-        let which = if second_won { "second" } else { "first" };
-        let left = if left {
-            "; the other, left running, is charged as its twin"
-        } else {
-            ""
-        };
-        ask.trace.note(
-            "model",
-            "router_hedge",
-            started,
-            None,
-            Some(&format!("{which} call answered{left}")),
-        );
+    let mut heard = None;
+    let (reply, left) = hedged(ask_once, ROUTER_HEDGE, |started, second_won, _| {
+        heard = Some((started, second_won));
     })
     .await;
     pending.done(reply.as_ref());
     // The call left running still costs: the proxy counts no unstreamed call its caller left, so
     // it is charged here as the winner's twin, the same prompt to the same model (T-7772).
     let twin = left.then(|| reply.as_ref().ok().cloned()).flatten();
+    if let Some((started, second_won)) = heard {
+        hedge_step(ask.trace, model, started, second_won, twin.as_ref());
+    }
     (reply, at.elapsed(), twin)
+}
+
+/// The hedge's step (T-7788): the call left running is a model call priced as the winner's twin,
+/// so the turn's cost holds what its budget counted; a hedge whose other call failed added no
+/// call to pay and is a route note, never an unpriced model call that marks the turn `uncosted`.
+fn hedge_step(
+    trace: &super::trace::Trace,
+    model: &str,
+    started: Instant,
+    second_won: bool,
+    twin: Option<&Completion>,
+) {
+    let which = if second_won { "second" } else { "first" };
+    match twin {
+        Some(twin) => trace.model("router_hedge", model, started, Ok(twin)),
+        None => trace.note(
+            "route",
+            "router_hedge",
+            started,
+            None,
+            Some(&format!("{which} call answered; the other failed")),
+        ),
+    }
 }
 
 /// The router's reply, how long it took, and the hedged call left running, charged as the
@@ -7902,6 +7917,38 @@ classes:
         assert_eq!(
             hedged(first_fails, ROUTER_HEDGE, |_, _, _| {}).await,
             (Ok(1), false)
+        );
+    }
+
+    /// T-7788: a hedge whose other call ran on is a model step priced as the winner's twin, so
+    /// the turn is fully priced; one whose other call failed is a route note and prices nothing.
+    #[test]
+    fn a_hedged_router_call_left_running_is_a_priced_step() {
+        let trace = super::super::trace::Trace::new(true);
+        let twin = Completion {
+            input: 1_942,
+            output: 689,
+            cost_micros: Some(8_080),
+            ..Default::default()
+        };
+        hedge_step(&trace, "google/x", Instant::now(), false, Some(&twin));
+        hedge_step(&trace, "google/x", Instant::now(), true, None);
+        let steps = trace.steps();
+        let shape: Vec<_> = steps
+            .iter()
+            .map(|s| (s.kind, s.name.as_str(), s.cost_micros, s.tokens_in))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                ("model", "router_hedge", Some(8_080), Some(1_942)),
+                ("route", "router_hedge", None, None)
+            ]
+        );
+        assert_eq!(super::super::transcript::priced(&steps), (8_080, 0));
+        assert_eq!(
+            steps[1].output.as_deref(),
+            Some("second call answered; the other failed")
         );
     }
 

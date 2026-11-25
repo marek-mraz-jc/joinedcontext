@@ -158,6 +158,8 @@ def judge(question: dict, hosts: list[str] | str, answer: dict) -> list[str]:
         if not any(normal(a) in said for a in group):
             why.append(f"none of {group}")
     known = set(numbers(f"{question.get('ask', '')} {question.get('evidence', '')}"))
+    # Gate only (T-7788): "4 sources" over an answer citing four is a count of its own listing.
+    known.add(str(len(markers(text))))
 
     def resolves(n):
         c = cited.get(n)
