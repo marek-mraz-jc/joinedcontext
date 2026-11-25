@@ -46,9 +46,8 @@ pub fn verify_signature(secret: &str, body: &[u8], presented_hex: &str) -> bool 
     let Some(expected_bytes) = decode_hex(hex_str) else {
         return false;
     };
-    let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else {
-        return false;
-    };
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC takes a key of any length");
     mac.update(body);
     mac.verify_slice(&expected_bytes).is_ok()
 }
@@ -833,10 +832,14 @@ mod tests {
     async fn settled(syncer: &Syncer, done: impl Fn(&crate::reconciler::SyncStatus) -> bool) {
         for _ in 0..200 {
             if done(&syncer.status()) {
-                return;
+                break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
-        panic!("the sync did not finish: {:?}", syncer.status());
+        assert!(
+            done(&syncer.status()),
+            "the sync did not finish: {:?}",
+            syncer.status()
+        );
     }
 }

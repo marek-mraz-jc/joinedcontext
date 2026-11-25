@@ -105,3 +105,51 @@ pub async fn list_addresses(
 pub fn router() -> Router<AppState> {
     Router::new().route("/organization/addresses", get(list_addresses))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+
+    /// An Organization's title, else its instance name, else its name: a blank instance name is
+    /// none, and an Organization the registry lacks keeps its name.
+    #[test]
+    fn the_title_falls_back_to_the_instance_name_then_the_name() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        for (name, title, appearance) in [
+            (
+                "titled",
+                Some("Bratislava"),
+                serde_json::json!({ "instanceName": "Smart BA" }),
+            ),
+            (
+                "branded",
+                None,
+                serde_json::json!({ "instanceName": "Smart City BB" }),
+            ),
+            ("blank", None, serde_json::json!({ "instanceName": "  " })),
+            ("plain", None, serde_json::json!({})),
+        ] {
+            let metadata: ObjectMeta = serde_json::from_value(
+                serde_json::json!({ "name": name, "namespace": ORG_NAMESPACE, "title": title }),
+            )
+            .expect("metadata");
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: API_VERSION.into(),
+                kind: "Organization".into(),
+                metadata,
+                spec: serde_json::json!({ "appearance": appearance }),
+                status: None,
+            });
+        }
+        for (name, shown) in [
+            ("titled", "Bratislava"),
+            ("branded", "Smart City BB"),
+            ("blank", "blank"),
+            ("plain", "plain"),
+            ("unknown", "unknown"),
+        ] {
+            assert_eq!(title(&state, name), shown);
+        }
+    }
+}

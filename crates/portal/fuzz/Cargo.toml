@@ -35,6 +35,7 @@ bin = [
   { name = "mentions", path = "fuzz_targets/mentions.rs", test = false, doc = false, bench = false },
   { name = "bundle_head", path = "fuzz_targets/bundle_head.rs", test = false, doc = false, bench = false },
   { name = "trash_entity", path = "fuzz_targets/trash_entity.rs", test = false, doc = false, bench = false },
+  { name = "dashboard_check", path = "fuzz_targets/dashboard_check.rs", test = false, doc = false, bench = false },
   { name = "preview_query", path = "fuzz_targets/preview_query.rs", test = false, doc = false, bench = false },
   { name = "view_geoq", path = "fuzz_targets/view_geoq.rs", test = false, doc = false, bench = false },
   { name = "view_desired", path = "fuzz_targets/view_desired.rs", test = false, doc = false, bench = false },

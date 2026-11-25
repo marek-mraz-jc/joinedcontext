@@ -292,10 +292,9 @@ mod tests {
     }
 
     fn refusal(bytes: &[u8]) -> String {
-        match repository_files(bytes, "zilina") {
-            Err(err) => err.to_string(),
-            Ok(files) => panic!("accepted {files:?}"),
-        }
+        repository_files(bytes, "zilina")
+            .expect_err("refused")
+            .to_string()
     }
 
     #[test]
@@ -326,6 +325,20 @@ mod tests {
         assert!(refusal(&zipped(&[("spaces/a/logo.png", &[0xff, 0xfe, 0x00])])).contains("UTF-8"));
         assert!(refusal(&zipped(&[("secrets/feed.enc.yaml", b"token: plain\n")])).contains("SOPS"));
         assert!(refusal(b"apiVersion: v1\n").contains("zip archive"));
+        let folders_only = {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            writer
+                .add_directory("spaces/", zip::write::SimpleFileOptions::default())
+                .expect("folder");
+            writer.finish().expect("finish").into_inner()
+        };
+        assert!(refusal(&folders_only).contains("holds no file"));
+        assert!(refusal(&vec![b'P'; super::MAX_UPLOAD_BYTES + 1]).contains("import limit"));
+        assert!(refusal(&zipped(&[
+            ("a.yaml", b"a: 1\n"),
+            ("projects/zilina/a.yaml", b"a: 2\n")
+        ]))
+        .contains("twice"));
     }
 
     #[test]

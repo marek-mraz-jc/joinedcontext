@@ -264,6 +264,34 @@ async fn a_query_that_is_not_one_is_the_callers_mistake_and_never_a_page() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
+    // A workspace and a revision together, a cursor beside the old continue token, and continue
+    // under a sort: each is refused with what to send instead.
+    for (query, says) in [
+        ("workspace=w&revision=abcdef0", "not both"),
+        ("cursor=x&continue=y", "cursor replaces continue"),
+        ("sort=-metadata.name&continue=y", "page a sort with cursor"),
+    ] {
+        let (status, body) = get(&state, Some(SPACE_READER), &format!("{spaces}?{query}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
+        assert!(
+            body["detail"].as_str().is_some_and(|d| d.contains(says)),
+            "{query}: {body}"
+        );
+    }
+    let (status, body) = get(
+        &state,
+        Some(SPACE_READER),
+        &format!("{spaces}/{PROJECT}?workspace=w&revision=abcdef0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("not both")),
+        "{body}"
+    );
+
     // A continuation token nobody minted is ignored and the first page comes back: today's
     // behaviour, written down in `/workspace/chyby.md` rather than asserted as wanted, because a
     // client walking a list would restart it instead of being told its token is stale. What matters
