@@ -35,7 +35,7 @@ fn scalars_follow_yaml_core_types_and_quoting() {
     let doc = parse_yaml_to_json(
         "a: true\nb: False\nc: ~\nd: null\ne: 42\nf: -1.5\ng: plain text # comment\n\
          h: \"quoted # not a comment\"\ni: 'it''s'\nj: \"tab\\there \\\"q\\\" \\u00e9 \\\\ \\/ \\r\\n\\0\"\n\
-         k: NaN\nl: 1e3\nm: [1, \"two\"]\nn: {\"x\": 1}\n\"quoted key\": 1\n'single key': 2\nurl: http://h:9090/x\n",
+         k: NaN\nl: 1e3\nm: [1, \"two\"]\nn: {\"x\": 1}\n\"quoted key\": 1\n'single key': 2\nurl: http://h:9090/x\nport:8080: open\n",
     )
     .unwrap();
     assert_eq!(doc["a"], true);
@@ -55,6 +55,8 @@ fn scalars_follow_yaml_core_types_and_quoting() {
     assert_eq!(doc["quoted key"], 1);
     assert_eq!(doc["single key"], 2);
     assert_eq!(doc["url"], "http://h:9090/x");
+    // A colon with no space after it belongs to the key.
+    assert_eq!(doc["port:8080"], "open");
 }
 
 #[test]
