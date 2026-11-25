@@ -288,4 +288,19 @@ mod tests {
             Err(Refusal::OtherPeople(1))
         );
     }
+
+    #[tokio::test]
+    async fn a_dead_database_makes_the_approval_mode_unavailable() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        let err = stored(&pool, "hel").await.expect_err("no database answers");
+        assert!(matches!(err, ApiError::Unavailable(m) if m.contains("approval mode")));
+        let state = AppState::new(crate::config::Config::for_tests(), None).with_db(pool);
+        assert!(matches!(
+            mode(&state, "hel").await,
+            Err(ApiError::Unavailable(_))
+        ));
+    }
 }

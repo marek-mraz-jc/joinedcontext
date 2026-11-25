@@ -2130,4 +2130,904 @@ mod tests {
         let kept = log.list(Some("bbsk"), later).await.expect("list");
         assert_eq!(kept.len(), 1, "the unloaded run dropped the row");
     }
+
+    // -----------------------------------------------------------------------------------------
+    // T-7823 coverage: names, rows, the memory store, the database store and the evaluator.
+
+    fn poisoned<T: Default + Send + Sync>() -> RwLock<T> {
+        let lock = RwLock::new(T::default());
+        let _ = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _held = lock.write();
+                    std::hint::black_box(Err::<(), &str>("poisoned"))
+                        .expect("poisoning the lock on purpose");
+                })
+                .join()
+        });
+        lock
+    }
+
+    fn unique() -> String {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64);
+        format!(
+            "{nanos:016x}{:06x}{:04x}",
+            std::process::id() & 0xff_ffff,
+            NEXT.fetch_add(1, Ordering::Relaxed) & 0xffff
+        )
+    }
+
+    fn project_in(mirror: &Mirror, project: &str, organization: &str) {
+        mirror.upsert(
+            serde_json::from_value(json!({
+                "apiVersion": "joinedcontext.com/v1alpha1",
+                "kind": "Project",
+                "metadata": { "name": project, "namespace": crate::permissions::ORG_NAMESPACE },
+                "spec": { "organizationRef": organization },
+            }))
+            .expect("a project"),
+        );
+    }
+
+    fn pipeline_of(project: &str, name: &str, status: Value) -> crate::resource::ResourceEnvelope {
+        serde_json::from_value(json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Pipeline",
+            "metadata": { "name": name, "namespace": project },
+            "spec": { "class": "auto" },
+            "status": status,
+        }))
+        .expect("a pipeline")
+    }
+
+    fn dead_pool() -> sqlx::PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool")
+    }
+
+    /// The database the run names; none when it names none (the measured run does).
+    async fn database() -> Option<sqlx::PgPool> {
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty());
+        let Some(url) = url else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return None;
+        };
+        Some(crate::db::connect(&url).await.expect("migrate"))
+    }
+
+    /// A mirror holding `projects`, each in an Organization of its own that the registry holds.
+    async fn placed(pool: &sqlx::PgPool, projects: &[&str]) -> Arc<Mirror> {
+        let mirror = Arc::new(Mirror::new());
+        for project in projects {
+            let organization = format!("o{}", unique());
+            sqlx::query(
+                "INSERT INTO organizations (name, host, state, created_by) \
+                 VALUES ($1, $1 || '.example', 'active', 'test')",
+            )
+            .bind(&organization)
+            .execute(pool)
+            .await
+            .expect("an Organization of the registry");
+            project_in(&mirror, project, &organization);
+        }
+        mirror
+    }
+
+    fn evaluator_over(mirror: &Arc<Mirror>, store: &Arc<AlertStore>) -> Evaluator {
+        Evaluator::new(
+            Arc::clone(mirror),
+            Arc::new(crate::quality::Store::default()),
+            Arc::clone(store),
+        )
+    }
+
+    fn stalled() -> Value {
+        json!({ "phase": "Live", "conditions": [{ "type": "StreamWriting", "status": "False", "reason": "Stalled" }] })
+    }
+
+    async fn subscribe(
+        store: &AlertStore,
+        who: &str,
+        project: &str,
+        events: &[Event],
+        delivery: Delivery,
+    ) -> Subscription {
+        store
+            .upsert(who, project, Scope::Pipeline, "bikes", events, delivery)
+            .await
+            .expect("stored")
+            .expect("kept")
+    }
+
+    #[test]
+    fn every_scope_event_and_delivery_names_itself_and_reads_back() {
+        for scope in [Scope::Pipeline, Scope::Space, Scope::Type, Scope::Agent] {
+            assert_eq!(Scope::parse(scope.as_str()), Some(scope));
+        }
+        assert_eq!(Scope::parse("planet"), None);
+        assert_eq!(Scope::parse(""), None);
+        for event in [
+            Event::Failure,
+            Event::Stale,
+            Event::Zero,
+            Event::Invalid,
+            Event::RefusalSpike,
+            Event::SpendShare,
+            Event::OffHoursWrite,
+        ] {
+            assert_eq!(Event::parse(event.as_str()), Some(event));
+        }
+        assert_eq!(Event::parse("Failure"), None);
+        assert_eq!(Delivery::Portal.as_str(), "portal");
+        assert_eq!(Delivery::Digest.as_str(), "digest");
+    }
+
+    #[test]
+    fn a_delivery_that_is_neither_portal_digest_nor_e_mail_is_refused_by_name() {
+        let new = NewSubscription {
+            project: "helsinki".into(),
+            scope: "space".into(),
+            target: "bikes".into(),
+            events: vec!["zero".into()],
+            delivery: "sms".into(),
+        };
+        assert_eq!(
+            checked(&new),
+            Err("`sms` is not portal or digest".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_stored_row_with_a_scope_this_build_does_not_know_is_left_out() {
+        let row = |scope: &str| -> SubscriptionRow {
+            (
+                7,
+                "jana".into(),
+                "helsinki".into(),
+                scope.into(),
+                "bikes".into(),
+                vec!["zero".into(), "from-the-future".into()],
+                "digest".into(),
+                None,
+                None,
+            )
+        };
+        assert!(held_of(row("planet")).is_none());
+        let held = held_of(row("space")).expect("a known scope");
+        assert_eq!(held.subscription.events, vec![Event::Zero]);
+        assert_eq!(held.subscription.delivery, Delivery::Digest);
+        assert_eq!(held.subject, "jana");
+    }
+
+    #[test]
+    fn a_digest_is_never_due_on_a_day_the_calendar_cannot_place() {
+        let first = TimestampTz::from_second(-377_705_001_600).expect("inside the range");
+        assert!(!digest_due(Some(TimestampTz::UNIX_EPOCH), first));
+    }
+
+    #[test]
+    fn a_held_delete_is_a_failure_unless_the_pipeline_already_fails() {
+        use crate::pipeline_source_deletes::{Hold, HoldReason};
+        let hold = |run: &str| Hold {
+            run: run.into(),
+            reason: HoldReason::Empty,
+            would: 0,
+            ledger: 0,
+        };
+        let failing: IncidentKey = ("helsinki".into(), "bikes".into(), Event::Failure);
+        let mut signals = vec![Signal {
+            key: failing,
+            detail: "runner refused".into(),
+        }];
+        held_signals(
+            &mut signals,
+            vec![
+                ("helsinki".into(), "bikes".into(), hold("r1")),
+                ("helsinki".into(), "trees".into(), hold("r2")),
+            ],
+        );
+        assert_eq!(signals.len(), 2);
+        assert_eq!(signals[0].detail, "runner refused");
+        assert_eq!(
+            signals[1].key,
+            ("helsinki".to_owned(), "trees".to_owned(), Event::Failure)
+        );
+        assert_eq!(signals[1].detail, hold("r2").detail());
+        held_signals(&mut signals, Vec::new());
+        assert_eq!(signals.len(), 2);
+    }
+
+    #[test]
+    fn a_stale_space_names_the_pipeline_that_feeds_it_and_no_other() {
+        use crate::quality::{FreshState, Freshness};
+        let mirror = mirror();
+        mirror.upsert(pipeline("bikes", json!({ "phase": "Live" })));
+        mirror.upsert(pipeline("trees", json!({ "phase": "Live" })));
+        let row = |name: &str, state: FreshState| Freshness {
+            pipeline: name.into(),
+            entity_type: String::new(),
+            newest: None,
+            target_seconds: Some(60),
+            state,
+            paused: false,
+        };
+        let report = crate::quality::Tally::default().into_quality(
+            at("2026-10-07T08:00:00Z"),
+            vec![
+                row("bikes", FreshState::Stale),
+                row("trees", FreshState::Fresh),
+            ],
+        );
+        let quality = crate::quality::Store::default();
+        quality.put("helsinki", "mobility", report);
+        let (_, signals) = read_pipelines(&mirror, &quality);
+        assert_eq!(
+            signals,
+            vec![Signal {
+                key: ("helsinki".into(), "bikes".into(), Event::Stale),
+                detail: String::new()
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_memory_store_answers_an_unknown_id_or_person_with_nothing() {
+        let store = AlertStore::new(None, Default::default());
+        let sub = subscribe(&store, "jana", "helsinki", &[Event::Zero], Delivery::Portal).await;
+        assert!(!store.remove("eeva", sub.id).await.unwrap());
+        assert!(!store.remove("jana", sub.id + 100).await.unwrap());
+        assert_eq!(store.mute("eeva", sub.id, None).await.unwrap(), None);
+        assert_eq!(store.mute("jana", sub.id + 100, None).await.unwrap(), None);
+        assert!(!store.mark_read(&["jana".into()], 999).await.unwrap());
+        assert!(store.notices(&["nobody".into()]).await.unwrap().is_empty());
+        store
+            .digested("helsinki", sub.id + 100, at("2026-10-07T08:00:00Z"))
+            .await
+            .unwrap();
+        assert!(store.subscriptions_of("eeva").await.unwrap().is_empty());
+        assert_eq!(store.subscriptions_of("jana").await.unwrap(), vec![sub]);
+    }
+
+    #[tokio::test]
+    async fn a_memory_subscription_changes_in_place_and_a_mute_is_set_and_lifted() {
+        let store = AlertStore::new(None, Default::default());
+        let first = subscribe(&store, "jana", "helsinki", &[Event::Zero], Delivery::Portal).await;
+        let muted = store
+            .mute("jana", first.id, Some(at("2026-10-08T00:00:00Z")))
+            .await
+            .unwrap()
+            .expect("hers");
+        assert_eq!(muted.muted_until.as_deref(), Some("2026-10-08T00:00:00Z"));
+        let again = subscribe(
+            &store,
+            "jana",
+            "helsinki",
+            &[Event::Failure, Event::Stale],
+            Delivery::Digest,
+        )
+        .await;
+        assert_eq!(again.id, first.id, "the same target is the same alert");
+        assert_eq!(again.events, vec![Event::Failure, Event::Stale]);
+        assert_eq!(again.delivery, Delivery::Digest);
+        let held = store.all().await.unwrap();
+        assert_eq!(held.len(), 1);
+        assert!(held[0].muted_until.is_some(), "a mute is kept");
+        let lifted = store
+            .mute("jana", first.id, None)
+            .await
+            .unwrap()
+            .expect("hers");
+        assert_eq!(lifted.muted_until, None);
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_lock_still_serves_every_memory_door() {
+        let store = AlertStore {
+            inner: Inner::Memory(poisoned()),
+        };
+        let sub = subscribe(&store, "jana", "helsinki", &[Event::Zero], Delivery::Portal).await;
+        assert_eq!(store.all().await.unwrap().len(), 1);
+        let key: IncidentKey = ("helsinki".into(), "bikes".into(), Event::Zero);
+        let signal = Signal {
+            key: key.clone(),
+            detail: "stalled".into(),
+        };
+        store
+            .open(&signal, at("2026-10-07T08:00:00Z"))
+            .await
+            .unwrap();
+        assert_eq!(store.open_incidents().await.unwrap().len(), 1);
+        store
+            .notify("jana", sub.id, &key, "opened", "stalled")
+            .await
+            .unwrap();
+        let told = store.notices(&["jana".into()]).await.unwrap();
+        assert_eq!(told.len(), 1);
+        assert!(store.mark_read(&["jana".into()], told[0].id).await.unwrap());
+        store
+            .digested("helsinki", sub.id, at("2026-10-07T09:00:00Z"))
+            .await
+            .unwrap();
+        assert!(store.all().await.unwrap()[0].digest_at.is_some());
+        let muted = store
+            .mute("jana", sub.id, Some(at("2026-10-08T00:00:00Z")))
+            .await
+            .unwrap()
+            .expect("hers");
+        assert!(muted.muted_until.is_some());
+        store.close(&key, at("2026-10-07T10:00:00Z")).await.unwrap();
+        assert!(store.open_incidents().await.unwrap().is_empty());
+        assert!(store.remove("jana", sub.id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_held_source_delete_opens_a_failure_for_the_pipeline_s_subscriber() {
+        use crate::pipeline_source_deletes::{Hold, HoldReason, Ledger};
+        let mirror = mirror();
+        mirror.upsert(pipeline("bikes", json!({ "phase": "Live" })));
+        let ledger = Arc::new(Ledger::new(None, Default::default()));
+        ledger
+            .settle(
+                "helsinki",
+                "bikes",
+                &[],
+                Some(&Hold {
+                    run: "r7".into(),
+                    reason: HoldReason::Empty,
+                    would: 0,
+                    ledger: 0,
+                }),
+            )
+            .await
+            .unwrap();
+        let store = Arc::new(AlertStore::new(None, Default::default()));
+        let evaluator = evaluator_over(&mirror, &store)
+            .with_source_holds(ledger)
+            .with_link_check(None);
+        subscribe(
+            &store,
+            "mikko",
+            "helsinki",
+            &[Event::Failure],
+            Delivery::Portal,
+        )
+        .await;
+        evaluator.run(at("2026-10-07T08:00:00Z")).await.unwrap();
+        let told = store.notices(&["mikko".into()]).await.unwrap();
+        assert_eq!(told.len(), 1);
+        assert_eq!(
+            told[0].detail,
+            "source deletes held: run r7 read no record, so nothing was deleted"
+        );
+        assert_eq!(told[0].event, Event::Failure);
+    }
+
+    #[tokio::test]
+    async fn an_hour_that_lost_records_opens_a_failure_naming_the_ratio() {
+        let mirror = mirror();
+        mirror.upsert(pipeline("bikes", json!({ "phase": "Live" })));
+        let store = Arc::new(AlertStore::new(None, Default::default()));
+        let runs = Arc::new(crate::pipeline_log::LogStore::new(None, Default::default()));
+        let evaluator = evaluator_over(&mirror, &store).with_run_health(Arc::clone(&runs));
+        subscribe(
+            &store,
+            "mikko",
+            "helsinki",
+            &[Event::Failure],
+            Delivery::Portal,
+        )
+        .await;
+        let said = |outcome, message: &str| crate::pipeline_log::NewLine {
+            record_id: String::new(),
+            step: None,
+            outcome,
+            message: message.to_owned(),
+        };
+        runs.append(
+            "helsinki",
+            "bikes",
+            "r1",
+            &[
+                said(crate::pipeline_log::Outcome::Sent, ""),
+                said(
+                    crate::pipeline_log::Outcome::Failed,
+                    "step 2 threw: no date",
+                ),
+            ],
+        )
+        .await
+        .unwrap();
+        evaluator.run(at("2026-10-07T08:00:00Z")).await.unwrap();
+        let told = store.notices(&["mikko".into()]).await.unwrap();
+        assert_eq!(told.len(), 1);
+        assert_eq!(
+            told[0].detail,
+            "1 of 2 records in the last hour failed or were refused (50 %): step 2 threw: no date"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_over_a_loaded_mirror_writes_its_findings_to_the_health_log() {
+        let mirror = mirror();
+        mirror.upsert(pipeline("bikes", json!({ "phase": "Error" })));
+        let log = Arc::new(crate::health_log::HealthStore::new(
+            None,
+            Default::default(),
+        ));
+        let store = Arc::new(AlertStore::new(None, Default::default()));
+        let evaluator = evaluator_over(&mirror, &store).with_health_log(
+            Arc::clone(&log),
+            Arc::new(crate::health_probe::Probes::new(None, None)),
+        );
+        let now = at("2026-10-21T08:00:00Z");
+        evaluator.run(now).await.unwrap();
+        let kept = log.list(Some("helsinki"), now).await.expect("list");
+        assert!(
+            kept.iter().any(|c| c.name == "bikes" && c.check == "runs"),
+            "the pipeline's runs check was written"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_health_log_that_cannot_be_written_does_not_stop_the_run() {
+        let mirror = mirror();
+        project_in(&mirror, "helsinki", "somewhere");
+        mirror.upsert(pipeline("bikes", json!({ "phase": "Live" })));
+        let log = Arc::new(crate::health_log::HealthStore::new(
+            Some(dead_pool()),
+            Arc::clone(&mirror),
+        ));
+        let store = Arc::new(AlertStore::new(None, Default::default()));
+        let evaluator = evaluator_over(&mirror, &store)
+            .with_health_log(log, Arc::new(crate::health_probe::Probes::new(None, None)));
+        evaluator
+            .run(at("2026-10-21T08:00:00Z"))
+            .await
+            .expect("the run goes on");
+    }
+
+    #[tokio::test]
+    async fn agent_runs_that_cannot_be_read_keep_the_open_agent_incidents_and_no_other() {
+        let mirror = Arc::new(Mirror::new());
+        project_in(&mirror, "helsinki", "somewhere");
+        let agents = Arc::new(crate::agents::store::AgentStore::new(
+            Some(dead_pool()),
+            Arc::clone(&mirror),
+        ));
+        let store = Arc::new(AlertStore::new(None, Default::default()));
+        let evaluator = evaluator_over(&mirror, &store).with_agent_runs(agents);
+        let agent_key: IncidentKey = ("helsinki".into(), "analyst".into(), Event::RefusalSpike);
+        let now = at("2026-10-07T08:00:00Z");
+        for (key, detail) in [
+            (agent_key.clone(), "5 refused tool calls in the last hour"),
+            (
+                ("helsinki".to_owned(), "bikes".to_owned(), Event::Zero),
+                "stalled",
+            ),
+        ] {
+            store
+                .open(
+                    &Signal {
+                        key,
+                        detail: detail.into(),
+                    },
+                    now,
+                )
+                .await
+                .unwrap();
+        }
+        let open = store.open_incidents().await.unwrap();
+        assert_eq!(open.len(), 2);
+        let mut signals = Vec::new();
+        evaluator.add_agents(&open, &mut signals, now).await;
+        assert_eq!(
+            signals,
+            vec![Signal {
+                key: agent_key,
+                detail: "5 refused tool calls in the last hour".into()
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_start_runs_once_in_the_background_and_not_while_one_is_under_way() {
+        let mirror = mirror();
+        mirror.upsert(pipeline("bikes", stalled()));
+        let store = Arc::new(AlertStore::new(None, Default::default()));
+        let links = Arc::new(crate::link_check::Checker::new(
+            Arc::new(Mirror::new()),
+            Arc::new(crate::link_check::LinkStore::new(None, Default::default())),
+            "http://127.0.0.1:1/".parse().expect("a url"),
+        ));
+        let evaluator = Arc::new(evaluator_over(&mirror, &store).with_link_check(Some(links)));
+        evaluator.running.store(true, Ordering::Release);
+        evaluator.start();
+        assert!(
+            store.open_incidents().await.unwrap().is_empty(),
+            "a run under way is not doubled"
+        );
+        evaluator.running.store(false, Ordering::Release);
+        evaluator.start();
+        for _ in 0..500 {
+            if !evaluator.running.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(store.open_incidents().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_background_run_that_fails_says_so_and_frees_the_next() {
+        let mirror = Arc::new(Mirror::new());
+        project_in(&mirror, "helsinki", "somewhere");
+        let store = Arc::new(AlertStore::new(Some(dead_pool()), Arc::clone(&mirror)));
+        let evaluator = Arc::new(evaluator_over(&mirror, &store));
+        evaluator.start();
+        for _ in 0..500 {
+            if !evaluator.running.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!evaluator.running.load(Ordering::Acquire));
+        assert!(evaluator.run(at("2026-10-07T08:00:00Z")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_dead_pool_fails_every_door_of_the_database_store() {
+        let mirror = Arc::new(Mirror::new());
+        project_in(&mirror, "helsinki", "somewhere");
+        let store = AlertStore::new(Some(dead_pool()), Arc::clone(&mirror));
+        let now = at("2026-10-07T08:00:00Z");
+        let key: IncidentKey = ("helsinki".into(), "bikes".into(), Event::Zero);
+        let signal = Signal {
+            key: key.clone(),
+            detail: String::new(),
+        };
+        assert!(store.all().await.is_err());
+        assert!(store.subscriptions_of("jana").await.is_err());
+        assert!(store
+            .upsert(
+                "jana",
+                "helsinki",
+                Scope::Pipeline,
+                "bikes",
+                &[Event::Zero],
+                Delivery::Portal
+            )
+            .await
+            .is_err());
+        assert!(store.remove("jana", 1).await.is_err());
+        assert!(store.mute("jana", 1, None).await.is_err());
+        assert!(store.digested("helsinki", 1, now).await.is_err());
+        assert!(store.open_incidents().await.is_err());
+        assert!(store.incidents_since(Some(now)).await.is_err());
+        assert!(store.open(&signal, now).await.is_err());
+        assert!(store.close(&key, now).await.is_err());
+        assert!(store.notify("jana", 1, &key, "opened", "").await.is_err());
+        assert!(store.notices(&["jana".into()]).await.is_err());
+        assert!(store.mark_read(&["jana".into()], 1).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn subscriptions_are_kept_per_project_with_every_scope_event_and_delivery() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let (a, b, who, other) = (
+            format!("p{}", unique()),
+            format!("p{}", unique()),
+            format!("s{}", unique()),
+            format!("s{}", unique()),
+        );
+        let mirror = placed(&pool, &[&a, &b]).await;
+        let store = AlertStore::new(Some(pool), mirror);
+        let pipeline_sub = subscribe(
+            &store,
+            &who,
+            &a,
+            &[Event::Failure, Event::Zero],
+            Delivery::Portal,
+        )
+        .await;
+        let mut kept = vec![pipeline_sub.clone()];
+        for (project, scope, target, events, delivery) in [
+            (
+                &a,
+                Scope::Space,
+                "mobility",
+                vec![Event::Invalid, Event::Stale],
+                Delivery::Digest,
+            ),
+            (
+                &b,
+                Scope::Type,
+                "mobility/Bike",
+                vec![Event::Zero],
+                Delivery::Portal,
+            ),
+            (
+                &b,
+                Scope::Agent,
+                "analyst",
+                vec![Event::RefusalSpike, Event::SpendShare, Event::OffHoursWrite],
+                Delivery::Portal,
+            ),
+        ] {
+            kept.push(
+                store
+                    .upsert(&who, project, scope, target, &events, delivery)
+                    .await
+                    .unwrap()
+                    .expect("kept"),
+            );
+        }
+        subscribe(&store, &other, &a, &[Event::Zero], Delivery::Portal).await;
+        let mine = store.subscriptions_of(&who).await.unwrap();
+        assert_eq!(mine, kept, "oldest first, across both Organizations");
+        assert_eq!(
+            mine.iter().map(|s| s.scope).collect::<Vec<_>>(),
+            [Scope::Pipeline, Scope::Space, Scope::Type, Scope::Agent]
+        );
+        assert_eq!(mine[1].delivery, Delivery::Digest);
+        assert_eq!(
+            mine[3].events,
+            vec![Event::RefusalSpike, Event::SpendShare, Event::OffHoursWrite]
+        );
+        assert_eq!(store.subscriptions_of(&other).await.unwrap().len(), 1);
+        let held = store.all().await.unwrap();
+        assert!(held.iter().filter(|h| h.subject == who).count() == 4);
+        let changed = subscribe(&store, &who, &a, &[Event::Zero], Delivery::Digest).await;
+        assert_eq!(
+            changed.id, pipeline_sub.id,
+            "the same target is the same alert"
+        );
+        assert_eq!(changed.events, vec![Event::Zero]);
+        assert_eq!(store.subscriptions_of(&who).await.unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn a_mute_is_set_kept_and_lifted_and_a_stop_reaches_the_other_organization() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let (a, b, who, other) = (
+            format!("p{}", unique()),
+            format!("p{}", unique()),
+            format!("s{}", unique()),
+            format!("s{}", unique()),
+        );
+        let mirror = placed(&pool, &[&a, &b]).await;
+        let store = AlertStore::new(Some(pool), mirror);
+        subscribe(&store, &who, &a, &[Event::Zero], Delivery::Portal).await;
+        let in_b = subscribe(&store, &who, &b, &[Event::Zero], Delivery::Portal).await;
+        let muted = store
+            .mute(&who, in_b.id, Some(at("2026-10-08T00:00:00Z")))
+            .await
+            .unwrap()
+            .expect("hers");
+        assert_eq!(muted.muted_until.as_deref(), Some("2026-10-08T00:00:00Z"));
+        let again = subscribe(&store, &who, &b, &[Event::Failure], Delivery::Portal).await;
+        assert_eq!(again.muted_until, muted.muted_until, "a mute is kept");
+        let lifted = store
+            .mute(&who, in_b.id, None)
+            .await
+            .unwrap()
+            .expect("hers");
+        assert_eq!(lifted.muted_until, None);
+        assert_eq!(store.mute(&other, in_b.id, None).await.unwrap(), None);
+        assert_eq!(store.mute(&who, i64::MAX, None).await.unwrap(), None);
+        assert!(!store.remove(&other, in_b.id).await.unwrap());
+        assert!(!store.remove(&who, i64::MAX).await.unwrap());
+        assert!(store.remove(&who, in_b.id).await.unwrap());
+        assert_eq!(store.subscriptions_of(&who).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_project_with_no_key_keeps_no_alert_and_no_incident_and_no_notice() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let (ghost, unregistered) = (format!("p{}", unique()), format!("p{}", unique()));
+        let mirror = Arc::new(Mirror::new());
+        project_in(
+            &mirror,
+            &unregistered,
+            &format!("unregistered-{}", unique()),
+        );
+        let store = Arc::new(AlertStore::new(Some(pool), Arc::clone(&mirror)));
+        let evaluator = evaluator_over(&mirror, &store);
+        let now = at("2026-10-07T08:00:00Z");
+        for project in [&ghost, &unregistered] {
+            assert_eq!(
+                store
+                    .upsert(
+                        "jana",
+                        project,
+                        Scope::Pipeline,
+                        "bikes",
+                        &[Event::Zero],
+                        Delivery::Portal
+                    )
+                    .await
+                    .unwrap(),
+                None,
+                "{project}"
+            );
+            mirror.upsert(pipeline_of(project, "bikes", stalled()));
+            let key: IncidentKey = (project.clone(), "bikes".into(), Event::Zero);
+            store.close(&key, now).await.unwrap();
+            store.notify("jana", 1, &key, "opened", "").await.unwrap();
+            store.digested(project, 1, now).await.unwrap();
+        }
+        evaluator.run(now).await.unwrap();
+        assert!(store.open_incidents().await.unwrap().is_empty());
+        assert!(store.notices(&["jana".into()]).await.unwrap().is_empty());
+        assert!(store.subscriptions_of("jana").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_incident_in_the_database_opens_once_recovers_once_and_tells_only_its_own_project() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let (a, b, jana, eeva) = (
+            format!("p{}", unique()),
+            format!("p{}", unique()),
+            format!("s{}", unique()),
+            format!("s{}", unique()),
+        );
+        let mirror = placed(&pool, &[&a, &b]).await;
+        let store = Arc::new(AlertStore::new(Some(pool), Arc::clone(&mirror)));
+        let evaluator = evaluator_over(&mirror, &store);
+        let hers = subscribe(&store, &jana, &a, &[Event::Zero], Delivery::Portal).await;
+        subscribe(&store, &eeva, &b, &[Event::Zero], Delivery::Portal).await;
+        for project in [&a, &b] {
+            mirror.upsert(pipeline_of(project, "bikes", stalled()));
+        }
+        evaluator.run(at("2026-10-07T08:00:00Z")).await.unwrap();
+        evaluator.run(at("2026-10-07T08:01:00Z")).await.unwrap();
+        assert_eq!(store.open_incidents().await.unwrap().len(), 2);
+        mirror.upsert(pipeline_of(&a, "bikes", json!({ "phase": "Live" })));
+        evaluator.run(at("2026-10-07T08:02:00Z")).await.unwrap();
+        let open = store.open_incidents().await.unwrap();
+        assert_eq!(
+            open.keys().cloned().collect::<Vec<_>>(),
+            vec![(b.clone(), "bikes".to_owned(), Event::Zero)]
+        );
+        let told = store.notices(std::slice::from_ref(&jana)).await.unwrap();
+        assert_eq!(
+            told.iter().map(|n| n.change.as_str()).collect::<Vec<_>>(),
+            vec!["recovered", "opened"]
+        );
+        assert!(told
+            .iter()
+            .all(|n| n.subscription == hers.id && n.project == a && n.pipeline == "bikes"));
+        assert_eq!(told[1].detail, "Stalled");
+        let theirs = store.notices(std::slice::from_ref(&eeva)).await.unwrap();
+        assert_eq!(theirs.len(), 1, "{theirs:?}");
+        assert_eq!(theirs[0].project, b);
+        let both = store.notices(&[jana, eeva]).await.unwrap();
+        assert_eq!(both.len(), 3);
+        assert!(both.windows(2).all(|pair| pair[0].id > pair[1].id));
+    }
+
+    #[tokio::test]
+    async fn a_digest_in_the_database_names_a_recovered_incident_once_and_skips_a_muted_reader() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let (a, who, quiet) = (
+            format!("p{}", unique()),
+            format!("s{}", unique()),
+            format!("s{}", unique()),
+        );
+        let mirror = placed(&pool, &[&a]).await;
+        let store = Arc::new(AlertStore::new(Some(pool), Arc::clone(&mirror)));
+        let evaluator = evaluator_over(&mirror, &store);
+        subscribe(&store, &who, &a, &[Event::Zero], Delivery::Digest).await;
+        let asleep = subscribe(&store, &quiet, &a, &[Event::Zero], Delivery::Digest).await;
+        store
+            .mute(&quiet, asleep.id, Some(at("2026-10-09T00:00:00Z")))
+            .await
+            .unwrap();
+        mirror.upsert(pipeline_of(&a, "bikes", stalled()));
+        evaluator.run(at("2026-10-07T03:00:00Z")).await.unwrap();
+        mirror.upsert(pipeline_of(&a, "bikes", json!({ "phase": "Live" })));
+        evaluator.run(at("2026-10-07T05:00:00Z")).await.unwrap();
+        evaluator.run(at("2026-10-07T07:30:00Z")).await.unwrap();
+        evaluator.run(at("2026-10-07T09:00:00Z")).await.unwrap();
+        let told = store.notices(std::slice::from_ref(&who)).await.unwrap();
+        assert_eq!(told.len(), 1);
+        assert_eq!(told[0].change, "digest");
+        assert_eq!(told[0].detail, "recovered 2026-10-07T05:00:00Z");
+        assert!(store
+            .notices(std::slice::from_ref(&quiet))
+            .await
+            .unwrap()
+            .is_empty());
+        let held = store.all().await.unwrap();
+        assert!(held
+            .iter()
+            .filter(|h| h.subject == who || h.subject == quiet)
+            .all(|h| h.digest_at.is_some()));
+    }
+
+    #[tokio::test]
+    async fn a_notice_is_read_once_by_its_own_person_in_any_project() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let (a, b, jana, eeva) = (
+            format!("p{}", unique()),
+            format!("p{}", unique()),
+            format!("s{}", unique()),
+            format!("s{}", unique()),
+        );
+        let mirror = placed(&pool, &[&a, &b]).await;
+        let store = AlertStore::new(Some(pool), mirror);
+        subscribe(&store, &jana, &a, &[Event::Zero], Delivery::Portal).await;
+        let in_b = subscribe(&store, &jana, &b, &[Event::Zero], Delivery::Portal).await;
+        let key: IncidentKey = (b.clone(), "bikes".into(), Event::Zero);
+        store
+            .notify(&jana, in_b.id, &key, "opened", "stalled")
+            .await
+            .unwrap();
+        let id = store.notices(std::slice::from_ref(&jana)).await.unwrap()[0].id;
+        assert!(!store
+            .mark_read(std::slice::from_ref(&eeva), id)
+            .await
+            .unwrap());
+        assert!(!store
+            .mark_read(std::slice::from_ref(&jana), i64::MAX)
+            .await
+            .unwrap());
+        assert!(store
+            .mark_read(std::slice::from_ref(&jana), id)
+            .await
+            .unwrap());
+        assert!(store.notices(&[jana]).await.unwrap()[0].read);
+    }
+
+    #[tokio::test]
+    async fn a_person_keeps_the_newest_notices_of_a_project_and_the_newest_overall() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let (a, b, jana) = (
+            format!("p{}", unique()),
+            format!("p{}", unique()),
+            format!("s{}", unique()),
+        );
+        let mirror = placed(&pool, &[&a, &b]).await;
+        let store = AlertStore::new(Some(pool), mirror);
+        let in_a = subscribe(&store, &jana, &a, &[Event::Zero], Delivery::Portal).await;
+        let in_b = subscribe(&store, &jana, &b, &[Event::Zero], Delivery::Portal).await;
+        let key_a: IncidentKey = (a.clone(), "bikes".into(), Event::Zero);
+        let key_b: IncidentKey = (b.clone(), "bikes".into(), Event::Zero);
+        for _ in 0..(KEPT + 3) {
+            store
+                .notify(&jana, in_a.id, &key_a, "opened", "")
+                .await
+                .unwrap();
+        }
+        for _ in 0..5 {
+            store
+                .notify(&jana, in_b.id, &key_b, "opened", "")
+                .await
+                .unwrap();
+        }
+        let told = store.notices(std::slice::from_ref(&jana)).await.unwrap();
+        assert_eq!(told.len(), KEPT as usize);
+        assert!(told[..5].iter().all(|n| n.project == b), "newest first");
+        assert!(told[5..].iter().all(|n| n.project == a));
+    }
 }

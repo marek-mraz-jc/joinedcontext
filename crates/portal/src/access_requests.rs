@@ -1204,4 +1204,274 @@ mod tests {
         assert!(checked_person_types(&[], &served).is_err());
         assert!(checked_person_types(&asked(&["Device"]), &[]).is_err());
     }
+
+    #[test]
+    fn an_operation_is_written_and_read_back_by_its_word() {
+        for (operations, word) in [
+            (Operations::Read, "read"),
+            (Operations::Write, "write"),
+            (Operations::History, "history"),
+        ] {
+            assert_eq!(operations.as_str(), word);
+            assert_eq!(Operations::parse(word), operations);
+        }
+        assert_eq!(Operations::parse("something-else"), Operations::Read);
+        assert_eq!(Operations::parse(""), Operations::Read);
+        assert_eq!(
+            Operations::History.policy_operations(),
+            json!(["retrieveOps", "queryTemporal"])
+        );
+    }
+
+    #[test]
+    fn a_persons_policy_is_named_by_the_request_when_the_endpoint_name_is_long() {
+        let mut long = person_request();
+        long.endpoint = "e".repeat(47);
+        assert_eq!(
+            long.policy_name(),
+            format!("{}-ar-0a1b2c3d4e5f", "e".repeat(47))
+        );
+        long.endpoint = "e".repeat(48);
+        assert_eq!(long.policy_name(), "access-ar-0a1b2c3d4e5f");
+        assert!(long.policy_name().len() <= 63);
+    }
+
+    #[test]
+    fn another_grant_of_the_project_that_has_not_ended_keeps_the_listing() {
+        let now = time::macros::datetime!(2026-11-01 08:00 UTC);
+        let request = request();
+        let ours =
+            grant_bundle(&request, &endpoint("project-list", &["city-kpis"]), &refs())[1].clone();
+        let other = |to: Value| {
+            json!({ "metadata": { "name": "air-quality-city-kpis-other" },
+                    "spec": { "validity": { "to": to } } })
+        };
+        let listed = endpoint("project-list", &["city-kpis"]);
+        let remaining =
+            |to: Value| revoke_bundle(&request, &listed, &[ours.clone(), other(to)], now).len();
+        assert_eq!(
+            remaining(json!("2027-01-01T00:00:00Z")),
+            1,
+            "still running: keeps the listing"
+        );
+        assert_eq!(
+            remaining(json!("2026-10-01T00:00:00Z")),
+            2,
+            "ended: the listing goes"
+        );
+        assert_eq!(
+            remaining(json!("not a date")),
+            1,
+            "unreadable end counts as no end"
+        );
+        assert_eq!(remaining(Value::Null), 1, "no end is running");
+    }
+
+    #[test]
+    fn a_request_that_is_pending_or_still_running_has_no_refusal_reason() {
+        let now = time::macros::datetime!(2026-11-01 08:00 UTC);
+        assert_eq!(refusal_reason(&[], now), None);
+        let pending = request();
+        assert_eq!(refusal_reason(std::slice::from_ref(&pending), now), None);
+        let mut running = request();
+        running.state = "approved".into();
+        running.until = Some(now + time::Duration::days(2));
+        assert_eq!(refusal_reason(std::slice::from_ref(&running), now), None);
+        let mut denied = request();
+        denied.state = "denied".into();
+        assert_eq!(refusal_reason(std::slice::from_ref(&denied), now), None);
+        let mut revoked_without_time = request();
+        revoked_without_time.state = "revoked".into();
+        assert_eq!(refusal_reason(&[revoked_without_time], now), None);
+    }
+
+    fn database_url() -> Option<String> {
+        std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+    }
+
+    /// A project of an Organization of the registry, so its requests are keyed (T-7202).
+    async fn keyed(pool: &PgPool, project: &str) {
+        let mirror = crate::store::Mirror::new();
+        let organization = format!("{project}-org");
+        crate::project_ids::placed(pool, &mirror, project, &organization).await;
+        crate::project_ids::key(pool, &organization, project)
+            .await
+            .expect("the registry")
+            .expect("a key for the project");
+    }
+
+    fn stored(project: &str, id: &str, operations: Operations) -> AccessRequest {
+        AccessRequest {
+            id: id.to_owned(),
+            endpoint_project: project.to_owned(),
+            operations,
+            ..request()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_decision_is_taken_back_to_the_request_as_it_was_and_only_by_its_decider() {
+        let Some(url) = database_url() else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = crate::db::connect(&url).await.expect("connect and migrate");
+        let project = format!("ar{}", jc_types::ProjectId::mint().path_segment());
+        keyed(&pool, &project).await;
+        let first = stored(&project, &new_id(), Operations::Write);
+        assert!(insert(&pool, &first).await.expect("stored"));
+        assert!(
+            !insert(&pool, &first).await.expect("the same request again"),
+            "a request the store already holds is not stored twice"
+        );
+        let read = get(&pool, &project, &first.id)
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(read.operations, Operations::Write);
+        assert_eq!(read.state, "pending");
+
+        assert!(decide(
+            &pool,
+            &read,
+            ("pending", "approved"),
+            "olli",
+            Some("fine"),
+            Some("change-1")
+        )
+        .await
+        .expect("decided"));
+        let decided = get(&pool, &project, &first.id)
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(
+            (decided.state.as_str(), decided.decided_by.as_deref()),
+            ("approved", Some("olli"))
+        );
+
+        // Another person's claim is not this person's to take back.
+        take_back(&pool, &read, "approved", "someone-else")
+            .await
+            .expect("no error");
+        let still = get(&pool, &project, &first.id)
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(still.state, "approved");
+        // A claim the row does not hold (it is not in that state) changes nothing either.
+        take_back(&pool, &read, "revoked", "olli")
+            .await
+            .expect("no error");
+        assert_eq!(
+            get(&pool, &project, &first.id)
+                .await
+                .expect("read")
+                .expect("kept")
+                .state,
+            "approved"
+        );
+        // The Change was recorded, so the row is no longer as it was claimed: nothing is taken.
+        take_back(&pool, &read, "approved", "olli")
+            .await
+            .expect("no error");
+        assert_eq!(
+            get(&pool, &project, &first.id)
+                .await
+                .expect("read")
+                .expect("kept")
+                .state,
+            "approved",
+            "a decision that carries a Change stays"
+        );
+
+        // A claim with no Change yet is taken back whole.
+        let second = AccessRequest {
+            endpoint: "second-endpoint".to_owned(),
+            ..stored(&project, &new_id(), Operations::History)
+        };
+        assert!(insert(&pool, &second).await.expect("stored"));
+        let before = get(&pool, &project, &second.id)
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(before.operations, Operations::History);
+        assert!(
+            decide(&pool, &before, ("pending", "approved"), "olli", None, None)
+                .await
+                .expect("claimed")
+        );
+        take_back(&pool, &before, "approved", "olli")
+            .await
+            .expect("taken back");
+        let back = get(&pool, &project, &second.id)
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(back.state, "pending");
+        assert_eq!(back.decided_by, None);
+        assert_eq!(back.change, None);
+        record_change(&pool, &back, "change-2")
+            .await
+            .expect("recorded");
+        assert_eq!(
+            get(&pool, &project, &second.id)
+                .await
+                .expect("read")
+                .expect("kept")
+                .change
+                .as_deref(),
+            Some("change-2")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_into_a_project_with_no_key_is_neither_stored_nor_taken_back() {
+        let Some(url) = database_url() else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = crate::db::connect(&url).await.expect("connect and migrate");
+        let project = format!("unkeyed{}", jc_types::ProjectId::mint().path_segment());
+        let request = stored(&project, &new_id(), Operations::Read);
+        assert!(
+            insert(&pool, &request).await.is_err(),
+            "the key is required"
+        );
+        assert!(get(&pool, &project, &request.id)
+            .await
+            .expect("read")
+            .is_none());
+        take_back(&pool, &request, "approved", "olli")
+            .await
+            .expect("nothing to take back");
+        assert!(incoming(&pool, &project).await.expect("read").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_dead_pool_answers_an_error_from_every_store_call() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        let request = request();
+        assert!(insert(&pool, &request).await.is_err());
+        assert!(get(&pool, "helsinki", &request.id).await.is_err());
+        assert!(incoming(&pool, "helsinki").await.is_err());
+        assert!(outgoing(&pool, "city-kpis", "air-index").await.is_err());
+        assert!(of_person(&pool, "olli", ("helsinki", "air-quality"))
+            .await
+            .is_err());
+        assert!(
+            decide(&pool, &request, ("pending", "approved"), "olli", None, None)
+                .await
+                .is_err()
+        );
+        assert!(take_back(&pool, &request, "approved", "olli")
+            .await
+            .is_err());
+        assert!(record_change(&pool, &request, "change-1").await.is_err());
+    }
 }

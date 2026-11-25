@@ -959,4 +959,934 @@ mod tests {
             Err(PeopleError::NotFound)
         );
     }
+
+    use serde_json::json;
+    use wiremock::matchers::{body_json, method, path, path_regex, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const ADMIN: &str = "/admin/realms/hel";
+
+    fn admin_for(base: &str) -> Admin {
+        let people = People::new(
+            &format!("{base}/realms/hel"),
+            "portal".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL");
+        Admin {
+            people,
+            token: "t".into(),
+        }
+    }
+
+    async fn stub(realm: &MockServer, verb: &str, at: &str, status: u16, body: Value) {
+        Mock::given(method(verb))
+            .and(path(format!("{ADMIN}{at}")))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .mount(realm)
+            .await;
+    }
+
+    async fn silent(realm: &MockServer, verb: &str, at: &str, status: u16) {
+        Mock::given(method(verb))
+            .and(path(format!("{ADMIN}{at}")))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(realm)
+            .await;
+    }
+
+    async fn not_json_realm() -> MockServer {
+        let realm = MockServer::start().await;
+        Mock::given(path_regex("^/admin/realms/hel/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&realm)
+            .await;
+        realm
+    }
+
+    #[test]
+    fn a_conflict_and_an_unreachable_realm_read_as_api_errors() {
+        assert!(matches!(
+            ApiError::from(PeopleError::Conflict),
+            ApiError::Conflict(message) if message.contains("e-mail")
+        ));
+        assert!(matches!(
+            ApiError::from(PeopleError::Unreachable("down".into())),
+            ApiError::Unavailable(message) if message.contains("down")
+        ));
+        assert!(matches!(
+            ApiError::from(PeopleError::Refused(403, "no".into())),
+            ApiError::Unavailable(message) if message.contains("403")
+        ));
+        assert!(matches!(
+            ApiError::from(PeopleError::NotFound),
+            ApiError::NotFound(_)
+        ));
+    }
+
+    #[test]
+    fn a_user_tells_a_service_account_and_a_locale() {
+        let user: KcUser = serde_json::from_value(json!({
+            "id": "u", "username": "service-account-x", "attributes": { "locale": ["fi", "sv"] }
+        }))
+        .expect("a user");
+        assert!(user.is_service_account());
+        assert_eq!(user.locale(), Some("fi"));
+        let linked: KcUser = serde_json::from_value(json!({
+            "id": "u", "username": "a@b", "serviceAccountClientLink": "c"
+        }))
+        .expect("a user");
+        assert!(linked.is_service_account());
+        assert_eq!(linked.locale(), None);
+    }
+
+    #[tokio::test]
+    async fn a_token_that_is_not_json_makes_the_realm_unreachable() {
+        let realm = MockServer::start().await;
+        Mock::given(path("/realms/hel/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&realm)
+            .await;
+        let people = People::new(
+            &format!("{}/realms/hel", realm.uri()),
+            "portal".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL");
+        assert!(matches!(
+            people.admin().await,
+            Err(PeopleError::Unreachable(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_refused_admin_client_and_a_dead_realm_are_named() {
+        let realm = MockServer::start().await;
+        Mock::given(path("/realms/hel/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&realm)
+            .await;
+        let people = People::new(
+            &format!("{}/realms/hel", realm.uri()),
+            "portal".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL");
+        assert!(matches!(
+            people.admin().await,
+            Err(PeopleError::Refused(401, _))
+        ));
+        let dead = People::new(
+            "http://127.0.0.1:1/realms/hel",
+            "portal".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL");
+        assert!(matches!(
+            dead.admin().await,
+            Err(PeopleError::Unreachable(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_realm_that_cannot_be_reached_fails_every_call_as_unreachable() {
+        let admin = admin_for("http://127.0.0.1:1");
+        assert!(matches!(
+            admin.list("", 0, 10).await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.sign_out("u1").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.delete("u1").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_refusal_names_the_realm_message_or_the_error_member_or_nothing() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/users/m",
+            400,
+            json!({ "errorMessage": "bad mail" }),
+        )
+        .await;
+        stub(
+            &realm,
+            "GET",
+            "/users/e",
+            400,
+            json!({ "error": "invalid_grant" }),
+        )
+        .await;
+        silent(&realm, "GET", "/users/n", 500).await;
+        silent(&realm, "GET", "/users/c", 409).await;
+        silent(&realm, "GET", "/users/f", 404).await;
+        let admin = admin_for(&realm.uri());
+        assert!(matches!(
+            admin.get("m").await,
+            Err(PeopleError::Refused(400, message)) if message == "bad mail"
+        ));
+        assert!(matches!(
+            admin.get("e").await,
+            Err(PeopleError::Refused(400, message)) if message == "invalid_grant"
+        ));
+        assert!(matches!(
+            admin.get("n").await,
+            Err(PeopleError::Refused(500, message)) if message == "no reason given"
+        ));
+        assert!(matches!(admin.get("c").await, Err(PeopleError::Conflict)));
+        assert!(matches!(admin.get("f").await, Err(PeopleError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_is_not_json_is_unreachable_for_every_read() {
+        let realm = not_json_realm().await;
+        let admin = admin_for(&realm.uri());
+        let bound = BTreeSet::new();
+        assert!(matches!(
+            admin.list("a", 0, 5).await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.get("u1").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.id_of_email("a@b.org").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.update("u1", |_| {}).await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.remove_second_factor("u1").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.last_seen("u1").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.consents("u1").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.groups_and_roles("u1").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.group_paths("u1").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.join_members("u1", "hel").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.join_group("u1", "ops").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.smtp_server().await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.test_smtp("a@b.org").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.group_members("ops").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.everyone().await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.members_of("hel").await,
+            Err(PeopleError::Unreachable(_))
+        ));
+        assert!(matches!(
+            admin.people_of("hel", &bound).await,
+            Err(PeopleError::Unreachable(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_create_without_location_is_found_by_its_e_mail() {
+        let realm = MockServer::start().await;
+        silent(&realm, "POST", "/users", 201).await;
+        stub(&realm, "GET", "/users", 200, json!([{ "id": "new1" }])).await;
+        let person = NewPerson {
+            email: "a@b.org",
+            first_name: "A",
+            last_name: "B",
+            locale: Some("fi"),
+        };
+        assert_eq!(
+            admin_for(&realm.uri()).create(&person).await,
+            Ok("new1".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_create_nobody_can_find_is_not_found_and_a_location_names_the_id() {
+        let none = MockServer::start().await;
+        silent(&none, "POST", "/users", 201).await;
+        stub(&none, "GET", "/users", 200, json!([])).await;
+        let person = NewPerson {
+            email: "a@b.org",
+            first_name: "A",
+            last_name: "B",
+            locale: None,
+        };
+        assert_eq!(
+            admin_for(&none.uri()).create(&person).await,
+            Err(PeopleError::NotFound)
+        );
+        let located = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("{ADMIN}/users")))
+            .respond_with(
+                ResponseTemplate::new(201)
+                    .insert_header("Location", "http://kc/admin/realms/hel/users/abc-1"),
+            )
+            .mount(&located)
+            .await;
+        assert_eq!(
+            admin_for(&located.uri()).create(&person).await,
+            Ok("abc-1".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_duplicate_create_is_a_conflict() {
+        let realm = MockServer::start().await;
+        silent(&realm, "POST", "/users", 409).await;
+        let person = NewPerson {
+            email: "a@b.org",
+            first_name: "A",
+            last_name: "B",
+            locale: None,
+        };
+        assert_eq!(
+            admin_for(&realm.uri()).create(&person).await,
+            Err(PeopleError::Conflict)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_e_mail_names_one_person_only_when_exactly_one_matches() {
+        let realm = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/users")))
+            .and(query_param("email", "one@b.org"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{ "id": "u1", "email": " ONE@b.org " }])),
+            )
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/users")))
+            .and(query_param("email", "two@b.org"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "u1", "email": "two@b.org" }, { "id": "u2", "email": "TWO@b.org" }
+            ])))
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/users")))
+            .and(query_param("email", "pre@b.org"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "u1", "email": "prefix-pre@b.org" }, { "id": "u3" }
+            ])))
+            .mount(&realm)
+            .await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(admin.id_of_email("one@b.org").await, Ok(Some("u1".into())));
+        assert_eq!(admin.id_of_email("two@b.org").await, Ok(None));
+        assert_eq!(admin.id_of_email("pre@b.org").await, Ok(None));
+    }
+
+    #[tokio::test]
+    async fn an_update_writes_the_edited_representation_back_whole() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/users/u1",
+            200,
+            json!({ "id": "u1", "attributes": { "x": ["1"] } }),
+        )
+        .await;
+        Mock::given(method("PUT"))
+            .and(path(format!("{ADMIN}/users/u1")))
+            .and(body_json(
+                json!({ "id": "u1", "attributes": { "x": ["1"] }, "enabled": false }),
+            ))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&realm)
+            .await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(
+            admin
+                .update("u1", |user| user["enabled"] = json!(false))
+                .await,
+            Ok(())
+        );
+        assert_eq!(
+            admin.update("../x", |_| {}).await,
+            Err(PeopleError::NotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_execute_actions_mail_carries_its_lifespan_and_return_page() {
+        let realm = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path(format!("{ADMIN}/users/u1/execute-actions-email")))
+            .and(query_param("lifespan", "3600"))
+            .and(query_param("client_id", "hub"))
+            .and(query_param("redirect_uri", "https://x/y"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&realm)
+            .await;
+        let admin = admin_for(&realm.uri());
+        let sent = admin
+            .send_actions(
+                "u1",
+                &["UPDATE_PASSWORD"],
+                Some(Duration::from_secs(3600)),
+                Some(("hub", "https://x/y")),
+            )
+            .await;
+        assert_eq!(sent, Ok(true));
+    }
+
+    #[tokio::test]
+    async fn a_realm_that_cannot_send_mail_answers_false_and_a_refusal_stands() {
+        let broken = MockServer::start().await;
+        silent(&broken, "PUT", "/users/u1/execute-actions-email", 500).await;
+        assert_eq!(
+            admin_for(&broken.uri())
+                .send_actions("u1", &["VERIFY_EMAIL"], None, None)
+                .await,
+            Ok(false)
+        );
+        let refusing = MockServer::start().await;
+        silent(&refusing, "PUT", "/users/u1/execute-actions-email", 403).await;
+        assert!(matches!(
+            admin_for(&refusing.uri())
+                .send_actions("u1", &["VERIFY_EMAIL"], None, None)
+                .await,
+            Err(PeopleError::Refused(403, _))
+        ));
+        assert_eq!(
+            admin_for(&refusing.uri())
+                .send_actions("a/b", &[], None, None)
+                .await,
+            Err(PeopleError::NotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_temporary_password_a_sign_out_and_a_delete_reach_the_realm() {
+        let realm = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path(format!("{ADMIN}/users/u1/reset-password")))
+            .and(body_json(
+                json!({ "type": "password", "value": "pw", "temporary": true }),
+            ))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&realm)
+            .await;
+        silent(&realm, "POST", "/users/u1/logout", 204).await;
+        silent(&realm, "DELETE", "/users/u1", 204).await;
+        silent(&realm, "DELETE", "/users/ghost", 404).await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(admin.set_temporary_password("u1", "pw").await, Ok(()));
+        assert_eq!(admin.sign_out("u1").await, Ok(()));
+        assert_eq!(admin.delete("u1").await, Ok(()));
+        assert_eq!(admin.delete("ghost").await, Err(PeopleError::NotFound));
+        assert_eq!(admin.delete("").await, Err(PeopleError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn only_second_factor_credentials_are_removed_and_counted() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/users/u1/credentials",
+            200,
+            json!([
+                { "id": "c1", "type": "otp" }, { "id": "c2", "type": "password" },
+                { "id": "c3", "type": "webauthn" }, { "id": "c4" }
+            ]),
+        )
+        .await;
+        silent(&realm, "DELETE", "/users/u1/credentials/c1", 204).await;
+        silent(&realm, "DELETE", "/users/u1/credentials/c3", 204).await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(admin.remove_second_factor("u1").await, Ok(2));
+    }
+
+    #[tokio::test]
+    async fn no_credentials_remove_nothing_and_a_bad_credential_id_stops() {
+        let realm = MockServer::start().await;
+        stub(&realm, "GET", "/users/u0/credentials", 200, json!([])).await;
+        stub(
+            &realm,
+            "GET",
+            "/users/u1/credentials",
+            200,
+            json!([{ "id": "a/b", "type": "otp" }]),
+        )
+        .await;
+        stub(
+            &realm,
+            "GET",
+            "/users/u2/credentials",
+            200,
+            json!([{ "id": "c1", "type": "otp" }]),
+        )
+        .await;
+        silent(&realm, "DELETE", "/users/u2/credentials/c1", 500).await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(admin.remove_second_factor("u0").await, Ok(0));
+        assert_eq!(
+            admin.remove_second_factor("u1").await,
+            Err(PeopleError::NotFound)
+        );
+        assert!(matches!(
+            admin.remove_second_factor("u2").await,
+            Err(PeopleError::Refused(500, _))
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_newest_session_is_the_last_seen_and_no_session_is_none() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/users/u1/sessions",
+            200,
+            json!([
+                { "lastAccess": 5 }, { "lastAccess": 9 }, {}
+            ]),
+        )
+        .await;
+        stub(&realm, "GET", "/users/u2/sessions", 200, json!([])).await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(admin.last_seen("u1").await, Ok(Some(9)));
+        assert_eq!(admin.last_seen("u2").await, Ok(None));
+    }
+
+    #[tokio::test]
+    async fn consents_are_listed_and_one_is_revoked() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/users/u1/consents",
+            200,
+            json!([
+                { "clientId": "hub", "grantedClientScopes": ["openid"], "createdDate": 1 }
+            ]),
+        )
+        .await;
+        silent(&realm, "DELETE", "/users/u1/consents/hub", 204).await;
+        let admin = admin_for(&realm.uri());
+        let consents = admin.consents("u1").await.expect("consents");
+        assert_eq!(consents.len(), 1);
+        assert_eq!(consents[0].client_id, "hub");
+        assert_eq!(consents[0].created_date, Some(1));
+        assert_eq!(admin.revoke_consent("u1", "hub").await, Ok(()));
+        assert_eq!(
+            admin.revoke_consent("u1", "../x").await,
+            Err(PeopleError::NotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn groups_and_roles_are_read_together_and_apart() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/users/u1/groups",
+            200,
+            json!([
+                { "path": "/helsinki/members" }, { "path": "/ops" }, {}
+            ]),
+        )
+        .await;
+        stub(
+            &realm,
+            "GET",
+            "/users/u1/role-mappings/realm/composite",
+            200,
+            json!([
+                { "name": "admin" }
+            ]),
+        )
+        .await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(
+            admin.groups_and_roles("u1").await,
+            Ok(vec![
+                "helsinki/members".into(),
+                "ops".into(),
+                "admin".into()
+            ])
+        );
+        assert_eq!(
+            admin.groups_and_realm_roles("u1").await,
+            Ok((
+                vec!["helsinki/members".into(), "ops".into()],
+                vec!["admin".into()]
+            ))
+        );
+        assert_eq!(
+            admin.group_paths("u1").await,
+            Ok(vec![
+                "/helsinki/members".into(),
+                "/ops".into(),
+                String::new()
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_group_that_does_not_exist_changes_no_membership() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/groups",
+            200,
+            json!([{ "id": "g1", "path": "/other" }]),
+        )
+        .await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(admin.join_group("u1", "ops").await, Ok(false));
+        assert_eq!(admin.leave_group("u1", "ops").await, Ok(false));
+        assert!(admin.group_members("ops").await.expect("read").is_none());
+        assert!(admin.members_of("hel").await.expect("read").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_person_joins_and_leaves_a_top_level_group() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/groups",
+            200,
+            json!([{ "id": "g-ops", "path": "/ops" }]),
+        )
+        .await;
+        silent(&realm, "PUT", "/users/u1/groups/g-ops", 204).await;
+        silent(&realm, "DELETE", "/users/u1/groups/g-ops", 204).await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(admin.join_group("u1", "ops").await, Ok(true));
+        assert_eq!(admin.leave_group("u1", "ops").await, Ok(true));
+        assert_eq!(
+            admin.join_group("a/b", "ops").await,
+            Err(PeopleError::NotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_group_id_that_is_not_a_segment_is_not_found() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/groups",
+            200,
+            json!([
+                { "id": "a/b", "path": "/ops" }, { "id": "c/d", "path": "/ops/members" }
+            ]),
+        )
+        .await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(
+            admin.join_group("u1", "ops").await,
+            Err(PeopleError::NotFound)
+        );
+        assert_eq!(
+            admin.join_members("u1", "ops").await,
+            Err(PeopleError::NotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_smtp_server_is_read_none_when_missing_and_an_error_otherwise() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/smtp-server",
+            200,
+            json!({
+                "host": "smtp.x.org", "port": 587, "tls": "starttls",
+                "from": "n@x.org", "user": "", "passwordSet": true
+            }),
+        )
+        .await;
+        let admin = admin_for(&realm.uri());
+        let smtp = admin.smtp_server().await.expect("read").expect("one");
+        assert_eq!(smtp.port, 587);
+        assert!(smtp.password_set);
+        let missing = MockServer::start().await;
+        silent(&missing, "GET", "/smtp-server", 404).await;
+        assert_eq!(admin_for(&missing.uri()).smtp_server().await, Ok(None));
+        let broken = MockServer::start().await;
+        silent(&broken, "GET", "/smtp-server", 500).await;
+        assert!(matches!(
+            admin_for(&broken.uri()).smtp_server().await,
+            Err(PeopleError::Refused(500, _))
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_smtp_server_is_written_with_a_password_or_without() {
+        let smtp = SmtpServer {
+            host: "smtp.x.org".into(),
+            port: 25,
+            tls: "ssl".into(),
+            from: "n@x.org".into(),
+            user: "u".into(),
+            password_set: false,
+        };
+        let with = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path(format!("{ADMIN}/smtp-server")))
+            .and(body_json(json!({
+                "host": "smtp.x.org", "port": 25, "tls": "ssl", "from": "n@x.org",
+                "user": "u", "password": "pw"
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&with)
+            .await;
+        assert_eq!(
+            admin_for(&with.uri())
+                .set_smtp_server(&smtp, Some("pw"))
+                .await,
+            Ok(())
+        );
+        let without = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path(format!("{ADMIN}/smtp-server")))
+            .and(body_json(json!({
+                "host": "smtp.x.org", "port": 25, "tls": "ssl", "from": "n@x.org", "user": "u"
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&without)
+            .await;
+        assert_eq!(
+            admin_for(&without.uri()).set_smtp_server(&smtp, None).await,
+            Ok(())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_test_mail_answers_whether_it_was_sent_and_why_not() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "POST",
+            "/smtp-server/test",
+            200,
+            json!({ "sent": false, "reason": "auth" }),
+        )
+        .await;
+        let test = admin_for(&realm.uri())
+            .test_smtp("a@b.org")
+            .await
+            .expect("answer");
+        assert!(!test.sent);
+        assert_eq!(test.reason.as_deref(), Some("auth"));
+    }
+
+    #[tokio::test]
+    async fn the_members_of_a_group_are_read_page_by_page() {
+        let realm = MockServer::start().await;
+        stub(
+            &realm,
+            "GET",
+            "/groups",
+            200,
+            json!([{ "id": "g-ops", "path": "/ops" }]),
+        )
+        .await;
+        let first: Vec<Value> = (0..500).map(|i| json!({ "id": format!("u{i}") })).collect();
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/groups/g-ops/members")))
+            .and(query_param("first", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(first))
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/groups/g-ops/members")))
+            .and(query_param("first", "500"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "id": "last" }])))
+            .mount(&realm)
+            .await;
+        let members = admin_for(&realm.uri())
+            .group_members("ops")
+            .await
+            .expect("read")
+            .expect("a group");
+        assert_eq!(members.len(), 501);
+        assert_eq!(members[500].id, "last");
+    }
+
+    #[tokio::test]
+    async fn everyone_stops_at_the_page_limit_instead_of_reading_forever() {
+        let realm = MockServer::start().await;
+        let full: Vec<Value> = (0..500).map(|i| json!({ "id": format!("u{i}") })).collect();
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/users")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(full))
+            .mount(&realm)
+            .await;
+        assert!(matches!(
+            admin_for(&realm.uri()).everyone().await,
+            Err(PeopleError::Unreachable(message)) if message.contains("more than 100000")
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_organizations_people_are_its_members_and_its_bound_subjects() {
+        let realm = MockServer::start().await;
+        stub(&realm, "GET", "/groups", 200, json!([
+            { "id": "g1", "path": "/hel", "subGroups": [{ "id": "g1m", "path": "/hel/members" }] }
+        ])).await;
+        stub(
+            &realm,
+            "GET",
+            "/groups/g1m/members",
+            200,
+            json!([{ "id": "m1" }]),
+        )
+        .await;
+        let bound_id = "11111111-1111-1111-1111-111111111111";
+        let gone_id = "22222222-2222-2222-2222-222222222222";
+        stub(
+            &realm,
+            "GET",
+            &format!("/users/{bound_id}"),
+            200,
+            json!({ "id": bound_id }),
+        )
+        .await;
+        silent(&realm, "GET", &format!("/users/{gone_id}"), 404).await;
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/users")))
+            .and(query_param("email", "known@x.org"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!([{ "id": "k1", "email": "known@x.org" }])),
+            )
+            .mount(&realm)
+            .await;
+        stub(&realm, "GET", "/users/k1", 200, json!({ "id": "k1" })).await;
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/users")))
+            .and(query_param("email", "ghost@x.org"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&realm)
+            .await;
+        let bound: BTreeSet<String> =
+            [bound_id, gone_id, "known@x.org", "ghost@x.org", "plainname"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        let people = admin_for(&realm.uri())
+            .people_of("hel", &bound)
+            .await
+            .expect("people");
+        let mut ids: Vec<&str> = people.iter().map(|p| p.id.as_str()).collect();
+        ids.sort();
+        assert_eq!(ids, ["11111111-1111-1111-1111-111111111111", "k1", "m1"]);
+    }
+
+    #[tokio::test]
+    async fn an_organization_without_a_members_group_has_only_its_bound_people_and_an_error_stands()
+    {
+        let realm = MockServer::start().await;
+        stub(&realm, "GET", "/groups", 200, json!([])).await;
+        let broken_id = "33333333-3333-3333-3333-333333333333";
+        silent(&realm, "GET", &format!("/users/{broken_id}"), 500).await;
+        let admin = admin_for(&realm.uri());
+        assert_eq!(
+            admin
+                .people_of("hel", &BTreeSet::new())
+                .await
+                .map(|p| p.len()),
+            Ok(0)
+        );
+        let bound: BTreeSet<String> = [broken_id.to_string()].into();
+        assert!(matches!(
+            admin.people_of("hel", &bound).await,
+            Err(PeopleError::Refused(500, _))
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_realm_id_of_an_e_mail_is_none_without_a_realm_an_at_or_an_answer() {
+        assert_eq!(realm_id_of(None, "a@b.org").await, None);
+        let dead = People::new(
+            "http://127.0.0.1:1/realms/hel",
+            "portal".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL");
+        assert_eq!(realm_id_of(Some(&dead), "no-at-sign").await, None);
+        assert_eq!(realm_id_of(Some(&dead), "a@b.org").await, None);
+    }
+
+    #[tokio::test]
+    async fn the_realm_id_of_an_e_mail_is_the_one_person_who_holds_it() {
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/hel/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+            .mount(&realm)
+            .await;
+        stub(
+            &realm,
+            "GET",
+            "/users",
+            200,
+            json!([{ "id": "u9", "email": "a@b.org" }]),
+        )
+        .await;
+        let people = People::new(
+            &format!("{}/realms/hel", realm.uri()),
+            "portal".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL");
+        assert_eq!(
+            realm_id_of(Some(&people), "a@b.org").await,
+            Some("u9".into())
+        );
+    }
 }

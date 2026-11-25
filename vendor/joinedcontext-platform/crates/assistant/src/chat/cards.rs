@@ -190,6 +190,14 @@ mod tests {
     }
 
     #[test]
+    fn a_procedure_keeps_its_first_ten_steps() {
+        let text: String = (1..=12).map(|n| format!("{n}. Krok {n}.\n")).collect();
+        let cards = of(&text);
+        let ten: Vec<String> = (1..=MAX_STEPS).map(|n| format!("Krok {n}.")).collect();
+        assert_eq!(cards, [Card::Procedure { steps: ten }]);
+    }
+
+    #[test]
     fn a_passage_without_any_gives_no_card() {
         assert_eq!(of(""), []);
         // Years, a date, an IČO, a postcode alone and one numbered line are none of them.

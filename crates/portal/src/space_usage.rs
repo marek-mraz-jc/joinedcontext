@@ -848,4 +848,121 @@ mod tests {
         let err = counter.usage("", "air").await.unwrap_err();
         assert!(err.contains("brokerRef"), "{err}");
     }
+
+    fn scratch_token_file() -> std::path::PathBuf {
+        let file = std::env::temp_dir().join(format!(
+            "space-usage-token-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        std::fs::write(&file, "t").expect("write the token");
+        file
+    }
+
+    fn poison_the_locks(counter: &Counter) {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _cache = counter.cache.write();
+            let _measuring = counter.measuring.lock();
+            let _surfaces = counter.surfaces.write();
+            panic!("poison every lock on purpose");
+        }));
+        assert!(outcome.is_err());
+    }
+
+    /// A thread that panicked holding the counter's maps leaves them usable: a count, a refused
+    /// count and the broker's surfaces are all answered.
+    #[tokio::test]
+    async fn a_counter_whose_locks_were_poisoned_still_counts_and_lists_surfaces() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let broker = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/q/tenants/air"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"counts": {"entities": 5}})),
+            )
+            .mount(&broker)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/q/tenants/bad"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&broker)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/q/health"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!({"version": "1.2.3", "surfaces": {"ngsi-ld": {}, "ogc": {}}}),
+                ),
+            )
+            .mount(&broker)
+            .await;
+        let file = scratch_token_file();
+        let counter = Counter::new(Some(broker.uri()), Some(file.clone()));
+        poison_the_locks(&counter);
+
+        let first = counter.usage("main", "air").await.expect("counted");
+        assert_eq!(first.entities, 5);
+        let again = counter.usage("main", "air").await.expect("kept");
+        assert_eq!(
+            again.observed_at, first.observed_at,
+            "the kept answer stands"
+        );
+        let refused = counter
+            .measure_now("main", "bad")
+            .await
+            .expect_err("a refused count with nothing kept");
+        assert!(refused.contains("500"), "{refused}");
+
+        let names = counter.surfaces().await.expect("the surfaces");
+        assert_eq!(
+            names,
+            BTreeSet::from(["ngsi-ld".to_owned(), "ogc".to_owned()])
+        );
+        assert_eq!(counter.surfaces().await, Some(names), "kept for a while");
+        assert_eq!(counter.health("main").await.expect("up"), "1.2.3");
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[tokio::test]
+    async fn a_broker_address_that_is_no_url_is_named_before_any_ask() {
+        let file = scratch_token_file();
+        for address in ["not a url", "mailto:ops@example.org"] {
+            let counter = Counter::new(Some(address.to_owned()), Some(file.clone()));
+            let err = counter
+                .stored_attributes("main", "air", "Room")
+                .await
+                .expect_err("no address to ask");
+            assert_eq!(err, "the broker address is not a URL", "{address}");
+        }
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[tokio::test]
+    async fn a_broker_that_refuses_or_does_not_answer_its_health_says_so() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let broker = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/q/health"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&broker)
+            .await;
+        let down = Counter::new(Some(broker.uri()), None);
+        let refused = down.health("main").await.expect_err("a refusing broker");
+        assert!(refused.contains("503"), "{refused}");
+        assert!(
+            down.surfaces().await.is_none(),
+            "an unhealthy broker lists nothing"
+        );
+        let away = Counter::new(Some("http://127.0.0.1:1".to_owned()), None);
+        let silent = away.health("main").await.expect_err("nobody listens");
+        assert_eq!(silent, "the broker did not answer; try again in a minute");
+        let none = Counter::new(None, None);
+        assert!(none
+            .health("main")
+            .await
+            .expect_err("no address")
+            .contains("no address"));
+    }
 }

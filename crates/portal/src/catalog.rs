@@ -252,4 +252,33 @@ mod tests {
         check_contact(&mirror, &aino, "Group", &endpoint("aino@city.example.org"))
             .expect("not an endpoint");
     }
+
+    #[test]
+    fn catalog_fields_that_are_not_text_are_refused_with_the_example() {
+        let spec = json!({ "catalog": { "fields": { "funding": 3 } } });
+        let refused = check_fields(&Mirror::new(), "city", "Endpoint", &spec)
+            .expect_err("a number is not text");
+        assert!(
+            matches!(&refused, ApiError::Unprocessable { errors, .. }
+            if errors.iter().any(|e| e.contains("each value is text"))),
+            "{refused:?}"
+        );
+        let list = json!({ "catalog": { "fields": ["a"] } });
+        assert!(check_fields(&Mirror::new(), "city", "Endpoint", &list).is_err());
+    }
+
+    #[test]
+    fn a_binding_entry_without_the_member_key_names_nobody() {
+        let mirror = Mirror::new();
+        mirror.upsert(envelope(
+            "RoleBinding",
+            "odd",
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "group": "no-user-here" }, { "user": " Ann@Hel.fi " }] }),
+        ));
+        let known = people(&mirror, &identity("me@hel.fi"));
+        assert!(known.contains("ann@hel.fi"));
+        assert!(!known.contains("no-user-here"));
+        assert!(known.contains("me@hel.fi"));
+    }
 }

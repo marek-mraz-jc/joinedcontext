@@ -1161,3 +1161,202 @@ mod branch_manifest_tests {
         assert!(mirror.refused(&namespace, "Endpoint", "x").is_some());
     }
 }
+
+#[cfg(test)]
+mod backfill_loop_tests {
+    use super::*;
+    use crate::state::AppState;
+    use base64::Engine;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const REPOSITORY: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
+
+    /// A forge holding one project's space, enough for one sync run to load.
+    async fn forge() -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(REPOSITORY))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPOSITORY}/Branches('main')")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    serde_json::json!({ "Name": "main", "HeadSha": "c0ffee123456" }),
+                ),
+            )
+            .mount(&server)
+            .await;
+        let file = "projects/ovzdusie/spaces/mobility/space.yaml";
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{REPOSITORY}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .and(query_param("@r", "'c0ffee123456'"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Sha": "tree-sha", "Truncated": false,
+                "Tree": [{ "Path": file, "Type": "blob" }]
+            })))
+            .mount(&server)
+            .await;
+        let space = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: mobility\n  namespace: ovzdusie\nspec:\n  isSandbox: true\n";
+        Mock::given(method("GET"))
+            .and(path(format!("{REPOSITORY}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
+            .and(query_param("@r", "'c0ffee123456'"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Sha": "blob-sha",
+                "Content": base64::engine::general_purpose::STANDARD.encode(space.as_bytes())
+            })))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn syncer_of(forge: &MockServer, mirror: &Arc<Mirror>) -> Arc<crate::reconciler::Syncer> {
+        let client = crate::forge::ShakoClient::new(
+            forge.uri().parse().expect("forge url"),
+            "test-owner",
+            "test-repo",
+            "token",
+        )
+        .expect("shako client");
+        Arc::new(crate::reconciler::Syncer::new(
+            Arc::new(client),
+            Arc::clone(mirror),
+        ))
+    }
+
+    fn dead_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool")
+    }
+
+    async fn database() -> Option<PgPool> {
+        let Ok(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL") else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return None;
+        };
+        Some(crate::db::connect(&url).await.expect("connect + migrate"))
+    }
+
+    fn unique() -> String {
+        ProjectId::mint().path_segment().to_string()
+    }
+
+    async fn notified(pool: &PgPool, project: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT project_id::text FROM notifications WHERE project = $1 LIMIT 1")
+            .bind(project)
+            .fetch_one(pool)
+            .await
+            .expect("the row")
+    }
+
+    async fn insert_notification(pool: &PgPool, project: &str) {
+        sqlx::query(
+            "INSERT INTO notifications (recipient, kind, project, space, urn, author, author_name, excerpt, event_key) \
+             VALUES ('pj-' || md5($1), 'connector.pending', $1, '', 'c-1', 'sami', 'Sami', 'x', 'k-' || md5($1))",
+        )
+        .bind(project)
+        .execute(pool)
+        .await
+        .expect("a notification of today");
+    }
+
+    #[test]
+    fn a_state_without_a_database_or_a_syncer_starts_no_loop() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async {
+            let state = AppState::new(crate::config::Config::for_tests(), None);
+            spawn_backfill(state);
+            let with_pool =
+                AppState::new(crate::config::Config::for_tests(), None).with_db(dead_pool());
+            spawn_backfill(with_pool);
+        });
+    }
+
+    #[tokio::test]
+    async fn a_syncer_that_has_not_run_keys_nothing_and_a_failing_database_is_a_warning() {
+        let forge = forge().await;
+        let mut state =
+            AppState::new(crate::config::Config::for_tests(), None).with_db(dead_pool());
+        state.syncer = Some(syncer_of(&forge, &state.mirror));
+        // Not synced yet: the loop skips its minute.
+        spawn_backfill(state.clone());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Synced: it asks the database, which is down.
+        state
+            .syncer
+            .as_ref()
+            .expect("a syncer")
+            .sync_once()
+            .await
+            .expect("the forge loads");
+        assert!(state
+            .syncer
+            .as_ref()
+            .expect("a syncer")
+            .status()
+            .revision
+            .is_some());
+        spawn_backfill(state);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+
+    #[tokio::test]
+    async fn a_synced_leader_keys_the_rows_of_a_placed_project_and_names_the_waiting_one() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let forge = forge().await;
+        let mut state =
+            AppState::new(crate::config::Config::for_tests(), None).with_db(pool.clone());
+        state.syncer = Some(syncer_of(&forge, &state.mirror));
+        state
+            .syncer
+            .as_ref()
+            .expect("a syncer")
+            .sync_once()
+            .await
+            .expect("the forge loads");
+        let placed_project = format!("cov-placed-{}", unique());
+        let waiting_project = format!("cov-waiting-{}", unique());
+        placed(
+            &pool,
+            &state.mirror,
+            &placed_project,
+            &format!("cov-org-{}", unique()),
+        )
+        .await;
+        insert_notification(&pool, &placed_project).await;
+        insert_notification(&pool, &waiting_project).await;
+        spawn_backfill(state);
+        let started = std::time::Instant::now();
+        let mut keyed = None;
+        while started.elapsed() < Duration::from_secs(20) {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            keyed = notified(&pool, &placed_project).await;
+            if keyed.is_some() {
+                break;
+            }
+        }
+        assert!(keyed.is_some(), "the placed project's row was keyed");
+        assert_eq!(
+            notified(&pool, &waiting_project).await,
+            None,
+            "a project the mirror lacks keeps no key"
+        );
+    }
+}

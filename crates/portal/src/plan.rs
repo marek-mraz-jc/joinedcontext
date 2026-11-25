@@ -558,6 +558,23 @@ mod tests {
         merge_patch(&mut target2, &patch2);
         assert_eq!(target2, json!([1, 2, 3]));
     }
+
+    #[test]
+    fn the_default_plan_diff_is_the_empty_one() {
+        let diff = PlanDiff::default();
+        assert!(diff.is_empty());
+        assert_eq!(diff, PlanDiff::empty());
+    }
+
+    #[test]
+    fn a_merge_patch_over_a_scalar_replaces_it_with_an_object() {
+        let mut target = json!("scalar");
+        merge_patch(&mut target, &json!({ "a": 1, "b": null }));
+        assert_eq!(target, json!({ "a": 1 }));
+        let mut array = json!([1, 2]);
+        merge_patch(&mut array, &json!(["x"]));
+        assert_eq!(array, json!(["x"]));
+    }
 }
 
 #[cfg(test)]

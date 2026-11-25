@@ -375,9 +375,19 @@ mod tests {
     }
 
     fn field_of(err: ApiError) -> Vec<String> {
-        match err {
-            ApiError::Unprocessable { errors, .. } => errors,
-            other => panic!("unexpected {other:?}"),
+        let (_, body) = err.into_document();
+        body["errors"]
+            .as_array()
+            .expect("errors")
+            .iter()
+            .map(|e| e["path"].as_str().expect("path").to_owned())
+            .collect()
+    }
+
+    fn processor_at(spec: &PipelineSpec, i: usize) -> Option<&ProcessorStep> {
+        match &spec.steps[i] {
+            Step::Processor(p) => Some(p),
+            Step::Compute(_) => None,
         }
     }
 
@@ -387,13 +397,10 @@ mod tests {
     }
 
     fn code_at(spec: &PipelineSpec, i: usize) -> String {
-        match &spec.steps[i] {
-            Step::Processor(p) => p.processor["javascript"]["code"]
-                .as_str()
-                .expect("code")
-                .to_owned(),
-            other => panic!("not a processor: {other:?}"),
-        }
+        processor_at(spec, i).expect("a processor").processor["javascript"]["code"]
+            .as_str()
+            .expect("code")
+            .to_owned()
     }
 
     /// PL-119/PL-120: a pipeline pins 1.0.0; publishing 1.1.0 leaves it on 1.0.0 until its pin
@@ -415,9 +422,7 @@ mod tests {
         ])));
         let pinned = rendered(&mirror, pipeline_spec("1.0.0", json!({}))).expect("ok");
         assert_eq!(code_at(&pinned, 1), V1);
-        let Step::Processor(p) = &pinned.steps[1] else {
-            panic!("processor")
-        };
+        let p = processor_at(&pinned, 1).expect("processor");
         assert_eq!(p.processor["javascript"]["timeout_ms"], 50);
         assert!(p.processor["label"]
             .as_str()
@@ -464,9 +469,11 @@ mod tests {
         assert_eq!(spec.steps.len(), 4);
         assert!(spec.scripts.is_empty());
         assert_eq!(code_at(&spec, 0), V1);
-        let Step::Processor(last) = &spec.steps[3] else {
-            panic!("processor")
-        };
+        let last = processor_at(&spec, 3).expect("processor");
+        assert!(
+            processor_at(&spec, 1).is_none(),
+            "a bloblang step stays a step"
+        );
         assert_eq!(
             last.processor["switch"][0]["check"],
             r#"["ParkingSpot"].contains(this.type)"#
@@ -522,5 +529,206 @@ mod tests {
             ])),
         )
         .expect("a new version beside it");
+    }
+
+    fn routed(pin: &str) -> Value {
+        let mut spec = pipeline_spec("1.0.0", json!({}));
+        spec["routes"] = json!([{
+            "name": "fast", "when": "this.v > 1",
+            "steps": [{ "kind": "script", "scriptRef": { "name": "flag", "version": pin } }],
+            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:intake" }]
+        }]);
+        spec
+    }
+
+    #[test]
+    fn every_pin_names_the_field_it_is_written_at() {
+        let mut spec = routed("1.0.0");
+        spec["scripts"] = json!([{ "scriptRef": { "name": "flag", "version": "1.0.0" },
+                                    "applyTo": "steps-start" }]);
+        let spec: PipelineSpec = serde_json::from_value(spec).expect("pipeline");
+        let fields: Vec<String> = pins(&spec).into_iter().map(|(f, _)| f).collect();
+        assert_eq!(
+            fields,
+            vec![
+                "spec.steps[1].scriptRef",
+                "spec.routes[0].steps[0].scriptRef",
+                "spec.scripts[0].scriptRef"
+            ]
+        );
+        let bare: PipelineSpec = serde_json::from_value(json!({
+            "class": "resident",
+            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }]
+        }))
+        .expect("pipeline");
+        assert!(pins(&bare).is_empty());
+    }
+
+    #[test]
+    fn a_pin_inside_a_route_or_in_the_applied_scripts_is_judged_too() {
+        let mirror = Mirror::new();
+        mirror.upsert(script(json!([version("1.0.0", "published", V1)])));
+        let route =
+            judged(&mirror, &envelope("Pipeline", "p", routed("9.9.9"))).expect_err("route");
+        assert_eq!(field_of(route), vec!["spec.routes[0].steps[0].scriptRef"]);
+        let mut applied = pipeline_spec("1.0.0", json!({}));
+        applied["scripts"] = json!([{ "scriptRef": { "name": "flag", "version": "0.0.1" },
+                                      "applyTo": "before-output" }]);
+        let err = judged(&mirror, &envelope("Pipeline", "p", applied)).expect_err("applied");
+        assert_eq!(field_of(err), vec!["spec.scripts[0].scriptRef"]);
+    }
+
+    #[test]
+    fn a_spec_that_does_not_read_or_a_script_that_is_not_there_is_not_this_checks() {
+        let mirror = Mirror::new();
+        judged(
+            &mirror,
+            &envelope("Pipeline", "p", json!({ "nonsense": 1 })),
+        )
+        .expect("unreadable");
+        judged(
+            &mirror,
+            &envelope("Script", "flag", json!({ "nonsense": 1 })),
+        )
+        .expect("unreadable");
+        judged(
+            &mirror,
+            &envelope("Pipeline", "p", pipeline_spec("1.0.0", json!({}))),
+        )
+        .expect("no Script of that name is the references check's");
+        judged(&mirror, &envelope("Endpoint", "e", json!({}))).expect("another kind");
+    }
+
+    #[test]
+    fn a_script_of_the_change_itself_is_pinned_by_its_pipeline_and_a_pipeline_of_the_change_pins_it(
+    ) {
+        let mirror = Mirror::new();
+        let proposed = json!({
+            "kind": "Script",
+            "metadata": { "name": "flag", "namespace": "helsinki" },
+            "spec": { "language": "javascript", "versions": [version("1.0.0", "draft", V1)] }
+        });
+        let elsewhere = json!({
+            "kind": "Script",
+            "metadata": { "name": "flag", "namespace": "oulu" },
+            "spec": { "language": "javascript", "versions": [version("1.0.0", "published", V1)] }
+        });
+        let pipeline = json!({
+            "kind": "Pipeline",
+            "metadata": { "name": "bundled" },
+            "spec": pipeline_spec("1.0.0", json!({}))
+        });
+        let nameless = json!({ "kind": "Pipeline", "metadata": {}, "spec": pipeline_spec("1.0.0", json!({})) });
+        let unreadable =
+            json!({ "kind": "Pipeline", "metadata": { "name": "odd" }, "spec": { "x": 1 } });
+        let held_twin = envelope("Pipeline", "bundled", pipeline_spec("5.0.0", json!({})));
+        mirror.upsert(held_twin);
+        let drafted =
+            crate::references::BUNDLE.sync_scope(vec![elsewhere.clone(), proposed.clone()], || {
+                judged(
+                    &mirror,
+                    &envelope("Pipeline", "p", pipeline_spec("1.0.0", json!({}))),
+                )
+            });
+        assert!(format!("{:?}", drafted.expect_err("draft")).contains("is a draft"));
+        let only_elsewhere = crate::references::BUNDLE.sync_scope(vec![elsewhere], || {
+            judged(
+                &mirror,
+                &envelope("Pipeline", "p", pipeline_spec("1.0.0", json!({}))),
+            )
+        });
+        only_elsewhere.expect("another project's Script of the Change is not this one's");
+        let dropped = crate::references::BUNDLE
+            .sync_scope(vec![pipeline, nameless, unreadable], || {
+                judged(&mirror, &script(json!([version("2.0.0", "published", V2)])))
+            });
+        let said = format!("{:?}", dropped.expect_err("pinned by the bundled pipeline"));
+        assert!(
+            said.contains("Pipeline 'bundled' pins version 1.0.0"),
+            "{said}"
+        );
+        assert!(
+            !said.contains("5.0.0"),
+            "the held twin of a bundled pipeline is replaced by the bundled one"
+        );
+    }
+
+    #[test]
+    fn a_pin_of_a_script_the_project_lacks_or_keeps_as_a_draft_renders_nothing() {
+        let mirror = Mirror::new();
+        let missing = rendered(&mirror, pipeline_spec("1.0.0", json!({}))).expect_err("missing");
+        assert!(
+            missing.contains("names Script 'flag', which is not in the project"),
+            "{missing}"
+        );
+        assert!(missing.starts_with("spec.steps[1].scriptRef"), "{missing}");
+        mirror.upsert(script(json!([version("1.0.0", "draft", V1)])));
+        let draft = rendered(&mirror, pipeline_spec("1.0.0", json!({}))).expect_err("draft");
+        assert!(draft.contains("which is not published"), "{draft}");
+        let unknown = rendered(&mirror, pipeline_spec("7.0.0", json!({}))).expect_err("unknown");
+        assert!(unknown.contains("version 7.0.0"), "{unknown}");
+    }
+
+    #[test]
+    fn a_script_step_without_a_script_ref_renders_nothing() {
+        let mirror = Mirror::new();
+        let mut spec = pipeline_spec("1.0.0", json!({}));
+        spec["steps"] = json!([{ "kind": "script" }]);
+        let said = rendered(&mirror, spec).expect_err("no scriptRef");
+        assert_eq!(said, "spec.steps[0] is a script step without scriptRef");
+    }
+
+    #[test]
+    fn a_pin_in_a_route_is_replaced_and_an_unresolved_one_names_the_route() {
+        let mirror = Mirror::new();
+        mirror.upsert(script(json!([version("1.0.0", "published", V1)])));
+        let spec: PipelineSpec = serde_json::from_value(routed("1.0.0")).expect("pipeline");
+        let mut spec = spec;
+        inline(&mirror, "helsinki", &mut spec).expect("inlined");
+        let route_step = match &spec.routes[0].steps[0] {
+            Step::Processor(p) => Some(p),
+            Step::Compute(_) => None,
+        };
+        assert_eq!(
+            route_step.expect("a processor").processor["javascript"]["code"],
+            V1
+        );
+        let said = rendered(&mirror, routed("3.0.0")).expect_err("unknown version");
+        assert!(
+            said.starts_with("spec.routes[0].steps[0].scriptRef"),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn an_applied_script_that_does_not_resolve_renders_nothing() {
+        let mirror = Mirror::new();
+        let mut spec = pipeline_spec("1.0.0", json!({}));
+        spec["steps"] = json!([{ "kind": "bloblang", "bloblang": "root = this" }]);
+        spec["scripts"] = json!([{ "scriptRef": { "name": "flag", "version": "1.0.0" },
+                                    "applyTo": "steps-start" }]);
+        let said = rendered(&mirror, spec).expect_err("no Script");
+        assert!(said.starts_with("spec.scripts[0].scriptRef"), "{said}");
+    }
+
+    #[test]
+    fn a_script_edit_that_changes_only_a_draft_or_adds_a_version_is_allowed() {
+        let mirror = Mirror::new();
+        mirror.upsert(script(json!([
+            version("1.0.0", "published", V1),
+            version("1.1.0", "draft", V1)
+        ])));
+        judged(
+            &mirror,
+            &script(json!([
+                version("1.0.0", "published", V1),
+                version("1.1.0", "draft", V2)
+            ])),
+        )
+        .expect("a draft may change");
+        let mut limited = version("1.0.0", "published", V1);
+        limited["limits"] = json!({ "timeoutMs": 100 });
+        let err = judged(&mirror, &script(json!([limited]))).expect_err("limits are frozen");
+        assert_eq!(field_of(err), vec!["spec.versions"]);
     }
 }

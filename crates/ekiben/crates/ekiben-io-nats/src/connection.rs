@@ -774,5 +774,22 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("invalid NATS URL"));
+        let no_host = conn(serde_json::json!({"urls": ["nats:x://"]}), None);
+        assert!(no_host
+            .checked_server_addrs()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("NATS URL has no host"));
+        // from_json checks the seed; details built another way meet the same check at the dial.
+        let mut seeded = conn(serde_json::json!({"urls": ["nats://8.8.8.8"]}), None);
+        seeded.auth.user_jwt = Some(SecretString::new("j".to_string()));
+        seeded.auth.user_nkey_seed = Some(SecretString::new("not-a-seed".to_string()));
+        assert!(seeded
+            .connect_live("t")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("nkey error"));
     }
 }

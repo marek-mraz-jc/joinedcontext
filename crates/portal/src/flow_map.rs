@@ -786,14 +786,14 @@ mod tests {
         map.nodes
             .iter()
             .find(|n| n.id == id)
-            .unwrap_or_else(|| panic!("no node {id} in {:?}", map.nodes))
+            .expect("the node is in the map")
     }
 
     fn edge<'m>(map: &'m FlowMap, from: &str, to: &str) -> &'m FlowEdge {
         map.edges
             .iter()
             .find(|e| e.from == from && e.to == to)
-            .unwrap_or_else(|| panic!("no edge {from} -> {to} in {:?}", map.edges))
+            .expect("the edge is in the map")
     }
 
     #[test]
@@ -1031,5 +1031,92 @@ mod tests {
             assert_eq!(edge(&map, from, kpi).relation, FlowRelation::Reads);
         }
         edge(&map, kpi, "helsinki/Endpoint/ep-kpi");
+    }
+
+    #[test]
+    fn a_policy_naming_an_operation_group_grants_what_the_group_holds() {
+        let mirror = Mirror::new();
+        mirror.upsert(manifest("helsinki", "ContextSpace", "a", json!({})));
+        mirror.upsert(endpoint("helsinki", "ep-a", "a"));
+        mirror.upsert(manifest(
+            "helsinki",
+            "Policy",
+            "readers",
+            json!({
+                "contextSpaceRef": { "kind": "ContextSpace", "name": "a" },
+                "assigner": "did:web:hel.fi",
+                "assignee": { "kind": "serviceAccount", "id": "pipelines" },
+                "operations": ["retrieveOps"],
+            }),
+        ));
+        mirror.upsert(manifest(
+            "helsinki",
+            "Pipeline",
+            "reads-a",
+            json!({ "class": "scheduled",
+                    "sources": [{ "endpointRef": "ep-a", "query": { "type": "Vehicle" } }],
+                    "outputs": [{ "targetEndpoint": target("ep-a") }] }),
+        ));
+        let reader = Reader {
+            may: &everyone,
+            may_project: &|_| true,
+        };
+        let map = build(&mirror, "helsinki", &reader, None);
+        let read = edge(&map, "helsinki/Endpoint/ep-a", "helsinki/Pipeline/reads-a");
+        assert_eq!(
+            read.grant.as_ref().map(|g| g.state),
+            Some(FlowGrantState::Granted)
+        );
+        let write = edge(&map, "helsinki/Pipeline/reads-a", "helsinki/Endpoint/ep-a");
+        assert_eq!(
+            write.grant.as_ref().map(|g| g.state),
+            Some(FlowGrantState::Missing),
+            "retrieveOps holds no upsertBatch"
+        );
+    }
+
+    #[test]
+    fn references_to_things_that_do_not_exist_draw_no_edge() {
+        let mirror = Mirror::new();
+        mirror.upsert(manifest(
+            "helsinki",
+            "Pipeline",
+            "dangling",
+            json!({ "class": "scheduled",
+                    "sources": [{ "dataSourceRef": "ghost" },
+                                { "endpointRef": "ep-ghost", "query": { "type": "Vehicle" } }],
+                    "outputs": [{ "targetEndpoint": target("ep-gone") }] }),
+        ));
+        let reader = Reader {
+            may: &everyone,
+            may_project: &|_| true,
+        };
+        let map = build(&mirror, "helsinki", &reader, None);
+        assert!(map.edges.is_empty(), "{:?}", map.edges);
+        assert_eq!(map.nodes.len(), 1);
+        assert_eq!(
+            node(&map, "helsinki/Pipeline/dangling").role,
+            Some(FlowRole::Derived)
+        );
+    }
+
+    #[test]
+    fn a_reader_of_endpoints_but_not_spaces_or_brokers_sees_neither_node() {
+        let no_spaces =
+            |kind: &str, _: Option<&str>| kind != "ContextSpace" && kind != "MqttBroker";
+        let map = map_as(&no_spaces, &|_| true, None);
+        assert!(map
+            .nodes
+            .iter()
+            .all(|n| !n.id.contains("/ContextSpace/") && !n.id.contains("/MqttBroker/")));
+        edge(
+            &map,
+            "helsinki/Pipeline/hfp-ingest",
+            "helsinki/Endpoint/ep-vehicles",
+        );
+        assert!(map
+            .edges
+            .iter()
+            .all(|e| !e.from.contains("/MqttBroker/") && !e.to.contains("/ContextSpace/")));
     }
 }

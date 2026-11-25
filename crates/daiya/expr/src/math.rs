@@ -967,11 +967,9 @@ fn eval_node(
                     severity: NoticeSeverity::Warning,
                     text: format!("{dropped} items dropped from union(s)"),
                 };
-                match first {
-                    ExprValue::Number { notices, .. } | ExprValue::Series { notices, .. } => {
-                        notices.push(notice);
-                    }
-                    _ => {}
+                if let ExprValue::Number { notices, .. } | ExprValue::Series { notices, .. } = first
+                {
+                    notices.push(notice);
                 }
             }
             Ok(out)
@@ -1175,6 +1173,58 @@ fn map_nullable(
 mod tests {
     use super::*;
 
+    /// A tree built by hand (the fields are public) may name an operator or function the parser
+    /// never emits: evaluation refuses it with the name instead of guessing.
+    #[test]
+    fn a_hand_built_tree_with_an_unknown_operator_or_function_is_refused() {
+        let vars = HashMap::new();
+        let scalar = |v| Box::new(AstNode::Scalar(v));
+        let eval = |root: AstNode| {
+            let expr = MathExpr {
+                raw: String::new(),
+                root,
+                var_names: Vec::new(),
+            };
+            expr.eval("C", &vars).expect_err("refused").to_string()
+        };
+        let unary = eval(AstNode::Unary {
+            op: "~".into(),
+            arg: scalar(1.0),
+        });
+        assert!(unary.contains("unknown unary operator ~"), "{unary}");
+        let binary = eval(AstNode::Binary {
+            op: "<>".into(),
+            left: scalar(1.0),
+            right: scalar(2.0),
+        });
+        assert!(binary.contains("unknown binary operator <>"), "{binary}");
+        let func = eval(AstNode::Func {
+            name: "sqrt".into(),
+            args: vec![AstNode::Scalar(4.0)],
+        });
+        assert!(func.contains("unknown function sqrt"), "{func}");
+    }
+
+    /// Edge cases of the parser: empty, blank, unbalanced, trailing tokens and a depth over the cap.
+    #[test]
+    fn malformed_expressions_are_refused() {
+        for bad in [
+            "",
+            "   ",
+            "(1 + 2",
+            "1 2",
+            "$A +",
+            "abs()",
+            "abs(1, 2)",
+            "1 +* 2",
+        ] {
+            assert!(MathExpr::parse(bad).is_err(), "{bad:?} parsed");
+        }
+        let deep = format!("{}1{}", "(".repeat(20), ")".repeat(20));
+        assert!(MathExpr::parse_with_max_depth(&deep, 5).is_err());
+        assert!(MathExpr::parse_with_max_depth(&deep, 50).is_ok());
+    }
+
     #[test]
     fn math_parser_and_functions_match_grafana_semantics() {
         let mut vars = HashMap::new();
@@ -1200,10 +1250,10 @@ mod tests {
         );
 
         let res = eval_math_on_vars("C", "round(abs($A) + ${B} * 2)", &vars, 100).unwrap();
-        let ExprValue::Series { points, .. } = &res[0] else {
-            panic!("expected series");
-        };
-        assert_eq!(points, &[(1000, Some(8.0)), (2000, Some(10.0))]);
+        assert!(
+            matches!(&res[0], ExprValue::Series { points, .. } if points == &[(1000, Some(8.0)), (2000, Some(10.0))]),
+            "{res:?}"
+        );
 
         let null_check =
             eval_math_on_vars("D", "is_null(null()) && !is_number(nan())", &vars, 100).unwrap();
@@ -1290,10 +1340,10 @@ mod tests {
             ("B".to_owned(), vec![one(2.0)]),
         ]);
         let out = eval_math_on_vars("C", "$A + $B", &vars, 100).unwrap();
-        let [ExprValue::Number { value, notices, .. }] = out.as_slice() else {
-            panic!("{out:?}");
-        };
-        assert_eq!((*value, notices.len()), (Some(3.0), 0));
+        assert!(
+            matches!(out.as_slice(), [ExprValue::Number { value: Some(v), notices, .. }] if *v == 3.0 && notices.is_empty()),
+            "{out:?}"
+        );
     }
 
     /// The nesting budget counts depth, not length: sibling groups and chains each give back

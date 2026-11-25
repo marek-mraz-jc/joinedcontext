@@ -347,18 +347,14 @@ fn decode_single_json_doc(raw: &[u8]) -> Result<Value, String> {
     if let Some(v) = ekiben_bloblang::go_json::decode_with_numbers(raw) {
         return Ok(v);
     }
+    // decode_with_numbers takes every input that is one valid document (same grammar, same depth
+    // limit), so serde_json is asked only for the error.
     let mut de = serde_json::Deserializer::from_slice(raw).into_iter::<serde_json::Value>();
-    let Some(first_res) = de.next() else {
-        return Err("EOF".to_string());
-    };
-    let first = first_res.map_err(|e| e.to_string())?;
-    if let Some(second_res) = de.next() {
-        if second_res.is_ok() {
-            return Err("message contains multiple valid documents".to_string());
-        }
-        return Err(second_res.unwrap_err().to_string());
-    }
-    Ok(Value::from_json_value(first))
+    Err(match (de.next(), de.next()) {
+        (None, _) => "EOF".to_string(),
+        (Some(Err(e)), _) | (Some(Ok(_)), Some(Err(e))) => e.to_string(),
+        (Some(Ok(_)), _) => "message contains multiple valid documents".to_string(),
+    })
 }
 
 /// Local wrapper type around `&'a [Part]` implementing `ekiben_bloblang::MessageBatch`.

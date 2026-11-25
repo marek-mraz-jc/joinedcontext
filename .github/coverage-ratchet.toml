@@ -25,8 +25,8 @@
 "antares-views" = { lines = 99.88, functions = 99.30 }
 "antares-wasm" = { lines = 97.53, functions = 100.00 }
 "antares-ws" = { lines = 99.04, functions = 99.19 }
-"assistant" = { lines = 96.30, functions = 96.40 }
-"context-gateway" = { lines = 97.00, functions = 97.40 }
+"assistant" = { lines = 96.60, functions = 96.90 }
+"context-gateway" = { lines = 97.10, functions = 97.50 }
 "daiya-api" = { lines = 99.31, functions = 99.12 }
 "daiya-expr" = { lines = 99.25, functions = 100.00 }
 "daiya-import" = { lines = 99.29, functions = 99.29 }
@@ -87,7 +87,7 @@
 "jc-types" = { lines = 100.00, functions = 100.00 }
 "jcctl" = { lines = 97.14, functions = 91.18 }
 "joinedcontext-policy" = { lines = 99.00, functions = 99.40 }
-"joinedcontext-portal" = { lines = 95.49, functions = 93.39 }
+"joinedcontext-portal" = { lines = 96.50, functions = 95.20 }
 "kaisatsu-admin" = { lines = 98.52, functions = 99.41 }
 "kaisatsu-core" = { lines = 99.98, functions = 99.73 }
 "kaisatsu-crypto" = { lines = 99.70, functions = 100.00 }

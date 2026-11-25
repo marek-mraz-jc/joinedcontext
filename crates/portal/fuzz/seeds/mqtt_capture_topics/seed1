@@ -1,0 +1,4 @@
+cams/cam-west/frame
+cams/${clientid}/frame
+status/+
+air/${clientid}/#

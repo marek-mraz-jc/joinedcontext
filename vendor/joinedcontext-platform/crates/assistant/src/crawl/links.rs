@@ -83,11 +83,12 @@ pub fn extract_links(base_url: &Url, html_text: &str, site_host: &str) -> Vec<Ex
     };
 
     let mut links = Vec::new();
-    for element in document.select(&selector) {
-        let href = match element.value().attr("href") {
-            Some(h) => h.trim(),
-            None => continue,
-        };
+    // `a[href]` selects only anchors that carry the attribute.
+    for href in document
+        .select(&selector)
+        .filter_map(|element| element.value().attr("href"))
+    {
+        let href = href.trim();
         if href.starts_with("mailto:")
             || href.starts_with("tel:")
             || href.starts_with("javascript:")

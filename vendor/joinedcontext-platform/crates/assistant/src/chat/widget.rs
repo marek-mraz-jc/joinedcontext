@@ -516,6 +516,29 @@ mod tests {
         for origin in &public.spec.allowed_origins {
             assert!(policy(&public, None).contains(origin.as_str()), "{origin}");
         }
+        // a named source of another project adds its sites; one of that project not named adds none
+        let shared =
+            deployment(json!({"publicId": "bb", "channel": "public", "sources": ["helsinki/web"]}));
+        let hosts = link_hosts(
+            &shared,
+            &[
+                source(
+                    "helsinki",
+                    "web",
+                    json!({"source": "website", "startUrls": ["https://hel.fi/"]}),
+                    None,
+                ),
+                source(
+                    "helsinki",
+                    "other",
+                    json!({"source": "website", "startUrls": ["https://evil.example/"]}),
+                    None,
+                ),
+            ],
+        );
+        assert_eq!(hosts, ["data.gov.sk", "hel.fi"]);
+        // without an allowed origin nothing may frame the page
+        assert!(policy(&shared, None).ends_with("frame-ancestors 'none'"));
     }
 
     #[test]

@@ -226,3 +226,22 @@ pub fn fits(schema: &Value, arguments: &Value) -> Result<(), String> {
         Err(problems.join("; "))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_schema_that_is_no_object_or_has_odd_properties_still_asks_for_the_endpoint() {
+        let shaped = general_schema(&json!("not a schema"));
+        assert_eq!(shaped["type"], json!("object"));
+        assert_eq!(shaped["required"], json!([ENDPOINT]));
+        assert!(shaped.pointer(&format!("/properties/{ENDPOINT}")).is_some());
+        // properties that are not an object stay as they are, the Endpoint still required first
+        let odd = general_schema(
+            &json!({"type": "object", "properties": 5, "required": ["type", ENDPOINT]}),
+        );
+        assert_eq!(odd["properties"], json!(5));
+        assert_eq!(odd["required"], json!([ENDPOINT, "type"]));
+    }
+}

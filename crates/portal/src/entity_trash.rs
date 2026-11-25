@@ -252,3 +252,50 @@ impl TrashStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn poisoned() -> TrashStore {
+        let store = TrashStore::new(None, std::sync::Arc::new(crate::store::Mirror::new()));
+        if let Inner::Memory(lock) = &store.inner {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = lock.write();
+                panic!("poison the lock on purpose");
+            }));
+            assert!(outcome.is_err());
+        }
+        store
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_memory_store_still_keeps_lists_and_forgets() {
+        let store = poisoned();
+        let keeper = ("p", "s", "ann");
+        let kept = store
+            .keep(
+                keeper,
+                "urn:ngsi-ld:T:1",
+                "T",
+                &json!({ "id": "urn:ngsi-ld:T:1" }),
+            )
+            .await
+            .expect("kept")
+            .expect("a copy");
+        let listed = store.list(keeper).await.expect("listed");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].urn, "urn:ngsi-ld:T:1");
+        assert!(!store
+            .forget(("p", "s", "bob"), kept.id)
+            .await
+            .expect("unknown keeper"));
+        assert!(!store
+            .forget(keeper, kept.id + 99)
+            .await
+            .expect("unknown id"));
+        assert!(store.forget(keeper, kept.id).await.expect("forgotten"));
+        assert!(store.list(keeper).await.expect("listed").is_empty());
+    }
+}

@@ -464,6 +464,27 @@ mod log_tests {
         assert_eq!(lines[0]["status"], 409);
         assert!(lines[0]["timestamp"].is_string(), "{written}");
     }
+
+    #[test]
+    fn the_log_buffer_flushes_without_writing_anything() {
+        let mut buffer = Buffer::default();
+        buffer.flush().expect("a flush");
+        assert!(buffer.0.lock().expect("buffer").is_empty());
+    }
+
+    #[test]
+    fn the_log_filter_is_built_from_the_environment_or_info() {
+        assert!(!super::log_filter().to_string().is_empty());
+    }
+
+    #[test]
+    fn an_unknown_run_timing_kind_and_a_database_gauge_are_recorded_without_a_recorder() {
+        super::record_run_timing("some_other_kind", "profile", 1500);
+        super::record_run_timing("first_frame", "profile", 1500);
+        super::record_run_timing("first_version", "profile", 1500);
+        super::db_unavailable(12);
+        super::db_unavailable(0);
+    }
 }
 
 #[cfg(test)]

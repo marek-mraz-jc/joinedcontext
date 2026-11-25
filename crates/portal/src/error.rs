@@ -200,9 +200,7 @@ impl IntoResponse for ApiError {
             _ => None,
         };
         let (status, body) = self.into_document();
-        let body = serde_json::to_string(&body).unwrap_or_else(|_| {
-            r#"{"type":"https://joinedcontext.com/errors/internal-error","title":"Internal Server Error","status":500}"#.to_string()
-        });
+        let body = body.to_string();
         let mut builder = Response::builder()
             .status(status)
             .header(header::CONTENT_TYPE, PROBLEM_JSON);
@@ -717,6 +715,49 @@ mod tests {
         let line: serde_json::Value = serde_json::from_str(written.trim()).expect(&written);
         assert_eq!(line["level"], "WARN");
         assert_eq!(line["detail"], "the realm could not be reached: timed out");
+    }
+
+    #[test]
+    fn a_body_that_is_not_an_object_is_kept_under_error() {
+        let wrapped = with_problem_members(
+            serde_json::json!("boom"),
+            StatusCode::BAD_GATEWAY,
+            "no-such-slug",
+        );
+        assert_eq!(wrapped["error"], "boom");
+        assert_eq!(wrapped["status"], 502);
+        assert_eq!(wrapped["title"], "Error");
+        assert!(wrapped.get("hint").is_none(), "an unknown slug has no hint");
+    }
+
+    #[tokio::test]
+    async fn an_etag_that_is_not_a_header_value_answers_a_500() {
+        let response = ApiError::PreconditionFailed {
+            detail: "stale".into(),
+            etag: "bad\netag".into(),
+        }
+        .into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn a_precondition_failure_carries_its_etag() {
+        let response = ApiError::PreconditionFailed {
+            detail: "stale".into(),
+            etag: "\"v2\"".into(),
+        }
+        .into_response();
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(response.headers()[header::ETAG], "\"v2\"");
+    }
+
+    #[test]
+    fn the_test_log_buffer_flushes_without_error() {
+        use std::io::Write;
+        let mut buffer = Buffer::default();
+        buffer.write_all(b"x").expect("write");
+        buffer.flush().expect("flush");
+        assert_eq!(buffer.0.lock().expect("buffer").len(), 1);
     }
 
     // Inside the tests module: the slug scan reads each file up to its first `#[cfg(test)]`.

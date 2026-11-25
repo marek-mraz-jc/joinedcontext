@@ -210,4 +210,25 @@ mod tests {
         assert!(withhold_source(&mut kept, "trips", &BTreeSet::new()).is_empty());
         assert_eq!(kept, plain);
     }
+
+    #[test]
+    fn a_record_that_is_no_object_and_an_input_without_a_sample_are_left_alone() {
+        let mut answer = json!({
+            "records": ["plain text", 5, { "phone": "1", "city": "Praha" }],
+            "input": { "topic": "t" }
+        });
+        let fields = BTreeSet::from(["phone".to_owned()]);
+        let removed = withhold_source(&mut answer, "feed", &fields);
+        assert_eq!(removed, vec!["DataSource/feed.phone".to_owned()]);
+        assert_eq!(answer["records"][0], "plain text");
+        assert_eq!(answer["records"][2], json!({ "city": "Praha" }));
+        assert_eq!(answer["input"], json!({ "topic": "t" }));
+    }
+
+    #[test]
+    fn a_source_listing_no_fields_withholds_nothing() {
+        let mut answer = json!({ "records": [{ "phone": "1" }] });
+        assert!(withhold_source(&mut answer, "feed", &BTreeSet::new()).is_empty());
+        assert_eq!(answer["records"][0]["phone"], "1");
+    }
 }

@@ -549,13 +549,13 @@ antares-broker v0.3.0
 │   │   │       │       │       ├── serde feature "default" (*)
 │   │   │       │       │       ├── itoa feature "default" (*)
 │   │   │       │       │       ├── form_urlencoded feature "default"
-│   │   │       │       │       │   ├── form_urlencoded v1.2.2
+│   │   │       │       │       │   ├── form_urlencoded v1.2.3
 │   │   │       │       │       │   │   └── percent-encoding v2.3.2
 │   │   │       │       │       │   └── form_urlencoded feature "std"
-│   │   │       │       │       │       ├── form_urlencoded v1.2.2 (*)
+│   │   │       │       │       │       ├── form_urlencoded v1.2.3 (*)
 │   │   │       │       │       │       ├── percent-encoding feature "std" (*)
 │   │   │       │       │       │       └── form_urlencoded feature "alloc"
-│   │   │       │       │       │           ├── form_urlencoded v1.2.2 (*)
+│   │   │       │       │       │           ├── form_urlencoded v1.2.3 (*)
 │   │   │       │       │       │           └── percent-encoding feature "alloc" (*)
 │   │   │       │       │       └── ryu feature "default"
 │   │   │       │       │           └── ryu v1.0.23
@@ -616,7 +616,7 @@ antares-broker v0.3.0
 │   │   │       │       │   │   ├── bitflags feature "default"
 │   │   │       │       │   │   │   └── bitflags v2.13.1
 │   │   │       │       │   │   └── url feature "default"
-│   │   │       │       │   │       ├── url v2.5.8
+│   │   │       │       │   │       ├── url v2.5.9
 │   │   │       │       │   │       │   ├── percent-encoding feature "alloc" (*)
 │   │   │       │       │   │       │   ├── form_urlencoded feature "alloc" (*)
 │   │   │       │       │   │       │   ├── idna feature "alloc"
@@ -746,7 +746,7 @@ antares-broker v0.3.0
 │   │   │       │       │   │       │               ├── icu_properties v2.2.0 (*)
 │   │   │       │       │   │       │               └── icu_provider feature "baked" (*)
 │   │   │       │       │   │       └── url feature "std"
-│   │   │       │       │   │           ├── url v2.5.8 (*)
+│   │   │       │       │   │           ├── url v2.5.9 (*)
 │   │   │       │       │   │           ├── percent-encoding feature "std" (*)
 │   │   │       │       │   │           ├── form_urlencoded feature "std" (*)
 │   │   │       │       │   │           └── idna feature "std"
@@ -1420,10 +1420,10 @@ antares-broker v0.3.0
 │   │   │       │           │   │       │       ├── tracing feature "log"
 │   │   │       │           │   │       │       │   └── tracing v0.1.44 (*)
 │   │   │       │           │   │       │       ├── url feature "default"
-│   │   │       │           │   │       │       │   ├── url v2.5.8
+│   │   │       │           │   │       │       │   ├── url v2.5.9
 │   │   │       │           │   │       │       │   │   ├── percent-encoding feature "alloc" (*)
 │   │   │       │           │   │       │       │   │   ├── form_urlencoded feature "alloc"
-│   │   │       │           │   │       │       │   │   │   ├── form_urlencoded v1.2.2
+│   │   │       │           │   │       │       │   │   │   ├── form_urlencoded v1.2.3
 │   │   │       │           │   │       │       │   │   │   │   └── percent-encoding v2.3.2
 │   │   │       │           │   │       │       │   │   │   └── percent-encoding feature "alloc" (*)
 │   │   │       │           │   │       │       │   │   ├── idna feature "alloc"
@@ -1507,10 +1507,10 @@ antares-broker v0.3.0
 │   │   │       │           │   │       │       │   │               ├── icu_properties v2.2.0 (*)
 │   │   │       │           │   │       │       │   │               └── icu_provider feature "baked" (*)
 │   │   │       │           │   │       │       │   └── url feature "std"
-│   │   │       │           │   │       │       │       ├── url v2.5.8 (*)
+│   │   │       │           │   │       │       │       ├── url v2.5.9 (*)
 │   │   │       │           │   │       │       │       ├── percent-encoding feature "std" (*)
 │   │   │       │           │   │       │       │       ├── form_urlencoded feature "std"
-│   │   │       │           │   │       │       │       │   ├── form_urlencoded v1.2.2 (*)
+│   │   │       │           │   │       │       │       │   ├── form_urlencoded v1.2.3 (*)
 │   │   │       │           │   │       │       │       │   ├── percent-encoding feature "std" (*)
 │   │   │       │           │   │       │       │       │   └── form_urlencoded feature "alloc" (*)
 │   │   │       │           │   │       │       │       └── idna feature "std"
@@ -3247,8 +3247,7 @@ antares-broker v0.3.0
 ├── rumqttc feature "use-rustls-no-provider" (*)
 ├── async-trait feature "default" (*)
 ├── parquet feature "zstd"
-│   └── parquet v60.0.0
-│       ├── hashbrown v0.17.1
+│   └── parquet v60.2.0
 │       ├── num-bigint v0.5.1
 │       │   ├── num-traits feature "i128"
 │       │   │   └── num-traits v0.2.19 (*)
@@ -3269,6 +3268,8 @@ antares-broker v0.3.0
 │       │       └── zstd-sys feature "std"
 │       │           └── zstd-sys v2.1.2+zstd.1.5.7 (*)
 │       ├── bytes feature "std" (*)
+│       ├── hashbrown feature "inline-more"
+│       │   └── hashbrown v0.17.1
 │       ├── num-traits feature "std" (*)
 │       ├── ahash feature "runtime-rng"
 │       │   ├── ahash v0.8.12

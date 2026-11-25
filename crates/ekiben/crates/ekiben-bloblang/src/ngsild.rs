@@ -943,10 +943,12 @@ mod tests {
             ("type", Value::String("Point".into())),
             ("coordinates", Value::String("1,2".into())),
         ]);
-        let Ok(Value::Object(attr)) = normalize("location", &bad, false) else {
-            panic!("not an attribute");
+        let attr = normalize("location", &bad, false);
+        let field = |k: &str| match &attr {
+            Ok(Value::Object(m)) => m.get(k).cloned(),
+            _ => None,
         };
-        assert_eq!(attr.get("type"), Some(&Value::String("Property".into())));
-        assert_eq!(attr.get("value"), Some(&bad));
+        assert_eq!(field("type"), Some(Value::String("Property".into())));
+        assert_eq!(field("value"), Some(bad.clone()));
     }
 }
