@@ -3306,7 +3306,7 @@ mod build_state_tests {
     /// `ANTARES_` namespace, is refused before anything is built.
     #[tokio::test]
     async fn a_host_default_the_broker_does_not_read_is_refused() {
-        for key in ["ANTARES_T7829_TYPO", "PATH"] {
+        for key in ["ANTARES_BOGUS_T7829", "PATH"] {
             let mut cfg = config_from_env().expect("config");
             cfg.defaults = [(key.to_owned(), "1".to_owned())].into_iter().collect();
             let err = build_state(&cfg, None).await.err().expect("refused");
