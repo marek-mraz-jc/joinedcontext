@@ -493,6 +493,10 @@ async fn the_project_door_handshake_names_the_server_after_the_projects_key() {
         .expect("the test database answers and migrates");
     let (mut state, issuer, signer, kid) = setup_state_with(Vec::new()).await;
     common::keyed_project(&state, &pool, "ovzdusie", "hel").await;
+    joinedcontext_portal::project_ids::key_of(&pool, &state.mirror, "ovzdusie")
+        .await
+        .expect("the registry answers")
+        .expect("the project gets its key");
     state.db = Some(pool.clone());
     let (organization, key) = joinedcontext_portal::project_ids::owned(&pool, "ovzdusie")
         .await

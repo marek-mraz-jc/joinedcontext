@@ -2108,6 +2108,129 @@ mod tests {
         }
     }
 
+    /// Each op is refused at the member that breaks it: a create over an object that exists, a
+    /// replace, patch or delete of one that does not, a delete carrying a body, an op carrying
+    /// the other body, and a manifest naming another kind, name or namespace. A delete without a
+    /// body removes; a patch merges into the object without its status.
+    #[test]
+    fn each_op_is_refused_at_the_member_that_breaks_it() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Endpoint".into(),
+            metadata: crate::resource::ObjectMeta::new("held", "doprava"),
+            spec: json!({ "contextSpaceRef": "parking", "audience": "public" }),
+            status: None,
+        });
+        let checked = |change: &ChangeInput| manifest_of(&state, "/changes/0", "doprava", change);
+        let refused = |change: ChangeInput| checked(&change).expect_err("refused").to_string();
+        let with = |op: Op, name: &str| {
+            let mut change = create("Endpoint", name);
+            change.op = op;
+            change
+        };
+        let bare = |op: Op, name: &str| {
+            let mut change = with(op, name);
+            change.manifest = None;
+            change
+        };
+        let gone = "invalid input at /changes/0/name: Endpoint 'gone' does not exist in project \
+                    doprava: use op create";
+        assert_eq!(
+            refused(with(Op::Create, "held")),
+            "invalid input at /changes/0/op: Endpoint 'held' exists already: use op replace or patch"
+        );
+        assert_eq!(refused(with(Op::Replace, "gone")), gone);
+        let mut patch = bare(Op::Patch, "gone");
+        patch.patch = Some(json!({ "spec": {} }));
+        assert_eq!(refused(patch), gone);
+        assert_eq!(refused(bare(Op::Delete, "gone")), gone);
+        assert_eq!(
+            refused(with(Op::Delete, "held")),
+            "invalid input at /changes/0: op delete takes neither manifest nor patch"
+        );
+        assert_eq!(checked(&bare(Op::Delete, "held")).expect("a removal"), None);
+        let mut both = with(Op::Replace, "held");
+        both.patch = Some(json!({}));
+        assert_eq!(
+            refused(both),
+            "invalid input at /changes/0/manifest: op replace takes manifest alone"
+        );
+        let mut kind = with(Op::Create, "new");
+        kind.manifest = Some(json!({ "kind": "Pipeline", "metadata": { "name": "new" } }));
+        assert_eq!(
+            refused(kind),
+            "invalid input at /changes/0/manifest/kind: the manifest's kind must be the \
+             change's, 'Endpoint'"
+        );
+        let mut name = with(Op::Create, "new");
+        name.manifest = Some(json!({ "kind": "Endpoint", "metadata": { "name": "other" } }));
+        assert_eq!(
+            refused(name),
+            "invalid input at /changes/0/manifest/metadata/name: the manifest's metadata/name \
+             must be the change's, 'new'"
+        );
+        let mut elsewhere = with(Op::Create, "new");
+        elsewhere.manifest = Some(
+            json!({ "kind": "Endpoint", "metadata": { "name": "new", "namespace": "kosice" } }),
+        );
+        assert_eq!(
+            refused(elsewhere),
+            "invalid input at /changes/0/manifest/metadata/namespace: Endpoint lives in \
+             namespace 'doprava', not 'kosice': set metadata.namespace to 'doprava' or leave it out"
+        );
+        let mut merge = bare(Op::Patch, "held");
+        merge.patch = Some(json!({ "spec": { "audience": "organization" } }));
+        let merged = checked(&merge).expect("a patch").expect("a manifest");
+        assert_eq!(merged["spec"]["audience"], "organization");
+        assert_eq!(merged["spec"]["contextSpaceRef"], "parking");
+        assert!(merged.get("status").is_none(), "{merged}");
+    }
+
+    /// A plan naming one object twice is refused at the second change; a model's source on a
+    /// delete of a model that exists is refused at the source.
+    #[tokio::test]
+    async fn a_plan_naming_an_object_twice_or_a_source_on_a_removal_is_refused() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let input = PlanInput {
+            changes: vec![create("Endpoint", "twice"), create("Endpoint", "twice")],
+            workspace: None,
+        };
+        let why = plan(&caller(None), &state, "doprava", input)
+            .await
+            .expect_err("refused")
+            .to_string();
+        assert_eq!(
+            why,
+            "invalid input at /changes/1: Endpoint 'twice' is in this plan twice"
+        );
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "DataModel".into(),
+            metadata: crate::resource::ObjectMeta::new("bike-counter", "doprava"),
+            spec: json!({ "contextSpaceRef": "parking", "linkml": "./bike.linkml.yaml" }),
+            status: None,
+        });
+        let removal = ChangeInput {
+            op: Op::Delete,
+            kind: "DataModel".into(),
+            name: "bike-counter".into(),
+            manifest: None,
+            patch: None,
+            source: Some("classes: {}".into()),
+        };
+        let input = PlanInput {
+            changes: vec![removal],
+            workspace: None,
+        };
+        let why = plan(&caller(None), &state, "doprava", input)
+            .await
+            .expect_err("refused")
+            .to_string();
+        assert!(why.contains("/changes/0/source"), "{why}");
+        assert!(why.contains("op delete takes no source"), "{why}");
+    }
+
     /// T-6282: two or more creates of the project's own objects are checked and opened as one
     /// Change, a model with its LinkML file among them (JC2-10); a single change, a workspace or
     /// a removal is not.

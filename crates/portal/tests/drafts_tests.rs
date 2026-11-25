@@ -1029,3 +1029,83 @@ async fn a_draft_of_a_copy_lives_in_that_copy() {
     .await;
     assert_eq!(gone.status(), StatusCode::NOT_FOUND);
 }
+
+/// The same life on PostgreSQL (when `JC_PORTAL_TEST_DATABASE_URL` is set): a second put moves
+/// the version, a stale or a missing expected version is a conflict naming the current one, and
+/// a project without a key keeps no draft and has none to judge.
+#[tokio::test]
+async fn a_database_draft_moves_its_version_and_refuses_a_stale_write() {
+    let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+    else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("the test database answers and migrates");
+    let mirror = common::keyed_mirror(&pool, &["helsinki"]).await;
+    let store = DraftStore::new(Some(pool), mirror);
+    let name = format!("ds{}", &common::unique::unique()[7..]);
+    let manifest = |url: &str| {
+        json!({
+            "apiVersion": API_VERSION,
+            "kind": "DataSource",
+            "metadata": { "name": name },
+            "spec": { "type": "http", "http": { "url": url } }
+        })
+    };
+    let put = |expected: Option<i64>, url: &'static str| {
+        store.put(
+            "helsinki",
+            "DataSource",
+            &name,
+            manifest(url),
+            expected,
+            "steward",
+            "person",
+        )
+    };
+    assert_eq!(put(None, "https://a.example").await.unwrap().version, 1);
+    let moved = put(Some(1), "https://b.example").await.unwrap();
+    assert_eq!(moved.version, 2);
+    assert_eq!(moved.manifest["spec"]["http"]["url"], "https://b.example");
+    assert_eq!(put(None, "https://c.example").await.unwrap().version, 3);
+    assert!(matches!(
+        put(Some(1), "https://d.example").await,
+        Err(DraftError::Conflict { current: 3 })
+    ));
+    let kept = store
+        .get("helsinki", "DataSource", &name)
+        .await
+        .unwrap()
+        .expect("kept");
+    assert_eq!(kept.manifest["spec"]["http"]["url"], "https://c.example");
+
+    assert!(matches!(
+        store
+            .put(
+                "no-key-here",
+                "DataSource",
+                &name,
+                manifest("https://a.example"),
+                None,
+                "steward",
+                "person",
+            )
+            .await,
+        Err(DraftError::Unplaced(project)) if project == "no-key-here"
+    ));
+    let verdict: Verdict = serde_json::from_value(json!({
+        "ok": true, "findings": [], "checkedAt": "2026-11-25T08:00:00Z", "inputDigest": "d"
+    }))
+    .expect("a verdict");
+    assert!(matches!(
+        store
+            .set_verdict("no-key-here", "DataSource", &name, verdict)
+            .await,
+        Err(DraftError::NotFound { .. })
+    ));
+    assert!(store.drop("helsinki", "DataSource", &name).await.unwrap());
+}

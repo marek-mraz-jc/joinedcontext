@@ -2151,6 +2151,90 @@ mod tests {
         assert_eq!(findings[0].path, "linkml");
     }
 
+    /// The input's own limits, each refused at its member: a type name that is no PascalCase
+    /// word, a description over the cap and files over the byte cap; one of files or url.
+    #[test]
+    fn an_input_over_a_limit_is_refused_at_its_member() {
+        let refused = |input: serde_json::Value| {
+            super::validate_input(&input)
+                .expect_err("refused")
+                .to_string()
+        };
+        let file = |content: String| json!([{ "name": "a.json", "content": content }]);
+        assert_eq!(
+            refused(json!({ "files": file("{}".into()), "typeName": "bike counter" })),
+            "invalid input at /typeName: 'bike counter' is not a PascalCase type name (a capital \
+             letter, then up to 62 letters or digits)"
+        );
+        assert_eq!(
+            refused(json!({
+                "files": file("{}".into()),
+                "description": "d".repeat(super::MAX_DESCRIPTION_CHARS + 1)
+            })),
+            format!(
+                "invalid input at /description: description is longer than {} characters",
+                super::MAX_DESCRIPTION_CHARS
+            )
+        );
+        assert_eq!(
+            refused(json!({ "files": file("x".repeat(super::MAX_TOTAL_FILES_BYTES + 1)) })),
+            format!(
+                "invalid input at /files: total file size exceeds limit of {} bytes",
+                super::MAX_TOTAL_FILES_BYTES
+            )
+        );
+        assert!(refused(json!({})).contains("exactly one of files or url"));
+        assert!(super::validate_input(&json!({ "url": "https://x.example/a.json" })).is_ok());
+    }
+
+    /// A name that folds to nothing is `space`; letters Unicode does not decompose are spelled
+    /// out; a description goes only onto a class that parses as a mapping without one.
+    #[test]
+    fn names_fold_and_a_description_lands_only_where_it_can() {
+        assert_eq!(super::sanitize_dns1123("---"), "space");
+        assert_eq!(super::fold_to_ascii("đĐøØæÆœŒ"), "ddooaeaeoeoe");
+        let same = |source: &str| assert_eq!(describe_class(source, "Bike", "d"), source);
+        same("classes: [unclosed");
+        same("classes: {Car: {}}");
+        same("classes: {Bike: plain}");
+        same("classes: {Bike: {description: kept}}");
+        let filled = describe_class("classes: {Bike: null}", "Bike", "counted bikes");
+        assert!(filled.contains("description: counted bikes"), "{filled}");
+    }
+
+    /// A space name that sanitises to a label ending in a hyphen (cut at 63 characters) is
+    /// refused at `/space` before anything is read.
+    #[tokio::test]
+    async fn a_space_name_cut_into_no_label_is_refused() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let caller = crate::ops::Caller::new(
+            crate::auth::session::Identity {
+                client: None,
+                subject: "sub-jana".into(),
+                username: "jana".into(),
+                email: None,
+                name: None,
+                roles: vec![],
+                groups: vec![],
+                second_factor: false,
+            },
+            crate::ops::Via::Mcp,
+        );
+        let space = format!("{} b", "a".repeat(62));
+        let input = json!({ "space": space, "url": "https://x.example/a.json" });
+        let why = super::run(&caller, &state, "doprava", input)
+            .await
+            .expect_err("refused")
+            .to_string();
+        assert_eq!(
+            why,
+            format!(
+                "invalid input at /space: '{}-' is not a valid DNS-1123 label",
+                "a".repeat(62)
+            )
+        );
+    }
+
     /// EP-75 (T-6285): an Endpoint uploaded with a slug the caller typed is refused before its
     /// draft is kept, so the draft never vouches for that slug in a later plan or dry run.
     #[tokio::test]
