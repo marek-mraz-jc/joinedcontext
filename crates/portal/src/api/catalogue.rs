@@ -3533,11 +3533,7 @@ classes:
         let (status, sample) =
             answer(get_sample(State(state), HeaderMap::new(), Path("air".into())).await).await;
         assert_eq!(status, StatusCode::OK, "{sample}");
-        assert_eq!(
-            sample.to_string().matches("pm10").count() >= 1,
-            true,
-            "{sample}"
-        );
+        assert!(sample.to_string().contains("pm10"), "{sample}");
 
         let refusing = wiremock::MockServer::start().await;
         wiremock::Mock::given(method("GET"))
