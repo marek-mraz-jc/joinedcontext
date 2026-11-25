@@ -33,6 +33,10 @@ struct Fake {
     active: Mutex<BTreeSet<(String, String, String)>>,
 }
 
+/// The path of the portal whose catalogue the fake desk serves badly: a source not served yet
+/// and a catalogue that fails with an address in its text.
+const BROKEN: &str = "broken";
+
 fn key(portal: &PortalSpec, source: &str) -> (String, String, String) {
     (
         portal.organization_ref.clone(),
@@ -44,9 +48,12 @@ fn key(portal: &PortalSpec, source: &str) -> (String, String, String) {
 impl SourceDesk for Fake {
     fn test<'a>(
         &'a self,
-        _portal: &'a PortalSpec,
+        portal: &'a PortalSpec,
         _source: &'a str,
     ) -> DeskFuture<'a, SourceTestAnswer> {
+        if portal.path == BROKEN {
+            return Box::pin(async { Err(DeskError::Failed("ckan at 10.0.0.7 said 500".into())) });
+        }
         Box::pin(async {
             Ok(SourceTestAnswer {
                 outcome: "ok".to_owned(),
@@ -63,10 +70,16 @@ impl SourceDesk for Fake {
         })
     }
     fn start<'a>(&'a self, portal: &'a PortalSpec, source: &'a str) -> DeskFuture<'a, ()> {
+        if portal.path == BROKEN {
+            return Box::pin(async { Err(DeskError::NotFound) });
+        }
         let fresh = self.active.lock().unwrap().insert(key(portal, source));
         Box::pin(async move { fresh.then_some(()).ok_or(DeskError::Busy) })
     }
     fn runs<'a>(&'a self, portal: &'a PortalSpec, source: &'a str) -> DeskFuture<'a, Vec<Value>> {
+        if portal.path == BROKEN {
+            return Box::pin(async { Err(DeskError::Failed("ckan at 10.0.0.7 said 500".into())) });
+        }
         let state = if self.active.lock().unwrap().contains(&key(portal, source)) {
             "running"
         } else {
@@ -80,6 +93,9 @@ impl SourceDesk for Fake {
         offset: usize,
         limit: usize,
     ) -> DeskFuture<'a, DeskCatalogue> {
+        if portal.path == BROKEN {
+            return Box::pin(async { Err(DeskError::NotFound) });
+        }
         let own = format!("{}-{}", portal.organization_ref, portal.path);
         Box::pin(async move {
             let all = vec![
@@ -200,6 +216,15 @@ fn world() -> AppState {
                 ] }),
         ));
     }
+    m.upsert(envelope(
+        "Portal",
+        "praha-broken",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "praha", "path": BROKEN,
+            "sources": [{ "name": "kosice", "type": "dcat-ap", "url": "https://data.kosice.sk/catalog.ttl",
+                          "allowedHosts": ["data.kosice.sk"], "schedule": "23 3 * * *",
+                          "budget": { "records": 100, "bytes": 1000000 } }] }),
+    ));
     bind(m, "bbsk-readers", "bbreader", "portal-reader", "bbsk");
     bind(m, "bbsk-others", "bbother", "group-reader", "bbsk");
     state
@@ -370,6 +395,51 @@ async fn test_connection_is_rate_limited_per_person() {
     )
     .await;
     assert_eq!(other.status, StatusCode::OK, "{}", other.body);
+}
+
+/// A catalogue that has not taken the source yet is a 404 that says when to try again; one that
+/// fails is a 500 that keeps the desk's text, which names an address, to the log (T-7813).
+#[tokio::test]
+async fn a_catalogue_that_is_not_ready_or_fails_says_what_to_do_and_hides_its_text() {
+    let state = world();
+    let who = || person("prahaadmin");
+    let started = http(
+        &state,
+        who(),
+        "POST",
+        &source_route("praha-broken", "kosice", "runs"),
+        None,
+    )
+    .await;
+    assert_eq!(started.status, StatusCode::NOT_FOUND, "{}", started.body);
+    assert!(
+        started.body.to_string().contains("try again then"),
+        "{}",
+        started.body
+    );
+    let listed = http(&state, who(), "GET", &datasets_route("praha-broken"), None).await;
+    assert_eq!(listed.status, StatusCode::NOT_FOUND, "{}", listed.body);
+    for (verb, end) in [("GET", "runs"), ("POST", "test")] {
+        let failed = http(
+            &state,
+            who(),
+            verb,
+            &source_route("praha-broken", "kosice", end),
+            None,
+        )
+        .await;
+        assert_eq!(
+            failed.status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{end}: {}",
+            failed.body
+        );
+        let text = failed.body.to_string();
+        assert!(
+            text.contains("Try again") && !text.contains("10.0.0.7"),
+            "{end}: {text}"
+        );
+    }
 }
 
 #[tokio::test]
