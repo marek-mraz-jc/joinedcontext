@@ -456,25 +456,23 @@ impl CkanSync {
                 ));
                 continue;
             }
-            if let Some(organization) = dashboard.organization() {
-                let key = (
-                    dashboard.anchor.instance.base_url().to_owned(),
-                    organization,
-                );
-                if let Some((_, kept)) = sweeps.get_mut(&key) {
-                    kept.insert(package.clone());
-                }
+            let catalogue = dashboard.anchor.instance.base_url().to_owned();
+            if let Some((_, kept)) = dashboard
+                .organization()
+                .and_then(|organization| sweeps.get_mut(&(catalogue, organization)))
+            {
+                kept.insert(package.clone());
             }
             let key = (
                 format!("dashboard:{}", dashboard.project),
                 dashboard.name.clone(),
             );
             let print = dashboard_fingerprint(&dashboard, &self.settings);
-            let due = self.pacing.lock().unwrap_or_else(|p| p.into_inner()).due(
-                &key,
-                print,
-                Instant::now(),
-            );
+            let due = self
+                .pacing
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .due(&key, print, Instant::now());
             if due {
                 due_dashboards.push((key, print, dashboard));
             }
@@ -488,11 +486,11 @@ impl CkanSync {
             }
             let key = claim(&target);
             let print = fingerprint(&target, &self.settings);
-            let due = self.pacing.lock().unwrap_or_else(|p| p.into_inner()).due(
-                &key,
-                print,
-                Instant::now(),
-            );
+            let due = self
+                .pacing
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .due(&key, print, Instant::now());
             if due {
                 due_targets.push(target);
             }
@@ -505,7 +503,7 @@ impl CkanSync {
                 let print = fingerprint(&target, &self.settings);
                 self.pacing
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .record(claim(&target), print, &report.publication, Instant::now());
                 report
             }
@@ -522,7 +520,7 @@ impl CkanSync {
             let report = self.dashboard(dashboard, repository, &known).await;
             self.pacing
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .record(key, print, &report.publication, Instant::now());
             reports.push(report);
         }
@@ -574,7 +572,10 @@ impl CkanSync {
             line.reason.hash(&mut hasher);
             hasher.finish()
         };
-        let mut pacing = self.pacing.lock().unwrap_or_else(|p| p.into_inner());
+        let mut pacing = self
+            .pacing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if !pacing.due(&key, print, Instant::now()) {
             return None;
         }
@@ -646,7 +647,10 @@ impl CkanSync {
         known: &Organizations,
     ) {
         let due = {
-            let done = self.moved_out.lock().unwrap_or_else(|p| p.into_inner());
+            let done = self
+                .moved_out
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             due_moves(moved, published, claims, &done, skip, |declared| {
                 self.organization_catalogue(&declared.instance).is_some()
             })
@@ -656,25 +660,17 @@ impl CkanSync {
             let report = self
                 .one(&declared, true, repository, Measurements::default(), known)
                 .await;
+            let (project, endpoint, dataset) = (&report.project, &report.endpoint, &report.dataset);
+            let catalogue = &key.0;
             match &report.publication {
-                Publication::Failed(why) => tracing::warn!(
-                    project = %report.project,
-                    endpoint = %report.endpoint,
-                    dataset = %report.dataset,
-                    catalogue = %key.0,
-                    "the dataset moved to its Organization's catalogue and stays in the old one for now: {why}"
-                ),
+                Publication::Failed(why) => {
+                    tracing::warn!(%project, %endpoint, %dataset, %catalogue, "{MOVE_HELD}: {why}")
+                }
                 _ => {
-                    tracing::info!(
-                        project = %report.project,
-                        endpoint = %report.endpoint,
-                        dataset = %report.dataset,
-                        catalogue = %key.0,
-                        "the dataset moved to its Organization's catalogue and left this one"
-                    );
+                    tracing::info!(%project, %endpoint, %dataset, %catalogue, "{MOVE_DONE}");
                     self.moved_out
                         .lock()
-                        .unwrap_or_else(|p| p.into_inner())
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .insert(key);
                 }
             }
@@ -716,12 +712,9 @@ impl CkanSync {
         })
         .await;
 
-        match work {
-            Ok(Ok(publication)) => line(publication),
-            Ok(Err(reason)) => line(Publication::Failed(reason)),
-            Err(err) => line(Publication::Failed(format!(
-                "the publication did not finish: {err}"
-            ))),
+        match finished(work, "the publication") {
+            Ok(publication) => line(publication),
+            Err(reason) => line(Publication::Failed(reason)),
         }
     }
 
@@ -755,14 +748,13 @@ impl CkanSync {
             dashboards::publish(&mut api, &desired)
         })
         .await;
-        let publication = match work {
-            Ok(Ok(outcome)) => Publication::Published {
+        let publication = match finished(work, "the publication") {
+            Ok(outcome) => Publication::Published {
                 dataset: dataset.clone(),
                 outcome,
                 no_linkml: false,
             },
-            Ok(Err(reason)) => Publication::Failed(reason),
-            Err(err) => Publication::Failed(format!("the publication did not finish: {err}")),
+            Err(reason) => Publication::Failed(reason),
         };
         Report {
             project,
@@ -801,8 +793,8 @@ impl CkanSync {
             sweep_with(&mut api, &organization, &kept)
         })
         .await;
-        match work {
-            Ok(Ok(reports)) => reports
+        match finished(work, "the catalogue sweep") {
+            Ok(reports) => reports
                 .into_iter()
                 .map(|(dataset, publication)| Report {
                     project: project.clone(),
@@ -811,15 +803,28 @@ impl CkanSync {
                     publication,
                 })
                 .collect(),
-            Ok(Err(reason)) => vec![Report::failed(&project, "", reason)],
-            Err(err) => vec![Report::failed(
-                &project,
-                "",
-                format!("the catalogue sweep did not finish: {err}"),
-            )],
+            Err(reason) => vec![Report::failed(&project, "", reason)],
         }
     }
 }
+
+/// What the blocking work of a publication or a sweep came to: its own answer, or that `what`
+/// did not finish (it panicked, or the runtime is shutting down).
+fn finished<T>(
+    work: Result<Result<T, String>, tokio::task::JoinError>,
+    what: &str,
+) -> Result<T, String> {
+    work.map_err(|err| format!("{what} did not finish: {err}"))?
+}
+
+/// What the log says of a moved dataset still in the catalogue it was declared in (T-7020).
+const MOVE_HELD: &str =
+    "the dataset moved to its Organization's catalogue and stays in the old one for now";
+/// What the log says of a moved dataset withdrawn from the catalogue it was declared in.
+const MOVE_DONE: &str = "the dataset moved to its Organization's catalogue and left this one";
+/// What the log says of a dataset the previous run published that cannot be withdrawn.
+const UNREACHABLE: &str = "a dataset the previous run published cannot be reached to withdraw; \
+                           it stays until the catalogue is declared again";
 
 /// How long an Endpoint whose publication went through, and has not changed, is left alone:
 /// its measurements and its charts are at most this old in the catalogue (T-4717).
@@ -1055,7 +1060,9 @@ impl<A> Paced<A> {
 
     fn held(&self, name: &str) -> Option<serde_json::Value> {
         let (catalogue, known) = self.known.as_ref()?;
-        let known = known.lock().unwrap_or_else(|p| p.into_inner());
+        let known = known
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         known.get(&(catalogue.clone(), name.to_owned())).cloned()
     }
 
@@ -1066,7 +1073,9 @@ impl<A> Paced<A> {
             return;
         };
         let key = (catalogue.clone(), name.to_owned());
-        let mut known = known.lock().unwrap_or_else(|p| p.into_inner());
+        let mut known = known
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match organization.filter(|org| org.get("name").is_some()) {
             Some(organization) => known.insert(key, organization.clone()),
             None => known.remove(&key),
@@ -1094,7 +1103,10 @@ impl<A> Paced<A> {
         if gap.is_zero() {
             return;
         }
-        let mut last = self.last.lock().unwrap_or_else(|p| p.into_inner());
+        let mut last = self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(ready) = *last {
             let now = Instant::now();
             if ready > now {
@@ -1242,10 +1254,9 @@ pub fn publish_without_models(
     unread: &str,
     settings: &Settings,
 ) -> Result<Publication, String> {
-    let outcome = match publish_with(api, target, record, None, settings)? {
-        Publication::Published { outcome, .. } => outcome_word(outcome),
-        _ => "not published",
-    };
+    let line = publisher::publish_one(api, target, record, None, settings)
+        .map_err(|err| err.to_string())?;
+    let outcome = outcome_word(line.outcome);
     Err(format!(
         "the dataset is {outcome}, its charts were not refreshed: {unread}"
     ))
@@ -1607,13 +1618,8 @@ pub fn withdrawn(
         // The catalogue manifest went with the Endpoint. Nothing can be reached without the
         // instance's URL and token reference, and inventing either would be worse than leaving
         // the dataset to the sweep.
-        tracing::warn!(
-            project = %line.project,
-            endpoint = %line.endpoint,
-            reason = %line.reason,
-            "a dataset the previous run published cannot be reached to withdraw; it stays until \
-             the catalogue is declared again"
-        );
+        let (project, endpoint, reason) = (&line.project, &line.endpoint, &line.reason);
+        tracing::warn!(%project, %endpoint, %reason, "{UNREACHABLE}");
     }
     planned
         .into_iter()
@@ -1969,9 +1975,7 @@ mod tests {
             assert_eq!(routed.instance.url, own, "{project}");
             assert_eq!(routed.instance.organization_default.as_deref(), Some(org));
             assert_eq!(routed.publication.organization.as_deref(), Some(org));
-            let (_, api_url, settings, _) = sync
-                .client(&routed, &dir, source)
-                .unwrap_or_else(|e| panic!("{project}: {e}"));
+            let (_, api_url, settings, _) = sync.client(&routed, &dir, source).expect(project);
             assert_eq!(api_url, format!("http://opendata.{org}.localhost"));
             assert_eq!(settings.host, format!("http://api.{org}.localhost:42301"));
             let other = if org == "hel" { "ba" } else { "hel" };
@@ -2001,9 +2005,10 @@ mod tests {
         // Without its token file the run says so, and never falls back to another's.
         std::fs::remove_file(dir.join("ba.token")).expect("rm");
         let routed = sync.routed(&repo, target("bratislava"));
-        let Err(err) = sync.client(&routed, &dir, source) else {
-            panic!("bratislava published without its token file");
-        };
+        let err = sync
+            .client(&routed, &dir, source)
+            .map(drop)
+            .expect_err("bratislava published without its token file");
         assert!(err.contains("ba's catalogue"), "{err}");
         assert!(!err.contains("hel-token"), "{err}");
         // A Portal without Organization catalogues keeps the instance's catalogue, and each
@@ -2097,5 +2102,66 @@ mod tests {
         own.instance_title = Some("Helsinki open data".to_owned());
         let routed = sync.routed(&repo, own);
         assert_eq!(routed.instance_title.as_deref(), Some("Helsinki open data"));
+    }
+
+    /// A log whose memory a panicking thread poisoned says nothing rather than panic the pass.
+    #[test]
+    fn a_poisoned_log_memory_logs_nothing() {
+        let sync = CkanSync::new("portal.example");
+        let said = sync.said.clone();
+        let poisoner = std::thread::spawn(move || {
+            let _held = said.lock();
+            panic!("poison the log's memory");
+        });
+        assert!(poisoner.join().is_err());
+        let report = Report::failed("helsinki", "bikes", "the catalogue is down");
+        assert!(sync.log(&[report]).is_empty());
+    }
+
+    /// The operator's settings reach the wave: the installation's catalogue, the age identity,
+    /// the branding title and documentation base, and the loopback address.
+    #[test]
+    fn the_operators_settings_reach_the_wave() {
+        let instance: CkanInstanceSpec = serde_json::from_value(json!({
+            "url": "https://data.example.fi",
+            "apiTokenRef": { "name": "ckan-api-token", "key": "token" },
+        }))
+        .expect("an instance");
+        let sync = CkanSync::new("portal.example")
+            .with_installation_catalogue(instance.clone())
+            .with_age_key_file(Some(PathBuf::from("/run/secrets/age.key")))
+            .titled("City of Helsinki")
+            .documented_at("https://docs.example.fi")
+            .reached_at(Some("127.0.0.1:8443".parse().expect("an address")));
+        assert_eq!(sync.installation, Some(instance));
+        assert_eq!(
+            sync.age_key_file,
+            Some(PathBuf::from("/run/secrets/age.key"))
+        );
+        assert_eq!(
+            sync.api_reach,
+            Some("127.0.0.1:8443".parse().expect("an address"))
+        );
+        let shown = format!("{:?}", sync.settings);
+        assert!(
+            shown.contains("City of Helsinki") && shown.contains("https://docs.example.fi"),
+            "{shown}"
+        );
+    }
+
+    /// Blocking work that panicked is the publication's failure, said in words.
+    #[tokio::test]
+    async fn work_that_did_not_finish_is_a_failure_in_words() {
+        let work = tokio::task::spawn_blocking(|| -> Result<(), String> {
+            panic!("the publisher broke off");
+        })
+        .await;
+        let reason = finished(work, "the publication").expect_err("not finished");
+        assert!(
+            reason.starts_with("the publication did not finish: "),
+            "{reason}"
+        );
+        let done = tokio::task::spawn_blocking(|| Ok::<u8, String>(1)).await;
+        assert_eq!(finished(done, "the catalogue sweep"), Ok(1));
     }
 }
