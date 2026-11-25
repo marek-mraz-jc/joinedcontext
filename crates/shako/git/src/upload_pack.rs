@@ -534,7 +534,7 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Answer> {
             .map_err(|_| ShakoError::BadRequest(format!("invalid want-ref '{rname}'")))?;
         let mut r = repo
             .try_find_reference(partial)
-            .map_err(|e| ShakoError::Git(e.to_string()))?
+            .map_err(git_err("find ref"))?
             .ok_or_else(|| ShakoError::BadRequest(format!("wanted ref '{rname}' not found")))?;
         let id = r
             .peel_to_id()

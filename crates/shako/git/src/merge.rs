@@ -5,7 +5,7 @@
 
 use crate::git_err;
 use crate::repo::{
-    CommitAuthor, build_nested_trees, collect_tree_blobs, is_ancestor, open_isolated,
+    CommitAuthor, branch_ref, build_nested_trees, collect_tree_blobs, is_ancestor, open_isolated,
     resolve_commit_oid, sanitize_actor_field, write_objects_as_pack,
 };
 use bstr::BString;
@@ -13,7 +13,7 @@ use gix_hash::ObjectId;
 use gix_object::WriteTo;
 use gix_object::tree::EntryKind;
 use gix_ref::{
-    FullName, Target,
+    Target,
     transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
 };
 use serde::{Deserialize, Serialize};
@@ -210,9 +210,7 @@ pub fn execute_pr_merge(
         ));
     }
 
-    let base_ref_name: FullName = format!("refs/heads/{base_branch}")
-        .try_into()
-        .map_err(|e| ShakoError::Unprocessable(format!("invalid base branch: {e}")))?;
+    let base_ref_name = branch_ref(base_branch)?;
 
     if style == MergeStyle::FastForwardOnly {
         if !is_ancestor(&repo, base_oid, head_oid) {
@@ -239,9 +237,10 @@ pub fn execute_pr_merge(
                 gix::lock::acquire::Fail::Immediately,
                 gix::lock::acquire::Fail::Immediately,
             )
-            .map_err(|e| ShakoError::Conflict(format!("concurrent update on {base_branch}: {e}")))?
-            .commit(None)
-            .map_err(|e| ShakoError::Conflict(format!("commit ref failed: {e}")))?;
+            .and_then(|tx| tx.commit(None))
+            .map_err(|e| {
+                ShakoError::Conflict(format!("concurrent update on {base_branch}: {e}"))
+            })?;
         return Ok(head_oid.to_hex().to_string());
     }
 
@@ -320,9 +319,8 @@ pub fn execute_pr_merge(
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(|e| ShakoError::Conflict(format!("concurrent update on {base_branch}: {e}")))?
-        .commit(None)
-        .map_err(|e| ShakoError::Conflict(format!("commit ref failed: {e}")))?;
+        .and_then(|tx| tx.commit(None))
+        .map_err(|e| ShakoError::Conflict(format!("concurrent update on {base_branch}: {e}")))?;
 
     Ok(commit_oid.to_hex().to_string())
 }

@@ -91,6 +91,18 @@ pub fn open_isolated(path: &Path) -> ShakoResult<gix::Repository> {
     Ok(repo.without_freelist())
 }
 
+/// `refs/heads/{branch}` once [`validate_branch_name`] admits `branch`.
+pub(crate) fn branch_ref(branch: &str) -> ShakoResult<FullName> {
+    validate_branch_name(branch)?;
+    full_ref(&format!("refs/heads/{branch}"))
+}
+
+/// `refname` once [`validate_full_ref_name`] admits it; gix checks a subset of the same rules.
+pub(crate) fn full_ref(refname: &str) -> ShakoResult<FullName> {
+    validate_full_ref_name(refname)?;
+    FullName::try_from(refname).map_err(git_err("ref name"))
+}
+
 /// Initializes a bare repository at `{root}/{instance_id}/{repo_id}.git`, writes `SAFE_BARE_REPO_CONFIG`,
 /// sets `HEAD` to `refs/heads/{default_branch}`, and optionally writes an initial commit (Row 2).
 pub fn init_bare_repo(
@@ -101,7 +113,7 @@ pub fn init_bare_repo(
     auto_init: bool,
     description: &str,
 ) -> ShakoResult<PathBuf> {
-    validate_branch_name(default_branch)?;
+    let head_target = branch_ref(default_branch)?;
     let path = repo_disk_path(root, instance_id, repo_id)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(storage_err("failed to create instance dir"))?;
@@ -112,12 +124,7 @@ pub fn init_bare_repo(
     std::fs::write(path.join("description"), description)
         .map_err(storage_err("failed to write repo description"))?;
 
-    let head_target: FullName = format!("refs/heads/{default_branch}")
-        .try_into()
-        .map_err(|e| ShakoError::Unprocessable(format!("invalid default branch: {e}")))?;
-    let head_name: FullName = "HEAD"
-        .try_into()
-        .map_err(|e| ShakoError::Internal(format!("HEAD name: {e}")))?;
+    let head_name = FullName::try_from("HEAD").map_err(git_err("HEAD"))?;
     repo.refs
         .transaction()
         .prepare(
@@ -137,9 +144,8 @@ pub fn init_bare_repo(
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(git_err("prepare HEAD failed"))?
-        .commit(None)
-        .map_err(git_err("commit HEAD failed"))?;
+        .and_then(|tx| tx.commit(None))
+        .map_err(git_err("update HEAD"))?;
 
     if auto_init {
         let readme = format!(
@@ -190,7 +196,7 @@ pub fn copy_bare_repo(
     std::fs::create_dir_all(&dest_pack_dir).map_err(storage_err("mkdir pack dir"))?;
     if origin_pack_dir.is_dir() {
         for entry in std::fs::read_dir(&origin_pack_dir)
-            .map_err(|e| ShakoError::Storage(e.to_string()))?
+            .map_err(storage_err("read pack dir"))?
             .flatten()
         {
             let file_name = entry.file_name();
@@ -235,10 +241,8 @@ pub fn copy_bare_repo(
         }
     }
 
-    let head_target: FullName = format!("refs/heads/{default_branch}")
-        .try_into()
-        .map_err(git_err("default branch"))?;
-    let head_name: FullName = "HEAD".try_into().map_err(git_err("HEAD"))?;
+    let head_target = branch_ref(default_branch)?;
+    let head_name = FullName::try_from("HEAD").map_err(git_err("HEAD"))?;
     edits.push(RefEdit {
         change: Change::Update {
             log: LogChange {
@@ -260,9 +264,8 @@ pub fn copy_bare_repo(
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(git_err("migrate ref prepare"))?
-        .commit(None)
-        .map_err(git_err("migrate ref commit"))?;
+        .and_then(|tx| tx.commit(None))
+        .map_err(git_err("migrate refs"))?;
 
     Ok(())
 }
@@ -434,18 +437,13 @@ pub fn commit_file_changes(
     committer: &CommitAuthor,
     changes: &[FileChangeOp],
 ) -> ShakoResult<String> {
-    validate_branch_name(branch)?;
+    let full_ref = branch_ref(branch)?;
     if changes.is_empty() {
         return Err(ShakoError::Unprocessable(
             "no file changes specified".into(),
         ));
     }
     let repo = open_isolated(repo_path)?;
-    let full_ref_str = format!("refs/heads/{branch}");
-    let full_ref: FullName = full_ref_str
-        .clone()
-        .try_into()
-        .map_err(|e| ShakoError::Unprocessable(format!("invalid branch: {e}")))?;
 
     let parent_commit_oid = match repo.refs.try_find(full_ref.as_bstr()) {
         Ok(Some(r)) => r.target.try_id().map(ToOwned::to_owned),
@@ -593,9 +591,8 @@ pub fn commit_file_changes(
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(|e| ShakoError::Conflict(format!("concurrent ref update on {branch}: {e}")))?
-        .commit(None)
-        .map_err(|e| ShakoError::Conflict(format!("failed to commit ref {branch}: {e}")))?;
+        .and_then(|tx| tx.commit(None))
+        .map_err(|e| ShakoError::Conflict(format!("concurrent ref update on {branch}: {e}")))?;
 
     Ok(commit_oid.to_hex().to_string())
 }
@@ -1161,16 +1158,13 @@ pub fn list_tags(repo_path: &Path) -> ShakoResult<Vec<(String, String, String, b
 
 /// Creates a new branch `refs/heads/{new_branch}` pointing to the commit of `from_ref` (Row 24).
 pub fn create_branch(repo_path: &Path, new_branch: &str, from_ref: &str) -> ShakoResult<String> {
-    validate_branch_name(new_branch)?;
+    let full_name = branch_ref(new_branch)?;
     let repo = open_isolated(repo_path)?;
     let target_oid = resolve_commit_oid(&repo, from_ref)?;
-    let full_name: FullName = format!("refs/heads/{new_branch}")
-        .try_into()
-        .map_err(|e| ShakoError::Unprocessable(format!("invalid branch name: {e}")))?;
     if repo
         .refs
         .try_find(full_name.as_bstr())
-        .map_err(|e| ShakoError::Git(e.to_string()))?
+        .map_err(git_err("find ref"))?
         .is_some()
     {
         return Err(ShakoError::Conflict("The branch already exists.".into()));
@@ -1194,23 +1188,19 @@ pub fn create_branch(repo_path: &Path, new_branch: &str, from_ref: &str) -> Shak
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(|_| ShakoError::Conflict("The branch already exists.".into()))?
-        .commit(None)
+        .and_then(|tx| tx.commit(None))
         .map_err(|_| ShakoError::Conflict("The branch already exists.".into()))?;
     Ok(target_oid.to_hex().to_string())
 }
 
 /// Deletes `refs/heads/{branch}`, returning `Ok(false)` if it did not exist (Row 24).
 pub fn delete_branch(repo_path: &Path, branch: &str) -> ShakoResult<bool> {
-    validate_branch_name(branch)?;
+    let full_name = branch_ref(branch)?;
     let repo = open_isolated(repo_path)?;
-    let full_name: FullName = format!("refs/heads/{branch}")
-        .try_into()
-        .map_err(|e| ShakoError::Unprocessable(format!("invalid branch name: {e}")))?;
     if repo
         .refs
         .try_find(full_name.as_bstr())
-        .map_err(|e| ShakoError::Git(e.to_string()))?
+        .map_err(git_err("find ref"))?
         .is_none()
     {
         return Ok(false);
@@ -1229,21 +1219,17 @@ pub fn delete_branch(repo_path: &Path, branch: &str) -> ShakoResult<bool> {
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(git_err("delete branch prepare"))?
-        .commit(None)
-        .map_err(git_err("delete branch commit"))?;
+        .and_then(|tx| tx.commit(None))
+        .map_err(git_err("delete branch"))?;
     Ok(true)
 }
 
 /// Sets a reference (such as `refs/pull/{number}/head`) directly to `oid_hex`.
 pub fn set_ref_direct(repo_path: &Path, full_ref_str: &str, oid_hex: &str) -> ShakoResult<()> {
-    validate_full_ref_name(full_ref_str)?;
+    let full_name = full_ref(full_ref_str)?;
     let repo = open_isolated(repo_path)?;
     let oid = ObjectId::from_hex(oid_hex.as_bytes())
         .map_err(|e| ShakoError::BadRequest(format!("invalid object id '{oid_hex}': {e}")))?;
-    let full_name: FullName = full_ref_str
-        .try_into()
-        .map_err(|e| ShakoError::Unprocessable(format!("invalid ref: {e}")))?;
     repo.refs
         .transaction()
         .prepare(
@@ -1263,9 +1249,8 @@ pub fn set_ref_direct(repo_path: &Path, full_ref_str: &str, oid_hex: &str) -> Sh
             gix::lock::acquire::Fail::Immediately,
             gix::lock::acquire::Fail::Immediately,
         )
-        .map_err(|e| ShakoError::Git(e.to_string()))?
-        .commit(None)
-        .map_err(|e| ShakoError::Git(e.to_string()))?;
+        .and_then(|tx| tx.commit(None))
+        .map_err(git_err("set ref"))?;
     Ok(())
 }
 

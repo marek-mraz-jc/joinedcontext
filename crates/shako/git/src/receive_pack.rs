@@ -8,7 +8,9 @@ use crate::pktline::{
     MAX_SIDEBAND_1K_DATA, MAX_SIDEBAND_64K_DATA, PktLine, read_pkt_line_from, write_flush,
     write_sideband_chunks, write_text_line,
 };
-use crate::repo::{collect_changed_blobs, collect_tree_blobs, is_ancestor, open_isolated};
+use crate::repo::{
+    collect_changed_blobs, collect_tree_blobs, full_ref, is_ancestor, open_isolated,
+};
 use crate::storage_err;
 use gix_hash::ObjectId;
 use gix_object::tree::EntryKind;
@@ -21,7 +23,7 @@ use gix_ref::{
 use regex::Regex;
 use shako_core::{
     Authorizer, MAX_DELTA_CHAIN_DEPTH, MAX_REFS_PER_PUSH, MAX_SINGLE_OBJECT_BYTES, RefPolicy,
-    RefUpdate, RequestCtx, ShakoError, ShakoResult, validate_full_ref_name, validate_tree_path,
+    RefUpdate, RequestCtx, ShakoError, ShakoResult, validate_tree_path,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -444,7 +446,7 @@ pub fn handle_receive_pack(
 
     // 5. Evaluate each command: ref validation, old_oid CAS check, connectivity check,
     //    fast-forward check, tree path validation (T1), secret scan (T9), and `RefPolicy` (S5)
-    let mut cmd_results: Vec<(RefUpdateCommand, Result<(), String>)> =
+    let mut cmd_results: Vec<(RefUpdateCommand, Result<RefEdit, String>)> =
         Vec::with_capacity(commands.len());
 
     for cmd in &commands {
@@ -476,10 +478,7 @@ pub fn handle_receive_pack(
 
     if atomic {
         if cmd_results.iter().all(|(_, r)| r.is_ok()) {
-            let edits: Vec<RefEdit> = cmd_results
-                .iter()
-                .filter_map(|(c, _)| build_ref_edit(c).ok())
-                .collect();
+            let edits: Vec<RefEdit> = cmd_results.iter().flat_map(|(_, r)| r.clone()).collect();
             match repo
                 .refs
                 .transaction()
@@ -504,20 +503,16 @@ pub fn handle_receive_pack(
                 }
             }
         } else {
-            final_results = cmd_results;
+            final_results = cmd_results
+                .into_iter()
+                .map(|(c, r)| (c, r.map(drop)))
+                .collect();
         }
     } else {
         for (c, pre_res) in cmd_results {
             match pre_res {
                 Err(reason) => final_results.push((c, Err(reason))),
-                Ok(()) => {
-                    let edit = match build_ref_edit(&c) {
-                        Ok(e) => e,
-                        Err(reason) => {
-                            final_results.push((c, Err(reason)));
-                            continue;
-                        }
-                    };
+                Ok(edit) => {
                     match repo
                         .refs
                         .transaction()
@@ -656,7 +651,7 @@ fn index_pack_in_quarantine(
     out_pack: &mut Option<PathBuf>,
     out_idx: &mut Option<PathBuf>,
 ) -> Result<(), String> {
-    let repo = open_isolated(repo_path).map_err(|e| e.to_string())?;
+    let repo = open_isolated(repo_path).map_err(reason)?;
     let odb = repo.objects.clone();
     let mut pack_reader = BufReader::new(pack);
     let mut progress = gix::progress::Discard;
@@ -691,7 +686,7 @@ fn evaluate_single_command(
     repo: &gix::Repository,
     guard: &PushGuard<'_>,
     cmd: &RefUpdateCommand,
-) -> Result<(), String> {
+) -> Result<RefEdit, String> {
     let PushGuard {
         ctx,
         authorizer,
@@ -704,13 +699,13 @@ fn evaluate_single_command(
     {
         return Err("refusing to update non-branch/tag ref".into());
     }
-    validate_full_ref_name(&cmd.refname).map_err(|e| e.to_string())?;
+    let name = full_ref(&cmd.refname).map_err(reason)?;
 
     // Check current ref value for CAS (`fetch first` on race)
     let current_oid = repo
         .refs
         .try_find(cmd.refname.as_str())
-        .map_err(|e| e.to_string())?
+        .map_err(reason)?
         .and_then(|r| r.target.try_id().map(ToOwned::to_owned));
 
     match (cmd.is_create(), current_oid) {
@@ -748,7 +743,7 @@ fn evaluate_single_command(
         )
         .map_err(|e| e.public_detail())?;
 
-    Ok(())
+    Ok(build_ref_edit(cmd, name))
 }
 
 /// Verifies that `new_oid` exists, peels to a valid commit and tree whose every referenced
@@ -759,18 +754,12 @@ fn verify_tip_connectivity_and_tree(
     new_oid: ObjectId,
     changed_paths: &mut Vec<String>,
 ) -> Result<(), String> {
-    let obj = repo
-        .find_object(new_oid)
-        .map_err(|_| "missing necessary objects".to_owned())?;
+    let obj = repo.find_object(new_oid).map_err(missing)?;
     let commit_obj = obj
         .peel_to_kind(gix_object::Kind::Commit)
-        .map_err(|_| "missing necessary objects".to_owned())?;
-    let commit = repo
-        .find_commit(commit_obj.id)
-        .map_err(|_| "missing necessary objects".to_owned())?;
-    let tree = commit
-        .tree()
-        .map_err(|_| "missing necessary objects".to_owned())?;
+        .map_err(missing)?;
+    let commit = repo.find_commit(commit_obj.id).map_err(missing)?;
+    let tree = commit.tree().map_err(missing)?;
 
     let mut new_blobs = BTreeMap::new();
     collect_tree_blobs(repo, &tree, "", &mut new_blobs).map_err(|e| match e {
@@ -787,14 +776,14 @@ fn verify_tip_connectivity_and_tree(
     }
 
     for (path, (kind, blob_oid)) in &new_blobs {
-        validate_tree_path(path).map_err(|e| e.to_string())?;
+        validate_tree_path(path).map_err(reason)?;
         // A gitlink's commit lives in the submodule's repository, not in this pack.
         if *kind != EntryKind::Commit {
             // The header answers: the index pass verified the bytes.
             repo.find_header(*blob_oid)
                 .ok()
                 .filter(|h| h.kind() == gix_object::Kind::Blob)
-                .ok_or_else(|| "missing necessary objects".to_owned())?;
+                .ok_or_else(|| missing(()))?;
         }
         let old_entry = old_blobs.get(path);
         if old_entry.map(|(_, o)| o) != Some(blob_oid) {
@@ -818,8 +807,17 @@ fn verify_tip_connectivity_and_tree(
 /// How every secret-scan refusal starts.
 const SECRET_REFUSAL: &str = "pre-receive secret scan blocked";
 
+/// The refusal of a push whose objects do not all arrive or do not peel as named.
+fn missing<E>(_: E) -> String {
+    "missing necessary objects".to_owned()
+}
+
+/// A gix or validation failure as the reason line of a refused command.
+fn reason<E: std::fmt::Display>(e: E) -> String {
+    e.to_string()
+}
+
 fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), String> {
-    let missing = |_| "missing necessary objects".to_owned();
     let tip = repo
         .find_object(new_oid)
         .map_err(missing)?
@@ -828,9 +826,9 @@ fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), Str
         .id;
     let held: Vec<ObjectId> = repo
         .references()
-        .map_err(|e| e.to_string())?
+        .map_err(reason)?
         .local_branches()
-        .map_err(|e| e.to_string())?
+        .map_err(reason)?
         .flatten()
         .filter_map(|r| r.try_id().map(|id| id.detach()))
         .collect();
@@ -838,7 +836,7 @@ fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), Str
         .rev_walk([tip])
         .with_hidden(held)
         .all()
-        .map_err(|e| e.to_string())?;
+        .map_err(reason)?;
     let mut scanned = BTreeSet::new();
     for info in walk {
         let commit = info.map_err(missing)?.object().map_err(missing)?;
@@ -849,7 +847,7 @@ fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), Str
             .collect();
         // A blob a parent holds at the same path was scanned when that parent came in.
         let mut blobs = BTreeMap::new();
-        collect_changed_blobs(repo, &tree, &parents, &mut blobs).map_err(|e| e.to_string())?;
+        collect_changed_blobs(repo, &tree, &parents, &mut blobs).map_err(reason)?;
         for (path, blob_oid) in &blobs {
             if !scanned.insert(*blob_oid) {
                 continue;
@@ -863,28 +861,24 @@ fn scan_new_commits(repo: &gix::Repository, new_oid: ObjectId) -> Result<(), Str
     Ok(())
 }
 
-fn build_ref_edit(cmd: &RefUpdateCommand) -> Result<RefEdit, String> {
-    let full_name: FullName = cmd
-        .refname
-        .clone()
-        .try_into()
-        .map_err(|e: gix_validate::reference::name::Error| e.to_string())?;
+/// The ref edit of an admitted command under its validated `full_name`.
+fn build_ref_edit(cmd: &RefUpdateCommand, full_name: FullName) -> RefEdit {
     if cmd.is_delete() {
-        Ok(RefEdit {
+        RefEdit {
             change: Change::Delete {
                 expected: PreviousValue::MustExistAndMatch(Target::Object(cmd.old_oid)),
                 log: RefLog::AndReference,
             },
             name: full_name,
             deref: false,
-        })
+        }
     } else {
         let expected = if cmd.is_create() {
             PreviousValue::MustNotExist
         } else {
             PreviousValue::MustExistAndMatch(Target::Object(cmd.old_oid))
         };
-        Ok(RefEdit {
+        RefEdit {
             change: Change::Update {
                 log: LogChange {
                     mode: RefLog::AndReference,
@@ -896,7 +890,7 @@ fn build_ref_edit(cmd: &RefUpdateCommand) -> Result<RefEdit, String> {
             },
             name: full_name,
             deref: false,
-        })
+        }
     }
 }
 
