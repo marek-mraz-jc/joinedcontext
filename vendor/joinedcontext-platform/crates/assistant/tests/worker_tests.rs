@@ -330,6 +330,263 @@ fn the_sources_are_read_from_the_organizations_checkout_and_a_broken_one_is_left
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// What the snapshot cannot use it passes over: a directory that is no project name, a
+/// CkanInstance, an McpServer and an AssistantDeployment that do not read, a manifest with no
+/// project; what it can use it follows: a plain title is a name, a deployment's server and
+/// another project's source are found.
+#[test]
+fn the_snapshot_passes_over_what_it_cannot_use_and_follows_what_a_deployment_names() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = std::env::temp_dir().join(format!("jc-assistant-snapshot2-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let manifest = |kind: &str, project: &str, name: &str, spec: &str| {
+        format!("apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: {project}\nspec:\n{spec}")
+    };
+    write(&dir, "org/projects/bb/project.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: bb\n  namespace: org\n  title: Plain city\nspec:\n  organizationRef: org\n");
+    write(
+        &dir,
+        "org/projects/bb/ckan/bad.yaml",
+        &manifest("CkanInstance", "bb", "bad", "  url: [1]\n"),
+    );
+    write(
+        &dir,
+        "org/projects/bb/mcp/bad.yaml",
+        &manifest("McpServer", "bb", "bad", "  audience: nowhere\n"),
+    );
+    write(
+        &dir,
+        "org/projects/bb/mcp/tools.yaml",
+        &manifest("McpServer", "bb", "tools", "  audience: organization\n"),
+    );
+    write(&dir, "org/projects/bb/endpoints/open.yaml", &manifest("Endpoint", "bb", "open",
+        "  contextSpaceRef: air\n  slug: k7m2qz4tv6xh3n5jb2ryd3wcfa\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n"));
+    write(
+        &dir,
+        "org/projects/bb/assistant/sources/web.yaml",
+        &manifest(
+            "KnowledgeSource",
+            "bb",
+            "web",
+            "  source: website\n  startUrls: [https://bb.example/]\n",
+        ),
+    );
+    write(
+        &dir,
+        "org/projects/other/assistant/sources/web2.yaml",
+        &manifest(
+            "KnowledgeSource",
+            "other",
+            "web2",
+            "  source: website\n  startUrls: [https://other.example/]\n",
+        ),
+    );
+    write(
+        &dir,
+        "org/projects/bb/assistant/tools.yaml",
+        &manifest(
+            "AssistantDeployment",
+            "bb",
+            "tools",
+            "  publicId: bb-tools\n  channel: internal\n  sources: [web]\n  languages: [sk]\n",
+        ),
+    );
+    write(&dir, "org/projects/bb/assistant/all.yaml", &manifest("AssistantDeployment", "bb", "all",
+        "  publicId: bb-all\n  channel: internal\n  sources: [web, other/web2]\n  languages: [sk]\n  scope: { projects: [other] }\n  mcpServer: org/all\n"));
+    write(
+        &dir,
+        "org/projects/bb/assistant/bad-language.yaml",
+        &manifest(
+            "AssistantDeployment",
+            "bb",
+            "bad-language",
+            "  publicId: bb-bad\n  channel: internal\n  sources: [web]\n  languages: [slovak]\n",
+        ),
+    );
+    write(&dir, "org/assistant/sources/orgwide.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: orgwide\nspec:\n  source: website\n  startUrls: [https://org.example/]\n");
+    std::fs::create_dir_all(dir.join("layout2/.hidden")).expect("hidden directory");
+    std::fs::create_dir_all(
+        dir.join("layout2")
+            .join(std::ffi::OsStr::from_bytes(b"not-\xff-utf8")),
+    )
+    .expect("a directory whose name is no text");
+    let snapshot = worker::snapshot(&Checkout {
+        organization: dir.join("org"),
+        projects: Some(dir.join("layout2")),
+        assembly: dir.join(".assembly"),
+    })
+    .expect("the checkout reads");
+    assert_eq!(
+        snapshot.titles.get("bb"),
+        Some(&vec!["Plain city".to_owned()])
+    );
+    let names: Vec<&str> = snapshot
+        .deployments
+        .iter()
+        .map(|d| d.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        ["all", "tools"],
+        "a language that is no code is refused"
+    );
+    assert!(!snapshot
+        .servers
+        .contains_key(&("bb".to_owned(), "bad".to_owned())));
+    let named = |name: &str| {
+        snapshot
+            .deployments
+            .iter()
+            .find(|d| d.name == name)
+            .expect("the deployment")
+    };
+    let held: Vec<&str> = snapshot
+        .sources_of(named("all"))
+        .map(|s| s.name.as_str())
+        .collect();
+    assert_eq!(
+        held,
+        ["web", "web2"],
+        "another project's source by its full name"
+    );
+    assert_eq!(
+        snapshot.reach(named("all")).endpoints.len(),
+        1,
+        "org/all reads the open Endpoint"
+    );
+    assert!(snapshot.reach(named("tools")).endpoints.len() <= 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A website whose daily check is due is queued as a check, once; a catalogue is queued when its
+/// pages change and not again while its job waits.
+#[tokio::test]
+async fn a_daily_check_and_a_changed_catalogue_are_queued_once() {
+    let (admin, pool, name) = database("queue_kinds").await;
+    let mut website = spec("https://www.city.test/", Some("15 3 * * 1"));
+    website.sitemap = true;
+    let mut catalogue = spec("https://unused.test/", None);
+    catalogue.source = SourceType::Catalogue;
+    catalogue.start_urls.clear();
+    let source = |name: &str, spec: KnowledgeSourceSpec| Source {
+        project: "helsinki".into(),
+        name: name.into(),
+        spec,
+        ckan_url: None,
+        catalogue: Vec::new(),
+    };
+    let sources = vec![source("city-web", website), source("data", catalogue)];
+    let site =
+        assistant::crawl::upsert_site(&pool, "helsinki", "hel.fi", "city-web", Visibility::Public)
+            .await
+            .expect("site");
+    let mut tx = project_scope(&pool, "helsinki").await.expect("scope");
+    sqlx::query("UPDATE sites SET last_crawl = now() WHERE id = $1")
+        .bind(site)
+        .execute(&mut *tx)
+        .await
+        .expect("read once");
+    tx.commit().await.expect("commit");
+    // A Tuesday at the schedule's minute: the weekly crawl is Monday's, the check is today's.
+    let tuesday = datetime!(2026-12-01 03:15 UTC);
+    assert_eq!(
+        worker::enqueue_due(&pool, &sources, tuesday)
+            .await
+            .expect("queued"),
+        2,
+        "the check, and the catalogue nobody read yet"
+    );
+    let (kind,): (String,) =
+        sqlx::query_as("SELECT kind FROM crawl_jobs WHERE source = 'city-web'")
+            .fetch_one(&pool)
+            .await
+            .expect("the job");
+    assert_eq!(kind, "sitemap", "queued as a check, not a crawl");
+
+    assert_eq!(
+        worker::enqueue_changed(&pool, &sources, &mut std::collections::BTreeMap::new())
+            .await
+            .expect("queued"),
+        0,
+        "a job waits for this catalogue already"
+    );
+    drop_database(admin, pool, &name).await;
+}
+
+/// A catalogue source is worked into its report, and a catalogue of datasets is read in no or
+/// two languages as one that names none.
+#[tokio::test]
+async fn a_catalogue_is_worked_in_no_language_and_datasets_in_two() {
+    let (admin, pool, name) = database("languages").await;
+    let server = MockServer::start().await;
+    let port = server.address().port();
+    Mock::given(method("GET"))
+        .and(path("/api/3/action/package_search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "success": true,
+            "result": {"count": 0, "results": []}
+        })))
+        .mount(&server)
+        .await;
+    let crawler = Crawler::new(
+        Arc::new(FixtureResolver::new(&[("data.city.test", port)])),
+        CrawlPolicy {
+            allow_plain_http: true,
+            max_page_bytes: 1024 * 1024,
+        },
+    )
+    .expect("crawler");
+    let mut catalogue = spec("https://unused.test/", None);
+    catalogue.source = SourceType::Catalogue;
+    catalogue.start_urls.clear();
+    let mut ckan = spec("https://unused.test/", None);
+    ckan.source = SourceType::Ckan;
+    ckan.start_urls.clear();
+    ckan.ckan_instance_ref = Some("data".into());
+    ckan.languages = vec!["sk".into(), "en".into()];
+    let sources = vec![
+        Source {
+            project: "helsinki".into(),
+            name: "catalogue".into(),
+            spec: catalogue,
+            ckan_url: None,
+            catalogue: Vec::new(),
+        },
+        Source {
+            project: "helsinki".into(),
+            name: "data".into(),
+            spec: ckan,
+            ckan_url: Some(format!("http://data.city.test:{port}")),
+            catalogue: Vec::new(),
+        },
+    ];
+    let reader = assistant::catalogue::Reader {
+        endpoint_base: url::Url::parse("https://platform.example.org/").ok(),
+        ..reader()
+    };
+    for source in ["catalogue", "data"] {
+        assistant::crawl::queue::enqueue(&pool, "helsinki", source)
+            .await
+            .expect("queued");
+    }
+    for _ in 0..2 {
+        assert!(
+            worker::work_one(&pool, &crawler, &reader, "hel.fi", "worker-a", &sources)
+                .await
+                .expect("worked")
+        );
+    }
+    let jobs: Vec<(String, String, Option<String>)> =
+        sqlx::query_as("SELECT source, state, error FROM crawl_jobs ORDER BY source")
+            .fetch_all(&pool)
+            .await
+            .expect("jobs");
+    assert!(jobs.iter().all(|j| j.1 == "done"), "{jobs:?}");
+    drop_database(admin, pool, &name).await;
+}
+
 #[tokio::test]
 async fn a_due_source_is_queued_once_and_its_job_crawls_and_indexes_the_site() {
     let (admin, pool, name) = database("worker").await;

@@ -387,6 +387,125 @@ async fn the_indexer_replaces_a_pages_chunks_and_cites_a_pdfs_page() {
     drop_database(admin, pool, &name).await;
 }
 
+#[tokio::test]
+async fn a_plain_text_is_read_as_it_comes() {
+    let text = "Zber odpadu v meste Banská Bystrica prebieha každý utorok ráno, \
+                a veľkoobjemový odpad sa odváža dvakrát do roka z vyhradených miest.";
+    let extracted = extract(text.as_bytes(), "text/plain", Some("sk"), 10)
+        .await
+        .expect("text extracts");
+    assert_eq!(extracted.language.as_deref(), Some("sk"));
+    assert!(
+        extracted.passages.iter().any(|p| p.text.contains("utorok")),
+        "{:?}",
+        extracted.passages
+    );
+}
+
+/// A page of more passages than one holds is cut at the cap and says so.
+#[tokio::test]
+async fn a_text_of_more_passages_than_a_page_may_hold_is_cut_at_the_cap() {
+    let paragraph = |n: usize| {
+        let words: String = (0..14)
+            .map(|k| format!("Veta{n}x{k}: mesto pripravilo nové cyklotrasy pre obce. "))
+            .collect();
+        words
+    };
+    let text: String = (0..assistant::extract::MAX_PASSAGES + 50)
+        .map(|n| format!("{}\n\n", paragraph(n)))
+        .collect();
+    let extracted = extract(text.as_bytes(), "text/plain", Some("sk"), 10)
+        .await
+        .expect("text extracts");
+    assert_eq!(extracted.passages.len(), assistant::extract::MAX_PASSAGES);
+    assert!(extracted.truncated);
+}
+
+/// A store that cannot answer is the page's failure, kept with its address, never the crawl's:
+/// first the lookup of an administrator's exclusion, then the write of the passages.
+#[tokio::test]
+async fn a_store_that_fails_is_a_failure_of_that_page_alone() {
+    let (admin, pool, name) = database("indexer_store_fails").await;
+    let (site, page, _) = rows(&pool, "banskabystrica").await;
+    let mut indexer = Indexer::new(pool.clone(), "banskabystrica", site, "public", 500);
+
+    sqlx::query("ALTER TABLE pages RENAME TO pages_gone")
+        .execute(&pool)
+        .await
+        .expect("the table is renamed away");
+    indexer
+        .page(page, "https://bb.example/", Some("sk"), &long_slovak_page())
+        .await;
+    sqlx::query("ALTER TABLE pages_gone RENAME TO pages")
+        .execute(&pool)
+        .await
+        .expect("the table is back");
+    assert_eq!(indexer.failures.len(), 1, "{:?}", indexer.failures);
+    assert!(indexer.failures[0].starts_with("https://bb.example/: "));
+
+    sqlx::query("ALTER TABLE chunks RENAME TO chunks_gone")
+        .execute(&pool)
+        .await
+        .expect("the table is renamed away");
+    indexer
+        .page(page, "https://bb.example/", Some("sk"), &long_slovak_page())
+        .await;
+    sqlx::query("ALTER TABLE chunks_gone RENAME TO chunks")
+        .execute(&pool)
+        .await
+        .expect("the table is back");
+    assert_eq!(indexer.failures.len(), 2, "{:?}", indexer.failures);
+    assert_eq!(indexer.passages, 0);
+    drop_database(admin, pool, &name).await;
+}
+
+/// An uploaded PDF that cannot be read is kept as failed with no passage; a store that cannot
+/// answer, or a project that is no name, refuses the file as a store error.
+#[tokio::test]
+async fn an_upload_that_cannot_be_read_or_stored_says_why() {
+    use assistant::upload::{add, Refused, Target};
+
+    let (admin, pool, name) = database("upload_gaps").await;
+    let (site, _, _) = rows(&pool, "banskabystrica").await;
+    let target = |project| Target {
+        project,
+        source: "web",
+        site_id: site,
+        visibility: "public",
+        max_files: 10,
+        max_pdf_pages: 10,
+        language: Some("sk"),
+    };
+    let file = add(
+        &pool,
+        &target("banskabystrica"),
+        "broken.pdf",
+        b"%PDF-1.4 and nothing else",
+    )
+    .await
+    .expect("the file is kept");
+    assert_eq!((file.status.as_str(), file.passages), ("failed", 0));
+
+    let refused = add(&pool, &target("Not A Project"), "a.pdf", b"%PDF-1.4")
+        .await
+        .expect_err("no such project");
+    assert!(matches!(refused, Refused::Store(_)), "{refused:?}");
+
+    sqlx::query("ALTER TABLE documents RENAME TO documents_gone")
+        .execute(&pool)
+        .await
+        .expect("the table is renamed away");
+    let refused = add(&pool, &target("banskabystrica"), "b.pdf", b"%PDF-1.4")
+        .await
+        .expect_err("no store");
+    assert!(matches!(refused, Refused::Store(_)), "{refused:?}");
+    sqlx::query("ALTER TABLE documents_gone RENAME TO documents")
+        .execute(&pool)
+        .await
+        .expect("the table is back");
+    drop_database(admin, pool, &name).await;
+}
+
 /// Adds `count` chunks to the site under a new page or document of its own, as a crawl that
 /// stored them earlier would have.
 async fn filler(pool: &PgPool, project: &str, site: i64, page: i64, document: bool, count: i64) {

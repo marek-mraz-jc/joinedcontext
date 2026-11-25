@@ -121,6 +121,15 @@ mod tests {
         Robots::Rules(texting_robots::Robot::new(USER_AGENT_TOKEN, text.as_bytes()).expect("rules"))
     }
 
+    /// A fragment is no part of the path a site's rules judge: the page with it is still the
+    /// page whose query a rule refuses.
+    #[test]
+    fn a_rule_over_the_query_refuses_the_address_whatever_its_fragment() {
+        let robots = rules("User-agent: *\nDisallow: /*?b=1$");
+        assert!(!robots.is_allowed("https://a.example/a?b=1#top"));
+        assert!(robots.is_allowed("https://a.example/a?b=2#top"));
+    }
+
     #[test]
     fn allow_all_and_disallow_all_answer_without_rules() {
         assert!(Robots::AllowAll.is_allowed("https://a.example/x"));

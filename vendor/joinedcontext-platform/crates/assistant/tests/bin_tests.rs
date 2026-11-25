@@ -4,6 +4,8 @@
 
 #[path = "common/db.rs"]
 mod db;
+#[path = "common/model.rs"]
+mod model;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -123,6 +125,19 @@ fn a_start_without_its_required_settings_names_them() {
         ],
         "are required",
     );
+}
+
+/// With no `RUST_LOG` the service logs at info: the refusal is still named.
+#[test]
+fn a_start_with_no_log_filter_still_names_what_failed() {
+    let output = command(&[])
+        .env_remove("RUST_LOG")
+        .output()
+        .expect("the binary runs");
+    let log = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{log}");
+    assert!(log.contains("JC_ASSISTANT_DATABASE_URL"), "{log}");
 }
 
 #[test]
@@ -352,6 +367,90 @@ async fn a_configured_service_stops_on_ctrl_c() {
     let (admin, pool, name) = db::database("bin_sigint").await;
     let (stopped, log) = ready_then(&name, "sigint", "-INT").await;
     assert!(stopped, "Ctrl-C stops it cleanly\n{log}");
+    db::drop_database(admin, pool, &name).await;
+}
+
+/// A minute over a live database with the real model: a source that is not due queues nothing,
+/// a guide source is queued as changed, a passage without an embedding is embedded and one
+/// whose terms are pending gets them, and a chat state whose lock a panic poisoned is left as it
+/// was.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_minute_over_a_live_database_does_each_of_its_steps() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    let (admin, pool, name) = db::database("bin_minute").await;
+    let dir = scratch("livepool");
+    let vars = configured(&dir, &test_url(&name));
+    let sources = dir.join("repo/projects/liveproj/assistant/sources");
+    std::fs::create_dir_all(&sources).expect("sources directory");
+    for (file, spec) in [
+        (
+            "web",
+            "source: website\n  startUrls: [https://jc-bin-test.invalid/]\n  schedule: \"0 0 1 1 *\"",
+        ),
+        ("guide", "source: guide"),
+    ] {
+        std::fs::write(
+            sources.join(format!("{file}.yaml")),
+            format!("apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: {file}\n  namespace: liveproj\nspec:\n  {spec}\n"),
+        )
+        .expect("source manifest");
+    }
+    let mut tx = assistant::project_scope(&pool, "liveproj")
+        .await
+        .expect("scope");
+    let site: i64 = sqlx::query_scalar("INSERT INTO sites (organization, project, source, visibility) VALUES ('bin', 'liveproj', 'web', 'public') RETURNING id")
+        .fetch_one(&mut *tx).await.expect("site");
+    let page: i64 = sqlx::query_scalar("INSERT INTO pages (site_id, project, url, depth) VALUES ($1, 'liveproj', 'https://bin.example/', 0) RETURNING id")
+        .bind(site).fetch_one(&mut *tx).await.expect("page");
+    sqlx::query("INSERT INTO chunks (site_id, project, page_id, ordinal, url, text, lang, visibility) VALUES ($1, 'liveproj', $2, 0, 'https://bin.example/', 'Knižnica je otvorená od pondelka do piatku.', 'sk', 'public')")
+        .bind(site).bind(page).execute(&mut *tx).await.expect("chunk");
+    sqlx::query("UPDATE chunks SET terms_pending = true")
+        .execute(&mut *tx)
+        .await
+        .expect("terms pending");
+    tx.commit().await.expect("commit");
+
+    let lookup = |key: &str| vars.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone());
+    let embedder = assistant::embed::Embedder::load(&model::model_dir(), 1).expect("the model");
+    let credential = assistant::host::credential(&lookup).expect("the credential");
+    let config = assistant::host::chat_config(&lookup, credential).expect("the chat config");
+    let (chat_state, reader) =
+        assistant::service::chat_state(config, &pool, &embedder, "bin.example").expect("the chat");
+    let poisoned = Arc::clone(&chat_state);
+    let _ = std::thread::spawn(move || {
+        let _held = poisoned.snapshot.write().expect("the lock is free");
+        panic!("poisons the snapshot on purpose");
+    })
+    .join();
+    let ready = Arc::new(AtomicBool::new(false));
+    let mut minute = assistant::host::Minute::new(
+        pool.clone(),
+        embedder,
+        assistant::crawl::Crawler::public().expect("the crawler"),
+        reader,
+        "bin.example".into(),
+        "live".into(),
+        assistant::host::checkout(lookup).expect("the checkout"),
+        chat_state,
+        ready,
+    );
+    minute.work().await;
+
+    let mut tx = assistant::project_scope(&pool, "liveproj")
+        .await
+        .expect("scope");
+    let (embedded, pending): (bool, bool) =
+        sqlx::query_as("SELECT embedding IS NOT NULL, terms_pending FROM chunks")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("the chunk");
+    tx.rollback().await.expect("rollback");
+    assert!(embedded, "the passage is embedded");
+    assert!(!pending, "its terms are filled");
+    assert_eq!(minute.catalogue_digests.len(), 1, "the guide was queued");
+    let _ = std::fs::remove_dir_all(&dir);
     db::drop_database(admin, pool, &name).await;
 }
 
