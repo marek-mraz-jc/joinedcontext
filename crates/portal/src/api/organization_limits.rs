@@ -348,12 +348,13 @@ mod tests {
             "limits": { "data": { "uploadMegabytes": 40 } },
         })));
         assert!(within_upload_limit(&state, 40 * MIB).is_ok());
-        let Err(ApiError::BadRequest(message)) = within_upload_limit(&state, 40 * MIB + MIB / 2)
-        else {
-            panic!("40.5 MiB is past the organization's 40");
-        };
-        assert!(message.contains("40.5 MiB"), "{message}");
-        assert!(message.contains("at most 40 MiB"), "{message}");
+        let refused = within_upload_limit(&state, 40 * MIB + MIB / 2)
+            .expect_err("40.5 MiB is past the organization's 40");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(message)
+                if message.contains("40.5 MiB") && message.contains("at most 40 MiB")),
+            "{refused:?}"
+        );
 
         state.mirror.upsert(organization(serde_json::json!({
             "domain": "hel.fi",

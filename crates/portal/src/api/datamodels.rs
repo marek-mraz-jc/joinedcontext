@@ -2054,13 +2054,13 @@ mod tests {
         assert_eq!(overall_severity(&changes), "breaking");
         let first = version("0.1.0");
         assert!(refuse_unversioned_break(false, &changes, &first, &first).is_ok());
-        let Err(ApiError::Invalid { detail, errors }) =
-            refuse_unversioned_break(true, &changes, &first, &first)
-        else {
-            panic!("a published model's break under its major is refused");
-        };
-        assert!(detail.contains("publish it as 1.0.0"), "{detail}");
-        assert!(!errors.is_empty());
+        let refused = refuse_unversioned_break(true, &changes, &first, &first)
+            .expect_err("a published model's break under its major is refused");
+        assert!(
+            matches!(&refused, ApiError::Invalid { detail, errors }
+                if detail.contains("publish it as 1.0.0") && !errors.is_empty()),
+            "{refused:?}"
+        );
         assert!(refuse_unversioned_break(true, &changes, &first, &version("1.0.0")).is_ok());
     }
 
