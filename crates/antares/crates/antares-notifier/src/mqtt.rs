@@ -441,13 +441,13 @@ impl MqttSink {
         pool.insert(key, conn);
         // bounded with eviction: drop the least-recently-used overflow.
         while pool.len() > self.cap {
-            if let Some(oldest) = pool
+            // over the cap, so the pool has an oldest session
+            let oldest = pool
                 .iter()
                 .min_by_key(|(_, c)| c.last_used)
                 .map(|(k, _)| k.clone())
-            {
-                pool.remove(&oldest);
-            }
+                .unwrap_or_default();
+            pool.remove(&oldest);
         }
     }
 
@@ -473,20 +473,12 @@ impl MqttSink {
         if params.v5 {
             let opts = options!(rumqttc::v5::MqttOptions, id, dial, addr.port(), ep);
             let (client, mut eventloop) = rumqttc::v5::AsyncClient::new(opts, 16);
-            tokio::time::timeout(self.timeout, async {
-                loop {
-                    match eventloop.poll().await {
-                        Ok(rumqttc::v5::Event::Incoming(
-                            rumqttc::v5::mqttbytes::v5::Packet::ConnAck(_),
-                        )) => return Ok(()),
-                        Ok(_) => {}
-                        Err(e) => return Err(e.to_string()),
-                    }
-                }
-            })
-            .await
-            .map_err(|_| refused("connect timeout".into()))?
-            .map_err(refused)?;
+            // a fresh event loop's first event is the CONNACK, or the error
+            // that kept it from arriving
+            tokio::time::timeout(self.timeout, eventloop.poll())
+                .await
+                .map_err(|_| refused("connect timeout".into()))?
+                .map_err(|e| refused(e.to_string()))?;
             let (ack, acks) = tokio::sync::mpsc::channel(16);
             let pump = tokio::spawn(async move {
                 while let Ok(event) = eventloop.poll().await {
@@ -510,18 +502,10 @@ impl MqttSink {
         } else {
             let opts = options!(rumqttc::MqttOptions, id, dial, addr.port(), ep);
             let (client, mut eventloop) = rumqttc::AsyncClient::new(opts, 16);
-            tokio::time::timeout(self.timeout, async {
-                loop {
-                    match eventloop.poll().await {
-                        Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => return Ok(()),
-                        Ok(_) => {}
-                        Err(e) => return Err(e.to_string()),
-                    }
-                }
-            })
-            .await
-            .map_err(|_| refused("connect timeout".into()))?
-            .map_err(refused)?;
+            tokio::time::timeout(self.timeout, eventloop.poll())
+                .await
+                .map_err(|_| refused("connect timeout".into()))?
+                .map_err(|e| refused(e.to_string()))?;
             let (ack, acks) = tokio::sync::mpsc::channel(16);
             let pump = tokio::spawn(async move {
                 while let Ok(event) = eventloop.poll().await {
@@ -601,18 +585,12 @@ pub async fn listen(
     let filter = format!("$share/{group}/{}", ep.topic);
     let refused =
         |e: String| NgsiError::InternalError(format!("mqtt connect {}:{}: {e}", ep.host, ep.port));
-    tokio::time::timeout(timeout, async {
-        loop {
-            match eventloop.poll().await {
-                Ok(Event::Incoming(Packet::ConnAck(_))) => return Ok(()),
-                Ok(_) => {}
-                Err(e) => return Err(e.to_string()),
-            }
-        }
-    })
-    .await
-    .map_err(|_| refused("connect timeout".into()))?
-    .map_err(refused)?;
+    // a fresh event loop's first event is the CONNACK, or the error that
+    // kept it from arriving
+    tokio::time::timeout(timeout, eventloop.poll())
+        .await
+        .map_err(|_| refused("connect timeout".into()))?
+        .map_err(|e| refused(e.to_string()))?;
     client
         .subscribe(filter.clone(), QoS::AtLeastOnce)
         .await
@@ -630,9 +608,7 @@ pub async fn listen(
                         Ok(()) => {}
                         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return,
                         Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                            tracing::debug!(
-                                "mqtt inbound {host}:{port}: queue full, message dropped"
-                            );
+                            tracing::debug!(%host, port, "mqtt inbound: queue full, dropped");
                         }
                     }
                 }
@@ -1349,6 +1325,30 @@ mod tests {
         assert!(err.to_string().contains("mqtt connect"), "{err}");
     }
 
+    /// `listen` carries the endpoint's credentials and, for `mqtts`, speaks
+    /// TLS: a plain stub that never answers the handshake fails it in time,
+    /// naming the endpoint and never the password.
+    #[tokio::test]
+    async fn listen_over_mqtts_with_credentials_fails_on_a_plain_silent_peer() {
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = silent.local_addr().expect("addr").port();
+        let ep =
+            MqttEndpoint::parse(&format!("mqtts://user:s3cret@127.0.0.1:{port}/t")).expect("parse");
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let err = listen(&ep, "g", tx, Duration::from_millis(300))
+            .await
+            .expect_err("no TLS handshake, no CONNACK");
+        let text = err.to_string();
+        assert!(
+            text.starts_with(&format!("mqtt connect 127.0.0.1:{port}: ")),
+            "{text}"
+        );
+        assert!(!text.contains("s3cret"), "{text}");
+        drop(silent);
+    }
+
     /// A broker that accepts the TCP connection but never sends CONNACK
     /// fails the delivery within the sink's timeout, in both versions,
     /// naming the endpoint.
@@ -1370,6 +1370,32 @@ mod tests {
                 "v5={v5}"
             );
         }
+    }
+
+    /// A refused connection fails the delivery at once, in both versions,
+    /// naming the endpoint and the transport's reason.
+    #[tokio::test]
+    async fn a_refused_connection_fails_the_publish_naming_the_endpoint() {
+        let closed = tokio::net::TcpSocket::new_v4().expect("socket");
+        closed
+            .bind("127.0.0.1:0".parse().expect("addr"))
+            .expect("bind");
+        let port = closed.local_addr().expect("addr").port();
+        let sink = MqttSink::new(2, Duration::from_secs(2));
+        for v5 in [false, true] {
+            let err = sink
+                .publish_message(&ep_at(port), MqttParams { qos: 0, v5 }, b"{}")
+                .await
+                .expect_err("refused");
+            let text = err.to_string();
+            assert!(
+                text.starts_with(&format!("mqtt connect 127.0.0.1:{port}: ")),
+                "v5={v5}: {text}"
+            );
+            assert!(!text.contains("connect timeout"), "v5={v5}: {text}");
+        }
+        drop(closed);
+        assert!(sink.pool.lock().expect("pool").is_empty());
     }
 
     /// The resolver runs under the sink's deadline: a name not resolved in
