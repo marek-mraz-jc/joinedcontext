@@ -524,6 +524,126 @@ async fn every_administration_path_says_the_store_could_not_be_read_when_it_is_d
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// A stored conversation is listed, read whole, found by its question, exported and erased over
+/// the administration routes; a malformed query or range is a 400 naming it, a project name that
+/// is none a 404, and a conversation or turn that is not stored a 404.
+#[tokio::test]
+async fn a_stored_conversation_is_listed_read_exported_and_erased() {
+    use assistant::chat::agent::Event;
+    use assistant::chat::trace::Step;
+    use assistant::chat::transcript::{self, Record, Seen};
+    let w = world("adminconversations").await;
+    let conversation = "11111111-1111-4111-8111-111111111111";
+    let mut seen = Seen::default();
+    seen.see(&Event::Answer("Odpad vyvážame v utorok.".into()));
+    let steps = [Step {
+        kind: "model",
+        name: "answer".into(),
+        status: "ok",
+        duration_ms: 900,
+        ..Step::default()
+    }];
+    for turn in [1, 2] {
+        transcript::store(
+            &w.pool,
+            &Record {
+                project: "hronov",
+                deployment: "obcania",
+                conversation,
+                turn,
+                origin: Some("https://www.hronov.example"),
+                client: "c0ffee",
+                question: "Kedy vyvážate odpad?",
+                history: &[],
+                seen: &seen,
+                steps: &steps,
+                route: "rag",
+                first_token_ms: Some(800),
+                total_ms: 2400,
+                timed_out: false,
+                days: 30,
+                personal: true,
+            },
+        )
+        .await
+        .expect("stored");
+    }
+    let get = |uri: String| {
+        let app = w.app.clone();
+        async move { call(&app, "GET", &uri, Some(PORTAL_TOKEN), None).await }
+    };
+    let (status, listed) = get(format!("{BASE}/conversations")).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(
+        listed["items"].as_array().map(Vec::len),
+        Some(1),
+        "{listed}"
+    );
+    let (status, found) = get(format!("{BASE}/conversations/{conversation}")).await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    assert!(
+        found.to_string().contains("Kedy vyvážate odpad?"),
+        "{found}"
+    );
+    let (status, same) = get(format!("{BASE}/conversations/{conversation}/turns/1/same")).await;
+    assert_eq!(status, StatusCode::OK, "{same}");
+    assert!(same["items"].is_array(), "{same}");
+    let (status, usage) = get(format!("{BASE}/conversations/usage?route=rag")).await;
+    assert_eq!(status, StatusCode::OK, "{usage}");
+    // the CSV is no JSON: the status is what is read here
+    let (status, _) = get(format!("{BASE}/conversations/export?deployment=obcania")).await;
+    assert_eq!(status, StatusCode::OK);
+    for (uri, why) in [
+        (format!("{BASE}/conversations?limit=many"), "limit"),
+        (format!("{BASE}/conversations?from=yesterday"), "from"),
+        (format!("{BASE}/conversations/usage?from=yesterday"), "from"),
+        (format!("{BASE}/conversations/usage?limit=1"), "limit"),
+        (format!("{BASE}/conversations/export?route="), "route"),
+    ] {
+        let (status, problem) = get(uri.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {problem}");
+        assert!(
+            problem["detail"].as_str().is_some_and(|d| d.contains(why)),
+            "{uri}: {problem}"
+        );
+    }
+    let bad = "/internal/v1/projects/Not_A_Project/knowledge";
+    for uri in [
+        format!("{bad}/conversations"),
+        format!("{bad}/conversations/usage"),
+        format!("{bad}/conversations/export"),
+    ] {
+        let (status, problem) = get(uri.clone()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {problem}");
+    }
+    let unknown = "22222222-2222-4222-8222-222222222222";
+    for uri in [
+        format!("{BASE}/conversations/not-a-uuid"),
+        format!("{BASE}/conversations/{unknown}"),
+        format!("{BASE}/conversations/{conversation}/turns/0/same"),
+        format!("{BASE}/conversations/{unknown}/turns/1/same"),
+    ] {
+        let (status, problem) = get(uri.clone()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {problem}");
+    }
+    let erase = |id: &str| {
+        let (app, uri) = (w.app.clone(), format!("{BASE}/conversations/{id}"));
+        async move { call(&app, "DELETE", &uri, Some(PORTAL_TOKEN), None).await.0 }
+    };
+    assert_eq!(erase("not-a-uuid").await, StatusCode::NOT_FOUND);
+    assert_eq!(erase(conversation).await, StatusCode::NO_CONTENT);
+    assert_eq!(
+        erase(conversation).await,
+        StatusCode::NOT_FOUND,
+        "erased once"
+    );
+    assert_eq!(
+        get(format!("{BASE}/conversations/{conversation}")).await.0,
+        StatusCode::NOT_FOUND
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 #[tokio::test]
 async fn the_inventory_reads_level_by_level() {
     let w = world("admininventory").await;
@@ -1158,6 +1278,16 @@ async fn uploaded_files_are_typed_indexed_listed_replaced_and_removed() {
         let (status, body) = send_file(&w.app, source, name, bytes).await;
         assert_eq!(status, expected, "{source} {name}: {body}");
     }
+    // A body declared past the limit is refused before a byte of it is read.
+    let declared = Request::builder()
+        .method("POST")
+        .uri(format!("{BASE}/sources/subory/files?name=velky.md"))
+        .header("authorization", format!("Bearer {PORTAL_TOKEN}"))
+        .header("content-length", (64 * 1024 + 1).to_string())
+        .body(Body::from("# x"))
+        .expect("a request");
+    let response = w.app.clone().oneshot(declared).await.expect("an answer");
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 
     let id = md["id"].as_i64().expect("an id");
     let gone = format!("{BASE}/sources/subory/files/{id}");

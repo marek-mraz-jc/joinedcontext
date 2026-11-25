@@ -1168,6 +1168,30 @@ mod tests {
     }
 
     #[test]
+    fn a_split_of_part_of_the_type_names_its_enum_words_the_old_and_the_blank_bars() {
+        let mut years: Vec<Option<Value>> = (1950..1990).map(|y| Some(json!(y))).collect();
+        years.extend([Some(json!(1700)), None]);
+        let split = split("yearBuilt", &years).expect("a split");
+        let mut table = bridges(&[("M21", 1953, 9.46)]);
+        let words: Words = [(
+            "1950–1959".to_owned(),
+            [("en".to_owned(), "Fifties".to_owned())].into(),
+        )]
+        .into();
+        table.enums = vec![None, Some(words), None];
+        show_split(&mut table, "yearBuilt", &split, 42);
+        let named = table.enums[0].as_ref().expect("words");
+        for key in [BEFORE, NONE, "1950–1959"] {
+            assert!(named.contains_key(key), "{key}");
+        }
+        let said = said(&table).expect("said");
+        assert_eq!(said["of"], 1651, "42 of 1651 counted");
+        assert_eq!(said["parts"][0][0]["en"], "Fifties");
+        // no count, no sentence
+        assert_eq!(super::said(&bridges(&[])), None);
+    }
+
+    #[test]
     fn a_short_or_small_name_is_never_folded_and_a_code_is_no_split() {
         let districts: Vec<Option<Value>> = (0..60)
             .map(|i| {
@@ -1218,6 +1242,60 @@ mod tests {
             [("2026-11", 2), ("2026-12", 0), ("2027-01", 1)],
             "no gap in time"
         );
+    }
+
+    #[test]
+    fn a_split_reads_years_months_years_of_days_and_names_and_refuses_what_is_no_category() {
+        // a few years close together are a bar each, no decade and no old bar
+        let few: Vec<Option<Value>> = [2001, 2003, 2003].map(|y| Some(json!(y))).to_vec();
+        let years = split("yearBuilt", &few).expect("years");
+        assert_eq!(years.per, "year");
+        assert_eq!(
+            years.rows,
+            [
+                ("2001".to_owned(), 1),
+                ("2002".to_owned(), 0),
+                ("2003".to_owned(), 2)
+            ]
+        );
+        // decades with no year before 1800 have no old bar
+        let modern: Vec<Option<Value>> = (1900..1960).map(|y| Some(json!(y))).collect();
+        let decades = split("yearBuilt", &modern).expect("decades");
+        assert_eq!(decades.per, "decade");
+        assert!(decades.rows.iter().all(|(k, _)| k != BEFORE));
+        // days over more than two years are counted per year
+        let days: Vec<Option<Value>> = ["2020-01-05", "2021-06-01", "2023-12-31"]
+            .map(|d| Some(json!(d)))
+            .to_vec();
+        let per_year = split("startDate", &days).expect("per year");
+        assert_eq!(per_year.per, "year");
+        assert_eq!(per_year.rows.len(), 4);
+        // a span wider than a chart draws keeps only the years counted
+        let wide: Vec<Option<Value>> = ["0100-01-01", "2026-01-01"]
+            .map(|d| Some(json!(d)))
+            .to_vec();
+        assert_eq!(split("startDate", &wide).map(|s| s.rows.len()), Some(2));
+        // more than eight kinds: the eight largest and the rest as one bar
+        let kinds: Vec<Option<Value>> = (0..10)
+            .flat_map(|k| std::iter::repeat_n(Some(json!(format!("kind {k}"))), 10 - k))
+            .collect();
+        let kinds = split("category", &kinds).expect("kinds");
+        assert_eq!(kinds.rows.len(), GROUPS + 1);
+        assert_eq!(kinds.rows.last(), Some(&(OTHER.to_owned(), 3)));
+        // long names fold to their heads once there are many of them
+        let long: Vec<Option<Value>> = (0..30)
+            .map(|i| Some(json!(format!("Správa ciest kraja, stredisko {}", i % 10))))
+            .collect();
+        assert_eq!(split("managerName", &long), None, "one head is one value");
+        // one value, or more than eight numbers, splits nothing
+        assert_eq!(
+            split("status", &[Some(json!("open")), Some(json!("open"))]),
+            None
+        );
+        let numbers: Vec<Option<Value>> = (0..20).map(|n| Some(json!(n))).collect();
+        assert_eq!(split("lanes", &numbers), None);
+        let mixed = [Some(json!(1)), Some(json!({"a": 1})), Some(json!(2))];
+        assert_eq!(split("lanes", &mixed), None);
     }
 
     #[test]
@@ -1294,6 +1372,44 @@ mod tests {
         keep_top(&mut table, "yearBuilt;asc", 1);
         assert_eq!(table.rows.len(), 2, "the two of 1800");
         assert_eq!(table.set_aside.len(), 1, "named by the answer, never shown");
+    }
+
+    #[test]
+    fn a_rank_by_a_column_not_shown_or_a_blank_edge_keeps_just_the_top_and_only_placeholders_keep_all(
+    ) {
+        let three = [("A", 1990, 5.0), ("B", 1991, 4.0), ("C", 1992, 4.0)];
+        let mut unshown = bridges(&three);
+        keep_top(&mut unshown, "height;desc", 1);
+        assert_eq!(unshown.rows.len(), 1);
+        let mut blank = bridges(&three);
+        for row in &mut blank.rows {
+            row[2] = Value::Null;
+        }
+        keep_top(&mut blank, "bridgedLength;desc", 2);
+        assert_eq!(blank.rows.len(), 2, "a blank edge ties with nothing");
+        let mut placeholders = bridges(&[
+            ("Pracovný názov: A", 1700, 0.1),
+            ("Pracovný názov: B", 1710, 0.2),
+        ]);
+        keep_top(&mut placeholders, "yearBuilt;asc", 1);
+        assert_eq!(
+            placeholders.rows.len(),
+            2,
+            "nothing real to rank: the table stays"
+        );
+        // a page past the first ranks nothing
+        assert_eq!(
+            top_of(&json!({"orderBy": "yearBuilt", "limit": 3, "cursor": "c"})),
+            None
+        );
+        assert_eq!(
+            top_of(&json!({"orderBy": "yearBuilt", "limit": 3, "offset": 3})),
+            None
+        );
+        assert_eq!(
+            top_of(&json!({"orderBy": "yearBuilt", "limit": 3})),
+            Some(3)
+        );
     }
 
     #[test]
@@ -1574,6 +1690,20 @@ mod tests {
         let mut day = month.clone();
         day["timeAt"] = json!("2026-11-22T00:00:00Z");
         assert_eq!(history_arguments(&schema, &day, now), day);
+    }
+
+    #[test]
+    fn a_window_between_two_instants_is_asked_per_day_and_a_broken_one_as_written() {
+        let schema = json!({"properties": {"aggrPeriodDuration": {}}});
+        let now = time::macros::datetime!(2026-11-22 12:00 UTC);
+        let between = json!({"timerel": "between", "timeAt": "2026-10-01T00:00:00Z", "endTimeAt": "2026-11-01T00:00:00Z", "aggrMethods": ["avg"], "aggrPeriodDuration": "PT1H"});
+        assert_eq!(
+            history_arguments(&schema, &between, now)["aggrPeriodDuration"],
+            "P1D"
+        );
+        let mut broken = between.clone();
+        broken["endTimeAt"] = json!("next week");
+        assert_eq!(history_arguments(&schema, &broken, now), broken);
     }
 
     #[test]
