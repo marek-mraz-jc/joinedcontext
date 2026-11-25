@@ -7843,6 +7843,42 @@ classes:
             hedged(second_fails, ROUTER_HEDGE, |_, _, _| {}).await,
             (Ok(0), false)
         );
+
+        // The first call answers while the second runs: the second is left running.
+        let runs = AtomicUsize::new(0);
+        let first_late = || {
+            let n = runs.fetch_add(1, Ordering::SeqCst);
+            async move {
+                tokio::time::sleep(Duration::from_secs(if n == 0 { 4 } else { 9 })).await;
+                Ok::<usize, ()>(n)
+            }
+        };
+        let mut first_won = None;
+        assert_eq!(
+            hedged(first_late, ROUTER_HEDGE, |_, second, left| {
+                first_won = Some((second, left))
+            })
+            .await,
+            (Ok(0), true)
+        );
+        assert_eq!(first_won, Some((false, true)));
+        // The first call fails after the second started: the second's answer is waited for.
+        let goes = AtomicUsize::new(0);
+        let first_fails = || {
+            let n = goes.fetch_add(1, Ordering::SeqCst);
+            async move {
+                tokio::time::sleep(Duration::from_secs(if n == 0 { 4 } else { 2 })).await;
+                if n == 0 {
+                    Err("down")
+                } else {
+                    Ok(n)
+                }
+            }
+        };
+        assert_eq!(
+            hedged(first_fails, ROUTER_HEDGE, |_, _, _| {}).await,
+            (Ok(1), false)
+        );
     }
 
     /// T-4803: the bbsk-registre model as the broker serves a view's LinkML (an annotation's
