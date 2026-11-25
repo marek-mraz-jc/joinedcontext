@@ -2496,7 +2496,8 @@ mod deliver_as_guards {
         let (uri, seen) = recording().await;
         let plain = sub(&uri, json!({}));
         let linked = sub(&uri, json!({"q": "owner{salary}>50000"}));
-        let dropped: [(fn(&mut Value) -> NotifyDecision, &Value); 4] = [
+        type Decide = fn(&mut Value) -> NotifyDecision;
+        let dropped: [(Decide, &Value); 4] = [
             (
                 |_| {
                     filter(crate::policy::Filter {

@@ -362,13 +362,11 @@ mod tests {
     fn a_query_body_must_be_a_query_object() {
         let p = params(&[("limit", "5")]);
         let bad = query_body_params(&Bytes::from_static(b"{nope"), &p, false)
-            .err()
-            .expect("malformed JSON is refused");
+            .expect_err("malformed JSON is refused");
         assert_eq!(bad.into_response().status(), StatusCode::BAD_REQUEST);
         for body in [&b"[]"[..], br#"{"type":"Entity"}"#, br#""Query""#] {
             let refused = query_body_params(&Bytes::copy_from_slice(body), &p, false)
-                .err()
-                .expect("a non-Query body is refused");
+                .expect_err("a non-Query body is refused");
             let resp = refused.into_response();
             assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         }

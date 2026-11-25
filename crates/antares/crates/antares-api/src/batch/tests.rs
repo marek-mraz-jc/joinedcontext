@@ -441,8 +441,7 @@ async fn batch_body_media_type_and_context_rules() {
         h
     };
     let status = |r: ApiResult<Vec<BatchItem>>| {
-        r.err()
-            .expect("the whole batch is refused")
+        r.expect_err("the whole batch is refused")
             .into_response()
             .status()
     };
@@ -453,7 +452,7 @@ async fn batch_body_media_type_and_context_rules() {
     );
     let json = hdrs(&[("content-type", "application/json")]);
     let refused = parse_batch(&st, &tenant, &json, b"[{").await;
-    let body = body_json(refused.err().expect("no JSON").into_response()).await;
+    let body = body_json(refused.expect_err("no JSON").into_response()).await;
     assert_eq!(
         body["type"],
         json!("https://uri.etsi.org/ngsi-ld/errors/InvalidRequest"),
@@ -485,8 +484,7 @@ async fn batch_body_media_type_and_context_rules() {
     let missing = items[0]
         .1
         .as_ref()
-        .err()
-        .expect("an ld+json item needs @context");
+        .expect_err("an ld+json item needs @context");
     assert!(
         format!("{missing:?}").contains("without @context"),
         "{missing:?}"
@@ -505,8 +503,7 @@ async fn batch_body_media_type_and_context_rules() {
     let carried = items[0]
         .1
         .as_ref()
-        .err()
-        .expect("a JSON item may not carry @context");
+        .expect_err("a JSON item may not carry @context");
     assert!(
         format!("{carried:?}").contains("carries @context"),
         "{carried:?}"
