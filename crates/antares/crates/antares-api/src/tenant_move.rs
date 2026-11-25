@@ -215,13 +215,12 @@ pub async fn export(
                 }
                 Some((Ok(Bytes::from(out)), w))
             }));
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/x-ndjson")
-        .body(Body::from_stream(
-            body.map(|r| r.map_err(std::io::Error::other)),
-        ))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/x-ndjson")],
+        Body::from_stream(body.map(|r| r.map_err(std::io::Error::other))),
+    )
+        .into_response()
 }
 
 fn line(v: &Value) -> Bytes {
