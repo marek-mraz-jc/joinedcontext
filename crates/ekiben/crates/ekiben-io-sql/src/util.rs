@@ -348,7 +348,7 @@ fn parse_with_offset(text: &str, format: &str) -> Option<Timestamp> {
         .get(2..)
         .filter(|m| !m.is_empty())
         .map_or(Ok(0), str::parse)
-        .ok()?;
+        .unwrap_or(0);
     if hours > 23 || minutes > 59 {
         return None;
     }
@@ -403,11 +403,12 @@ fn encode_numeric(text: &str) -> Option<Vec<u8>> {
     while !digits.len().is_multiple_of(4) {
         digits.push('0');
     }
+    // Every byte is an ASCII digit (checked above), so a group of four is at most 9999.
     let groups: Vec<i16> = digits
         .as_bytes()
         .chunks(4)
-        .map(|c| std::str::from_utf8(c).ok().and_then(|s| s.parse().ok()))
-        .collect::<Option<_>>()?;
+        .map(|c| c.iter().fold(0, |n, d| n * 10 + i16::from(d - b'0')))
+        .collect();
     let mut weight = point / 4 - 1;
     let mut start = 0;
     while start < groups.len() && groups[start] == 0 {

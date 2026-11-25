@@ -750,6 +750,7 @@ mod tests {
 
     use ekiben_core::{OrgId, OrgQuotas, ResourceManager, StreamMetrics};
     use serde_json::json;
+    use std::future::IntoFuture;
     use std::sync::Mutex;
     use tokio::sync::watch;
 
@@ -779,9 +780,7 @@ mod tests {
             .await
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
+        tokio::spawn(axum::serve(listener, app).into_future());
         (format!("http://{addr}/ngsi-ld/v1"), seen)
     }
 

@@ -59,6 +59,35 @@ fn assert_close(got: &Value, want: &Value, at: &str) {
     }
 }
 
+/// Sets the declared uncompressed size of every member whose name ends with `suffix` to one byte,
+/// in its local header and in the central directory.
+fn understate(zip: &mut [u8], suffix: &[u8]) {
+    let u16_at = |z: &[u8], i: usize| usize::from(u16::from_le_bytes([z[i], z[i + 1]]));
+    for i in 0..zip.len().saturating_sub(46) {
+        let (size_at, name_len_at, name_at) = match &zip[i..i + 4] {
+            b"PK\x03\x04" => (22, 26, 30),
+            b"PK\x01\x02" => (24, 28, 46),
+            _ => continue,
+        };
+        let name = &zip[i + name_at..i + name_at + u16_at(zip, i + name_len_at)];
+        if name.ends_with(suffix) {
+            zip[i + size_at..i + size_at + 4].copy_from_slice(&1u32.to_le_bytes());
+        }
+    }
+}
+
+#[test]
+fn a_member_that_unpacks_past_its_declared_size_is_refused() {
+    let mut zip = std::fs::read(format!("{FIXTURES}/helsinki-3879-pisteet.zip")).unwrap();
+    understate(&mut zip, b".dbf");
+    let err = features(&zip, 1000).expect_err("refused");
+    assert!(
+        err.starts_with("failed to read kohteet/pisteet.dbf: ")
+            && err.ends_with("larger than its declared uncompressed size"),
+        "{err}"
+    );
+}
+
 #[test]
 fn helsinki_layers_come_out_as_wgs84_within_a_centimetre_of_proj() {
     let expected: Value = serde_json::from_str(

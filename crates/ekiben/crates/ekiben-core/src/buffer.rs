@@ -208,20 +208,6 @@ impl MemoryBuffer {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Stores `payload` when it fits; answers whether it did.
-    fn try_store(&self, payload: &mut Option<Batch>, size: usize) -> bool {
-        let mut st = self.lock();
-        if st.bytes + size > self.limit {
-            return false;
-        }
-        if let Some(batch) = payload.take() {
-            st.bytes += size;
-            st.queue.push_back((batch, size));
-            self.backlog.set(st.bytes as i64);
-        }
-        true
-    }
-
     fn take(&self) -> Option<Batch> {
         let batch = {
             let mut st = self.lock();
@@ -246,11 +232,16 @@ impl MemoryBuffer {
             ack.nack(BatchError::new(payload, msg.clone()));
             return Err(CoreError::other(msg));
         }
-        let mut payload = Some(payload);
         loop {
             let room = self.space.notified();
-            if self.try_store(&mut payload, size) {
-                break;
+            {
+                let mut st = self.lock();
+                if st.bytes + size <= self.limit {
+                    st.bytes += size;
+                    st.queue.push_back((payload, size));
+                    self.backlog.set(st.bytes as i64);
+                    break;
+                }
             }
             room.await;
         }
