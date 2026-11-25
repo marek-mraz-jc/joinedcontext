@@ -97,12 +97,9 @@ pub(super) async fn process_queued(
                     .unwrap_or_default()
                     .to_owned(),
             );
-            match index.get(&key) {
-                Some(&i) => {
-                    if let Some(group) = groups.get_mut(i) {
-                        group.data.extend(m.data);
-                    }
-                }
+            // `index` holds positions in `groups` only
+            match index.get(&key).and_then(|&i| groups.get_mut(i)) {
+                Some(group) => group.data.extend(m.data),
                 None => {
                     index.insert(key, groups.len());
                     groups.push(m);

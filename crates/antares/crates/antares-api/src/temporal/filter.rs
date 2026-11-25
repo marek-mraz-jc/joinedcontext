@@ -425,7 +425,8 @@ pub(super) fn retain_q_instances(
         let Some(arr) = obj.get_mut(&head).and_then(Value::as_array_mut) else {
             continue;
         };
-        let windowed = eval.get(&head).cloned();
+        // `eval` is a clone of the document, so it holds `head` too
+        let windowed = eval.get(&head).cloned().unwrap_or_default();
         arr.retain(|inst| {
             eval.insert(head.clone(), Value::Array(vec![inst.clone()]));
             // `eval` is lent back as a document for the one evaluation
@@ -436,9 +437,7 @@ pub(super) fn retain_q_instances(
             }
             holds
         });
-        if let Some(w) = windowed {
-            eval.insert(head, w);
-        }
+        eval.insert(head, windowed);
     }
 }
 
@@ -470,6 +469,10 @@ pub(super) fn scope_window_retain(
         },
         None => (None, None),
     };
+    // a document that is no object has no scope to be valid in
+    let Some(o) = doc.as_object_mut() else {
+        return false;
+    };
     let intersects = iv.iter().any(|(s, e)| {
         wend.as_deref().is_none_or(|w| s.as_str() < w)
             && e.as_deref()
@@ -478,23 +481,21 @@ pub(super) fn scope_window_retain(
     if !intersects {
         return false;
     }
-    if let Some(o) = doc.as_object_mut() {
-        for (k, v) in o.iter_mut() {
-            if is_meta(k) {
-                continue;
-            }
-            if let Some(arr) = v.as_array_mut() {
-                arr.retain(|inst| {
-                    inst.get(timeprop)
-                        .and_then(Value::as_str)
-                        .map(dt_key)
-                        .is_some_and(|t| {
-                            let t = t.as_str();
-                            iv.iter()
-                                .any(|(s, e)| t >= s.as_str() && e.as_deref().is_none_or(|e| t < e))
-                        })
-                });
-            }
+    for (k, v) in o.iter_mut() {
+        if is_meta(k) {
+            continue;
+        }
+        if let Some(arr) = v.as_array_mut() {
+            arr.retain(|inst| {
+                inst.get(timeprop)
+                    .and_then(Value::as_str)
+                    .map(dt_key)
+                    .is_some_and(|t| {
+                        let t = t.as_str();
+                        iv.iter()
+                            .any(|(s, e)| t >= s.as_str() && e.as_deref().is_none_or(|e| t < e))
+                    })
+            });
         }
     }
     true

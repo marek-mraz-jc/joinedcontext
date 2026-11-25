@@ -286,6 +286,34 @@ async fn clause_5_14_2_update() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// 5.14.2.4: the fragment is a JSON object; a body that is no JSON is
+/// InvalidRequest, JSON that is no object is BadRequestData.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_14_2_update_body_must_be_an_object() {
+    let st = state().await;
+    create_vehicle(&st, "urn:ngsi-ld:Vehicle:u2", 10).await;
+    let (loc, _) = create_map(&st).await;
+    for (frag, kind) in [("{not json", "InvalidRequest"), ("[1]", "BadRequestData")] {
+        let (status, _, body) = send(
+            &st,
+            Request::builder()
+                .method("PATCH")
+                .uri(&loc)
+                .header("Content-Type", "application/json")
+                .header("Content-Length", frag.len())
+                .body(Body::from(frag))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{frag}: {body}");
+        assert_eq!(
+            body["type"],
+            json!(format!("https://uri.etsi.org/ngsi-ld/errors/{kind}")),
+            "{frag}: {body}"
+        );
+    }
+}
+
 /// 5.14.3.4: delete removes the map (204/404), invalid id → 400.
 #[tokio::test(flavor = "multi_thread")]
 async fn clause_5_14_3_delete() {

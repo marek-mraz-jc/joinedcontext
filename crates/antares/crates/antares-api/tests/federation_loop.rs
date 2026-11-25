@@ -1442,6 +1442,88 @@ async fn clause_5_6_8_upsert_forwarding_fallbacks() {
     );
 }
 
+/// The rest of the 5.6.8.4 / 5.6.9.4 / 5.6.20.4 ladders: a create-only
+/// source that already holds the Entity offers no upsert path (an
+/// OperationNotSupported entry in E, never a second request); a
+/// replace-only source takes the upsert as Replace Entity; a source with
+/// updateBatch or mergeBatch takes the whole array at its own batch path.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_6_8_upsert_update_and_merge_ladders_end_to_end() {
+    let batch = |path: &str| {
+        let body = serde_json::json!([
+            {"id": ENTITY, "type": "Vehicle", "speed": {"type": "Property", "value": 1}}
+        ])
+        .to_string();
+        Request::builder()
+            .method("POST")
+            .uri(format!("/ngsi-ld/v1/entityOperations/{path}"))
+            .header("Content-Type", "application/json")
+            .header("Content-Length", body.len())
+            .body(Body::from(body))
+            .expect("request")
+    };
+    let register_with = |st: AppState, ops: serde_json::Value, port: u16| async move {
+        let doc = serde_json::json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:ladders",
+            "type": "ContextSourceRegistration",
+            "mode": "redirect",
+            "operations": ops,
+            "information": [{"entities": [{"type": "Vehicle", "id": ENTITY}]}],
+            "endpoint": format!("http://127.0.0.1:{port}"),
+        });
+        register_doc(&st, doc).await;
+        st
+    };
+    let text = |res: axum::http::Response<Body>| async move {
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+
+    // create-only source, the Entity is there already: no upsert path
+    let m = mock_replying("HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\n\r\n");
+    let st = register_with(state(), serde_json::json!(["createEntity"]), m.port).await;
+    let res = send(&st, batch("upsert")).await;
+    assert_eq!(res.status(), StatusCode::MULTI_STATUS);
+    let body = text(res).await;
+    assert!(
+        body.contains("OperationNotSupported") && body.contains(ENTITY),
+        "no replace or update path is an OperationNotSupported entry: {body}"
+    );
+    assert_eq!(m.hits.load(Ordering::SeqCst), 1, "only the create was sent");
+
+    // replace-only source: the upsert is a Replace Entity
+    let m = mock_replying("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+    let st = register_with(state(), serde_json::json!(["replaceEntity"]), m.port).await;
+    let res = send(&st, batch("upsert")).await;
+    assert!(res.status().is_success(), "{}", res.status());
+    assert!(
+        m.last_head
+            .lock()
+            .expect("lock")
+            .starts_with(&format!("PUT /ngsi-ld/v1/entities/{ENTITY}")),
+        "{}",
+        m.last_head.lock().expect("lock")
+    );
+
+    for (path, op) in [("update", "updateBatch"), ("merge", "mergeBatch")] {
+        let m = mock_replying("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
+        let st = register_with(state(), serde_json::json!([op]), m.port).await;
+        let res = send(&st, batch(path)).await;
+        assert!(res.status().is_success(), "{op}: {}", res.status());
+        assert!(
+            m.last_head
+                .lock()
+                .expect("lock")
+                .starts_with(&format!("POST /ngsi-ld/v1/entityOperations/{path}")),
+            "{op} takes the array at its own batch path: {}",
+            m.last_head.lock().expect("lock")
+        );
+        assert_eq!(m.hits.load(Ordering::SeqCst), 1, "{op}: one request");
+    }
+}
+
 /// 5.6.8.5: a 201 Upsert response lists ONLY the newly created ids — a
 /// forwarded upsertBatch answered with 204 means those entities were
 /// UPDATED on the source, so an all-updated distributed upsert returns
