@@ -64,6 +64,7 @@ pub fn component_of(bundle: &[u8]) -> Result<Vec<u8>, String> {
         if entry.header().entry_type() != tar::EntryType::Regular {
             return Err(format!("{COMPONENT_PATH} in the bundle is no regular file"));
         }
+        let declared = entry.size();
         let mut bytes = Vec::new();
         entry
             .take(MAX_COMPONENT_BYTES + 1)
@@ -73,6 +74,10 @@ pub fn component_of(bundle: &[u8]) -> Result<Vec<u8>, String> {
             return Err(format!(
                 "{COMPONENT_PATH} is larger than {MAX_COMPONENT_BYTES} bytes"
             ));
+        }
+        // The tar reader ends an entry cut short without an error.
+        if bytes.len() as u64 != declared {
+            return Err(format!("{COMPONENT_PATH} in the bundle is cut short"));
         }
         // A component's preamble: the WebAssembly magic and the component layer (AP-151).
         if bytes.get(..8) != Some(&[0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00]) {
@@ -320,10 +325,7 @@ mod tests {
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         std::io::Write::write_all(&mut gz, &raw[..512 + 1000]).expect("gz");
         let err = component_of(&gz.finish().expect("gz")).expect_err("cut short");
-        assert!(
-            err.starts_with(COMPONENT_PATH) || err.contains("no tar.gz"),
-            "{err}"
-        );
+        assert!(err.contains("is cut short"), "{err}");
     }
 
     #[test]

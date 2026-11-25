@@ -161,13 +161,12 @@ fn install(archive: &[u8], dir: &Path) -> Result<(), FetchError> {
         let _ = fs::remove_dir_all(&partial);
         return Err(err);
     }
-    match fs::rename(&partial, dir) {
-        Ok(()) => {}
+    if let Err(err) = fs::rename(&partial, dir) {
+        let _ = fs::remove_dir_all(&partial);
         // Another sync of this replica got there first: the same digest is the same build.
-        Err(_) if dir.is_dir() => {
-            let _ = fs::remove_dir_all(&partial);
+        if !dir.is_dir() {
+            return Err(unpack_error(err));
         }
-        Err(err) => return Err(unpack_error(err)),
     }
     prune(parent, leaf);
     Ok(())

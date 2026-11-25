@@ -52,7 +52,9 @@ struct Row {
 }
 
 fn utc(at: OffsetDateTime) -> TimestampTz {
-    jiff::Timestamp::from_nanosecond(at.unix_timestamp_nanos())
+    // `from_nanosecond` only debug-asserts its range; `new` checks it.
+    let nanos = i32::try_from(at.nanosecond()).unwrap_or(0);
+    jiff::Timestamp::new(at.unix_timestamp(), nanos)
         .map_or_else(|_| TimestampTz::default(), TimestampTz)
 }
 

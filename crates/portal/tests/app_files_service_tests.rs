@@ -443,12 +443,10 @@ async fn a_failing_store_answers_503_and_a_missing_key_404() {
         .mount(&typeless)
         .await;
     let state = self::state(&typeless, json!(["files"]));
-    let (status, _, text) = call(&state, "GET", "", Vec::new()).await;
-    assert_eq!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "a type it cannot read: {text}"
-    );
+    // A type the store does not tell (its HEAD refused) is listed as octet-stream.
+    let (status, body, text) = call(&state, "GET", "", Vec::new()).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(body[0]["contentType"], "application/octet-stream");
     let (status, body, _) = call(&state, "GET", "/gone.txt", Vec::new()).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["detail"], "no file 'gone.txt'");
@@ -499,7 +497,7 @@ async fn a_write_with_the_edges_token_needs_csrf_and_a_foreign_host_is_redirecte
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     assert!(asked(&store, "PUT").await.is_empty());
 
-    config.apps_url = Some("https://apps.dev.example".parse().expect("a url"));
+    config.apps_url = Some("https://dev.example".parse().expect("a url"));
     state.config = std::sync::Arc::new(config);
     let request = Request::builder()
         .uri(format!("/apps/{APP}/api/services/files/old.txt"))

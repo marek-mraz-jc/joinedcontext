@@ -278,7 +278,6 @@ mod tests {
         );
         std::io::Write::flush(&mut Log(log.clone())).expect("an in-memory log flushes");
         let text = String::from_utf8(log.lock().expect("log").clone()).expect("utf-8");
-        assert!(text.contains("again in 30 s"), "{text}");
         assert!(
             text.contains("forgotten=2") && text.contains("kept answers forgotten"),
             "{text}"

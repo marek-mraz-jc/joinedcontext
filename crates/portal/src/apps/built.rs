@@ -642,10 +642,11 @@ mod tests {
             "a directory entry is skipped"
         );
 
-        let cut = &tar[..tar.len() / 2];
-        let err = image_of(cut, &digest).expect_err("cut short");
+        let mut cut = tar_of(&[("index.json".to_owned(), vec![b' '; 1000])]);
+        cut.truncate(512 + 10);
+        let err = image_of(&cut, &digest).expect_err("cut short");
         assert!(
-            err.contains("not readable") || err.contains("not a tar"),
+            err.contains("index.json of the layout is not readable"),
             "{err}"
         );
 
@@ -706,7 +707,7 @@ mod tests {
                 "ok",
             ),
             (
-                ResponseTemplate::new(200).set_body_bytes(b"other".to_vec()),
+                ResponseTemplate::new(200).set_body_bytes(b"diff".to_vec()),
                 "conflict",
             ),
             (ResponseTemplate::new(500), "error"),

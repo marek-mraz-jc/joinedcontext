@@ -436,7 +436,7 @@ async fn an_app_without_a_readable_bundle_answers_404() {
 async fn a_call_off_the_apps_own_origin_is_sent_there() {
     let rig = rig("fn-origin").await;
     let mut config = (*rig.state.config).clone();
-    config.apps_url = Some("https://apps.example.org".parse().expect("a url"));
+    config.apps_url = Some("https://example.org".parse().expect("a url"));
     let mut state = rig.state.clone();
     state.config = std::sync::Arc::new(config);
     let app = server::app(state);
