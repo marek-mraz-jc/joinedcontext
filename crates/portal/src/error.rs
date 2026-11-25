@@ -716,24 +716,23 @@ mod tests {
         assert_eq!(line["level"], "WARN");
         assert_eq!(line["detail"], "the realm could not be reached: timed out");
     }
-}
 
-// Kept after every `#[cfg(test)]`-free line: the slug scan reads each file up to its first one.
-#[cfg(test)]
-impl ApiError {
-    /// The field errors of a `422`, none for any other answer: what a test names.
-    pub(crate) fn field_errors(&self) -> &[String] {
-        match self {
-            Self::Unprocessable { errors, .. } => errors,
-            _ => &[],
+    // Inside the tests module: the slug scan reads each file up to its first `#[cfg(test)]`.
+    impl super::ApiError {
+        /// The field errors of a `422`, none for any other answer: what a test names.
+        pub(crate) fn field_errors(&self) -> &[String] {
+            match self {
+                Self::Unprocessable { errors, .. } => errors,
+                _ => &[],
+            }
         }
-    }
 
-    /// The field a `422` names first (`smtp.host: …` names `smtp.host`), empty for any other.
-    pub(crate) fn first_field(&self) -> &str {
-        self.field_errors()
-            .first()
-            .and_then(|e| e.split(':').next())
-            .unwrap_or_default()
+        /// The field a `422` names first (`smtp.host: …` names `smtp.host`), empty for any other.
+        pub(crate) fn first_field(&self) -> &str {
+            self.field_errors()
+                .first()
+                .and_then(|e| e.split(':').next())
+                .unwrap_or_default()
+        }
     }
 }

@@ -477,8 +477,7 @@ mod tests {
         let mut files = std::collections::BTreeMap::new();
         let missing = super::plan(&state, &index, &files)
             .await
-            .err()
-            .expect("refused");
+            .expect_err("refused");
         assert!(
             matches!(&missing, crate::error::ApiError::BadRequest(m) if m.contains("has no models/stations.linkml.yaml")),
             "{missing:?}"
@@ -489,8 +488,7 @@ mod tests {
         );
         let altered = super::plan(&state, &index, &files)
             .await
-            .err()
-            .expect("refused");
+            .expect_err("refused");
         assert!(
             matches!(&altered, crate::error::ApiError::BadRequest(m) if m.contains("SHA-256 differs")),
             "{altered:?}"
