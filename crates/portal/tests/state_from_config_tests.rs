@@ -231,6 +231,137 @@ async fn no_database_still_starts_with_a_non_durable_agent_store() {
     assert!(!state.agents.is_durable());
 }
 
+/// A realm whose discovery and key set both answer, for the startups that need one to run.
+async fn live_realm() -> (MockServer, String) {
+    let server = MockServer::start().await;
+    let issuer = format!("{}{REALM_PATH}", server.uri());
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REALM_PATH}/.well-known/openid-configuration"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuer": issuer,
+            "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+            "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+            "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM_PATH}/protocol/openid-connect/certs")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "keys": [] })))
+        .mount(&server)
+        .await;
+    (server, issuer)
+}
+
+/// Every optional part of a deployment at once, outside a cluster: a realm with its admin
+/// client, the forge (from the host's variables), the gateway, the broker, the artifact store,
+/// the WASM database, Grafana, the pipeline runner, the namespaces and SOPS. `capture` and
+/// `wasm_host` flip the two settings whose absence is its own branch; `apps_db` and `store`
+/// are the WASM database URL and the artifact store endpoint, each well-formed or not.
+fn everything(
+    issuer: &str,
+    token_file: &std::path::Path,
+    (capture, wasm_host): (bool, bool),
+    (apps_db, store): (&'static str, &'static str),
+) -> Config {
+    let issuer = issuer.to_owned();
+    let token_file = token_file.display().to_string();
+    let mut config = Config::from_vars(|k| {
+        let v = match k {
+            "JC_OIDC_ISSUER" => issuer.as_str(),
+            "JC_OIDC_CLIENT_ID" => "joinedcontext-portal",
+            "JC_OIDC_CLIENT_SECRET" => "test-secret",
+            "JC_PORTAL_COOKIE_KEY" => return Some("k".repeat(64)),
+            "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID" => "portal-admin",
+            "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SECRET" => "admin-secret",
+            "JC_PORTAL_GATEWAY_URL" => "http://gateway.test:8080",
+            "JC_PORTAL_ORG_DOMAIN" => "bb.example",
+            "JC_PORTAL_APPS_NAMESPACE" => "apps",
+            "JC_PORTAL_ARTIFACT_STORE_ENDPOINT" => store,
+            "JC_PORTAL_ARTIFACT_STORE_ACCESS_KEY" => "fixture",
+            "JC_PORTAL_ARTIFACT_STORE_SECRET_KEY" => "fixture",
+            "JC_PORTAL_APPS_DB_URL" => apps_db,
+            "JC_PORTAL_WASM_HOST_NAMESPACE" if wasm_host => "wasm",
+            "JC_PORTAL_MQTT_NAMESPACE" => "mqtt",
+            "JC_PORTAL_SOPS_AGE_KEY_FILE" => "/nonexistent/age.key",
+            "JC_PORTAL_PIPELINE_NAMESPACE" => "pipelines",
+            "JC_PORTAL_APP_IDENTITY_NAMESPACE" => "app-jobs",
+            "JC_PORTAL_PIPELINE_RUNNER_URL" => "http://runner.{project}.svc:4195",
+            "JC_PORTAL_PIPELINE_TEST_CAPTURE_URL" if capture => "http://portal.test:8081",
+            "JC_PORTAL_GRAFANA_URL" => "http://grafana.test:3000",
+            "JC_PORTAL_GRAFANA_PUBLIC_URL" => "https://grafana.test",
+            "JC_PORTAL_GRAFANA_USER" => "admin",
+            "JC_PORTAL_GRAFANA_PASSWORD" => "fixture",
+            "JC_PORTAL_BROKER_URL" => "http://broker.test:8080",
+            "JC_PORTAL_BROKER_ADMIN_TOKEN_FILE" => token_file.as_str(),
+            "JC_PORTAL_MODEL_TOOLS_URL" => "http://tools.test:8000",
+            _ => return None,
+        };
+        Some(v.to_owned())
+    })
+    .expect("config");
+    config.public_base_url = "https://portal.bb.example".parse().expect("url");
+    config.database_url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").ok();
+    for (key, value) in [
+        ("JC_SHAKO_URL", "http://shako.test:3000"),
+        ("JC_SHAKO_OWNER", "owner"),
+        ("JC_SHAKO_REPO", "config"),
+        ("JC_SHAKO_TOKEN", "fixture"),
+    ] {
+        config.host_vars.insert(key.into(), value.into());
+    }
+    config
+}
+
+/// With a forge configured the Portal builds its reconciler and wires every step this process
+/// can reach outside a cluster: the sync driver, the views, the drift watch and the live hub's
+/// subscription writer. The steps that need the ServiceAccount mount say so and stay unwired.
+#[tokio::test]
+async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
+    let (_server, issuer) = live_realm().await;
+    let token = std::env::temp_dir().join(format!("t7816-broker-token-{}", std::process::id()));
+    std::fs::write(&token, "fixture").expect("token file");
+    let apps_db = "postgres://apps@127.0.0.1:1/apps";
+    let store = "http://store.test:9000/";
+    for (switches, wasm) in [
+        ((true, true), (apps_db, store)),
+        ((false, false), ("no database URL", store)),
+        ((false, true), (apps_db, "no endpoint")),
+    ] {
+        let mut config = everything(&issuer, &token, switches, wasm);
+        // The last startup runs without a database, so the sync driver keeps its runs in memory.
+        let durable = config.database_url.is_some() && wasm.1 == store;
+        if !durable {
+            config.database_url = None;
+        }
+        let state = AppState::from_config(config)
+            .await
+            .expect("the Portal starts");
+        assert!(state.shako.is_some(), "the forge client");
+        assert!(state.syncer.is_some(), "the reconciler");
+        assert!(state.sync.is_some(), "the SyncSource driver");
+        assert!(state.views.is_some(), "the broker views");
+        assert!(state.drift_watch.is_some(), "the drift watch");
+        assert!(state.people.is_some(), "the realm's people");
+        assert!(
+            state.github_mirror.is_none(),
+            "no GitHub copy was configured"
+        );
+        assert_eq!(
+            state.wasm_apps.is_some(),
+            wasm == (apps_db, store),
+            "wasm Apps publish with both a database URL and a usable store"
+        );
+        assert_eq!(state.db.is_some(), durable);
+    }
+    std::fs::remove_file(&token).expect("token file removed");
+}
+
 fn session(subject: &str, issued_at: i64) -> Session {
     Session {
         identity: Identity {

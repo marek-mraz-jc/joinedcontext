@@ -13,7 +13,7 @@
 # documentation page's path. Its own
 # paths and texts, and (T-7659) an export's revision and kinds filter, the secrets a bundle strips
 # a visualization's title, and (T-7783) the session cookie line, a presented bearer token and a
-# token's second-factor claims. Its own
+# token's second-factor claims, and (T-7816) a stored dashboard file and a dashboard Board. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 # The targets, one per line: .gitattributes merges this file with merge=union, so two branches
@@ -53,6 +53,7 @@ bin = [
   { name = "export_query", path = "fuzz_targets/export_query.rs", test = false, doc = false, bench = false },
   { name = "export_secrets", path = "fuzz_targets/export_secrets.rs", test = false, doc = false, bench = false },
   { name = "grafana_title", path = "fuzz_targets/grafana_title.rs", test = false, doc = false, bench = false },
+  { name = "grafana_board", path = "fuzz_targets/grafana_board.rs", test = false, doc = false, bench = false },
   { name = "auth_session_cookie", path = "fuzz_targets/auth_session_cookie.rs", test = false, doc = false, bench = false },
   { name = "auth_bearer_token", path = "fuzz_targets/auth_bearer_token.rs", test = false, doc = false, bench = false },
   { name = "auth_second_factor", path = "fuzz_targets/auth_second_factor.rs", test = false, doc = false, bench = false },
