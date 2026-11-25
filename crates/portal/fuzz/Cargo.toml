@@ -68,6 +68,7 @@ cookie = { version = "0.18", features = ["percent-encode"] }
 url = "2"
 joinedcontext-portal = { path = ".." }
 jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
+jc-time = { path = "../../shared/jc-time" }
 
 # The Portal's own patches (../Cargo.toml), one directory deeper: the vendored platform, ngsild
 # and the patched rstar and geo-types, so the targets link the code the Portal ships.
