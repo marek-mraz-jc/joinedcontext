@@ -1565,6 +1565,69 @@ async fn the_call_past_the_running_ones_answers_429_with_a_second_to_wait() {
     assert_eq!(post("busy.bot").await.unwrap().status(), StatusCode::OK);
 }
 
+/// CC-76: an operation that answers a conflict (a draft saved over a version nobody read) is
+/// an error result whose structured content is the conflict and whose text says the same.
+#[tokio::test]
+async fn a_conflict_is_an_error_result_carrying_the_conflict() {
+    let (app, issuer, signer, kid) = setup_app_and_keys().await;
+    let token = sign_token(
+        &signer,
+        &kid,
+        &issuer,
+        PORTAL_AUDIENCE,
+        "steward.user",
+        &["portal-approver"],
+        &["platform-admins"],
+    );
+    let send = |body: Value| {
+        let app = app.clone();
+        let token = token.clone();
+        async move {
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/mcp")
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            serde_json::from_slice::<Value>(&bytes).unwrap()
+        }
+    };
+    let save = |version: u64| {
+        json!({
+            "jsonrpc": "2.0", "id": version, "method": "tools/call",
+            "params": { "name": "jc_draft_put", "project": "ovzdusie", "arguments": {
+                "project": "ovzdusie",
+                "kind": "ContextSpace",
+                "name": "mcp-conflict",
+                "manifest": {
+                    "apiVersion": "joinedcontext.com/v1alpha1", "kind": "ContextSpace",
+                    "metadata": { "name": "mcp-conflict", "namespace": "ovzdusie" },
+                    "spec": { "isSandbox": true }
+                },
+                "expectedVersion": version,
+            } }
+        })
+    };
+    let stale = send(save(7)).await;
+    assert_eq!(stale["result"]["isError"], true, "{stale}");
+    assert!(
+        stale["result"]["structuredContent"].is_object(),
+        "the conflict is the structured content: {stale}"
+    );
+    assert_eq!(
+        stale["result"]["content"][0]["text"],
+        json!(stale["result"]["structuredContent"].to_string()),
+        "{stale}"
+    );
+}
+
 /// AG-60, ADR-N-021, T-0843: a call that waits on something else answers a task, and the client
 /// polls it instead of holding the request open. A short call still answers inline.
 #[tokio::test]
