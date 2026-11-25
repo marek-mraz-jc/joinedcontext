@@ -516,8 +516,9 @@ impl<'de> Deserialize<'de> for Unique {
 }
 
 // Unique is read through deserialize_any only: serde_json and serde_norway answer null there
-// with visit_unit and an empty YAML document with visit_none, and neither calls visit_some or
-// visit_newtype_struct from it, so the visitor has neither (T-7837).
+// with visit_unit and an empty YAML document with visit_none, hand every string to visit_str,
+// and never call visit_some or visit_newtype_struct from it, so the visitor has none of those
+// (visit_string's default forwards to visit_str) (T-7837).
 struct UniqueVisitor;
 
 impl<'de> serde::de::Visitor<'de> for UniqueVisitor {
@@ -553,10 +554,6 @@ impl<'de> serde::de::Visitor<'de> for UniqueVisitor {
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
         Ok(Unique(Value::String(value.to_owned())))
-    }
-
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-        Ok(Unique(Value::String(value)))
     }
 
     fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {

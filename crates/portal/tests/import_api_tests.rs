@@ -453,6 +453,54 @@ async fn a_bundle_lands_as_one_commit() {
 
 /// All or nothing: a commit the forge refuses leaves no Change behind, and nobody approves half
 /// a bundle.
+/// T-7837: an upload that is no multipart body of its own boundary, a part cut off mid-body,
+/// options that do not parse and an empty bundle are each a 400 naming what to send, for the
+/// bundle import and the git import alike; nothing reaches the forge.
+#[tokio::test]
+async fn a_malformed_upload_is_a_400_and_reaches_no_forge() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import");
+    let cut = b"--b\r\nContent-Disposition: form-data; name=\"file\"\r\n\r\nabc".to_vec();
+    let mut wrong = Vec::new();
+    for (content_type, body, query) in [
+        ("multipart/form-data", b"x".to_vec(), ""),
+        ("multipart/form-data; boundary=b", cut.clone(), ""),
+        (
+            "multipart/form-data; boundary=b",
+            b"no parts here".to_vec(),
+            "",
+        ),
+        ("multipart/form-data", b"x".to_vec(), "?format=git"),
+        (
+            "multipart/form-data; boundary=b",
+            cut.clone(),
+            "?format=git",
+        ),
+        (
+            "multipart/form-data; boundary=b",
+            b"no parts here".to_vec(),
+            "?format=git",
+        ),
+        ("application/json", b"{\"manifests\": 7}".to_vec(), ""),
+        ("application/json", b"{\"manifests\": []}".to_vec(), ""),
+    ] {
+        let (status, body) = send(
+            state.clone(),
+            &cookie,
+            content_type,
+            body,
+            &format!("{uri}{query}"),
+        )
+        .await;
+        if status != StatusCode::BAD_REQUEST {
+            wrong.push(format!("{content_type} {query}: {status} {body}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert!(forge_calls(&server).await.is_empty());
+}
+
 #[tokio::test]
 async fn a_commit_the_forge_refuses_opens_no_merge_request() {
     let server = forge().await;
