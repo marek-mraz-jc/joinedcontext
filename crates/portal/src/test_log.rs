@@ -4,16 +4,16 @@
 //! A scoped `set_default` per test raced tracing-core's callsite interest cache: when another test
 //! thread registered a callsite while the scoped subscriber was being registered, the callsite
 //! kept `Interest::never` and the capturing test read an empty log (T-7613, ci 45482851985 and
-//! 45500747555). The global subscriber's filter answers `sometimes` for every callsite, so no
-//! callsite registered after it is installed caches `never`, and `install` rebuilds the cache
-//! once for the callsites registered before.
+//! 45500747555). The global subscriber's filter is a `dynamic_filter_fn`, which answers
+//! `sometimes` for every callsite, so tracing asks it per event; a plain `filter_fn` caches its
+//! first answer as the callsite's interest, and a callsite a non-capturing thread reached first
+//! stays `never`. `logged` rebuilds the cache for callsites registered before the install.
 
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex, Once};
 
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::Layer;
 
 type Buffer = Arc<Mutex<Vec<u8>>>;
 
@@ -22,25 +22,28 @@ thread_local! {
     static CAPTURE: RefCell<Option<(Buffer, LevelFilter)>> = const { RefCell::new(None) };
 }
 
-/// Installs the global routing subscriber once per process and rebuilds the interest cache.
+/// Installs the global routing subscriber once per process and rebuilds the interest cache, which
+/// also settles a callsite whose registration raced the install.
 pub(crate) fn install() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let layer = tracing_subscriber::fmt::layer()
-            .with_ansi(false)
-            .with_writer(|| Routed)
-            .with_filter(tracing_subscriber::filter::filter_fn(|meta| {
-                CAPTURE.with(|capture| {
-                    capture
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|(_, level)| level >= meta.level())
-                })
-            }));
-        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer))
+        let capturing = tracing_subscriber::filter::dynamic_filter_fn(|meta, _| {
+            CAPTURE.with(|capture| {
+                capture
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|(_, level)| level >= meta.level())
+            })
+        });
+        let subscriber = tracing_subscriber::registry().with(capturing).with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(|| Routed),
+        );
+        tracing::subscriber::set_global_default(subscriber)
             .expect("no other global subscriber in the lib tests");
-        tracing::callsite::rebuild_interest_cache();
     });
+    tracing::callsite::rebuild_interest_cache();
 }
 
 /// Everything logged at `level` or above on this thread while `run` runs, as text.
@@ -105,7 +108,7 @@ mod tests {
         })
         .await;
         assert!(
-            text.contains("kept") && text.contains("client=praha"),
+            text.contains("kept") && text.contains("client=\"praha\""),
             "{text}"
         );
         assert!(!text.contains("below the level"), "{text}");
