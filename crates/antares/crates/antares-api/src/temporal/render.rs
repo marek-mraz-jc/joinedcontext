@@ -375,7 +375,13 @@ pub(super) fn content_range(
     } else {
         let start = match named.map(|t| (t.timerel.as_str(), t)) {
             Some(("before", t)) => t.time_at.clone(),
-            Some(("between", t)) => t.end_time_at.clone().unwrap_or_else(|| data_max.to_owned()),
+            Some((
+                "between",
+                TemporalQ {
+                    end_time_at: Some(end),
+                    ..
+                },
+            )) => end.clone(),
             _ => data_max.to_owned(),
         };
         (start, data_min.to_owned())
@@ -674,6 +680,227 @@ fn compact_vocab(vv: &Value, ctx: &Context) -> Value {
                 .collect(),
         ),
         o => o.clone(),
+    }
+}
+
+#[cfg(test)]
+mod edges {
+    use super::*;
+    use serde_json::json;
+
+    fn windowed(instances: Vec<Value>) -> Windowed {
+        let mut attrs = std::collections::BTreeMap::new();
+        let n = instances.len();
+        attrs.insert("speed".to_owned(), instances);
+        Windowed {
+            attrs,
+            max_per_attr: n,
+            ts_min: None,
+            ts_max: None,
+            truncated: false,
+            cut_served: None,
+            more: false,
+            held: Default::default(),
+        }
+    }
+
+    /// With no instance carrying the time property there is no boundary
+    /// instant: the cut keeps the first `limit` and the window bounds stay
+    /// unknown.
+    #[test]
+    fn a_cut_without_timed_instances_keeps_the_first_ones() {
+        let mut w = windowed(vec![
+            json!({"value": 1}),
+            json!({"value": 2}),
+            json!({"value": 3}),
+        ]);
+        truncate(&mut w, "observedAt", false, 2);
+        assert_eq!(
+            w.attrs["speed"],
+            vec![json!({"value": 1}), json!({"value": 2})]
+        );
+        assert!(w.truncated && w.more);
+        assert_eq!(w.cut_served, Some(2));
+        assert_eq!((w.ts_min, w.ts_max), (None, None));
+    }
+
+    /// ADR-N-054 2.9: a version row without observedAt belongs to the
+    /// instance with its instanceId.
+    #[test]
+    fn a_version_without_observed_at_follows_its_instance_id() {
+        let mut w = windowed(vec![
+            json!({"value": 2, "instanceId": "urn:i:1"}),
+            json!({"value": 5, "instanceId": "urn:i:2"}),
+        ]);
+        let mut chains = Map::new();
+        chains.insert(
+            "speed".to_owned(),
+            json!([{"value": 1, "instanceId": "urn:i:1"}, {"value": 2, "instanceId": "urn:i:1"}]),
+        );
+        with_versions(&mut w, &chains);
+        assert_eq!(
+            w.attrs["speed"],
+            vec![
+                json!({"value": 1, "instanceId": "urn:i:1"}),
+                json!({"value": 2, "instanceId": "urn:i:1"}),
+                json!({"value": 5, "instanceId": "urn:i:2"}),
+            ]
+        );
+    }
+
+    /// A datasetId that is not a string is in no asked dataset.
+    #[test]
+    fn a_non_string_dataset_id_matches_no_selection() {
+        let want = vec!["urn:d:1".to_owned(), "@none".to_owned()];
+        assert!(!of_dataset(Some(&want), &json!({"datasetId": 7})));
+        assert!(of_dataset(Some(&want), &json!({"datasetId": "urn:d:1"})));
+        assert!(of_dataset(Some(&want), &json!({})));
+        assert!(of_dataset(None, &json!({"datasetId": 7})));
+    }
+
+    /// The scope set before the window is carried in once, never twice.
+    #[test]
+    fn a_carried_scope_already_in_the_window_is_not_added_again() {
+        let set = json!({"type": "Property", "value": "/a", "observedAt": "2020-01-01T00:00:00Z"});
+        let all = json!([set.clone()]);
+        let tq = TemporalQ {
+            timerel: "after".to_owned(),
+            time_at: "2021-01-01T00:00:00Z".to_owned(),
+            end_time_at: None,
+            timeproperty: "observedAt".to_owned(),
+        };
+        let mut instances = vec![set.clone()];
+        carry_scope(&mut instances, &all, Some(&tq));
+        assert_eq!(instances, vec![set.clone()]);
+        let mut empty = Vec::new();
+        carry_scope(&mut empty, &all, Some(&tq));
+        assert_eq!(empty, vec![set]);
+    }
+
+    /// The Content-Range of a backward `between` page starts at the query's
+    /// end; a query naming no end starts at the data's latest instant.
+    #[test]
+    fn a_backward_between_range_starts_at_the_named_end() {
+        let page = InstancePage {
+            desc: true,
+            n: Some(2),
+            offset: 0,
+        };
+        let tq = |end: Option<&str>| TemporalQ {
+            timerel: "between".to_owned(),
+            time_at: "2020-01-01T00:00:00Z".to_owned(),
+            end_time_at: end.map(str::to_owned),
+            timeproperty: "observedAt".to_owned(),
+        };
+        let r = |q: &TemporalQ| {
+            content_range(
+                true,
+                Some("2020-02-01T00:00:00Z"),
+                Some("2020-03-01T00:00:00Z"),
+                Some(q),
+                page,
+            )
+        };
+        assert_eq!(
+            r(&tq(Some("2020-04-01T00:00:00Z"))).as_deref(),
+            Some("date-time 2020-04-01T00:00:00Z-2020-02-01T00:00:00Z/2")
+        );
+        assert_eq!(
+            r(&tq(None)).as_deref(),
+            Some("date-time 2020-03-01T00:00:00Z-2020-02-01T00:00:00Z/2")
+        );
+    }
+
+    /// A temporal Entity that is not a JSON object is rendered as it is.
+    #[test]
+    fn a_non_object_entity_renders_unchanged() {
+        let w = windowed(Vec::new());
+        let out = present_temporal(
+            &json!("x"),
+            &w,
+            &Context::default(),
+            &TRepr::default(),
+            None,
+            "observedAt",
+        )
+        .expect("rendered");
+        assert_eq!(out, json!("x"));
+    }
+
+    /// 4.5.9: every attribute kind takes its simplified member name and
+    /// value shape; two datasets give two groups, an instance with no type
+    /// is a Property, a datasetId is kept.
+    #[test]
+    fn temporal_values_name_each_attribute_kind() {
+        let ctx = Context::default();
+        let t = "2020-01-01T00:00:00Z";
+        let one = |inst: Value| simplified_attr(&[inst], &ctx, "observedAt");
+        assert_eq!(
+            one(json!({"type": "VocabProperty", "vocab": ["urn:v:a", 3], "observedAt": t})),
+            json!({"type": "VocabProperty", "vocabs": [[{"vocab": ["urn:v:a", 3]}, t]]})
+        );
+        assert_eq!(
+            one(json!({"type": "VocabProperty", "vocab": {"x": 1}, "observedAt": t})),
+            json!({"type": "VocabProperty", "vocabs": [[{"vocab": {"x": 1}}, t]]})
+        );
+        assert_eq!(
+            one(json!({"type": "JsonProperty", "json": {"a": 1}, "observedAt": t})),
+            json!({"type": "JsonProperty", "jsons": [[{"json": {"a": 1}}, t]]})
+        );
+        assert_eq!(
+            one(json!({"observedAt": t})),
+            json!({"type": "Property", "values": [[null, t]]})
+        );
+        let two = simplified_attr(
+            &[
+                json!({"type": "Property", "value": 1, "observedAt": t}),
+                json!({"type": "Property", "value": 2, "datasetId": "urn:d:1", "observedAt": t}),
+            ],
+            &ctx,
+            "observedAt",
+        );
+        assert_eq!(
+            two,
+            json!([
+                {"type": "Property", "values": [[1, t]]},
+                {"type": "Property", "datasetId": "urn:d:1", "values": [[2, t]]},
+            ])
+        );
+    }
+
+    /// 6.3.7: `normalized` is accepted as an option and a format; anything
+    /// else is InvalidRequest naming the value.
+    #[test]
+    fn options_and_format_accept_normalized_and_refuse_the_unknown() {
+        let ctx = Context::default();
+        let p = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        let r = parse_trepr(&p(&[("options", "normalized,sysAttrs")]), &ctx).expect("options");
+        assert!(r.sys && !r.temporal_values && !r.aggregated);
+        let r = parse_trepr(
+            &p(&[("options", "temporalValues"), ("format", "normalized")]),
+            &ctx,
+        )
+        .expect("format");
+        assert!(!r.temporal_values, "format wins over options");
+        let e = parse_trepr(&p(&[("options", "bogus")]), &ctx)
+            .err()
+            .expect("bad option");
+        assert!(
+            matches!(&e, NgsiError::InvalidRequest(m) if m.contains("\"bogus\"")),
+            "{e:?}"
+        );
+        let e = parse_trepr(&p(&[("format", "concise")]), &ctx)
+            .err()
+            .expect("bad format");
+        assert!(
+            matches!(&e, NgsiError::InvalidRequest(m) if m.contains("\"concise\"")),
+            "{e:?}"
+        );
     }
 }
 
