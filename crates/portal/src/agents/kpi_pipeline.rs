@@ -95,13 +95,15 @@ fn seconds_of(period: &str) -> Option<u64> {
     let split = period.find(|c: char| !c.is_ascii_digit())?;
     let (number, unit) = period.split_at(split);
     let number: u64 = number.parse().ok()?;
-    match unit {
-        "s" => Some(number),
-        "m" => Some(number * 60),
-        "h" => Some(number * 3600),
-        "d" => Some(number * 86_400),
-        _ => None,
-    }
+    let unit = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        _ => return None,
+    };
+    // The model writes the number: one too large for seconds is no period.
+    number.checked_mul(unit)
 }
 
 /// The ISO 8601 duration of a period, for `calculationPeriod`.
@@ -697,6 +699,91 @@ mod tests {
         );
     }
 
+    /// T-7711: a period is digits and one unit; a number too large for seconds is no period,
+    /// never an overflow (the model writes the text, so a debug build panicked and a release
+    /// build wrapped to a short period).
+    #[test]
+    fn a_period_is_digits_and_one_unit_and_an_overflow_is_no_period() {
+        assert_eq!(seconds_of(" 90s "), Some(90));
+        assert_eq!(seconds_of("2h"), Some(7200));
+        assert_eq!(seconds_of("1d"), Some(86_400));
+        assert_eq!(seconds_of("15"), None, "no unit");
+        assert_eq!(seconds_of("m"), None, "no number");
+        assert_eq!(seconds_of("5w"), None, "no such unit");
+        assert_eq!(seconds_of("5mm"), None, "one unit");
+        assert_eq!(seconds_of("99999999999999999999s"), None, "over u64");
+        assert_eq!(
+            seconds_of("18446744073709551615d"),
+            None,
+            "over u64 in seconds"
+        );
+        assert_eq!(seconds_of("6000000000000000h"), None, "over u64 in seconds");
+        let base = json!({ "name": "x", "type": "T", "attribute": "a", "agg": "avg" });
+        let mut huge = base.clone();
+        huge["every"] = json!("18446744073709551615d");
+        assert!(trigger_of(&call(huge))
+            .unwrap_err()
+            .contains("not a period"));
+        let mut blank = base;
+        blank["every"] = json!("  ");
+        assert!(
+            trigger_of(&call(blank)).unwrap_err().contains("say when"),
+            "a blank period is no period"
+        );
+    }
+
+    #[test]
+    fn a_period_reads_as_whole_hours_minutes_or_seconds() {
+        assert_eq!(iso_duration(3600), "PT1H");
+        assert_eq!(iso_duration(86_400), "PT24H");
+        assert_eq!(iso_duration(900), "PT15M");
+        assert_eq!(iso_duration(90), "PT90S");
+        assert_eq!(
+            Trigger::Every {
+                period: "15m".into(),
+                seconds: 900
+            }
+            .describe(),
+            "every 15m"
+        );
+        assert_eq!(
+            Trigger::OnChange(vec!["a".into(), "b".into()]).describe(),
+            "on every change of a, b"
+        );
+        assert_eq!(
+            space_title("transportation-kpi"),
+            "Transportation indicators"
+        );
+        assert_eq!(space_title("air-quality"), "Air quality indicators");
+        assert_eq!(space_title("-kpi"), "Indicators");
+        assert_eq!(space_title(""), "Indicators");
+    }
+
+    #[test]
+    fn a_count_on_change_without_attributes_and_a_bad_space_are_refused() {
+        let count = call(json!({ "name": "x", "type": "T", "agg": "count", "onChange": true }));
+        assert!(trigger_of(&count)
+            .unwrap_err()
+            .contains("watchedAttributes"));
+        assert_eq!(
+            target_space("helsinki", Some("  ")).unwrap(),
+            "helsinki-kpi"
+        );
+        assert_eq!(
+            target_space("helsinki", Some("AIR-KPIS")).unwrap(),
+            "air-kpi"
+        );
+        assert!(target_space("helsinki", Some("ünicode")).is_err());
+        assert!(target_space("helsinki", Some(&"a".repeat(70))).is_err());
+        // An answer with a fence that is no JSON, then the call: the call is read.
+        let answer = "```json\nnot json\n```\n```json\n{\"tool\":\"draft_kpi_pipeline\",\"name\":\"x\",\"agg\":\"sum\"}\n```";
+        assert_eq!(
+            tool_call(answer).expect("a call").expect("parses").agg,
+            Agg::Sum
+        );
+        assert!(tool_call("no fence at all").is_none());
+    }
+
     #[test]
     fn the_target_space_always_ends_with_kpi() {
         assert_eq!(target_space("helsinki", None).unwrap(), "helsinki-kpi");
@@ -861,6 +948,32 @@ mod tests {
         assert!(plan(&call(base.clone()), &no_run)
             .unwrap_err()
             .contains("sourceEndpoint"));
+    }
+
+    /// T-7711: an empty type is named back; a source endpoint without a space reads the project's
+    /// own space; a `q` filter reaches the pipeline's query trimmed and a blank one is dropped.
+    #[test]
+    fn a_blank_type_is_refused_and_the_query_carries_the_filter() {
+        let spaces = ["helsinki-kpi".to_owned()];
+        let base =
+            json!({ "name": "x", "type": " ", "attribute": "a", "agg": "avg", "every": "15m" });
+        let endpoints = [endpoint("helsinki-all", "helsinki", "allslug")];
+        assert!(plan(&call(base), &world(&endpoints, &spaces, &[]))
+            .unwrap_err()
+            .contains("entity type"));
+        let bare = [json!({ "metadata": { "name": "helsinki-all" }, "spec": {} })];
+        let filtered = json!({ "name": "x", "type": "T", "attribute": "a", "agg": "avg",
+                               "every": "15m", "q": " a>3 ", "targetSpace": "air" });
+        let plan_ = plan(&call(filtered), &world(&bare, &[], &[])).expect("a plan");
+        assert_eq!(
+            plan_.source_space, "helsinki",
+            "no space ref: the project's own"
+        );
+        assert_eq!(plan_.pipeline["spec"]["source"]["query"]["q"], "a>3");
+        let blank = json!({ "name": "x", "type": "T", "attribute": "a", "agg": "avg",
+                            "every": "15m", "q": "  ", "targetSpace": "air" });
+        let plan_ = plan(&call(blank), &world(&bare, &[], &[])).expect("a plan");
+        assert!(plan_.pipeline["spec"]["source"]["query"].get("q").is_none());
     }
 
     #[test]

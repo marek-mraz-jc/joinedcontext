@@ -16,7 +16,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
-use ekiben_core::{redact_url_str, CoreError, OrgContext};
+use ekiben_core::{CoreError, OrgContext};
 use tokio::net::TcpStream;
 use url::Url;
 
@@ -161,23 +161,17 @@ fn denied(org: &OrgContext, reason: String) -> CoreError {
 
 /// The checked addresses `url` may be connected to, resolved once.
 pub async fn resolve_checked(url: &Url, org: &OrgContext) -> Result<Vec<SocketAddr>, CoreError> {
-    let scheme = url.scheme();
-    let default_port = match scheme {
-        "http" | "ws" => 80,
-        "https" | "wss" => 443,
-        other => {
+    // The url crate gives every http(s) and ws(s) URL a host.
+    let (default_port, host) = match (url.scheme(), url.host_str()) {
+        ("http" | "ws", Some(host)) => (80, host),
+        ("https" | "wss", Some(host)) => (443, host),
+        (other, _) => {
             return Err(denied(
                 org,
                 format!("refused URL scheme '{other}': only http, https, ws and wss are allowed"),
             ))
         }
     };
-    let host = url.host_str().ok_or_else(|| {
-        CoreError::config(format!(
-            "URL '{}' has no host",
-            redact_url_str(url.as_str())
-        ))
-    })?;
     resolve_host_checked(host, url.port().unwrap_or(default_port), org).await
 }
 

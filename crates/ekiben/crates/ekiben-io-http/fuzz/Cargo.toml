@@ -1,5 +1,5 @@
 # Fuzzes the parsers of ekiben-io-http that read bytes from outside (T-7579): the MQTT wire
-# (packet framing and PUBLISH), multipart bodies with their Content-Type, and route patterns with
+# (packet framing and PUBLISH), redis RESP replies, multipart bodies with their Content-Type, and route patterns with
 # percent-decoded request paths. Each must answer or refuse, never panic, hang or allocate past
 # its input. Run by hand: cargo +nightly fuzz run <target> -- -max_total_time=300. Not a member
 # of the ekiben workspace.
@@ -19,6 +19,13 @@ ekiben-io-http = { path = "..", features = ["fuzzing"] }
 [[bin]]
 name = "mqtt_wire"
 path = "fuzz_targets/mqtt_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "redis_reply"
+path = "fuzz_targets/redis_reply.rs"
 test = false
 doc = false
 bench = false

@@ -411,7 +411,7 @@ impl Walk {
             }
         }
         if !done {
-            let base = self.base.clone().unwrap_or_else(|| url.clone());
+            let base = self.base.as_ref().unwrap_or(url).clone();
             match &conf.mode {
                 Mode::Cursor { from, .. } => {
                     let next = match from {
@@ -543,9 +543,10 @@ pub async fn next_page(
     let (mut out, headers) = client
         .send_page(batch.to_vec(), false, Some(&req), org, resources)
         .await?;
-    let Some(mut part) = out.pop() else {
-        return Err(CoreError::other("paginate: the page answered no message"));
-    };
+    // The client answers one message per response; an empty answer still fails closed.
+    let mut part = out
+        .pop()
+        .ok_or(CoreError::other("paginate: the page answered no message"))?;
     walk.observe(&part, &headers, &req.url, org)?;
     part.meta_set("http_page", Value::Int(walk.page as i64));
     Ok(Some(part))
@@ -771,9 +772,9 @@ mod tests {
             let answer = answer.clone();
             async move { answer(req.uri(), req.headers()) }
         });
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
+        tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+            listener, app,
+        )));
         format!("http://{addr}")
     }
 
@@ -870,9 +871,7 @@ mod tests {
     async fn offset_mode_moves_by_the_records_a_capped_server_sent() {
         let base = fake(|uri: &Uri, _: &AxHeaders| -> Response {
             let q = query(uri);
-            if q.get("orderByFields").map(String::as_str) != Some("OBJECTID") {
-                return (StatusCode::BAD_REQUEST, "no order").into_response();
-            }
+            assert_eq!(q.get("orderByFields").map(String::as_str), Some("OBJECTID"));
             let offset: usize = q["resultOffset"].parse().unwrap();
             let asked: usize = q["resultRecordCount"].parse().unwrap();
             let slice: Vec<JsonValue> = items(10)
@@ -933,8 +932,8 @@ mod tests {
             let n = seen.fetch_add(1, Ordering::SeqCst);
             // a, b, a, b, ...: a loop longer than one page, which only max_pages ends.
             let want = ["b", "a"][n % 2];
-            if n > 0 && h.get("x-cursor").and_then(|v| v.to_str().ok()) != Some(want) {
-                return (StatusCode::BAD_REQUEST, "wrong cursor").into_response();
+            if n > 0 {
+                assert_eq!(h.get("x-cursor").and_then(|v| v.to_str().ok()), Some(want));
             }
             let next = ["a", "b"][n % 2];
             axum::Json(json!({"next": next})).into_response()
@@ -1144,5 +1143,251 @@ mod tests {
         let h = "<https://a/x?a=1,2>; rel=\"prev\", <https://a/y>; rel=\"next last\"";
         assert_eq!(link_target(h, &["next"]).as_deref(), Some("https://a/y"));
         assert_eq!(link_target("<https://a/x>; rel=prev", &["next"]), None);
+    }
+
+    #[test]
+    fn odd_config_values_are_refused_by_name_and_numbers_read_from_text() {
+        let env = Environment::new();
+        for (bad, want) in [
+            (json!("page"), "expected an object"),
+            (
+                json!({"mode": "link", "records": 5}),
+                "records: expected a non-empty string",
+            ),
+            (
+                json!({"mode": "link", "max_pages": "many"}),
+                "max_pages: expected a whole number",
+            ),
+            (
+                json!({"mode": "link", "max_pages": -1}),
+                "max_pages: expected a whole number",
+            ),
+            (
+                json!({"mode": "cursor", "cursor_query": "${! nope( }", "cursor_param": "c"}),
+                "cursor_query: ",
+            ),
+            (
+                json!({"mode": "cursor", "cursor": "n", "cursor_header": "bad header"}),
+                "cursor_header is not a valid header name",
+            ),
+            (
+                json!({"mode": "link", "records": "a", "max_records": 0}),
+                "max_records must be at least 1",
+            ),
+            (
+                json!({"mode": "link", "order_by": "id"}),
+                "order_by: expected {param, value}",
+            ),
+        ] {
+            let err = PaginateConf::from_json(&bad, &env)
+                .err()
+                .expect("refused")
+                .to_string();
+            assert!(err.contains(want), "{bad}: {err}");
+        }
+        let conf = PaginateConf::from_json(&json!({"mode": "link", "max_pages": " 7 "}), &env)
+            .expect("text number");
+        assert_eq!(conf.max_pages, 7);
+        assert_eq!(as_count(&json!(" 12 ")), Some(12));
+        assert_eq!(scalar_text(&json!(3)), Some("3".into()));
+    }
+
+    #[tokio::test]
+    async fn a_page_that_is_not_json_or_lacks_its_array_fails_the_walk() {
+        let page = json!({"mode": "page", "records": "items"});
+        let base = fake(|_: &Uri, _: &AxHeaders| -> Response { "nope".into_response() }).await;
+        let err = walk(&base, page.clone()).await.unwrap_err().to_string();
+        assert!(err.contains("page 1 is not JSON"), "{err}");
+        let base = fake(|_: &Uri, _: &AxHeaders| -> Response {
+            axum::Json(json!({"items": 5})).into_response()
+        })
+        .await;
+        let err = walk(&base, page).await.unwrap_err().to_string();
+        assert!(
+            err.contains("has no array at records path 'items'"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn page_mode_without_a_size_and_with_a_delay_still_walks_to_the_end() {
+        let base = fake(page_server(5, 5)).await;
+        let pages = walk(
+            &base,
+            json!({"mode": "page", "records": "items", "delay": "1ms"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(counts(&pages, "items")[0], 5);
+        let asked = pages.len();
+        assert!((1..=2).contains(&asked), "{asked}");
+        // A max_records the walk stays under lets it finish.
+        let base = fake(page_server(5, 5)).await;
+        let capped = json!({"mode": "page", "records": "items", "size_param": "size", "size": 10, "max_records": 100});
+        assert_eq!(counts(&walk(&base, capped).await.unwrap(), "items"), [5]);
+    }
+
+    #[tokio::test]
+    async fn max_records_fails_a_walk_that_would_read_past_it() {
+        let base = fake(page_server(25, 25)).await;
+        let err = walk(&base, json!({"mode": "page", "size_param": "size", "size": 10, "records": "items", "max_records": 5}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("max_records (5) reached before the stop rule held"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_total_given_as_text_is_counted() {
+        let base = fake(|uri: &Uri, _: &AxHeaders| -> Response {
+            let page: usize = query(uri)
+                .get("page")
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(1);
+            let slice: Vec<JsonValue> = items(4).into_iter().skip((page - 1) * 2).take(2).collect();
+            axum::Json(json!({"items": slice, "count": "4"})).into_response()
+        })
+        .await;
+        let pages = walk(&base, json!({"mode": "page", "size_param": "size", "size": 2, "records": "items", "total": "count"}))
+            .await
+            .unwrap();
+        assert_eq!(counts(&pages, "items"), [2, 2]);
+    }
+
+    #[tokio::test]
+    async fn a_cursor_query_or_a_numeric_cursor_drives_the_walk() {
+        let seen = Arc::new(AtomicUsize::new(0));
+        let n = seen.clone();
+        let base = fake(move |uri: &Uri, _: &AxHeaders| -> Response {
+            let at = n.fetch_add(1, Ordering::SeqCst);
+            let next = [json!(7), json!("b"), JsonValue::Null][at.min(2)].clone();
+            if at > 0 {
+                assert_eq!(query(uri)["c"], ["7", "b"][at - 1]);
+            }
+            axum::Json(json!({"next": next})).into_response()
+        })
+        .await;
+        let conf =
+            json!({"mode": "cursor", "cursor_query": "${! json(\"next\") }", "cursor_param": "c"});
+        assert_eq!(walk(&base, conf).await.unwrap().len(), 3);
+        seen.store(0, Ordering::SeqCst);
+        assert_eq!(
+            walk(
+                &base,
+                json!({"mode": "cursor", "cursor": "next", "cursor_param": "c"})
+            )
+            .await
+            .unwrap()
+            .len(),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn a_next_link_given_as_href_or_naming_itself_is_read() {
+        let base = fake(|uri: &Uri, _: &AxHeaders| -> Response {
+            let next = (uri.query() != Some("p=2")).then(|| json!({"href": "?p=2"}));
+            axum::Json(json!({"next": next})).into_response()
+        })
+        .await;
+        assert_eq!(
+            walk(&base, json!({"mode": "next_url", "next": "next"}))
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let base = fake(|_: &Uri, _: &AxHeaders| -> Response {
+            (
+                [(axum::http::header::LINK, "<http://[bad>; rel=\"next\"")],
+                "{}",
+            )
+                .into_response()
+        })
+        .await;
+        let err = walk(&base, json!({"mode": "link"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not parse"), "{err}");
+        let base = fake(|uri: &Uri, _: &AxHeaders| -> Response {
+            let own = format!("<{}>; rel=\"next\"", uri.path());
+            let mut resp = "{}".into_response();
+            resp.headers_mut().insert(
+                axum::http::header::LINK,
+                HeaderValue::from_str(&own).unwrap(),
+            );
+            resp
+        })
+        .await;
+        let err = walk(&base, json!({"mode": "link"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("page 1"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_base_url_that_does_not_parse_fails_the_walk() {
+        let conf = PaginateConf::from_json(&json!({"mode": "link"}), &Environment::new()).unwrap();
+        let client = HttpClient::from_json_config(
+            &json!({"url": "http://[::1/items", "retries": 0}),
+            "GET",
+            &Environment::new(),
+        )
+        .unwrap();
+        let mut walk = Walk::new(conf);
+        let err = next_page(&client, &mut walk, &[], &org(), &ResourceManager::new())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("paginate: invalid URL"), "{err}");
+    }
+
+    fn proc_ctx(org: Arc<OrgContext>, stopped: bool) -> ProcContext {
+        ProcContext {
+            stream_id: "s".into(),
+            org,
+            resources: ResourceManager::new(),
+            registry: Arc::new(ekiben_core::Registry::new()),
+            blobl_env: Environment::new(),
+            metrics: ekiben_core::StreamMetrics::new("s", "t"),
+            label: String::new(),
+            component_type: "http".into(),
+            path: "pipeline.processors.0".into(),
+            file_root: None,
+            shutdown_rx: tokio::sync::watch::channel(stopped).1,
+        }
+    }
+
+    async fn paged(base: &str, ctx: &ProcContext) -> Result<Vec<Batch>, CoreError> {
+        let conf = PaginateConf::from_json(&json!({"mode": "link"}), &Environment::new()).unwrap();
+        let client = HttpClient::from_json_config(
+            &json!({"url": format!("{base}/items"), "retries": 0}),
+            "GET",
+            &Environment::new(),
+        )
+        .unwrap();
+        process_paged(&client, &conf, ctx, vec![Part::from_str("{}")]).await
+    }
+
+    #[tokio::test]
+    async fn a_stopped_stream_or_a_refused_host_fails_the_batch_and_a_status_flags_the_message() {
+        let base = fake(|_: &Uri, _: &AxHeaders| -> Response {
+            (StatusCode::INTERNAL_SERVER_ERROR, "down").into_response()
+        })
+        .await;
+        let err = paged(&base, &proc_ctx(org(), true)).await.unwrap_err();
+        assert!(matches!(err, CoreError::ComponentClosed), "{err}");
+        let guarded = OrgContext::new(OrgId::new("g"), OrgQuotas::default());
+        let err = paged(&base, &proc_ctx(guarded, false)).await.unwrap_err();
+        assert!(matches!(err, CoreError::AccessDenied { .. }), "{err}");
+        let out = paged(&base, &proc_ctx(org(), false)).await.unwrap();
+        assert!(out[0][0].is_errored());
+        assert_eq!(out[0][0].meta_get_str("http_status_code"), "500");
     }
 }
