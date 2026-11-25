@@ -1137,6 +1137,36 @@ pub(super) fn tool_result_message(provider: &str, call_id: &str, content: &str) 
 mod tests {
     use super::*;
 
+    /// The provider's message shapes at their edges: an opening already in blocks keeps them,
+    /// content of no known shape becomes text, an Anthropic turn carries its prose, and an
+    /// OpenAI turn without calls has no `tool_calls` (T-7818).
+    #[test]
+    fn provider_messages_keep_their_shape_at_the_edges() {
+        let blocks = serde_json::json!([{ "type": "text", "text": "hello" }]);
+        let marked = cache_marked(&[serde_json::json!({ "role": "user", "content": blocks })]);
+        assert_eq!(marked[0]["content"], blocks);
+        let merged = merge_anthropic_messages(&[
+            serde_json::json!({ "role": "user", "content": 7 }),
+            serde_json::json!({ "role": "user", "content": "more" }),
+        ]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0]["content"],
+            serde_json::json!([{ "type": "text", "text": "7" }, { "type": "text", "text": "more" }])
+        );
+        let answer = ToolAnswer {
+            text: Some("Here it is.".to_owned()),
+            ..ToolAnswer::default()
+        };
+        assert_eq!(
+            assistant_turn_message("anthropic", &answer)["content"],
+            serde_json::json!([{ "type": "text", "text": "Here it is." }])
+        );
+        let openai = assistant_turn_message("openai", &answer);
+        assert!(openai.get("tool_calls").is_none(), "{openai}");
+        assert_eq!(openai["content"], "Here it is.");
+    }
+
     /// T-3065, AG-97: the proxy's daily-budget refusal is shown as the proxy said it and is not
     /// asked again; a 429 that is neither a profile limit nor a budget is left to the retry.
     #[test]

@@ -1229,6 +1229,33 @@ mod tests {
             .contains("already names"));
     }
 
+    /// A relationship starts on one class: a slot two classes use gets no inverse, and a slot
+    /// written without a body takes a field as an object (T-7818).
+    #[test]
+    fn an_inverse_of_a_shared_slot_is_refused_and_a_bodiless_slot_takes_a_field() {
+        let mut model = bikes();
+        model["slots"]["station"]["annotations"] = json!({ "ngsi_ld_kind": "Relationship" });
+        model["classes"]["Depot"] = json!({ "slots": ["station"] });
+        model["classes"]["Yard"] = json!({ "slots": ["station"] });
+        let ask = op(json!({ "op": "addInverse", "name": "station", "inverse": "vehicles" }));
+        let refused = add_inverse(&mut model, &ask).expect_err("two owners or more");
+        assert!(
+            refused.contains("classes; a relationship starts on one"),
+            "{refused}"
+        );
+
+        let mut model = bikes();
+        model["slots"]["status"] = Value::Null;
+        let set = op(
+            json!({ "op": "setSlot", "name": "status", "field": "description", "value": "the state" }),
+        );
+        let changed = apply(&model, &[set]).expect("set");
+        assert_eq!(
+            changed["slots"]["status"],
+            json!({ "description": "the state" })
+        );
+    }
+
     #[test]
     fn a_term_added_without_an_iri_is_minted_under_the_models_own_prefix() {
         // The helsinki model on dev: its default prefix is an imported vocabulary, so a term

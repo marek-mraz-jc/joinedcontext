@@ -142,3 +142,103 @@ pub fn spawn_periodic(state: AppState) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    //! The reaper's quiet paths (T-7818): a store that cannot list, a waiting run with no Change
+    //! or no forge, a replica that does not lead, and the ticks between forge reads.
+
+    use super::*;
+    use crate::agents::store::{tests::run, AgentStore};
+    use crate::config::Config;
+    use std::sync::Arc;
+
+    fn dead() -> sqlx::PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool")
+    }
+
+    #[tokio::test]
+    async fn a_store_that_cannot_list_reaps_nothing() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        state.agents = Arc::new(AgentStore::new(Some(dead()), state.mirror.clone()));
+        assert_eq!(reap_expired(&state).await, 0);
+        assert_eq!(end_closed_publications(&state).await, 0);
+    }
+
+    #[tokio::test]
+    async fn a_waiting_run_without_a_change_or_a_forge_stays_waiting() {
+        let state = AppState::new(Config::for_tests(), None);
+        let mut waiting = run("r-1", "helsinki", "2026-09-12T10:00:00Z");
+        waiting.status = AgentRunStatus::AwaitingApproval.as_str().to_owned();
+        state.agents.create_run(&waiting).await.expect("a run");
+        assert_eq!(end_closed_publications(&state).await, 0, "no change number");
+        state
+            .agents
+            .set_merge_request("r-1", 5)
+            .await
+            .expect("its change");
+        assert!(state.forge_for("helsinki").is_none());
+        assert_eq!(end_closed_publications(&state).await, 0, "no forge to ask");
+        let after = state
+            .agents
+            .get_run("r-1")
+            .await
+            .expect("read")
+            .expect("the run");
+        assert_eq!(after.status, AgentRunStatus::AwaitingApproval.as_str());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_leader_reaps_on_every_tick_and_a_follower_never() {
+        let leader = AppState::new(Config::for_tests(), None);
+        let mut expired = run("r-old", "helsinki", "2020-01-01T00:00:00Z");
+        expired.expires_at = "2020-01-01T00:20:00Z".to_owned();
+        leader.agents.create_run(&expired).await.expect("a run");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://follower@localhost/none")
+            .expect("a lazy pool");
+        let shako = Arc::new(
+            crate::forge::ShakoClient::new(
+                "http://localhost:3000".parse().expect("a url"),
+                "o",
+                "r",
+                "t",
+            )
+            .expect("a client"),
+        );
+        let syncer = crate::reconciler::Syncer::new(shako, Arc::new(crate::store::Mirror::new()))
+            .with_leadership(Arc::new(crate::reconciler::Leadership::reconciler(pool)));
+        let follower = AppState::new(Config::for_tests(), None).with_syncer(Arc::new(syncer));
+        let mut theirs = run("r-theirs", "helsinki", "2020-01-01T00:00:00Z");
+        theirs.expires_at = "2020-01-01T00:20:00Z".to_owned();
+        follower.agents.create_run(&theirs).await.expect("a run");
+        assert!(!follower.leads());
+
+        spawn_periodic(leader.clone());
+        spawn_periodic(follower.clone());
+        tokio::time::sleep(Duration::from_secs(65)).await;
+        let status = |state: &AppState, id: &'static str| {
+            let state = state.clone();
+            async move {
+                state
+                    .agents
+                    .get_run(id)
+                    .await
+                    .expect("read")
+                    .expect("the run")
+                    .status
+            }
+        };
+        assert_eq!(
+            status(&leader, "r-old").await,
+            AgentRunStatus::Expired.as_str()
+        );
+        assert_eq!(
+            status(&follower, "r-theirs").await,
+            AgentRunStatus::Queued.as_str()
+        );
+    }
+}
