@@ -589,6 +589,66 @@ async fn a_pipeline_sink_checks_its_document_and_its_pipeline_after_the_token() 
     );
 }
 
+/// The pipeline sinks over a database that does not answer: a refused record, a run's outcome, a
+/// delete report and an events post are each a 503, so the runner retries, and nothing is
+/// claimed kept (T-7813).
+#[tokio::test]
+async fn a_pipeline_sink_whose_store_is_down_answers_503() {
+    let (state, signer, issuer) = listener_state(Some(GATEWAY_CLIENT), None, None).await;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    let state = state.with_db(pool);
+    for envelope in [
+        json!({
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Project",
+            "metadata": { "name": "praha", "namespace": "org" },
+            "spec": { "organizationRef": { "kind": "Organization", "name": "hel" } }
+        }),
+        json!({
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Pipeline",
+            "metadata": { "name": "odpad", "namespace": "praha" },
+            "spec": { "contextSpaceRef": { "kind": "ContextSpace", "name": "odpad" },
+                      "sourceDeletes": { "mode": "events", "deletedWhen": "$.deleted == true" } }
+        }),
+    ] {
+        state
+            .mirror
+            .upsert(serde_json::from_value(envelope).expect("an envelope"));
+    }
+    let app = server::internal_app(state);
+    let own = token(&signer, &issuer, INTERNAL_AUDIENCE, "praha-pipelines");
+    for (route, body) in [
+        (
+            "rejected",
+            r#"{"record":{"id":"urn:ngsi-ld:Thing:1"},"error":"no","step":"2"}"#,
+        ),
+        ("outcomes", r#"{"sent":["urn:ngsi-ld:Thing:1"]}"#),
+        (
+            "source-deletes",
+            r#"{"run":"r1","deleted":["urn:ngsi-ld:Thing:1"],"gone":[],"failed":[]}"#,
+        ),
+        (
+            "source-events",
+            r#"{"run":"r1","ids":["urn:ngsi-ld:Thing:1"]}"#,
+        ),
+    ] {
+        assert_eq!(
+            call(
+                &app,
+                "POST",
+                &format!("/internal/pipelines/praha/odpad/{route}"),
+                body,
+                Some(&own)
+            )
+            .await,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{route}"
+        );
+    }
+}
+
 /// T-3193 (PL-19, PL-47): a pipeline's outcome and rejection sinks post for their own project.
 /// Every stream of project P presents P's `pipelines` client, or with pipeline identity its own
 /// `{P}-pl-{pipeline}`; one runner-wide client accepted for every project refused every project's
