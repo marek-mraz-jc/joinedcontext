@@ -41,13 +41,8 @@ async fn broker_failed(slug: &str, status: StatusCode, body: Body) -> Box<Respon
         .await
         .unwrap_or_default();
     let (kind, detail) = ngsi_ld::explanation(&held);
-    tracing::warn!(
-        slug,
-        status = status.as_u16(),
-        broker_type = %kind,
-        broker_detail = %detail,
-        "the broker failed a read behind a representation; its own explanation is not passed on"
-    );
+    let code = status.as_u16();
+    tracing::warn!(slug, status = code, broker_type = %kind, broker_detail = %detail, "the broker failed a read behind a representation; its own explanation is not passed on");
     let problem = match status {
         _ if ngsi_ld::timed_out(status, &held) => ngsi_ld::query_timeout(),
         StatusCode::BAD_REQUEST => ProblemDetails::bad_request()
@@ -65,4 +60,29 @@ async fn broker_failed(slug: &str, status: StatusCode, body: Body) -> Box<Respon
         .with_detail("the context broker behind this endpoint failed to answer this request"),
     };
     Box::new(problem.into_response())
+}
+
+#[cfg(test)]
+mod broker_failed_tests {
+    use super::*;
+
+    /// A broker `404` behind a representation is a miss, a `400` the broker refusing the
+    /// query, any other refusal a `502`; the broker's own words never reach the caller.
+    #[tokio::test]
+    async fn each_broker_failure_answers_the_gateways_own_status() {
+        for (broker, want) in [
+            (StatusCode::NOT_FOUND, 404),
+            (StatusCode::BAD_REQUEST, 400),
+            (StatusCode::UNAUTHORIZED, 502),
+            (StatusCode::SERVICE_UNAVAILABLE, 503),
+        ] {
+            let body = Body::from(r#"{"type":"x","detail":"postgres://u:secret@db"}"#);
+            let answer = broker_failed("air", broker, body).await;
+            assert_eq!(answer.status().as_u16(), want, "{broker}");
+            let bytes = axum::body::to_bytes(answer.into_body(), MAX_BODY)
+                .await
+                .expect("body");
+            assert!(!String::from_utf8_lossy(&bytes).contains("secret"));
+        }
+    }
 }

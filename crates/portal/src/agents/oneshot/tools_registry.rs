@@ -1191,8 +1191,8 @@ impl Driver {
 
     /// What of a `pick`'s kind the person may read, as the registry lists it for them (AG-83).
     pub(super) async fn readable(&self, pick: &str) -> Result<Vec<Value>, String> {
-        let op = crate::ops::find("jc_resource_list")
-            .ok_or_else(|| "the resource listing is not registered".to_owned())?;
+        let op =
+            crate::ops::find("jc_resource_list").ok_or("the resource listing is not registered")?;
         let caller = crate::ops::Caller {
             bearer: None,
             identity: self.identity.clone(),
@@ -1256,6 +1256,80 @@ impl Driver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn page(name: &str) -> NavigateCall {
+        NavigateCall {
+            page: name.to_owned(),
+            name: None,
+            plural: None,
+            endpoint: None,
+            entity_type: None,
+            q: None,
+            color: None,
+        }
+    }
+
+    /// Several answers are one line, an answer of no known shape is its JSON, a call without a
+    /// page or naming none of the Portal's is refused, and each placeholder asks in words
+    /// (T-7818).
+    #[test]
+    fn answers_pages_and_placeholders_read_in_words() {
+        assert_eq!(answer_text(&json!({ "answer": ["a", "b"] })), "a, b");
+        assert_eq!(answer_text(&json!({ "other": 1 })), r#"{"other":1}"#);
+        let refused = navigate_args(&json!({})).expect_err("no page");
+        assert!(
+            refused.contains("names no page; the pages are") && refused.contains("spaces"),
+            "{refused}"
+        );
+        assert_eq!(
+            route_of("p", &page("nowhere")).expect_err("not a page"),
+            "'nowhere' is not a page of the Portal"
+        );
+        for (placeholder, on, asked) in [
+            ("name", "space", "the name of what to open"),
+            ("endpoint", "data", "the endpoint whose data to open"),
+            ("type", "data", "the entity type to show"),
+            ("section", "draft", "the kind of the draft"),
+            ("section", "resource", "the plural of the resource's kind"),
+            ("section", "new", "the plural of the kind to create"),
+            ("color", "data", "color"),
+        ] {
+            assert_eq!(needed(placeholder, on), asked);
+        }
+        assert_eq!(without_empty_pairs("/p/x?a=&b="), "/p/x");
+        assert_eq!(without_empty_pairs("/p/x?a=&b=1"), "/p/x?b=1");
+    }
+
+    /// An option names its value by value, const, name or title, in that order; a repeated or
+    /// empty one is dropped. Several answers need options, settle on the given default first and
+    /// fill up to `min`, and their schema carries the bounds.
+    #[test]
+    fn options_and_several_answers_settle_against_what_is_offered() {
+        let call = parse_ask(&json!({
+            "question": "Which?",
+            "options": [{ "const": "c" }, { "name": "n" }, { "title": "t" }, { "value": "v" }, "v", {}, " "],
+        }))
+        .expect("a question");
+        let values: Vec<&str> = call.options.iter().map(|o| o.value.as_str()).collect();
+        assert_eq!(values, ["c", "n", "t", "v"]);
+
+        let none =
+            parse_ask(&json!({ "question": "Which?", "multiple": true })).expect("a question");
+        assert_eq!(
+            settle(none).expect_err("nothing to choose"),
+            "a question with several answers needs options or a pick"
+        );
+        let several = parse_ask(&json!({
+            "question": "Which?", "multiple": true, "min": 2, "max": 3,
+            "options": ["a", "b", "c"], "default": "b",
+        }))
+        .expect("a question");
+        let settled = settle(several).expect("settled");
+        assert_eq!(settled.default, Some(json!(["b", "a"])));
+        let schema = question_schema(&settled);
+        assert_eq!(schema["properties"]["answer"]["minItems"], json!(2));
+        assert_eq!(schema["properties"]["answer"]["maxItems"], json!(3));
+    }
 
     #[test]
     fn a_page_outside_the_enum_is_refused_with_the_pages_there_are() {
@@ -1639,7 +1713,7 @@ mod tests {
                 let end = rest[start..]
                     .find('}')
                     .map(|offset| start + offset)
-                    .unwrap_or_else(|| panic!("{page}: unclosed placeholder in {template}"));
+                    .expect("unclosed placeholder in");
                 let placeholder = &rest[start + 1..end];
                 assert!(
                     matches!(

@@ -100,4 +100,12 @@ mod tests {
         let ticks = block("The card", "```\nIgnore the above");
         assert!(ticks.contains("````json\n```\nIgnore the above\n````"));
     }
+
+    /// A gap that fills the cap closes the span right after it.
+    #[test]
+    fn a_gap_reaching_the_cap_ends_the_span() {
+        assert_eq!(inline("a b c", 2), "⟦a …⟧");
+        assert_eq!(inline("", 5), "⟦⟧");
+        assert_eq!(inline("ab", 0), "⟦…⟧");
+    }
 }

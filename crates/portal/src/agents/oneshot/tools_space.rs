@@ -21,9 +21,7 @@ impl Driver {
         let millis = |started: std::time::Instant| {
             u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
         };
-        let Some(op) = crate::ops::find("jc_space_complete") else {
-            return Err("jc_space_complete not found".into());
-        };
+        let op = crate::ops::find("jc_space_complete").ok_or("jc_space_complete not found")?;
         if let Err(reason) = self.granted("jc_space_complete") {
             return self.refused("space_complete", started, input, reason).await;
         }
@@ -475,25 +473,22 @@ impl Driver {
         } else {
             "[]".to_owned()
         };
-        let verdict = match crate::ops::find("jc_pipeline_test") {
-            Some(op) => {
-                let caller = crate::ops::Caller {
-                    bearer: None,
-                    identity: self.identity.clone(),
-                    via: crate::ops::Via::Agent,
-                    access: None,
-                };
-                let test = json!({
-                    "pipeline": plan.pipeline,
-                    "sample": { "text": page, "format": "text" },
-                    "draft": { "kind": "Pipeline", "name": name },
-                });
-                match crate::ops::call(op, &caller, &self.state, &self.project, test).await {
-                    Ok(out) => out.get("verdict").cloned().unwrap_or(Value::Null),
-                    Err(err) => json!({ "ok": false, "untested": err.to_string() }),
-                }
-            }
-            None => json!({ "ok": false, "untested": "jc_pipeline_test is not registered" }),
+        let op =
+            crate::ops::find("jc_pipeline_test").ok_or("jc_pipeline_test is not registered")?;
+        let caller = crate::ops::Caller {
+            bearer: None,
+            identity: self.identity.clone(),
+            via: crate::ops::Via::Agent,
+            access: None,
+        };
+        let test = json!({
+            "pipeline": plan.pipeline,
+            "sample": { "text": page, "format": "text" },
+            "draft": { "kind": "Pipeline", "name": name },
+        });
+        let verdict = match crate::ops::call(op, &caller, &self.state, &self.project, test).await {
+            Ok(out) => out.get("verdict").cloned().unwrap_or(Value::Null),
+            Err(err) => json!({ "ok": false, "untested": err.to_string() }),
         };
 
         let (verdict, awaits) = without_awaited(verdict, &plan);
@@ -893,9 +888,7 @@ mod tests {
             .kpi(Ok(call), "", &mut chosen, &mut vec![Vec::new()], true)
             .await
             .expect("an answer");
-        let super::Worked::Done(prose) = worked else {
-            panic!("the last step is done");
-        };
+        let prose = worked.done().expect("the last step is done");
         assert!(prose.contains("draft_kpi_pipeline"), "{prose}");
     }
 
@@ -953,7 +946,7 @@ mod tests {
         let entity = events
             .iter()
             .find_map(|event| event["output"].get("entity"))
-            .unwrap_or_else(|| panic!("an indicator: {events:?}"));
+            .expect("an indicator");
         let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_owned();
         assert!(text(&entity["id"]).contains(":hel.fi:"), "{entity}");
         for field in ["derivedFrom", "computedBy"] {
@@ -1051,9 +1044,7 @@ mod tests {
             .kpi_pipeline(Ok(bikes()), "", &mut chosen, &mut Vec::new(), true)
             .await
             .expect("the run goes on");
-        let super::Worked::Done(prose) = worked else {
-            panic!("the last draft ends the tool");
-        };
+        let prose = worked.done().expect("the last draft ends the tool");
         assert!(
             prose.contains("not tested") && prose.contains("503"),
             "{prose}"
@@ -1084,9 +1075,7 @@ mod tests {
             )
             .await
             .expect("the run goes on");
-        let super::Worked::Done(prose) = worked else {
-            panic!("a lost draft ends the tool");
-        };
+        let prose = worked.done().expect("a lost draft ends the tool");
         assert!(
             prose.contains("could not be saved") && !prose.contains("10.0.0.7"),
             "{prose}"
@@ -1109,11 +1098,604 @@ mod tests {
             )
             .await
             .expect("the run goes on");
-        let super::Worked::Done(prose) = secret else {
-            panic!("a refused draft ends the tool");
-        };
+        let prose = secret.done().expect("a refused draft ends the tool");
         assert!(
             prose.contains("spec.auth.password") && prose.contains("secretRef"),
+            "{prose}"
+        );
+    }
+
+    /// A steward's run that may call every operation on every kind it names.
+    fn everything(driver: &mut super::Driver) {
+        let operations: Vec<&str> = crate::ops::registry().iter().map(|op| op.name).collect();
+        let kinds: std::collections::BTreeSet<String> = crate::ops::registry()
+            .iter()
+            .filter_map(|op| json!(op.kind).as_str().map(str::to_owned))
+            .filter(|kind| !kind.is_empty())
+            .collect();
+        let kinds: Vec<serde_json::Value> = kinds
+            .iter()
+            .map(|kind| json!({ "kind": kind, "verbs": ["read", "propose"] }))
+            .collect();
+        driver.access = crate::agents::access::Access::from_spec(&json!({ "access": {
+            "operations": operations, "kinds": kinds,
+        } }));
+    }
+
+    async fn kpi_world(
+        answer: u16,
+    ) -> (super::Driver, crate::state::AppState, wiremock::MockServer) {
+        let (mut driver, state, source) = kpi_run(answer).await;
+        everything(&mut driver);
+        (driver, state, source)
+    }
+
+    fn kpi_call(extra: serde_json::Value) -> crate::agents::kpi::ComputeKpi {
+        let mut call = json!({ "name": "bikes", "type": "Bike", "attribute": "n", "agg": "sum" });
+        crate::plan::merge_patch(&mut call, &extra);
+        serde_json::from_value(call).expect("a call")
+    }
+
+    fn all_helsinki() -> Vec<crate::agents::endpoints::RunEndpoint> {
+        vec![crate::agents::endpoints::RunEndpoint {
+            name: "helsinki-all".into(),
+            slug: "allslug".into(),
+            space: "helsinki".into(),
+        }]
+    }
+
+    /// A source answering `body` on every read, in kpi_run's project.
+    async fn answering(
+        body: serde_json::Value,
+    ) -> (super::Driver, crate::state::AppState, wiremock::MockServer) {
+        let (mut driver, state, _) = kpi_world(200).await;
+        let source = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(&source)
+            .await;
+        driver.proxy_base = source.uri();
+        (driver, state, source)
+    }
+
+    /// A call that does not parse goes back to the model while drafts are left and ends the
+    /// step on the last one, each a failed tool step.
+    #[tokio::test]
+    async fn an_unreadable_indicator_request_goes_back_then_ends() {
+        let (driver, state, _source) = kpi_world(200).await;
+        let mut chosen = all_helsinki();
+        let reason = driver
+            .kpi(
+                Err("missing field `agg`".into()),
+                "",
+                &mut chosen,
+                &mut Vec::new(),
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .again()
+            .expect("goes back");
+        assert_eq!(reason, "error: missing field `agg`");
+        let prose = driver
+            .kpi(
+                Err("missing field `agg`".into()),
+                "",
+                &mut chosen,
+                &mut Vec::new(),
+                true,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("the last draft ends");
+        assert!(prose.contains("could not be read"), "{prose}");
+        let events = tool_events(&state).await;
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|e| e["status"] == "failed"));
+    }
+
+    /// A run whose profile does not grant jc_kpi_compute reads nothing and says why.
+    #[tokio::test]
+    async fn an_indicator_outside_the_profile_is_refused_before_any_read() {
+        let (mut driver, state, source) = kpi_world(200).await;
+        driver.access = crate::agents::access::Access::from_spec(&json!({ "access": {
+            "operations": [], "kinds": [],
+        } }));
+        let prose = driver
+            .kpi(
+                Ok(kpi_call(json!({}))),
+                "",
+                &mut all_helsinki(),
+                &mut Vec::new(),
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("a refusal ends the step");
+        assert!(
+            prose.contains("outside what this assistant may do"),
+            "{prose}"
+        );
+        assert!(source
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+        assert_eq!(tool_events(&state).await[0]["status"], "failed");
+    }
+
+    /// No endpoint read and none named: the model is told to name one; on the last draft the
+    /// person reads it. An endpoint named but not in the project is the same refusal.
+    #[tokio::test]
+    async fn an_indicator_with_no_endpoint_to_read_goes_back() {
+        let (driver, _state, _source) = kpi_world(200).await;
+        let reason = driver
+            .kpi(
+                Ok(kpi_call(json!({}))),
+                "",
+                &mut Vec::new(),
+                &mut Vec::new(),
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .again()
+            .expect("goes back");
+        assert!(reason.contains("reads no endpoint"), "{reason}");
+        let prose = driver
+            .kpi(
+                Ok(kpi_call(json!({ "endpoint": "nowhere" }))),
+                "",
+                &mut Vec::new(),
+                &mut Vec::new(),
+                true,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("the last draft ends");
+        assert!(prose.contains("has no endpoint to read"), "{prose}");
+    }
+
+    /// A source that answers 503 fails the read: back to the model, then the person.
+    #[tokio::test]
+    async fn an_unreadable_source_page_computes_nothing() {
+        let (driver, state, _source) = kpi_world(503).await;
+        let reason = driver
+            .kpi(
+                Ok(kpi_call(json!({}))),
+                "",
+                &mut all_helsinki(),
+                &mut Vec::new(),
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .again()
+            .expect("goes back");
+        assert!(reason.starts_with("error: "), "{reason}");
+        let prose = driver
+            .kpi(
+                Ok(kpi_call(json!({}))),
+                "",
+                &mut all_helsinki(),
+                &mut Vec::new(),
+                true,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("the last draft ends");
+        assert!(prose.contains("could not be read"), "{prose}");
+        assert!(tool_events(&state)
+            .await
+            .iter()
+            .all(|e| e.get("output").is_none()));
+    }
+
+    /// A page that is no list holds no rows, and rows without a number in the attribute give
+    /// no value: that goes back, and the last draft ends on it.
+    #[tokio::test]
+    async fn an_indicator_with_no_number_to_fold_has_no_value() {
+        let (driver, _state, _source) = answering(json!({ "not": "a list" })).await;
+        let reason = driver
+            .kpi(
+                Ok(kpi_call(json!({}))),
+                "",
+                &mut all_helsinki(),
+                &mut Vec::new(),
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .again()
+            .expect("goes back");
+        assert!(
+            reason.contains("no Bike carries a number in 'n' (0 read)"),
+            "{reason}"
+        );
+        let (driver, _state, _source) =
+            answering(json!([{ "id": "urn:ngsi-ld:Bike:1", "type": "Bike", "n": "many" }])).await;
+        let prose = driver
+            .kpi(
+                Ok(kpi_call(json!({}))),
+                "",
+                &mut all_helsinki(),
+                &mut Vec::new(),
+                true,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("the last draft ends");
+        assert!(
+            prose.contains("has no value") && prose.contains("(1 read)"),
+            "{prose}"
+        );
+    }
+
+    /// The read carries the attribute and the filter; an endpoint with no space of its own
+    /// is the project's, and the model's own words are what the person reads.
+    #[tokio::test]
+    async fn an_indicator_reads_its_filter_and_names_the_project_for_a_spaceless_endpoint() {
+        let (driver, state, source) =
+            answering(json!([{ "id": "urn:ngsi-ld:Bike:1", "type": "Bike", "n": 3 }])).await;
+        let mut chosen = vec![crate::agents::endpoints::RunEndpoint {
+            name: "helsinki-all".into(),
+            slug: "allslug".into(),
+            space: String::new(),
+        }];
+        let call = || kpi_call(json!({ "q": "n>0", "endpoint": " helsinki-all " }));
+        let prose = driver
+            .kpi(Ok(call()), "", &mut chosen, &mut vec![Vec::new()], false)
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("an indicator with no URN ends the step");
+        assert!(
+            prose.starts_with("The indicator could not be rendered: "),
+            "{prose}"
+        );
+        crate::agents::oneshot::placed(&state);
+        let prose = driver
+            .kpi(
+                Ok(call()),
+                "Three bikes in all.",
+                &mut chosen,
+                &mut vec![Vec::new()],
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("computed");
+        assert_eq!(prose, "Three bikes in all.");
+        let asked = source.received_requests().await.unwrap_or_default();
+        let url = asked.last().expect("a read").url.to_string();
+        assert!(url.contains("attrs=n") && url.contains("q=n%3E0"), "{url}");
+        let ok = tool_events(&state).await;
+        let output = &ok.last().expect("the step")["output"];
+        assert_eq!(output["value"], json!(3.0));
+        assert!(
+            output["entity"].to_string().contains("helsinki"),
+            "{output}"
+        );
+    }
+
+    /// A pipeline call that does not parse, one outside the profile and one naming an endpoint
+    /// the project does not have each draft nothing.
+    #[tokio::test]
+    async fn a_pipeline_request_that_cannot_be_drafted_keeps_nothing() {
+        let (driver, state, _source) = kpi_world(200).await;
+        let reason = driver
+            .kpi_pipeline(
+                Err("bad".into()),
+                "",
+                &mut all_helsinki(),
+                &mut Vec::new(),
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .again()
+            .expect("goes back");
+        assert_eq!(reason, "error: bad");
+        let prose = driver
+            .kpi_pipeline(
+                Err("bad".into()),
+                "",
+                &mut all_helsinki(),
+                &mut Vec::new(),
+                true,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("ends");
+        assert!(prose.contains("could not be read"), "{prose}");
+
+        let mut call = bikes();
+        call.source_endpoint = Some("nowhere".into());
+        let reason = driver
+            .kpi_pipeline(
+                Ok(call.clone()),
+                "",
+                &mut all_helsinki(),
+                &mut vec![Vec::new()],
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .again()
+            .expect("goes back");
+        assert!(
+            reason.starts_with("error: ") && reason.contains("nowhere"),
+            "{reason}"
+        );
+        let prose = driver
+            .kpi_pipeline(
+                Ok(call),
+                "",
+                &mut all_helsinki(),
+                &mut vec![Vec::new()],
+                true,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("ends");
+        assert!(prose.contains("could not be drafted"), "{prose}");
+
+        let mut empty = bikes();
+        empty.name = String::new();
+        let prose = driver
+            .kpi_pipeline(
+                Ok(empty.clone()),
+                "",
+                &mut all_helsinki(),
+                &mut Vec::new(),
+                true,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("ends");
+        assert!(prose.contains("could not be drafted"), "{prose}");
+        assert!(driver
+            .kpi_pipeline(Ok(empty), "", &mut all_helsinki(), &mut Vec::new(), false)
+            .await
+            .expect("the run goes on")
+            .again()
+            .is_some());
+
+        let mut denied = driver;
+        denied.access = crate::agents::access::Access::default();
+        let prose = denied
+            .kpi_pipeline(Ok(bikes()), "", &mut all_helsinki(), &mut Vec::new(), false)
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("refused");
+        assert!(
+            prose.contains("outside what this assistant may do"),
+            "{prose}"
+        );
+        assert!(state
+            .drafts
+            .list("helsinki")
+            .await
+            .expect("drafts")
+            .is_empty());
+    }
+
+    /// The source read carries the attribute and the filter, and a source page that is not a
+    /// pipeline's input turns the test red: the model reads the findings and the page while
+    /// drafts are left, the person the kept draft on the last one.
+    #[tokio::test]
+    async fn a_red_pipeline_test_goes_back_with_its_page_then_keeps_the_draft() {
+        let (driver, state, source) = answering(json!({ "unexpected": true })).await;
+        let mut call = bikes();
+        call.q = Some("availableBikeNumber>0".into());
+        let worked = driver
+            .kpi_pipeline(
+                Ok(call.clone()),
+                "",
+                &mut all_helsinki(),
+                &mut Vec::new(),
+                false,
+            )
+            .await
+            .expect("the run goes on");
+        let asked = source.received_requests().await.unwrap_or_default();
+        let url = asked.last().expect("a read").url.to_string();
+        assert!(
+            url.contains("attrs=availableBikeNumber") && url.contains("q=availableBikeNumber%3E0"),
+            "{url}"
+        );
+        let events = tool_events(&state).await;
+        let last = events.last().expect("a step");
+        match worked {
+            super::Worked::Again(reason) => {
+                assert!(
+                    reason.contains("not green") && reason.contains("a page of the source"),
+                    "{reason}"
+                );
+                assert_eq!(last["status"], "failed");
+                let prose = driver
+                    .kpi_pipeline(Ok(call), "", &mut all_helsinki(), &mut Vec::new(), true)
+                    .await
+                    .expect("the run goes on")
+                    .done()
+                    .expect("ends");
+                assert!(prose.contains("still not green"), "{prose}");
+            }
+            super::Worked::Done(prose) => {
+                assert_eq!(last["status"], "ok", "{last}");
+                assert!(prose.contains("Drafted the pipeline"), "{prose}");
+            }
+        }
+        assert!(state
+            .drafts
+            .get("helsinki", "Pipeline", "bikes-available-avg")
+            .await
+            .expect("drafts")
+            .is_some());
+    }
+
+    /// No endpoint read in the conversation: the pipeline is tested on an empty page, and a new
+    /// indicator space's drafts are named for the person beside the pipeline's form.
+    #[tokio::test]
+    async fn a_pipeline_without_a_read_endpoint_is_tested_on_an_empty_page() {
+        let (driver, state, source) = kpi_world(200).await;
+        let mut call = bikes();
+        call.target_space = Some("helsinki-bikes-kpi".into());
+        call.source_endpoint = Some("helsinki-all".into());
+        let worked = driver
+            .kpi_pipeline(Ok(call), "", &mut Vec::new(), &mut vec![Vec::new()], true)
+            .await
+            .expect("the run goes on");
+        let (super::Worked::Done(prose) | super::Worked::Again(prose)) = worked;
+        assert!(!prose.is_empty());
+        let events = tool_events(&state).await;
+        assert!(!events.is_empty(), "a step");
+        drop(source);
+    }
+
+    /// The pipeline drafts and the endpoint draft are kept in the store: one the store cannot
+    /// keep ends the tool with what to do, never the database's own words.
+    #[tokio::test]
+    async fn a_pipeline_or_endpoint_the_store_cannot_keep_ends_the_tool() {
+        let (mut broken, _state, _source) = kpi_world(200).await;
+        let dead = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        crate::agents::oneshot::placed(&broken.state);
+        broken.state.drafts =
+            crate::ops::drafts::DraftStore::new(Some(dead), broken.state.mirror.clone());
+        let mut call = bikes();
+        call.target_space = Some("helsinki-bikes-kpi".into());
+        let prose = broken
+            .kpi_pipeline(Ok(call), "", &mut all_helsinki(), &mut Vec::new(), true)
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("ends");
+        assert!(
+            prose.contains("could not be saved") && !prose.contains("127.0.0.1"),
+            "{prose}"
+        );
+        let prose = broken
+            .kpi_pipeline(Ok(bikes()), "", &mut all_helsinki(), &mut Vec::new(), false)
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("ends");
+        assert!(prose.contains("could not be saved"), "{prose}");
+
+        let share = share_call(json!({}));
+        let prose = broken.share(Ok(share), "").await.expect("the run goes on");
+        assert!(
+            prose.contains("not kept as a draft") && !prose.contains("127.0.0.1"),
+            "{prose}"
+        );
+    }
+
+    fn share_call(extra: serde_json::Value) -> crate::agents::share::ProposeEndpoint {
+        let mut call =
+            json!({ "contextSpace": "helsinki", "name": "helsinki-open", "audience": "public" });
+        crate::plan::merge_patch(&mut call, &extra);
+        serde_json::from_value(call).expect("a call")
+    }
+
+    /// A share request: unreadable, outside the profile, refused by the render, and drafted with
+    /// the form opened on the draft.
+    #[tokio::test]
+    async fn a_share_request_drafts_an_endpoint_or_says_why_not() {
+        let (mut driver, state, _source) = kpi_world(200).await;
+        let prose = driver
+            .share(Err("bad".into()), "")
+            .await
+            .expect("the run goes on");
+        assert_eq!(prose, "The share request could not be read: bad");
+
+        let prose = driver
+            .share(Ok(share_call(json!({ "name": "" }))), "")
+            .await
+            .expect("the run goes on");
+        assert!(
+            prose.starts_with("The endpoint could not be drafted: "),
+            "{prose}"
+        );
+
+        let prose = driver
+            .share(Ok(share_call(json!({}))), "")
+            .await
+            .expect("the run goes on");
+        assert!(
+            prose.contains("Drafted the endpoint 'helsinki-open'"),
+            "{prose}"
+        );
+        assert!(state
+            .drafts
+            .get("helsinki", "Endpoint", "helsinki-open")
+            .await
+            .expect("drafts")
+            .is_some());
+        let prose = driver
+            .share(
+                Ok(share_call(json!({ "name": "helsinki-open-2" }))),
+                "Shared it.",
+            )
+            .await
+            .expect("the run goes on");
+        assert_eq!(prose, "Shared it.");
+
+        driver.access = crate::agents::access::Access::default();
+        let prose = driver
+            .share(Ok(share_call(json!({}))), "")
+            .await
+            .expect("the run goes on");
+        assert!(
+            prose.contains("outside what this assistant may do"),
+            "{prose}"
+        );
+    }
+
+    /// space_complete outside the profile is refused; a call the operation refuses is a failed
+    /// step the person reads, with the call's own `tool` and `propose` keys dropped first.
+    #[tokio::test]
+    async fn a_space_completion_is_refused_or_fails_with_the_reason() {
+        let (mut driver, state, _source) = kpi_world(200).await;
+        let prose = driver
+            .space_complete(
+                json!({ "tool": "space_complete", "propose": true, "space": 7 }),
+                "",
+            )
+            .await
+            .expect("the run goes on");
+        assert!(prose.starts_with("Completing space failed: "), "{prose}");
+        let events = tool_events(&state).await;
+        let input = &events.last().expect("a step")["input"];
+        assert!(
+            input.get("tool").is_none() && input.get("propose").is_none(),
+            "{input}"
+        );
+        let prose = driver
+            .space_complete(json!("not an object"), "")
+            .await
+            .expect("the run goes on");
+        assert!(prose.starts_with("Completing space failed: "), "{prose}");
+
+        driver.access = crate::agents::access::Access::default();
+        let prose = driver
+            .space_complete(json!({}), "")
+            .await
+            .expect("the run goes on");
+        assert!(
+            prose.contains("outside what this assistant may do"),
             "{prose}"
         );
     }

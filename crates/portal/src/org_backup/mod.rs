@@ -485,17 +485,21 @@ impl BackupStore {
                     };
                     let token = jc_types::ProjectId::mint().to_string();
                     let rows: Vec<TargetRow> = sqlx::query_as(
-                        "UPDATE organization_backup_targets \
-                         SET lease_until = now() + make_interval(secs => $2), lease_token = $3 \
-                         WHERE organization = $1 AND kind IN (SELECT kind \
+                        // The picked kinds are materialised once: a `kind IN (SELECT … LIMIT
+                        // … SKIP LOCKED)` subquery is evaluated again per row and claimed past
+                        // its limit, more targets than the replica has slots.
+                        "WITH picked AS MATERIALIZED (SELECT kind \
                          FROM organization_backup_targets WHERE organization = $1 AND enabled \
                          AND (last_run_at IS NULL \
                          OR last_run_at <= now() - make_interval(hours => every_hours)) \
                          AND (lease_until IS NULL OR lease_until <= now()) \
                          ORDER BY kind LIMIT $4 FOR UPDATE SKIP LOCKED) \
-                         RETURNING organization, kind, endpoint, region, bucket, prefix, \
-                         access_key_id, sealed_secret, enabled, every_hours, keep_days, \
-                         recipients, updated_by, updated_at, last_run_at",
+                         UPDATE organization_backup_targets t \
+                         SET lease_until = now() + make_interval(secs => $2), lease_token = $3 \
+                         FROM picked WHERE t.organization = $1 AND t.kind = picked.kind \
+                         RETURNING t.organization, t.kind, t.endpoint, t.region, t.bucket, \
+                         t.prefix, t.access_key_id, t.sealed_secret, t.enabled, t.every_hours, \
+                         t.keep_days, t.recipients, t.updated_by, t.updated_at, t.last_run_at",
                     )
                     .bind(&organization)
                     .bind(secs(LEASE))
@@ -1610,13 +1614,335 @@ mod tests {
     }
 
     /// Moves every lease and backoff of the store into the past, as a lapse or the backoff's end.
+    /// The rows of a memory store; none for a Postgres one.
+    fn memory(store: &BackupStore) -> Option<&RwLock<MemoryRows>> {
+        match &store.inner {
+            Inner::Memory(rows) => Some(rows),
+            Inner::Postgres(_) => None,
+        }
+    }
+
     fn lapse(store: &BackupStore) {
-        let Inner::Memory(rows) = &store.inner else {
-            unreachable!("a memory store")
-        };
+        let rows = memory(store).expect("a memory store");
         for (_, until) in rows.write().expect("rows").2.values_mut() {
             *until = time::OffsetDateTime::now_utc() - time::Duration::seconds(1);
         }
+    }
+
+    /// A writer that panicked while it held the rows leaves the lock poisoned.
+    fn poison(store: &BackupStore) {
+        let rows = memory(store).expect("a memory store");
+        let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _rows = rows.write().expect("rows");
+            panic!("a writer panicked holding the rows");
+        }));
+        assert!(held.is_err());
+    }
+
+    /// The Portal's own age identity in a file of its own, as `JC_PORTAL_SOPS_AGE_KEY_FILE`.
+    fn keyed_state() -> (AppState, age::x25519::Identity) {
+        use age::secrecy::ExposeSecret;
+        let identity = age::x25519::Identity::generate();
+        let file = std::env::temp_dir().join(format!(
+            "org-backup-key-{}-{}",
+            std::process::id(),
+            jc_types::ProjectId::mint()
+        ));
+        std::fs::write(&file, format!("{}\n", identity.to_string().expose_secret()))
+            .expect("key file");
+        let mut config = crate::config::Config::for_tests();
+        config.pipeline_secrets =
+            Some(crate::pipeline_secrets::Backend::Sops { age_key_file: file });
+        (AppState::new(config, None), identity)
+    }
+
+    /// `plain` sealed as `seal` armours it, to `recipient`.
+    fn armoured(recipient: &age::x25519::Recipient, plain: &[u8]) -> String {
+        let encryptor =
+            age::Encryptor::with_recipients(std::iter::once(recipient as &dyn age::Recipient))
+                .expect("recipient");
+        let mut out = Vec::new();
+        let armor =
+            age::armor::ArmoredWriter::wrap_output(&mut out, age::armor::Format::AsciiArmor)
+                .expect("armor");
+        let mut writer = encryptor.wrap_output(armor).expect("encrypt");
+        std::io::Write::write_all(&mut writer, plain).expect("write");
+        writer
+            .finish()
+            .and_then(|armor| armor.finish())
+            .expect("finish");
+        String::from_utf8(out).expect("armoured text")
+    }
+
+    /// A poisoned memory store answers every call with a 500 that says so, never a panic.
+    #[tokio::test]
+    async fn a_poisoned_store_answers_every_call_with_an_error() {
+        let store = BackupStore::new(None);
+        store.save(&due_target("alfa")).await.expect("saved");
+        let lease = store.claim("alfa", CONFIGURATION).await.expect("claimed");
+        poison(&store);
+        let poisoned = |err: ApiError| {
+            assert!(
+                matches!(&err, ApiError::Internal(m) if m.contains("poisoned")),
+                "{err}"
+            );
+        };
+        poisoned(
+            store
+                .target("alfa", CONFIGURATION)
+                .await
+                .expect_err("poisoned"),
+        );
+        poisoned(store.save(&due_target("alfa")).await.expect_err("poisoned"));
+        poisoned(store.claim_due(1).await.expect_err("poisoned"));
+        poisoned(store.claim("alfa", DATA).await.expect_err("poisoned"));
+        poisoned(store.renew(&lease).await.expect_err("poisoned"));
+        poisoned(store.finished(&lease, true).await.expect_err("poisoned"));
+        poisoned(
+            store
+                .log(NewEntry {
+                    organization: "alfa",
+                    kind: CONFIGURATION,
+                    action: "run",
+                    actor: "ada@hel.fi",
+                    ok: true,
+                    bytes: 0,
+                    object_key: "",
+                    version_id: "",
+                    message: "",
+                    sha256: "",
+                })
+                .await
+                .expect_err("poisoned"),
+        );
+        poisoned(
+            store
+                .entries("alfa", CONFIGURATION, 10)
+                .await
+                .expect_err("poisoned"),
+        );
+    }
+
+    /// A successful run of a target deleted while it ran ends its lease and stamps nothing.
+    #[tokio::test]
+    async fn a_run_of_a_target_that_is_gone_ends_without_a_stamp() {
+        let store = BackupStore::new(None);
+        let lease = store.claim("alfa", CONFIGURATION).await.expect("claimed");
+        store.finished(&lease, true).await.expect("ended");
+        assert_eq!(
+            store.target("alfa", CONFIGURATION).await.expect("read"),
+            None
+        );
+        store
+            .claim("alfa", CONFIGURATION)
+            .await
+            .expect("free again");
+    }
+
+    /// A target no store has saved has no key, so it has no folder to write into.
+    #[test]
+    fn a_target_never_saved_has_no_folder() {
+        let err = due_target("alfa").object_key().expect_err("no key");
+        assert!(
+            matches!(&err, ApiError::Internal(m) if m.contains("before it was saved")),
+            "{err}"
+        );
+        assert_eq!(
+            due_target("alfa").legacy_object_key(),
+            "jc/alfa/configuration/bundle.zip"
+        );
+        let mut data = due_target("alfa");
+        data.kind = DATA.into();
+        assert_eq!(data.legacy_object_key(), "jc/alfa/data/archive.zip.age");
+    }
+
+    /// Without the Portal's age key nothing is sealed and a seal never opens: the operator is
+    /// told which setting to set.
+    #[tokio::test]
+    async fn without_an_age_key_nothing_is_sealed_or_unsealed() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        for err in [
+            seal(&state, "x", "secret").expect_err("no key"),
+            unseal(&state, "x", "sealed").expect_err("no key"),
+        ] {
+            assert!(
+                matches!(&err, ApiError::Unavailable(m) if m.contains("JC_PORTAL_SOPS_AGE_KEY_FILE")),
+                "{err}"
+            );
+        }
+        assert_eq!(reseal_unbound(&state).await.expect("nothing to do"), 0);
+        let lazy = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("lazy pool");
+        let with_db = AppState::new(crate::config::Config::for_tests(), None).with_db(lazy);
+        assert_eq!(
+            reseal_unbound(&with_db)
+                .await
+                .expect("no key, nothing read"),
+            0
+        );
+        assert!(
+            memory(&BackupStore::new(with_db.db.clone())).is_none(),
+            "a Postgres store"
+        );
+        assert_eq!(smtp_context("mail.hel.fi"), "operator-smtp/mail.hel.fi");
+    }
+
+    /// A seal opens only for its own record; text that is no seal, a seal to another key and a
+    /// sealed value that is not text are refused with what to do, and never rebound.
+    #[test]
+    fn a_seal_that_does_not_open_is_refused_and_never_rebound() {
+        let (state, own) = keyed_state();
+        let context = target_context("alfa", CONFIGURATION);
+        let sealed = seal(&state, &context, "s3cret").expect("sealed");
+        assert_eq!(
+            unseal(&state, &context, &sealed).expect("opens").as_str(),
+            "s3cret"
+        );
+        let other = target_context("bravo", CONFIGURATION);
+        let err = unseal(&state, &other, &sealed).expect_err("another record");
+        assert!(
+            err.to_string().contains("not sealed for this record"),
+            "{err}"
+        );
+        let stranger = age::x25519::Identity::generate().to_public();
+        for refused in [
+            "not a seal".to_owned(),
+            armoured(&stranger, b"s3cret"),
+            armoured(&own.to_public(), &[0xff, 0xfe, 0x00]),
+        ] {
+            let err = unseal(&state, &context, &refused).expect_err("does not open");
+            assert!(
+                matches!(&err, ApiError::Unavailable(m) if m.contains("save it again")),
+                "{err}"
+            );
+            assert_eq!(rebound(&state, &context, &refused).expect("rebound"), None);
+        }
+    }
+
+    /// A saved endpoint that no longer parses is refused naming what to do.
+    #[test]
+    fn a_saved_endpoint_that_does_not_parse_is_refused() {
+        let (state, _) = keyed_state();
+        let mut target = due_target("alfa");
+        target.endpoint = "not a url".into();
+        let err = bucket(&state, &target).err().expect("refused");
+        assert!(
+            matches!(&err, ApiError::BadRequest(m) if m.contains("save it again")),
+            "{err}"
+        );
+    }
+
+    /// The egress check passes a public address by IP and anything at all for a Portal that is
+    /// told its endpoints are private (tests, an on-premise S3).
+    #[test]
+    fn a_public_ip_passes_the_egress_check_and_a_private_portal_passes_all() {
+        let public = Egress {
+            http: reqwest::Client::new(),
+            public_only: true,
+        };
+        public
+            .check(&"https://9.9.9.9/backups".parse().expect("url"))
+            .expect("a public address");
+        let err = public
+            .check(&"http://9.9.9.9".parse().expect("url"))
+            .expect_err("not https");
+        assert!(err.contains("https"), "{err}");
+        let private = Egress {
+            http: reqwest::Client::new(),
+            public_only: false,
+        };
+        private
+            .check(&"http://minio.svc:9000".parse().expect("url"))
+            .expect("a private Portal");
+    }
+
+    /// The README says when a bundle holds no people and lists each project at its commit.
+    #[test]
+    fn the_readme_says_what_a_bundle_holds_and_leaves_out() {
+        let index = Index {
+            format_version: 1,
+            organization: "alfa".into(),
+            taken_at: "2026-11-24T10:00:00Z".into(),
+            taken_by: "ada@hel.fi".into(),
+            items: Vec::new(),
+        };
+        let without = readme(&index, &[], false);
+        assert!(
+            without.contains("holds no `organization/people.yaml`"),
+            "{without}"
+        );
+        assert!(!without.contains("Projects:"), "{without}");
+        let with = readme(&index, &[("alfa-city".into(), "c0ffee".into())], true);
+        assert!(
+            !with.contains("holds no `organization/people.yaml`"),
+            "{with}"
+        );
+        assert!(with.contains("- `alfa-city` at `c0ffee`"), "{with}");
+        assert!(with.ends_with(README_LEFT_OUT));
+    }
+
+    /// A manifest of a kind the Portal does not list lands under its lower-cased kind.
+    #[test]
+    fn an_unlisted_kind_lands_under_its_lower_cased_name() {
+        let unknown = envelope("WidgetThing", "w1", Value::Null);
+        assert_eq!(
+            organization_path(&unknown),
+            "organization/widgetthing/w1.yaml"
+        );
+        let role = envelope("Role", "reader", Value::Null);
+        assert_eq!(organization_path(&role), "organization/roles/reader.yaml");
+    }
+
+    /// A bucket that does not answer is a 400 that says why; one that is not versioned is a
+    /// 409 naming the setting.
+    #[tokio::test]
+    async fn versioning_that_cannot_be_read_or_is_off_is_refused() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let closed = listener.local_addr().expect("address").port();
+        drop(listener);
+        let at = |endpoint: String| s3::Bucket {
+            endpoint: endpoint.parse().expect("url"),
+            region: "eu-central-1".into(),
+            bucket: "backups".into(),
+            access_key_id: "AKID".into(),
+            secret_access_key: Zeroizing::new("secret".into()),
+        };
+        let http = reqwest::Client::new();
+        let err = require_versioning(&http, &at(format!("http://127.0.0.1:{closed}")))
+            .await
+            .expect_err("unreachable");
+        assert!(
+            matches!(&err, ApiError::BadRequest(m) if m.contains("could not be reached")),
+            "{err}"
+        );
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("versioning", ""))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "<VersioningConfiguration><Status>Suspended</Status></VersioningConfiguration>",
+            ))
+            .mount(&server)
+            .await;
+        let err = require_versioning(&http, &at(server.uri()))
+            .await
+            .expect_err("suspended");
+        assert!(
+            matches!(&err, ApiError::Conflict(m) if m.contains("is Suspended")),
+            "{err}"
+        );
+    }
+
+    /// The schedule of a Portal without a database binds nothing at start and claims nothing.
+    #[tokio::test]
+    async fn the_schedule_of_a_portal_without_a_database_starts_and_idles() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        spawn_schedule(state.clone());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let slots = Arc::new(tokio::sync::Semaphore::new(SCHEDULED_RUNS));
+        assert!(schedule(&state, &slots).await.is_empty());
     }
 
     async fn stamped(store: &BackupStore) -> bool {

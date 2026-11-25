@@ -161,13 +161,12 @@ fn install(archive: &[u8], dir: &Path) -> Result<(), FetchError> {
         let _ = fs::remove_dir_all(&partial);
         return Err(err);
     }
-    match fs::rename(&partial, dir) {
-        Ok(()) => {}
+    if let Err(err) = fs::rename(&partial, dir) {
+        let _ = fs::remove_dir_all(&partial);
         // Another sync of this replica got there first: the same digest is the same build.
-        Err(_) if dir.is_dir() => {
-            let _ = fs::remove_dir_all(&partial);
+        if !dir.is_dir() {
+            return Err(unpack_error(err));
         }
-        Err(err) => return Err(unpack_error(err)),
     }
     prune(parent, leaf);
     Ok(())
@@ -192,10 +191,15 @@ fn prune(app: &Path, keep: &std::ffi::OsStr) {
 /// `dest`, no file written twice, and at most `MAX_UNPACKED_BYTES` in `MAX_ENTRIES` entries.
 /// A link, a device or a path that climbs out refuses the whole archive.
 pub fn unpack(archive: &[u8], dest: &Path) -> Result<(), FetchError> {
+    unpack_within(archive, dest, MAX_UNPACKED_BYTES)
+}
+
+/// [`unpack`] with at most `limit` bytes unpacked.
+fn unpack_within(archive: &[u8], dest: &Path, limit: u64) -> Result<(), FetchError> {
     let refuse = |why: String| FetchError::Unpack(why);
     let io_error = |err: io::Error| FetchError::Unpack(err.to_string());
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
-    let mut budget = MAX_UNPACKED_BYTES;
+    let mut budget = limit;
     for (index, entry) in tar.entries().map_err(io_error)?.enumerate() {
         if index >= MAX_ENTRIES {
             return Err(refuse(format!("more than {MAX_ENTRIES} entries")));
@@ -218,9 +222,7 @@ pub fn unpack(archive: &[u8], dest: &Path) -> Result<(), FetchError> {
             if relative.as_os_str().is_empty() {
                 return Err(refuse("a file with no name".to_owned()));
             }
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(io_error)?;
-            }
+            fs::create_dir_all(target.parent().unwrap_or(dest)).map_err(io_error)?;
             let mut file = fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -229,9 +231,7 @@ pub fn unpack(archive: &[u8], dest: &Path) -> Result<(), FetchError> {
             let written =
                 io::copy(&mut (&mut entry).take(budget + 1), &mut file).map_err(io_error)?;
             if written > budget {
-                return Err(refuse(format!(
-                    "more than {MAX_UNPACKED_BYTES} bytes unpacked"
-                )));
+                return Err(refuse(format!("more than {limit} bytes unpacked")));
             }
             budget -= written;
         } else {
@@ -403,6 +403,122 @@ mod tests {
             .map(|entry| entry.file_name())
             .collect();
         assert_eq!(held, vec![std::ffi::OsString::from("bb")]);
+    }
+
+    /// More than the byte budget, more than 10 000 entries, a file with no name and bytes that
+    /// are no gzip are each refused with the reason.
+    #[test]
+    fn an_archive_over_its_limits_or_malformed_is_refused() {
+        let dest = Scratch::new("limits");
+        let err = unpack_within(&archive(&[("big.bin", FILE, &[7; 64])]), dest.path(), 63)
+            .expect_err("over the budget");
+        assert!(
+            err.to_string().contains("more than 63 bytes unpacked"),
+            "{err}"
+        );
+        unpack_within(&archive(&[("fits.bin", FILE, &[7; 64])]), dest.path(), 64)
+            .expect("exactly the budget");
+
+        let many: Vec<(&str, tar::EntryType, &[u8])> =
+            (0..=MAX_ENTRIES).map(|_| ("d/", DIR, &b""[..])).collect();
+        let err = unpack(&archive(&many), dest.path()).expect_err("too many");
+        assert!(err.to_string().contains("more than 10000 entries"), "{err}");
+
+        let err = unpack(&archive(&[("./", FILE, b"x")]), dest.path()).expect_err("no name");
+        assert!(err.to_string().contains("a file with no name"), "{err}");
+
+        let err = unpack(b"\x1f\x8b not really gzip", dest.path()).expect_err("no gzip");
+        assert!(matches!(err, FetchError::Unpack(_)), "{err}");
+    }
+
+    /// A build directory with no parent is refused; a partial unpack left by a crash is
+    /// replaced; a path taken by a file is no place to install into.
+    #[test]
+    fn install_replaces_a_stale_partial_and_refuses_an_impossible_place() {
+        let err = install(&archive(&[("index.html", FILE, b"<html>")]), Path::new("/"))
+            .expect_err("no parent");
+        assert!(err.to_string().contains("has no parent"), "{err}");
+
+        let cache = Scratch::new("stale");
+        let app = cache.path().join("alerts");
+        let stale = app.join(".partial-aa");
+        fs::create_dir_all(&stale).expect("a stale partial");
+        fs::write(stale.join("leftover.js"), "old").expect("leftover");
+        install(
+            &archive(&[("index.html", FILE, b"<html>")]),
+            &app.join("aa"),
+        )
+        .expect("installed");
+        assert!(app.join("aa/index.html").is_file());
+        assert!(!stale.exists(), "the partial is gone");
+
+        let taken = cache.path().join("taken");
+        fs::create_dir_all(&taken).expect("app dir");
+        fs::write(taken.join("bb"), "a file where the build goes").expect("a file");
+        let err = install(
+            &archive(&[("index.html", FILE, b"<html>")]),
+            &taken.join("bb"),
+        )
+        .expect_err("a file in the way");
+        assert!(matches!(err, FetchError::Unpack(_)), "{err}");
+        assert!(
+            !taken.join(".partial-bb").exists(),
+            "nothing half-installed stays"
+        );
+    }
+
+    /// Pruning an App the cache holds nothing of does nothing, and an entry that is no
+    /// directory is kept (and logged) rather than stopping the prune.
+    #[test]
+    fn prune_keeps_what_it_cannot_remove() {
+        let cache = Scratch::new("prune-kept");
+        prune(&cache.path().join("absent"), std::ffi::OsStr::new("aa"));
+        let app = cache.path().join("alerts");
+        fs::create_dir_all(app.join("old")).expect("an old build");
+        fs::write(app.join("stray"), "a file").expect("a stray file");
+        prune(&app, std::ffi::OsStr::new("aa"));
+        assert!(!app.join("old").exists());
+        assert!(app.join("stray").is_file());
+    }
+
+    /// An App with no build, one whose digest is no build's, and one already held are each
+    /// passed by without a call to the forge.
+    #[tokio::test]
+    async fn fetch_missing_asks_the_forge_only_for_a_build_it_lacks() {
+        let server = wiremock::MockServer::start().await;
+        let shako = ShakoClient::new(server.uri().parse().expect("url"), "jc", "config", "t")
+            .expect("client");
+        let cache = Scratch::new("missing");
+        let hex = "b".repeat(64);
+        fs::create_dir_all(cache.path().join("held").join(&hex)).expect("a held build");
+        let mirror = Mirror::new();
+        for (name, build) in [
+            ("unbuilt", None),
+            ("odd", Some("sha256:not-hex")),
+            ("held", Some(format!("sha256:{hex}").leak() as &str)),
+        ] {
+            let mut app: crate::resource::ResourceEnvelope =
+                serde_json::from_value(serde_json::json!({
+                    "apiVersion": crate::resource::API_VERSION,
+                    "kind": "App",
+                    "metadata": { "name": name, "namespace": "roads" },
+                    "spec": {},
+                }))
+                .expect("an App");
+            if let Some(digest) = build {
+                app.status = serde_json::from_value(serde_json::json!({
+                    "build": { "commit": "c0ffee", "digest": digest, "sdkVersion": "1.0.0", "builtAt": "2026-11-25T00:00:00Z" }
+                }))
+                .expect("a status");
+            }
+            mirror.upsert(app);
+        }
+        fetch_missing(&shako, cache.path(), &mirror).await;
+        assert!(server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
     }
 
     /// AP-102: only a `sha256:` digest of 64 hex digits and a DNS-1123 name become a directory.

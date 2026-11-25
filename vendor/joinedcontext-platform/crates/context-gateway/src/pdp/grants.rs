@@ -286,4 +286,177 @@ mod per_grant_tests {
         assert_eq!(reads.len(), 1, "Y's grant reads nothing of an X target");
         assert_eq!(reads[0].q.as_deref(), Some("((a>1))"));
     }
+
+    fn info(attributes: serde_json::Value, names: &[&str]) -> RegistrationInfo {
+        serde_json::from_value(serde_json::json!({
+            "entities": [{"type": "Car"}],
+            "propertyNames": names,
+            "attributes": attributes,
+        }))
+        .expect("a registration")
+    }
+
+    /// The capability an operation needs: delete for a delete, update for an update, the read
+    /// flag (own name first, then `*`, then open) for every other operation.
+    #[test]
+    fn each_operation_asks_its_own_capability() {
+        let caps = info(
+            serde_json::json!({"speed": {"read": false, "write": ["update"]}, "*": {"read": true, "write": ["delete"]}}),
+            &[],
+        );
+        assert!(covers(
+            &caps,
+            Operation::UpdateAttrs,
+            Part::Attribute("speed")
+        ));
+        assert!(!covers(
+            &caps,
+            Operation::DeleteAttrs,
+            Part::Attribute("speed")
+        ));
+        assert!(
+            covers(&caps, Operation::DeleteAttrs, Part::Attribute("colour")),
+            "`*` gives delete"
+        );
+        assert!(!covers(
+            &caps,
+            Operation::UpdateAttrs,
+            Part::Attribute("colour")
+        ));
+        assert!(
+            !covers(&caps, Operation::RetrieveEntity, Part::Attribute("speed")),
+            "own read false"
+        );
+        assert!(
+            covers(&caps, Operation::RetrieveEntity, Part::Attribute("colour")),
+            "`*` read true"
+        );
+        let open = info(serde_json::json!({}), &[]);
+        assert!(covers(
+            &open,
+            Operation::RetrieveEntity,
+            Part::Attribute("any")
+        ));
+        assert!(covers(&open, Operation::DeleteEntity, Part::Whole));
+        assert!(covers(&open, Operation::DeleteEntity, Part::Root));
+        let named = info(
+            serde_json::json!({"speed": {"write": ["delete"]}, "colour": {"write": ["update"]}}),
+            &[],
+        );
+        assert!(
+            !covers(&named, Operation::DeleteEntity, Part::Whole),
+            "colour gives no delete"
+        );
+        let deletable = info(serde_json::json!({"speed": {"write": ["delete"]}}), &[]);
+        assert!(covers(&deletable, Operation::DeleteEntity, Part::Whole));
+    }
+
+    /// A listed registration gives only what it lists; a whole delete needs an open list.
+    #[test]
+    fn a_listed_registration_gives_only_its_names() {
+        let listed = info(serde_json::json!({}), &["speed"]);
+        assert!(covers(
+            &listed,
+            Operation::DeleteAttrs,
+            Part::Attribute("speed")
+        ));
+        assert!(!covers(
+            &listed,
+            Operation::DeleteAttrs,
+            Part::Attribute("colour")
+        ));
+        assert!(covers(
+            &listed,
+            Operation::DeleteAttrs,
+            Part::Holding(&["speed"])
+        ));
+        assert!(!covers(
+            &listed,
+            Operation::DeleteAttrs,
+            Part::Holding(&["speed", "colour"])
+        ));
+        assert!(!covers(&listed, Operation::DeleteEntity, Part::Whole));
+        assert!(
+            covers(&listed, Operation::DeleteEntity, Part::Holding(&[])),
+            "nothing held"
+        );
+    }
+
+    /// An id that is no URN is given by no grant, whatever the policies say.
+    #[test]
+    fn an_id_that_is_no_urn_is_given_by_no_grant() {
+        let subject = Subject::default();
+        assert!(!one_grant_gives(
+            &subject,
+            &[],
+            Operation::DeleteEntity,
+            "not a urn",
+            Part::Root,
+            TimestampTz::now()
+        ));
+    }
+
+    /// The attributes a grant's `q` reads and `location` under an area are asked for; a `q`
+    /// that does not parse adds nothing.
+    #[test]
+    fn condition_attributes_name_what_the_conditions_read() {
+        let grants = [
+            GrantView {
+                q: Some("speed>1;owner==\"a\"".to_owned()),
+                ..GrantView::default()
+            },
+            GrantView {
+                geo_q: Some("georel=near;maxDistance==10".to_owned()),
+                ..GrantView::default()
+            },
+            GrantView {
+                q: Some("((".to_owned()),
+                ..GrantView::default()
+            },
+        ];
+        let names = condition_attributes(&grants);
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "location".to_owned(),
+                "owner".to_owned(),
+                "speed".to_owned()
+            ])
+        );
+        assert!(condition_attributes(&[]).is_empty());
+        assert!(condition_attributes(&[GrantView::default()]).is_empty());
+    }
+
+    /// A grant of every type reads the read's types, a read of every type the grant's, and two
+    /// open sides stay open; disjoint types read nothing.
+    #[test]
+    fn per_grant_types_follow_the_open_side() {
+        let types = |names: &[&str]| {
+            names
+                .iter()
+                .map(|n| (*n).to_owned())
+                .collect::<BTreeSet<_>>()
+        };
+        let open_grant = GrantView::default();
+        let x_grant = GrantView {
+            types: types(&["X"]),
+            ..GrantView::default()
+        };
+        let read = |read_types: &[&str], grant: &GrantView| super::super::evaluator::Constraints {
+            types: types(read_types),
+            grants: vec![grant.clone()],
+            ..Default::default()
+        };
+        assert_eq!(
+            per_grant(&read(&["Y"], &open_grant))[0].types,
+            types(&["Y"])
+        );
+        assert_eq!(per_grant(&read(&[], &x_grant))[0].types, types(&["X"]));
+        assert!(per_grant(&read(&[], &open_grant))[0].types.is_empty());
+        assert!(per_grant(&read(&["Y"], &x_grant)).is_empty());
+        assert!(
+            per_grant(&super::super::evaluator::Constraints::default()).is_empty(),
+            "no grant, no read"
+        );
+    }
 }

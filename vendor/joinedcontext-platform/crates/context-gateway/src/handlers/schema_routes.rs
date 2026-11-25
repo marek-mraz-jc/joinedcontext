@@ -135,13 +135,7 @@ async fn through_view(
     }
     // GET and HEAD only: jc's door counts answered reads and writes every refusal (T-7474), and
     // this line was 16 % of jc-prod's log (T-7479).
-    tracing::debug!(
-        slug = %endpoint.slug,
-        space = %endpoint.space,
-        %view,
-        principal = %principal_of(subject),
-        "schema request forwarded to the broker's view"
-    );
+    tracing::debug!(slug = %endpoint.slug, space = %endpoint.space, %view, principal = %principal_of(subject), "schema request forwarded to the broker's view");
     let (parts, _) = request.into_parts();
     let answer = match gateway
         .broker

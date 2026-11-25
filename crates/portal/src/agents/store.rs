@@ -753,7 +753,7 @@ fn transition(status: &str, next: AgentRunStatus) -> Result<AgentRunStatus, Stat
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// T-6442: this text reaches the run's page; a person read "pool timed out while waiting for
@@ -765,7 +765,7 @@ mod tests {
         assert!(shown.contains("Start the run again"), "{shown}");
     }
 
-    fn run(id: &str, project: &str, created_at: &str) -> AgentRun {
+    pub(crate) fn run(id: &str, project: &str, created_at: &str) -> AgentRun {
         AgentRun {
             id: id.to_owned(),
             project: project.to_owned(),

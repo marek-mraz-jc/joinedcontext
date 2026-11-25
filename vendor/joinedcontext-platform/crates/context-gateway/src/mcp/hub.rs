@@ -923,15 +923,7 @@ impl Hub {
         // What a call to the Endpoint's URL logs, and which Endpoint and tool it was (ADR-N-025
         // section 3, ADR-N-043 §2.8). The Endpoint's own decision line follows from the re-entry.
         let server = self.server.as_ref().map(McpServer::path);
-        tracing::info!(
-            slug = %endpoint.slug,
-            space = %endpoint.space,
-            principal = %principal_of(subject),
-            tool = %name,
-            door = if server.is_some() { "server" } else { "hub" },
-            server = server.as_deref().unwrap_or_default(),
-            "hub call"
-        );
+        tracing::info!(slug = %endpoint.slug, space = %endpoint.space, principal = %principal_of(subject), tool = %name, door = if server.is_some() { "server" } else { "hub" }, server = server.as_deref().unwrap_or_default(), "hub call");
 
         if describe::DESCRIBE_TOOLS.contains(&name) {
             let mut asked = params.as_object().cloned().unwrap_or_default();
