@@ -116,6 +116,9 @@ impl JetStreamInput {
             .get("max_ack_pending")
             .and_then(JsonValue::as_u64)
             .unwrap_or(1024) as usize;
+        if conn_details.is_in_memory() {
+            crate::broker_mem::check_mem_cap("max_ack_pending", max_ack_pending)?;
+        }
 
         let consumer_key = format!(
             "{}:{}:{}",

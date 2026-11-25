@@ -65,6 +65,10 @@ impl NatsCoreInput {
             ));
         }
 
+        if conn_details.is_in_memory() {
+            crate::broker_mem::check_mem_cap("prefetch_count", prefetch_count as usize)?;
+        }
+
         let nak_delay = match obj.get("nak_delay").and_then(JsonValue::as_str) {
             Some(s) if !s.is_empty() => Some(parse_duration_str(s)?),
             _ => None,
