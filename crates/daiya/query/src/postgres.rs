@@ -1658,6 +1658,9 @@ mod tests {
             "WITH d AS (DELETE FROM org_metrics_view RETURNING *) SELECT * FROM d",
             "TABLE secret_table",
             "VALUES (1)",
+            // An unclosed WITH group, a qualified name cut after its dot.
+            "WITH x AS (SELECT 1",
+            "SELECT * FROM org_metrics_view.",
         ] {
             assert!(
                 validate_readonly_select("A", sql, &v).is_err(),
@@ -1683,6 +1686,10 @@ mod tests {
             "SELECT * FROM org_metrics_view WHERE id IN (SELECT id FROM reports.daily)",
             "SELECT 'it''s' AS label FROM \"org_metrics_view\"",
             "SELECT * FROM org_metrics_view;",
+            "SELECT \"a\"\"b\" FROM org_metrics_view",
+            "WITH \"q\" AS (SELECT 1), r AS (SELECT 2) SELECT * FROM \"q\", r",
+            "SELECT ((value)) FROM org_metrics_view",
+            "SELECT * FROM org_metrics_view \"m\"",
         ] {
             assert!(
                 validate_readonly_select("A", sql, &v).is_ok(),
@@ -1690,5 +1697,49 @@ mod tests {
                 validate_readonly_select("A", sql, &v)
             );
         }
+    }
+
+    /// Grafana's epoch guess keeps milliseconds and divides nanoseconds; a null time stays null,
+    /// a long result whose time is no number is refused, and only a `metric` label renames.
+    #[test]
+    fn epochs_and_odd_time_columns_convert_as_grafana_does() {
+        assert_eq!(epoch_to_ms(1.7e18), 1.7e12);
+        assert_eq!(epoch_to_ms(1.7e12), 1.7e12);
+        let col = |name: &str, field_type: FieldType, values: Vec<Value>| FieldColumn {
+            name: name.into(),
+            field_type,
+            unit: None,
+            display_name: None,
+            labels: BTreeMap::new(),
+            values,
+        };
+        let out = sql_time_series(vec![
+            col(
+                "time",
+                FieldType::Number,
+                vec![Value::from(1.7e12), Value::Null],
+            ),
+            col("v", FieldType::Number, vec![Value::from(1), Value::from(2)]),
+        ])
+        .unwrap();
+        assert_eq!(
+            out[0].values,
+            [Value::from(1_700_000_000_000_i64), Value::Null]
+        );
+        let e = sql_time_series(vec![
+            col("time", FieldType::String, vec![Value::from("noon")]),
+            col("host", FieldType::String, vec![Value::from("a")]),
+            col("v", FieldType::Number, vec![Value::from(1)]),
+        ])
+        .unwrap_err();
+        assert!(e.starts_with("long series must be sorted"), "{e}");
+        let out = sql_time_series(vec![
+            col("time", FieldType::Time, vec![Value::from(1_000)]),
+            col("host", FieldType::String, vec![Value::from("a")]),
+            col("v", FieldType::Number, vec![Value::from(1)]),
+        ])
+        .unwrap();
+        assert_eq!(out[1].name, "v");
+        assert_eq!(out[1].labels["host"], "a");
     }
 }

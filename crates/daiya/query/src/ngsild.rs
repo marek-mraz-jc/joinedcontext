@@ -440,6 +440,9 @@ fn projected_attrs(model: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default();
+    // An attribute listed twice is one column: its values once per entity.
+    let mut seen = BTreeSet::new();
+    attrs.retain(|a| seen.insert(a.clone()));
     if attrs.is_empty() {
         return attrs;
     }
@@ -1129,5 +1132,42 @@ impl Datasource for NgsiLdDatasource {
             map.insert("hide".to_owned(), Value::Bool(true));
         }
         Value::Object(map)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A table frame joins a multi-typed entity's types, leaves a type-less entity's empty, an
+    /// attribute an entity lacks empty, keeps the first unit it meets, skips what is no entity,
+    /// and lists an attribute requested twice once.
+    #[test]
+    fn a_table_frame_joins_types_and_leaves_what_is_missing_empty() {
+        let speed =
+            |value: i64, unit: &str| json!({"type": "Property", "value": value, "unitCode": unit});
+        let entities = vec![
+            json!({"id": "urn:a", "type": ["Road", "Segment"], "speed": speed(3, "KMH")}),
+            json!({"id": "urn:b", "speed": speed(4, "MTS")}),
+            json!({"id": "urn:c", "type": "Road"}),
+            json!("no entity"),
+        ];
+        let frame =
+            entities_to_table_frame("A", &entities, &json!({"attributes": ["speed", "speed"]}));
+        let field = |name: &str| {
+            frame
+                .fields
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap_or_else(|| panic!("{name}: {:?}", frame.fields))
+        };
+        assert_eq!(
+            field("type").values,
+            [json!("Road,Segment"), Value::Null, json!("Road")]
+        );
+        let speed = field("speed");
+        assert_eq!(speed.values, [json!(3), json!(4), Value::Null]);
+        assert_eq!(speed.unit, grafana_unit(Some("KMH")));
+        assert_eq!(frame.fields.iter().filter(|f| f.name == "speed").count(), 1);
     }
 }

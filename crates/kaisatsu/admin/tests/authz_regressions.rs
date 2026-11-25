@@ -1065,6 +1065,118 @@ async fn a_people_manager_cannot_change_an_organization_admin() {
 
 /// Through SCIM an Organization admin sees another Organization's groups and people as missing,
 /// and the groups it creates or renames sit under its own Organization.
+/// A people manager registers no passkey for another person: only the person or a realm
+/// admin does, and the refusal reads as an unknown person.
+#[tokio::test]
+async fn a_people_manager_registers_no_passkey_for_another_person() {
+    let f = Fixture::new().await;
+    let manager = f
+        .token(
+            "dev",
+            "plain-1",
+            json!({ "realm_access": { "roles": ["manage-users"] } }),
+        )
+        .await;
+    let st = f
+        .send(
+            Method::POST,
+            "/api/v1/realms/dev/odata/People('hel-person')/RegisterPasskey",
+            &manager,
+            Some(json!({ "credential": {} })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// A reader of people and groups (`view-users`, `query-groups`) changes neither through SCIM:
+/// each write answers 404, as for a record it cannot see, and nothing changes; without
+/// `query-groups` it cannot read a group either.
+#[tokio::test]
+async fn scim_readers_change_no_person_or_group() {
+    let f = Fixture::new().await;
+    f.store
+        .upsert_group(GroupRepresentation {
+            id: "g-hel".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            name: "g-hel".into(),
+            path: "/helsinki/g-hel".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let scim = "/api/v1/realms/dev/scim/v2";
+    let reader = f
+        .token(
+            "dev",
+            "plain-1",
+            json!({ "realm_access": { "roles": ["view-users", "query-groups"] } }),
+        )
+        .await;
+    for uri in [
+        format!("{scim}/Users/hel-person"),
+        format!("{scim}/Groups/g-hel"),
+    ] {
+        assert_eq!(
+            f.send(Method::GET, &uri, &reader, None).await,
+            StatusCode::OK,
+            "{uri}"
+        );
+    }
+    let patch = json!({ "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [{ "op": "replace", "path": "displayName", "value": "taken" }] });
+    for (method, uri, body) in [
+        (
+            Method::PUT,
+            format!("{scim}/Users/hel-person"),
+            Some(json!({ "userName": "taken" })),
+        ),
+        (
+            Method::PATCH,
+            format!("{scim}/Users/hel-person"),
+            Some(patch.clone()),
+        ),
+        (
+            Method::PUT,
+            format!("{scim}/Groups/g-hel"),
+            Some(json!({ "displayName": "taken" })),
+        ),
+        (
+            Method::PATCH,
+            format!("{scim}/Groups/g-hel"),
+            Some(patch.clone()),
+        ),
+        (Method::DELETE, format!("{scim}/Groups/g-hel"), None),
+    ] {
+        let st = f.send(method.clone(), &uri, &reader, body).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{method} {uri}");
+    }
+    let people_only = f
+        .token(
+            "dev",
+            "plain-1",
+            json!({ "realm_access": { "roles": ["view-users"] } }),
+        )
+        .await;
+    let st = f
+        .send(
+            Method::GET,
+            &format!("{scim}/Groups/g-hel"),
+            &people_only,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert_eq!(f.user("hel-person").await.username, "hel-person");
+    let kept = f
+        .store
+        .get_group("dev", None, "g-hel")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.name, "g-hel");
+}
+
 #[tokio::test]
 async fn scim_keeps_an_org_admin_inside_its_organization() {
     let f = Fixture::new().await;

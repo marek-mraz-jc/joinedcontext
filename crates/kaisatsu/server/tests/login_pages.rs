@@ -412,6 +412,29 @@ async fn sign_in_not_in_the_browsers_set_is_refused() {
     assert!(is_code(st, &h));
 }
 
+/// Ten wrong passwords on the sign-in form lock the person: the right password then gets the
+/// wrong-password page, no code, while another person still signs in.
+#[tokio::test]
+async fn a_locked_person_gets_the_wrong_password_page_for_the_right_password() {
+    let (app, _store) = app().await;
+    let a = start(&app, "").await;
+    let (_, _, wrong) = a.password(&app, MEMBER, "WrongPass123!").await;
+    for _ in 0..9 {
+        a.password(&app, MEMBER, "WrongPass123!").await;
+    }
+    let (st, h, locked) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert!(!is_code(st, &h), "a locked person got a code");
+    assert_eq!(st, StatusCode::OK);
+    let alert = |html: &str| {
+        let i = html.find("role=\"alert\"").expect("an alert");
+        html[i..i + 200].to_owned()
+    };
+    assert_eq!(alert(&locked), alert(&wrong));
+    let other = start(&app, "").await;
+    let (st, h, _) = other.password(&app, ANALYST, ANALYST_PW).await;
+    assert!(is_code(st, &h), "{st}");
+}
+
 #[tokio::test]
 async fn refusals_look_the_same_and_legacy_hashes_migrate() {
     let (app, store) = app().await;
