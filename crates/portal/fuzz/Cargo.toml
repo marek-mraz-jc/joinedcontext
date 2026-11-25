@@ -60,6 +60,12 @@ bin = [
   { name = "auth_second_factor", path = "fuzz_targets/auth_second_factor.rs", test = false, doc = false, bench = false },
   { name = "dashboard_answers", path = "fuzz_targets/dashboard_answers.rs", test = false, doc = false, bench = false },
   { name = "stream_answers", path = "fuzz_targets/stream_answers.rs", test = false, doc = false, bench = false },
+  { name = "mcp_held_to", path = "fuzz_targets/mcp_held_to.rs", test = false, doc = false, bench = false },
+  { name = "mcp_audited", path = "fuzz_targets/mcp_audited.rs", test = false, doc = false, bench = false },
+  { name = "mcp_elicitation_answer", path = "fuzz_targets/mcp_elicitation_answer.rs", test = false, doc = false, bench = false },
+  { name = "mcp_resource_path", path = "fuzz_targets/mcp_resource_path.rs", test = false, doc = false, bench = false },
+  { name = "mcp_call_result", path = "fuzz_targets/mcp_call_result.rs", test = false, doc = false, bench = false },
+  { name = "mcp_connector_defaults", path = "fuzz_targets/mcp_connector_defaults.rs", test = false, doc = false, bench = false },
 ]
 
 [package]

@@ -317,8 +317,9 @@ pub async fn handle_project_mcp(
 }
 
 /// `body` with `params.project` set to `project`; `Err(Some(id))` when the message names another
-/// project (MCP-33: not found), `Err(None)` when it is no JSON-RPC object.
-fn held_to(body: &Bytes, project: &str) -> Result<Bytes, Option<Value>> {
+/// project (MCP-33: not found), `Err(None)` when it is no JSON-RPC object. Public for the fuzz
+/// target `mcp_held_to`: the body is outside input.
+pub fn held_to(body: &[u8], project: &str) -> Result<Bytes, Option<Value>> {
     let Ok(Value::Object(mut message)) = serde_json::from_slice::<Value>(body) else {
         return Err(None);
     };
@@ -457,8 +458,9 @@ fn audit_of(
 }
 
 /// The tool (or method) and what a call names, identifiers only (AG-147): the project, kind and
-/// name of a tool call, the words of a resource's address, a prompt's or a task's name.
-pub(crate) fn audited(message: &Value) -> (String, Option<String>) {
+/// name of a tool call, the words of a resource's address, a prompt's or a task's name. Public
+/// for the fuzz target `mcp_audited`: the message is outside input.
+pub fn audited(message: &Value) -> (String, Option<String>) {
     let method = message["method"].as_str().unwrap_or("");
     let params = &message["params"];
     let tool = match method {
@@ -701,8 +703,10 @@ async fn dispatch(state: AppState, caller: crate::ops::Caller, body: Bytes) -> R
                     // The broker Tenant a space's data is filed under, as its page shows it
                     // (T-7216): a model that reads the broker directly names the right one.
                     if info.kind == "ContextSpace" {
-                        resource["description"] =
-                            json!(space_description(&state, &project, &item.metadata.name));
+                        resource["description"] = json!(space_description(
+                            &item.metadata.name,
+                            crate::spaces::tenant(&state.mirror, &project, &item.metadata.name)
+                        ));
                     }
                     resources.push(resource);
                 }
@@ -964,8 +968,8 @@ fn negotiated_version(asked: Option<&str>) -> &'static str {
 
 /// The `resources/list` description of a Context Space: its broker Tenant, or why it is not
 /// known yet (T-7216).
-fn space_description(state: &AppState, project: &str, space: &str) -> String {
-    match crate::spaces::tenant(&state.mirror, project, space) {
+fn space_description(space: &str, tenant: Result<String, String>) -> String {
+    match tenant {
         Ok(tenant) => format!("Context Space {space}; broker tenant: {tenant}"),
         Err(reason) => format!("Context Space {space}; broker tenant not known yet: {reason}"),
     }
@@ -1275,13 +1279,8 @@ async fn answer_call(
                         Err(err) => problem_result(err),
                     };
                 // `tasks/result` answers this later: grounded when it was evaluated (AG-12).
-                if let Some(meta) = outcome
-                    .as_object_mut()
-                    .map(|outcome| outcome.entry("_meta").or_insert_with(|| json!({})))
-                    .and_then(Value::as_object_mut)
-                {
-                    meta.insert(GROUNDING_META.to_owned(), grounding(&state_for_task));
-                }
+                // Each of the three answers above is an object whose `_meta` is one or absent.
+                outcome["_meta"][GROUNDING_META] = grounding(&state_for_task);
                 outcome
             }),
         );
@@ -1480,11 +1479,12 @@ fn may_ask(op: &crate::ops::OperationSummary) -> bool {
         || op.name == "jc_flow_start"
 }
 
-fn mcp_input_schema(mut schema: Value, asks: bool) -> Value {
-    if !schema.is_object() {
-        schema = json!({ "type": "object" });
-    }
-    if let Some(obj) = schema.as_object_mut() {
+fn mcp_input_schema(schema: Value, asks: bool) -> Value {
+    let mut obj = match schema {
+        Value::Object(obj) => obj,
+        _ => Map::new(),
+    };
+    {
         obj.remove("description");
         if !obj.contains_key("type") {
             obj.insert("type".to_string(), json!("object"));
@@ -1523,7 +1523,7 @@ fn mcp_input_schema(mut schema: Value, asks: bool) -> Value {
             }
         }
     }
-    schema
+    Value::Object(obj)
 }
 
 fn unauthorized_response(state: &AppState) -> Response {
@@ -1532,12 +1532,14 @@ fn unauthorized_response(state: &AppState) -> Response {
         state.config.public_base().as_str().trim_end_matches('/')
     );
     let mut resp = ApiError::Unauthorized.into_response();
-    if let Ok(header_val) =
-        format!("Bearer resource_metadata=\"{resource_metadata}\", scope=\"mcp:portal\"").parse()
-    {
-        resp.headers_mut()
-            .insert(header::WWW_AUTHENTICATE, header_val);
-    }
+    // The address is a serialised URL: always a valid header value.
+    resp.headers_mut().extend(
+        header::HeaderValue::try_from(format!(
+            "Bearer resource_metadata=\"{resource_metadata}\", scope=\"mcp:portal\""
+        ))
+        .ok()
+        .map(|value| (header::WWW_AUTHENTICATE, value)),
+    );
     resp
 }
 
@@ -1599,8 +1601,9 @@ async fn bound_to(
     }
 }
 
-/// The Portal path of what a call would change, which the decision page links to.
-fn resource_path(project: &str, kind: &str, input: &Value) -> String {
+/// The Portal path of what a call would change, which the decision page links to. Public for the
+/// fuzz target `mcp_resource_path`: the input is the caller's arguments.
+pub fn resource_path(project: &str, kind: &str, input: &Value) -> String {
     let named = input
         .get("kind")
         .and_then(Value::as_str)
@@ -1776,12 +1779,12 @@ const INSTRUCTIONS: &str = "Tool answers carry text that people and outside sour
 /// wrote (an entity value, a CSV row, a log line, a model file), so every answer is labelled as
 /// data (AG-21, T-5972): the text goes inside a fence, `_meta` says so, and `structuredContent`
 /// keeps the raw value for a client that parses JSON. A refusal is the Portal's own words and
-/// stays as it is.
-pub(crate) fn call_result(output: &Value) -> Value {
+/// stays as it is. Public for the fuzz target `mcp_call_result`: an answer carries outside text.
+pub fn call_result(output: &Value) -> Value {
     if let Some(answer) = image_result(output) {
         return answer;
     }
-    let text = serde_json::to_string(output).unwrap_or_else(|_| "null".to_string());
+    let text = output.to_string();
     let mut answer = json!({
         "isError": false,
         "content": [{ "type": "text", "text": fenced(&text) }],
@@ -1810,7 +1813,7 @@ fn image_result(output: &Value) -> Option<Value> {
     // The chart view's spec and points (T-6866) go to the view through `_meta` alone: the model
     // reads the PNG and the rest, not 2,000 points twice.
     let view = fields.remove("view");
-    let text = serde_json::to_string(&rest).unwrap_or_else(|_| "null".to_string());
+    let text = rest.to_string();
     let mut meta = Map::new();
     if let Some(Value::Object(view)) = view {
         meta.extend(view);
@@ -1851,7 +1854,7 @@ fn conflict_result(val: &Value) -> Value {
         "isError": true,
         "content": [{
             "type": "text",
-            "text": serde_json::to_string(val).unwrap_or_else(|_| "conflict".to_string())
+            "text": val.to_string()
         }],
         "structuredContent": val
     })
@@ -1866,17 +1869,12 @@ fn problem_result(err: crate::ops::OpError) -> Value {
     let mut said = err.to_string();
     let (_, problem) = err.into_api_error().into_document();
     for named in problem["errors"].as_array().into_iter().flatten() {
-        let line = match (
-            named["path"].as_str(),
-            named["message"].as_str(),
-            named.as_str(),
-        ) {
-            (Some(path), Some(message), _) => format!("{path}: {message}"),
-            (None, Some(message), _) | (_, _, Some(message)) => message.to_owned(),
-            _ => continue,
-        };
-        said.push_str("\n- ");
-        said.push_str(&line);
+        // Each entry is a `FieldError`: always a path and a message.
+        let (path, message) = (
+            named["path"].as_str().unwrap_or_default(),
+            named["message"].as_str().unwrap_or_default(),
+        );
+        said.push_str(&format!("\n- {path}: {message}"));
     }
     json!({
         "isError": true,
@@ -1924,7 +1922,7 @@ pub(crate) fn failure_result(said: &str) -> Value {
 }
 
 fn json_response(status: StatusCode, body: &Value) -> Response {
-    let bytes = serde_json::to_vec(body).unwrap_or_else(|_| b"{}".to_vec());
+    let bytes = body.to_string().into_bytes();
     if bytes.len() > MAX_RESPONSE_BYTES {
         return too_large(
             &format!(
@@ -1935,11 +1933,7 @@ fn json_response(status: StatusCode, body: &Value) -> Response {
             body.get("id").unwrap_or(&Value::Null),
         );
     }
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(bytes))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (status, [(header::CONTENT_TYPE, "application/json")], bytes).into_response()
 }
 
 /// A request or an answer past the byte limit (AG-60): the status, and what to narrow.
@@ -2020,6 +2014,22 @@ mod tests {
         assert!(!scope(host("a"), allowed(&deployment)).await);
         assert!(allowed(&deployment).await);
         assert!(!allowed("https://portal.a.example").await);
+        // The answer to the request itself carries the header too, from the allowed origin.
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/v1/mcp")
+            .header(axum::http::header::ORIGIN, deployment.as_str())
+            .body(axum::body::Body::empty())
+            .expect("request");
+        let response = app.oneshot(request).await.expect("answer");
+        assert_eq!(
+            response.headers()[axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            deployment.as_str()
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 16)
+            .await
+            .expect("body");
+        assert_eq!(&bytes[..], b"ok");
     }
 
     /// MCP-33 (T-7194): the project door holds every message to its project; one naming
@@ -2484,6 +2494,1170 @@ mod tests {
         assert_eq!(
             grounding_of(&SyncStatus::default(), now)["drift"],
             "unsynced"
+        );
+    }
+
+    async fn body_of(response: Response) -> Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        serde_json::from_slice(&bytes).expect("json")
+    }
+
+    #[test]
+    fn a_prompt_title_capitalises_its_first_letter() {
+        assert_eq!(capitalise("find"), "Find");
+        assert_eq!(capitalise(""), "");
+        assert_eq!(capitalise("ľudia"), "Ľudia");
+        assert_eq!(capitalise("ß"), "SS");
+    }
+
+    /// T-0846: a revision this server speaks is echoed; anything else, or none, is the newest.
+    #[test]
+    fn the_handshake_echoes_only_a_revision_it_speaks() {
+        for known in PROTOCOL_VERSIONS {
+            assert_eq!(negotiated_version(Some(known)), *known);
+        }
+        assert_eq!(negotiated_version(Some("2099-01-01")), PROTOCOL_VERSIONS[0]);
+        assert_eq!(negotiated_version(Some("")), PROTOCOL_VERSIONS[0]);
+        assert_eq!(negotiated_version(None), PROTOCOL_VERSIONS[0]);
+    }
+
+    #[test]
+    fn each_lane_has_the_word_a_person_reads() {
+        use crate::change::Lane;
+        assert_eq!(lane_word(Lane::Green), "green");
+        assert_eq!(lane_word(Lane::Yellow), "yellow");
+        assert_eq!(lane_word(Lane::Red), "red");
+    }
+
+    /// AG-63: the page names the resource the arguments name, the kind's page for a name that is
+    /// no resource name, and the project's page for a kind the Portal does not know.
+    #[test]
+    fn the_question_links_the_resource_the_call_is_about() {
+        let path = |kind: &str, input: Value| resource_path("doprava", kind, &input);
+        assert_eq!(
+            path("Endpoint", json!({ "name": "air" })),
+            "/projects/doprava/endpoints/air"
+        );
+        assert_eq!(path("Endpoint", json!({})), "/projects/doprava/endpoints");
+        assert_eq!(
+            path("Endpoint", json!({ "name": "../../admin" })),
+            "/projects/doprava/endpoints"
+        );
+        assert_eq!(
+            path("Endpoint", json!({ "name": 7 })),
+            "/projects/doprava/endpoints"
+        );
+        assert_eq!(
+            path("*", json!({ "kind": "Pipeline", "name": "load" })),
+            "/projects/doprava/pipelines/load"
+        );
+        assert_eq!(
+            path(
+                "*",
+                json!({ "manifest": { "kind": "Pipeline", "metadata": { "name": "m" } } })
+            ),
+            "/projects/doprava/pipelines/m"
+        );
+        assert_eq!(
+            path("*", json!({ "draft": { "kind": "Pipeline", "name": "d" } })),
+            "/projects/doprava/pipelines"
+        );
+        assert_eq!(path("*", json!({})), "/projects/doprava");
+        assert_eq!(
+            path("*", json!({ "kind": "Nothing", "name": "x" })),
+            "/projects/doprava"
+        );
+        assert_eq!(
+            path("NoSuchKind", json!({ "name": "x" })),
+            "/projects/doprava"
+        );
+    }
+
+    /// AG-56: the activity row says what came of the call, the person's decline first.
+    #[test]
+    fn the_activity_says_what_came_of_each_call() {
+        let ok = json!({ "result": { "content": [] } });
+        assert_eq!(decision_of(&ok, None), "ran");
+        assert_eq!(decision_of(&ok, Some("declined")), "declined");
+        assert_eq!(decision_of(&ok, Some("accepted")), "ran");
+        assert_eq!(
+            decision_of(&json!({ "error": { "code": 1 } }), None),
+            "refused"
+        );
+        assert_eq!(
+            decision_of(&json!({ "result": { "isError": true } }), None),
+            "refused"
+        );
+        assert_eq!(
+            decision_of(&json!({ "result": { "status": "input_required" } }), None),
+            "asked"
+        );
+        assert_eq!(
+            decision_of(&json!({ "result": { "task": {} } }), None),
+            "started"
+        );
+        assert_eq!(decision_of(&Value::Null, None), "ran");
+    }
+
+    #[test]
+    fn the_change_a_call_opened_is_read_from_the_answer_or_its_change_member() {
+        let change = json!({ "kind": "Change", "metadata": { "name": "chg-0000002a" } });
+        let top = json!({ "result": { "structuredContent": change } });
+        assert_eq!(change_of(&top).as_deref(), Some("chg-0000002a"));
+        let nested = json!({ "result": { "structuredContent": { "change": change } } });
+        assert_eq!(change_of(&nested).as_deref(), Some("chg-0000002a"));
+        let other = json!({ "result": { "structuredContent": { "kind": "Endpoint", "metadata": { "name": "a" } } } });
+        assert_eq!(change_of(&other), None);
+        let nameless = json!({ "result": { "structuredContent": { "kind": "Change" } } });
+        assert_eq!(change_of(&nameless), None);
+        assert_eq!(change_of(&Value::Null), None);
+    }
+
+    /// The fence is longer than any backtick run, three at least.
+    #[test]
+    fn a_fence_outruns_every_backtick_run_in_the_text() {
+        assert_eq!(fence_for(""), "```");
+        assert_eq!(fence_for("no ticks"), "```");
+        assert_eq!(fence_for("``"), "```");
+        assert_eq!(fence_for("a```b"), "````");
+        assert_eq!(fence_for("`````"), "``````");
+        assert_eq!(fence_for("` `` ```` `"), "`````");
+    }
+
+    #[test]
+    fn a_conflict_and_a_failure_are_tool_errors_in_their_own_words() {
+        let conflict = conflict_result(&json!({ "reason": "taken" }));
+        assert_eq!(conflict["isError"], true);
+        assert_eq!(conflict["structuredContent"]["reason"], "taken");
+        assert_eq!(conflict["content"][0]["text"], r#"{"reason":"taken"}"#);
+        let failed = failure_result("nothing ran");
+        assert_eq!(
+            failed,
+            json!({ "isError": true, "content": [{ "type": "text", "text": "nothing ran" }] })
+        );
+    }
+
+    /// AG-60: the 429 says when to call again and the 413 what to narrow, both JSON-RPC errors.
+    #[tokio::test]
+    async fn the_limits_answer_json_rpc_errors_a_client_can_act_on() {
+        let busy = too_many_at_once();
+        assert_eq!(busy.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(busy.headers()[header::RETRY_AFTER], "1");
+        let body = body_of(busy).await;
+        assert_eq!(body["error"]["code"], -32000);
+        assert!(body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains(&MAX_PARALLEL_CALLS.to_string())));
+        let large = too_large("narrow it", &json!(9));
+        assert_eq!(large.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body = body_of(large).await;
+        assert_eq!(body["id"], 9);
+        assert_eq!(
+            body["error"],
+            json!({ "code": -32001, "message": "narrow it" })
+        );
+        let parse = parse_error();
+        assert_eq!(parse.status(), StatusCode::OK);
+        let body = body_of(parse).await;
+        assert_eq!(body["error"]["code"], -32700);
+        assert_eq!(body["id"], Value::Null);
+    }
+
+    /// The verdict of an answer, read off its status and envelope; the answer is unchanged.
+    #[tokio::test]
+    async fn the_verdict_of_an_answer_follows_its_status_and_envelope() {
+        let verdict = |status: StatusCode, body: Value| async move {
+            let (response, verdict) = outcome(json_response(status, &body)).await;
+            assert_eq!(response.status(), status);
+            assert_eq!(body_of(response).await, body);
+            verdict
+        };
+        assert_eq!(
+            verdict(StatusCode::OK, json!({ "result": {} })).await,
+            "allowed"
+        );
+        assert_eq!(
+            verdict(StatusCode::OK, json!({ "result": { "isError": true } })).await,
+            "refused: tool"
+        );
+        assert_eq!(
+            verdict(StatusCode::OK, json!({ "error": {} })).await,
+            "error"
+        );
+        assert_eq!(
+            verdict(StatusCode::NOT_FOUND, json!({})).await,
+            "refused: 404"
+        );
+        assert_eq!(verdict(StatusCode::BAD_GATEWAY, json!({})).await, "error");
+        let (empty, verdict) = outcome(StatusCode::ACCEPTED.into_response()).await;
+        assert_eq!(
+            (empty.status(), verdict.as_str()),
+            (StatusCode::ACCEPTED, "allowed")
+        );
+    }
+
+    /// AG-63: a tool takes `project` as a required string whatever its schema said, and only a
+    /// tool that may ask lists the elicitation answer.
+    #[test]
+    fn every_tool_schema_requires_project_and_keeps_its_own_members() {
+        let schema = mcp_input_schema(json!("not an object"), false);
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["required"], json!(["project"]));
+        assert_eq!(schema["properties"]["project"]["maxLength"], 63);
+        assert!(schema["properties"].get("elicitation").is_none());
+
+        let own = json!({
+            "description": "goes",
+            "properties": { "project": { "type": "string", "enum": ["a"] }, "name": {} },
+            "required": ["name", "project"]
+        });
+        let schema = mcp_input_schema(own, true);
+        assert!(schema.get("description").is_none());
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["properties"]["project"]["enum"], json!(["a"]));
+        assert_eq!(schema["required"], json!(["name", "project"]));
+        assert_eq!(
+            schema["properties"]["elicitation"]["required"],
+            json!(["elicitationId"])
+        );
+        assert_eq!(
+            schema["properties"]["elicitation"]["additionalProperties"],
+            false
+        );
+
+        // A schema whose members are of the wrong shape is left as it is, never panics.
+        let odd = mcp_input_schema(
+            json!({ "type": "object", "properties": 1, "required": "x" }),
+            true,
+        );
+        assert_eq!(odd["properties"], 1);
+        assert_eq!(odd["required"], "x");
+    }
+
+    /// A picture is image content only when it is a PNG with its data; anything else is data.
+    #[test]
+    fn only_a_png_with_data_becomes_image_content() {
+        for output in [
+            json!({ "image": { "mimeType": "image/svg+xml", "data": "PHN2Zz4=" } }),
+            json!({ "image": { "mimeType": "image/png" } }),
+            json!({ "image": { "data": "iVBORw0KGgo=" } }),
+            json!({ "image": { "mimeType": "image/png", "data": 7 } }),
+        ] {
+            let answer = call_result(&output);
+            assert_eq!(
+                answer["content"].as_array().map(Vec::len),
+                Some(1),
+                "{output}"
+            );
+            assert_eq!(answer["content"][0]["type"], "text");
+            assert_eq!(answer["structuredContent"], output);
+        }
+        // A view that is no object adds nothing to `_meta`.
+        let answer = call_result(&json!({
+            "image": { "mimeType": "image/png", "data": "iVBORw0KGgo=" },
+            "view": "flat"
+        }));
+        assert_eq!(answer["_meta"], json!({ UNTRUSTED_META: true }));
+        assert!(answer["structuredContent"].get("view").is_none());
+    }
+
+    /// AG-158: a sample answer's withheld fields go to `_meta`; an empty list adds no key.
+    #[test]
+    fn a_sample_names_what_it_withheld_in_meta() {
+        let answer = call_result(&json!({ "rows": [], "withheld": ["DataSource/s.email"] }));
+        assert_eq!(
+            answer["_meta"][WITHHELD_META],
+            json!(["DataSource/s.email"])
+        );
+        let answer = call_result(&json!({ "rows": [], "withheld": [] }));
+        assert!(answer["_meta"].get(WITHHELD_META).is_none());
+        let answer = call_result(&json!("text"));
+        assert_eq!(answer["structuredContent"], "text");
+    }
+
+    /// A refusal without `errors`, or with plain strings in it, still reads as one sentence each.
+    #[test]
+    fn a_refusal_lists_plain_error_strings_and_skips_what_it_cannot_read() {
+        let refused = problem_result(crate::ops::OpError::InvalidInput {
+            path: "/name".to_owned(),
+            message: "too long".to_owned(),
+        });
+        let text = refused["content"][0]["text"].as_str().expect("text");
+        assert!(text.contains("/name"), "{text}");
+        let plain = problem_result(crate::ops::OpError::Api(ApiError::Invalid {
+            detail: "bad".to_owned(),
+            errors: vec!["name: too long".to_owned()],
+        }));
+        let text = plain["content"][0]["text"].as_str().expect("text");
+        assert!(text.contains("\n- "), "{text}");
+        let none = problem_result(crate::ops::OpError::Api(ApiError::NotFound("gone".into())));
+        let text = none["content"][0]["text"].as_str().expect("text");
+        assert!(!text.contains("\n- "), "{text}");
+        assert_eq!(none["structuredContent"]["status"], 404);
+    }
+
+    /// F-R2POR4-012: the project comes from the arguments, else the params, and is a name.
+    #[test]
+    fn the_called_project_is_a_name_from_the_arguments_or_the_params() {
+        let empty = json!({});
+        assert_eq!(
+            called_project(&json!({ "project": "doprava" }), &empty).ok(),
+            Some("doprava")
+        );
+        assert_eq!(
+            called_project(&empty, &json!({ "project": "doprava" })).ok(),
+            Some("doprava")
+        );
+        assert_eq!(
+            called_project(&json!({ "project": "a" }), &json!({ "project": "b" })).ok(),
+            Some("a")
+        );
+        for missing in [
+            json!({}),
+            json!({ "project": "  " }),
+            json!({ "project": 7 }),
+        ] {
+            let refused = called_project(&missing, &empty).expect_err("missing");
+            assert!(refused.to_string().contains("project"), "{refused}");
+        }
+        let refused =
+            called_project(&json!({ "project": "Doprava!" }), &empty).expect_err("no name");
+        assert!(
+            matches!(refused, crate::ops::OpError::InvalidInput { ref path, .. } if path == "/project")
+        );
+    }
+
+    /// AG-147: the audit keeps identifiers: a resource address's words up to the first that is
+    /// none, a task's id, a prompt's name, a chart's endpoint; a tool name that is none is
+    /// `unknown`.
+    #[test]
+    fn the_audit_reads_identifiers_from_every_method() {
+        let read = audited(&json!({ "method": "resources/read",
+            "params": { "uri": "jc://doprava/endpoints/air/x y/z?q=1#f" } }));
+        assert_eq!(
+            read,
+            (
+                "resources/read".to_owned(),
+                Some("doprava/endpoints/air".to_owned())
+            )
+        );
+        let no_scheme =
+            audited(&json!({ "method": "resources/read", "params": { "uri": "doprava" } }));
+        assert_eq!(no_scheme.1, None);
+        let task = audited(&json!({ "method": "tasks/get", "params": { "taskId": "task-00ff" } }));
+        assert_eq!(task, ("tasks/get".to_owned(), Some("task-00ff".to_owned())));
+        let prompt = audited(
+            &json!({ "method": "prompts/get", "params": { "name": "find", "project": "doprava" } }),
+        );
+        assert_eq!(prompt.1.as_deref(), Some("doprava/find"));
+        let chart = audited(
+            &json!({ "method": "tools/call", "params": { "name": "jc_render",
+            "arguments": { "project": "doprava", "data": { "query": { "endpoint": "air" } } } } }),
+        );
+        assert_eq!(
+            chart,
+            ("jc_render".to_owned(), Some("doprava/air".to_owned()))
+        );
+        let long = "x".repeat(65);
+        assert_eq!(audited(&json!({ "method": long })).0, "unknown");
+        assert_eq!(
+            audited(&json!({ "method": "tools/call", "params": { "name": "a b" } })).0,
+            "unknown"
+        );
+        assert_eq!(audited(&Value::Null), ("unknown".to_owned(), None));
+        let value = audited(&json!({ "method": "tools/call", "params": { "name": "jc_x",
+            "arguments": { "project": "a".repeat(64), "kind": "", "name": "ok" } } }));
+        assert_eq!(value.1.as_deref(), Some("ok"));
+    }
+
+    /// The project door refuses a body whose params are no object, and keeps an id of any type.
+    #[test]
+    fn the_project_door_refuses_params_that_are_no_object() {
+        assert_eq!(
+            held_to(br#"{"id":"a","params":[1]}"#, "doprava").err(),
+            Some(Some(json!("a")))
+        );
+        assert_eq!(
+            held_to(br#"{"params":7}"#, "doprava").err(),
+            Some(Some(Value::Null))
+        );
+        assert_eq!(held_to(b"not json", "doprava").err(), Some(None));
+        let held =
+            held_to(br#"{"params":{"uri":"https://elsewhere/x"}}"#, "doprava").expect("held");
+        let held: Value = serde_json::from_slice(&held).expect("json");
+        assert_eq!(held["params"]["project"], "doprava");
+        let dash = held_to(br#"{"params":{"uri":"jc://-/organizations/a"}}"#, "doprava");
+        assert!(dash.is_ok());
+    }
+
+    /// An answer past the route's limit is a 413 that keeps the request id.
+    #[tokio::test]
+    async fn an_answer_past_the_limit_is_a_413_with_its_id() {
+        let big = json!({ "id": 4, "result": "x".repeat(MAX_RESPONSE_BYTES) });
+        let response = json_response(StatusCode::OK, &big);
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body = body_of(response).await;
+        assert_eq!(body["id"], 4);
+        assert!(body["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("one project")));
+        let small = json_response(StatusCode::CREATED, &json!({ "ok": true }));
+        assert_eq!(small.status(), StatusCode::CREATED);
+        assert_eq!(small.headers()[header::CONTENT_TYPE], "application/json");
+    }
+
+    #[test]
+    fn a_tool_may_ask_on_a_lane_a_destructive_hint_or_a_flow() {
+        let mut summary = crate::ops::summary(crate::ops::find("jc_resource_list").expect("op"));
+        assert!(!may_ask(&summary));
+        summary.annotations.destructive_hint = true;
+        assert!(may_ask(&summary));
+        summary.annotations.destructive_hint = false;
+        summary.lane = crate::change::Lane::Yellow;
+        assert!(may_ask(&summary));
+        summary.lane = crate::change::Lane::Green;
+        summary.name = "jc_flow_start".into();
+        assert!(may_ask(&summary));
+    }
+
+    /// S-44: a refusal that is no Denied, or of a Change in a project that is no name, stays.
+    #[test]
+    fn a_refusal_that_is_no_denied_change_keeps_its_words() {
+        let base: url::Url = "https://portal.test".parse().expect("url");
+        let approve = crate::ops::find("jc_change_approve").expect("registered");
+        let invalid = || crate::ops::OpError::InvalidInput {
+            path: "/id".to_owned(),
+            message: "no".to_owned(),
+        };
+        assert_eq!(
+            decided_in_portal(&base, approve, "doprava", &json!({}), invalid()).to_string(),
+            invalid().to_string()
+        );
+        let denied = crate::ops::OpError::Api(ApiError::Denied("no".into()));
+        assert_eq!(
+            decided_in_portal(&base, approve, "Bad Name", &json!({}), denied).to_string(),
+            crate::ops::OpError::Api(ApiError::Denied("no".into())).to_string()
+        );
+        for id in [
+            "chg-0000002",
+            "chg-0000002A",
+            "chg-0000002a0",
+            "abc-0000002a",
+        ] {
+            let denied = crate::ops::OpError::Api(ApiError::Denied("no".into()));
+            let said = decided_in_portal(&base, approve, "doprava", &json!({ "id": id }), denied);
+            assert!(
+                said.to_string().ends_with("/projects/doprava/approvals"),
+                "{id}"
+            );
+        }
+    }
+
+    fn steward(state: &AppState) -> crate::ops::Caller {
+        crate::ops::Caller {
+            bearer: None,
+            identity: crate::auth::session::Identity {
+                subject: "f:1:steward".to_owned(),
+                username: "steward".to_owned(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: vec![state.config.bootstrap_admins.clone()],
+                client: Some("claude-code".to_owned()),
+                second_factor: true,
+            },
+            via: crate::ops::Via::Mcp,
+            access: None,
+        }
+    }
+
+    fn nobody() -> crate::ops::Caller {
+        crate::ops::Caller::new(
+            crate::auth::session::Identity {
+                subject: "f:1:nobody".to_owned(),
+                username: "nobody".to_owned(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                client: None,
+                second_factor: false,
+            },
+            crate::ops::Via::Mcp,
+        )
+    }
+
+    fn pipeline_in(state: &AppState, project: &str, name: &str) {
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Pipeline".into(),
+            metadata: crate::resource::ObjectMeta::new(name, project),
+            spec: json!({}),
+            status: None,
+        });
+    }
+
+    /// One message through the JSON-RPC half every door shares: status and answer.
+    async fn rpc(state: &AppState, caller: crate::ops::Caller, body: &[u8]) -> (StatusCode, Value) {
+        let response = dispatch(state.clone(), caller, Bytes::copy_from_slice(body)).await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// No object is a parse error; a notification and a message without an id are accepted
+    /// with no answer; a method the server lacks is -32601.
+    #[tokio::test]
+    async fn the_dispatcher_answers_what_json_rpc_says_for_each_shape() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        for raw in [&b"not json"[..], b"[1]", b"\"ping\""] {
+            let (status, body) = rpc(&state, steward(&state), raw).await;
+            assert_eq!(
+                (status, body["error"]["code"].as_i64()),
+                (StatusCode::OK, Some(-32700))
+            );
+        }
+        for quiet in [
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+            json!({ "jsonrpc": "2.0", "method": "ping" }),
+        ] {
+            let (status, body) = rpc(&state, steward(&state), quiet.to_string().as_bytes()).await;
+            assert_eq!(
+                (status, body),
+                (StatusCode::ACCEPTED, Value::Null),
+                "{quiet}"
+            );
+        }
+        let (_, body) = rpc(
+            &state,
+            steward(&state),
+            br#"{"jsonrpc":"2.0","id":3,"method":"nope"}"#,
+        )
+        .await;
+        assert_eq!(
+            body["error"],
+            json!({ "code": -32601, "message": "method not found" })
+        );
+        assert_eq!(body["id"], 3);
+    }
+
+    /// AG-60: the Tasks methods answer the caller's own tasks; a missing id and another's task
+    /// are refused alike, and a working task is told to wait.
+    #[tokio::test]
+    async fn the_task_methods_answer_the_callers_own_tasks() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let call = |method: &str, params: Value| {
+            json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string()
+        };
+        let (_, listed) = rpc(
+            &state,
+            steward(&state),
+            call("tasks/list", json!({})).as_bytes(),
+        )
+        .await;
+        assert_eq!(listed["result"]["tasks"], json!([]));
+        for method in ["tasks/get", "tasks/result", "tasks/cancel"] {
+            let (_, body) = rpc(&state, steward(&state), call(method, json!({})).as_bytes()).await;
+            assert_eq!(body["error"]["message"], "missing taskId", "{method}");
+            let (_, body) = rpc(
+                &state,
+                steward(&state),
+                call(method, json!({ "taskId": "task-0" })).as_bytes(),
+            )
+            .await;
+            assert_eq!(
+                body["error"],
+                json!({ "code": -32602, "message": "unknown task" }),
+                "{method}"
+            );
+        }
+        let task = state.mcp_tasks.start("f:1:steward", std::future::pending());
+        let id = task["taskId"].as_str().expect("id");
+        let (_, body) = rpc(
+            &state,
+            steward(&state),
+            call("tasks/result", json!({ "taskId": id })).as_bytes(),
+        )
+        .await;
+        assert_eq!(
+            body["error"],
+            json!({ "code": -32002, "message": "the task is still working" })
+        );
+        let (_, body) = rpc(
+            &state,
+            nobody(),
+            call("tasks/get", json!({ "taskId": id })).as_bytes(),
+        )
+        .await;
+        assert_eq!(body["error"]["message"], "unknown task");
+        let (_, body) = rpc(
+            &state,
+            steward(&state),
+            call("tasks/get", json!({ "taskId": id })).as_bytes(),
+        )
+        .await;
+        assert_eq!(body["result"]["status"], "working");
+        let (_, body) = rpc(
+            &state,
+            steward(&state),
+            call("tasks/list", json!({})).as_bytes(),
+        )
+        .await;
+        assert_eq!(body["result"]["tasks"][0]["taskId"], id);
+        let (_, body) = rpc(
+            &state,
+            steward(&state),
+            call("tasks/cancel", json!({ "taskId": id })).as_bytes(),
+        )
+        .await;
+        assert_eq!(body["result"]["status"], "cancelled");
+    }
+
+    /// A project the caller may not read: the handshake answers as for an unknown one, the
+    /// resource list is empty; discovery counts the project's tools; an unknown prompt and an
+    /// unknown resource are refused; a prompt without its project names the placeholder.
+    #[tokio::test]
+    async fn the_handshake_resources_and_prompts_tell_a_stranger_nothing() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        pipeline_in(&state, "ovzdusie", "load");
+        let call = |method: &str, params: Value| {
+            json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }).to_string()
+        };
+        let (status, body) = rpc(
+            &state,
+            nobody(),
+            call("initialize", json!({ "project": "ovzdusie" })).as_bytes(),
+        )
+        .await;
+        assert_eq!(
+            (status, body["error"]["message"].as_str()),
+            (StatusCode::NOT_FOUND, Some("unknown project"))
+        );
+        let (_, body) = rpc(
+            &state,
+            nobody(),
+            call("resources/list", json!({ "project": "ovzdusie" })).as_bytes(),
+        )
+        .await;
+        assert_eq!(body["result"]["resources"], json!([]));
+        let (_, body) = rpc(
+            &state,
+            steward(&state),
+            call("server/discover", json!({ "project": "ovzdusie" })).as_bytes(),
+        )
+        .await;
+        let count = body["result"]["tools"]["count"].as_u64().expect("count");
+        assert!(
+            count > 0 && count <= crate::ops::registry().len() as u64,
+            "{body}"
+        );
+        let (_, body) = rpc(
+            &state,
+            steward(&state),
+            call("prompts/get", json!({ "name": "nope" })).as_bytes(),
+        )
+        .await;
+        assert_eq!(body["error"]["message"], "unknown prompt");
+        let (_, body) = rpc(
+            &state,
+            steward(&state),
+            call("prompts/get", json!({ "name": "find" })).as_bytes(),
+        )
+        .await;
+        let text = body["result"]["messages"][0]["content"]["text"]
+            .as_str()
+            .expect("text");
+        assert!(text.contains("Project: <project>."), "{text}");
+        let (_, body) = rpc(
+            &state,
+            steward(&state),
+            call(
+                "resources/read",
+                json!({ "uri": "jc://ovzdusie/nothings/x" }),
+            )
+            .as_bytes(),
+        )
+        .await;
+        assert_eq!(
+            body["error"],
+            json!({ "code": -32002, "message": "resource not found" })
+        );
+    }
+
+    /// The project a list is about: the one named, else the first the caller reads, else
+    /// `default`.
+    #[tokio::test]
+    async fn a_list_without_a_project_takes_the_first_the_caller_reads() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        assert_eq!(project_of(&json!({}), &state, &steward(&state)), "default");
+        pipeline_in(&state, "ovzdusie", "load");
+        assert_eq!(project_of(&json!({}), &state, &steward(&state)), "ovzdusie");
+        assert_eq!(project_of(&json!({}), &state, &nobody()), "default");
+        assert_eq!(
+            project_of(&json!({ "project": "x" }), &state, &nobody()),
+            "x"
+        );
+    }
+
+    /// JC2-29: a person's own door names the projects they read, at most 50; a connector or a
+    /// run gets the plain words.
+    #[tokio::test]
+    async fn the_instructions_name_the_projects_a_person_reads() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let words = instructions_for(&state, &nobody());
+        assert!(
+            words.ends_with("You may read no project yet: an administrator binds you to one."),
+            "{words}"
+        );
+        let mut run = steward(&state);
+        run.via = crate::ops::Via::Agent;
+        assert_eq!(instructions_for(&state, &run), INSTRUCTIONS);
+        let mut through = steward(&state);
+        through.access = Some(
+            crate::connectors::of_conversation("r1", "f:1:steward", "p-00", "pipeline").access(),
+        );
+        assert_eq!(instructions_for(&state, &through), INSTRUCTIONS);
+        pipeline_in(&state, "p-00", "load");
+        let one = instructions_for(&state, &steward(&state));
+        assert!(one.ends_with("Projects you read: p-00."), "{one}");
+        for n in 1..=MAX_PROJECTS_NAMED {
+            pipeline_in(&state, &format!("p-{n:02}"), "load");
+        }
+        let many = instructions_for(&state, &steward(&state));
+        assert!(many.contains("Projects you read include p-00, "), "{many}");
+        assert!(many.contains("p-49.") && !many.contains("p-50"), "{many}");
+    }
+
+    #[test]
+    fn a_space_without_a_tenant_says_why() {
+        let said = space_description("air", Err("no project id yet".to_owned()));
+        assert_eq!(
+            said,
+            "Context Space air; broker tenant not known yet: no project id yet"
+        );
+        let said = space_description("air", Ok("ovzdusie-air".to_owned()));
+        assert_eq!(said, "Context Space air; broker tenant: ovzdusie-air");
+    }
+
+    /// AG-70: a caller narrowed by an access reads only the kinds the access reads.
+    #[test]
+    fn an_access_narrows_the_kinds_a_caller_reads() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let access =
+            crate::connectors::of_conversation("r1", "f:1:steward", "ovzdusie", "pipeline")
+                .access();
+        let mut narrowed = steward(&state);
+        narrowed.access = Some(access.clone());
+        let mut some_read = false;
+        for kind in ["Pipeline", "Role", "Endpoint", "DataSource", "Organization"] {
+            let open = may_read_kind(&state, &steward(&state), "ovzdusie", kind);
+            assert_eq!(
+                may_read_kind(&state, &narrowed, "ovzdusie", kind),
+                access.reads(kind) && open,
+                "{kind}"
+            );
+            some_read |= access.reads(kind);
+        }
+        assert!(some_read);
+        assert!(!access.reads("Role"));
+    }
+
+    /// AG-63: a caller who may not run the operation is refused before any question, with the
+    /// approvals page for a change decision.
+    #[tokio::test]
+    async fn a_caller_whose_access_lacks_the_operation_is_refused_before_a_question() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut narrowed = steward(&state);
+        narrowed.access = Some(
+            crate::connectors::of_conversation("r1", "f:1:steward", "ovzdusie", "pipeline")
+                .access(),
+        );
+        let via = crate::change::ProposedVia::mcp(None);
+        let params = json!({ "name": "jc_change_approve", "arguments": { "project": "ovzdusie", "id": "chg-0000002a" } });
+        let mut answer = None;
+        let envelope = answer_call(&state, narrowed, json!(1), &params, &via, &mut answer).await;
+        assert_eq!(envelope["result"]["isError"], true, "{envelope}");
+        assert!(
+            !envelope.to_string().contains("mcp-elicitations"),
+            "{envelope}"
+        );
+        assert!(answer.is_none());
+    }
+
+    /// AG-60: only a tool listed with `taskSupport: optional` runs as a task.
+    #[tokio::test]
+    async fn a_short_tool_asked_as_a_task_is_told_to_answer_inline() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let via = crate::change::ProposedVia::mcp(None);
+        let params = json!({ "name": "jc_resource_list", "arguments": { "project": "ovzdusie", "kind": "Pipeline" }, "task": {} });
+        let mut answer = None;
+        let envelope = answer_call(
+            &state,
+            steward(&state),
+            json!(1),
+            &params,
+            &via,
+            &mut answer,
+        )
+        .await;
+        assert_eq!(
+            envelope["error"],
+            json!({ "code": -32602, "message": "this tool answers inline: send it without `task`" })
+        );
+        let unknown = json!({ "name": "jc_nothing", "arguments": { "project": "ovzdusie" } });
+        let envelope = answer_call(
+            &state,
+            steward(&state),
+            json!(2),
+            &unknown,
+            &via,
+            &mut answer,
+        )
+        .await;
+        assert_eq!(envelope["error"]["message"], "unknown tool");
+    }
+
+    /// AG-12: an error envelope, or a result whose `_meta` is no object, gets no grounding.
+    #[test]
+    fn grounding_goes_only_into_a_result_with_an_object_meta() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut failed = json!({ "error": { "code": 1 } });
+        ground(&state, &mut failed);
+        assert_eq!(failed, json!({ "error": { "code": 1 } }));
+        let mut odd = json!({ "result": { "_meta": "flat" } });
+        ground(&state, &mut odd);
+        assert_eq!(odd, json!({ "result": { "_meta": "flat" } }));
+        let mut plain = json!({ "result": {} });
+        ground(&state, &mut plain);
+        assert_eq!(
+            plain["result"]["_meta"][GROUNDING_META]["drift"],
+            "unsynced"
+        );
+    }
+
+    /// Addresses of no known shape, a schema of no kind and a model source the Portal cannot read
+    /// are no resource.
+    #[tokio::test]
+    async fn an_address_of_no_known_shape_reads_nothing() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "DataModel".into(),
+            metadata: crate::resource::ObjectMeta::new("m", "ovzdusie"),
+            spec: json!({}),
+            status: None,
+        });
+        let caller = steward(&state);
+        for uri in [
+            "https://x/y",
+            "jc://ovzdusie",
+            "jc://a/b/c/d/e",
+            "jc://schemas/NoSuchKind",
+            "jc://-/nothings/x",
+            "jc://ovzdusie/datamodels/m/linkml",
+            "jc://ovzdusie/drafts/Pipeline/none",
+        ] {
+            assert_eq!(read_resource(&state, &caller, uri).await, None, "{uri}");
+        }
+        assert!(read_resource(&state, &caller, "jc://schemas/Endpoint")
+            .await
+            .is_some());
+    }
+
+    /// A question about a draft that cannot be read is bound to the arguments alone.
+    #[tokio::test]
+    async fn a_question_about_a_missing_draft_binds_the_arguments() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let identity = steward(&state).identity;
+        for input in [
+            json!({ "draft": { "kind": "Pipeline", "name": "none" } }),
+            json!({ "draft": "not a reference" }),
+            json!({ "name": "x" }),
+        ] {
+            assert_eq!(bound_to(&state, &identity, "ovzdusie", &input).await, input);
+        }
+    }
+
+    /// MCP-33: the project door refuses a message naming another project, or none at all,
+    /// before it reads the token.
+    #[tokio::test]
+    async fn the_project_door_refuses_before_the_token() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let door = |body: &'static [u8]| {
+            handle_project_mcp(
+                State(state.clone()),
+                Path("doprava".to_owned()),
+                HeaderMap::new(),
+                Bytes::from_static(body),
+            )
+        };
+        let response =
+            door(br#"{"jsonrpc":"2.0","id":5,"method":"tools/list","params":{"project":"espoo"}}"#)
+                .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_of(response).await;
+        assert_eq!(
+            (body["id"].clone(), body["error"]["code"].clone()),
+            (json!(5), json!(-32602))
+        );
+        let body = body_of(door(b"[]").await).await;
+        assert_eq!(body["error"]["code"], -32700);
+        let unauthorized = door(br#"{"jsonrpc":"2.0","id":6,"method":"initialize"}"#).await;
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// The doors take POST alone; a browser origin that is no text is never answered.
+    #[tokio::test]
+    async fn the_doors_take_post_alone_and_refuse_an_origin_that_is_no_text() {
+        use tower::ServiceExt;
+        let config = crate::config::Config::for_tests();
+        let app = router(&config).with_state(AppState::new(config.clone(), None));
+        for uri in ["/api/v1/mcp", "/api/v1/projects/doprava/mcp"] {
+            let get = axum::http::Request::builder()
+                .uri(uri)
+                .body(Body::empty())
+                .expect("request");
+            let response = app.clone().oneshot(get).await.expect("answer");
+            assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{uri}");
+        }
+        let preflight = axum::http::Request::builder()
+            .method("OPTIONS")
+            .uri("/api/v1/mcp")
+            .header(
+                header::ORIGIN,
+                axum::http::HeaderValue::from_bytes(b"https://\xffportal").expect("bytes"),
+            )
+            .header("access-control-request-method", "POST")
+            .body(Body::empty())
+            .expect("request");
+        let response = app.oneshot(preflight).await.expect("answer");
+        assert!(!response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+        let state = AppState::new(config, None);
+        assert!(authorization_servers(&state).is_empty());
+        let doc = body_of(oauth_protected_resource(State(state)).await).await;
+        assert_eq!(doc["authorization_servers"], json!([]));
+        assert_eq!(doc["scopes_supported"], json!(["mcp:portal"]));
+    }
+
+    /// AG-70, T-7542: a run's call is on the record and answered; one past the byte limit is a 413.
+    #[tokio::test]
+    async fn a_runs_call_is_recorded_and_answered_and_one_too_large_is_refused() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let body = Bytes::from(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }).to_string());
+        let response = dispatch_for(
+            state.clone(),
+            steward(&state),
+            body,
+            Some("bbsk".to_owned()),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_of(response).await["result"], json!({}));
+        let huge = Bytes::from(vec![b' '; MAX_REQUEST_BYTES + 1]);
+        let response = dispatch_for(state.clone(), steward(&state), huge, None).await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let said = body_of(response).await["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(said.contains("put a large manifest in a draft"), "{said}");
+    }
+
+    /// MCP-16, AUD-02 (T-7542): a call whose `started` row cannot be written never runs (503);
+    /// one whose outcome cannot be written answers 500 saying it may have run; an activity row
+    /// that cannot be written loses the row, never the answer. Needs a PostgreSQL the test may
+    /// write to.
+    #[tokio::test]
+    async fn a_call_off_the_record_never_runs_and_a_lost_outcome_says_so() {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let organization = crate::host_registry::SeedOrganization {
+            name: "mcp-audit".to_owned(),
+            organization_id: None,
+            host: "portal.mcp-audit.example".to_owned(),
+            catalogue_id: None,
+        };
+        let mut config = crate::config::Config::for_tests();
+        config.installation_organization = Some(organization.clone());
+        let pool = crate::db::connect(&url).await.expect("connect + migrate");
+        crate::host_registry::seed_organizations(&pool, &[organization])
+            .await
+            .expect("the installation Organization");
+        let state = AppState::new(config, None).with_db(pool.clone());
+        let audit = || Audit {
+            trail: crate::connectors::Trail::new(None, None),
+            subject: "f:1:ana".to_owned(),
+            client: None,
+            tool: "ping".to_owned(),
+            target: None,
+        };
+        let ok = || (StatusCode::OK.into_response(), "allowed".to_owned());
+        assert_eq!(
+            on_record(&state, audit(), async { ok() }).await.status(),
+            StatusCode::OK
+        );
+
+        let closing = pool.clone();
+        let lost = on_record(&state, audit(), async move {
+            closing.close().await;
+            ok()
+        })
+        .await;
+        assert_eq!(lost.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // The words are the generic 500's: an internal error never carries its own detail.
+        assert_eq!(
+            body_of(lost).await["type"],
+            crate::error::type_uri("internal-error")
+        );
+
+        // Had the call been awaited, its 200 would come back, or the 500 of its lost outcome.
+        let refused = on_record(&state, audit(), std::future::ready(ok())).await;
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let said = body_of(refused).await.to_string();
+        assert!(said.contains("did not run"), "{said}");
+
+        let caller = steward(&state);
+        let via = crate::change::ProposedVia::mcp(Some("claude-code"));
+        let params = json!({ "name": "jc_resource_list", "arguments": { "project": "ovzdusie" } });
+        record_call(
+            &state,
+            &caller,
+            &params,
+            &json!({ "result": {} }),
+            None,
+            &via,
+        )
+        .await;
+    }
+
+    /// RTE-10: a configured client origin is answered cross-origin beside the Portal's own.
+    #[tokio::test]
+    async fn a_configured_client_origin_is_answered_cross_origin() {
+        use tower::ServiceExt;
+        let mut config = crate::config::Config::for_tests();
+        config.mcp_client_origins = vec!["https://client.example".to_owned()];
+        let app = router(&config).with_state(AppState::new(config.clone(), None));
+        let preflight = |origin: &'static str| {
+            axum::http::Request::builder()
+                .method("OPTIONS")
+                .uri("/api/v1/mcp")
+                .header(header::ORIGIN, origin)
+                .header("access-control-request-method", "POST")
+                .body(Body::empty())
+                .expect("request")
+        };
+        let allowed = app
+            .clone()
+            .oneshot(preflight("https://client.example"))
+            .await
+            .expect("answer");
+        assert_eq!(
+            allowed.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "https://client.example"
+        );
+        let other = app
+            .oneshot(preflight("https://other.example"))
+            .await
+            .expect("answer");
+        assert!(!other
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+    }
+
+    /// A call naming its project in the params alone, with no arguments or arguments that are no
+    /// object, still runs as that project's; a credential in an argument is refused first.
+    #[tokio::test]
+    async fn arguments_absent_or_flat_and_a_pasted_credential() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let via = crate::change::ProposedVia::mcp(None);
+        let mut answer = None;
+        let bare = json!({ "name": "jc_resource_list", "project": "ovzdusie" });
+        let envelope =
+            answer_call(&state, steward(&state), json!(1), &bare, &via, &mut answer).await;
+        assert!(envelope.get("result").is_some(), "{envelope}");
+        let flat = json!({ "name": "jc_resource_list", "project": "ovzdusie", "arguments": "x" });
+        let envelope =
+            answer_call(&state, steward(&state), json!(2), &flat, &via, &mut answer).await;
+        assert_eq!(envelope["result"]["isError"], true, "{envelope}");
+        let pasted = json!({ "name": "jc_resource_list",
+            "arguments": { "project": "ovzdusie", "kind": "Pipeline", "password": "typed-in" } });
+        let envelope = answer_call(
+            &state,
+            steward(&state),
+            json!(3),
+            &pasted,
+            &via,
+            &mut answer,
+        )
+        .await;
+        assert_eq!(envelope["result"]["isError"], true, "{envelope}");
+        let text = envelope["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text");
+        assert!(
+            text.contains("/password") && !text.contains("typed-in"),
+            "{text}"
+        );
+    }
+
+    /// AG-60: a task is refused while the caller's calls at once are all running.
+    #[tokio::test]
+    async fn a_task_past_the_running_calls_is_refused() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let held: Vec<_> = (0..MAX_PARALLEL_CALLS)
+            .map(|_| {
+                state
+                    .mcp_enter(&[("f:1:steward", MAX_PARALLEL_CALLS)])
+                    .expect("a slot")
+            })
+            .collect();
+        let via = crate::change::ProposedVia::mcp(None);
+        let params = json!({ "name": "jc_pipeline_test", "task": {}, "arguments": {
+            "project": "ovzdusie",
+            "pipeline": { "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Pipeline",
+                          "metadata": { "name": "bikes" }, "spec": {} },
+            "sample": "{}" } });
+        let mut answer = None;
+        let envelope = answer_call(
+            &state,
+            steward(&state),
+            json!(1),
+            &params,
+            &via,
+            &mut answer,
+        )
+        .await;
+        let text = envelope["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(text.contains("of your calls are running now"), "{envelope}");
+        drop(held);
+    }
+
+    /// An answer whose body cannot be read is an error, never an allowed call.
+    #[tokio::test]
+    async fn an_answer_that_cannot_be_read_is_an_error() {
+        let cut = futures_util::stream::once(async {
+            Err::<Bytes, std::io::Error>(std::io::Error::other("cut"))
+        });
+        let (response, verdict) = outcome(Response::new(Body::from_stream(cut))).await;
+        assert_eq!(
+            (response.status(), verdict.as_str()),
+            (StatusCode::INTERNAL_SERVER_ERROR, "error")
         );
     }
 }
