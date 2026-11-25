@@ -304,7 +304,8 @@ mod tests {
             "HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/again\r\nContent-Length: 0\r\n\r\n"
         );
         tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
+            loop {
+                let (mut socket, _) = listener.accept().await.expect("a connection");
                 let head = head.clone();
                 tokio::spawn(async move {
                     let mut request = [0u8; 2048];
@@ -351,13 +352,11 @@ mod tests {
     /// `localhost` is the rebinding in miniature, a name whose DNS answer is loopback.
     #[tokio::test]
     async fn a_name_that_resolves_to_loopback_is_refused_by_the_resolver() {
-        let err = match PublicOnly
+        let err = PublicOnly
             .resolve("localhost".parse().expect("a name"))
             .await
-        {
-            Ok(addrs) => panic!("resolved to {:?}", addrs.collect::<Vec<_>>()),
-            Err(err) => err,
-        };
+            .err()
+            .expect("localhost resolves to no public address");
         let found = refused(err.as_ref()).expect("the resolver's own refusal");
         assert_eq!(found.host, "localhost");
     }
@@ -369,16 +368,17 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
         let addr = listener.local_addr().expect("an address");
         tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
+            loop {
+                let (mut socket, _) = listener.accept().await.expect("a connection");
                 let head = head.clone();
                 tokio::spawn(async move {
                     let mut request = [0u8; 2048];
                     let _ = socket.read(&mut request).await;
-                    if socket.write_all(head.as_bytes()).await.is_err() {
-                        return;
-                    }
+                    let mut open = socket.write_all(head.as_bytes()).await.is_ok();
                     let chunk = format!("{:x}\r\n{}\r\n", 1024, "x".repeat(1024));
-                    while endless && socket.write_all(chunk.as_bytes()).await.is_ok() {}
+                    while endless && open {
+                        open = socket.write_all(chunk.as_bytes()).await.is_ok();
+                    }
                 });
             }
         });
@@ -395,21 +395,16 @@ mod tests {
         let head =
             format!("HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\n\r\n");
         let url = serve(head, false).await;
-        match guarded().get(url).send().await {
-            Ok(response) => panic!("followed to {}", response.url()),
-            Err(err) => err,
-        }
+        guarded()
+            .get(url)
+            .send()
+            .await
+            .expect_err("the redirect is not followed")
     }
 
     fn refusal_of(err: &reqwest::Error) -> Option<&Refusal> {
-        let mut cause: Option<&(dyn Error + 'static)> = Some(err);
-        while let Some(current) = cause {
-            if let Some(found) = current.downcast_ref::<Refusal>() {
-                return Some(found);
-            }
-            cause = current.source();
-        }
-        None
+        std::iter::successors(Some(err as &(dyn Error + 'static)), |&e| e.source())
+            .find_map(|e| e.downcast_ref::<Refusal>())
     }
 
     #[tokio::test]

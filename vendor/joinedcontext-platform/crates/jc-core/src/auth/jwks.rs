@@ -115,15 +115,10 @@ async fn fetch(
         .map_err(|e| JwksError::Unreachable(e.to_string()))
 }
 
-/// Refreshes the keys forever, starting now.
+/// Refreshes the keys forever, starting now, dialing [`refresh_at`]'s `reach` when given.
 ///
 /// A failed refresh keeps the keys the verifier already has: a realm that is briefly
 /// unreachable must not take every authenticated caller down with it.
-pub async fn keep_current(verifier: Arc<Verifier>, url: String) {
-    keep_current_at(verifier, url, None).await;
-}
-
-/// [`keep_current`] with [`refresh_at`]'s `reach`.
 pub async fn keep_current_at(
     verifier: Arc<Verifier>,
     url: String,
@@ -194,7 +189,8 @@ mod tests {
         let address = listener.local_addr().expect("an address");
         let held = tokio::spawn(async move {
             let (_socket, _) = listener.accept().await.expect("a connection");
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            // held open past the refresh's timeout below, never answered
+            tokio::time::sleep(std::time::Duration::from_millis(900)).await;
         });
         let verifier = Verifier::new("http://realm");
         let started = std::time::Instant::now();
@@ -209,8 +205,8 @@ mod tests {
             matches!(outcome, Err(JwksError::Unreachable(_))),
             "{outcome:?}"
         );
-        assert!(started.elapsed() < std::time::Duration::from_secs(5));
-        held.abort();
+        assert!(started.elapsed() < std::time::Duration::from_millis(900));
+        held.await.expect("the silent realm ends");
     }
 
     /// One HTTP answer on a fresh loopback listener; the URL to fetch it from.
@@ -221,11 +217,10 @@ mod tests {
             .expect("a listener");
         let address = listener.local_addr().expect("an address");
         tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
-                let mut head = vec![0; 4096];
-                let _ = socket.read(&mut head).await;
-                let _ = socket.write_all(answer.as_bytes()).await;
-            }
+            let (mut socket, _) = listener.accept().await.expect("a connection");
+            let mut head = vec![0; 4096];
+            let _ = socket.read(&mut head).await;
+            let _ = socket.write_all(answer.as_bytes()).await;
         });
         format!("http://{address}/certs")
     }
@@ -253,6 +248,8 @@ mod tests {
         for answer in [
             "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
             "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+            // a body cut short: the connection closes 95 bytes before its length
+            "HTTP/1.1 200 OK\r\ncontent-length: 100\r\nconnection: close\r\n\r\n{\"keys\"",
         ] {
             let url = serve_once(answer).await;
             let outcome = refresh(&verifier, &url).await;
@@ -274,10 +271,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keep_current_loads_the_keys_and_goes_on_refreshing() {
+    async fn keeping_current_loads_the_keys_and_goes_on_refreshing() {
         let url = serve_once(EMPTY_SET).await;
         let verifier = Arc::new(Verifier::new("http://realm"));
-        let task = tokio::spawn(keep_current(Arc::clone(&verifier), url));
+        let task = tokio::spawn(keep_current_at(Arc::clone(&verifier), url, None));
         // The first refresh runs at once; the loop then sleeps until the next one.
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         assert!(!task.is_finished(), "the loop runs for ever");

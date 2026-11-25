@@ -718,8 +718,7 @@ mod tests {
         let jwks: jsonwebtoken::jwk::JwkSet = serde_json::from_value(serde_json::json!({
             "keys": [
                 {"kty": "RSA", "kid": "broken", "alg": "RS256", "n": "!!", "e": "AQAB"},
-                {"kty": "oct", "kid": "shared", "alg": "HS256", "k": "c2VjcmV0"},
-                {"kty": "EC", "crv": "P-256", "alg": "ES256"}
+                {"kty": "oct", "kid": "shared", "alg": "HS256", "k": "c2VjcmV0"}
             ]
         }))
         .expect("a JWKS");

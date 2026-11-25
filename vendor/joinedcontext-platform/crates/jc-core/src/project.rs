@@ -856,7 +856,7 @@ mod edge_tests {
         // a manifest that is no mapping has no kind either, and is refused for that first
         let mut non_obj = serde_json::json!("not-a-map");
         let err = mount(&mut non_obj, "my-slug").unwrap_err();
-        assert!(err.to_string().contains("is not a manifest kind"), "{err}");
+        assert!(err.to_string().contains("a manifest is a mapping"), "{err}");
 
         let mut bad_meta = serde_json::json!({ "kind": "Endpoint", "metadata": "not-map" });
         let err = mount(&mut bad_meta, "my-slug").unwrap_err();

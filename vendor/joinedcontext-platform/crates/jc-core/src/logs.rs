@@ -81,6 +81,7 @@ mod tests {
             tracing::debug!(target: "context_gateway", "not written at info");
             tracing::info!(target: "hyper", "not a target the filter names");
         });
+        buffer.clone().flush().expect("a buffer flushes");
         let written = String::from_utf8(buffer.0.lock().expect("buffer").clone()).expect("utf-8");
         let lines: Vec<Value> = written
             .lines()
