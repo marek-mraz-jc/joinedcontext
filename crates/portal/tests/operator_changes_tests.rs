@@ -894,8 +894,13 @@ fn with_age_key(state: &mut AppState) {
 /// Organization's administrator reads and asks for nothing; the proposer never approves; the
 /// password is sealed until a second operator approves, written to the sign-in service then,
 /// and never in a read, the payload, the audit or a decided row.
+/// The installation has one `smtp` target and one open operator Change on it at a time, and the
+/// tests share the database: the two tests that open an `SmtpSet` Change take turns.
+static SMTP_TARGET: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 async fn the_e_mail_server_waits_for_a_second_operator_and_its_password_is_never_read_back() {
+    let _smtp = SMTP_TARGET.lock().await;
     let (mut state, _) = world().await;
     with_age_key(&mut state);
     let kc = realm(&mut state, "sub-ops-b", "ops-b", true, &[]).await;
@@ -1071,6 +1076,7 @@ async fn the_e_mail_server_waits_for_a_second_operator_and_its_password_is_never
 /// settings is 422 on `smtp` and the Change stays open.
 #[tokio::test]
 async fn the_e_mail_server_password_and_the_realms_refusal_are_named() {
+    let _smtp = SMTP_TARGET.lock().await;
     let (mut state, _) = world().await;
     with_age_key(&mut state);
     let kc = realm(&mut state, "sub-ops-b", "ops-b", true, &[]).await;
