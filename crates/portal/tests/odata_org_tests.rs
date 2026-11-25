@@ -686,6 +686,145 @@ async fn each_path_shape_answers_its_status() {
     assert!(body["@odata.etag"].is_string(), "{body}");
 }
 
+/// Each path or option the resource dispatcher refuses answers its OData status, every mismatch
+/// listed at once (T-7837): a malformed path, a bad `$skiptoken` on each set's page and count, a
+/// property path, and a key of the wrong shape for projects, kinds, members and Organization sets;
+/// a `$count` reads no `$skiptoken`, so a garbled one changes nothing.
+#[tokio::test]
+async fn each_refused_resource_shape_answers_its_status() {
+    let state = state();
+    let mode = Mode::Path("hel");
+    let cookie = cookies(&state.config, person("hel-only", &[]), "hel").await;
+    let root = cookies(&state.config, person("root", groups_of("root")), "hel").await;
+    let mut wrong = Vec::new();
+    for (who, uri, want) in [
+        (
+            &cookie,
+            "/api/v1/projects('helsinki'",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects/$count?$skiptoken=garbage",
+            StatusCode::OK,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects?$skiptoken=garbage",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects?$expand=spaces&$skiptoken=garbage",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects(name='helsinki',x='y')/spaces",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects('helsinki')/spaces/$count?$skiptoken=garbage",
+            StatusCode::OK,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects('helsinki')/spaces('a')/name",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects('nowhere')/spaces",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects('nowhere')",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            &cookie,
+            "/api/v1/spaces/$count?$skiptoken=garbage",
+            StatusCode::OK,
+        ),
+        (
+            &cookie,
+            "/api/v1/spaces?$skiptoken=garbage",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/spaces(project='helsinki')",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/spaces(project='nowhere',name='x')",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            &cookie,
+            "/api/v1/spaces(project='helsinki',name='x')/name",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (&root, "/api/v1/members/$count", StatusCode::OK),
+        (
+            &root,
+            "/api/v1/members/$count?$skiptoken=garbage",
+            StatusCode::OK,
+        ),
+        (&root, "/api/v1/members(1)", StatusCode::BAD_REQUEST),
+        (
+            &root,
+            "/api/v1/members('a')/name",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (&root, "/api/v1/organizationRoles/$count", StatusCode::OK),
+        (
+            &root,
+            "/api/v1/organizationRoles/$count?$skiptoken=garbage",
+            StatusCode::OK,
+        ),
+        (
+            &root,
+            "/api/v1/organizationRoles(1)",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &root,
+            "/api/v1/organizationRoles('x')/name",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (&root, "/api/v1/nothings", StatusCode::NOT_FOUND),
+    ] {
+        let answer = send(&state, mode, who, uri, &[]).await;
+        if answer.status != want {
+            wrong.push(format!("{uri}: {} {}", answer.status, answer.text));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+
+    // An OData request whose body is over 1 MiB is refused before anything reads it.
+    let big = vec![b' '; (1 << 20) + 16];
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/api/v1/projects")
+        .header(header::HOST, SHARED)
+        .header(header::COOKIE, &cookie)
+        .header("odata-version", "4.01")
+        .body(Body::from(big))
+        .expect("request");
+    request
+        .extensions_mut()
+        .insert(RequestOrganization("hel".to_owned()));
+    let response = server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
 /// The `portals` set (ODP-08): 401 to nobody, refused to a reader without a Portal rule, and
 /// an Organization's portal reader sees only that Organization's portals.
 /// The router placed the request in an Organization this Portal holds no host for (one the

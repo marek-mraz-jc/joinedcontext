@@ -3561,4 +3561,137 @@ mod tests {
         );
         assert!(metadata_json(model).is_ok());
     }
+
+    /// Every path form an action binds to, and each refusal of one that is not (T-7837).
+    #[test]
+    fn an_action_binds_to_a_project_an_entity_or_an_organization_manifest_only() {
+        let status = |entity: &str| bound_to(entity).map(|_| ()).map_err(|r| r.status());
+        let (project, none) = bound_to("projects('air')").expect("a project");
+        assert_eq!((project.as_str(), none.is_none()), ("air", true));
+        let (project, set) = bound_to("projects/air/spaces/counters").expect("key as segment");
+        let (set, name) = set.expect("a kind");
+        assert_eq!(
+            (project.as_str(), set.set.as_str(), name.as_str()),
+            ("air", "spaces", "counters")
+        );
+        let (project, set) = bound_to("spaces(project='air',name='counters')").expect("compound");
+        assert_eq!(
+            (project.as_str(), set.map(|(_, n)| n)),
+            ("air", Some("counters".to_owned()))
+        );
+        let (namespace, set) = bound_to("organizationRoles('viewer')").expect("an org manifest");
+        assert_eq!(namespace, ORG_NAMESPACE);
+        assert_eq!(set.map(|(_, n)| n).as_deref(), Some("viewer"));
+        assert_eq!(status("organizationRoles(1)"), Err(StatusCode::BAD_REQUEST));
+        assert_eq!(
+            status("spaces(project='air')"),
+            Err(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            status("spaces(project='air',nome='x')"),
+            Err(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(status("nothings('x')"), Err(StatusCode::NOT_FOUND));
+        assert_eq!(status("projects('air')/spaces"), Err(StatusCode::NOT_FOUND));
+        assert_eq!(status("projects"), Err(StatusCode::NOT_FOUND));
+        assert_eq!(status("$metadata"), Err(StatusCode::NOT_FOUND));
+        assert_eq!(status("projects/Not_A_Name"), Err(StatusCode::NOT_FOUND));
+    }
+
+    /// An action's body: none, a JSON object of its own parameters, or a 400 naming why.
+    #[test]
+    fn an_actions_parameters_are_one_json_object_of_named_members() {
+        let status = |body: &str, allowed: &[&str]| {
+            parameters(body.as_bytes(), allowed)
+                .map(|p| p.len())
+                .map_err(|r| r.status())
+        };
+        assert_eq!(status("", &["dryRun"]), Ok(0));
+        assert_eq!(status("{}", &["dryRun"]), Ok(0));
+        assert_eq!(status(r#"{"dryRun":true}"#, &["dryRun"]), Ok(1));
+        assert_eq!(status("[1]", &["dryRun"]), Err(StatusCode::BAD_REQUEST));
+        assert_eq!(
+            status("not json", &["dryRun"]),
+            Err(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            status(r#"{"other":1}"#, &["dryRun"]),
+            Err(StatusCode::BAD_REQUEST)
+        );
+        let action = |body: &str| {
+            action_parameters(body.as_bytes())
+                .map(|p| p.len())
+                .map_err(|r| r.status())
+        };
+        assert_eq!(action(""), Ok(0));
+        assert_eq!(action(r#"{"a":1,"b":2}"#), Ok(2));
+        assert_eq!(action("\"text\""), Err(StatusCode::BAD_REQUEST));
+        assert_eq!(action("{"), Err(StatusCode::BAD_REQUEST));
+    }
+
+    /// `dryRun` is a boolean and `confirm` the name typed back; anything else is the caller's 400.
+    #[test]
+    fn dry_run_and_confirm_take_their_own_types_only() {
+        let of = |v: Value| {
+            let Value::Object(map) = v else {
+                return Err(StatusCode::IM_A_TEAPOT);
+            };
+            dry_run(&map)
+                .map(|q| (q.dry_run, q.confirm))
+                .map_err(|r| r.status())
+        };
+        assert_eq!(of(json!({})), Ok((None, None)));
+        assert_eq!(
+            of(json!({ "dryRun": null, "confirm": null })),
+            Ok((None, None))
+        );
+        assert_eq!(of(json!({ "dryRun": false })), Ok((None, None)));
+        assert_eq!(
+            of(json!({ "dryRun": true, "confirm": "air" })),
+            Ok((Some("All".to_owned()), Some("air".to_owned())))
+        );
+        assert_eq!(of(json!({ "dryRun": "yes" })), Err(StatusCode::BAD_REQUEST));
+        assert_eq!(of(json!({ "confirm": 1 })), Err(StatusCode::BAD_REQUEST));
+    }
+
+    /// A set past MAX_ROWS is refused 400 with the narrowing to ask for instead.
+    #[test]
+    fn a_set_over_the_row_cap_names_how_to_narrow_it() {
+        let answer = too_many("endpoints");
+        assert_eq!(answer.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// `$expand` is one level on a project's kinds; each other form is named (T-7837).
+    #[test]
+    fn expand_takes_one_plain_level_of_a_projects_kind() {
+        let status = |query: &str| {
+            let parsed = odata_url::parse(
+                &format!("projects?{query}"),
+                &EdmModel(&ORG.public),
+                &limits(),
+            );
+            match parsed {
+                Ok(ODataUri::Resource { options, .. }) => expansions(&options)
+                    .map(|sets| sets.len())
+                    .map_err(|r| r.status()),
+                Ok(_) => Err(StatusCode::IM_A_TEAPOT),
+                Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            }
+        };
+        assert_eq!(status("$top=1"), Ok(0));
+        assert_eq!(status("$expand=spaces"), Ok(1));
+        assert_eq!(status("$expand=*"), Err(StatusCode::NOT_IMPLEMENTED));
+        assert_eq!(
+            status("$expand=spaces/$ref"),
+            Err(StatusCode::NOT_IMPLEMENTED)
+        );
+        assert_eq!(
+            status("$expand=spaces($levels=2)"),
+            Err(StatusCode::NOT_IMPLEMENTED)
+        );
+        assert_eq!(
+            status("$expand=spaces($select=name)"),
+            Err(StatusCode::NOT_IMPLEMENTED)
+        );
+    }
 }

@@ -564,6 +564,29 @@ async fn a_draft_the_check_does_not_take_is_refused_and_previews_nothing() {
     assert_eq!(previews(&rig.broker).await, 0);
 }
 
+/// T-7837: a draft of no kpi step is told the one it needs; a source naming another project's
+/// Endpoint is unknown, as one that is not there.
+#[tokio::test]
+async fn a_stepless_draft_and_a_foreign_endpoint_are_each_refused() {
+    let rig = rig().await;
+    let good = || draft("sum(parking.occupied) / count(stops)", "stops");
+    let mut stepless = good();
+    stepless["pipeline"]["spec"]["steps"] =
+        json!([{ "kind": "bloblang", "bloblang": "root = this" }]);
+    let verdict = checked(&rig, stepless).await;
+    assert!(verdict.to_string().contains("spec.steps"), "{verdict}");
+    assert!(verdict.get("preview").is_none(), "{verdict}");
+
+    let mut foreign = good();
+    foreign["pipeline"]["spec"]["sources"][1]["endpointRef"]["namespace"] = json!("town");
+    let verdict = checked(&rig, foreign).await;
+    assert!(
+        verdict.to_string().contains("that you may read"),
+        "{verdict}"
+    );
+    assert_eq!(previews(&rig.broker).await, 0);
+}
+
 /// A source with no rows gives no value and says so; a sum over nothing must not read as 0.
 #[tokio::test]
 async fn an_empty_source_gives_no_value_and_says_why() {

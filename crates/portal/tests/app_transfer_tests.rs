@@ -530,6 +530,53 @@ async fn an_exported_app_imports_into_another_project_under_a_new_name() {
 }
 
 /// PF-57: the dry run answers the repository it would create and creates nothing.
+/// T-7837: an import into an organization of layout 1, a Portal without a forge, and a name
+/// the applications organization cannot hold are each refused, and nothing is created.
+#[tokio::test]
+async fn an_import_with_no_place_to_land_is_refused_and_creates_nothing() {
+    let (server, state) = world(APP_HEAD, APP_HEAD).await;
+    let file = exported(&state).await;
+
+    let mut forgeless = state.clone();
+    forgeless.shako = None;
+    let answer = export(
+        &forgeless,
+        person("jana"),
+        "/api/v1/projects/ovzdusie/apps/air-map/export",
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    let answer = import(&forgeless, person("jana"), "?format=app", &file, &[]).await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+
+    let long = "x".repeat(70);
+    let answer = import(
+        &state,
+        person("jana"),
+        "?format=app",
+        &file,
+        &[("name", &long)],
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+
+    state.mirror.set_layout(1);
+    let answer = import(&state, person("jana"), "?format=app", &file, &[]).await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(answer.text.contains("layout 1"), "{}", answer.text);
+    nothing_created(&server).await;
+}
+
 #[tokio::test]
 async fn the_dry_run_answers_the_repository_and_creates_nothing() {
     let (server, state) = world(APP_HEAD, APP_HEAD).await;
