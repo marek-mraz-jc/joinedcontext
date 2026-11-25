@@ -1167,7 +1167,11 @@ describe("asking an assistant in the Portal (T-3058, AG-115)", () => {
     });
     await userEvent.type(within(dialog).getAllByRole("textbox")[0], "PM10?{Enter}");
     const alert = await within(dialog).findByRole("alert");
-    const time = new Intl.DateTimeFormat("de", { hour: "numeric", minute: "2-digit" }).format(new Date(before + 3600e3));
+    // resetAt's rule: the date joins the time when the reset falls on another day (a run near midnight).
+    const at = new Date(before + 3600e3);
+    const sameDay = new Date(before).toDateString() === at.toDateString();
+    const hm = { hour: "numeric", minute: "2-digit" } as const;
+    const time = new Intl.DateTimeFormat("de", sameDay ? hm : { day: "numeric", month: "numeric", ...hm }).format(at);
     expect(alert).toHaveTextContent(`Der Assistent hat sein Limit erreicht. Versuchen Sie es nach ${time} erneut.`);
     expect(alert).not.toHaveTextContent("denný limit");
     // Nothing changes before the limit resets: no Try again, the question stays in the box.
