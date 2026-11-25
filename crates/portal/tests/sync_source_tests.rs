@@ -721,12 +721,9 @@ async fn a_merge_request_the_forge_refuses_is_never_recorded_as_open() {
 
     let refused = driver(&server, &origin, &states).tick(NOW).await;
 
-    assert!(
-        refused
-            .as_ref()
-            .is_none_or(|run| run.proposed.is_empty() && !run.flags.is_empty()),
-        "{refused:?}"
-    );
+    if let Ok(run) = &refused {
+        assert!(run.proposed.is_empty() && !run.flags.is_empty(), "{run:?}");
+    }
     let status = states.get("bb", "regional").await;
     assert_eq!(status.state.open_proposal, None);
     assert_eq!(status.merge_request, None);
