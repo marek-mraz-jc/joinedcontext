@@ -4629,6 +4629,7 @@ mod tests {
         model(ORG_NAMESPACE, "leaky", "published", "project.local.v1");
         model("city", "uses-leaky", "draft", "org.leaky.v1");
         model("city", "lost", "draft", "org.nothing.v1");
+        model("city", "malformed", "draft", "org.noversion");
         let many: Vec<String> = (0..=crate::api::datamodels::MAX_IMPORTS)
             .map(|n| format!("org.m{n}.v1"))
             .collect();
@@ -4670,6 +4671,7 @@ mod tests {
         let top = model_source(&repo, "city", "top");
         let leaky = model_source(&repo, "city", "uses-leaky");
         let lost = model_source(&repo, "city", "lost");
+        let malformed = model_source(&repo, "city", "malformed");
         let too_many = model_source(&repo, "city", "many");
         let with_broken = model_source(&repo, "city", "uses-broken");
         let unread = model_source(&repo, "city", "unread");
@@ -4687,6 +4689,7 @@ mod tests {
         assert!(leaky
             .is_err_and(|e| e.contains("an organization model imports organization models only")),);
         assert!(lost.is_err_and(|e| e.contains("has no DataModel nothing")));
+        assert!(malformed.is_err_and(|e| e.contains("org.noversion")));
         assert!(too_many.is_err_and(|e| e.contains(&format!(
             "at most {} platform models",
             crate::api::datamodels::MAX_IMPORTS
@@ -4811,12 +4814,14 @@ mod tests {
             .expect("a rule")
         };
         let with = |rules: Vec<QualityRule>| {
-            let mut s = sources(vec![("cars", cars())]);
+            let mut s = with_model(sources(vec![("cars", cars())]));
             s.quality.insert(("city".into(), "air".into()), rules);
             desired(&s)
         };
         let before = with(vec![rule("stale")]);
-        assert!(with(vec![rule("stale")]).beyond(&before).quality.is_empty());
+        let same = with(vec![rule("stale")]).beyond(&before);
+        assert!(same.quality.is_empty() && same.schemas.is_empty() && same.views.is_empty());
+        assert!(before.schemas.contains_key("city-air"));
         let changed = with(vec![rule("stale"), rule("late")]).beyond(&before);
         assert!(changed.quality.contains_key("city-air"));
     }
@@ -5300,12 +5305,13 @@ mod tests {
             .with_model_tools(tools.uri())
             .with_linkml(Arc::clone(&schemas));
         let first = sync.apply(desired(&s), Pass::Whole).await;
+        let again = sync.apply(desired(&s), Pass::Whole).await;
         let staged = schemas.stage_linkml("city", "air");
         let second = sync
             .apply(desired(&sources(vec![("cars", cars())])), Pass::Whole)
             .await;
         let _ = std::fs::remove_file(&file);
-        for outcomes in [&first, &second] {
+        for outcomes in [&first, &again, &second] {
             assert!(
                 outcomes.iter().all(|(_, o)| *o == ViewOutcome::Written),
                 "{outcomes:?}"
@@ -5351,6 +5357,20 @@ mod tests {
             .expect(1)
             .mount(&compiles)
             .await;
+        let bare = ModelSource {
+            imports: BTreeMap::new(),
+            ..fleet_model()
+        };
+        let compiles_bare = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .and(body_json(json!({"source": bare.source})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"brokerSchema": {"s": 2}})),
+            )
+            .expect(1)
+            .mount(&compiles_bare)
+            .await;
         let refusing = tools_answering(
             ResponseTemplate::new(422).set_body_json(json!({"detail": "line 3: bad slot"})),
         )
@@ -5372,6 +5392,13 @@ mod tests {
             fresh.broker_schema("city-air", &model).await,
             Ok(json!({"s": 1})),
             "the second ask is the held schema"
+        );
+        assert_eq!(
+            with(&compiles_bare.uri())
+                .broker_schema("city-air", &bare)
+                .await,
+            Ok(json!({"s": 2})),
+            "a model without imports sends no imports member"
         );
         let failed = |outcome: Result<Value, ViewOutcome>, wanted: &str| {
             assert!(
@@ -5513,6 +5540,8 @@ mod tests {
         s.brokers.insert("city-air".into(), "main".into());
         s.brokers.insert("far".into(), "edge".into());
         let sync = having(s, &server.uri(), &file);
+        let context = json!({"@context": {"speed": "https://vocab.example/speed"}});
+        lock(&sync.compiled).insert("city-air".into(), ([0; 32], json!({}), Some(context)));
         let entities = vec!["urn:ngsi-ld:Car:1".to_owned()];
         let who = ("urn:ngsi-ld:Person:1", "alice", "DM-127 request");
         let speed = ["speed".to_owned()];
@@ -5558,6 +5587,10 @@ mod tests {
                     .iter()
                     .all(|a| a.as_str().is_some_and(|a| a.ends_with("speed"))),
             "{attrs:?}"
+        );
+        assert!(
+            attrs.contains(&json!("https://vocab.example/speed")),
+            "expanded under the space's @context: {attrs:?}"
         );
         assert_eq!(posted[1]["attrs"], Value::Null, "the whole Entity");
         let refused = sync.erase("refusing", &entities, None, who).await;
@@ -6870,8 +6903,21 @@ mod tests {
     /// admin token. ci-full's `test-all`, the job that starts it, without them is a failure,
     /// never a pass; elsewhere the test returns, other ci-full jobs (the README's commands) too.
     fn jc_broker() -> Option<(String, PathBuf)> {
-        let url = std::env::var("JC_PORTAL_TEST_BROKER_URL").ok();
-        let token = std::env::var("JC_PORTAL_TEST_BROKER_TOKEN_FILE").ok();
+        let ci_full = std::env::var("GITHUB_WORKFLOW").as_deref() == Ok("ci-full")
+            && std::env::var("GITHUB_JOB").as_deref() == Ok("test-all");
+        jc_broker_from(
+            std::env::var("JC_PORTAL_TEST_BROKER_URL").ok(),
+            std::env::var("JC_PORTAL_TEST_BROKER_TOKEN_FILE").ok(),
+            ci_full,
+        )
+    }
+
+    /// [`jc_broker`] from its two variables, `ci_full` when ci-full's `test-all` runs.
+    fn jc_broker_from(
+        url: Option<String>,
+        token: Option<String>,
+        ci_full: bool,
+    ) -> Option<(String, PathBuf)> {
         match (url, token) {
             (Some(url), Some(token)) if !url.trim().is_empty() && !token.trim().is_empty() => {
                 Some((
@@ -6881,8 +6927,7 @@ mod tests {
             }
             _ => {
                 assert!(
-                    !(std::env::var("GITHUB_WORKFLOW").as_deref() == Ok("ci-full")
-                        && std::env::var("GITHUB_JOB").as_deref() == Ok("test-all")),
+                    !ci_full,
                     "ci-full test-all starts the -jc broker and must set \
                      JC_PORTAL_TEST_BROKER_URL and JC_PORTAL_TEST_BROKER_TOKEN_FILE"
                 );
@@ -6892,6 +6937,34 @@ mod tests {
                 None
             }
         }
+    }
+
+    /// The -jc broker test runs where both variables name something, and returns elsewhere,
+    /// but in ci-full's `test-all`, which starts the broker: there a missing one is red.
+    #[test]
+    fn the_jc_broker_test_runs_only_where_its_broker_is_named() {
+        assert_eq!(
+            jc_broker_from(
+                Some(" http://127.0.0.1:9090/ ".into()),
+                Some("/run/token".into()),
+                true
+            ),
+            Some(("http://127.0.0.1:9090".into(), PathBuf::from("/run/token")))
+        );
+        for (url, token) in [
+            (None, None),
+            (Some("http://b".to_owned()), None),
+            (Some(" ".to_owned()), Some("/run/token".to_owned())),
+            (Some("http://b".to_owned()), Some(String::new())),
+        ] {
+            assert_eq!(jc_broker_from(url, token, false), None);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "ci-full test-all starts the -jc broker")]
+    fn ci_full_without_the_jc_broker_is_red() {
+        jc_broker_from(None, None, true);
     }
 
     /// What [`the_writer_converges_the_jc_broker`] creates: the cars Policy, the Endpoint and a
