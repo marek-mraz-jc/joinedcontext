@@ -157,6 +157,79 @@ fn domain_names_are_validated() {
     assert_eq!(validate_verifiable_domain(" Hel.FI. ").unwrap(), "hel.fi");
 }
 
+/// A name server on a loopback UDP port: a TXT question for `name` gets `answers`, each owned
+/// by its own name; any other question an empty NOERROR.
+fn dns(
+    name: &'static str,
+    answers: Vec<(&'static str, hickory_resolver::proto::rr::RData)>,
+) -> std::net::SocketAddr {
+    use hickory_resolver::proto::op::{Message, OpCode};
+    use hickory_resolver::proto::rr::{Name, Record, RecordType};
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let addr = socket.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok((n, from)) = socket.recv_from(&mut buf) {
+            let query = Message::from_vec(&buf[..n]).unwrap();
+            let mut answer = Message::response(query.metadata.id, OpCode::Query);
+            answer.metadata.recursion_desired = query.metadata.recursion_desired;
+            answer.metadata.recursion_available = true;
+            for q in &query.queries {
+                if q.query_type() == RecordType::TXT
+                    && q.name().to_ascii().eq_ignore_ascii_case(name)
+                {
+                    for (owner, data) in &answers {
+                        answer.add_answer(Record::from_rdata(
+                            Name::from_ascii(owner).unwrap(),
+                            60,
+                            data.clone(),
+                        ));
+                    }
+                }
+                answer.add_query(q.clone());
+            }
+            socket.send_to(&answer.to_vec().unwrap(), from).unwrap();
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn the_resolver_reads_the_txt_records_its_name_server_answers() {
+    use hickory_resolver::proto::rr::RData;
+    use hickory_resolver::proto::rr::rdata::{CNAME, TXT};
+    let asked = "_kaisatsu-challenge.alias.example.org.";
+    let target = "_kaisatsu-challenge.example.org.";
+    let server = dns(
+        asked,
+        vec![
+            // The alias is followed; only the TXT records are values.
+            (
+                asked,
+                RData::CNAME(CNAME(
+                    hickory_resolver::proto::rr::Name::from_ascii(target).unwrap(),
+                )),
+            ),
+            (
+                target,
+                RData::TXT(TXT::new(vec!["kaisatsu-verify=abc".into()])),
+            ),
+            (target, RData::TXT(TXT::new(vec!["v=spf1 -all".into()]))),
+        ],
+    );
+    let resolver = HickoryDnsResolver::with_name_server(server);
+    assert_eq!(
+        resolver.lookup_txt(asked).await.unwrap(),
+        ["kaisatsu-verify=abc", "v=spf1 -all"]
+    );
+    // A name the server holds nothing for is the 400 the Verify call names.
+    let err = resolver
+        .lookup_txt("_kaisatsu-challenge.other.example.org")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, KaisatsuError::BadRequest(_)), "{err}");
+}
+
 #[tokio::test]
 async fn real_resolver_refuses_internal_names_and_reports_missing_records() {
     let resolver = HickoryDnsResolver::new();

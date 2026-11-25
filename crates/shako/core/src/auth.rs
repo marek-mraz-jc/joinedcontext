@@ -619,9 +619,9 @@ impl ShakoSigningKey {
                     .map_err(|e| ShakoError::Internal(format!("invalid PKCS#8 PEM key: {e}")))?;
                 return Self::from_signing_key(signing_key);
             }
-            if trimmed.len() == 64 && trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
-                let decoded = hex::decode(trimmed)
-                    .map_err(|e| ShakoError::Internal(format!("invalid hex key: {e}")))?;
+            if trimmed.len() == 64
+                && let Ok(decoded) = hex::decode(trimmed)
+            {
                 return Self::from_secret_bytes(&decoded);
             }
         }
@@ -1448,6 +1448,14 @@ mod tests {
         let raw = [0x11u8; 32];
         let kid = ShakoSigningKey::from_secret_bytes(&raw).expect("raw").kid;
         assert_eq!(ShakoSigningKey::from_text(&raw).expect("raw text").kid, kid);
+        // Raw bytes that are not UTF-8 skip the text forms.
+        let binary = [0x80u8; 32];
+        assert_eq!(
+            ShakoSigningKey::from_text(&binary).expect("binary").kid,
+            ShakoSigningKey::from_secret_bytes(&binary)
+                .expect("binary raw")
+                .kid
+        );
         let hex = format!(" {}\n", "11".repeat(32));
         assert_eq!(
             ShakoSigningKey::from_text(hex.as_bytes()).expect("hex").kid,
@@ -1465,6 +1473,8 @@ mod tests {
             &b"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----"[..],
             &[0u8; 32][..],
             &b"short"[..],
+            // 64 characters but not hex: read as 64 raw bytes, which is no scalar.
+            "zz".repeat(32).as_bytes(),
         ] {
             let err = ShakoSigningKey::from_text(bad).expect_err("not a key");
             assert_eq!(err.status_code(), 500, "{err}");

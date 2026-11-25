@@ -361,26 +361,22 @@ mod tests {
                 .expect("timeout");
             let mut seen = Vec::new();
             let mut buf = [0u8; 4096];
-            loop {
+            let mut done = false;
+            while !done {
                 let n = stream.read(&mut buf).unwrap_or(0);
                 seen.extend_from_slice(&buf[..n]);
                 let text = String::from_utf8_lossy(&seen).to_ascii_lowercase();
-                if let Some(end) = text.find("\r\n\r\n") {
+                let complete = text.find("\r\n\r\n").is_some_and(|end| {
                     let length = text
                         .lines()
                         .find_map(|l| l.strip_prefix("content-length:"))
                         .and_then(|v| v.trim().parse::<usize>().ok())
                         .unwrap_or(0);
                     let chunked = text.contains("transfer-encoding: chunked");
-                    if (chunked && text.ends_with("0\r\n\r\n"))
+                    (chunked && text.ends_with("0\r\n\r\n"))
                         || (!chunked && seen.len() >= end + 4 + length)
-                    {
-                        break;
-                    }
-                }
-                if n == 0 {
-                    break;
-                }
+                });
+                done = complete || n == 0;
             }
             let head = format!(
                 "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -457,6 +453,41 @@ mod tests {
             .await
             .expect_err("nothing listens");
         assert!(matches!(err, ShakoError::SsrfBlocked(_)), "{err}");
+    }
+
+    /// A spool that cannot rewind (a pipe) is a storage error, sent nowhere and handed to no mock.
+    #[tokio::test]
+    async fn a_spool_that_cannot_rewind_is_a_storage_error() {
+        fn pipe_spool() -> std::fs::File {
+            let (reader, _writer) = std::io::pipe().expect("pipe");
+            std::fs::File::from(std::os::fd::OwnedFd::from(reader))
+        }
+        let handler: MockOutboundHandler =
+            Arc::new(|_: &str, _: &str, _: &[(String, String)], _: &[u8]| Some((200, Vec::new())));
+        let mocked = OutboundGuard::new(OutboundPolicy {
+            mock_handler: Some(handler),
+            ..OutboundPolicy::default()
+        });
+        let guards = [
+            (loopback(), "http://127.0.0.1:9/x".to_owned()),
+            (mocked, "https://github.com/echo".to_owned()),
+        ];
+        for (guard, url) in guards {
+            let err = guard
+                .send(
+                    Method::PUT,
+                    &url,
+                    &[],
+                    OutboundBody::File(pipe_spool()),
+                    None,
+                )
+                .await
+                .expect_err("a pipe does not rewind");
+            assert!(
+                matches!(&err, ShakoError::Storage(m) if m.contains("outbound spool")),
+                "{err}"
+            );
+        }
     }
 
     #[tokio::test]

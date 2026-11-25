@@ -56,8 +56,8 @@ pub fn sign_jwt<T: Serialize>(
         // PEM reader unwraps, so hand it the PKCS#8 document as PEM.
         Algorithm::RS256 => EncodingKey::from_rsa_pem(pkcs8_pem(&pkcs8_der).as_bytes())
             .map_err(crate::crypto_err("stored RSA key is not PKCS#8"))?,
-        Algorithm::EdDSA => EncodingKey::from_ed_der(&pkcs8_der),
-        _ => return Err(KaisatsuError::Crypto("forbidden algorithm".into())),
+        // parse_alg admits only ES256, RS256 and EdDSA; `encode` refuses a key of another family.
+        _ => EncodingKey::from_ed_der(&pkcs8_der),
     };
     let mut header = Header::new(alg);
     header.kid = Some(key_record.kid.clone());

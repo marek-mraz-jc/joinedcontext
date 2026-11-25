@@ -80,7 +80,7 @@ fn param_u32(map: &serde_json::Map<String, serde_json::Value>, key: &str, defaul
         return default;
     };
     if let Some(n) = val.as_u64() {
-        return n as u32;
+        return u32::try_from(n).unwrap_or(default);
     }
     if let Some(s) = val.as_str() {
         return s.parse().unwrap_or(default);
@@ -92,7 +92,7 @@ fn param_u32(map: &serde_json::Map<String, serde_json::Value>, key: &str, defaul
             return s.parse().unwrap_or(default);
         }
         if let Some(n) = first.as_u64() {
-            return n as u32;
+            return u32::try_from(n).unwrap_or(default);
         }
     }
     default
@@ -360,6 +360,22 @@ pub fn first_policy_violation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn param_u32_reads_numbers_strings_and_arrays_and_never_wraps() {
+        let map = serde_json::json!({
+            "n": 7, "s": "8", "an": [9], "as": ["10"], "big": 4_294_967_303u64,
+            "abig": [4_294_967_303u64], "bad": true, "empty": [], "abad": [true]
+        });
+        let map = map.as_object().expect("object");
+        let got: Vec<u32> = [
+            "n", "s", "an", "as", "big", "abig", "bad", "empty", "abad", "missing",
+        ]
+        .iter()
+        .map(|k| param_u32(map, k, 1))
+        .collect();
+        assert_eq!(got, [7, 8, 9, 10, 1, 1, 1, 1, 1, 1]);
+    }
 
     #[test]
     fn verifies_keycloak_argon2_and_pbkdf2_variants_and_rehashes() {
