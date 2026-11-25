@@ -87,7 +87,7 @@
 "jc-types" = { lines = 100.00, functions = 100.00 }
 "jcctl" = { lines = 97.14, functions = 91.18 }
 "joinedcontext-policy" = { lines = 99.00, functions = 99.40 }
-"joinedcontext-portal" = { lines = 96.50, functions = 95.20 }
+"joinedcontext-portal" = { lines = 97.61, functions = 95.90 }
 "kaisatsu-admin" = { lines = 98.52, functions = 99.41 }
 "kaisatsu-core" = { lines = 99.98, functions = 99.73 }
 "kaisatsu-crypto" = { lines = 99.70, functions = 100.00 }
