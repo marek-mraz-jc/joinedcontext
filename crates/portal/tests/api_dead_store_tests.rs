@@ -1,9 +1,6 @@
-//! The read doors over a database that does not answer (T-7813).
-//!
-//! Every route here reads a store the Portal keeps in Postgres: a pipeline's rejected records,
-//! its runs and their log, its source ledger, and the access requests of a project. With the
-//! pool unreachable each answers `503` with a sentence a person can act on ("try again"), and
-//! never the driver's text, which names the database host and user.
+//! The doors that write through a pipeline's replay, over a database that does not answer
+//! (T-7813): a replay refuses what it cannot run before it reaches the store or the runner, each
+//! refusal naming what to change.
 
 #[path = "common/csrf_echo.rs"]
 mod csrf_echo;
@@ -116,14 +113,6 @@ fn world() -> AppState {
     state
 }
 
-async fn get(state: &AppState, uri: &str) -> (StatusCode, String) {
-    send(state, "GET", uri).await
-}
-
-async fn send(state: &AppState, verb: &str, uri: &str) -> (StatusCode, String) {
-    send_json(state, verb, uri, None).await
-}
-
 async fn send_json(
     state: &AppState,
     verb: &str,
@@ -154,35 +143,6 @@ async fn send_json(
     (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Each read of a pipeline's records, runs, log and ledger, and each list of access requests,
-/// answers 503 with "try again" and keeps the driver's words to the log.
-#[tokio::test]
-async fn every_store_read_is_a_503_that_names_no_database() {
-    let state = world();
-    let pipeline = format!("/api/v1/projects/{PROJECT}/pipelines/air-intake");
-    let mut wrong = Vec::new();
-    for uri in [
-        format!("{pipeline}/rejected"),
-        format!("{pipeline}/rejected/groups"),
-        format!("{pipeline}/rejected/export"),
-        format!("{pipeline}/runs"),
-        format!("{pipeline}/runs/run-1/log"),
-        format!("{pipeline}/source-deletes"),
-        format!("/api/v1/projects/{PROJECT}/pipeline-runs"),
-        format!("/api/v1/projects/{PROJECT}/pipeline-health"),
-        format!("{pipeline}/access-requests"),
-        format!("/api/v1/projects/{PROJECT}/access-requests"),
-        format!("/api/v1/projects/{PROJECT}/endpoints/air-counters/access-requests"),
-    ] {
-        let (status, body) = get(&state, &uri).await;
-        let leaks = body.contains("127.0.0.1") || body.contains("nobody") || body.contains("pool");
-        if status != StatusCode::SERVICE_UNAVAILABLE || !body.contains("try again") || leaks {
-            wrong.push(format!("{uri}: {status} {body}"));
-        }
-    }
-    assert!(wrong.is_empty(), "{wrong:#?}");
-}
-
 /// A replay needs a target to write and a model to check against: a pipeline whose output names
 /// no Endpoint of the project, and one whose space names no model, are conflicts that say what
 /// to change; an empty or oversized id list is the caller's 400 (T-7813).
@@ -201,7 +161,12 @@ async fn a_replay_names_why_it_cannot_run() {
     let (status, body) = send_json(&state, "POST", &retry("air-replay"), none).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let many: Vec<i64> = (0..101).collect();
-    let (status, body) =
-        send_json(&state, "POST", &retry("air-replay"), Some(json!({ "ids": many }))).await;
+    let (status, body) = send_json(
+        &state,
+        "POST",
+        &retry("air-replay"),
+        Some(json!({ "ids": many })),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }

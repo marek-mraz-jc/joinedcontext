@@ -712,7 +712,11 @@ async fn a_long_grant_name_and_a_gone_endpoint_are_refused_with_what_to_do() {
     )
     .await;
     assert_eq!(approved.status, StatusCode::CONFLICT, "{}", approved.text);
-    assert!(approved.text.contains("decline the request"), "{}", approved.text);
+    assert!(
+        approved.text.contains("decline the request"),
+        "{}",
+        approved.text
+    );
 }
 
 async fn state_shared(pool: sqlx::PgPool, pipeline: &str) -> AppState {

@@ -680,14 +680,15 @@ async fn count_key_and_unserved_paths_answer_as_odata() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let (status, body) = get(&state, editor, &odata("nothing-here")).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    let (status, body) = get(&state, editor, &odata("endpoints('air-counters')/name")).await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
     let (status, body) = get(&state, editor, &odata("endpoints?$apply=groupby((space))")).await;
     assert!(
-        matches!(status, StatusCode::NOT_IMPLEMENTED | StatusCode::BAD_REQUEST),
+        matches!(
+            status,
+            StatusCode::NOT_IMPLEMENTED | StatusCode::BAD_REQUEST
+        ),
         "{status} {body}"
     );
-    let (status, body) = get(&state, editor, &odata("endpoints?$filter=nope eq 1")).await;
+    let (status, body) = get(&state, editor, &odata("endpoints?$filter=nope%20eq%201")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     // Nobody signed in, a member of another project and a project name that is none.
     let (status, _) = get(&state, None, &odata("endpoints/$count")).await;

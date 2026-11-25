@@ -1283,17 +1283,30 @@ async fn a_taken_email_is_a_conflict_and_bad_input_a_bad_request() {
 async fn a_list_takes_its_own_parameters_and_an_edit_keeps_the_address_unique() {
     let (kc, shako) = (realm(true).await, forge().await);
     let state = state_with(&kc, &shako);
+    ola(&kc, &state, None).await;
     for query in [
         "?sort=name".to_owned(),
         "?first=one".to_owned(),
         "?max=0".to_owned(),
         format!("?search={}", "a".repeat(256)),
     ] {
-        let refused = send(&state, person("pia"), "GET", &format!("{PEOPLE}{query}"), None).await;
-        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{query}: {}", refused.text);
+        let refused = send(
+            &state,
+            person("pia"),
+            "GET",
+            &format!("{PEOPLE}{query}"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::BAD_REQUEST,
+            "{query}: {}",
+            refused.text
+        );
     }
     Mock::given(method("PUT"))
-        .and(path(format!("{ADMIN}/users/jana-id")))
+        .and(path(format!("{ADMIN}/users/ola-id")))
         .respond_with(ResponseTemplate::new(204))
         .with_priority(1)
         .expect(1)
@@ -1303,19 +1316,19 @@ async fn a_list_takes_its_own_parameters_and_an_edit_keeps_the_address_unique() 
         &state,
         person("pia"),
         "PATCH",
-        &format!("{PEOPLE}/jana-id"),
+        &format!("{PEOPLE}/ola-id"),
         Some(json!({ "lastName": "Koski", "locale": "sk" })),
     )
     .await;
     assert_eq!(edited.status, StatusCode::OK, "{}", edited.text);
-    let sent = received(&kc, "PUT", "/users/jana-id").await;
+    let sent = received(&kc, "PUT", "/users/ola-id").await;
     let rep: Value = serde_json::from_slice(&sent[0].body).expect("a representation");
     assert_eq!(rep["lastName"], json!("Koski"));
     assert_eq!(rep["attributes"]["locale"], json!(["sk"]));
 
     let (kc, shako) = (realm(true).await, forge().await);
     Mock::given(method("PUT"))
-        .and(path(format!("{ADMIN}/users/jana-id")))
+        .and(path(format!("{ADMIN}/users/ola-id")))
         .respond_with(
             ResponseTemplate::new(409)
                 .set_body_json(json!({ "errorMessage": "User exists with same email" })),
@@ -1324,17 +1337,25 @@ async fn a_list_takes_its_own_parameters_and_an_edit_keeps_the_address_unique() 
         .mount(&kc)
         .await;
     let state = state_with(&kc, &shako);
+    ola(&kc, &state, None).await;
     let taken = send(
         &state,
         person("pia"),
         "PATCH",
-        &format!("{PEOPLE}/jana-id"),
+        &format!("{PEOPLE}/ola-id"),
         Some(json!({ "email": "ada@hel.fi" })),
     )
     .await;
     assert_eq!(taken.status, StatusCode::CONFLICT, "{}", taken.text);
     assert!(taken.text.contains("ada@hel.fi"), "{}", taken.text);
-    let empty = send(&state, person("pia"), "PATCH", &format!("{PEOPLE}/jana-id"), Some(json!({}))).await;
+    let empty = send(
+        &state,
+        person("pia"),
+        "PATCH",
+        &format!("{PEOPLE}/ola-id"),
+        Some(json!({})),
+    )
+    .await;
     assert_eq!(empty.status, StatusCode::BAD_REQUEST, "{}", empty.text);
 }
 

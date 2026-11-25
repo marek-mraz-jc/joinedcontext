@@ -563,7 +563,11 @@ async fn a_pipeline_sink_checks_its_document_and_its_pipeline_after_the_token() 
     let report = r#"{"run":"r1","deleted":["urn:ngsi-ld:Thing:1"],"gone":[],"failed":[]}"#;
     let marks = r#"{"run":"r1","ids":["urn:ngsi-ld:Thing:1"]}"#;
     let own_elsewhere = token(&signer, &issuer, INTERNAL_AUDIENCE, "praha-pl-nothing");
-    for (route, body) in [("source-deletes", report), ("source-events", marks), ("samples", tap)] {
+    for (route, body) in [
+        ("source-deletes", report),
+        ("source-events", marks),
+        ("samples", tap),
+    ] {
         assert_eq!(
             call(&app, "POST", &gone(route), body, Some(&own_elsewhere)).await,
             StatusCode::NOT_FOUND,
@@ -575,7 +579,9 @@ async fn a_pipeline_sink_checks_its_document_and_its_pipeline_after_the_token() 
         call(&app, "POST", &at("source-events"), marks, own).await,
         StatusCode::CONFLICT
     );
-    let ids: Vec<String> = (0..1001).map(|n| format!("urn:ngsi-ld:Thing:{n}")).collect();
+    let ids: Vec<String> = (0..1001)
+        .map(|n| format!("urn:ngsi-ld:Thing:{n}"))
+        .collect();
     let over: &'static str = Box::leak(json!({ "ids": ids }).to_string().into_boxed_str());
     assert_eq!(
         call(&app, "POST", &at("source-events"), over, own).await,

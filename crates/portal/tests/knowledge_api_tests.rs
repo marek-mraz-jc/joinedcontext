@@ -626,7 +626,11 @@ async fn an_assistant_without_a_token_or_an_answer_is_a_503_that_says_which() {
     let refused = common::send(&tokenless, admin(), "GET", pages, None).await;
     assert_eq!(refused.status, 503, "{}", refused.text);
     assert!(refused.text.contains("Keycloak client"), "{}", refused.text);
-    assert_eq!(asked(&r.assistant).await, before, "nothing is sent without a token");
+    assert_eq!(
+        asked(&r.assistant).await,
+        before,
+        "nothing is sent without a token"
+    );
 
     let mut away = r.state.clone();
     let mut config = (*away.config).clone();

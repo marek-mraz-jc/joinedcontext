@@ -3645,29 +3645,50 @@ mod tests {
     /// (F-POR2-004, T-7813).
     #[test]
     fn files_beside_a_manifest_stay_in_its_folder_and_bounds() {
-        let at = "projects/helsinki/models/air/air.yaml";
+        let at = "projects/helsinki/models/x/air.yaml";
         let refused = |files: Value| match sidecars(Some(files), at, "air") {
             Err(ApiError::BadRequest(why)) => why,
             other => format!("not refused: {other:?}"),
         };
         assert_eq!(sidecars(None, at, "air").expect("no files"), Vec::new());
         assert_eq!(
-            sidecars(Some(json!({ "./air.linkml.yaml": "id: air", "notes/readme.md": "# Air" })), at, "air")
-                .expect("two files"),
+            sidecars(
+                Some(json!({ "./air.linkml.yaml": "id: air", "notes/readme.md": "# Air" })),
+                at,
+                "air"
+            )
+            .expect("two files"),
             vec![
-                ("projects/helsinki/models/air/air.linkml.yaml".to_owned(), "id: air".to_owned()),
-                ("projects/helsinki/models/air/notes/readme.md".to_owned(), "# Air".to_owned()),
+                (
+                    "projects/helsinki/models/x/air.linkml.yaml".to_owned(),
+                    "id: air".to_owned()
+                ),
+                (
+                    "projects/helsinki/models/x/notes/readme.md".to_owned(),
+                    "# Air".to_owned()
+                ),
             ]
         );
         assert!(refused(json!(["a.md"])).contains("an object of path"));
-        let many: serde_json::Map<String, Value> =
-            (0..=MAX_SIDECARS).map(|n| (format!("f{n}.md"), json!("x"))).collect();
+        let many: serde_json::Map<String, Value> = (0..=MAX_SIDECARS)
+            .map(|n| (format!("f{n}.md"), json!("x")))
+            .collect();
         assert!(refused(Value::Object(many)).contains("at most"));
         assert!(refused(json!({ "a.md": 1 })).contains("is not text"));
-        for path in ["", "/etc/passwd", "../up.md", "a/./b.md", "a//b.md", "a\\b.md", "nul\u{0}.md"] {
+        for path in [
+            "",
+            "/etc/passwd",
+            "../up.md",
+            "a/./b.md",
+            "a//b.md",
+            "a\\b.md",
+            "nul\u{0}.md",
+        ] {
             assert!(
-                refused(Value::Object([(path.to_owned(), json!("x"))].into_iter().collect()))
-                    .contains("not a path under"),
+                refused(Value::Object(
+                    [(path.to_owned(), json!("x"))].into_iter().collect()
+                ))
+                .contains("not a path under"),
                 "{path:?}"
             );
         }

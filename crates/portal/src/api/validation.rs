@@ -481,7 +481,11 @@ mod tests {
         write(dir.as_path(), "budgets.json", &body("budgets", NOW, 0));
         assert!(read_dir(&file, now()).is_err());
         let big = dir.join("big.json");
-        std::fs::write(&big, vec![b' '; usize::try_from(MAX_FILE).expect("fits") + 1]).expect("a big file");
+        std::fs::write(
+            &big,
+            vec![b' '; usize::try_from(MAX_FILE).expect("fits") + 1],
+        )
+        .expect("a big file");
         assert!(read_capped(&big).is_none());
         let mut config = crate::config::Config::for_tests();
         config.health_dir = Some(file.to_string_lossy().into_owned());
@@ -506,8 +510,14 @@ mod tests {
             refresh_token: None,
         });
         match get_health(admin, State(state)).await {
-            Err(ApiError::Unavailable(why)) => assert!(why.contains("jc-validation-results"), "{why}"),
-            other => assert!(other.is_err(), "an unreadable directory answered {:?}", other.map(|_| ())),
+            Err(ApiError::Unavailable(why)) => {
+                assert!(why.contains("jc-validation-results"), "{why}")
+            }
+            other => assert!(
+                other.is_err(),
+                "an unreadable directory answered {:?}",
+                other.map(|_| ())
+            ),
         }
     }
 

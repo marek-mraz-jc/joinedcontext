@@ -99,7 +99,6 @@ fn app(name: &str, visibility: &str) -> joinedcontext_portal::resource::Resource
 
 struct Rig {
     app: axum::Router,
-    state: AppState,
     runtime: MockServer,
     /// The suite's own realm; `None` where the process's signing realm stands in.
     _realm: Option<MockServer>,
@@ -148,8 +147,7 @@ async fn rig(test: &str) -> Rig {
     mirror.upsert(app("tampered", "public"));
     let state = AppState::new(config, Some(oidc)).with_mirror(std::sync::Arc::new(mirror));
     Rig {
-        app: server::app(state.clone()),
-        state,
+        app: server::app(state),
         runtime,
         _realm: Some(realm),
         _root: root,
@@ -435,8 +433,7 @@ async fn organization_rig(test: &str, runtime: MockServer) -> Rig {
     common::bind(&mirror, "eva", "parks");
     let state = AppState::new(config, Some(oidc)).with_mirror(std::sync::Arc::new(mirror));
     Rig {
-        app: server::app(state.clone()),
-        state,
+        app: server::app(state),
         runtime,
         _realm: None,
         _root: root,

@@ -1310,10 +1310,7 @@ mod tests {
         let Refusal(status, code, text) = refusal(TableError::UnknownProperty("nope".into()));
         assert_eq!((status, code), (StatusCode::BAD_REQUEST, "BadRequest"));
         assert!(text.contains("no property nope"), "{text}");
-        assert_eq!(
-            refusal(TableError::BadRequest("why".into())),
-            bad("why")
-        );
+        assert_eq!(refusal(TableError::BadRequest("why".into())), bad("why"));
         assert_eq!(
             refusal(TableError::Forbidden("no".into())),
             Refusal(StatusCode::FORBIDDEN, "Forbidden", "no".into())
@@ -1328,7 +1325,10 @@ mod tests {
             (status, code),
             (StatusCode::INTERNAL_SERVER_ERROR, "InternalServerError")
         );
-        assert!(!text.contains("hunter2") && !text.contains("5432"), "{text}");
+        assert!(
+            !text.contains("hunter2") && !text.contains("5432"),
+            "{text}"
+        );
     }
 
     /// A key literal is a string or an integer; a number with a fraction, a boolean or null is
@@ -1378,12 +1378,28 @@ mod tests {
             select: None,
         };
         let path = [Segment::EntitySet("endpoints".into())];
-        let body = collection("https://p/odata/", &path, &QueryOptions::default(), answer(Some(1)));
-        assert_eq!(body["@odata.context"], json!("https://p/odata/$metadata#endpoints"));
+        let body = collection(
+            "https://p/odata/",
+            &path,
+            &QueryOptions::default(),
+            answer(Some(1)),
+        );
+        assert_eq!(
+            body["@odata.context"],
+            json!("https://p/odata/$metadata#endpoints")
+        );
         assert_eq!(body["@odata.count"], json!(3));
         let next = body["@odata.nextLink"].as_str().expect("a next link");
-        assert!(next.starts_with("https://p/odata/endpoints") && next.contains("skiptoken=1"), "{next}");
-        let body = collection("https://p/odata/", &[], &QueryOptions::default(), answer(None));
+        assert!(
+            next.starts_with("https://p/odata/endpoints") && next.contains("skiptoken=1"),
+            "{next}"
+        );
+        let body = collection(
+            "https://p/odata/",
+            &[],
+            &QueryOptions::default(),
+            answer(None),
+        );
         assert_eq!(body["@odata.context"], json!("https://p/odata/$metadata#"));
         assert!(body.get("@odata.nextLink").is_none());
     }
@@ -1393,7 +1409,10 @@ mod tests {
     #[test]
     fn schema_types_map_to_edm_types() {
         assert_eq!(edm_type(&json!({ "type": "number" })), "Edm.Double");
-        assert_eq!(edm_type(&json!({ "type": "string", "format": "date-time" })), "Edm.DateTimeOffset");
+        assert_eq!(
+            edm_type(&json!({ "type": "string", "format": "date-time" })),
+            "Edm.DateTimeOffset"
+        );
         assert_eq!(edm_type(&json!({ "type": "object" })), "Edm.Untyped");
         assert_eq!(edm_type(&json!({})), "Edm.Untyped");
         let op = ops::find("jc_resource_propose").expect("registered");

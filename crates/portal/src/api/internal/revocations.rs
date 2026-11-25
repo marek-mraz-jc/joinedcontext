@@ -24,7 +24,9 @@ pub async fn revoked_subjects(
         .into_iter()
         .map(|(subject, revoked_at)| serde_json::json!({ "subject": subject, "revokedAt": revoked_at }))
         .collect();
-    let body = serde_json::json!({ "items": items }).to_string().into_bytes();
+    let body = serde_json::json!({ "items": items })
+        .to_string()
+        .into_bytes();
     Ok(super::polled_json(&headers, body))
 }
 

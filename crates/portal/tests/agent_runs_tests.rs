@@ -1400,8 +1400,14 @@ async fn conversation_members_are_refused_on_an_application_run() {
         .to_owned();
     let messages = format!("/api/v1/projects/{PROJECT}/agent-runs/{id}/messages");
     for (body, named) in [
-        (json!({ "text": "x", "pageContext": { "route": "/projects/helsinki" } }), "pageContext"),
-        (json!({ "text": "x", "access": { "preset": "read" } }), "access"),
+        (
+            json!({ "text": "x", "pageContext": { "route": "/projects/helsinki" } }),
+            "pageContext",
+        ),
+        (
+            json!({ "text": "x", "access": { "preset": "read" } }),
+            "access",
+        ),
         (json!({ "text": "x", "endpointNames": [] }), "endpointNames"),
         (json!({ "text": "x", "scope": "pages/Card.tsx" }), "scope"),
     ] {
