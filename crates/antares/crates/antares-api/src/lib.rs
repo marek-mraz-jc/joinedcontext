@@ -334,6 +334,44 @@ pub async fn wired_state(host_alias: &str) -> AppState {
 }
 
 #[cfg(test)]
+mod sweep_expired {
+    use super::*;
+
+    /// 4.22: the sweep walks client tenants only — a broker tenant the
+    /// store lists is skipped, its documents untouched — and a store that
+    /// cannot list its tenants reaps nothing rather than failing the tick.
+    #[tokio::test]
+    async fn the_sweep_skips_broker_tenants_and_survives_a_refusing_store() {
+        let st = AppState::new("sweep-tenants".into());
+        let own = antares_model::TenantId::new_internal("antares-views").expect("internal");
+        let doc = serde_json::json!({"id": "urn:ngsi-ld:EntityMap:x", "expiresAt": "2000-01-01T00:00:00Z"});
+        assert!(st
+            .store
+            .create(
+                &own,
+                antares_store::Kind::EntityMap,
+                "urn:ngsi-ld:EntityMap:x",
+                doc
+            )
+            .await
+            .expect("create"));
+        assert_eq!(sweep_expired_docs(&st).await, 0);
+        assert!(st
+            .store
+            .get(
+                &own,
+                antares_store::Kind::EntityMap,
+                "urn:ngsi-ld:EntityMap:x"
+            )
+            .await
+            .expect("read")
+            .is_some());
+        #[cfg(feature = "postgres")]
+        assert_eq!(sweep_expired_docs(&state::refusing_state()).await, 0);
+    }
+}
+
+#[cfg(test)]
 mod clause_5_2_8 {
     use super::*;
     use axum::body::Body;
@@ -2093,14 +2131,7 @@ mod clause_6_3_11 {
         assert_eq!(sys["expiresAt"], "2100-01-01T00:00:00Z");
         assert_eq!(sys["name"]["expiresAt"], "2100-01-01T00:00:00Z");
 
-        let inst_of = |body: &serde_json::Value| -> serde_json::Value {
-            let a = &body["name"];
-            if a.is_array() {
-                a[0].clone()
-            } else {
-                a.clone()
-            }
-        };
+        let inst_of = |body: &serde_json::Value| -> serde_json::Value { body["name"][0].clone() };
         let t_plain = body_json(
             app.clone()
                 .oneshot(

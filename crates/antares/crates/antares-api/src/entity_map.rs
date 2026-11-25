@@ -247,7 +247,10 @@ pub(crate) async fn map_set_expiry(
 ) -> Result<bool, NgsiError> {
     let mut want = json!({"expiresAt": expires});
     clamp_expiry(&mut want);
-    let e = want["expiresAt"].take();
+    let e = want
+        .get_mut("expiresAt")
+        .map(Value::take)
+        .unwrap_or_default();
     Ok(st
         .store
         .mutate(tenant, Kind::EntityMap, id, |d| {
@@ -576,7 +579,10 @@ where
         let map = build_retrieve_map(st, &tenant, &ctx, headers, id, params, temporal, local_held)
             .await?;
         // build_retrieve_map minted the id
-        set_map_header(&mut resp, map["id"].as_str().unwrap_or_default());
+        set_map_header(
+            &mut resp,
+            map.get("id").and_then(Value::as_str).unwrap_or_default(),
+        );
     }
     Ok(resp)
 }

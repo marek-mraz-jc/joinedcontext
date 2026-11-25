@@ -2803,7 +2803,7 @@ mod tests {
     }
 
     fn ngsi(r: ApiResult<Response>) -> NgsiError {
-        match r.err().expect("refused") {
+        match r.expect_err("refused") {
             ApiError::Ngsi(e) => e,
             other => panic!("an NGSI-LD error, got {other:?}"),
         }
