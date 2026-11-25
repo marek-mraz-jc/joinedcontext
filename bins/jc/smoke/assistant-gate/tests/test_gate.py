@@ -188,6 +188,12 @@ def test_the_deployment_admits_the_gate_from_the_jc_dev_widget_page(fx):
     assert min(rate["perClientPerHour"], rate["perClientPerDay"]) >= 2 * n, "a red run and its rerun within the hour"
     assert suite.origin_of("https://jc.jcdev.dev.joinedcontext.com/d/gate/widget") in spec["allowedOrigins"]
     assert spec["budget"]["messagesPerConversation"] >= len(fx["questions"])
+    # jc-dev 2026-11-25: 4 turns cost 0.0965 USD and 53,436 tokens, the dearest turn 0.0372 USD, and a
+    # 0.09 USD conversation cap stopped the fifth question; all ten must fit, with within()'s headroom
+    b, n = spec["budget"], len(fx["questions"])
+    assert b["costPerConversationUsd"] >= n * 0.0372
+    assert b["tokensPerConversation"] >= 1.5 * n * 53436 / 4
+    assert b["costPerDayUsd"] >= 2 * (b["costPerConversationUsd"] + 0.04), "two runs and their widget turns a day"
 
 
 def test_a_wrong_expected_fact_makes_the_run_red(tmp_path, stub, fx, monkeypatch):
@@ -210,8 +216,16 @@ def test_an_answer_after_the_limit_fails(tmp_path, stub, fx, monkeypatch):
     assert asked == 1 and code == 1
     q7 = next(q for q in v["questions"] if q["id"] == "gate-07")
     assert any("over 150 ms" in w for w in q7["mechanical"])
-    assert suite.mechanical({"status": 200, "events": [("done", {})], "msDone": 15100}, 15000) == \
-        ["done after 15100 ms, over 15000 ms"]
+    lim = fx["limits"] | {"answerMs": 15000}
+    ok = [("answer", {"text": "x"}), ("citations", []), ("done", {})]
+    assert suite.mechanical({"status": 200, "events": ok, "msAnswer": 15100, "msDone": 15100}, lim) == \
+        ["answer after 15100 ms, over 15000 ms"]
+    # jc-dev 2026-11-25 gate-02: the answer and its sources at 11.0 s, `done` at 23.7 s (a web search
+    # the answer did not wait for): the visitor read it in time, the widget took the next question in 30 s
+    assert suite.mechanical({"status": 200, "events": ok, "msAnswer": 11007, "msDone": 23692}, lim) == []
+    assert suite.mechanical({"status": 200, "events": ok, "msAnswer": 11007, "msDone": 30100}, lim) == \
+        ["done after 30100 ms, over 30000 ms"]
+    assert suite.mechanical({"status": 200, "events": [("done", {})], "msAnswer": None, "msDone": 900}, lim) == ["no answer"]
 
 
 def test_a_cached_answer_a_budget_stop_and_a_missing_citation_fail(tmp_path, stub, fx, monkeypatch):
@@ -221,7 +235,7 @@ def test_a_cached_answer_a_budget_stop_and_a_missing_citation_fail(tmp_path, stu
     _, code, v, _ = run_gate(tmp_path, stub, fx, monkeypatch)
     assert code == 1 and v["mechanical"] == 7
     m = {q["id"]: q["mechanical"] for q in v["questions"]}
-    assert any("answer cache" in w for w in m["gate-01"])
+    assert any("served from a cache" in w for w in m["gate-01"])
     assert any(w.startswith("error event") and "dlhý" in w for w in m["gate-02"])
     assert m["gate-07"] == ["[2] has no citation"]
 
@@ -272,17 +286,71 @@ def test_the_expected_facts_follow_the_read():
     assert suite.number_forms(11.0) == ["11"]
 
 
-def test_the_widget_journey_finds_table_source_and_progress(tmp_path):
-    page = tmp_path / "widget.html"
-    page.write_text("""<!doctype html><textarea></textarea><div class="jc-steps"></div><script>
-      document.querySelector('textarea').addEventListener('keydown', e => { if (e.key !== 'Enter') return;
-        const b = document.createElement('div'); b.className = 'jc-bot';
-        b.innerHTML = '<table><tr><td>11</td></tr></table><a href="https://x.test/s">source</a>';
-        setTimeout(() => document.body.append(b), 50); });</script>""")
-    assert suite.widget_check(page.as_uri(), "How many?", timeout_ms=5000) == []
-    bare = tmp_path / "bare.html"
-    bare.write_text(page.read_text().replace('<div class="jc-steps"></div>', ""))
-    assert suite.widget_check(bare.as_uri(), "How many?", timeout_ms=5000) == ["no progress line (.jc-steps or .jc-status)"]
+WIDGET_DIR = HERE.parents[4] / "vendor/joinedcontext-platform/crates/assistant/widget"
+TABLE = {"type": "AirQualityObserved", "total": 3, "columns": ["name", "pm10", "observedAt"], "units": [None, "µg/m³", None],
+         "rows": [["Helsinki Herttoniemi 2", 9.1, "2026-11-24T16:00:00Z"], ["Vantaa Ilola", 3.9, "2026-11-24T16:00:00Z"]]}
+
+
+class WidgetStub:
+    """The real widget (render.js + widget.js as src/chat/widget.rs serves them) and a chat that
+    streams the events routed.rs sends: `data` only when `table` (gate-01's count has none)."""
+
+    def __init__(self, table: bool):
+        script = ("var JC_FIELDS = " + (WIDGET_DIR / "../../jc-core/data/field-order.json").read_text() + ";\n"
+                  + (WIDGET_DIR / "render.js").read_text() + (WIDGET_DIR / "widget.js").read_text())
+        config = json.dumps({"publicId": "gate", "languages": ["en"], "enabled": True, "connectors": [], "linkHosts": [DOMAIN]})
+        page = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="/d/widget.css">'
+                '</head><body><main id="jc-chat" class="jc-chat" data-config="' + config.replace('"', "&quot;")
+                + '"></main><script src="/d/widget.js" defer></script></body></html>')
+        files = {"/d/gate/widget": (page, "text/html"), "/d/widget.js": (script, "text/javascript"),
+                 "/d/widget.css": ((WIDGET_DIR / "widget.css").read_text(), "text/css"),
+                 "/d/visitor.js": ((WIDGET_DIR / "visitor.js").read_text(), "text/javascript"),
+                 "/api/v1/d/gate/challenge": (json.dumps({"challenge": "c0ffee.1.8.5a", "difficulty": 8,
+                                                          "expiresAt": "2099-01-01T00:00:00Z"}), "application/json")}
+        evs = [("conversation", {"id": "c1", "at": "2026-11-25T08:00:00Z"}), ("stage", {"stage": "reading", "topic": "AirQualityObserved"}),
+               ("step", {"source": "Helsinki air quality", "type": "AirQualityObserved", "count": 3})]
+        evs += [("data", TABLE)] if table else []
+        evs += [("answer", {"text": GOOD["gate-03"][0]}), ("citations", DATA_CITE),
+                ("done", {"totalMs": 900, "stagesMs": {"route": 300, "answer": 500}})]
+        files["/api/v1/d/gate/chat"] = ("".join(f"event: {n}\ndata: {json.dumps(d)}\n\n" for n, d in evs), "text/event-stream")
+        files["/api/v1/d/gate/token"] = (json.dumps({"token": "visitor-1", "expiresAt": "2099-01-01T00:00:00Z"}), "application/json")
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def reply(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                body, ctype = files.get(self.path, ("{}", "application/json"))
+                raw = body.encode()
+                self.send_response(200 if self.path in files else 404)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            do_GET = do_POST = reply
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.url = f"http://127.0.0.1:{self.server.server_port}/d/gate/widget"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+
+def test_the_widget_journey_finds_table_source_and_steps_in_the_real_widget(fx):
+    ask = next(q["ask"] for q in fx["questions"] if q["id"] == fx["widget"])
+    w = WidgetStub(table=True)
+    try:
+        assert suite.widget_check(w.url, ask, timeout_ms=10000) == []
+    finally:
+        w.server.shutdown()
+    # gate-01's count answers without a table: the jc-dev journey waited 30 s for one that never came
+    w = WidgetStub(table=False)
+    try:
+        assert suite.widget_check(w.url, ask, timeout_ms=10000) == ["no table"]
+    finally:
+        w.server.shutdown()
+    # the journey asks a question that answers with a table, never the count
+    assert fx["widget"] != "gate-01" and next(q for q in fx["questions"] if q["id"] == fx["widget"])["lane"] == "data-superlative"
 
 
 # The Rust judge's own cases (answer_evals_tests.rs), against this port.
