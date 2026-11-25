@@ -1077,6 +1077,182 @@ mod change_pipeline {
     }
 }
 
+/// The pipeline's own seams: a full queue, a panicking step, a seed over
+/// a row it cannot key, a failed seed, a delivery that never ends, and a
+/// lost group told to its binding.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod pipeline_edges {
+    use super::*;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A binding that opens no socket and whose delivery never ends, or
+    /// that records the groups it is told were lost.
+    struct Stall(Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl antares_notifier::NotificationSink for Stall {
+        fn schemes(&self) -> &'static [&'static str] {
+            &["x-stall"]
+        }
+        fn parse_endpoint(
+            &self,
+            _uri: &str,
+            _notifier_info: &[(&str, &str)],
+        ) -> Result<(), antares_model::NgsiError> {
+            Ok(())
+        }
+        fn network(&self) -> bool {
+            false
+        }
+        fn deliver<'a>(
+            &'a self,
+            _uri: &'a str,
+            _out: &'a antares_notifier::Outbound,
+            _timeout: std::time::Duration,
+        ) -> antares_notifier::DeliveryFuture<'a> {
+            Box::pin(std::future::pending())
+        }
+        fn lost(&self, uri: &str, tenant: &str, subscription: &str) {
+            if let Ok(mut l) = self.0.lock() {
+                l.push(format!("{uri} {tenant} {subscription}"));
+            }
+        }
+    }
+
+    fn stalled(id: &str, uri: &str) -> Value {
+        json!({"id": id, "type": "Subscription", "entities": [{"type": "T"}],
+               "notification": {"endpoint": {"uri": uri}}})
+    }
+
+    /// A queue full by count drops the batch and counts it.
+    #[test]
+    fn a_full_matcher_queue_drops_and_counts() {
+        let ledger: &'static Ledger = Box::leak(Box::new(Ledger(Default::default(), "edge")));
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let pending = AtomicUsize::new(0);
+        let dropped = AtomicUsize::new(0);
+        let count = || {
+            dropped.fetch_add(1, Ordering::SeqCst);
+        };
+        let change = || -> Vec<Change> {
+            vec![(
+                "t".to_owned(),
+                None,
+                Some(json!({"id": "urn:a", "type": "T"})),
+            )]
+        };
+        queue_within(&tx, &pending, change(), (ledger, 1 << 20), count);
+        queue_within(&tx, &pending, change(), (ledger, 1 << 20), count);
+        assert_eq!(pending.load(Ordering::SeqCst), 1);
+        assert_eq!(dropped.load(Ordering::SeqCst), 1);
+    }
+
+    /// A step that panics is counted and absorbed in place.
+    #[tokio::test]
+    async fn a_panicking_step_is_counted_and_absorbed() {
+        let before = TASK_PANICS.load(Ordering::Relaxed);
+        guarded(async { panic!("a step that dies") }).await;
+        assert!(TASK_PANICS.load(Ordering::Relaxed) > before);
+    }
+
+    /// A row without an `id` cannot be keyed, so the seed leaves it out.
+    #[tokio::test]
+    async fn a_seed_skips_a_row_without_an_id() {
+        let st = AppState::new("antares-seed-idless".into());
+        let t = TenantId::default();
+        let mut nameless = stalled("x", "http://h/n");
+        if let Some(o) = nameless.as_object_mut() {
+            o.remove("id");
+        }
+        st.store
+            .upsert(&t, Kind::Subscription, "nameless", nameless)
+            .await
+            .expect("an id-less row");
+        st.store
+            .upsert(
+                &t,
+                Kind::Subscription,
+                "urn:s:1",
+                stalled("urn:s:1", "http://h/n"),
+            )
+            .await
+            .expect("a row");
+        let mirror = SubMirror::default();
+        seed_mirror(&*st.store, &mirror, Kind::Subscription)
+            .await
+            .expect("seed");
+        assert_eq!(
+            Mirror::held(&mirror),
+            [(t.as_str().to_owned(), "urn:s:1".to_owned())]
+        );
+    }
+
+    /// A seed the store refuses installs neither mirror: matching and
+    /// federation read the store instead of a partial copy.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn a_failed_seed_installs_no_mirror() {
+        let mut st = crate::state::refusing_state();
+        wire_matcher(&mut st).await;
+        assert!(st.sub_mirror.is_none());
+        assert!(st.reg_mirror.is_none());
+        assert!(
+            st.sub_sync.is_some(),
+            "the write hook is installed regardless"
+        );
+    }
+
+    /// T-4102: a delivery that never ends is abandoned at the step
+    /// deadline, so the drain goes on.
+    #[tokio::test(start_paused = true)]
+    async fn a_delivery_that_never_ends_is_abandoned_at_the_deadline() {
+        let st = AppState::new("antares-stall".into()).with_sink(Box::new(Stall(Arc::default())));
+        let t = TenantId::default();
+        let id = "urn:ngsi-ld:Subscription:stall";
+        let sub = stalled(id, "x-stall://h");
+        st.store
+            .create(&t, Kind::Subscription, id, sub.clone())
+            .await
+            .expect("subscription row");
+        let group = Matched {
+            tenant: t,
+            sub: Arc::new(sub),
+            ctx: antares_jsonld::Loader::new().core(),
+            data: vec![json!({"id": "urn:a", "type": "T"})],
+        };
+        let started = tokio::time::Instant::now();
+        deliver_group(&st, group).await;
+        assert!(
+            started.elapsed() >= STEP_DEADLINE,
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    /// T-4921: a lost group is told to the binding its endpoint names, and
+    /// to no other; one without an endpoint is told to nobody.
+    #[test]
+    fn a_lost_group_is_told_to_its_own_binding() {
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let st = AppState::new("antares-lost".into()).with_sink(Box::new(Stall(seen.clone())));
+        let t = TenantId::default();
+        let group = |sub: Value| Matched {
+            tenant: t.clone(),
+            sub: Arc::new(sub),
+            ctx: antares_jsonld::Loader::new().core(),
+            data: Vec::new(),
+        };
+        tell_lost(&st, &group(stalled("urn:s:other", "x-unknown://h")));
+        tell_lost(&st, &group(json!({"id": "urn:s:none", "notification": {}})));
+        assert!(seen.lock().expect("lock").is_empty());
+        tell_lost(&st, &group(stalled("urn:s:mine", "x-stall://h")));
+        assert_eq!(
+            *seen.lock().expect("lock"),
+            [format!("x-stall://h {} urn:s:mine", t.as_str())]
+        );
+    }
+}
+
 #[cfg(test)]
 mod clause_5_2_12_triggers {
     use super::*;
@@ -2823,6 +2999,130 @@ mod delivery_policy_tests {
             "no retry after the grant went"
         );
         assert!(letters(&st, &t).await.is_empty(), "no dead letter");
+    }
+
+    fn outbound() -> Outbound {
+        Outbound {
+            body: json!({"type": "Notification", "data": []}),
+            accept: "application/json".into(),
+            link: String::new(),
+            receiver_info: Vec::new(),
+            notifier_info: Vec::new(),
+        }
+    }
+
+    /// A subscription deleted before its retry task starts settles nothing:
+    /// no attempt, no dead letter.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_retry_of_a_deleted_subscription_settles_nothing() {
+        let (st, t) = state(policy(3, 10));
+        let (uri, hits) = flaky_endpoint(0).await;
+        retry_and_settle(
+            &st,
+            &t,
+            Kind::Subscription,
+            SUB_ID,
+            &uri,
+            1_000,
+            outbound(),
+            "first".into(),
+        )
+        .await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert!(letters(&st, &t).await.is_empty());
+    }
+
+    /// A retry that finds nobody listening counts toward the breaker, and
+    /// the exhausted policy parks one letter naming every attempt.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unreachable_retry_is_dead_lettered() {
+        let (st, t) = state(policy(2, 10));
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+            l.local_addr().expect("addr").port()
+        };
+        let uri = format!("http://127.0.0.1:{port}/notify");
+        subscribe(&st, &t, SUB_ID, &uri).await;
+        retry_and_settle(
+            &st,
+            &t,
+            Kind::Subscription,
+            SUB_ID,
+            &uri,
+            1_000,
+            outbound(),
+            "first".into(),
+        )
+        .await;
+        let parked = letters(&st, &t).await;
+        assert_eq!(parked.len(), 1, "{parked:?}");
+        assert_eq!(parked[0]["attempts"], 2);
+        assert_eq!(parked[0]["firstError"], "first");
+        assert_ne!(
+            parked[0]["lastError"], "first",
+            "the retry's own error is kept"
+        );
+    }
+
+    /// A retry or replay re-checks the subscription: one made through a view
+    /// that is gone, or one the policy now decides differently, may not go;
+    /// a letter that names no subscription is not replayed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_notification_built_earlier_is_checked_again() {
+        let (mut st, t) = state(policy(1, 10));
+        let (uri, hits) = flaky_endpoint(0).await;
+        let body = outbound().body;
+        #[cfg(feature = "views")]
+        {
+            let mut sub = subscribe(&st, &t, SUB_ID, &uri).await;
+            sub[crate::views::VIEW_MEMBER] = json!("gone-view");
+            st.store
+                .upsert(&t, Kind::Subscription, SUB_ID, sub)
+                .await
+                .expect("through a view");
+            let why = still_deliverable(&st, &t, Kind::Subscription, SUB_ID, &uri, &body, None)
+                .await
+                .expect_err("the view is gone");
+            assert!(why.contains("view"), "{why}");
+            st.store
+                .delete(&t, Kind::Subscription, SUB_ID)
+                .await
+                .expect("delete");
+        }
+        subscribe(&st, &t, SUB_ID, &uri).await;
+        st.policy = Some(Arc::new(Switch(std::sync::atomic::AtomicBool::new(true))));
+        let why = still_deliverable(&st, &t, Kind::Subscription, SUB_ID, &uri, &body, None)
+            .await
+            .expect_err("the policy drops it now");
+        assert!(why.contains("policy no longer allows"), "{why}");
+
+        let mut letter = dead_letter(SUB_ID, &uri, 1_000, &outbound(), 1, "e", "e", &now_iso());
+        if let Some(o) = letter.as_object_mut() {
+            o.remove("subscriptionId");
+        }
+        match replay_dead_letter(&st, &t, &letter).await {
+            Err(Replay::Refused(why)) => assert!(why.contains("subscriptionId"), "{why}"),
+            other => panic!("a letter without subscriptionId is refused, got {other:?}"),
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "nothing was sent");
+    }
+
+    /// A store that refuses the letter answers false: nothing was parked.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn a_refused_dead_letter_is_not_parked() {
+        let st = crate::state::refusing_state();
+        let letter = dead_letter(
+            SUB_ID,
+            "http://x/n",
+            1_000,
+            &outbound(),
+            1,
+            "e",
+            "e",
+            &now_iso(),
+        );
+        assert!(!park_dead_letter(&st, &TenantId::default(), letter).await);
     }
 
     #[tokio::test(flavor = "multi_thread")]
