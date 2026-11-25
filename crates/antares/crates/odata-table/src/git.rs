@@ -385,9 +385,10 @@ impl GitTable {
                 }
                 Change::Update(patch) => {
                     let mut row = row.clone();
-                    if let Some(o) = row.as_object_mut() {
-                        o.extend(patch.iter().map(|(k, v)| (k.clone(), v.clone())));
-                    }
+                    // a row is read only from a file holding an object
+                    row.as_object_mut()
+                        .into_iter()
+                        .for_each(|o| o.extend(patch.iter().map(|(k, v)| (k.clone(), v.clone()))));
                     let bytes = written(file, &row)?;
                     let blob = run(&["hash-object", "-w", "--stdin"], Some(&bytes))?;
                     run(
@@ -566,10 +567,7 @@ mod tests {
     }
 
     fn refused(result: Result<GitTable, TableError>) -> TableError {
-        match result {
-            Ok(_) => panic!("the set opened"),
-            Err(e) => e,
-        }
+        result.expect_err("the set must not open")
     }
 
     #[test]
