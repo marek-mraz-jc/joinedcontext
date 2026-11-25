@@ -884,11 +884,6 @@ pub async fn run(
         // agent just made holds nothing and shows nothing (T-0908). Two grants, no more: the
         // service account that loads it writes, and the endpoint's own audience reads.
         if inferred_endpoint || app_endpoint {
-            let audience = m
-                .pointer("/spec/audience")
-                .and_then(Value::as_str)
-                .unwrap_or("organization")
-                .to_owned();
             let name = m
                 .pointer("/metadata/name")
                 .and_then(Value::as_str)
@@ -904,7 +899,6 @@ pub async fn run(
                     &space_name,
                     &name,
                     &class_name,
-                    &audience,
                     &caller.identity.subject,
                 ),
             };
@@ -1653,29 +1647,25 @@ fn space_name_of(input: &SpaceCompleteInput) -> String {
 /// The two grants a space the agent just made needs to be loaded and read (T-0908, PF-31):
 /// the write for the account the runner authenticates as, taken from a write Policy the project
 /// already has so a project that renamed it keeps working, and the reads for the audience the
-/// endpoint declares — the same mapping `propose_endpoint` uses (EP-72).
+/// endpoint declares — the same mapping `propose_endpoint` uses (EP-72). The Endpoint this
+/// drafts beside them is always an `organization` one, so the reads are that audience's.
 fn policies_for(
     state: &AppState,
     project: &str,
     space: &str,
     endpoint: &str,
     class: &str,
-    audience: &str,
     owner: &str,
 ) -> Vec<Value> {
     let (writer, account) = writer_of(state, project, space, owner);
-    // Whom the audience admits, as `propose_endpoint` grants it (T-6464): the organization's
-    // domain names no group, so a grant to it matched nobody and the assistant read no row.
-    let project_group = json!({ "kind": "group", "id": project });
-    let readers = match audience {
-        "public" => vec![("read", json!({ "kind": "role", "id": "public" }))],
-        "organization" => vec![
-            ("read", json!({ "kind": "organization" })),
-            // A person of the project's root group carries no `jc_org` (T-6408).
-            ("project-read", project_group),
-        ],
-        _ => vec![("read", project_group)],
-    };
+    // Whom the organization audience admits, as `propose_endpoint` grants it (T-6464): the
+    // organization's domain names no group, so a grant to it matched nobody and the assistant
+    // read no row.
+    let readers = [
+        ("read", json!({ "kind": "organization" })),
+        // A person of the project's root group carries no `jc_org` (T-6408).
+        ("project-read", json!({ "kind": "group", "id": project })),
+    ];
     let policy = |name: String, title: String, assignee: Value, operations: Value, typed: bool| {
         let mut spec = json!({
             "contextSpaceRef": { "kind": "ContextSpace", "name": space },
