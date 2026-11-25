@@ -1531,7 +1531,7 @@ mod tests {
         let (_, _, unpaired) =
             judged(&state, &connector, ana(), rpc("tools/list", json!({}))).await;
         assert!(
-            !names(&unpaired).iter().any(|n| n == "jc_ui_navigate"),
+            !names(&unpaired).contains(&"jc_ui_navigate".to_owned()),
             "{unpaired}"
         );
         let call = rpc(

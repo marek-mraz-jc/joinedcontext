@@ -2014,6 +2014,22 @@ mod tests {
         assert!(!scope(host("a"), allowed(&deployment)).await);
         assert!(allowed(&deployment).await);
         assert!(!allowed("https://portal.a.example").await);
+        // The answer to the request itself carries the header too, from the allowed origin.
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/v1/mcp")
+            .header(axum::http::header::ORIGIN, deployment.as_str())
+            .body(axum::body::Body::empty())
+            .expect("request");
+        let response = app.oneshot(request).await.expect("answer");
+        assert_eq!(
+            response.headers()[axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            deployment.as_str()
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 16)
+            .await
+            .expect("body");
+        assert_eq!(&bytes[..], b"ok");
     }
 
     /// MCP-33 (T-7194): the project door holds every message to its project; one naming
