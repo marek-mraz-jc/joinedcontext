@@ -510,6 +510,42 @@ pub fn operations() -> Vec<Operation> {
 mod tests {
     use super::*;
 
+    /// T-7817: a run without its project or id keeps its record as it is, a relative preview
+    /// gets the Portal's address, and a run names its app.
+    #[test]
+    fn a_run_without_a_place_keeps_its_record_and_a_run_names_its_app() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let bare = json!({ "id": "r1" });
+        assert_eq!(with_pages(&state, bare.clone()), bare);
+        let paged = with_pages(
+            &state,
+            json!({ "id": "r1", "project": "p", "previewUrl": "/preview/r1", "x": 1 }),
+        );
+        assert!(
+            paged["url"]
+                .as_str()
+                .is_some_and(|u| u.ends_with("/projects/p/apps?run=r1")),
+            "{paged}"
+        );
+        assert!(
+            paged["previewUrl"]
+                .as_str()
+                .is_some_and(|u| u.ends_with("/preview/r1") && u != "/preview/r1"),
+            "{paged}"
+        );
+        let absolute = with_pages(
+            &state,
+            json!({ "id": "r1", "project": "p", "previewUrl": "https://x/y" }),
+        );
+        assert_eq!(absolute["previewUrl"], "https://x/y");
+        let create = super::super::find("jc_run_create").expect("registered");
+        let refused = (create.validate)(&json!({ "kind": "app" }));
+        assert!(
+            matches!(&refused, Err(OpError::InvalidInput { path, .. }) if path == "/appName"),
+            "{refused:?}"
+        );
+    }
+
     /// JC2-46: jc_run_create offers no kind its route refuses (a conversation starts at
     /// /assistant/conversations).
     #[test]
@@ -576,10 +612,6 @@ mod tests {
             .expect("op");
         let schema = (op.output)();
         let validator = jsonschema::validator_for(&schema).expect("schema");
-        let problems: Vec<String> = validator
-            .iter_errors(&answer)
-            .map(|e| e.to_string())
-            .collect();
-        assert!(problems.is_empty(), "{problems:?} in {answer}");
+        assert!(validator.is_valid(&answer), "{answer}");
     }
 }

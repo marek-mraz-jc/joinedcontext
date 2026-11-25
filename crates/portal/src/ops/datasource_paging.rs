@@ -346,6 +346,7 @@ mod tests {
         let url = Url::parse("https://api.example/items").expect("url");
         let read = |sample: Option<Value>, bytes: usize| {
             let mut trace = TestTrace::default();
+            trace.input.events = 1;
             trace.input.sample = sample;
             trace.mapping = vec![json!({ "bytes": bytes, "link": "" })];
             guess_of(&url, trace)

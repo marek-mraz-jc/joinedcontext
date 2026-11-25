@@ -653,6 +653,7 @@ mod tests {
         );
         let url = Url::parse("https://data.example/api/3/action/organization_list").expect("url");
         let mut trace = TestTrace::default();
+        trace.input.events = 1;
         trace.input.sample = Some(json!({ "result": ["parks", 7, true] }));
         trace.mapping = vec![json!({ "bytes": 40 })];
         let found = discovery_of(HttpPresetKind::Ckan, &url, trace);

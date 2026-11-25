@@ -513,10 +513,9 @@ mod tests {
     }
 
     fn refused_at(result: Result<Value, OpError>) -> String {
-        match result {
-            Err(OpError::InvalidInput { path, .. }) => path,
-            other => panic!("an input refusal, got {other:?}"),
-        }
+        #[rustfmt::skip]
+        let Err(OpError::InvalidInput { path, .. }) = result else { panic!("an input refusal, got {result:?}") };
+        path
     }
 
     /// An export through an operation is a document, yaml or json; a zip is the Portal's
@@ -558,21 +557,25 @@ mod tests {
                 "/bundle"
             );
         }
-        match body(
+        let merge = body(
             "jc_project_import",
             json!({ "bundle": "a: b", "conflictPolicy": "merge" }),
         )
-        .await
-        {
-            Err(OpError::InvalidInput { path, message }) => {
-                assert_eq!(path, "/conflictPolicy");
-                assert!(
-                    message.contains("'merge' is not fail, skip, replace or rename"),
-                    "{message}"
-                );
-            }
-            other => panic!("a 422, got {other:?}"),
-        }
+        .await;
+        assert!(
+            matches!(&merge, Err(OpError::InvalidInput { path, message }) if path == "/conflictPolicy" && message.contains("'merge' is not fail, skip, replace or rename")),
+            "{merge:?}"
+        );
+        // A named policy passes the door; what the bundle holds is judged after it.
+        let skip = body(
+            "jc_project_import",
+            json!({ "bundle": "a: b", "conflictPolicy": "skip" }),
+        )
+        .await;
+        assert!(
+            !matches!(&skip, Err(OpError::InvalidInput { path, .. }) if path == "/conflictPolicy"),
+            "{skip:?}"
+        );
         let op = find("jc_project_import").expect("listed");
         assert!((op.validate)(&json!({ "manifests": [] })).is_ok());
         assert_eq!(

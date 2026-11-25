@@ -848,7 +848,7 @@ mod tests {
             status(OpError::Forbidden("portal-admin".into()).into_api_error()),
             403
         );
-        assert_eq!(status(ApiError::from(invalid_at("/name"))), 422);
+        assert_eq!(status(ApiError::from(invalid_at("/name"))), 400);
         let other = ApiError::from(OpError::Conflict(json!({ "error": "stale_plan" })));
         assert!(
             matches!(&other, ApiError::Conflict(text) if text == "stale_plan"),
