@@ -423,10 +423,11 @@ jobs:
           > "$RUNNER_TEMP/assistant-pg.log" 2>&1 &)
       # The modules' Postgres, started like the assistant's beside the cache restore and the build
       # (as a service container its pull and health checks held every step for 15-19 s, run
-      # 42829330070); the test step waits for it and creates the databases.
+      # 42829330070); the test step waits for it and creates the databases. PostGIS: jc's
+      # tests/restart_pg.rs runs Antares, whose migrations create the extension (coverage.yml's image).
       - run: >-
           (docker run -d --name pg -p 5432:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres
-          postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
+          postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6
           > "$RUNNER_TEMP/pg.log" 2>&1 &)
       - uses: ./.github/actions/rust
         with: { key: root-test }
