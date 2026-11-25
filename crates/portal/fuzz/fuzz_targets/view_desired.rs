@@ -52,7 +52,10 @@ fuzz_target!(|data: &[u8]| {
     let wanted = desired(&sources);
     for (id, (_, view)) in &wanted.views {
         assert!(!id.is_empty() && id.len() <= 63, "view id {id:?}");
-        let rules = view.get("rules").and_then(Value::as_array).map_or(0, Vec::len);
+        let rules = view
+            .get("rules")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
         assert!(rules <= 64, "{rules} rules");
     }
 });
