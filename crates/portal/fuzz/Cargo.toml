@@ -77,6 +77,7 @@ bin = [
   { name = "mcp_resource_path", path = "fuzz_targets/mcp_resource_path.rs", test = false, doc = false, bench = false },
   { name = "mcp_call_result", path = "fuzz_targets/mcp_call_result.rs", test = false, doc = false, bench = false },
   { name = "mcp_connector_defaults", path = "fuzz_targets/mcp_connector_defaults.rs", test = false, doc = false, bench = false },
+  { name = "discover_choices", path = "fuzz_targets/discover_choices.rs", test = false, doc = false, bench = false },
 ]
 
 [package]
