@@ -1741,6 +1741,11 @@ mod tests {
         (state, caller, realm)
     }
 
+    /// Whether `request` read an Endpoint at the gateway.
+    fn endpoint_read(request: &wiremock::Request) -> bool {
+        request.url.path().starts_with("/api/endpoint/")
+    }
+
     fn the_widget() -> Value {
         json!({ "width": 400, "height": 240,
                 "data": { "widget": { "dashboard": "air-quality", "page": 0, "widget": 1 } } })
@@ -1798,7 +1803,7 @@ mod tests {
             .await
             .expect("recorded")
             .into_iter()
-            .filter(|r| r.url.path().starts_with("/api/endpoint/"))
+            .filter(endpoint_read)
             .collect();
         assert_eq!(reads.len(), 1);
         assert_eq!(reads[0].headers["authorization"], "Bearer endpoint-token");
@@ -1827,9 +1832,7 @@ mod tests {
         assert_eq!(foreign, missing.replace("nobody", "air-quality"));
         let reads = server.received_requests().await.expect("recorded");
         assert!(
-            reads
-                .iter()
-                .all(|r| !r.url.path().starts_with("/api/endpoint/")),
+            !reads.iter().any(endpoint_read),
             "nothing of Bratislava was read"
         );
     }
@@ -1980,7 +1983,7 @@ mod tests {
             .await
             .expect("recorded")
             .into_iter()
-            .filter(|r| r.url.path().starts_with("/api/endpoint/"))
+            .filter(endpoint_read)
             .collect();
         assert_eq!(reads.len(), 3);
         assert!(reads
@@ -2054,9 +2057,7 @@ mod tests {
         assert_eq!(foreign, missing.replace("nobody", "air-quality"));
         let reads = server.received_requests().await.expect("recorded");
         assert!(
-            reads
-                .iter()
-                .all(|r| !r.url.path().starts_with("/api/endpoint/")),
+            !reads.iter().any(endpoint_read),
             "nothing of Bratislava was read"
         );
     }
@@ -2238,15 +2239,8 @@ mod tests {
         // What a valid call sets comes through.
         let call = json!({ "title": "Mine", "description": "d", "width": 300, "height": 200,
                            "data": { "widget": widget } });
-        let Ok(Request::Widget {
-            at,
-            title,
-            width,
-            height,
-        }) = spec_of(&call)
-        else {
-            unreachable!("{call}")
-        };
+        #[rustfmt::skip]
+        let Ok(Request::Widget { at, title, width, height }) = spec_of(&call) else { unreachable!("{call}") };
         assert_eq!(
             (at.dashboard.as_str(), at.page, at.widget),
             ("air-quality", 0, 1)
@@ -2255,11 +2249,9 @@ mod tests {
             (title.as_deref(), width, height),
             (Some("Mine"), Some(300), Some(200))
         );
-        let Ok(Request::Dashboard(name)) =
-            spec_of(&json!({ "description": "all", "data": { "dashboard": "air-quality" } }))
-        else {
-            unreachable!("a dashboard")
-        };
+        let whole = json!({ "description": "all", "data": { "dashboard": "air-quality" } });
+        #[rustfmt::skip]
+        let Ok(Request::Dashboard(name)) = spec_of(&whole) else { unreachable!("a dashboard") };
         assert_eq!(name, "air-quality");
         // A member put under its place; another error passes as it is.
         let moved = under("/data/query", invalid("/", "whole"));
@@ -2675,6 +2667,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_aggregated_widget_reads_each_methods_values() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{AIR}/ngsi-ld/v1/temporal/entities")))
+            .and(query_param("format", "aggregatedValues"))
+            .and(query_param("aggrMethods", "avg"))
+            .and(query_param("aggrPeriodDuration", "PT1H"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "urn:ngsi-ld:AirQualityObserved:kallio", "type": "AirQualityObserved",
+                  "pm10": { "type": "Property", "avg": [[12.5, "2026-11-13T00:00:00Z"], [14.0, "2026-11-13T01:00:00Z"]] } }
+            ])))
+            .mount(&server)
+            .await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        sourced(
+            &state,
+            "hourly",
+            json!({ "source": "temporal", "type": "AirQualityObserved", "attrs": ["pm10"],
+                                          "last": "P1D", "aggrMethod": "avg", "aggrPeriod": "PT1H" }),
+        );
+        let answer = run(&caller, &state, "helsinki", first("hourly"))
+            .await
+            .expect("drawn");
+        assert_eq!(answer["rows"], 2, "{answer}");
+        // Another person's spec without a title has no title to withhold.
+        let mut untitled = query_spec(&spec("line"));
+        untitled.title = String::new();
+        let withheld = withhold(&mut untitled);
+        assert!(!withheld.contains_key("title"), "{withheld:?}");
+    }
+
+    #[tokio::test]
     async fn the_callers_own_title_replaces_the_widgets() {
         let server = wiremock::MockServer::start().await;
         pm10(&server).await;
@@ -2715,6 +2741,17 @@ mod tests {
         // No forge.
         let none = AppState::new(crate::config::Config::for_tests(), None);
         assert!(!proposed_by_caller(&caller, &none, "helsinki", &board).await);
+        // A Dashboard whose space does not name a place in the repository.
+        let nowhere = manifest(
+            "Dashboard",
+            "other",
+            "helsinki",
+            json!({ "contextSpaceRef": { "name": "../x" } }),
+        );
+        assert!(!proposed_by_caller(&caller, &state, "helsinki", &nowhere).await);
+        // The door of a widget that is there names its Endpoint.
+        let door = door_args(&caller, &state, "helsinki", &the_widget()).expect("a widget call");
+        assert_eq!(door["data"]["query"]["endpoint"], "air");
         // No e-mail, or a blank one.
         for email in [None, Some(" ".to_owned())] {
             caller.identity.email = email;
