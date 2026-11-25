@@ -293,7 +293,11 @@ async fn a_space_completed_from_a_url_infers_its_model_from_the_probed_records()
     );
     assert_eq!(inferred.status, StatusCode::OK, "{}", inferred.text);
     assert!(inferred.text.contains("BusStop"), "{}", inferred.text);
-    assert!(!inferred.text.contains("\"path\":\"linkml\""), "{}", inferred.text);
+    assert!(
+        !inferred.text.contains("\"path\":\"linkml\""),
+        "{}",
+        inferred.text
+    );
 
     let (refused, _) = tokio::join!(
         send(&state, ada, "POST", &uri, Some(body)),
@@ -302,7 +306,11 @@ async fn a_space_completed_from_a_url_infers_its_model_from_the_probed_records()
         play_runner(&runner, &state, 3, &probed),
     );
     assert_eq!(refused.status, StatusCode::OK, "{}", refused.text);
-    assert!(refused.text.contains("\"path\":\"linkml\""), "{}", refused.text);
+    assert!(
+        refused.text.contains("\"path\":\"linkml\""),
+        "{}",
+        refused.text
+    );
 }
 
 #[tokio::test]
