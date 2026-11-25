@@ -3410,3 +3410,98 @@ mod emit_order_tests {
         assert!(order.entries() <= 1024, "{} entries", order.entries());
     }
 }
+
+#[cfg(test)]
+mod memory_arm_tests {
+    use super::*;
+    use antares_model::TenantId;
+
+    /// The outbox, sealing and batch-commit calls belong to the Postgres
+    /// store: the memory store answers each with nothing done.
+    #[tokio::test]
+    async fn the_postgres_only_calls_do_nothing_in_memory() {
+        let store = AnyStore::Mem(Store::default());
+        let t = TenantId::new("mem_arms").expect("tenant");
+        store.set_outbox(true);
+        store.set_async_batch_commit(true);
+        assert_eq!(store.seal_plaintext_credentials().await.expect("seal"), 0);
+        assert!(store.outbox_peek(10).await.expect("peek").is_empty());
+        assert_eq!(store.outbox_ack(&[1, 2]).await.expect("ack"), 0);
+        assert_eq!(store.outbox_retain(&t, &[1]).await.expect("retain"), 0);
+        assert_eq!(store.outbox_event(1, &t).await.expect("event"), None);
+    }
+
+    /// Entities and Temporal Representations have tables of their own: a
+    /// caller that routes one to the document store gets a 500 for that one
+    /// request, naming the kind.
+    #[cfg(feature = "postgres")]
+    #[test]
+    fn entity_and_temporal_are_no_document_kinds() {
+        for kind in [Kind::Entity, Kind::Temporal] {
+            let err = doc_kind(kind).expect_err("refused");
+            assert!(
+                matches!(&err, NgsiError::InternalError(m) if m.contains("is not a document-store kind")),
+                "{err:?}"
+            );
+        }
+        assert!(matches!(doc_kind(Kind::View), Ok(DocKind::View)));
+    }
+
+    /// An exhausted pool is the constant the binding answers 503; a store
+    /// error carried as configuration keeps its variant; any other
+    /// configuration error and a protocol error are a 500 that names no
+    /// driver detail. A read past its deadline is TooManyResults only for
+    /// the server's statement timeout.
+    #[cfg(feature = "postgres")]
+    #[test]
+    fn database_errors_map_to_what_a_client_may_see() {
+        assert!(matches!(
+            db(sqlx::Error::PoolTimedOut),
+            NgsiError::InternalError(m) if m == antares_model::error::DB_OVERLOADED
+        ));
+        let spec = db(sqlx::Error::Configuration(Box::new(
+            NgsiError::ResourceNotFound("gone".into()),
+        )));
+        assert!(
+            matches!(&spec, NgsiError::ResourceNotFound(m) if m == "gone"),
+            "{spec:?}"
+        );
+        let other = db(sqlx::Error::Configuration("host=secret.example".into()));
+        assert!(
+            matches!(&other, NgsiError::InternalError(m) if m == "database error"),
+            "{other:?}"
+        );
+        let proto = db(sqlx::Error::Protocol(
+            "bad frame from host=secret.example".into(),
+        ));
+        assert!(
+            matches!(&proto, NgsiError::InternalError(m) if m == "database error"),
+            "{proto:?}"
+        );
+
+        let timed = crate::store::filter::TemporalFilter {
+            deadline: Some(std::time::Instant::now()),
+            ..Default::default()
+        };
+        assert!(over_budget(&timed, &sqlx::Error::PoolTimedOut).is_none());
+        assert!(over_budget(&Default::default(), &sqlx::Error::PoolTimedOut).is_none());
+    }
+
+    /// The Postgres arm pages a temporal `q` the prefilter compiles exactly
+    /// and leaves any other to the evaluator; the memory arm pages none.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn only_the_postgres_arm_pages_an_exact_q() {
+        use antares_store::TemporalDriver;
+        let lazy = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool opens no connection");
+        let pg = AnyStore::Pg(PgBackend::new(lazy));
+        let expand = |t: &str| format!("https://example.org/{t}");
+        let exact = antares_ql::parse_q("speed>25").expect("q");
+        assert!(pg.q_pushdown_exact(&exact, None, &expand));
+        assert!(!AnyStore::Mem(Store::default()).q_pushdown_exact(&exact, None, &expand));
+        let linked = antares_ql::parse_q("a.b>1").expect("q");
+        assert!(!pg.q_pushdown_exact(&linked, None, &expand));
+    }
+}

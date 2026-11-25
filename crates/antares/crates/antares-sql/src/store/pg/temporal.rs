@@ -2825,4 +2825,48 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["observed_at"], "2026-08-08T10:00:00Z");
     }
+
+    /// The pure history helpers take any JSON a damaged row could hold: a
+    /// document that is no object keys only its Entity, has no meta and no
+    /// rows; an instance that is no object keeps its place without an id;
+    /// an instance list and id list of other lengths stay as they are.
+    #[test]
+    fn the_history_helpers_take_shapes_no_write_produces() {
+        use serde_json::json;
+        for doc in [json!("x"), json!(7), json!(null), json!([1, 2])] {
+            assert_eq!(iris_of("urn:e:1", &doc), vec!["urn:e:1".to_owned()]);
+            assert_eq!(meta_of(&doc), json!({}));
+            assert!(decompose(&doc).is_empty());
+            let mut packed = doc.clone();
+            unpack(&mut packed);
+            assert_eq!(packed, doc);
+        }
+        let mut packed = json!({
+            "a": [[7, {"value": 1}], ["urn:i:1", "urn:i:2"]],
+            "b": [[{"value": 1}], ["urn:i:1", "urn:i:2"]],
+            "c": [[{"value": 1}], [3]],
+            "d": "plain"
+        });
+        unpack(&mut packed);
+        assert_eq!(
+            packed,
+            json!({
+                "a": [7, {"value": 1, "instanceId": "urn:i:2"}],
+                "b": [[{"value": 1}], ["urn:i:1", "urn:i:2"]],
+                "c": [[{"value": 1}], [3]],
+                "d": "plain"
+            })
+        );
+        // rows equal but for their stamps are one observation; a scalar
+        // datum has no stamps to drop and is compared whole
+        let row =
+            |data: serde_json::Value| json!({"attr_id": "a", "data": data, "observed_at": "x"});
+        let kept = unseen(vec![
+            row(json!("same")),
+            row(json!("same")),
+            row(json!({"value": 1, "createdAt": "2026-01-01T00:00:00Z"})),
+            row(json!({"value": 1, "createdAt": "2026-02-01T00:00:00Z"})),
+        ]);
+        assert_eq!(kept.len(), 2, "{kept:?}");
+    }
 }
