@@ -189,7 +189,6 @@ pub async fn list_agent_activity(
     let filter = Filter::parse(&query)?;
     let answer = activity(&state, &user, &filter, TimestampTz::now()).await?;
     let (subject, runs) = (&user.0.identity.subject, answer.runs.len());
-    #[rustfmt::skip]
     tracing::info!(target: "audit", user = %subject, project = ?query.project, profile = ?query.profile, run = ?query.run, runs, "agent activity read");
     Ok(Json(answer))
 }
