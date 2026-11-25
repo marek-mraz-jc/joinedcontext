@@ -2547,9 +2547,13 @@ mod tests {
             verbs: vec![ConnectorVerb::Read, ConnectorVerb::Create],
         }]);
         let through = caller(Some(connector.access()));
-        let denied = |answer: Result<Value, OpError>| match answer {
-            Err(OpError::Api(ApiError::Denied(why))) => why,
-            other => panic!("expected a refusal, got {other:?}"),
+        let denied = |answer: Result<Value, OpError>| {
+            let refusal = answer.expect_err("a refusal");
+            assert!(
+                matches!(refusal, OpError::Api(ApiError::Denied(_))),
+                "{refusal:?}"
+            );
+            refusal.to_string()
         };
         let plan_of = |change: ChangeInput| PlanInput {
             changes: vec![change],
@@ -2871,13 +2875,15 @@ mod tests {
         assert!(bundled(&plan));
         let rows = opened_together(&state, &plan).await;
         let requests = server.received_requests().await.expect("requests");
-        let rows = rows.unwrap_or_else(|err| {
-            let seen: Vec<String> = requests
-                .iter()
-                .map(|r| format!("{} {}", r.method, r.url))
-                .collect();
-            panic!("the plan opens: {err}; forge saw {seen:#?}")
-        });
+        let seen: Vec<String> = requests
+            .iter()
+            .map(|r| format!("{} {}", r.method, r.url))
+            .collect();
+        assert!(
+            rows.is_ok(),
+            "the plan opens: {rows:?}; forge saw {seen:#?}"
+        );
+        let rows = rows.expect("checked above");
         assert_eq!(rows.len(), 1, "one Change: {rows:?}");
 
         let commits: Vec<Value> = requests
@@ -2927,6 +2933,54 @@ mod tests {
 
     /// CC-34 (JC2-10): a change already open on the model refuses the plan before a byte of it is
     /// written, and names the open change.
+    /// A plan whose second write the forge refuses opens nothing and says which item failed;
+    /// a branch the forge will not delete afterwards is logged, not a second error.
+    #[tokio::test]
+    async fn a_plan_the_forge_refuses_halfway_opens_nothing_and_names_the_item() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = empty_forge(None).await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c0ffee" })))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.DeleteBranch")))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let state = on_forge(&server).await;
+        let why = opened_together(&state, &model_and_space())
+            .await
+            .expect_err("the second write is refused")
+            .to_string();
+        assert!(why.contains("ContextSpace mobility was refused"), "{why}");
+        assert!(why.contains("nothing of the plan was opened"), "{why}");
+        let requests = server.received_requests().await.expect("requests");
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.url.path().ends_with("/Shako.DeleteBranch")),
+            "the half-written branch is removed"
+        );
+        assert!(
+            !requests
+                .iter()
+                .any(|r| r.url.path().ends_with("/Shako.OpenPullRequest")),
+            "no Change opened"
+        );
+    }
+
     #[tokio::test]
     async fn a_bundled_plan_is_refused_while_the_model_has_an_open_change() {
         let own = crate::api::mutate::branch_name(
