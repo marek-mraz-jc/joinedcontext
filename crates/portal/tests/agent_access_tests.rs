@@ -20,7 +20,7 @@ use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const ACCESS: &str = "/api/v1/projects/ovzdusie/serviceaccounts/vendor-ci/access";
@@ -425,6 +425,134 @@ async fn an_administrators_revoke_proposes_the_account_without_the_grant() {
         yaml.contains("ovzdusie") && !yaml.contains("doprava"),
         "{yaml}"
     );
+}
+
+/// What the forge holds of the revoke's merge request (pull 7) decides who merges it: files it
+/// cannot list, a base that is no account, or a second file leave it pending for a person; one
+/// file whose head only drops a grant of its base is merged by the Portal at once (AG-132).
+#[tokio::test]
+async fn a_revoke_is_merged_only_when_the_forge_shows_one_file_that_only_removes_access() {
+    const FILE: &str = "projects/ovzdusie/access/serviceaccounts/vendor-ci.yaml";
+    const BRANCH: &str = "portal/update-serviceaccount-vendor-ci-00000007";
+    use base64::Engine as _;
+    let yaml = |roles: Value| serde_norway::to_string(&account_with(roles)).expect("yaml");
+    let one_grant = json!([{ "role": "pipeline-admin", "scope": { "project": "ovzdusie" } }]);
+    let cases: [(ResponseTemplate, String, &str); 4] = [
+        (
+            ResponseTemplate::new(500),
+            yaml(two_grants()),
+            "PendingApproval",
+        ),
+        (
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "value": [{ "Filename": FILE, "Status": "modified" }] })),
+            "not: [an account".to_owned(),
+            "PendingApproval",
+        ),
+        (
+            ResponseTemplate::new(200).set_body_json(json!({ "value": [
+                { "Filename": FILE, "Status": "modified" },
+                { "Filename": "projects/ovzdusie/project.yaml", "Status": "modified" }
+            ] })),
+            yaml(two_grants()),
+            "PendingApproval",
+        ),
+        (
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "value": [{ "Filename": FILE, "Status": "modified" }] })),
+            yaml(two_grants()),
+            "Deploying",
+        ),
+    ];
+    for (files, base, phase) in cases {
+        let forge = MockServer::start().await;
+        let repo = "/odata/Repositories(Owner='owner',Name='config')";
+        Mock::given(method("GET"))
+            .and(path(repo))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&forge)
+            .await;
+        for (ref_, content) in [("main", base.clone()), (BRANCH, yaml(one_grant.clone()))] {
+            Mock::given(method("GET"))
+                .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+                .and(query_param("@p", format!("'{FILE}'")))
+                .and(query_param("@r", format!("'{ref_}'")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "Sha": "old",
+                    "Content": base64::engine::general_purpose::STANDARD.encode(content)
+                })))
+                .mount(&forge)
+                .await;
+        }
+        for (verb, route, status) in [
+            ("POST", "Shako.CreateBranch", 201),
+            ("POST", "Shako.CommitFiles", 200),
+            ("POST", "PullRequests(7)/Shako.Merge", 200),
+        ] {
+            Mock::given(method(verb))
+                .and(path(format!("{repo}/{route}")))
+                .respond_with(ResponseTemplate::new(status).set_body_json(json!({ "Sha": "new" })))
+                .mount(&forge)
+                .await;
+        }
+        let pull = json!({
+            "Number": 7,
+            "HtmlUrl": "https://shako.example.org/pulls/7",
+            "State": "open",
+            "Head": BRANCH,
+            "Base": "main",
+            "Mergeable": true,
+            "Merged": false
+        });
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.OpenPullRequest")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(pull.clone()))
+            .mount(&forge)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/PullRequests(7)")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(pull))
+            .mount(&forge)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/PullRequests(7)/Files")))
+            .respond_with(files)
+            .mount(&forge)
+            .await;
+        let client = ShakoClient::new(
+            forge.uri().parse().expect("url"),
+            "owner",
+            "config",
+            "token",
+        )
+        .expect("client");
+        let config = Config::for_tests();
+        let state = seeded(
+            AppState::new(config.clone(), None).with_shako(Arc::new(client)),
+            two_grants(),
+        );
+        let (status, body) = call(
+            server::app(state),
+            &config,
+            Some(person("ana@hel.fi", &[])),
+            "POST",
+            REVOKE,
+            Some(json!({ "index": 1, "role": "pipeline-admin" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{phase}: {body}");
+        let change: Value = serde_json::from_str(&body).expect("json");
+        assert_eq!(change["status"]["phase"], json!(phase), "{body}");
+        let merged = forge
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .any(|r| r.url.path().ends_with("/Shako.Merge"));
+        assert_eq!(merged, phase == "Deploying", "{phase}");
+    }
 }
 
 const ACCOUNT: &str = "/api/v1/projects/ovzdusie/serviceaccounts/vendor-ci";
