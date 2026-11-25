@@ -270,14 +270,28 @@ mod tests {
     #[test]
     fn every_refusal_says_what_was_refused() {
         let private = Refusal::Private("10.0.0.1".parse().expect("an address")).to_string();
-        assert!(private.contains("'10.0.0.1'") && private.contains("private"), "{private}");
-        assert!(Refusal::Downgrade.to_string().contains("https to plain http"));
+        assert!(
+            private.contains("'10.0.0.1'") && private.contains("private"),
+            "{private}"
+        );
+        assert!(Refusal::Downgrade
+            .to_string()
+            .contains("https to plain http"));
         let hops = Refusal::TooManyRedirects.to_string();
-        assert!(hops.contains(&format!("more than {MAX_REDIRECTS} redirects")), "{hops}");
+        assert!(
+            hops.contains(&format!("more than {MAX_REDIRECTS} redirects")),
+            "{hops}"
+        );
         let scheme = Refusal::Scheme("ftp://x/".to_owned()).to_string();
         assert!(scheme.contains("'ftp://x/'"), "{scheme}");
-        let name = PrivateAddress { host: "intranet".to_owned() }.to_string();
-        assert!(name.contains("'intranet'") && name.contains("AG-65"), "{name}");
+        let name = PrivateAddress {
+            host: "intranet".to_owned(),
+        }
+        .to_string();
+        assert!(
+            name.contains("'intranet'") && name.contains("AG-65"),
+            "{name}"
+        );
     }
 
     /// A name a redirect names is judged when it is resolved, after the hop count: a client on

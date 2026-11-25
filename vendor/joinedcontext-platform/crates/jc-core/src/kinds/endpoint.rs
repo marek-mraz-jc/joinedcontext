@@ -862,11 +862,13 @@ impl EndpointSpec {
                     got: view.kind.clone(),
                 });
             }
-            names::validate_dns1123_label(&view.name).map_err(|e| names::map_reason(e, |reason| Error::Name {
+            names::validate_dns1123_label(&view.name).map_err(|e| {
+                names::map_reason(e, |reason| Error::Name {
                     field: "spec.viewMappingRef.name",
                     value: view.name.clone(),
                     reason,
-                }))?;
+                })
+            })?;
         }
 
         if let Some(ical) = self
@@ -925,11 +927,13 @@ impl EndpointSpec {
                     got: projection.kind.clone(),
                 });
             }
-            names::validate_dns1123_label(&projection.name).map_err(|e| names::map_reason(e, |reason| Error::Name {
+            names::validate_dns1123_label(&projection.name).map_err(|e| {
+                names::map_reason(e, |reason| Error::Name {
                     field: "spec.projectionRef.name",
                     value: projection.name.clone(),
                     reason,
-                }))?;
+                })
+            })?;
         }
 
         for (class, display) in &self.display {
@@ -1284,11 +1288,13 @@ impl SharedSpaceReferenceSpec {
                 })
             }
         }
-        names::validate_dns1123_label(&self.alias).map_err(|e| names::map_reason(e, |reason| Error::Name {
+        names::validate_dns1123_label(&self.alias).map_err(|e| {
+            names::map_reason(e, |reason| Error::Name {
                 field: "spec.alias",
                 value: self.alias.clone(),
                 reason,
-            }))?;
+            })
+        })?;
         crate::kinds::validate_mirror_schedule(self.schedule.as_ref())
     }
 }

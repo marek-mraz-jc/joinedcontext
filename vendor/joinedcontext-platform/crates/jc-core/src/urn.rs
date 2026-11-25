@@ -48,10 +48,12 @@ impl Urn {
         let fail = |reason: fn(String, &'static str) -> UrnError, segment: &str| {
             let urn = urn.clone();
             let segment = segment.to_string();
-            move |e: Error| names::map_reason(e, |why| Error::Urn {
+            move |e: Error| {
+                names::map_reason(e, |why| Error::Urn {
                     urn,
                     reason: reason(segment, why),
                 })
+            }
         };
         names::validate_entity_type(entity_type).map_err(fail(
             |segment, reason| UrnError::InvalidEntityType { segment, reason },
@@ -256,10 +258,14 @@ impl FromStr for Urn {
         let Some((entity_type, id)) = rest.split_once(':') else {
             return Err(invalid(UrnError::MissingId));
         };
-        names::validate_entity_type(entity_type).map_err(|e| names::map_reason(e, |reason| invalid(UrnError::InvalidEntityType {
-                segment: entity_type.to_string(),
-                reason,
-            })))?;
+        names::validate_entity_type(entity_type).map_err(|e| {
+            names::map_reason(e, |reason| {
+                invalid(UrnError::InvalidEntityType {
+                    segment: entity_type.to_string(),
+                    reason,
+                })
+            })
+        })?;
         if id.is_empty() {
             return Err(invalid(UrnError::MissingId));
         }

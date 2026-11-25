@@ -1059,7 +1059,8 @@ mod tests {
         // The fresh corpus is written every run: over the file when asked, else beside the
         // temporary files, where nothing reads it.
         let write = std::env::var_os("JC_WRITE_KEEP_CORPUS").is_some();
-        let spare = std::env::temp_dir().join(format!("stylesheet_keep-{}.json", std::process::id()));
+        let spare =
+            std::env::temp_dir().join(format!("stylesheet_keep-{}.json", std::process::id()));
         let out = [spare.as_path(), std::path::Path::new(path)][usize::from(write)];
         let text = serde_json::to_string_pretty(&fresh).expect("writes") + "\n";
         std::fs::write(out, text).expect("writes the corpus");

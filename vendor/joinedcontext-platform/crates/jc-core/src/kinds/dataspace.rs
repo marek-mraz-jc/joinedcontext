@@ -30,11 +30,13 @@ impl Did {
         })?;
 
         let domain = &caps[1];
-        names::validate_org_domain(domain).map_err(|e| names::map_reason(e, |reason| Error::Name {
+        names::validate_org_domain(domain).map_err(|e| {
+            names::map_reason(e, |reason| Error::Name {
                 field: "did",
                 value: s.to_string(),
                 reason,
-            }))?;
+            })
+        })?;
 
         Ok(Self(s.to_string()))
     }
@@ -248,11 +250,13 @@ impl Kind for DataOfferSpec {
 impl DataOfferSpec {
     /// Validates context space ref, endpoint refs, ODRL policy structure, and personal data rules (DS-07, DS-14).
     pub fn validate(&self) -> Result<()> {
-        names::validate_dns1123_label(&self.context_space_ref).map_err(|e| names::map_reason(e, |reason| Error::Name {
+        names::validate_dns1123_label(&self.context_space_ref).map_err(|e| {
+            names::map_reason(e, |reason| Error::Name {
                 field: "spec.contextSpaceRef",
                 value: self.context_space_ref.clone(),
                 reason,
-            }))?;
+            })
+        })?;
 
         if self.endpoint_refs.is_empty() {
             return Err(Error::Name {
@@ -265,11 +269,13 @@ impl DataOfferSpec {
         let mut seen = std::collections::BTreeSet::new();
         for ep in &self.endpoint_refs {
             let name = ep.name();
-            names::validate_dns1123_label(name).map_err(|e| names::map_reason(e, |reason| Error::Name {
+            names::validate_dns1123_label(name).map_err(|e| {
+                names::map_reason(e, |reason| Error::Name {
                     field: "spec.endpointRefs.name",
                     value: name.to_string(),
                     reason,
-                }))?;
+                })
+            })?;
             if let Some(kind) = ep.kind() {
                 if kind != "Endpoint" {
                     return Err(Error::Kind {
@@ -504,11 +510,13 @@ impl DataAgreementSpec {
         if self.role == AgreementRole::Provider {
             match &self.offer_ref {
                 Some(offer) => {
-                    names::validate_dns1123_label(offer.name()).map_err(|e| names::map_reason(e, |reason| Error::Name {
+                    names::validate_dns1123_label(offer.name()).map_err(|e| {
+                        names::map_reason(e, |reason| Error::Name {
                             field: "spec.offerRef.name",
                             value: offer.name().to_string(),
                             reason,
-                        }))?;
+                        })
+                    })?;
                     if let Some(kind) = offer.kind() {
                         if kind != "DataOffer" {
                             return Err(Error::Kind {
@@ -541,11 +549,13 @@ impl DataAgreementSpec {
         }
 
         if let Some(ref sec) = self.token_secret_ref {
-            names::validate_dns1123_label(&sec.name).map_err(|e| names::map_reason(e, |reason| Error::Name {
+            names::validate_dns1123_label(&sec.name).map_err(|e| {
+                names::map_reason(e, |reason| Error::Name {
                     field: "spec.tokenSecretRef.name",
                     value: sec.name.clone(),
                     reason,
-                }))?;
+                })
+            })?;
         }
 
         if let (Some(from), Some(to)) = (self.validity.from, self.validity.to) {

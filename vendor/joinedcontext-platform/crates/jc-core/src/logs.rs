@@ -46,7 +46,10 @@ mod tests {
     #[test]
     fn rust_log_wins_unless_it_is_unset_blank_or_unreadable() {
         use std::env::VarError;
-        assert_eq!(directives(Ok("hyper=warn".to_owned()), "info"), "hyper=warn");
+        assert_eq!(
+            directives(Ok("hyper=warn".to_owned()), "info"),
+            "hyper=warn"
+        );
         assert_eq!(directives(Ok(" \t".to_owned()), "info"), "info");
         assert_eq!(directives(Err(VarError::NotPresent), "info"), "info");
         let unreadable = VarError::NotUnicode(std::ffi::OsString::from("x"));

@@ -238,7 +238,10 @@ mod tests {
         let verifier = Verifier::new("http://realm");
         for url in ["https://idm.city.invalid/certs", "ftp://idm/certs", "certs"] {
             let outcome = refresh(&verifier, url).await;
-            assert!(matches!(outcome, Err(JwksError::Url(_))), "{url}: {outcome:?}");
+            assert!(
+                matches!(outcome, Err(JwksError::Url(_))),
+                "{url}: {outcome:?}"
+            );
         }
         let outcome = refresh(&verifier, "http://exa mple/certs").await;
         assert!(matches!(outcome, Err(JwksError::Url(_))), "{outcome:?}");
@@ -264,7 +267,10 @@ mod tests {
         let closed = refused.local_addr().expect("an address");
         drop(refused);
         let outcome = refresh(&verifier, &format!("http://{closed}/certs")).await;
-        assert!(matches!(outcome, Err(JwksError::Unreachable(_))), "{outcome:?}");
+        assert!(
+            matches!(outcome, Err(JwksError::Unreachable(_))),
+            "{outcome:?}"
+        );
     }
 
     #[tokio::test]
@@ -293,7 +299,10 @@ mod tests {
             Some(closed),
         ));
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        assert!(!task.is_finished(), "a failed refresh does not end the loop");
+        assert!(
+            !task.is_finished(),
+            "a failed refresh does not end the loop"
+        );
         task.abort();
         drop(socket);
     }

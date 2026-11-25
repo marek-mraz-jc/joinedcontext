@@ -615,7 +615,10 @@ pub fn layout_of(file: Option<&str>, role: RepositoryRole) -> Result<u32> {
 pub fn mount(manifest: &mut Value, slug: &str) -> Result<()> {
     names::validate_dns1123_label(slug)?;
     let Some(manifest) = manifest.as_object_mut() else {
-        return Err(invalid("kind", "a manifest is a mapping that names its kind"));
+        return Err(invalid(
+            "kind",
+            "a manifest is a mapping that names its kind",
+        ));
     };
     let kind = manifest
         .get("kind")
@@ -668,7 +671,11 @@ mod edge_tests {
 
     #[test]
     fn mount_refuses_a_manifest_that_is_no_mapping() {
-        for mut manifest in [Value::Null, serde_json::json!([]), serde_json::json!("Project")] {
+        for mut manifest in [
+            Value::Null,
+            serde_json::json!([]),
+            serde_json::json!("Project"),
+        ] {
             let err = mount(&mut manifest, "smart-city").expect_err("not a manifest");
             assert!(
                 matches!(&err, Error::Invalid { field, .. } if field == "kind"),
