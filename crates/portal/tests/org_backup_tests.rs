@@ -851,6 +851,73 @@ async fn a_plain_bundle_from_before_encryption_is_refused_with_its_date() {
     assert!(!wrong.text.contains(&other), "the identity is never echoed");
 }
 
+/// A version whose bundle has no index, is of another Organization, or names a project the
+/// Organization no longer holds plans no restore and says which (T-7154).
+#[tokio::test]
+async fn a_bundle_that_is_not_this_organizations_plans_no_restore() {
+    let world = world("alfa", "Enabled").await;
+    saved_and_run(&world, "ada").await;
+    let key = key_of(&world, "alfa", "configuration").await;
+    let files = unzip(&opened(&latest(&world.bucket, &key)));
+    let zipped = |files: &BTreeMap<String, String>| {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (path, text) in files {
+            writer
+                .start_file(path.as_str(), zip::write::SimpleFileOptions::default())
+                .expect("entry");
+            std::io::Write::write_all(&mut writer, text.as_bytes()).expect("write");
+        }
+        writer.finish().expect("zip").into_inner()
+    };
+    let mut no_index = files.clone();
+    no_index.remove("index.yaml");
+    let mut other_org = files.clone();
+    let index = other_org["index.yaml"].replace("organization: alfa", "organization: bravo");
+    other_org.insert("index.yaml".into(), index);
+    let moved: BTreeMap<String, String> = files
+        .iter()
+        .map(|(path, text)| {
+            (
+                path.replace("alfa-city", "bravo-town"),
+                text.replace("alfa-city", "bravo-town"),
+            )
+        })
+        .collect();
+    for (version, bundle, says) in [
+        ("no-index", no_index, "no index.yaml"),
+        ("other-org", other_org, "of Organization 'bravo'"),
+        ("moved", moved, "'bravo-town'"),
+    ] {
+        world
+            .bucket
+            .lock()
+            .expect("bucket")
+            .objects
+            .get_mut(&key)
+            .expect("alfa's bundle")
+            .push((
+                version.into(),
+                Some(sealed(&zipped(&bundle))),
+                "2026-11-16T11:00:00.000Z".into(),
+            ));
+        let refused = send(
+            &world.state,
+            person("ada"),
+            "POST",
+            &format!("{DOOR}/versions/{version}/restore"),
+            Some(json!({ "identity": identity(), "apply": false })),
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{version}: {}",
+            refused.text
+        );
+        assert!(refused.text.contains(says), "{version}: {}", refused.text);
+    }
+}
+
 #[tokio::test]
 async fn a_seal_opens_only_for_the_organization_and_kind_it_was_sealed_for() {
     let world = world("alfa", "Enabled").await;
