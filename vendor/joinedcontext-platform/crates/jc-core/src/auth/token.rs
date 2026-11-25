@@ -704,6 +704,28 @@ mod tests {
             .is_ok());
     }
 
+    #[test]
+    fn a_memo_without_room_keeps_the_new_entry_alone() {
+        let memo = Mutex::new(HashMap::new());
+        assert_eq!(keep(&memo, 0, [1; 32], 1u8), 1);
+        assert_eq!(memo.into_inner().expect("the memo").len(), 1);
+    }
+
+    /// A key the JWKS names with an id and an algorithm, but whose material does not decode, is
+    /// skipped; the realm's usable keys are still taken.
+    #[test]
+    fn a_key_whose_material_does_not_decode_is_skipped() {
+        let jwks: jsonwebtoken::jwk::JwkSet = serde_json::from_value(serde_json::json!({
+            "keys": [
+                {"kty": "RSA", "kid": "broken", "alg": "RS256", "n": "!!", "e": "AQAB"},
+                {"kty": "oct", "kid": "shared", "alg": "HS256", "k": "c2VjcmV0"},
+                {"kty": "EC", "crv": "P-256", "alg": "ES256"}
+            ]
+        }))
+        .expect("a JWKS");
+        assert_eq!(super::Verifier::new("realm").replace_keys(&jwks), 0);
+    }
+
     /// P-3-03: a full memo trades one entry for the new one instead of forgetting every caller.
     #[test]
     fn a_full_memo_pushes_out_one_entry_and_keeps_the_rest() {

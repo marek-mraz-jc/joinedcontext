@@ -844,12 +844,27 @@ mod tests {
     const SHA: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     fn reason(css: &str) -> String {
-        match scoped_stylesheet(css, "jc-portal-x") {
-            Err(Error::Invalid { field, reason }) => {
-                assert_eq!(field, CSS_FIELD);
-                reason
-            }
-            other => panic!("{css:?} was not refused: {other:?}"),
+        let refused = scoped_stylesheet(css, "jc-portal-x").expect_err(css);
+        assert!(
+            matches!(&refused, Error::Invalid { field, .. } if field == CSS_FIELD),
+            "{css:?}: {refused:?}"
+        );
+        refused.to_string()
+    }
+
+    /// CSS the tokenizer cannot read as rules, and text that would close the `<style>` element
+    /// the stylesheet is served in, are refused with the field named.
+    #[test]
+    fn unparsable_css_and_a_closing_tag_are_refused() {
+        for css in [
+            ".x { color: #ffffff } }",
+            "}",
+            ".x { color: #ffffff; } {",
+            ".x::after { content: \"</style>\" }",
+            ".x { font-family: \"a</b\" }",
+            ".x { background: url(</x) }",
+        ] {
+            assert!(!reason(css).is_empty(), "{css}");
         }
     }
 
@@ -983,10 +998,11 @@ mod tests {
                     gitRepositoryUrl: https://forge.bbsk.sk/o/config.git\n  locales: [sk]\n  \
                     defaultLocale: sk\n  appearance:\n    css: \".x { color: #ffffff }\"\n";
         let org = crate::kinds::Organization::from_yaml(yaml).expect("parses");
-        match org.spec.validate() {
-            Err(Error::Invalid { field, .. }) => assert_eq!(field, CSS_FIELD),
-            other => panic!("not refused: {other:?}"),
-        }
+        let refused = org.spec.validate().expect_err("not refused");
+        assert!(
+            matches!(&refused, Error::Invalid { field, .. } if field == CSS_FIELD),
+            "{refused:?}"
+        );
     }
 
     /// Found by the fuzz target: tokens the author kept apart with a comment stay apart, so
@@ -1026,25 +1042,31 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/src/kinds/stylesheet_keep.json"
         );
-        let mut corpus: Vec<Entry> =
+        let corpus: Vec<Entry> =
             serde_json::from_str(include_str!("stylesheet_keep.json")).expect("the corpus parses");
-        let mut stale = Vec::new();
-        for entry in &mut corpus {
-            let scoped = scoped_stylesheet(&entry.css, "jc-portal-test").expect(&entry.css);
-            if scoped != entry.scoped {
-                stale.push(entry.css.clone());
-                entry.scoped = scoped;
-            }
-        }
-        if std::env::var_os("JC_WRITE_KEEP_CORPUS").is_some() {
-            let text = serde_json::to_string_pretty(&corpus).expect("writes") + "\n";
-            std::fs::write(path, text).expect("writes the corpus");
-        } else {
-            assert!(
-                stale.is_empty(),
-                "stale scoped text, rerun with JC_WRITE_KEEP_CORPUS=1: {stale:?}"
-            );
-        }
+        let fresh: Vec<Entry> = corpus
+            .iter()
+            .map(|entry| Entry {
+                css: entry.css.clone(),
+                scoped: scoped_stylesheet(&entry.css, "jc-portal-test").expect(&entry.css),
+            })
+            .collect();
+        let stale: Vec<&str> = corpus
+            .iter()
+            .zip(&fresh)
+            .filter_map(|(old, new)| (old.scoped != new.scoped).then_some(old.css.as_str()))
+            .collect();
+        // The fresh corpus is written every run: over the file when asked, else beside the
+        // temporary files, where nothing reads it.
+        let write = std::env::var_os("JC_WRITE_KEEP_CORPUS").is_some();
+        let spare = std::env::temp_dir().join(format!("stylesheet_keep-{}.json", std::process::id()));
+        let out = [spare.as_path(), std::path::Path::new(path)][usize::from(write)];
+        let text = serde_json::to_string_pretty(&fresh).expect("writes") + "\n";
+        std::fs::write(out, text).expect("writes the corpus");
+        assert!(
+            write || stale.is_empty(),
+            "stale scoped text, rerun with JC_WRITE_KEEP_CORPUS=1: {stale:?}"
+        );
     }
 
     #[test]

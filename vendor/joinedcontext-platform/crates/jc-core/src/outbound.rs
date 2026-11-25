@@ -123,10 +123,11 @@ pub fn check(url: &Url) -> Result<(), Refusal> {
         let _ = shown.set_username("");
         shown.to_string()
     };
-    if !matches!(url.scheme(), "http" | "https") {
-        return Err(Refusal::Scheme(shown()));
-    }
-    let Some(host) = url.host_str() else {
+    // An http(s) URL always parses with a host; the filter keeps the other schemes out.
+    let Some(host) = url
+        .host_str()
+        .filter(|_| matches!(url.scheme(), "http" | "https"))
+    else {
         return Err(Refusal::Scheme(shown()));
     };
     // The URL keeps an IPv6 address in brackets; a name parses as no address at all.
@@ -144,19 +145,22 @@ pub fn check(url: &Url) -> Result<(), Refusal> {
 /// each hop's URL judged by [`check`]; a named hop is resolved through [`PublicOnly`] again.
 pub fn redirects(max: usize) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
-        if attempt.previous().len() > max {
-            return attempt.error(Refusal::TooManyRedirects);
-        }
-        let downgrade = attempt.url().scheme() == "http"
-            && attempt.previous().iter().any(|hop| hop.scheme() == "https");
-        if downgrade {
-            return attempt.error(Refusal::Downgrade);
-        }
-        match check(attempt.url()) {
+        match judge_hop(attempt.url(), attempt.previous(), max) {
             Ok(()) => attempt.follow(),
             Err(refusal) => attempt.error(refusal),
         }
     })
+}
+
+/// [`redirects`]' rule for the hop to `next` after the URLs `previous` already visited.
+fn judge_hop(next: &Url, previous: &[Url], max: usize) -> Result<(), Refusal> {
+    if previous.len() > max {
+        return Err(Refusal::TooManyRedirects);
+    }
+    if next.scheme() == "http" && previous.iter().any(|hop| hop.scheme() == "https") {
+        return Err(Refusal::Downgrade);
+    }
+    check(next)
 }
 
 /// A client builder for URLs that came from outside the installation: public addresses only after
@@ -237,6 +241,76 @@ mod tests {
     }
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    fn url(text: &str) -> Url {
+        Url::parse(text).expect("a URL")
+    }
+
+    #[test]
+    fn a_hop_is_judged_by_its_count_its_scheme_and_its_address() {
+        let public = url("https://opendata.example.org/a");
+        let plain = url("http://opendata.example.org/b");
+        assert_eq!(judge_hop(&public, &[plain.clone()], 1), Ok(()));
+        assert_eq!(judge_hop(&plain, &[plain.clone()], 1), Ok(()));
+        assert_eq!(
+            judge_hop(&plain, &[public.clone()], 1),
+            Err(Refusal::Downgrade)
+        );
+        assert_eq!(
+            judge_hop(&public, &[plain.clone(), public.clone()], 1),
+            Err(Refusal::TooManyRedirects)
+        );
+        assert_eq!(judge_hop(&public, &[], 0), Ok(()));
+        assert_eq!(
+            judge_hop(&url("http://10.1.2.3/"), &[plain], 1),
+            Err(Refusal::Private("10.1.2.3".parse().expect("an address")))
+        );
+    }
+
+    #[test]
+    fn every_refusal_says_what_was_refused() {
+        let private = Refusal::Private("10.0.0.1".parse().expect("an address")).to_string();
+        assert!(private.contains("'10.0.0.1'") && private.contains("private"), "{private}");
+        assert!(Refusal::Downgrade.to_string().contains("https to plain http"));
+        let hops = Refusal::TooManyRedirects.to_string();
+        assert!(hops.contains(&format!("more than {MAX_REDIRECTS} redirects")), "{hops}");
+        let scheme = Refusal::Scheme("ftp://x/".to_owned()).to_string();
+        assert!(scheme.contains("'ftp://x/'"), "{scheme}");
+        let name = PrivateAddress { host: "intranet".to_owned() }.to_string();
+        assert!(name.contains("'intranet'") && name.contains("AG-65"), "{name}");
+    }
+
+    /// A name a redirect names is judged when it is resolved, after the hop count: a client on
+    /// the plain resolver reaches the hop limit by a loop through `localhost`.
+    #[tokio::test]
+    async fn a_redirect_loop_stops_at_the_hop_limit() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("a port");
+        let port = listener.local_addr().expect("an address").port();
+        let head = format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/again\r\nContent-Length: 0\r\n\r\n"
+        );
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let head = head.clone();
+                tokio::spawn(async move {
+                    let mut request = [0u8; 2048];
+                    let _ = socket.read(&mut request).await;
+                    let _ = socket.write_all(head.as_bytes()).await;
+                });
+            }
+        });
+        let plain = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(redirects(2))
+            .build()
+            .expect("a client");
+        let err = plain
+            .get(format!("http://127.0.0.1:{port}/"))
+            .send()
+            .await
+            .expect_err("the loop is not followed");
+        assert_eq!(refusal_of(&err), Some(&Refusal::TooManyRedirects));
+    }
 
     #[test]
     fn a_url_naming_an_inside_address_or_another_scheme_is_refused() {

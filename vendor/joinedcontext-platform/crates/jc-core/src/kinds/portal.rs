@@ -462,15 +462,12 @@ mod tests {
             )
         };
         parse(&yaml("sk")).expect("a heading in an offered language");
-        match parse(&yaml("de")) {
-            Err(Error::Invalid { field, .. }) => {
-                assert_eq!(
-                    field,
-                    "spec.appearance.display.dataset.sections[0].heading.de"
-                );
-            }
-            other => panic!("{other:?}"),
-        }
+        let refused = parse(&yaml("de")).expect_err("a heading in a language not offered");
+        assert!(
+            matches!(&refused, Error::Invalid { field, .. }
+                if field == "spec.appearance.display.dataset.sections[0].heading.de"),
+            "{refused:?}"
+        );
     }
 
     #[test]

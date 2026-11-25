@@ -88,19 +88,15 @@ async fn fetch(
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
             .build_http();
     let mut request = axum::http::Request::get(&uri);
-    let uri = match (reach, uri.authority()) {
-        // The request names the URL's host; the connection goes to `reach`.
-        (Some(addr), Some(authority)) => {
-            request = request.header(axum::http::header::HOST, authority.as_str());
-            let path = uri.path_and_query().map_or("/", |p| p.as_str());
-            format!("http://{addr}{path}")
-                .parse()
-                .map_err(|e| JwksError::Url(format!("{e}")))?
-        }
-        _ => uri,
-    };
+    if let (Some(addr), Some(authority)) = (reach, uri.authority()) {
+        // The request names the URL's host; the connection goes to `reach`. The builder parses
+        // the new target and reports a bad one from `body` below.
+        let path = uri.path_and_query().map_or("/", |p| p.as_str());
+        request = request
+            .header(axum::http::header::HOST, authority.as_str())
+            .uri(format!("http://{addr}{path}"));
+    }
     let request = request
-        .uri(uri)
         .body(Body::empty())
         .map_err(|e| JwksError::Url(e.to_string()))?;
     let response = client
@@ -215,5 +211,90 @@ mod tests {
         );
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
         held.abort();
+    }
+
+    /// One HTTP answer on a fresh loopback listener; the URL to fetch it from.
+    async fn serve_once(answer: &'static str) -> String {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a listener");
+        let address = listener.local_addr().expect("an address");
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut head = vec![0; 4096];
+                let _ = socket.read(&mut head).await;
+                let _ = socket.write_all(answer.as_bytes()).await;
+            }
+        });
+        format!("http://{address}/certs")
+    }
+
+    const EMPTY_SET: &str =
+        "HTTP/1.1 200 OK\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"keys\":[]}";
+
+    #[tokio::test]
+    async fn only_a_plain_http_url_is_fetched() {
+        let verifier = Verifier::new("http://realm");
+        for url in ["https://idm.city.invalid/certs", "ftp://idm/certs", "certs"] {
+            let outcome = refresh(&verifier, url).await;
+            assert!(matches!(outcome, Err(JwksError::Url(_))), "{url}: {outcome:?}");
+        }
+        let outcome = refresh(&verifier, "http://exa mple/certs").await;
+        assert!(matches!(outcome, Err(JwksError::Url(_))), "{outcome:?}");
+    }
+
+    #[tokio::test]
+    async fn a_realm_answering_an_error_or_no_jwks_keeps_the_old_keys() {
+        let verifier = Verifier::new("http://realm");
+        for answer in [
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+            "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello",
+        ] {
+            let url = serve_once(answer).await;
+            let outcome = refresh(&verifier, &url).await;
+            assert!(
+                matches!(&outcome, Err(JwksError::Unreachable(why)) if !why.is_empty()),
+                "{answer}: {outcome:?}"
+            );
+        }
+        let refused = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a listener");
+        let closed = refused.local_addr().expect("an address");
+        drop(refused);
+        let outcome = refresh(&verifier, &format!("http://{closed}/certs")).await;
+        assert!(matches!(outcome, Err(JwksError::Unreachable(_))), "{outcome:?}");
+    }
+
+    #[tokio::test]
+    async fn keep_current_loads_the_keys_and_goes_on_refreshing() {
+        let url = serve_once(EMPTY_SET).await;
+        let verifier = Arc::new(Verifier::new("http://realm"));
+        let task = tokio::spawn(keep_current(Arc::clone(&verifier), url));
+        // The first refresh runs at once; the loop then sleeps until the next one.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(!task.is_finished(), "the loop runs for ever");
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn a_failed_refresh_keeps_the_loop_alive() {
+        // A bound socket that never listens: every connection to it is refused.
+        let socket = tokio::net::TcpSocket::new_v4().expect("a socket");
+        socket
+            .bind("127.0.0.1:0".parse().expect("an address"))
+            .expect("bound");
+        let closed = socket.local_addr().expect("an address");
+        let verifier = Arc::new(Verifier::new("http://realm"));
+        let task = tokio::spawn(keep_current_at(
+            Arc::clone(&verifier),
+            "http://idm.city.invalid/certs".to_owned(),
+            Some(closed),
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(!task.is_finished(), "a failed refresh does not end the loop");
+        task.abort();
+        drop(socket);
     }
 }

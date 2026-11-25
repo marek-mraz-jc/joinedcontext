@@ -185,7 +185,7 @@ pub fn mark(entity: &mut Value, verdicts: &[Verdict<'_>], now: impl Into<SystemT
     let Some(object) = entity.as_object_mut() else {
         return;
     };
-    let mut flags: Map<String, Value> = Map::new();
+    let mut flags: std::collections::BTreeMap<String, Vec<Value>> = Default::default();
     for verdict in verdicts {
         let attribute = &verdict.rule.attribute;
         for instance in instances_mut(object, attribute) {
@@ -194,12 +194,10 @@ pub fn mark(entity: &mut Value, verdicts: &[Verdict<'_>], now: impl Into<SystemT
             }
         }
         if verdict.broken == Some(QualityOutcome::Flag) {
-            if let Value::Array(names) = flags
+            flags
                 .entry(attribute.clone())
-                .or_insert_with(|| Value::Array(Vec::new()))
-            {
-                names.push(Value::String(verdict.rule.name.clone()));
-            }
+                .or_default()
+                .push(Value::String(verdict.rule.name.clone()));
         }
     }
     for (attribute, names) in flags {
@@ -209,12 +207,8 @@ pub fn mark(entity: &mut Value, verdicts: &[Verdict<'_>], now: impl Into<SystemT
             {
                 *instance = json!({ "type": "Property", "value": instance.take() });
             }
-            if let Value::Object(o) = instance {
-                o.insert(
-                    QUALITY_FLAGS.into(),
-                    json!({ "type": "Property", "value": names.clone() }),
-                );
-            }
+            // An object by now: the wrap above made one of anything else.
+            instance[QUALITY_FLAGS] = json!({ "type": "Property", "value": names.clone() });
         }
     }
     let quarantined: Vec<&str> = verdicts
@@ -247,15 +241,12 @@ fn instances_mut<'v>(object: &'v mut Map<String, Value>, attribute: &str) -> Vec
     let Some(value) = object.get_mut(attribute) else {
         return Vec::new();
     };
-    if matches!(value, Value::Array(all) if all.iter().all(Value::is_object) && !all.is_empty()) {
-        if let Value::Array(all) = value {
-            return all.iter_mut().collect();
+    match value {
+        Value::Array(all) if !all.is_empty() && all.iter().all(Value::is_object) => {
+            all.iter_mut().collect()
         }
-    }
-    if value.is_null() {
-        Vec::new()
-    } else {
-        vec![value]
+        Value::Null => Vec::new(),
+        other => vec![other],
     }
 }
 

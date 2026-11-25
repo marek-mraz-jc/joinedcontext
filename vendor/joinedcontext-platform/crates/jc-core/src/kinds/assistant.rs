@@ -2010,11 +2010,17 @@ mod knowledge_source_tests {
     }
 
     /// The field a refusal names, so each piece is judged by what it reports.
-    fn refused(result: Result<()>) -> &'static str {
-        match result {
-            Err(Error::Name { field, .. }) => field,
-            other => panic!("expected a refused field, got {other:?}"),
-        }
+    fn refused(result: Result<()>) -> String {
+        let err = result.expect_err("a refusal");
+        assert!(
+            matches!(err, Error::Name { .. }),
+            "expected a refused field, got {err:?}"
+        );
+        let problem = crate::error::ProblemDetails::from(err);
+        problem.extensions["field"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
     }
 
     #[test]
@@ -2280,11 +2286,17 @@ mod deployment_spec_tests {
         serde_json::from_value(spec).expect("an AssistantDeployment spec")
     }
 
-    fn refused(result: Result<()>) -> &'static str {
-        match result {
-            Err(Error::Name { field, .. }) => field,
-            other => panic!("expected a refused field, got {other:?}"),
-        }
+    fn refused(result: Result<()>) -> String {
+        let err = result.expect_err("a refusal");
+        assert!(
+            matches!(err, Error::Name { .. }),
+            "expected a refused field, got {err:?}"
+        );
+        let problem = crate::error::ProblemDetails::from(err);
+        problem.extensions["field"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
     }
 
     #[test]

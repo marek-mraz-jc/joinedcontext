@@ -47,14 +47,11 @@ impl DataModelRef {
                 });
             }
         }
-        names::validate_dns1123_label(&self.name).map_err(|e| match e {
-            Error::Name { reason, .. } => Error::Name {
+        names::validate_dns1123_label(&self.name).map_err(|e| names::map_reason(e, |reason| Error::Name {
                 field: field_prefix,
                 value: self.name.clone(),
                 reason,
-            },
-            other => other,
-        })?;
+            }))?;
         if !MAJOR_RE.is_match(&self.version) {
             return Err(Error::Name {
                 field: field_prefix,
@@ -264,14 +261,11 @@ impl MappingSpec {
 
     /// Validates context space ref, source and target data models, transformation, native blocks, and tests.
     pub fn validate(&self) -> Result<()> {
-        names::validate_space_name(&self.context_space_ref).map_err(|e| match e {
-            Error::Name { reason, .. } => Error::Name {
+        names::validate_space_name(&self.context_space_ref).map_err(|e| names::map_reason(e, |reason| Error::Name {
                 field: "spec.contextSpaceRef",
                 value: self.context_space_ref.clone(),
                 reason,
-            },
-            other => other,
-        })?;
+            }))?;
 
         self.source.validate("spec.source.name")?;
         self.target.validate("spec.target.name")?;

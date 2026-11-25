@@ -234,14 +234,11 @@ impl OrganizationSpec {
                     reason: "contact email must have exactly one `@` and a non-empty local part",
                 });
             }
-            names::validate_org_domain(parts[1]).map_err(|e| match e {
-                Error::Name { reason, .. } => Error::Name {
+            names::validate_org_domain(parts[1]).map_err(|e| names::map_reason(e, |reason| Error::Name {
                     field: "contacts.email",
                     value: contact.email.clone(),
                     reason,
-                },
-                other => other,
-            })?;
+                }))?;
         }
 
         if let Some(quota) = self.projects.quota.as_ref() {
