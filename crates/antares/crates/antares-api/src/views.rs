@@ -308,11 +308,11 @@ fn paired(view: &CompiledView, clause: &str, engine: Arc<Filter>) -> Result<Arc<
     let answer =
         composed.and_then(
             |composed| match resolve(clause, Decision::Filter(Arc::new(composed))) {
-                Decision::Allow => Ok(crate::policy::unnarrowed()),
-                // `resolve` makes no condition of a filter
                 Decision::Filter(f) => Ok(f),
-                Decision::AllowIf(f) => Ok(Arc::new(f)),
                 Decision::Deny(why) => Err(Denied(why)),
+                // `resolve` makes no condition of a filter: what is left is
+                // the Allow of an empty one
+                _ => Ok(crate::policy::unnarrowed()),
             },
         );
     LAST.set(Some((
@@ -1279,11 +1279,10 @@ pub(crate) async fn schema_admits(
     if types.is_empty() {
         return Ok(());
     }
-    let mut typed = doc.clone();
-    if let Some(o) = typed.as_object_mut() {
-        o.insert("type".to_owned(), serde_json::Value::Array(types));
-    }
-    schema_admits_typed(st, tenant, &typed, false)
+    // a fragment is an object: every write path parsed it as one
+    let mut typed = doc.as_object().cloned().unwrap_or_default();
+    typed.insert("type".to_owned(), serde_json::Value::Array(types));
+    schema_admits_typed(st, tenant, &serde_json::Value::Object(typed), false)
 }
 
 /// `v.to_string().hash(h)` without the String: the text streams into the
@@ -2229,6 +2228,114 @@ mod tests {
             compose(&Filter::default(), Filter::default()).expect("empty"),
             Filter::default()
         );
+    }
+
+    /// The joins keep one copy of a name both sides omit, the per-type
+    /// omissions of both sides, the one `pick` that is set, and refuse a
+    /// `scopeQ` that names no scope group to intersect with.
+    #[test]
+    fn a_pair_joins_the_omissions_and_refuses_disjoint_scopes() {
+        let a = Filter {
+            omit: vec!["x".into()],
+            omit_by_type: BTreeMap::from([("Car".to_owned(), vec!["secret".to_owned()])]),
+            pick: vec!["speed".into(), "colour".into()],
+            ..Filter::default()
+        };
+        let b = Filter {
+            omit: vec!["x".into()],
+            omit_by_type: BTreeMap::from([(
+                "Car".to_owned(),
+                vec!["secret".to_owned(), "vin".to_owned()],
+            )]),
+            ..Filter::default()
+        };
+        let f = compose(&a, b).expect("composes");
+        assert_eq!(f.omit, vec!["x"], "a name both omit is kept once");
+        assert_eq!(f.omit_by_type["Car"], vec!["secret", "vin"]);
+        assert_eq!(f.pick, vec!["speed", "colour"], "the only pick stands");
+        let shared = compose(
+            &a,
+            Filter {
+                pick: vec!["colour".into(), "vin".into()],
+                ..Filter::default()
+            },
+        )
+        .expect("composes");
+        assert_eq!(shared.pick, vec!["colour"], "two picks keep what both name");
+        let disjoint = compose(
+            &Filter {
+                scope_q: Some(String::new()),
+                ..Filter::default()
+            },
+            Filter {
+                scope_q: Some("/b".into()),
+                ..Filter::default()
+            },
+        );
+        assert_eq!(
+            disjoint,
+            Err(Denied(crate::policy::SCOPE_NOT_NARROWABLE.to_owned()))
+        );
+    }
+
+    /// A view that narrows nothing, paired for a clause taken whole: the
+    /// empty pair is an Allow, the shared unnarrowed filter.
+    #[test]
+    fn an_empty_pair_for_a_whole_operation_is_an_allow() {
+        let every = CompiledView::every(None, None, None);
+        let got = with_view(Some(&every), "5.16.1", Ok(Arc::new(Filter::default())))
+            .expect("an empty narrowing allows");
+        assert!(Arc::ptr_eq(&got, &crate::policy::unnarrowed()));
+        let engine = Narrowing(Filter::default());
+        assert_eq!(engine.name(), "narrowing");
+        let mut n = json!({});
+        assert!(matches!(
+            engine.pre_notify(
+                &Subject {
+                    tenant: antares_model::TenantId::default(),
+                    headers: Vec::new(),
+                },
+                &json!({}),
+                &mut n
+            ),
+            NotifyDecision::Deliver
+        ));
+    }
+
+    /// The pieces of the table a surface reads: the opaque attachment prints
+    /// nothing of itself, the admin routes are set once, and an `objectList`
+    /// entry written as an object names its target.
+    #[test]
+    fn the_table_seams_hold_their_contract() {
+        let att = Attached(Arc::new(7_u8));
+        assert_eq!(format!("{att:?}"), "Attached(..)");
+        let table = ViewTable::default();
+        assert!(table.set_admin(axum::Router::new()).is_ok());
+        assert_eq!(
+            table.set_admin(axum::Router::new()),
+            Err("the /q/views routes are set already".to_owned())
+        );
+        let doc = json!({"owns": [{"type": "ListRelationship",
+            "objectList": [{"object": "urn:ngsi-ld:Car:1"}, "urn:ngsi-ld:Car:2", 3]}]});
+        assert_eq!(
+            relationship_targets(&doc),
+            vec!["urn:ngsi-ld:Car:1", "urn:ngsi-ld:Car:2"]
+        );
+    }
+
+    /// Mode `off` judges nothing, a check registered or not.
+    #[test]
+    fn schema_writes_off_admits_without_checking() {
+        fn refuse(_: u64, _: &Arc<[u8]>, _: &Value, _: bool) -> Result<(), String> {
+            Err("checked".into())
+        }
+        let st = AppState::new("schema-off".into());
+        st.views.schema_writes.set(refuse);
+        st.views
+            .schema_writes
+            .set_mode(crate::schema_writes::Mode::Off);
+        let t = antares_model::TenantId::default();
+        assert!(schema_admits_typed(&st, &t, &json!({"type": ["Car"]}), true).is_ok());
     }
 
     /// A `within` box from longitude `west` to `east`, 1 degree either side
