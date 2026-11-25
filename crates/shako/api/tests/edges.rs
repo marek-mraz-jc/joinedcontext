@@ -2141,6 +2141,15 @@ async fn a_blob_that_cannot_be_written_is_a_storage_error() {
         matches!(&written, Err(ShakoError::Storage(m)) if m.starts_with("blob write failed: ")),
         "{written:?}"
     );
+    // A name held by a directory with content: the rename over it fails, and the content stays.
+    let occupied = dir.path().join("occupied");
+    std::fs::create_dir_all(occupied.join("inside")).expect("occupied");
+    let written = shako_api::service::write_blob_file(occupied.clone(), b"x".to_vec()).await;
+    assert!(occupied.join("inside").is_dir());
+    assert!(
+        matches!(&written, Err(ShakoError::Storage(m)) if m.starts_with("blob write failed: ")),
+        "{written:?}"
+    );
 }
 
 /// A commit stands when the refreshed repository record cannot be stored.
@@ -2316,4 +2325,19 @@ async fn a_bare_name_names_only_what_the_caller_may_read() {
         answer.to_string().contains("repository not found"),
         "{answer}"
     );
+}
+
+/// A default branch change whose HEAD file cannot be written is a 500 naming no path, and the
+/// stored default branch stays what it was.
+#[tokio::test]
+async fn a_default_branch_whose_head_cannot_be_written_is_not_stored() {
+    let w = seeded().await;
+    w.branch_with_commit("dev").await;
+    let head = w.disk("site").await.join("HEAD");
+    std::fs::remove_file(&head).expect("HEAD removed");
+    std::fs::create_dir(&head).expect("HEAD is a directory");
+    let (s, answer) = send(&w.app, "PATCH", R, Some(json!({ "default_branch": "dev" }))).await;
+    assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR, "{answer}");
+    assert!(!answer.to_string().contains("/HEAD"), "{answer}");
+    assert_eq!(w.repo("site").await.default_branch, "main");
 }

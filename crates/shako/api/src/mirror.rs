@@ -146,13 +146,13 @@ async fn sync_repo(
         .list_push_mirrors(instance, org, Some(id))
         .await?;
     for mirror in mirrors.into_iter().filter(|m| m.sync_on_commit) {
-        let result = tokio::time::timeout_at(deadline, push(state, &repo, &disk, &mirror))
-            .await
-            .unwrap_or_else(|_| {
-                Err(ShakoError::Conflict(
+        let result =
+            match tokio::time::timeout_at(deadline, push(state, &repo, &disk, &mirror)).await {
+                Ok(pushed) => pushed,
+                Err(_) => Err(ShakoError::Conflict(
                     "the sync took longer than 10 minutes; the next push tries again".into(),
-                ))
-            });
+                )),
+            };
         record(state, &mirror, result).await?;
     }
     Ok(())
