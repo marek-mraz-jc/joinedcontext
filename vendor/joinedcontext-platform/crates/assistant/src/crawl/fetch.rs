@@ -138,7 +138,11 @@ pub fn tls_config(
 
 /// The production TLS: the native roots and [`INTERMEDIATES`].
 fn public_tls() -> Result<ClientConfig, String> {
-    let found = rustls_native_certs::load_native_certs();
+    native_tls(rustls_native_certs::load_native_certs())
+}
+
+/// [`public_tls`] of the certificates the platform store gave.
+fn native_tls(found: rustls_native_certs::CertificateResult) -> Result<ClientConfig, String> {
     let mut roots = RootCertStore::empty();
     let (added, _) = roots.add_parsable_certificates(found.certs);
     if added == 0 {
@@ -349,8 +353,67 @@ fn is_refused_error(err: &reqwest::Error) -> bool {
 mod tests {
     use super::*;
 
+    /// A platform store that gives no root is an error naming it, never a client trusting
+    /// nothing; a verifier of no roots is refused the same way.
+    #[test]
+    fn no_root_certificate_is_a_tls_error_that_says_so() {
+        let none =
+            native_tls(rustls_native_certs::CertificateResult::default()).expect_err("no roots");
+        assert!(none.starts_with("no native root certificate"), "{none}");
+        let empty = tls_config(RootCertStore::empty(), Vec::new()).expect_err("no roots");
+        assert!(empty.starts_with("no TLS verifier"), "{empty}");
+    }
+
     fn allowed(url: &str) -> bool {
         is_url_allowed(&Url::parse(url).expect("a URL"), false)
+    }
+
+    /// Public address literals pass; an http(s) URL always has a host, so the guard's no-host
+    /// arm is a defence no parsed crawl URL reaches.
+    #[test]
+    fn a_public_address_literal_is_allowed_and_every_web_url_has_a_host() {
+        assert!(allowed("https://93.184.216.34/"));
+        assert!(allowed("https://[2606:4700:4700::1111]/"));
+        for url in ["https:///x", "http:x", "https://a/../b"] {
+            assert!(
+                Url::parse(url).map_or(true, |u| u.host().is_some()),
+                "{url}"
+            );
+        }
+        assert!(!is_url_allowed(
+            &Url::parse("data:text/plain,x").expect("a URL"),
+            true
+        ));
+    }
+
+    /// A body the server cuts short is a failed read naming the error, never a short page.
+    #[tokio::test]
+    async fn a_body_cut_mid_stream_is_a_failed_read() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let address = listener.local_addr().expect("an address");
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("the crawler connects");
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf).await;
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 50\r\n\r\nshort")
+                .await;
+        });
+        let client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve(HOST, address)
+            .build()
+            .expect("a client");
+        let policy = CrawlPolicy {
+            allow_plain_http: true,
+            max_page_bytes: 64,
+        };
+        let url = Url::parse(&format!("http://{HOST}:{}/", address.port())).expect("a URL");
+        let outcome = fetch_url(&client, &policy, HOST, &url, 64, None, None).await;
+        assert!(matches!(outcome, FetchOutcome::Failed(_)), "{outcome:?}");
     }
 
     /// T-3227: every address a crawled link or a start URL could aim inside the cluster or at the
@@ -480,19 +543,12 @@ mod tests {
             )
             .mount(&server)
             .await;
-        match get(&server, "old").await {
-            FetchOutcome::Success {
-                final_url,
-                body,
-                status,
-                ..
-            } => {
-                assert_eq!(final_url.path(), "/new");
-                assert_eq!(status, StatusCode::OK);
-                assert_eq!(body, b"moved");
-            }
-            other => panic!("followed, not {other:?}"),
-        }
+        let followed = get(&server, "old").await;
+        assert!(
+            matches!(&followed, FetchOutcome::Success { final_url, status, body, .. }
+                if final_url.path() == "/new" && *status == StatusCode::OK && body == b"moved"),
+            "{followed:?}"
+        );
         assert!(matches!(
             get(&server, "away").await,
             FetchOutcome::RedirectExternal { target_url } if target_url.host_str() == Some("elsewhere.test")
@@ -532,23 +588,21 @@ mod tests {
             .respond_with(ResponseTemplate::new(302).insert_header("location", "http://[::1"))
             .mount(&server)
             .await;
-        let failed = |outcome: FetchOutcome| match outcome {
-            FetchOutcome::Failed(why) => why,
-            other => panic!("failed, not {other:?}"),
-        };
+        // A failed outcome's reason, as its Debug form names it.
+        let failed = |outcome: FetchOutcome| format!("{outcome:?}");
         assert_eq!(
             failed(get(&server, "loop").await),
-            "too many redirects (> 5 hops)"
+            format!("Failed({:?})", "too many redirects (> 5 hops)")
         );
         assert_eq!(
             failed(get(&server, "bare").await),
-            "redirect missing location header"
+            format!("Failed({:?})", "redirect missing location header")
         );
         assert_eq!(
             failed(get(&server, "bytes").await),
-            "invalid location header encoding"
+            format!("Failed({:?})", "invalid location header encoding")
         );
-        assert!(failed(get(&server, "badurl").await).starts_with("invalid redirect URL"));
+        assert!(failed(get(&server, "badurl").await).starts_with("Failed(\"invalid redirect URL"));
         // A hop that carries credentials is refused before it is sent.
         assert!(matches!(
             get(&server, "creds").await,

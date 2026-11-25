@@ -252,6 +252,55 @@ mod tests {
     }
 
     #[test]
+    fn a_read_with_no_filter_asks_none_and_a_structured_cell_is_text() {
+        let unfiltered =
+            Read::of("e", "Bridge", None, Duration::ZERO, &spec(), &schema()).expect("a read");
+        assert!(unfiltered.arguments(None).get("q").is_none());
+        let answer = json!({"entities": [{
+            "location": {"type": "Point", "coordinates": [19.1, 48.7]},
+            "name": "Most",
+            "yearBuilt": {"value": {"from": 1890, "to": 1900}},
+        }]});
+        let (features, next) = unfiltered.page(&answer.to_string()).expect("a page");
+        assert_eq!(next, None);
+        assert_eq!(
+            features[0]["properties"]["yearBuilt"],
+            r#"{"from":1890,"to":1900}"#
+        );
+    }
+
+    #[test]
+    fn the_oldest_source_goes_when_the_pod_holds_the_most_and_a_poisoned_hold_finds_none() {
+        let sources = Sources::default();
+        let start = Instant::now();
+        let first = sources
+            .hold("p", "v", read(), start)
+            .expect("the first source");
+        for n in 1..MAX_SOURCES {
+            sources
+                .hold("p", "v", read(), start + Duration::from_millis(n as u64))
+                .expect("a source");
+        }
+        assert_eq!(sources.held.lock().expect("the lock").len(), MAX_SOURCES);
+        let later = start + Duration::from_secs(1);
+        sources.hold("p", "v", read(), later).expect("one more");
+        assert_eq!(sources.held.lock().expect("the lock").len(), MAX_SOURCES);
+        assert_eq!(
+            sources.page("p", "v", &first, later),
+            Found::Missing,
+            "the oldest went to make room"
+        );
+        let sources = std::sync::Arc::new(sources);
+        let held = std::sync::Arc::clone(&sources);
+        let _ = std::thread::spawn(move || {
+            let _guard = held.held.lock().expect("the lock is free");
+            panic!("poisons the hold on purpose");
+        })
+        .join();
+        assert_eq!(sources.page("p", "v", &first, later), Found::Missing);
+    }
+
+    #[test]
     fn a_connector_that_cannot_page_picked_key_values_gets_no_source() {
         let without = json!({"properties": {"type": {}, "limit": {}}});
         assert_eq!(

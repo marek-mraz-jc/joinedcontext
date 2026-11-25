@@ -303,6 +303,17 @@ async fn a_timed_out_turn_keeps_its_steps_and_the_error() {
     .expect("the filtered list reads");
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0]["lastError"], "The assistant took too long.");
+    let (dear, _) = transcript::list(
+        &pool,
+        PROJECT,
+        &Filter {
+            min_cost_usd: Some(1_000.0),
+            ..Filter::default()
+        },
+    )
+    .await
+    .expect("the cost-filtered list reads");
+    assert!(dear.is_empty(), "no conversation cost a thousand dollars");
 
     db::drop_database(admin, pool, &name).await;
 }

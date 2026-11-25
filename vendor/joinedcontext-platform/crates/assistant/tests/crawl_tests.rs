@@ -908,13 +908,19 @@ fn authority(
 }
 
 /// An https server for www.city.test that sends only its leaf, as www.bbsk.sk does (T-3298).
-async fn leaf_only_server(issuer: &rcgen::Issuer<'_, rcgen::KeyPair>) -> u16 {
+/// `tls12` keeps the server to TLS 1.2, whose handshake signature the crawler checks apart.
+async fn leaf_only_server(issuer: &rcgen::Issuer<'_, rcgen::KeyPair>, tls12: bool) -> u16 {
     let key = rcgen::KeyPair::generate().expect("a server key");
     let leaf = rcgen::CertificateParams::new(vec!["www.city.test".to_owned()])
         .expect("the SAN")
         .signed_by(&key, issuer)
         .expect("a leaf");
-    let tls = rustls::ServerConfig::builder()
+    let versions: &[&rustls::SupportedProtocolVersion] = if tls12 {
+        &[&rustls::version::TLS12]
+    } else {
+        rustls::DEFAULT_VERSIONS
+    };
+    let tls = rustls::ServerConfig::builder_with_protocol_versions(versions)
         .with_no_client_auth()
         .with_single_cert(
             vec![leaf.der().clone()],
@@ -958,7 +964,8 @@ async fn a_missing_intermediate_the_crawler_holds_completes_the_chain() {
     let (intermediate, key, params) = authority("test intermediate", Some(&root_issuer));
     let issuer = rcgen::Issuer::new(params, key);
     let (stranger, _, _) = authority("another intermediate", Some(&root_issuer));
-    let port = leaf_only_server(&issuer).await;
+    let port = leaf_only_server(&issuer, false).await;
+    let port12 = leaf_only_server(&issuer, true).await;
 
     let (other_root, _, _) = authority("another root", None);
     let fetch_with = |root: &rcgen::Certificate,
@@ -998,6 +1005,21 @@ async fn a_missing_intermediate_the_crawler_holds_completes_the_chain() {
     let answer = fetch_with(&root, vec![intermediate.der().clone()])
         .await
         .expect("the chain completes");
+    assert_eq!(answer.status(), 200);
+    // The same chain over TLS 1.2.
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(root.der().clone()).expect("the root");
+    let config = fetch::tls_config(roots, vec![intermediate.der().clone()]).expect("TLS config");
+    let client = fetch::client_with_tls(
+        Arc::new(FixtureResolver::new(&[("www.city.test", port12)])),
+        config,
+    )
+    .expect("client");
+    let answer = client
+        .get(format!("https://www.city.test:{port12}/"))
+        .send()
+        .await
+        .expect("the chain completes over TLS 1.2");
     assert_eq!(answer.status(), 200);
 }
 

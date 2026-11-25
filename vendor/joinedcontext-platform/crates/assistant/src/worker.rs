@@ -824,6 +824,17 @@ fn one_line(text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_publisher_in_no_listed_language_is_named_in_the_first_it_has() {
+        let names = serde_json::json!({ "pl": " Urząd Miasta ", "de": "Stadtamt" });
+        assert_eq!(publisher_name(&names).as_deref(), Some("Urząd Miasta"));
+        assert_eq!(
+            publisher_name(&serde_json::json!({ "cs": "Úřad", "sk": "Úrad" })).as_deref(),
+            Some("Úrad"),
+            "a listed language comes first"
+        );
+    }
+
     /// T-4749: a weekly-crawled website with a sitemap is checked at the schedule's minute and
     /// hour every other day; never before its first crawl, without a sitemap, or for another kind.
     #[test]

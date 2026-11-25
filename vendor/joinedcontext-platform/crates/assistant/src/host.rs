@@ -255,9 +255,8 @@ impl Minute {
         let sources = &snapshot.sources;
         self.ready.store(true, Ordering::Relaxed);
         let pool = &self.pool;
-        let now = time::OffsetDateTime::now_utc()
-            .replace_second(0)
-            .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+        let now = time::OffsetDateTime::now_utc();
+        let now = now - time::Duration::seconds(i64::from(now.second()));
         if let Err(err) = chat::forget_expired(pool).await {
             tracing::warn!(%err, "expired conversations not deleted this minute");
         }

@@ -1221,6 +1221,161 @@ mod tests {
         assert!(log.text().contains("again=true"), "{}", log.text());
     }
 
+    /// A provider that spends every token it is given on thinking: whatever the effort, the call
+    /// comes back cut at its length with nothing said.
+    fn endless_thinker(req: &wiremock::Request) -> wiremock::ResponseTemplate {
+        let body: Value = serde_json::from_slice(&req.body).expect("a JSON body");
+        let max = body["max_tokens"].as_u64().expect("max_tokens");
+        let usage = json!({
+            "prompt_tokens": 50, "completion_tokens": max, "total_tokens": 50 + max,
+            "completion_tokens_details": { "reasoning_tokens": max },
+        });
+        if body["stream"] == true {
+            let chunk =
+                json!({ "choices": [{ "delta": { "content": "" }, "finish_reason": "length" }] });
+            let last = json!({ "choices": [], "usage": usage });
+            return wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(format!("data: {chunk}\n\ndata: {last}\n\ndata: [DONE]\n\n"));
+        }
+        wiremock::ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{ "message": { "role": "assistant", "content": "" }, "finish_reason": "length" }],
+            "usage": usage,
+        }))
+    }
+
+    /// A model whose proxy answers the first call as a call cut by its thinking and every later
+    /// call with a 500, and the proxy.
+    async fn cut_then_refused() -> (Model, wiremock::MockServer, wiremock::MockServer) {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(token_answer())
+            .mount(&realm)
+            .await;
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(endless_thinker)
+            .up_to_n_times(1)
+            .mount(&proxy)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&proxy)
+            .await;
+        (a_model(&realm.uri(), &proxy.uri()), realm, proxy)
+    }
+
+    /// T-7758: a call already at minimal effort is not asked again, and one whose second call
+    /// fails answers as the first did, streamed or not.
+    #[tokio::test]
+    async fn a_cut_call_at_minimal_effort_or_whose_second_call_fails_answers_as_the_first_did() {
+        use jc_core::kinds::ReasoningEffort;
+        use wiremock::{matchers::method, Mock, MockServer};
+        let messages = [json!({ "role": "user", "content": "hi" })];
+        let (deltas, _shown) = tokio::sync::mpsc::channel(8);
+
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(token_answer())
+            .mount(&realm)
+            .await;
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(endless_thinker)
+            .mount(&proxy)
+            .await;
+        let model = a_model(&realm.uri(), &proxy.uri());
+        let call = answer_call(0, ReasoningEffort::Minimal);
+        let done = model
+            .ask("p/d", 0, &call, &messages)
+            .await
+            .expect("the cut answer");
+        assert_eq!(done.finish.as_deref(), Some("length"));
+        let (done, _) = model
+            .stream("p/d", 0, &call, &messages, &deltas)
+            .await
+            .expect("the cut answer");
+        assert_eq!(done.finish.as_deref(), Some("length"));
+        assert_eq!(bodies(&proxy).await.len(), 2, "never asked again");
+
+        let (model, _realm, proxy) = cut_then_refused().await;
+        let call = answer_call(0, ReasoningEffort::Low);
+        let done = model
+            .ask("p/d", 0, &call, &messages)
+            .await
+            .expect("the first answer");
+        assert_eq!(done.finish.as_deref(), Some("length"));
+        assert_eq!(bodies(&proxy).await.len(), 2, "asked again, and refused");
+
+        let (model, _realm, proxy) = cut_then_refused().await;
+        let (done, _) = model
+            .stream("p/d", 0, &call, &messages, &deltas)
+            .await
+            .expect("the first answer");
+        assert_eq!(done.finish.as_deref(), Some("length"));
+        assert_eq!(bodies(&proxy).await.len(), 2, "asked again, and refused");
+    }
+
+    /// A step that offers no tool sends none, however it is asked.
+    #[tokio::test]
+    async fn a_step_with_no_tool_to_offer_sends_none() {
+        let (model, _realm, proxy) = thinking_model().await;
+        let messages = [json!({ "role": "user", "content": "hi" })];
+        let call = answer_call(2_000, jc_core::kinds::ReasoningEffort::Low);
+        model
+            .step("p/d", 0, &call, &messages, &[], false)
+            .await
+            .expect("an answer");
+        let sent = bodies(&proxy).await;
+        assert!(sent[0].get("tools").is_none() && sent[0].get("tool_choice").is_none());
+    }
+
+    /// A proxy nobody listens at fails the call after its one resend; one that refuses the held
+    /// token makes the next call ask the realm for another.
+    #[tokio::test]
+    async fn a_proxy_that_is_down_or_refuses_the_token_is_unavailable() {
+        use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(token_answer())
+            .mount(&realm)
+            .await;
+        let down = a_model(&realm.uri(), &format!("http://127.0.0.1:{}", a_free_port()));
+        let err = down
+            .send("data", 1000, &json!({"messages": []}))
+            .await
+            .expect_err("nobody answers");
+        assert!(matches!(err, CallError::Unavailable(_)), "{err:?}");
+
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&proxy)
+            .await;
+        let model = a_model(&realm.uri(), &proxy.uri());
+        let err = model
+            .send("data", 1000, &json!({"messages": []}))
+            .await
+            .expect_err("the token is refused");
+        assert!(matches!(err, CallError::Unavailable(_)), "{err:?}");
+        let before = realm.received_requests().await.expect("recorded").len();
+        model.token().await.expect("a token again");
+        let after = realm.received_requests().await.expect("recorded").len();
+        assert_eq!(after, before + 1, "the refused token was dropped");
+    }
+
+    #[test]
+    fn a_stream_line_without_an_end_is_dropped_past_its_cap() {
+        let mut reader = StreamReader::default();
+        assert!(reader.feed(&vec![b'x'; STREAM_LINE_MAX + 1]).is_empty());
+        assert!(reader.finish().is_none(), "nothing was kept");
+        assert_eq!(
+            reasoning_text(&json!({ "reasoning_details": "not a list" })),
+            None
+        );
+    }
+
     /// T-7758: only a call that asked for more than minimal reasoning is asked again, and only a
     /// length cut with more than nine in ten of its output thought counts as cut by reasoning.
     #[test]

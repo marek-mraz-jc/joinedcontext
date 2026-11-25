@@ -868,6 +868,104 @@ mod tests {
     }
 
     #[test]
+    fn an_address_that_cannot_be_a_base_is_no_citation() {
+        let base = Url::parse("mailto:data@example.org").expect("url");
+        assert!(page("public").citation(&base).is_err());
+    }
+
+    #[test]
+    fn a_leading_dot_in_a_manifest_path_stays_inside() {
+        assert_eq!(
+            beside(
+                Path::new("/repo"),
+                Path::new("./a/model.yaml"),
+                "m.v1.schema.json"
+            ),
+            Some(PathBuf::from("/repo/a/m.v1.schema.json"))
+        );
+    }
+
+    #[test]
+    fn a_text_in_no_wanted_language_is_the_first_the_map_holds() {
+        let map = json!({ "sk": "Ovzdušie" });
+        assert_eq!(
+            language_text(Some(&map), &["de".to_owned()]).as_deref(),
+            Some("Ovzdušie")
+        );
+        assert_eq!(
+            language_text(Some(&json!({ "sk": 3 })), &["sk".to_owned()]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_description_and_a_bare_type_are_written_as_they_are() {
+        let mut endpoint = page("public");
+        endpoint.description = Some("Air <data>".into());
+        endpoint.types = vec![
+            EntityType {
+                class: "Bare".into(),
+                description: None,
+                attributes: Vec::new(),
+            },
+            EntityType {
+                class: "Described".into(),
+                description: Some("A thing.".into()),
+                attributes: vec![Attribute {
+                    name: "n".into(),
+                    kind: "Property".into(),
+                    description: None,
+                    unit: None,
+                }],
+            },
+        ];
+        let html = page_html(&endpoint, "https://x.example/e", &BTreeMap::new(), None);
+        assert!(html.contains("<p>Air &lt;data&gt;</p>"), "{html}");
+        assert!(html.contains("<h2>Bare</h2><h2>Described</h2>"), "{html}");
+        assert!(html.contains("<p>A thing.</p><ul><li>n (Property)</li></ul>"));
+    }
+
+    #[tokio::test]
+    async fn a_private_endpoint_or_an_unjoinable_gateway_is_counted_as_nothing() {
+        let http = reqwest::Client::new();
+        let gateway = Url::parse("https://gateway.example/").expect("url");
+        assert_eq!(
+            counts(&http, &gateway, &page("organization")).await,
+            Some(BTreeMap::new()),
+            "no read for an Endpoint that is not public"
+        );
+        let base_less = Url::parse("mailto:gateway@example.org").expect("url");
+        assert_eq!(
+            counts(&http, &base_less, &page("public")).await,
+            Some(BTreeMap::new()),
+            "an address no path joins to asks nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_hold_still_answers_the_counts() {
+        let held = Held::default();
+        let poisoned = Arc::clone(&held.by_slug);
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.lock().expect("the lock is free");
+            panic!("poisons the hold on purpose");
+        })
+        .join();
+        let gateway = Url::parse("https://gateway.example/").expect("url");
+        let mut sheds = 0;
+        let (counts, at) = held
+            .count(
+                &reqwest::Client::new(),
+                &gateway,
+                &page("organization"),
+                "now",
+                &mut sheds,
+            )
+            .await;
+        assert!(counts.is_empty() && at.as_deref() == Some("now"));
+    }
+
+    #[test]
     fn a_page_names_the_types_their_attributes_and_the_counts_escaped() {
         let counts = BTreeMap::from([("AirQualityObserved".to_owned(), 14)]);
         let html = page_html(

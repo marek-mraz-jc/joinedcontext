@@ -748,6 +748,102 @@ async fn a_scope_refuses_a_name_that_is_not_a_project() {
     drop_database(admin, pool, &name).await;
 }
 
+/// A search with no source or no room, and a lookup of a type or an Endpoint that is no plain
+/// name, ask the store nothing; a dataset page that opens with no heading is titled by its address.
+#[tokio::test]
+async fn a_lookup_with_nothing_to_look_for_asks_nothing() {
+    let (admin, pool, name) = database("nothing_asked").await;
+    let ids = site(
+        &pool,
+        "helsinki",
+        "hel-ckan3",
+        &[(
+            "Readings (API) (https://gw.example/api/endpoint/od-air/odata/v4/Thing)",
+            "en",
+            "public",
+            embedding(0, None),
+        )],
+    )
+    .await;
+    sqlx::query(
+        "UPDATE chunks SET url = 'https://opendata.example/dataset/air-quality/' WHERE id = $1",
+    )
+    .bind(ids[0])
+    .execute(&pool)
+    .await
+    .expect("the dataset page's url");
+    let mut tx = project_scope(&pool, "helsinki").await.expect("scope");
+    sqlx::query("SET LOCAL ROLE assistant_app")
+        .execute(&mut *tx)
+        .await
+        .expect("role");
+    let sources = vec!["hel-ckan3".to_owned()];
+    let vector = embedding(0, None);
+    for (sources, limit) in [(&[][..], 10), (&sources[..], 0)] {
+        let hits = hybrid_search(
+            &mut tx,
+            &Search {
+                text: "air",
+                embedding: &vector,
+                sources,
+                public_only: true,
+                limit,
+                lang: None,
+                paths: &[],
+            },
+        )
+        .await
+        .expect("search");
+        assert!(hits.is_empty());
+    }
+    let slugs = ["od-air".to_owned()];
+    assert_eq!(
+        dataset_page(&mut tx, &slugs, "not a type", &sources, true)
+            .await
+            .expect("page"),
+        None,
+        "a type that is no plain name"
+    );
+    assert_eq!(
+        dataset_page(&mut tx, &slugs, "Thing", &[], true)
+            .await
+            .expect("page"),
+        None,
+        "no source"
+    );
+    assert!(
+        assistant::type_datasets(&mut tx, "od-air", &["not a type".to_owned()], 0, true)
+            .await
+            .expect("datasets")
+            .is_empty()
+    );
+    let titled = assistant::type_datasets(&mut tx, "od-air", &["Thing".to_owned()], 0, true)
+        .await
+        .expect("datasets");
+    assert_eq!(titled.len(), 1);
+    assert_eq!(titled[0].title, "air-quality", "the address names it");
+    tx.rollback().await.expect("rollback");
+
+    let projects = [("helsinki".to_owned(), sources.clone())];
+    assert!(!dataset_reads_projects(
+        &pool,
+        "https://x.example/",
+        "od-air",
+        "not a type",
+        &projects,
+        true
+    )
+    .await
+    .expect("reads"));
+    assert_eq!(
+        dataset_page_projects(&pool, &slugs, "not a type", &projects, true)
+            .await
+            .expect("page"),
+        None
+    );
+    drop_database(admin, pool, &name).await;
+}
+
 /// T-4281: a deployment's `{project}/{source}` sources are searched in that project's own scope
 /// and merged; a project it names no source of is never read, even through a source of the same
 /// name. The search runs as a login role of the service's own, so row-level security holds.

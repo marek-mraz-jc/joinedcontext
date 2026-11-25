@@ -27,6 +27,8 @@ pub(crate) mod scope;
 pub mod script;
 pub mod shape;
 pub mod standard;
+#[cfg(test)]
+pub(crate) mod test_world;
 pub mod trace;
 pub mod transcript;
 pub mod usage;

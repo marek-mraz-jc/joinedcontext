@@ -295,7 +295,7 @@ async fn passages_are_embedded_until_the_budget_is_spent() {
 }
 
 /// An embedder service like `crates/embedder`'s: `413` for a request holding a text over its
-/// byte cap or one holding `ODMIETNI`, else a vector per text. It counts the texts it was sent
+/// byte cap or one holding `ODMIETNI`, `503` for one holding `VYPADOK`, else a vector per text. It counts the texts it was sent
 /// that hold `ODMIETNI`. Its base URL and its token endpoint.
 async fn refusing_embedder(refused_sent: Arc<AtomicUsize>) -> (String, String) {
     use axum::{http::StatusCode, Json};
@@ -323,6 +323,10 @@ async fn refusing_embedder(refused_sent: Arc<AtomicUsize>) -> (String, String) {
                         let why = format!("text {at} is longer than {} bytes", jc_embedder::MAX_TEXT_BYTES);
                         return (StatusCode::PAYLOAD_TOO_LARGE, Json(json!({"error": why})));
                     }
+                    // A service that is down for a text holding VYPADOK, after the 413 check.
+                    if input.iter().any(|t| t.contains("VYPADOK")) {
+                        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "down"})));
+                    }
                     let data: Vec<Value> = (0..input.len())
                         .map(|index| json!({"index": index, "embedding": vec![0.05_f32; DIMENSIONS]}))
                         .collect();
@@ -340,6 +344,49 @@ async fn refusing_embedder(refused_sent: Arc<AtomicUsize>) -> (String, String) {
     let addr = listener.local_addr().expect("addr");
     tokio::spawn(async move { axum::serve(listener, app).await });
     (format!("http://{addr}"), format!("http://{addr}/token"))
+}
+
+/// A service that fails a batch for anything but its texts fails the round, to be tried again;
+/// so does one that fails a text sent alone after refusing the batch for another text.
+#[tokio::test]
+async fn an_embedder_outage_fails_the_round_whole() {
+    let (admin, pool, name) = db::database("embeddown").await;
+    let (url, token_url) = refusing_embedder(Arc::new(AtomicUsize::new(0))).await;
+    let embedder = Embedder::remote(jc_embedder::client::RemoteConfig {
+        url,
+        token_url,
+        client_id: "jc-assistant".into(),
+        client_secret: "s".into(),
+    })
+    .expect("remote");
+    corpus::pages(
+        &pool,
+        "presov",
+        "web",
+        &[("https://presov.example/a", "sk", "VYPADOK celej dávky.")],
+    )
+    .await;
+    assert!(embed_missing(&pool, &embedder, "presov", 100)
+        .await
+        .is_err());
+    corpus::pages(
+        &pool,
+        "kosice",
+        "web",
+        &[
+            ("https://kosice.example/a", "sk", "ODMIETNI tento odsek."),
+            (
+                "https://kosice.example/b",
+                "sk",
+                "VYPADOK pri samostatnom odseku.",
+            ),
+        ],
+    )
+    .await;
+    assert!(embed_missing(&pool, &embedder, "kosice", 100)
+        .await
+        .is_err());
+    db::drop_database(admin, pool, &name).await;
 }
 
 /// A question asked through the embedder service: its vector and no wait for a local model; a

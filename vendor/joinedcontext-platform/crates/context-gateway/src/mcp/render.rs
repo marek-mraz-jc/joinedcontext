@@ -228,6 +228,40 @@ fn refusal(id: Value, text: &str) -> Value {
     result(id, refused(text, &Value::Null))
 }
 
+/// Draws `chart` in a render slot of this tool's own within `cap` of taking the slot: the PNG, or
+/// the refusal's words. The permit moves into the drawing: a call the deadline drops frees its
+/// slot only when the raster is done, so no more than RENDER_SLOTS draw at once.
+async fn paint(chart: raster::Chart, cap: Duration) -> Result<Vec<u8>, &'static str> {
+    let Some(slot) = slot().await else {
+        return Err("busy, retry: every render slot is drawing; ask again in a second");
+    };
+    let deadline = Instant::now() + cap;
+    let drawing = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        raster::render(&chart, deadline)
+    });
+    painted(drawing.await)
+}
+
+/// The PNG of a finished drawing, or why there is none.
+fn painted(
+    drawn: Result<Result<Vec<u8>, raster::Limited>, tokio::task::JoinError>,
+) -> Result<Vec<u8>, &'static str> {
+    match drawn {
+        Ok(Ok(png)) if png.len() <= MAX_PNG => Ok(png),
+        Ok(Ok(_)) => Err(
+            "/spec/width: the picture is larger than 256 KiB; ask for a smaller width and height",
+        ),
+        Ok(Err(raster::Limited)) => Err(
+            "limited: the render ran past its 3 s cap; read fewer rows (limit, a shorter window, an aggregation)",
+        ),
+        Err(err) => {
+            tracing::warn!(%err, "render_chart stopped");
+            Err("the render stopped; ask again")
+        }
+    }
+}
+
 /// One `render_chart` call on `hub`, answered within the hub's call deadline.
 pub(crate) async fn call(hub: &Hub, id: Value, arguments: &Map<String, Value>) -> Value {
     let work = draw(hub, id.clone(), arguments);
@@ -301,38 +335,9 @@ async fn draw(hub: &Hub, id: Value, arguments: &Map<String, Value>) -> Value {
     if truncated {
         view["joinedcontext.com/pointsTruncated"] = json!(true);
     }
-    let Some(slot) = slot().await else {
-        return refusal(
-            id,
-            "busy, retry: every render slot is drawing; ask again in a second",
-        );
-    };
-    let deadline = Instant::now() + RENDER_CAP;
-    let chart = charted.chart;
-    // The permit moves into the drawing: a call the deadline drops frees its slot only when the
-    // raster is done, so no more than RENDER_SLOTS draw at once.
-    let drawing = tokio::task::spawn_blocking(move || {
-        let _slot = slot;
-        raster::render(&chart, deadline)
-    });
-    let png = match drawing.await {
-        Ok(Ok(png)) if png.len() <= MAX_PNG => png,
-        Ok(Ok(_)) => {
-            return refusal(
-                id,
-                "/spec/width: the picture is larger than 256 KiB; ask for a smaller width and height",
-            )
-        }
-        Ok(Err(raster::Limited)) => {
-            return refusal(
-                id,
-                "limited: the render ran past its 3 s cap; read fewer rows (limit, a shorter window, an aggregation)",
-            )
-        }
-        Err(err) => {
-            tracing::warn!(%err, "render_chart stopped");
-            return refusal(id, "the render stopped; ask again");
-        }
+    let png = match paint(charted.chart, RENDER_CAP).await {
+        Ok(png) => png,
+        Err(why) => return refusal(id, why),
     };
     let mark = spec::mark_name(spec.mark);
     let mut text = format!(
@@ -380,9 +385,51 @@ mod tests {
         let started = Instant::now();
         assert!(slot().await.is_none(), "every slot is taken");
         assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            paint(tiny(), RENDER_CAP).await,
+            Err("busy, retry: every render slot is drawing; ask again in a second")
+        );
         drop(first);
         assert!(slot().await.is_some(), "a freed slot is taken again");
         drop(second);
+        // One test holds the process's slots, so the drawing outcomes run here too.
+        let png = paint(tiny(), RENDER_CAP)
+            .await
+            .expect("a small chart is drawn");
+        assert!(png.starts_with(b"\x89PNG"));
+        let past = paint(tiny(), Duration::ZERO).await;
+        assert!(past.expect_err("no time to draw").starts_with("limited: "));
+        assert_eq!(
+            SLOTS.available_permits(),
+            RENDER_SLOTS,
+            "every slot is back"
+        );
+    }
+
+    fn tiny() -> raster::Chart {
+        raster::Chart {
+            mark: jc_chart::raster::Mark::Bar,
+            width: 120,
+            height: 80,
+            title: String::new(),
+            x: None,
+            y: None,
+            colors: 0,
+            points: Vec::new(),
+        }
+    }
+
+    /// A picture over 256 KiB names the width to shrink; a raster that panicked asks again.
+    #[tokio::test]
+    async fn an_oversized_or_panicked_drawing_is_refused_by_its_words() {
+        let large = painted(Ok(Ok(vec![0; MAX_PNG + 1])));
+        assert!(large.expect_err("too large").starts_with("/spec/width: "));
+        assert_eq!(painted(Ok(Ok(vec![0; MAX_PNG]))), Ok(vec![0; MAX_PNG]));
+        let panicked = tokio::task::spawn_blocking(|| -> Result<Vec<u8>, raster::Limited> {
+            panic!("raster")
+        })
+        .await;
+        assert_eq!(painted(panicked), Err("the render stopped; ask again"));
     }
 
     #[test]

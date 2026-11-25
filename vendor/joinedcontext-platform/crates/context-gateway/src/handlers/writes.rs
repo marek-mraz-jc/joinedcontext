@@ -1827,3 +1827,331 @@ mod merged_batch_tests {
         assert!(refused.contains("attribute x is not valid"), "{refused}");
     }
 }
+
+#[cfg(test)]
+mod early_exit_tests {
+    //! The refusals and early exits of the write checks that the routes above them never reach:
+    //! each function is asked directly with the input the route would have turned away first.
+    use super::*;
+    use crate::resolver::DeclaredTypes;
+    use jc_core::kinds::{Audience, Representation};
+    use serde_json::json;
+
+    fn endpoint(declared: Option<DeclaredTypes>) -> Endpoint {
+        Endpoint {
+            declared_types: declared.map(Into::into),
+            view_mapping: None,
+            catalog: None,
+            deprecation: None,
+            feeds: Vec::new(),
+            calendars: Vec::new(),
+            map_defaults: Default::default(),
+            page: None,
+            open_data: false,
+            roles: Default::default(),
+            slug: "slug".to_owned(),
+            title: Default::default(),
+            description: Default::default(),
+            space: "space".to_owned(),
+            tenant: None,
+            project: "space".to_owned(),
+            audience: Audience::Public,
+            allowed_projects: Vec::new(),
+            representations: vec![Representation::NgsiLd],
+            rate_limit: None,
+            creates: None,
+            file_limits: None,
+            hidden_attributes: Default::default(),
+            projection: None,
+            base_path: "/api/endpoint/slug".to_owned(),
+            models: Vec::new(),
+            policy_names: Vec::new(),
+            manifest_name: String::new(),
+            policies: Vec::new(),
+        }
+    }
+
+    fn declared(classes: &[&str]) -> DeclaredTypes {
+        DeclaredTypes {
+            model: "m".into(),
+            classes: classes.iter().map(|class| (*class).to_owned()).collect(),
+            units: Default::default(),
+            relationships: Default::default(),
+            quality: Vec::new(),
+            schema: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_held_write_with_nothing_to_hold_passes() {
+        let gateway = Gateway::new(
+            Broker::new("http://127.0.0.1:1"),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        let endpoint = endpoint(None);
+        let subject = Subject::anonymous();
+        let headers = HeaderMap::new();
+        let rules = crate::relationships::RelationshipRules::default();
+        let held = |operation: Operation, path: &'static str| HeldWrite {
+            gateway: &gateway,
+            subject: &subject,
+            endpoint: &endpoint,
+            headers: &headers,
+            path,
+            params: &[],
+            operation,
+            rules: &rules,
+        };
+        let mut divided = None;
+        // A DELETE of an attribute whose path names no entity or attribute: nothing to hold.
+        let mut sent = Vec::new();
+        let delete = held(Operation::DeleteAttrs, "/entities");
+        assert!(delete.check(&mut sent, &mut divided).await.is_ok());
+        // A write whose body is empty, and one that is no JSON (judged and refused earlier).
+        let append = held(Operation::AppendAttrs, "/entities/urn:x:T:1/attrs");
+        assert!(append.check(&mut sent, &mut divided).await.is_ok());
+        let mut garbage = b"not json".to_vec();
+        let create = held(Operation::CreateEntity, "/entities");
+        assert!(create.check(&mut garbage, &mut divided).await.is_ok());
+        assert_eq!(garbage, b"not json");
+        assert!(divided.is_none());
+    }
+
+    #[test]
+    fn a_body_that_is_no_json_is_refused_or_left_to_the_judge_that_refuses_it() {
+        let constraints = Constraints::default();
+        let endpoint = endpoint(None);
+        let refused = judge_write(
+            b"{ nope",
+            "/entities",
+            Operation::CreateEntity,
+            &constraints,
+            &endpoint,
+        );
+        assert_eq!(refused.err().map(|problem| problem.status), Some(400));
+
+        let rules = crate::units::UnitRules::from_schema(
+            &json!({ "definitions": { "T": { "properties": {
+                "pm10": { "x-ngsi-ld-kind": "Property", "x-unit": { "exactMappings": ["ucefact:GQ"] } }
+            } } } }),
+            jc_core::kinds::MissingUnitCode::Fill,
+        );
+        assert!(!rules.is_empty());
+        let mut garbage = b"not json".to_vec();
+        assert_eq!(
+            filled_units(&mut garbage, "/entities", &rules).ok(),
+            Some(Vec::new())
+        );
+
+        assert_eq!(owned_guarded(&mut garbage, "/entities").ok(), Some(false));
+
+        let mut divided = None;
+        let judged = quality_judged(
+            &mut garbage,
+            "/entities",
+            Operation::CreateEntity,
+            &endpoint,
+            &mut divided,
+        );
+        assert!(judged.is_ok(), "an Endpoint without a model judges nothing");
+    }
+
+    #[test]
+    fn a_model_without_rules_or_a_schema_judges_nothing_and_a_garbled_body_is_not_its_to_judge() {
+        let mut declared = declared(&["T"]);
+        let idle = endpoint(Some(declared.clone()));
+        let mut none = None;
+        let mut untouched = b"{}".to_vec();
+        assert!(quality_judged(
+            &mut untouched,
+            "/entities",
+            Operation::CreateEntity,
+            &idle,
+            &mut none
+        )
+        .is_ok());
+        // A model schema, so the body is read; the body is no JSON.
+        declared.schema = Some(std::sync::Arc::new(
+            jc_manifest::model_schema::ModelSchema::compile(
+                "m",
+                "1.0.0",
+                &json!({ "definitions": { "T": { "properties": {} } } }),
+                &["T".to_owned()],
+                true,
+            ),
+        ));
+        let endpoint = endpoint(Some(declared));
+        let mut garbage = b"not json".to_vec();
+        let mut divided = None;
+        assert!(quality_judged(
+            &mut garbage,
+            "/entities",
+            Operation::CreateEntity,
+            &endpoint,
+            &mut divided
+        )
+        .is_ok());
+        assert_eq!(garbage, b"not json");
+    }
+
+    #[test]
+    fn a_type_that_is_not_a_string_or_is_a_list_is_judged_by_its_members() {
+        let endpoint = endpoint(Some(declared(&["Teacher"])));
+        let constraints = Constraints::default();
+        let judge = |body: Value| {
+            judge_write(
+                body.to_string().as_bytes(),
+                "/entities",
+                Operation::CreateEntity,
+                &constraints,
+                &endpoint,
+            )
+        };
+        let number = judge(json!({ "id": "urn:ngsi-ld:Teacher:1", "type": 5 }));
+        assert_eq!(number.err().map(|problem| problem.status), Some(400));
+        let listed = judge(json!({ "id": "urn:ngsi-ld:Teacher:1", "type": ["Teacher", "Alien"] }));
+        let problem = listed.err().expect("Alien is no class");
+        assert!(format!("{problem:?}").contains("Alien"), "{problem:?}");
+        assert!(judge(json!({ "id": "urn:ngsi-ld:Teacher:1", "type": ["Teacher"] })).is_ok());
+    }
+
+    #[test]
+    fn an_array_for_a_write_that_is_no_batch_is_judged_entity_by_entity() {
+        let endpoint = endpoint(None);
+        let constraints = Constraints::default();
+        let both = json!([
+            { "id": "urn:ngsi-ld:Teacher:1", "type": "Teacher" },
+            { "id": "urn:ngsi-ld:Teacher:2", "type": "Teacher" }
+        ]);
+        let judged = judge_write(
+            both.to_string().as_bytes(),
+            "/entities",
+            Operation::CreateEntity,
+            &constraints,
+            &endpoint,
+        );
+        assert!(matches!(judged, Ok(Judged::Whole)));
+        let bad = json!([{ "id": "not-a-urn", "type": "Teacher" }]);
+        let judged = judge_write(
+            bad.to_string().as_bytes(),
+            "/entities",
+            Operation::CreateEntity,
+            &constraints,
+            &endpoint,
+        );
+        assert!(judged.is_err());
+    }
+
+    #[test]
+    fn a_write_that_names_no_new_entity_has_no_foreign_owner() {
+        let body =
+            json!({ "id": "urn:ngsi-ld:Teacher:other.org:s:1", "type": "Teacher" }).to_string();
+        assert!(foreign_owners(body.as_bytes(), Operation::UpdateEntity, "example.org").is_empty());
+        assert!(
+            foreign_owners(b"not json", Operation::CreateEntity, "example.org").is_empty(),
+            "a body that is no JSON names nothing"
+        );
+        assert_eq!(
+            foreign_owners(body.as_bytes(), Operation::CreateEntity, "example.org").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_refused_read_of_one_entity_is_a_miss_and_a_refused_write_is_a_refusal() {
+        let path = "/entities/urn:ngsi-ld:T:1";
+        assert_eq!(
+            refused(Operation::RetrieveEntity, path).status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            refused(Operation::QueryEntity, "/entities").status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            refused(Operation::UpdateEntity, path).status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[test]
+    fn units_that_do_not_fit_a_header_are_not_named() {
+        let answer = Response::new(Body::empty());
+        let answer = with_filled_units(answer, &["bad\nunit".to_owned()]);
+        assert!(!answer.headers().contains_key(crate::units::FILLED_HEADER));
+        let answer = with_filled_units(Response::new(Body::empty()), &["pm10".to_owned()]);
+        assert!(answer.headers().contains_key(crate::units::FILLED_HEADER));
+    }
+
+    #[tokio::test]
+    async fn a_batch_answer_that_is_too_large_or_oddly_shaped_is_merged_by_what_it_holds() {
+        let text = |answer: Response<Body>| async move {
+            let status = answer.status();
+            let bytes = axum::body::to_bytes(answer.into_body(), MAX_BODY)
+                .await
+                .expect("a body");
+            (
+                status,
+                serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null),
+            )
+        };
+        // Larger than the gateway merges: the gateway's own failure, not the broker's words.
+        let huge = Response::builder()
+            .status(StatusCode::MULTI_STATUS)
+            .body(Body::from(vec![b' '; MAX_BODY + 1]))
+            .expect("a response");
+        let (status, _) =
+            text(merged_batch(huge, vec!["urn:ngsi-ld:T:1".into()], Vec::new()).await).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+
+        // A 207 whose members are no lists holds nothing of either.
+        let odd = Response::builder()
+            .status(StatusCode::MULTI_STATUS)
+            .body(Body::from(
+                json!({ "success": "x", "errors": null }).to_string(),
+            ))
+            .expect("a response");
+        let refused: Refused = vec![("urn:ngsi-ld:T:2".into(), ProblemDetails::forbidden())];
+        let (status, body) =
+            text(merged_batch(odd, vec!["urn:ngsi-ld:T:1".into()], refused).await).await;
+        assert_eq!(status, StatusCode::MULTI_STATUS);
+        assert_eq!(body["success"], json!([]));
+        assert_eq!(body["errors"].as_array().map(Vec::len), Some(1));
+
+        // A success that lists ids is those ids; one that lists none means every forwarded id.
+        let listed = Response::builder()
+            .status(StatusCode::CREATED)
+            .body(Body::from(json!(["urn:ngsi-ld:T:9"]).to_string()))
+            .expect("a response");
+        let (_, body) =
+            text(merged_batch(listed, vec!["urn:ngsi-ld:T:1".into()], Vec::new()).await).await;
+        assert_eq!(body["success"], json!(["urn:ngsi-ld:T:9"]));
+        let bare = Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(Body::empty())
+            .expect("a response");
+        let (_, body) =
+            text(merged_batch(bare, vec!["urn:ngsi-ld:T:1".into()], Vec::new()).await).await;
+        assert_eq!(body["success"], json!(["urn:ngsi-ld:T:1"]));
+    }
+
+    #[tokio::test]
+    async fn a_minimised_body_that_is_no_json_is_refused() {
+        let gateway = Gateway::new(
+            Broker::new("http://127.0.0.1:1"),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        let schema = jc_manifest::model_schema::ModelSchema::compile(
+            "m",
+            "1.0.0",
+            &json!({ "definitions": { "T": { "properties": {} } } }),
+            &["T".to_owned()],
+            true,
+        );
+        let mut sent = b"not json".to_vec();
+        let refused = minimised(&gateway, &endpoint(None), "/entities", &schema, &mut sent).await;
+        assert_eq!(refused.err().map(|problem| problem.status), Some(400));
+    }
+}

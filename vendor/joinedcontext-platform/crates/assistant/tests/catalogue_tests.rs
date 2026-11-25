@@ -334,6 +334,102 @@ async fn a_public_endpoint_is_counted_anonymously_and_each_page_cites_where_a_vi
     db::drop_database(admin, pool, &name).await;
 }
 
+/// A manifest of a kind the catalogue reads that does not parse, a model with no schema, a
+/// mirrored model and a projection that does not parse are each left out, not fatal.
+#[test]
+fn a_manifest_the_catalogue_cannot_read_is_left_out_of_its_pages() {
+    let dir = checkout("unreadable");
+    let root = &dir.organization;
+    let manifest = |kind: &str, name: &str, spec: &str| {
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: bb\nspec:\n{spec}"
+        )
+    };
+    write(
+        root,
+        "projects/bb/spaces/ovzdusie/datamodels/broken.yaml",
+        &manifest("DataModel", "broken", "  version: [not, a, version]\n"),
+    );
+    write(root, "projects/bb/spaces/ovzdusie/datamodels/bare.yaml",
+        &manifest("DataModel", "bare", "  contextSpaceRef: ovzdusie\n  linkml: ./bare.linkml.yaml\n  version: 1.0.0\n  lifecycle: draft\n  classes: [Bare]\n"));
+    write(root, "projects/bb/spaces/ovzdusie/datamodels/peer.yaml",
+        &manifest("DataModel", "peer", "  contextSpaceRef: ovzdusie\n  linkml: ./peer.linkml.yaml\n  version: 1.0.0\n  lifecycle: mirrored\n  classes: [AirQualityObserved]\n  artifacts:\n    jsonSchema: ./air.v1.schema.json\n"));
+    write(
+        root,
+        "projects/bb/spaces/ovzdusie/projections/broken.yaml",
+        &manifest("ModelProjection", "broken", "  classes: not-a-list\n"),
+    );
+    write(
+        root,
+        "projects/bb/spaces/ovzdusie/endpoints/broken.yaml",
+        &manifest("Endpoint", "broken", "  slug: [1]\n"),
+    );
+    let sources = worker::sources(&dir).expect("the checkout reads");
+    let public = source(&sources, "catalogue");
+    let names: Vec<&str> = public.catalogue.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["mesto-all", "public-air"]);
+    assert_eq!(
+        public.catalogue[1].types.len(),
+        2,
+        "the mirrored copy adds none"
+    );
+}
+
+/// Two Endpoints that publish one dataset share its page: the first written keeps it.
+#[tokio::test]
+async fn two_endpoints_of_one_dataset_are_one_page() {
+    let (admin, pool, name) = db::database("catalogue_shared_dataset").await;
+    let reader = Reader {
+        http: reqwest::Client::new(),
+        gateway: None,
+        endpoint_base: Url::parse("https://platform.example.org/").ok(),
+        portal: None,
+        held: Default::default(),
+    };
+    let sources = worker::sources(&checkout("shared_dataset")).expect("reads");
+    let source = source_owned(&sources, "catalogue");
+    let site = upsert_site(&pool, "bb", "example.org", &source.name, Visibility::Public)
+        .await
+        .expect("site");
+    let first = source
+        .catalogue
+        .iter()
+        .find(|p| p.ckan_dataset.is_some())
+        .expect("an Endpoint with a dataset")
+        .clone();
+    let mut second = first.clone();
+    second.name = "public-air-copy".into();
+    let written = sync_once(&pool, &reader, site, &[first, second]).await;
+    assert_eq!(written.0.len(), 1, "one dataset, one page");
+    db::drop_database(admin, pool, &name).await;
+}
+
+/// A guide page listed twice is one set of sections: the second copy cites the same addresses.
+#[tokio::test]
+async fn a_guide_page_listed_twice_is_indexed_once() {
+    let (admin, pool, name) = db::database("guide_twice").await;
+    let site = upsert_site(&pool, "bb", "example.org", "guide", Visibility::Public)
+        .await
+        .expect("site");
+    let page = "# Guide\n\n## 1. Start\n\nOpen /projects/bb/endpoints to begin.";
+    let mut written = Pages::default();
+    let report = assistant::guide::sync_guide(
+        &pool,
+        "bb",
+        site,
+        Some("https://portal.example.org"),
+        &[("01-start.md", page), ("01-start.md", page)],
+        &mut written,
+    )
+    .await
+    .expect("indexed");
+    assert_eq!(report.sections, written.0.len());
+    let urls: std::collections::BTreeSet<&str> =
+        written.0.iter().map(|(url, _)| url.as_str()).collect();
+    assert_eq!(urls.len(), written.0.len(), "no section twice");
+    db::drop_database(admin, pool, &name).await;
+}
+
 fn source_owned(sources: &[Source], name: &str) -> Source {
     source(sources, name).clone()
 }

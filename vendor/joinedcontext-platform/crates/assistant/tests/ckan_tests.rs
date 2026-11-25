@@ -348,6 +348,76 @@ async fn a_listing_the_catalogue_cannot_give_fails_the_run_naming_why() {
     db::drop_database(admin, pool, &name).await;
 }
 
+/// An address no path joins to, a catalogue nobody answers for, and a dataset the listing names
+/// twice: the first two fail the run naming why, the third is read once.
+#[tokio::test]
+async fn an_unusable_address_a_dead_catalogue_and_a_repeated_dataset() {
+    let (admin, pool, name) = db::database("ckandead").await;
+    let site = upsert_site(
+        &pool,
+        "hronov",
+        "hronov.example",
+        "catalogue",
+        Visibility::Public,
+    )
+    .await
+    .expect("site");
+    let (report, pages) = run(
+        &pool,
+        &Crawler::public().expect("crawler"),
+        site,
+        "mailto:data@example.org",
+        10,
+        &[],
+    )
+    .await;
+    let err = report.expect_err("no search URL").to_string();
+    assert!(err.contains("the CKAN search URL"), "{err}");
+    assert!(pages.0.is_empty());
+
+    let closed = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("a port")
+        .local_addr()
+        .expect("its address")
+        .port();
+    let dead = Crawler::new(
+        Arc::new(Catalogue1(closed)),
+        CrawlPolicy {
+            allow_plain_http: true,
+            ..CrawlPolicy::default()
+        },
+    )
+    .expect("crawler");
+    let (report, _) = run(
+        &pool,
+        &dead,
+        site,
+        &format!("http://data.example:{closed}"),
+        10,
+        &[],
+    )
+    .await;
+    let err = report.expect_err("nobody answers").to_string();
+    assert!(err.contains("data.example"), "{err}");
+
+    let server = MockServer::start().await;
+    let crawler = Crawler::new(
+        Arc::new(Catalogue1(server.address().port())),
+        CrawlPolicy {
+            allow_plain_http: true,
+            ..CrawlPolicy::default()
+        },
+    )
+    .expect("crawler");
+    let twice = dataset("twice", "2026-10-01T10:00:00");
+    listing(&server, 0, 2, vec![twice.clone(), twice]).await;
+    let base = format!("http://data.example:{}", server.address().port());
+    let (report, pages) = run(&pool, &crawler, site, &base, 10, &[]).await;
+    assert_eq!(report.expect("the run").datasets, 1);
+    assert_eq!(pages.0.len(), 1, "one page for a dataset listed twice");
+    db::drop_database(admin, pool, &name).await;
+}
+
 /// T-4747: the how-to each dataset's interfaces repeat is indexed once, at the catalogue's own
 /// address, so a question about connecting cites the catalogue; it is written again only when
 /// it changes and stays while the catalogue lists a dataset with interfaces.
