@@ -339,6 +339,16 @@ mod per_grant_tests {
         ));
         assert!(covers(&open, Operation::DeleteEntity, Part::Whole));
         assert!(covers(&open, Operation::DeleteEntity, Part::Root));
+        let named = info(
+            serde_json::json!({"speed": {"write": ["delete"]}, "colour": {"write": ["update"]}}),
+            &[],
+        );
+        assert!(
+            !covers(&named, Operation::DeleteEntity, Part::Whole),
+            "colour gives no delete"
+        );
+        let deletable = info(serde_json::json!({"speed": {"write": ["delete"]}}), &[]);
+        assert!(covers(&deletable, Operation::DeleteEntity, Part::Whole));
     }
 
     /// A listed registration gives only what it lists; a whole delete needs an open list.

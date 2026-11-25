@@ -68,3 +68,28 @@ pub fn json_response(status: StatusCode, body: &Value) -> Response<Body> {
     );
     response
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A refusal carries the problem document as `structuredContent` only when it is an object.
+    #[test]
+    fn a_refusal_carries_only_an_object_as_its_structured_content() {
+        let with = refused("refused", &json!({"status": 403}));
+        assert_eq!(with["isError"], json!(true));
+        assert_eq!(with["structuredContent"], json!({"status": 403}));
+        assert!(refused("refused", &Value::Null)
+            .get("structuredContent")
+            .is_none());
+        assert!(refused("refused", &json!([1]))
+            .get("structuredContent")
+            .is_none());
+        let ok = answered(&json!([1, 2]), "items");
+        assert_eq!(ok["content"][0]["text"], json!("[1,2]"));
+        assert_eq!(ok["structuredContent"]["items"], json!([1, 2]));
+        let answer = json_response(StatusCode::ACCEPTED, &json!({"a": 1}));
+        assert_eq!(answer.status(), StatusCode::ACCEPTED);
+        assert_eq!(answer.headers()["content-type"], "application/json");
+    }
+}

@@ -577,7 +577,7 @@ mod tests {
         let literal = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"@type": "xsd:double", "@value": 12}});
         check_model(&literal, WHOLE, true, &schema, "fleet").expect("a bare literal is its value");
         // A list value is one attribute, its elements no instances.
-        let list = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"value": 3}, "tags": [1, 2]});
+        let list = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"value": 3}, "tags": [1, 2], "owner": {"object": "urn:ngsi-ld:Org:1"}, "note": {"text": "no member"}, "createdAt": "2026-01-01T00:00:00Z"});
         check_model(&list, WHOLE, true, &schema, "fleet").expect("a list is a value");
     }
 
