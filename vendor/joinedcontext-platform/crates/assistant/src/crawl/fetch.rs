@@ -395,13 +395,12 @@ mod tests {
             .expect("a port");
         let address = listener.local_addr().expect("an address");
         tokio::spawn(async move {
-            if let Ok((mut stream, _)) = listener.accept().await {
-                let mut buf = [0u8; 2048];
-                let _ = stream.read(&mut buf).await;
-                let _ = stream
-                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 50\r\n\r\nshort")
-                    .await;
-            }
+            let (mut stream, _) = listener.accept().await.expect("the crawler connects");
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf).await;
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 50\r\n\r\nshort")
+                .await;
         });
         let client = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -544,18 +543,11 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let followed = match get(&server, "old").await {
-            FetchOutcome::Success {
-                final_url,
-                body,
-                status,
-                ..
-            } => Some((final_url.path().to_owned(), status, body)),
-            _ => None,
-        };
-        assert_eq!(
-            followed.expect("followed"),
-            ("/new".to_owned(), StatusCode::OK, b"moved".to_vec())
+        let followed = get(&server, "old").await;
+        assert!(
+            matches!(&followed, FetchOutcome::Success { final_url, status, body, .. }
+                if final_url.path() == "/new" && *status == StatusCode::OK && body == b"moved"),
+            "{followed:?}"
         );
         assert!(matches!(
             get(&server, "away").await,
@@ -596,26 +588,21 @@ mod tests {
             .respond_with(ResponseTemplate::new(302).insert_header("location", "http://[::1"))
             .mount(&server)
             .await;
-        let failed = |outcome: FetchOutcome| {
-            match outcome {
-                FetchOutcome::Failed(why) => Some(why),
-                _ => None,
-            }
-            .expect("failed")
-        };
+        // A failed outcome's reason, as its Debug form names it.
+        let failed = |outcome: FetchOutcome| format!("{outcome:?}");
         assert_eq!(
             failed(get(&server, "loop").await),
-            "too many redirects (> 5 hops)"
+            format!("Failed({:?})", "too many redirects (> 5 hops)")
         );
         assert_eq!(
             failed(get(&server, "bare").await),
-            "redirect missing location header"
+            format!("Failed({:?})", "redirect missing location header")
         );
         assert_eq!(
             failed(get(&server, "bytes").await),
-            "invalid location header encoding"
+            format!("Failed({:?})", "invalid location header encoding")
         );
-        assert!(failed(get(&server, "badurl").await).starts_with("invalid redirect URL"));
+        assert!(failed(get(&server, "badurl").await).starts_with("Failed(\"invalid redirect URL"));
         // A hop that carries credentials is refused before it is sent.
         assert!(matches!(
             get(&server, "creds").await,

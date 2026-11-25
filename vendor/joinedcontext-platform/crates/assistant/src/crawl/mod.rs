@@ -1654,10 +1654,10 @@ mod tests {
     }
 
     fn refusal(source: &str, spec: &KnowledgeSourceSpec) -> String {
-        match start_of(source, spec) {
-            Err(Error::Crawl(why)) => why,
-            other => panic!("expected a crawl refusal, got {other:?}"),
-        }
+        let refused = start_of(source, spec);
+        let why = format!("{refused:?}");
+        assert!(matches!(refused, Err(Error::Crawl(_))), "{why}");
+        why
     }
 
     #[test]
