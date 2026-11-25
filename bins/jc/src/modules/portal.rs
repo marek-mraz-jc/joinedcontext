@@ -1264,6 +1264,11 @@ mod tests {
             "00000000-0000-7000-8000-0000000000a1"
         );
         assert_ne!(tenants.dataroom["beta"].org, alpha.org);
+        // A malformed dataroom id names no tenant; dataroom's own start refuses it.
+        let mut bad =
+            crate::config::Config::merge(cli("portal,dataroom"), file.clone()).expect("config");
+        bad.dataroom.org_id = "not-an-org-id".into();
+        assert!(backup_vars(&bad).is_empty());
         let portal_only = crate::config::Config::merge(cli("portal"), file).expect("config");
         assert!(backup_vars(&portal_only).is_empty());
     }

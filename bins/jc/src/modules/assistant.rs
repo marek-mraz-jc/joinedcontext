@@ -964,6 +964,43 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn the_proxy_takes_the_organizations_realms_and_follows_the_registrys() {
+        let (cfg, mut siblings, _setup, _d) = fixture();
+        let text = "base_host = \"city.example\"\n\
+            [[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+            hosts = { portal = \"smartcity.bbsk.sk\", idm = \"idm.bbsk.sk\" }\n";
+        let file = crate::config::Config::parse_file(Path::new("jc.toml"), text).unwrap();
+        let orgs = crate::config::Config::merge(crate::config::Cli::default(), file)
+            .unwrap()
+            .organizations;
+        let none = |_: &str| None;
+        siblings.remove(Module::Shako);
+        let table = proxy_lookup(&siblings, &setup::Realm::default(), &orgs, &none);
+        assert!(table["JC_OIDC_ORGANIZATION_REALMS"].contains("idm.bbsk.sk/realms/bbsk"));
+        assert!(!table.contains_key("JC_FORGE_BASE"), "no forge here");
+        // A setup without shako holds no forge token: the proxy is built without one.
+        let dir = tempfile::tempdir().unwrap();
+        let roles: Vec<Module> = cfg
+            .roles
+            .iter()
+            .copied()
+            .filter(|m| *m != Module::Shako)
+            .collect();
+        let setup = Setup::prepare(dir.path(), &roles, &BTreeMap::new()).unwrap();
+        let key = jc_secret::Secret::new("model-key-of-the-jc-tests".to_owned());
+        let built = proxy(&siblings, &setup, &orgs, &none, &key)
+            .await
+            .expect("the proxy builds");
+        assert!(built.state.config.forge_token.is_empty());
+        // The registry's sign-in hosts replace the jc.toml realms at run time.
+        crate::modules::sign_in::publish(vec![crate::modules::sign_in::SignIn {
+            organization: "rt-assistant".into(),
+            host: "idm.rt-assistant.sk".into(),
+            portals: vec!["smartcity.rt-assistant.sk".into()],
+        }]);
+    }
+
     #[test]
     fn the_proxy_table_names_no_secret_and_follows_the_models_base() {
         let (_cfg, siblings, _setup, _d) = fixture();
@@ -1026,6 +1063,23 @@ mod tests {
             None
         );
         assert!(tasks.is_empty(), "nothing was spawned");
+        // An operator's proxy and gateway: no proxy of jc's, and still off without a model.
+        let (cfg, setup) = (cfg.clone(), setup);
+        let (_, siblings, _, _d2) = fixture();
+        let operator = |k: &str| match k {
+            "JC_ASSISTANT_PROXY_URL" => Some("http://proxy.example".to_owned()),
+            "JC_ASSISTANT_GATEWAY_URL" => Some("https://gateway.example".to_owned()),
+            _ => None,
+        };
+        let Err(why) = try_start(
+            &cfg, &setup, &siblings, &secrets, &operator, &shutdown, &tasks,
+        )
+        .await
+        else {
+            panic!("started without a model");
+        };
+        assert!(why.contains("JC_ASSISTANT_MODEL_DIR"), "{why}");
+        assert!(tasks.is_empty(), "nothing was spawned");
     }
 
     #[tokio::test]
@@ -1062,6 +1116,34 @@ mod tests {
         alone.remove(Module::Gateway);
         let why = missing(&cfg, &alone, &setup, &found).unwrap();
         assert!(why.contains("gateway"), "{why}");
+        // Without the gateway the assistant gets no checkout directories of its own.
+        let filled = vars(&alone, &setup, None, None);
+        assert!(!filled.contains_key("JC_ASSISTANT_REPO_DIR"));
+        // A setup made without the assistant's role holds none of its client secrets.
+        let other = tempfile::tempdir().unwrap();
+        let portal_only =
+            Setup::prepare(other.path(), &[Module::Portal], &BTreeMap::new()).unwrap();
+        let why = missing(&cfg, &siblings, &portal_only, &found).unwrap();
+        assert!(why.starts_with("setup holds no"), "{why}");
+        let (m, o) = (
+            dir.path().join("no-model").display().to_string(),
+            ort.display().to_string(),
+        );
+        let gone = move |k: &str| match k {
+            "JC_ASSISTANT_MODEL_DIR" => Some(m.clone()),
+            "ORT_DYLIB_PATH" => Some(o.clone()),
+            _ => None,
+        };
+        let why = missing(&cfg, &siblings, &setup, &gone).unwrap();
+        assert!(why.contains("does not exist"), "{why}");
+        let m = model.display().to_string();
+        let no_ort = move |k: &str| (k == "JC_ASSISTANT_MODEL_DIR").then(|| m.clone());
+        let why = missing(&cfg, &siblings, &setup, &no_ort).unwrap();
+        assert!(why.starts_with("ORT_DYLIB_PATH"), "{why}");
+        let Err(why) = embedder(&no_ort).await else {
+            panic!("an embedder without ONNX Runtime");
+        };
+        assert!(why.contains("unset"), "{why}");
     }
 
     /// The catalogue's origin joins the named deployment's allowedOrigins over https only: the
