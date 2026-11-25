@@ -669,13 +669,12 @@ impl Catalog {
                     got: pipeline.kind.clone(),
                 });
             }
-            names::validate_dns1123_label(&pipeline.name).map_err(|e| match e {
-                Error::Name { reason, .. } => Error::Name {
+            names::validate_dns1123_label(&pipeline.name).map_err(|e| {
+                names::map_reason(e, |reason| Error::Name {
                     field: "spec.catalog.pipelineRef.name",
                     value: pipeline.name.clone(),
                     reason,
-                },
-                other => other,
+                })
             })?;
         }
         for law in &self.applicable_legislation {

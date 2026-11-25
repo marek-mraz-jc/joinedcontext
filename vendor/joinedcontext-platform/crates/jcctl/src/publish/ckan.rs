@@ -2058,42 +2058,6 @@ impl CkanApi for InMemoryCkan {
                 self.packages.remove(&self.key_of(payload, &name));
                 Ok(json!({}))
             }
-            "resource_patch" => {
-                let stamp = self.tick();
-                let listed = self.packages.values_mut().find_map(|package| {
-                    let index = package["resources"]
-                        .as_array()?
-                        .iter()
-                        .position(|r| r["id"] == json!(name))?;
-                    Some((package, index))
-                });
-                let Some((package, index)) = listed else {
-                    return Err(Self::rejected(action, "unknown resource"));
-                };
-                let resource = &mut package["resources"][index];
-                for (key, value) in payload.as_object().into_iter().flatten() {
-                    resource[key] = value.clone();
-                }
-                let patched = resource.clone();
-                // A resource that changes changes its dataset, as CKAN's resource_update does.
-                package["metadata_modified"] = json!(stamp);
-                Ok(patched)
-            }
-            "resource_delete" => {
-                let mut found = false;
-                for package in self.packages.values_mut() {
-                    if let Some(resources) = package["resources"].as_array_mut() {
-                        let before = resources.len();
-                        resources.retain(|resource| resource["id"] != json!(name));
-                        found |= resources.len() != before;
-                    }
-                }
-                if !found {
-                    return Err(Self::rejected(action, "unknown resource"));
-                }
-                self.views.remove(&name);
-                Ok(json!({}))
-            }
             other => Err(Self::rejected(other, "unknown action")),
         }
     }
@@ -2143,6 +2107,96 @@ mod tests {
     }
 
     use super::*;
+
+    /// A period of whole minutes or of loose seconds is written the ISO 8601 way.
+    #[test]
+    fn a_period_is_written_in_its_largest_whole_unit() {
+        assert_eq!(iso_duration(86_400), "P1D");
+        assert_eq!(iso_duration(7_200), "PT2H");
+        assert_eq!(iso_duration(300), "PT5M");
+        assert_eq!(iso_duration(61), "PT61S");
+    }
+
+    /// Each generated model file names its format; any other file its upper-cased extension.
+    #[test]
+    fn a_file_names_its_format() {
+        let base = "https://data.example.sk/api/endpoint/s/schema/v1";
+        assert_eq!(format_of(&format!("{base}/model.owl.ttl")), "OWL");
+        assert_eq!(format_of(&format!("{base}/model.rdf.ttl")), "RDF");
+        assert_eq!(format_of(&format!("{base}/model.md")), "Markdown");
+        assert_eq!(format_of(&format!("{base}/data.parquet")), "PARQUET");
+    }
+
+    /// A literal flattens to its text; null to nothing; a structure to its JSON.
+    #[test]
+    fn a_literal_flattens_to_text() {
+        assert_eq!(flatten(&Value::Null), None);
+        assert_eq!(flatten(&json!(5)), Some("5".to_owned()));
+        assert_eq!(flatten(&json!(true)), Some("true".to_owned()));
+        assert_eq!(flatten(&json!({ "a": 1 })), Some(r#"{"a":1}"#.to_owned()));
+        assert_eq!(text_of(&json!(5)), None);
+    }
+
+    /// One keyword that is not a list is one tag; a media type without an IANA IRI passes as it
+    /// is; an extra goes nowhere when the payload has no extras; an unknown quality measure
+    /// becomes no extra.
+    #[test]
+    fn single_values_and_unknown_measures() {
+        let tags = tags(&json!({ "dcat:keyword": "ovzdušie" }));
+        assert_eq!(tags.len(), 1, "{tags:?}");
+        assert_eq!(mimetype(&json!("text/csv")), json!("text/csv"));
+        let mut payload = json!({});
+        push_extra(&mut payload, "k", "v");
+        assert!(payload["extras"].as_array().is_none(), "{payload}");
+        let record = json!({ "dqv:hasQualityMeasurement": [
+            { "dqv:isMeasurementOf": { "@id": "https://example.org/other" }, "dqv:value": 1 }
+        ]});
+        assert!(quality_extras(&record).is_empty());
+    }
+
+    /// A chart of an attribute the model does not describe is titled by the attribute's name.
+    #[test]
+    fn a_chart_of_an_undescribed_attribute_is_titled_by_its_name() {
+        let title = chart_title(None, "AirQualityObserved", "pm10");
+        assert!(!title.is_empty(), "{title:?}");
+    }
+
+    /// The in-memory catalogue refuses what CKAN refuses: an unknown action, a resource or
+    /// view or organization it does not hold, a payload naming nothing, a dataset created
+    /// twice.
+    #[test]
+    fn the_in_memory_catalogue_refuses_what_ckan_refuses() {
+        let mut api = InMemoryCkan::new().with_organization("mesto");
+        assert!(api.show("frobnicate_show", "x").is_err());
+        assert!(api.action("frobnicate", &json!({ "name": "x" })).is_err());
+        assert!(api.action("package_create", &json!({})).is_err());
+        assert!(api.action("resource_view_create", &json!({})).is_err());
+        assert!(api
+            .action("resource_view_create", &json!({ "resource_id": "nope" }))
+            .is_err());
+        assert!(api
+            .action("resource_view_update", &json!({ "id": "nope" }))
+            .is_err());
+        assert!(api
+            .action("organization_patch", &json!({ "id": "nobody" }))
+            .is_err());
+        assert!(api
+            .action("organization_patch", &json!({ "id": "mesto" }))
+            .is_ok());
+        assert_eq!(
+            api.show("organization_show", "mesto").ok().flatten(),
+            Some(json!({ "name": "mesto" }))
+        );
+        assert!(api
+            .action(
+                "package_create",
+                &json!({ "name": "d", "owner_org": "nobody" })
+            )
+            .is_err());
+        let dataset = json!({ "name": "d", "owner_org": "mesto" });
+        assert!(api.action("package_create", &dataset).is_ok());
+        assert!(api.action("package_create", &dataset).is_err());
+    }
 
     /// API/11 EP-159: one resource per calendar output, titled in the catalogue's language.
     #[test]

@@ -91,28 +91,29 @@ struct Part {
 }
 
 fn split_documents(src: &str) -> Vec<Part> {
-    let mut parts = vec![Part {
+    let mut parts = Vec::new();
+    let mut current = Part {
         marked: false,
         lines: Vec::new(),
-    }];
+    };
     for (i, raw) in src.lines().enumerate() {
         let raw = raw.trim_end_matches('\r');
         if raw == "---" || raw.starts_with("--- ") {
-            let first = parts.len() == 1 && parts[0].lines.iter().all(Src::is_trivia);
+            let first = parts.is_empty() && current.lines.iter().all(Src::is_trivia);
             if first {
-                parts[0].marked = true;
+                current.marked = true;
             } else {
-                parts.push(Part {
+                let next = Part {
                     marked: true,
                     lines: Vec::new(),
-                });
+                };
+                parts.push(std::mem::replace(&mut current, next));
             }
             continue;
         }
-        if let Some(p) = parts.last_mut() {
-            p.lines.push(Src::new(i + 1, raw));
-        }
+        current.lines.push(Src::new(i + 1, raw));
     }
+    parts.push(current);
     parts
 }
 
@@ -200,8 +201,8 @@ fn unsupported(line: usize, what: &'static str) -> FmtError {
 
 impl Parser {
     fn document(&mut self) -> Result<Document> {
-        let root = match self.peek_content().map(|l| l.indent) {
-            Some(indent) => Some(self.node_at(indent)?),
+        let root = match self.peek_content().cloned() {
+            Some(line) => Some(self.node_at(line)?),
             None => None,
         };
         let tail = self.trivia();
@@ -229,11 +230,9 @@ impl Parser {
         out
     }
 
-    /// The node whose first content line is at `indent`.
-    fn node_at(&mut self, indent: usize) -> Result<Node> {
-        let Some(line) = self.peek_content().cloned() else {
-            return Ok(Node::Null);
-        };
+    /// The node whose first content line is `line`, the next one at the cursor.
+    fn node_at(&mut self, line: Src) -> Result<Node> {
+        let indent = line.indent;
         if is_dash(line.text()) {
             return self.seq(indent);
         }
@@ -343,8 +342,9 @@ impl Parser {
         let rest = after_dash.trim_start_matches(' ');
         if is_dash(rest) || split_key(rest).is_some() {
             let column = indent + 1 + after_dash.len() - rest.len();
-            self.lines[self.pos] = Src::new(line.no, &format!("{}{rest}", " ".repeat(column)));
-            return Ok((self.node_at(column)?, None));
+            let moved = Src::new(line.no, &format!("{}{rest}", " ".repeat(column)));
+            self.lines[self.pos] = moved.clone();
+            return Ok((self.node_at(moved)?, None));
         }
         self.pos += 1;
         self.after(rest, indent, false, line.no)
@@ -368,9 +368,11 @@ impl Parser {
 
     /// The node on the lines below a key with nothing after its colon.
     fn below(&mut self, parent: usize, in_map: bool) -> Result<Node> {
-        match self.peek_content().map(|l| (l.indent, is_dash(l.text()))) {
-            Some((indent, _)) if indent > parent => self.node_at(indent),
-            Some((indent, true)) if in_map && indent == parent => self.seq(parent),
+        match self.peek_content().cloned() {
+            Some(line) if line.indent > parent => self.node_at(line),
+            Some(line) if in_map && line.indent == parent && is_dash(line.text()) => {
+                self.seq(parent)
+            }
             _ => Ok(Node::Null),
         }
     }
@@ -534,7 +536,7 @@ fn reorder_manifest(node: Node) -> Node {
     if !is_manifest {
         return Node::Map(entries);
     }
-    let header = entries
+    let mut header = entries
         .first_mut()
         .map(|e| std::mem::take(&mut e.lead))
         .unwrap_or_default();
@@ -544,10 +546,9 @@ fn reorder_manifest(node: Node) -> Node {
         }
     }
     sort_by_order(&mut entries, TOP_ORDER);
-    if let Some(first) = entries.first_mut() {
-        let mut lead = header;
-        lead.append(&mut first.lead);
-        first.lead = lead;
+    // A manifest has its apiVersion and kind: the loop runs once.
+    for first in entries.iter_mut().take(1) {
+        first.lead.splice(0..0, std::mem::take(&mut header));
     }
     Node::Map(entries)
 }
@@ -627,7 +628,7 @@ fn string_node(s: &str) -> Node {
 /// character.
 fn quote(s: &str) -> String {
     if s.contains('\'') || s.chars().any(char::is_control) {
-        return serde_json::to_string(s).unwrap_or_else(|_| format!("{s:?}"));
+        return serde_json::Value::from(s).to_string();
     }
     format!("'{s}'")
 }
@@ -1116,6 +1117,14 @@ mod edge_tests {
     #[test]
     fn a_line_left_after_the_root_node_is_refused() {
         assert_eq!(refused(" x\ny\n"), Some("indentation that closes no block"));
+    }
+
+    /// A plain value YAML reads only in its place (a `%` first starts a directive when alone)
+    /// stays out of a flow collection, where the next run would re-read it alone.
+    #[test]
+    fn a_plain_value_that_reads_back_only_in_place_stays_as_written() {
+        assert!(!reads_back("%x"));
+        assert!(reads_back("plain words"));
     }
 
     #[test]

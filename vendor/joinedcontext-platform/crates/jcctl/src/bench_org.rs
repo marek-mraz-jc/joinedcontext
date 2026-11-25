@@ -142,9 +142,7 @@ pub fn write(root: &Path, endpoints: usize) -> io::Result<Tree> {
 
 fn put(dir: &Path, rel: &str, body: &str) -> io::Result<()> {
     let path = dir.join(rel);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    std::fs::create_dir_all(path.parent().unwrap_or(dir))?;
     std::fs::write(path, body)
 }
 
@@ -170,5 +168,30 @@ fn opaque(state: &mut u64, names: &[&str]) -> String {
         if !leaks {
             return slug;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A name holding most three-letter runs makes nearly every draw leak, so the slug is the
+    /// first later draw that shares none of them.
+    #[test]
+    fn a_leaking_draw_is_drawn_again() {
+        let mut seed = 7_u64;
+        let name: String = (0..4000)
+            .map(|_| opaque(&mut seed, &[]).remove(0))
+            .collect();
+        let mut state = 1_u64;
+        let slug = opaque(&mut state, &[&name]);
+        assert_eq!(slug.len(), 26);
+        assert!(slug
+            .as_bytes()
+            .windows(3)
+            .all(|w| !name.contains(std::str::from_utf8(w).expect("ASCII"))));
+        let mut single = 1_u64;
+        opaque(&mut single, &[]);
+        assert_ne!(state, single, "more than one draw");
     }
 }

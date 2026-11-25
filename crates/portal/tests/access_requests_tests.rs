@@ -661,6 +661,64 @@ async fn a_request_is_refused_before_it_is_stored() {
     assert!(!inbox.text.contains("not-there"), "{}", inbox.text);
 }
 
+/// A grant whose Policy name would pass 63 characters is refused when it is asked for, and an
+/// approval of a request whose Endpoint left the project is a conflict that says to decline it
+/// (T-7813).
+#[tokio::test]
+async fn a_long_grant_name_and_a_gone_endpoint_are_refused_with_what_to_do() {
+    let _held = DATABASE.lock().await;
+    let Some(pool) = pool().await else { return };
+    let long = unique(&"p".repeat(20));
+    let long_world = state(pool.clone(), &long, true).await;
+    let refused = send(
+        &long_world,
+        "jana",
+        "POST",
+        &format!("/api/v1/projects/{KPIS}/pipelines/{long}/access-requests"),
+        Some(ask()),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert!(refused.text.contains("longer than 63"), "{}", refused.text);
+
+    let pipeline = unique("gone");
+    let state = state(pool, &pipeline, true).await;
+    let filed = send(
+        &state,
+        "jana",
+        "POST",
+        &format!("/api/v1/projects/{KPIS}/pipelines/{pipeline}/access-requests"),
+        Some(ask()),
+    )
+    .await;
+    assert_eq!(filed.status, StatusCode::CREATED, "{}", filed.text);
+    let id = serde_json::from_str::<Value>(&filed.text).expect("json")["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    state
+        .mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: HELSINKI.into(),
+            kind: "Endpoint".into(),
+            name: "air-quality".into(),
+        });
+    let approved = send(
+        &state,
+        "olli",
+        "POST",
+        &format!("/api/v1/projects/{HELSINKI}/access-requests/{id}/approve"),
+        None,
+    )
+    .await;
+    assert_eq!(approved.status, StatusCode::CONFLICT, "{}", approved.text);
+    assert!(
+        approved.text.contains("decline the request"),
+        "{}",
+        approved.text
+    );
+}
+
 async fn state_shared(pool: sqlx::PgPool, pipeline: &str) -> AppState {
     state(pool, pipeline, false).await
 }
@@ -1171,4 +1229,148 @@ async fn an_owner_decides_a_request_only_after_a_second_factor() {
     olli.second_factor = true;
     let approved = common::send(&state, olli, "POST", &format!("{base}/approve"), None).await;
     assert_eq!(approved.status, StatusCode::ACCEPTED, "{}", approved.text);
+}
+
+/// AP-139, T-7835: an App's own Endpoint is refused with what to ask for instead; a ModelProjection
+/// narrows the offered types to its classes.
+#[tokio::test]
+async fn an_app_endpoint_is_refused_and_a_projection_narrows_the_types() {
+    let pipeline = unique("proj");
+    let state = world(&pipeline, true).await;
+    modelled(&state);
+    state.mirror.upsert(common::envelope(
+        "App",
+        "dash",
+        HELSINKI,
+        json!({ "contextSpaceRef": "air" }),
+    ));
+    state.mirror.upsert(common::envelope(
+        "Endpoint",
+        "app-dash",
+        HELSINKI,
+        json!({ "contextSpaceRef": "air", "slug": "zt4qm7ge2xdv6ksb3ncf5arwaa", "audience": "project-list" }),
+    ));
+    let uri = "/api/v1/projects/helsinki/endpoints/app-dash/access-requests";
+    let filed = send(
+        &state,
+        "eve",
+        "POST",
+        uri,
+        Some(person_ask(&["AirQualityObserved"])),
+    )
+    .await;
+    assert_eq!(filed.status, StatusCode::CONFLICT, "{}", filed.text);
+    assert!(
+        filed.text.contains("belongs to app 'dash'"),
+        "{}",
+        filed.text
+    );
+
+    // A projection keeping no class of the model leaves nothing to ask for.
+    state.mirror.upsert(common::envelope(
+        "ModelProjection",
+        "nothing-kept",
+        HELSINKI,
+        json!({ "classes": [{ "name": "WeatherObserved" }] }),
+    ));
+    state.mirror.upsert(common::envelope(
+        "Endpoint",
+        "air-projected",
+        HELSINKI,
+        json!({ "contextSpaceRef": "air", "slug": "zt4qm7ge2xdv6ksb3ncf5arwab", "audience": "project-list", "projectionRef": "nothing-kept" }),
+    ));
+    let projected = send(
+        &state,
+        "eve",
+        "POST",
+        "/api/v1/projects/helsinki/endpoints/air-projected/access-requests",
+        Some(person_ask(&["AirQualityObserved"])),
+    )
+    .await;
+    assert_eq!(
+        projected.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        projected.text
+    );
+}
+
+/// P-18, T-7835: an Endpoint naming its Policies, as a list or as one ref, is approved with the
+/// grant beside the named ones; a revoke of a grant that never reached main is a conflict saying
+/// to approve or close its Change first.
+#[tokio::test]
+async fn an_endpoint_naming_its_policies_is_approved_and_an_unmerged_grant_is_not_revoked() {
+    let _held = DATABASE.lock().await;
+    let Some(pool) = pool().await else { return };
+    let state = state(pool, &unique("named"), true).await;
+    modelled(&state);
+    let owner = ["ContextSpace", "Endpoint", "Policy", "Group"];
+    role(
+        &state,
+        "air-owner",
+        "oona",
+        HELSINKI,
+        &owner,
+        &["read", "propose", "approve"],
+    );
+    for (key, refs) in [
+        (
+            "policyRefs",
+            json!(["urn:ngsi-ld:Policy:hel.fi:air:air-read"]),
+        ),
+        ("policyRef", json!("urn:ngsi-ld:Policy:hel.fi:air:air-read")),
+    ] {
+        let name = unique("air-named");
+        let mut spec = json!({ "contextSpaceRef": "air", "slug": "zt4qm7ge2xdv6ksb3ncf5arwad", "audience": "project-list", "allowedProjects": ["traffic"] });
+        spec[key] = refs;
+        state
+            .mirror
+            .upsert(common::envelope("Endpoint", &name, HELSINKI, spec));
+        let filed = send(
+            &state,
+            "eve",
+            "POST",
+            &format!("/api/v1/projects/{HELSINKI}/endpoints/{name}/access-requests"),
+            Some(person_ask(&["AirQualityObserved"])),
+        )
+        .await;
+        assert_eq!(filed.status, StatusCode::CREATED, "{key}: {}", filed.text);
+        let id = serde_json::from_str::<Value>(&filed.text).expect("json")["id"]
+            .as_str()
+            .expect("an id")
+            .to_owned();
+        let approved = send(
+            &state,
+            "oona",
+            "POST",
+            &format!("/api/v1/projects/{HELSINKI}/access-requests/{id}/approve"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            approved.status,
+            StatusCode::ACCEPTED,
+            "{key}: {}",
+            approved.text
+        );
+        let revoked = send(
+            &state,
+            "oona",
+            "POST",
+            &format!("/api/v1/projects/{HELSINKI}/access-requests/{id}/revoke"),
+            Some(json!({ "reason": "the report ended" })),
+        )
+        .await;
+        assert_eq!(
+            revoked.status,
+            StatusCode::CONFLICT,
+            "{key}: {}",
+            revoked.text
+        );
+        assert!(
+            revoked.text.contains("not on main yet"),
+            "{key}: {}",
+            revoked.text
+        );
+    }
 }

@@ -49,15 +49,19 @@ async fn scoped(
     Ok(tx)
 }
 
-/// The subject as stored and compared: its JSON text, header bytes as numbers.
-fn key(subject: &Subject) -> Result<String, sqlx::Error> {
-    serde_json::to_string(subject).map_err(|e| sqlx::Error::Encode(Box::new(e)))
+/// The subject as stored and compared: its JSON text, header bytes as numbers
+/// (what `serde_json::to_string` writes, built without its never-taken error).
+fn key(subject: &Subject) -> String {
+    use serde_json::Value;
+    let pairs = subject.iter().map(|(name, bytes)| {
+        Value::Array(vec![Value::from(name.as_str()), Value::from(bytes.clone())])
+    });
+    Value::Array(pairs.collect()).to_string()
 }
 
 fn question(row: &PgRow) -> Result<Confirmation, sqlx::Error> {
     Ok(Confirmation {
-        subject: serde_json::from_str(row.try_get("subject")?)
-            .map_err(|e| sqlx::Error::Decode(Box::new(e)))?,
+        subject: serde_json::from_str(row.try_get("subject")?).map_err(super::undecodable)?,
         view: row.try_get("view")?,
         tool: row.try_get("tool")?,
         message: row.try_get("message")?,
@@ -80,7 +84,7 @@ async fn put(
     new: New<'_>,
     caps: Caps,
 ) -> Result<bool, sqlx::Error> {
-    let subject = key(new.subject)?;
+    let subject = key(new.subject);
     let mut tx = scoped(pool, tenant).await?;
     sqlx::query(LOCK_SQL)
         .bind(tenant.as_str())
@@ -187,7 +191,7 @@ pub async fn take(
     id: &str,
     subject: &Subject,
 ) -> Result<Taken, sqlx::Error> {
-    let subject = key(subject)?;
+    let subject = key(subject);
     let mut tx = scoped(pool, tenant).await?;
     let decided: Option<bool> = sqlx::query_scalar(TAKE_SQL)
         .bind(tenant.as_str())
@@ -225,4 +229,27 @@ pub async fn sweep(pool: &PgPool, tenant: &TenantId) -> Result<u64, sqlx::Error>
         .rows_affected();
     tx.commit().await?;
     Ok(gone)
+}
+
+#[cfg(test)]
+mod tests {
+    /// `key` writes exactly the text serde writes, which rows stored before it
+    /// hold and `question` parses back; an empty subject and non-ASCII bytes too.
+    #[test]
+    fn key_is_the_serde_text() {
+        for subject in [
+            vec![],
+            vec![("x-jc-subject".to_owned(), b"alice".to_vec())],
+            vec![
+                ("a\"b".to_owned(), vec![0, 255, 34]),
+                ("\u{e9}".to_owned(), Vec::new()),
+            ],
+        ] {
+            let text = super::key(&subject);
+            assert_eq!(text, serde_json::to_string(&subject).expect("serde"));
+            let back: antares_store::confirmations::Subject =
+                serde_json::from_str(&text).expect("parses back");
+            assert_eq!(back, subject);
+        }
+    }
 }

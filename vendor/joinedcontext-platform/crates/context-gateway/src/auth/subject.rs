@@ -1104,6 +1104,24 @@ mod tests {
         assert!(!holds(&["/analysts"]), "a group under no Organization");
     }
 
+    /// A role subject is a user or a group: one naming both (or neither) never matches, so a
+    /// manifest that slipped past validation grants nobody the role.
+    #[test]
+    fn a_role_subject_naming_both_a_user_and_a_group_is_held_by_nobody() {
+        let spec: jc_core::kinds::EndpointSpec = serde_json::from_value(serde_json::json!({
+            "contextSpaceRef": "air", "slug": "w3nq7pzk2mtv6hx5brj4gcdsfa", "audience": "public",
+            "enabledRepresentations": ["ngsi-ld"],
+            "roles": [{"name": "analyst", "subjects": [{"user": "reader", "group": "analysts"}]}]
+        }))
+        .expect("an Endpoint spec");
+        let roles = EndpointRoles::of("city", "air", &spec);
+        let groups = BTreeSet::from(["analysts".to_owned()]);
+        assert_eq!(
+            roles.held_by(Some("reader"), &groups, &[]).count(),
+            usize::from(roles.caller.is_some())
+        );
+    }
+
     /// The panel reader of the synthetic bundle (jc-panel-grant): the reconciler writes the
     /// project's derived group under the Organization of its Project manifest (`/hel/...`), the
     /// seed subtree gives `jc_org` another name. Under `hel` the group counts; under any other

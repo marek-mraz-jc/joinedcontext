@@ -547,21 +547,7 @@ impl AppState {
                 let mut every = tokio::time::interval(std::time::Duration::from_secs(300));
                 loop {
                     every.tick().await;
-                    match crate::host_registry::report_drift(&pool, &mirror).await {
-                        // A loaded mirror only: before the first sync every project looks empty.
-                        Ok(Some(_)) => {
-                            if let Err(err) =
-                                crate::host_registry::report_unplaced_pipelines(&pool, &mirror)
-                                    .await
-                            {
-                                tracing::warn!(error = %err, "the unplaced projects could not be read");
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(err) => {
-                            tracing::warn!(error = %err, "the Organization drift could not be read")
-                        }
-                    }
+                    crate::host_registry::report_round(&pool, &mirror).await;
                 }
             });
         }
@@ -670,10 +656,7 @@ impl AppState {
                             .map(|pool| (pool, Arc::clone(&state.mirror))),
                     ));
                     if !states.is_durable() {
-                        tracing::info!(
-                            "no database: sync sources remember their runs only until this \
-                             process ends"
-                        );
+                        tracing::info!("no database: sync sources remember their runs only until this process ends");
                     }
                     state.sync = Some(Arc::new(crate::sync::driver::Driver::new(
                         Arc::clone(&client),
@@ -691,15 +674,23 @@ impl AppState {
         // A copy has nothing to copy without the forge it mirrors.
         match (github_mirror, state.shako.is_some()) {
             (Some(mirror), true) => state.github_mirror = Some(Arc::new(mirror)),
-            (Some(_), false) => tracing::warn!(
-                "JC_APP_MIRROR_GITHUB_OWNER is set but no forge is configured: application \
-                 repositories are not copied to GitHub"
-            ),
+            (Some(_), false) => tracing::warn!("JC_APP_MIRROR_GITHUB_OWNER is set but no forge is configured: application repositories are not copied to GitHub"),
             (None, _) => {}
         }
         // The 24-hour and 7-day windows need a reading an hour, page or no page (DM-94).
         state.quality_checks.start_hourly();
         Ok(state)
+    }
+
+    /// A client of the cluster this Portal runs in, from the ServiceAccount mount; `None`
+    /// outside a cluster.
+    fn in_cluster(
+        &self,
+    ) -> Result<Option<crate::apps::kube::KubeClient>, crate::apps::kube::KubeError> {
+        crate::apps::kube::KubeClient::from_mount(
+            &self.config.service_account_dir,
+            crate::apps::kube::IN_CLUSTER_API,
+        )
     }
 
     /// The writers into the cluster: the artifact store's root client, the WASM shards, the MQTT
@@ -719,7 +710,7 @@ impl AppState {
         // Each WASM shard's placement and store key, in the host's namespace (AP-157, AP-158).
         // Without that namespace there is nowhere a shard would read them, so none is written.
         if let Some(apps_db) = self.config.apps_db.clone() {
-            match (apps_db.host_namespace.clone(), crate::apps::kube::KubeClient::in_cluster()) {
+            match (apps_db.host_namespace.clone(), self.in_cluster()) {
                 (Some(namespace), Ok(Some(kube))) => {
                     let mut shards = crate::reconciler::wasm_shards::WasmShards::new(
                         kube,
@@ -732,9 +723,7 @@ impl AppState {
                     }
                     syncer = syncer.with_wasm_shards(Arc::new(shards));
                 }
-                (None, _) => tracing::warn!(
-                    "JC_PORTAL_WASM_HOST_NAMESPACE is not set: no WASM shard gets its placement or its store key"
-                ),
+                (None, _) => tracing::warn!("JC_PORTAL_WASM_HOST_NAMESPACE is not set: no WASM shard gets its placement or its store key"),
                 (_, Err(err)) => {
                     tracing::warn!(error = %err, "the ServiceAccount mount is unreadable, so no WASM shard gets its placement")
                 }
@@ -743,10 +732,7 @@ impl AppState {
         }
         // Each MqttBroker's release, in the brokers' namespace, from the deployment's template
         // (ADR-N-048, T-3994).
-        match (
-            self.config.mqtt_namespace.clone(),
-            crate::apps::kube::KubeClient::in_cluster(),
-        ) {
+        match (self.config.mqtt_namespace.clone(), self.in_cluster()) {
             (Some(namespace), Ok(Some(kube))) => {
                 syncer = syncer.with_mqtt_capture(Arc::new(crate::mqtt_capture::Capture::new(
                     Arc::clone(&self.mqtt_capture),
@@ -768,8 +754,8 @@ impl AppState {
         // artifact-store reader (T-0925) and the pipeline runner's environment (T-0927).
         // Outside a cluster there is nowhere to write one, which is not an error.
         match (
-            crate::apps::kube::KubeClient::in_cluster(),
-            crate::apps::kube::KubeClient::own_namespace(),
+            self.in_cluster(),
+            crate::apps::kube::KubeClient::namespace_of(&self.config.service_account_dir),
         ) {
             (Ok(Some(kube)), Some(namespace)) => {
                 syncer = syncer.with_credential_secrets(Arc::new(kube), namespace);
@@ -836,16 +822,13 @@ impl AppState {
         // settings that say where. Either missing leaves the reconciler reading apps and
         // deploying nothing, which is what a Portal on a laptop does (T-0411, AP-18). No
         // realm is needed: the login front is the edge's one client (AP-27, ADR-N-019).
-        match (
-            self.config.app_settings.clone(),
-            crate::apps::kube::KubeClient::in_cluster(),
-        ) {
+        match (self.config.app_settings.clone(), self.in_cluster()) {
             (Some(settings), Ok(Some(kube))) => {
                 // The edge file has its own client: the converger owns the other one.
-                match crate::apps::kube::KubeClient::in_cluster() {
+                match self.in_cluster() {
                     Ok(Some(edge_kube)) => {
                         let namespace = settings.apisix_namespace.clone();
-                        match crate::apps::kube::KubeClient::in_cluster() {
+                        match self.in_cluster() {
                             Ok(Some(hosts_kube)) => {
                                 syncer = syncer.with_app_hosts(Arc::new(
                                     crate::reconciler::app_hosts::AppHosts::new(
@@ -854,9 +837,11 @@ impl AppState {
                                     ),
                                 ));
                             }
-                            _ => tracing::warn!(
-                                "no third API client: no App host gets a certificate"
-                            ),
+                            _ => {
+                                tracing::warn!(
+                                    "no third API client: no App host gets a certificate"
+                                );
+                            }
                         }
                         syncer = self.wire_org_hosts(syncer, &namespace);
                         syncer = syncer.with_edge_file(
@@ -914,7 +899,7 @@ impl AppState {
             tracing::error!(%name, "JC_PORTAL_DNS01_ISSUER is not a Kubernetes name: no registry host gets a certificate");
             return syncer;
         }
-        match crate::apps::kube::KubeClient::in_cluster() {
+        match self.in_cluster() {
             Ok(Some(kube)) => syncer.with_org_hosts(Arc::new(
                 crate::reconciler::org_hosts::OrgHosts::new(
                     kube,
@@ -948,14 +933,18 @@ impl AppState {
                                 .with_operators(&self.config.bootstrap_admins),
                         ))
                     }
-                    None => tracing::warn!(
-                        "the issuer is not a realm URL, so no Keycloak group is managed"
-                    ),
+                    None => {
+                        tracing::warn!(
+                            "the issuer is not a realm URL, so no Keycloak group is managed"
+                        );
+                    }
                 }
             }
-            _ => tracing::info!(
-                "no Keycloak admin client: Group manifests are read, the realm is not written"
-            ),
+            _ => {
+                tracing::info!(
+                    "no Keycloak admin client: Group manifests are read, the realm is not written"
+                );
+            }
         }
         // Each Organization's realm, as that realm's own `portal-reconciler` (T-7144).
         if let Some(admin) = self.config.keycloak_admin.as_ref() {
@@ -1061,9 +1050,11 @@ impl AppState {
                     };
                     syncer = syncer.with_workload_clients(Arc::new(clients))
                 }
-                None => tracing::warn!(
-                    "the issuer is not a realm URL, so no workload client is managed"
-                ),
+                None => {
+                    tracing::warn!(
+                        "the issuer is not a realm URL, so no workload client is managed"
+                    );
+                }
             }
             // The MCP hub's `endpoint:{slug}` scopes (T-2490), by the same identity.
             if let Some(scopes) = crate::reconciler::hub_scopes::HubScopeSync::new(
@@ -1098,33 +1089,33 @@ impl AppState {
         // Each Pipeline's own Kubernetes ServiceAccount (PL-19, T-1508), by the Portal's
         // in-cluster identity, which the deployment lets write that one namespace.
         if let Some(namespace) = self.config.pipeline_namespace.clone() {
-            match crate::apps::kube::KubeClient::in_cluster() {
+            match self.in_cluster() {
                 Ok(Some(kube)) => {
                     syncer = syncer.with_pipeline_service_accounts(Arc::new(kube), namespace)
                 }
-                Ok(None) => tracing::warn!(
-                    "no ServiceAccount mount: the pipelines' Kubernetes accounts are not made"
-                ),
-                Err(err) => tracing::warn!(
-                    error = %err,
-                    "the ServiceAccount mount is unreadable, so the pipelines' Kubernetes accounts are not made"
-                ),
+                Ok(None) => {
+                    tracing::warn!(
+                        "no ServiceAccount mount: the pipelines' Kubernetes accounts are not made"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "the ServiceAccount mount is unreadable, so the pipelines' Kubernetes accounts are not made")
+                }
             }
         }
         // Each App's job ServiceAccount (AP-159, T-3539), by the same in-cluster identity,
         // which the deployment lets write the identities namespace.
         match self.config.app_identity_namespace.clone() {
-            Some(namespace) => match crate::apps::kube::KubeClient::in_cluster() {
+            Some(namespace) => match self.in_cluster() {
                 Ok(Some(kube)) => {
                     syncer = syncer.with_app_job_service_accounts(Arc::new(kube), namespace)
                 }
                 Ok(None) => {
                     tracing::warn!("no ServiceAccount mount: the Apps' job accounts are not made")
                 }
-                Err(err) => tracing::warn!(
-                    error = %err,
-                    "the ServiceAccount mount is unreadable, so the Apps' job accounts are not made"
-                ),
+                Err(err) => {
+                    tracing::warn!(error = %err, "the ServiceAccount mount is unreadable, so the Apps' job accounts are not made")
+                }
             },
             None => {
                 tracing::info!("no JC_PORTAL_APP_IDENTITY_NAMESPACE: no App job gets a principal")
@@ -1212,10 +1203,7 @@ impl AppState {
                     ),
                 ));
             }
-            _ => tracing::info!(
-                "no gateway address, realm client or organization domain: Subscription \
-                 manifests are read, no broker is written"
-            ),
+            _ => tracing::info!("no gateway address, realm client or organization domain: Subscription manifests are read, no broker is written"),
         }
         // An Endpoint that declares `spec.publish.ckan` becomes a dataset in its catalogue on
         // every run, and one that stopped declaring it loses the dataset (EP-62, T-2405). The
@@ -1267,10 +1255,7 @@ impl AppState {
                         .with_admin_token(self.config.broker_admin_token_file.clone()),
                 ));
             }
-            None => tracing::info!(
-                "no broker address: ContextSourceRegistration manifests are read, no hub is \
-                 federated"
-            ),
+            None => tracing::info!("no broker address: ContextSourceRegistration manifests are read, no hub is federated"),
         }
         // Every Endpoint's and Context Space's view and every space's rule document, written
         // into the broker with its admin token (T-3640). Without both the Endpoints stay on
@@ -1328,10 +1313,7 @@ impl AppState {
                     )));
                 syncer = syncer.with_drift(watch, Arc::clone(&self.drift));
             }
-            _ => tracing::info!(
-                "no gateway address or realm client: seed entities are never compared, so \
-                 the drift surface answers that no scan has run"
-            ),
+            _ => tracing::info!("no gateway address or realm client: seed entities are never compared, so the drift surface answers that no scan has run"),
         }
         syncer
     }
@@ -1421,32 +1403,32 @@ impl AppState {
             .as_ref()
             .is_some_and(|settings| settings.namespace.is_some())
         {
-            match crate::apps::kube::KubeClient::in_cluster() {
+            match self.in_cluster() {
                 Ok(Some(kube)) => self.kube = Some(Arc::new(kube)),
-                Ok(None) => tracing::info!(
-                    "no ServiceAccount mount: a builder run is driven by its caller, not scheduled"
-                ),
-                Err(err) => tracing::warn!(
-                    error = %err,
-                    "the ServiceAccount mount is unreadable, so no builder workspace is scheduled"
-                ),
+                Ok(None) => {
+                    tracing::info!("no ServiceAccount mount: a builder run is driven by its caller, not scheduled");
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "the ServiceAccount mount is unreadable, so no builder workspace is scheduled")
+                }
             }
         }
         // The run's test sandbox (SDK-38): its own client, in the namespace that fences it.
         if let Some(settings) = self.config.app_tests.clone() {
-            match crate::apps::kube::KubeClient::in_cluster() {
+            match self.in_cluster() {
                 Ok(Some(kube)) => {
                     self.app_tests = Some(Arc::new(crate::agents::sandbox::Sandbox::new(
                         kube, settings,
                     )))
                 }
-                Ok(None) => tracing::info!(
-                    "no ServiceAccount mount: a run's tests are left to the build lane"
-                ),
-                Err(err) => tracing::warn!(
-                    error = %err,
-                    "the ServiceAccount mount is unreadable, so a run's tests are left to the build lane"
-                ),
+                Ok(None) => {
+                    tracing::info!(
+                        "no ServiceAccount mount: a run's tests are left to the build lane"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "the ServiceAccount mount is unreadable, so a run's tests are left to the build lane")
+                }
             }
         }
     }
@@ -1561,11 +1543,9 @@ impl AppState {
                     tracing::info!(marks = marks.len(), "logout marks read back");
                 }
             }
-            Err(error) => tracing::error!(
-                %error,
-                "logout marks could not be read: a session logged out before this start is \
-                 accepted again until its cookie expires"
-            ),
+            Err(error) => {
+                tracing::error!(%error, "logout marks could not be read: a session logged out before this start is accepted again until its cookie expires")
+            }
         }
     }
 
@@ -1800,9 +1780,11 @@ impl AppState {
         };
         match serde_json::from_value::<jc_core::kinds::OrganizationAppearance>(look) {
             Ok(look) if look.validate().is_ok() => self.set_installation_look(look),
-            _ => tracing::error!(
-                "the installation's approved look fails its check; the branding file shows"
-            ),
+            _ => {
+                tracing::error!(
+                    "the installation's approved look fails its check; the branding file shows"
+                );
+            }
         }
     }
 
@@ -1936,6 +1918,189 @@ mod tests {
             state.take_id_token(&session(now - 10, now + 3600, "")),
             None
         );
+    }
+
+    fn session_of(subject: &str, issued_at: i64) -> Session {
+        let now = now_unix();
+        Session {
+            identity: Identity {
+                client: None,
+                subject: subject.into(),
+                username: "demo.editor".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                second_factor: false,
+            },
+            expires_at: now + 3600,
+            issued_at,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: now + 300,
+            refresh_token: None,
+        }
+    }
+
+    /// Leaves `lock` poisoned, as a thread that panicked while writing would.
+    fn poison<T: Send + Sync + 'static>(lock: Arc<RwLock<T>>) {
+        let _ = std::thread::spawn(move || {
+            let _held = lock.write();
+            panic!("poisoned on purpose");
+        })
+        .join();
+    }
+
+    /// T-7816: a session keeps at most MAX_EXCHANGED_PER_SESSION exchanged tokens; at the cap
+    /// the expired ones go first, and a set still full of live ones starts over.
+    #[test]
+    fn the_exchanged_tokens_of_a_session_are_capped() {
+        let state = AppState::new(Config::for_tests(), None);
+        let now = now_unix();
+        let session = session_of("f:1:demo.editor", now - 60);
+        // No claims kept yet: nothing is kept for a session this process does not hold.
+        state.keep_access_token(&session, "access".into());
+        state.keep_exchanged(&session, "s", "t".into(), now + 60);
+        assert_eq!(state.session_access_token(&session, now), None);
+        assert_eq!(state.session_exchanged(&session, "s", now), None);
+        state.keep_session_claims(&session);
+        for i in 0..MAX_EXCHANGED_PER_SESSION {
+            state.keep_exchanged(&session, &format!("old-{i}"), "t".into(), now - 1);
+        }
+        state.keep_exchanged(&session, "live-0", "t0".into(), now + 600);
+        assert_eq!(
+            state.session_exchanged(&session, "old-0", now - 2),
+            None,
+            "the expired went"
+        );
+        for i in 1..MAX_EXCHANGED_PER_SESSION {
+            state.keep_exchanged(&session, &format!("live-{i}"), "t".into(), now + 600);
+        }
+        state.keep_exchanged(&session, "newest", "tn".into(), now + 600);
+        assert_eq!(
+            state.session_exchanged(&session, "live-0", now),
+            None,
+            "a full set restarts"
+        );
+        assert_eq!(
+            state.session_exchanged(&session, "newest", now).as_deref(),
+            Some("tn")
+        );
+    }
+
+    /// T-7816: a lock a panicking thread left poisoned refuses the call or keeps nothing; it
+    /// never panics the request that meets it.
+    #[test]
+    fn a_poisoned_lock_refuses_or_keeps_nothing() {
+        let state = AppState::new(Config::for_tests(), None);
+        let session = session_of("f:1:demo.editor", now_unix() - 60);
+        state.keep_session_claims(&session);
+        let held = state.mcp_enter(&[("tool", 2)]).expect("a free slot");
+        let mutex = Arc::clone(&state.mcp_in_flight);
+        let _ = std::thread::spawn(move || {
+            let _held = mutex.lock();
+            panic!("poisoned on purpose");
+        })
+        .join();
+        assert_eq!(state.mcp_enter(&[("tool", 2)]).err(), Some(0));
+        drop(held);
+        poison(Arc::clone(&state.session_claims));
+        state.keep_session_claims(&session);
+        state.keep_access_token(&session, "access".into());
+        state.keep_exchanged(&session, "s", "t".into(), now_unix() + 60);
+        assert_eq!(state.session_groups(&session), None);
+        assert_eq!(state.session_access_token(&session, now_unix()), None);
+        assert_eq!(state.session_exchanged(&session, "s", now_unix()), None);
+        assert_eq!(state.session_id_token(&session), None);
+        assert_eq!(state.take_id_token(&session), None);
+        poison(Arc::clone(&state.installation_look));
+        state.set_installation_look(jc_core::kinds::OrganizationAppearance::default());
+        assert!(state.installation_look().is_none());
+    }
+
+    /// T-7816: a database that does not answer costs a logout mark its persistence and a start
+    /// its read-back, each with a log line, never the process.
+    #[tokio::test]
+    async fn a_database_that_does_not_answer_keeps_the_marks_in_memory() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("a port")
+            .local_addr()
+            .expect("an address")
+            .port();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(300))
+            .connect_lazy(&format!("postgres://portal@127.0.0.1:{port}/portal"))
+            .expect("a lazy pool");
+        let mut state = AppState::new(Config::for_tests(), None);
+        state.db = Some(pool);
+        let now = now_unix();
+        state.revoke_subject("f:1:gone", now).await;
+        assert!(state.is_revoked(&session_of("f:1:gone", now - 10)));
+        // A mark past the calendar's end still holds in this process; its expiry falls back.
+        let far = 300_000_000_000;
+        state.revoke_subject("f:1:far", far).await;
+        assert!(state.is_revoked(&session_of("f:1:far", far - 10)));
+        state.load_revocations().await;
+        state.load_installation_look().await;
+        assert!(state.installation_look().is_none());
+    }
+
+    /// T-7816: an approved look that no longer reads as an appearance leaves the branding file
+    /// in place. The session's own temporary `operator_changes` holds the row, so no shared table
+    /// changes.
+    #[tokio::test]
+    async fn an_approved_look_that_fails_its_check_shows_the_file() {
+        // The database part runs where JC_PORTAL_TEST_DATABASE_URL names a PostgreSQL.
+        if let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .after_connect(|conn, _| {
+                    Box::pin(async move {
+                        sqlx::raw_sql(
+                            "CREATE TEMP TABLE operator_changes \
+                               (kind text, state text, decided_at timestamptz, payload jsonb); \
+                             INSERT INTO operator_changes VALUES \
+                               ('BrandingSet', 'applied', now(), '{\"branding\": 42}')",
+                        )
+                        .execute(conn)
+                        .await
+                        .map(|_| ())
+                    })
+                })
+                .connect(&url)
+                .await
+                .expect("a pool");
+            let mut state = AppState::new(Config::for_tests(), None);
+            state.db = Some(pool);
+            state.load_installation_look().await;
+            assert!(state.installation_look().is_none());
+            assert_eq!(state.installation_branding(), Branding::load(None));
+        }
+    }
+
+    /// T-7816: an SDM mirror directory that does not read leaves the Portal without one, and a
+    /// mirror handed in later learns the installation's Organization.
+    #[test]
+    fn an_unreadable_sdm_mirror_and_a_later_mirror_are_taken_as_they_come() {
+        let config = Config {
+            sdm_mirror_dir: Some("/nonexistent/t7816/sdm".into()),
+            installation_organization: Some(crate::host_registry::SeedOrganization {
+                name: "smartcity".into(),
+                organization_id: None,
+                host: "portal.smartcity.example".into(),
+                catalogue_id: None,
+            }),
+            ..Config::for_tests()
+        };
+        let mirror = Arc::new(Mirror::new());
+        let state = AppState::new(config, None).with_mirror(Arc::clone(&mirror));
+        assert_eq!(mirror.configured_installation(), Some("smartcity"));
+        assert!(Arc::ptr_eq(&state.mirror, &mirror));
+        assert!(state.sdm_mirror.is_none());
     }
 
     /// F-R2POR1-011 (T-6225): a replica that does not hold the reconciler lock leads no

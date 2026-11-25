@@ -46,12 +46,12 @@ impl DatabaseSection {
     pub fn validate(&self) -> Result<(), String> {
         check_url("url", &self.url)?;
         match (&self.migrate_url, &self.migrate_password_file) {
-            (Some(url), Some(_)) => check_url("migrate_url", url),
+            (Some(url), Some(_)) => check_url("migrate_url", url).map(drop),
             (None, None) => Ok(()),
             _ => Err("migrate_url and migrate_password_file go together".into()),
         }?;
         match (&self.maintenance_url, &self.maintenance_password_file) {
-            (Some(url), Some(_)) => check_url("maintenance_url", url),
+            (Some(url), Some(_)) => check_url("maintenance_url", url).map(drop),
             (None, None) => Ok(()),
             _ => Err("maintenance_url and maintenance_password_file go together".into()),
         }?;
@@ -206,15 +206,14 @@ pub async fn refuse_unsafe_request_role(
 
 /// `raw` with the password of `file` in it. Hold it as a secret: never log or print it.
 fn url_with_password(key: &str, raw: &str, file: &Path) -> Result<jc_secret::Secret, String> {
-    check_url(key, raw)?;
+    let mut url = check_url(key, raw)?;
     let password = read_password(file)?;
-    let mut url = url::Url::parse(raw).map_err(|_| format!("{key} does not parse"))?;
     url.set_password(Some(password.expose()))
         .map_err(|()| format!("{key} takes no password"))?;
     Ok(jc_secret::Secret::new(url.into()))
 }
 
-fn check_url(key: &str, raw: &str) -> Result<(), String> {
+fn check_url(key: &str, raw: &str) -> Result<url::Url, String> {
     let url = url::Url::parse(raw).map_err(|_| format!("{key} is not a URL"))?;
     if !matches!(url.scheme(), "postgres" | "postgresql") {
         return Err(format!("{key} must use the postgres:// scheme"));
@@ -239,7 +238,7 @@ fn check_url(key: &str, raw: &str) -> Result<(), String> {
         ));
     }
     PgConnectOptions::from_str(raw).map_err(|_| format!("{key} is not a Postgres URL"))?;
-    Ok(())
+    Ok(url)
 }
 
 /// The password in `path`, through `jc`'s one secret reader: trimmed, an empty file refused, the
@@ -540,6 +539,17 @@ mod tests {
         assert!(e.starts_with("cannot connect to Postgres"), "{e}");
         assert!(!e.contains("pw"), "{e}");
         drop(closed);
+    }
+
+    /// A URL whose role names no host has nowhere to put the password: refused, naming the key.
+    #[test]
+    fn a_url_without_a_host_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("pw");
+        std::fs::write(&file, "pw-no-host").unwrap();
+        let e = url_with_password("url", "postgres://jc@/jc", &file).unwrap_err();
+        assert!(e.starts_with("url "), "{e}");
+        assert!(!e.contains("pw-no-host"), "{e}");
     }
 
     #[test]

@@ -1,0 +1,83 @@
+{
+  "@context": [
+    "http://www.w3.org/ns/odrl.jsonld",
+    "https://joinedcontext.com/odrl/ngsi-ld/v1/context.jsonld"
+  ],
+  "@type": "Set",
+  "assigner": "did:web:banskabystrica.sk",
+  "conflict": "prohibit",
+  "permission": [
+    {
+      "action": [
+        "ngsi-ld:queryEntity",
+        "ngsi-ld:retrieveEntity",
+        "ngsi-ld:queryTemporal"
+      ],
+      "assignee": {
+        "@type": "ngsi-ld:Role",
+        "uid": "public"
+      },
+      "constraint": [
+        {
+          "leftOperand": "ngsi-ld:q",
+          "operator": "eq",
+          "rightOperand": "pm10>=0"
+        },
+        {
+          "leftOperand": "ngsi-ld:scopeQ",
+          "operator": "isPartOf",
+          "rightOperand": "/geo/SK/BB"
+        },
+        {
+          "leftOperand": "ngsi-ld:geoQ",
+          "operator": "eq",
+          "rightOperand": "georel=within;geometry=Polygon;coordinates=[[[19.10,48.70],[19.20,48.70],[19.20,48.76],[19.10,48.76],[19.10,48.70]]]"
+        },
+        {
+          "leftOperand": "ngsi-ld:temporalQ",
+          "operator": "eq",
+          "rightOperand": "timerel=after;timeAt=P-1D"
+        },
+        {
+          "leftOperand": "ngsi-ld:validity",
+          "operator": "gteq",
+          "rightOperand": "2026-09-01T00:00:00Z"
+        },
+        {
+          "leftOperand": "ngsi-ld:validity",
+          "operator": "lt",
+          "rightOperand": "2027-09-01T00:00:00Z"
+        }
+      ],
+      "target": {
+        "@type": "ngsi-ld:EntityType",
+        "refinement": [
+          {
+            "leftOperand": "ngsi-ld:idPattern",
+            "operator": "eq",
+            "rightOperand": "^urn:ngsi-ld:AirQualityObserved:banskabystrica\\.sk:ovzdusie:.*$"
+          },
+          {
+            "leftOperand": "ngsi-ld:propertyNames",
+            "operator": "isAnyOf",
+            "rightOperand": [
+              "pm10",
+              "pm25",
+              "dateObserved",
+              "location"
+            ]
+          },
+          {
+            "leftOperand": "ngsi-ld:relationshipNames",
+            "operator": "isAnyOf",
+            "rightOperand": [
+              "refDistrict"
+            ]
+          }
+        ],
+        "uid": "AirQualityObserved"
+      }
+    }
+  ],
+  "uid": "urn:joinedcontext:policy:ovzdusie:ovzdusie:public-air-quality"
+}

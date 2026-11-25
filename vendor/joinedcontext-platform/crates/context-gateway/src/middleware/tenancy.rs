@@ -514,6 +514,17 @@ mod tests {
         Tenant::segment("air").expect("a space name")
     }
 
+    /// An unpinned hop says what is missing in a log line and what to do in its `503`.
+    #[test]
+    fn an_unpinned_hop_names_the_missing_organization() {
+        assert!(Unpinned.to_string().contains("resolves to no Organization"));
+        let problem = Unpinned.problem();
+        assert_eq!(problem.status, 503);
+        assert!(problem
+            .detail
+            .is_some_and(|d| d.contains("spec.organizationRef")));
+    }
+
     /// ADR-N-066 2.3 (DM-149): every attribute is `true`, a list is its names encoded, and an empty
     /// list sends nothing, which the broker reads as no grant.
     #[test]
@@ -979,7 +990,13 @@ mod tests {
         assert_eq!(pin_caller(&mut request, None, &member), Err(Unpinned));
         assert!(pinned_tenant(request.headers()).is_none());
         assert_eq!(Unpinned.problem().status, 503);
-        for bad in ["", "Air", "air\r\nx-userinfo: root", "sk_bbsk__air"] {
+        for bad in [
+            "",
+            "Air",
+            "Air Quality\n",
+            "air\r\nx-userinfo: root",
+            "sk_bbsk__air",
+        ] {
             assert!(Tenant::segment(bad).is_err(), "{bad}");
         }
     }

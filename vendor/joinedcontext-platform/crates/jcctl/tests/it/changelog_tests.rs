@@ -155,6 +155,72 @@ fn every_merged_public_change_in_the_window_is_listed_newest_first() {
     assert_eq!(first.day, jc_time::Date(TimestampTz::now().utc().date()));
 }
 
+/// Each kind of public change gets its own words: a rate limit set, a surface removed, an
+/// attribute served again, a new data model, a deprecation of attributes without a link and
+/// its withdrawal, and an Endpoint deleted; a plain-string title is the title.
+#[test]
+fn every_kind_of_public_change_is_said_in_its_own_words() {
+    let dir = temp_dir("changelog-kinds");
+    git(&dir, None, &["init", "-q", "-b", "main"]);
+    write(&dir, "spaces/ovzdusie/space.yaml", SPACE);
+    let plain = |extra: &str| {
+        endpoint("air", "public", extra).replace(
+            "title: { en: \"Air <b>quality</b>\", sk: \"Ovzdušie\" }",
+            "title: Air",
+        )
+    };
+    let steps = [
+        "  enabledRepresentations: [ngsi-ld, csv]\n  projection:\n    hiddenAttributes: [pm25]\n",
+        "  enabledRepresentations: [ngsi-ld, csv]\n  projection:\n    hiddenAttributes: [pm25]\n  rateLimits: { requestsPerMinute: 600 }\n",
+        "  enabledRepresentations: [ngsi-ld]\n  projection:\n    hiddenAttributes: [pm25]\n  rateLimits: { requestsPerMinute: 600 }\n",
+        "  enabledRepresentations: [ngsi-ld]\n  rateLimits: { requestsPerMinute: 600 }\n",
+        "  enabledRepresentations: [ngsi-ld]\n  rateLimits: { requestsPerMinute: 600 }\n  projectionRef: { kind: ModelProjection, name: air-v2 }\n",
+        "  enabledRepresentations: [ngsi-ld]\n  rateLimits: { requestsPerMinute: 600 }\n  projectionRef: { kind: ModelProjection, name: air-v2 }\n  deprecation:\n    since: 2026-11-02\n    sunset: 2027-02-01\n    attributes: [pm10]\n",
+        "  enabledRepresentations: [ngsi-ld]\n  rateLimits: { requestsPerMinute: 600 }\n  projectionRef: { kind: ModelProjection, name: air-v2 }\n",
+    ];
+    for (n, extra) in steps.iter().enumerate() {
+        write(&dir, ENDPOINT_PATH, &plain(extra));
+        commit(&dir, None, &format!("step {n}"));
+    }
+    std::fs::remove_file(dir.join(ENDPOINT_PATH)).expect("delete");
+    commit(&dir, None, "the endpoint goes");
+
+    let list = entries(&dir, TimestampTz::now() - SignedDuration::from_hours(24))
+        .expect("the history reads");
+    let said: Vec<String> = list.iter().flat_map(|e| e.changes.clone()).collect();
+    for words in [
+        "withdrawn",
+        "deprecation withdrawn",
+        "deprecated, sunset 2027-02-01 (attributes pm10)",
+        "data model changed",
+        "attributes served again: pm25",
+        "surface removed: csv",
+        "rate limit the default to 600/min",
+        "published",
+    ] {
+        assert!(said.iter().any(|s| s == words), "{words}: {said:#?}");
+    }
+    assert!(
+        list.iter().all(|e| e.title.as_deref() == Some("Air")),
+        "{list:#?}"
+    );
+
+    let out = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["changelog", "--repo-dir"])
+        .arg(&dir)
+        .args(["--format", "md", "--days", "2"])
+        .output()
+        .expect("jcctl runs");
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("# Public API changelog"));
+    let refused = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["changelog", "--repo-dir"])
+        .arg(dir.join("absent"))
+        .output()
+        .expect("jcctl runs");
+    assert_eq!(refused.status.code(), Some(1));
+}
+
 #[test]
 fn the_page_groups_per_surface_and_carries_nothing_internal() {
     let dir = repository();

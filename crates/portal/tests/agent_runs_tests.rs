@@ -1386,6 +1386,111 @@ async fn a_message_scoped_to_a_pointed_element_carries_it_and_a_bad_scope_is_ref
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
 
+/// A function call whose body is not JSON is the caller's 400, and a Portal that knows the
+/// runtime but has no Keycloak client to call it with says so with a 503 before anything is sent
+/// (T-7813).
+#[tokio::test]
+async fn a_function_call_needs_a_json_body_and_a_portal_token() {
+    let mut config = config();
+    config.functions_url = Some("http://127.0.0.1:9".into());
+    let state =
+        AppState::new(config.clone(), None).with_mirror(mirror(Some(builder_profile_spec())));
+    let app = server::app(state.clone());
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let id = create_run(&app, &cookie).await["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let mut files = preview::template_files();
+    files.retain(|path, _| path.starts_with("functions/") || path.starts_with("src/"));
+    state
+        .agents
+        .set_files(&id, json!(files))
+        .await
+        .expect("files kept");
+    let uri = format!("/api/v1/projects/{PROJECT}/agent-runs/{id}/functions/summary");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(&uri)
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .echo_csrf()
+                .body(Body::from("{not json"))
+                .expect("a request"),
+        )
+        .await
+        .expect("a response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let (status, answer) = call(&app, &cookie, Method::POST, &uri, Some(json!({}))).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+    if joinedcontext_portal::agents::kit::functions_server().is_some() {
+        assert!(answer.to_string().contains("Keycloak client"), "{answer}");
+    }
+}
+
+/// The members of a message that belong to a conversation are refused on an application run,
+/// each naming what it is for; a conversation takes a new endpoint list and an empty one
+/// (T-7813).
+#[tokio::test]
+async fn conversation_members_are_refused_on_an_application_run() {
+    let config = config();
+    let (app, _) = both(mirror(Some(builder_profile_spec())), &config);
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let id = create_run(&app, &cookie).await["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let messages = format!("/api/v1/projects/{PROJECT}/agent-runs/{id}/messages");
+    for (body, named) in [
+        (
+            json!({ "text": "x", "pageContext": { "route": "/projects/helsinki" } }),
+            "pageContext",
+        ),
+        (
+            json!({ "text": "x", "access": { "preset": "read" } }),
+            "access",
+        ),
+        (json!({ "text": "x", "endpointNames": [] }), "endpointNames"),
+        (json!({ "text": "x", "scope": "pages/Card.tsx" }), "scope"),
+    ] {
+        let (status, answer) = call(&app, &cookie, Method::POST, &messages, Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{named}: {answer}");
+        assert!(answer.to_string().contains(named), "{named}: {answer}");
+    }
+
+    let (_, created) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{PROJECT}/assistant/conversations"),
+        Some(json!({ "message": "Find datasets about bikes" })),
+    )
+    .await;
+    let conversation = created["id"].as_str().expect("id");
+    let messages = format!("/api/v1/projects/{PROJECT}/agent-runs/{conversation}/messages");
+    let (status, answer) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &messages,
+        Some(json!({ "text": "only bikes", "endpointNames": ["helsinki-bikes"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+    let (status, answer) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &messages,
+        Some(json!({ "text": "no data now", "endpointNames": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+}
+
 #[tokio::test]
 async fn a_person_steers_a_live_run_and_the_workspace_reads_it() {
     let config = config();
@@ -1608,6 +1713,7 @@ async fn a_preview_observation_lands_once_per_version_within_its_bounds() {
         json!({ "version": 1, "pages": [{ "label": "Stations", "text": "ok", "h1": 51 }] }),
         json!({ "version": 1, "pages": [page("ok".into())], "failedRequests": [{ "path": "/functions/summary", "status": 200 }] }),
         json!({ "version": 1, "pages": [page("ok".into())], "failedRequests": [{ "path": "p".repeat(257), "status": 500 }] }),
+        json!({ "version": 1, "pages": [page("ok".into())], "failedRequests": vec![json!({ "path": "/f", "status": 500 }); 51] }),
     ] {
         let (status, problem) = call(&app, &cookie, Method::POST, &uri, Some(refused)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
@@ -1753,7 +1859,10 @@ async fn a_code_run_previews_its_files_as_one_document() {
             assert!(body.contains("\"transport\":\"bridge\""));
         }
         // A Portal built without sdk/dist/runtime says so rather than serving half a document.
-        StatusCode::SERVICE_UNAVAILABLE => assert!(body.contains("SDK runtime"), "{body}"),
+        StatusCode::SERVICE_UNAVAILABLE => {
+            assert!(body.contains("SDK runtime"), "{body}");
+            joinedcontext_portal::agents::kit::sdk_built_or_skip(false, "runtime/runtime.json");
+        }
         other => panic!("{other}: {body}"),
     }
 
@@ -1913,7 +2022,7 @@ async fn a_function_of_the_run_answers_through_jc_functions() {
 
     let summary = format!("{}?types=Station", uri("summary"));
     let (status, answer) = call(&app, &cookie, Method::POST, &summary, body.clone()).await;
-    if kit::functions_server().is_none() {
+    if !kit::sdk_built_or_skip(kit::functions_server().is_some(), "functions-server.js") {
         // A Portal built without sdk/dist says so rather than invoking without the SDK.
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
         return;

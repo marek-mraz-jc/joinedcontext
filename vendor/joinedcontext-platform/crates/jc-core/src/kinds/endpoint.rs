@@ -271,10 +271,9 @@ impl Representation {
     /// What a space without a usable data model lacks for this representation's fixed
     /// requirement, `None` for the others (EP-125).
     pub fn missing_model_gap(&self) -> Option<String> {
-        self.requirement().map(|need| match need.entity_type {
-            ANY_TYPE => "a type with a numeric attribute that declares its unit".to_owned(),
-            named => format!("the type {named}"),
-        })
+        // STA, the one representation with a requirement, serves any type (ANY_TYPE).
+        self.requirement()
+            .map(|_| "a type with a numeric attribute that declares its unit".to_owned())
     }
 
     /// Every representation, in the order a record lists them.
@@ -863,13 +862,12 @@ impl EndpointSpec {
                     got: view.kind.clone(),
                 });
             }
-            names::validate_dns1123_label(&view.name).map_err(|e| match e {
-                Error::Name { reason, .. } => Error::Name {
+            names::validate_dns1123_label(&view.name).map_err(|e| {
+                names::map_reason(e, |reason| Error::Name {
                     field: "spec.viewMappingRef.name",
                     value: view.name.clone(),
                     reason,
-                },
-                other => other,
+                })
             })?;
         }
 
@@ -906,8 +904,7 @@ impl EndpointSpec {
             });
         }
 
-        let feed_gaps = super::feed_output::feed_gaps(self.feed_outputs(), None)
-            .unwrap_or_else(|never| vec![never]);
+        let feed_gaps = super::feed_output::feed_shape_gaps(self.feed_outputs());
         if !feed_gaps.is_empty() {
             return Err(Error::Invalid {
                 field: "spec.representations.feed".to_owned(),
@@ -915,8 +912,7 @@ impl EndpointSpec {
             });
         }
 
-        let widget_gaps = super::widget_output::widget_gaps(self.widget_outputs(), None)
-            .unwrap_or_else(|never| vec![never]);
+        let widget_gaps = super::widget_output::widget_shape_gaps(self.widget_outputs());
         if !widget_gaps.is_empty() {
             return Err(Error::Invalid {
                 field: "spec.representations.widget".to_owned(),
@@ -931,13 +927,12 @@ impl EndpointSpec {
                     got: projection.kind.clone(),
                 });
             }
-            names::validate_dns1123_label(&projection.name).map_err(|e| match e {
-                Error::Name { reason, .. } => Error::Name {
+            names::validate_dns1123_label(&projection.name).map_err(|e| {
+                names::map_reason(e, |reason| Error::Name {
                     field: "spec.projectionRef.name",
                     value: projection.name.clone(),
                     reason,
-                },
-                other => other,
+                })
             })?;
         }
 
@@ -1293,13 +1288,12 @@ impl SharedSpaceReferenceSpec {
                 })
             }
         }
-        names::validate_dns1123_label(&self.alias).map_err(|e| match e {
-            Error::Name { reason, .. } => Error::Name {
+        names::validate_dns1123_label(&self.alias).map_err(|e| {
+            names::map_reason(e, |reason| Error::Name {
                 field: "spec.alias",
                 value: self.alias.clone(),
                 reason,
-            },
-            other => other,
+            })
         })?;
         crate::kinds::validate_mirror_schedule(self.schedule.as_ref())
     }

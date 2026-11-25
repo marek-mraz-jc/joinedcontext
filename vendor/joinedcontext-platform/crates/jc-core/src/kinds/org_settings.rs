@@ -697,15 +697,10 @@ impl OrganizationBounds {
             else {
                 continue;
             };
-            let (min, max) = self.range(entry);
-            if value < min || max.is_some_and(|max| value > max) {
-                let bound = match max {
-                    Some(max) => format!("{min} … {max}"),
-                    None => format!("at least {min}"),
-                };
+            if let Some(reason) = self.outside(entry, value) {
                 return Err(Error::Invalid {
                     field: format!("{field}.{name}"),
-                    reason: format!("{value} is outside the bound, {bound} (PF-97)"),
+                    reason,
                 });
             }
         }
@@ -755,6 +750,20 @@ impl OrganizationBounds {
     pub fn range(&self, entry: &Entry) -> (u32, Option<u32>) {
         let bound = self.0.get(entry.path).copied().unwrap_or_default();
         (bound.min.unwrap_or(entry.min), bound.max.or(entry.max))
+    }
+
+    /// The refusal of `value` at `entry` when it falls outside [`Self::range`], naming the
+    /// value and the bound; `None` when it is inside.
+    fn outside(&self, entry: &Entry, value: u32) -> Option<String> {
+        let (min, max) = self.range(entry);
+        if value >= min && max.is_none_or(|max| value <= max) {
+            return None;
+        }
+        let bound = match max {
+            Some(max) => format!("{min} … {max}"),
+            None => format!("at least {min}"),
+        };
+        Some(format!("{value} is outside the bound, {bound} (PF-97)"))
     }
 }
 
@@ -827,45 +836,35 @@ impl OrganizationSpec {
             let Some(value) = self.setting(entry.path) else {
                 continue;
             };
-            let (min, max) = bounds.range(entry);
-            if value < min || max.is_some_and(|max| value > max) {
-                let bound = match max {
-                    Some(max) => format!("{min} … {max}"),
-                    None => format!("at least {min}"),
-                };
-                return Err(invalid(
-                    entry.path,
-                    format!("{value} is outside the bound, {bound} (PF-97)"),
-                ));
+            if let Some(reason) = bounds.outside(entry, value) {
+                return Err(invalid(entry.path, reason));
             }
         }
         let value_at = |path: &str| entry_at(path).and_then(|entry| self.effective(entry).0);
-        if let Some(edge_body) = value_at(EDGE_BODY) {
-            for path in UNDER_EDGE_BODY {
-                if let Some(value) = value_at(path).filter(|value| *value > edge_body) {
-                    return Err(invalid(
-                        path,
-                        format!(
-                            "{value} MiB is more than the edge's {edge_body} MiB ({EDGE_BODY}), \
-                             which refuses a larger body first (ADR-N-035)"
-                        ),
-                    ));
-                }
-            }
-        }
-        if let (Some(idle), Some(hours)) = (
-            value_at("spec.limits.signIn.sessionIdleMinutes"),
-            value_at("spec.limits.signIn.sessionMaxHours"),
-        ) {
-            if u64::from(idle) > u64::from(hours) * 60 {
+        // The three entries carry a default, so each has a value in force; the fallbacks are
+        // no limit.
+        let edge_body = value_at(EDGE_BODY).unwrap_or(u32::MAX);
+        for path in UNDER_EDGE_BODY {
+            if let Some(value) = value_at(path).filter(|value| *value > edge_body) {
                 return Err(invalid(
-                    "spec.limits.signIn.sessionIdleMinutes",
+                    path,
                     format!(
-                        "{idle} minutes is longer than the session lives, {hours} h \
-                         (spec.limits.signIn.sessionMaxHours)"
+                        "{value} MiB is more than the edge's {edge_body} MiB ({EDGE_BODY}), \
+                         which refuses a larger body first (ADR-N-035)"
                     ),
                 ));
             }
+        }
+        let idle = value_at("spec.limits.signIn.sessionIdleMinutes").unwrap_or(0);
+        let hours = value_at("spec.limits.signIn.sessionMaxHours").unwrap_or(u32::MAX);
+        if u64::from(idle) > u64::from(hours) * 60 {
+            return Err(invalid(
+                "spec.limits.signIn.sessionIdleMinutes",
+                format!(
+                    "{idle} minutes is longer than the session lives, {hours} h \
+                     (spec.limits.signIn.sessionMaxHours)"
+                ),
+            ));
         }
         self.limits.mqtt.validate("spec.limits.mqtt")?;
         // Every project inherits spec.limits.mqtt: a hostname or a client CA there would be held

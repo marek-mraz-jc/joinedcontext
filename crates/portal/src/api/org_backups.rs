@@ -1734,3 +1734,252 @@ mod tests {
         assert!(all_there.created.is_empty() && all_there.note.is_none());
     }
 }
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+
+    fn target(change: Value) -> TargetInput {
+        let mut input = serde_json::json!({
+            "endpoint": "https://s3.eu-central-1.amazonaws.com",
+            "region": "eu-central-1",
+            "bucket": "bb-backups",
+            "prefix": "joinedcontext/",
+            "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+            "enabled": true,
+            "everyHours": 24,
+            "keepDays": 90
+        });
+        for (key, value) in change.as_object().expect("an object") {
+            input[key] = value.clone();
+        }
+        serde_json::from_value(input).expect("a TargetInput")
+    }
+
+    fn field(err: ApiError) -> String {
+        err.first_field().to_owned()
+    }
+
+    fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer
+            .add_directory("projects/", options)
+            .expect("a folder");
+        for (path, content) in files {
+            writer.start_file(*path, options).expect("a file");
+            writer.write_all(content).expect("written");
+        }
+        writer.finish().expect("a zip").into_inner()
+    }
+
+    /// Each field of a backup target is checked and named; a good target passes.
+    #[test]
+    fn each_target_field_is_checked_and_named() {
+        assert!(well_formed(&target(serde_json::json!({}))).is_ok());
+        assert!(well_formed(&target(
+            serde_json::json!({ "prefix": "", "secretAccessKey": "s3cr3t/Key+" })
+        ))
+        .is_ok());
+        for (change, name) in [
+            (serde_json::json!({ "endpoint": "not a url" }), "endpoint"),
+            (
+                serde_json::json!({ "endpoint": "https://user:pw@s3.example.org" }),
+                "endpoint",
+            ),
+            (
+                serde_json::json!({ "endpoint": "https://s3.example.org/?x=1" }),
+                "endpoint",
+            ),
+            (serde_json::json!({ "region": "EU-Central" }), "region"),
+            (serde_json::json!({ "region": "" }), "region"),
+            (serde_json::json!({ "bucket": "bb" }), "bucket"),
+            (serde_json::json!({ "bucket": "BB_backups" }), "bucket"),
+            (serde_json::json!({ "prefix": "/root/" }), "prefix"),
+            (serde_json::json!({ "prefix": "no-slash" }), "prefix"),
+            (serde_json::json!({ "prefix": "a/../" }), "prefix"),
+            (serde_json::json!({ "accessKeyId": "" }), "accessKeyId"),
+            (
+                serde_json::json!({ "accessKeyId": "has space" }),
+                "accessKeyId",
+            ),
+            (
+                serde_json::json!({ "secretAccessKey": "" }),
+                "secretAccessKey",
+            ),
+            (
+                serde_json::json!({ "secretAccessKey": "has space" }),
+                "secretAccessKey",
+            ),
+            (
+                serde_json::json!({ "secretAccessKey": "k".repeat(257) }),
+                "secretAccessKey",
+            ),
+            (serde_json::json!({ "everyHours": 0 }), "everyHours"),
+            (serde_json::json!({ "everyHours": 673 }), "everyHours"),
+            (serde_json::json!({ "keepDays": 0 }), "keepDays"),
+            (serde_json::json!({ "keepDays": 3651 }), "keepDays"),
+        ] {
+            let err = well_formed(&target(change.clone())).expect_err("refused");
+            assert_eq!(field(err), name, "{change}");
+        }
+    }
+
+    /// A version id is letters, digits, `-`, `_` and `.`, at most 1024; any other is not found,
+    /// so a crafted id never reaches the bucket.
+    #[test]
+    fn a_version_id_outside_its_alphabet_is_not_found() {
+        assert!(valid_version("3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY_-1").is_ok());
+        for bad in ["", "../index", "a b", "x?versionId=y", &"v".repeat(1025)] {
+            assert!(
+                matches!(valid_version(bad), Err(ApiError::NotFound(_))),
+                "{bad}"
+            );
+        }
+    }
+
+    /// Two equal recipients are refused: losing the one key would lose every backup.
+    #[test]
+    fn the_recovery_recipient_differs_from_the_working_one() {
+        let missing = recipients_of(&target(serde_json::json!({}))).expect_err("refused");
+        assert!(matches!(missing, ApiError::Unprocessable { .. }));
+        let key = age::x25519::Identity::generate().to_public().to_string();
+        let same = target(serde_json::json!({ "workingRecipient": key, "recoveryRecipient": key }));
+        assert_eq!(
+            field(recipients_of(&same).expect_err("refused")),
+            "recoveryRecipient"
+        );
+        let other = age::x25519::Identity::generate().to_public().to_string();
+        let two =
+            target(serde_json::json!({ "workingRecipient": key, "recoveryRecipient": other }));
+        assert_eq!(recipients_of(&two).expect("two keys"), vec![key, other]);
+    }
+
+    /// A bundle unpacks to its files, folders left out; bytes that are no zip are refused.
+    #[test]
+    fn a_bundle_unpacks_to_its_files_and_garbage_is_refused() {
+        let files = unpack(&zip_of(&[
+            ("index.yaml", b"x"),
+            ("projects/p/a.yaml", b"a"),
+        ]))
+        .expect("files");
+        assert_eq!(
+            files.keys().collect::<Vec<_>>(),
+            ["index.yaml", "projects/p/a.yaml"]
+        );
+        assert!(matches!(
+            unpack(b"not a zip"),
+            Err(ApiError::Unprocessable { .. })
+        ));
+        assert!(matches!(unpack(b""), Err(ApiError::Unprocessable { .. })));
+    }
+
+    /// A version uploaded as a plain zip is refused with the date it was taken, or an unknown
+    /// date when its index cannot be read.
+    #[test]
+    fn a_plain_zip_version_is_refused_with_its_date() {
+        let index = serde_norway::to_string(&org_backup::Index {
+            format_version: 1,
+            organization: "bbsk".into(),
+            taken_at: "2026-01-02T03:04:05Z".into(),
+            taken_by: "ops".into(),
+            items: Vec::new(),
+        })
+        .expect("yaml");
+        for (bundle, date) in [
+            (
+                zip_of(&[("index.yaml", index.as_bytes())]),
+                "2026-01-02T03:04:05Z",
+            ),
+            (
+                zip_of(&[("index.yaml", b": not yaml [")]),
+                "an unknown date",
+            ),
+            (zip_of(&[]), "an unknown date"),
+        ] {
+            let err = decrypt_bundle(&bundle, "AGE-SECRET-KEY-unused").expect_err("refused");
+            assert!(
+                matches!(&err, ApiError::Unprocessable { detail, .. } if detail.contains(date)),
+                "{err:?}"
+            );
+        }
+    }
+
+    /// A project's files come back at the paths of its configuration export; another project's
+    /// files stay out.
+    #[test]
+    fn a_project_archive_keeps_the_export_paths() {
+        let files: BTreeMap<String, Vec<u8>> = [
+            ("projects/p/bundle.yaml", "b"),
+            (
+                &*format!("projects/p/{}", crate::api::export::README_PATH),
+                "r",
+            ),
+            ("projects/p/endpoints/e.yaml", "e"),
+            ("projects/q/bundle.yaml", "q"),
+        ]
+        .into_iter()
+        .map(|(path, content)| (path.to_owned(), content.as_bytes().to_vec()))
+        .collect();
+        let archive = unpack(&project_archive(&files, "p").expect("an archive")).expect("files");
+        let paths: Vec<&str> = archive.keys().map(String::as_str).collect();
+        assert_eq!(
+            paths,
+            [
+                crate::api::export::README_PATH,
+                "bundle.yaml",
+                "projects/p/endpoints/e.yaml"
+            ]
+        );
+        assert!(unpack(&project_archive(&files, "none").expect("empty"))
+            .expect("files")
+            .is_empty());
+    }
+
+    /// The bundle's people missing today are listed to invite by hand, with their e-mail when
+    /// the bundle has one; a bundle without people, or a Portal that cannot read today's, plans
+    /// none; an unreadable list is refused.
+    #[tokio::test]
+    async fn the_people_plan_lists_who_to_invite() {
+        let person = |id: &str, email: Option<&str>| org_backup::Person {
+            id: id.into(),
+            username: format!("user-{id}"),
+            email: email.map(str::to_owned),
+        };
+        let group = missing_people(
+            &[
+                person("a", Some("a@example.org")),
+                person("b", None),
+                person("c", None),
+            ],
+            &[person("c", None)],
+        );
+        assert_eq!(group.created, ["user-a <a@example.org>", "user-b"]);
+        assert_eq!(group.unchanged, 1);
+        assert!(group.note.is_some());
+        assert!(missing_people(&[person("c", None)], &[person("c", None)])
+            .note
+            .is_none());
+
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut files = BTreeMap::new();
+        assert!(people_plan(&state, "bbsk", &files)
+            .await
+            .expect("no people")
+            .is_none());
+        files.insert(
+            org_backup::PEOPLE_PATH.to_owned(),
+            b"{ not: [ a list".to_vec(),
+        );
+        assert!(matches!(
+            people_plan(&state, "bbsk", &files).await,
+            Err(ApiError::Unprocessable { .. })
+        ));
+        let saved = serde_norway::to_string(&[person("a", None)]).expect("yaml");
+        files.insert(org_backup::PEOPLE_PATH.to_owned(), saved.into_bytes());
+        assert!(people_plan(&state, "bbsk", &files)
+            .await
+            .expect("read")
+            .is_none());
+    }
+}

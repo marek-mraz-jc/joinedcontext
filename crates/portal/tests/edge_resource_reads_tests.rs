@@ -264,6 +264,34 @@ async fn a_query_that_is_not_one_is_the_callers_mistake_and_never_a_page() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
+    // A workspace and a revision together, a cursor beside the old continue token, and continue
+    // under a sort: each is refused with what to send instead.
+    for (query, says) in [
+        ("workspace=w&revision=abcdef0", "not both"),
+        ("cursor=x&continue=y", "cursor replaces continue"),
+        ("sort=-metadata.name&continue=y", "page a sort with cursor"),
+    ] {
+        let (status, body) = get(&state, Some(SPACE_READER), &format!("{spaces}?{query}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {body}");
+        assert!(
+            body["detail"].as_str().is_some_and(|d| d.contains(says)),
+            "{query}: {body}"
+        );
+    }
+    let (status, body) = get(
+        &state,
+        Some(SPACE_READER),
+        &format!("{spaces}/{PROJECT}?workspace=w&revision=abcdef0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("not both")),
+        "{body}"
+    );
+
     // A continuation token nobody minted is ignored and the first page comes back: today's
     // behaviour, written down in `/workspace/chyby.md` rather than asserted as wanted, because a
     // client walking a list would restart it instead of being told its token is stale. What matters
@@ -647,6 +675,87 @@ async fn post(
         status,
         serde_json::from_slice(&bytes).unwrap_or(Value::Null),
     )
+}
+
+/// The paths beside a collection: `$count` answers the rows as text, a key one row or a 404
+/// that never says whether the row exists, and every path the service does not serve is an
+/// OData error with a status a client can act on (T-7813).
+#[tokio::test]
+async fn count_key_and_unserved_paths_answer_as_odata() {
+    let state = odata_world();
+    let editor = Some(EDITOR);
+    let (status, count) = get(&state, editor, &odata("endpoints/$count")).await;
+    assert_eq!((status, count), (StatusCode::OK, json!(4)));
+    let (status, count) = get(
+        &state,
+        editor,
+        &odata("endpoints/$count?$filter=startswith(name,'air')"),
+    )
+    .await;
+    assert_eq!((status, count), (StatusCode::OK, json!(2)));
+    let (status, row) = get(&state, editor, &odata("endpoints('air-counters')")).await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    assert_eq!(row["name"], json!("air-counters"));
+    assert!(
+        row["@odata.context"]
+            .as_str()
+            .is_some_and(|c| c.ends_with("$metadata#endpoints/$entity")),
+        "{row}"
+    );
+    let (status, body) = get(&state, editor, &odata("endpoints('no-such-endpoint')")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = get(&state, editor, &odata("endpoints(1.5)")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = get(&state, editor, &odata("nothing-here")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = get(&state, editor, &odata("endpoints?$apply=groupby((space))")).await;
+    assert!(
+        matches!(
+            status,
+            StatusCode::NOT_IMPLEMENTED | StatusCode::BAD_REQUEST
+        ),
+        "{status} {body}"
+    );
+    let (status, body) = get(&state, editor, &odata("endpoints?$filter=nope%20eq%201")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    // Nobody signed in, a member of another project and a project name that is none.
+    let (status, _) = get(&state, None, &odata("endpoints/$count")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = get(&state, Some(OUTSIDER), &odata("endpoints/$count")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// An action is a writing operation by name: a read-only one, an unknown one, a body that is not
+/// JSON and a project name that is none are refused before anything runs (T-7813).
+#[tokio::test]
+async fn an_action_refuses_what_is_not_one_before_it_runs() {
+    let state = odata_world();
+    let (status, body) = post(&state, Some(EDITOR), &odata("jc_resource_list"), json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = post(&state, Some(EDITOR), &odata("jc_no_such_action"), json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = post(
+        &state,
+        Some(EDITOR),
+        "/api/v1/projects/Not_A_Project/odata/jc_resource_propose",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let response = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(odata("jc_resource_propose"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, cookie(&state.config, EDITOR))
+                .echo_csrf()
+                .body(Body::from("{not json"))
+                .expect("a request"),
+        )
+        .await
+        .expect("a response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 /// T-6655 parity: every mapped list operation answers OData with the rows and the status its REST
@@ -1276,4 +1385,36 @@ async fn odata_endpoints_carry_the_shared_and_gone_rows_the_page_lists_and_no_ot
         assert_eq!(status, want, "{method} {key} as {who:?}: {text}");
         assert!(text.contains(says), "{method} {key} as {who:?}: {text}");
     }
+
+    // A proposer's change the row edits runs the REST door's check first and proposes only on
+    // a green verdict (PF-57, T-7835); only endpointList answers `$allowed`.
+    let request = Request::builder()
+        .method("PATCH")
+        .uri(entity("helsinki-bikes"))
+        .header(header::COOKIE, cookie(&state.config, "pat.proposer@hel.fi"))
+        .echo_csrf()
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "mcp": false }).to_string()))
+        .expect("a request");
+    let response = server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("a response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a body")
+        .to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{text}");
+    assert!(text.contains("refused by its check"), "{text}");
+    let (status, other) = get(
+        &state,
+        vera,
+        &format!("/api/v1/projects/{PROJECT}/odata/endpoints/$allowed?op=read"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{other}");
 }

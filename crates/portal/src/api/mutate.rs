@@ -3640,6 +3640,114 @@ mod tests {
     use super::*;
     use crate::auth::session::{Identity, Session};
 
+    /// T-7835: a bundle rides a check alone, as a list of at most 20 manifests; a body without
+    /// one has none.
+    #[test]
+    fn a_bundle_is_a_checks_list_of_at_most_twenty_manifests() {
+        assert!(take_bundle(&mut json!({}), false).expect("none").is_empty());
+        let refused = |mut body: Value, dry_run: bool| match take_bundle(&mut body, dry_run) {
+            Err(ApiError::Unprocessable { errors, .. }) => errors.join(" "),
+            other => format!("not refused: {other:?}"),
+        };
+        assert!(refused(json!({ "bundle": [] }), false).contains("dryRun=All"));
+        assert!(refused(json!({ "bundle": {} }), true).contains("at most 20"));
+        assert!(refused(json!({ "bundle": [1] }), true).contains("at most 20"));
+        assert!(refused(json!({ "bundle": vec![json!({}); 21] }), true).contains("at most 20"));
+        let mut body = json!({ "bundle": [{ "kind": "Policy" }], "kind": "Endpoint" });
+        assert_eq!(
+            take_bundle(&mut body, true).expect("a bundle"),
+            vec![json!({ "kind": "Policy" })]
+        );
+        assert_eq!(body, json!({ "kind": "Endpoint" }), "taken out of the body");
+    }
+
+    /// UI-50, T-7835: a plain title over a legacy map without `en` goes into its first language;
+    /// over an empty map it stays the plain text the person wrote.
+    #[test]
+    fn a_plain_title_over_a_map_without_english_lands_in_its_first_language() {
+        use jc_core::i18n::{MultiLanguageMap, Text};
+        let mut stored = MultiLanguageMap::new();
+        stored.insert("fi", "Ilma").expect("fi");
+        stored.insert("sv", "Luft").expect("sv");
+        let mut sent = Some(Text::Plain("Ilmanlaatu".into()));
+        keep_languages(&mut sent, Some(&Text::Localized(stored)));
+        let Some(Text::Localized(kept)) = sent else {
+            panic!("a map: {sent:?}");
+        };
+        assert_eq!(kept.get("fi"), Some("Ilmanlaatu"));
+        assert_eq!(kept.get("sv"), Some("Luft"));
+        let mut sent = Some(Text::Plain("Air".into()));
+        keep_languages(&mut sent, Some(&Text::Localized(MultiLanguageMap::new())));
+        assert_eq!(sent, Some(Text::Plain("Air".into())));
+    }
+
+    /// T-7491, T-7835: a chart without `data` is left to the kind's own parse.
+    #[test]
+    fn a_chart_without_data_is_the_kinds_parse_to_refuse() {
+        assert!(check_visualization_sources(
+            &json!({ "catalog": { "visualizations": [{ "title": "no data yet" }] } })
+        )
+        .is_ok());
+    }
+
+    /// The files beside a manifest: each one a text under the manifest's own folder, no second
+    /// manifest, no path twice, within the count and byte bounds; each refusal names what to fix
+    /// (F-POR2-004, T-7813).
+    #[test]
+    fn files_beside_a_manifest_stay_in_its_folder_and_bounds() {
+        let at = "projects/helsinki/models/x/air.yaml";
+        let refused = |files: Value| match sidecars(Some(files), at, "air") {
+            Err(ApiError::BadRequest(why)) => why,
+            other => format!("not refused: {other:?}"),
+        };
+        assert_eq!(sidecars(None, at, "air").expect("no files"), Vec::new());
+        assert_eq!(
+            sidecars(
+                Some(json!({ "./air.linkml.yaml": "id: air", "notes/readme.md": "# Air" })),
+                at,
+                "air"
+            )
+            .expect("two files"),
+            vec![
+                (
+                    "projects/helsinki/models/x/air.linkml.yaml".to_owned(),
+                    "id: air".to_owned()
+                ),
+                (
+                    "projects/helsinki/models/x/notes/readme.md".to_owned(),
+                    "# Air".to_owned()
+                ),
+            ]
+        );
+        assert!(refused(json!(["a.md"])).contains("an object of path"));
+        let many: serde_json::Map<String, Value> = (0..=MAX_SIDECARS)
+            .map(|n| (format!("f{n}.md"), json!("x")))
+            .collect();
+        assert!(refused(Value::Object(many)).contains("at most"));
+        assert!(refused(json!({ "a.md": 1 })).contains("is not text"));
+        for path in [
+            "",
+            "/etc/passwd",
+            "../up.md",
+            "a/./b.md",
+            "a//b.md",
+            "a\\b.md",
+            "nul\u{0}.md",
+        ] {
+            assert!(
+                refused(Value::Object(
+                    [(path.to_owned(), json!("x"))].into_iter().collect()
+                ))
+                .contains("not a path under"),
+                "{path:?}"
+            );
+        }
+        assert!(refused(json!({ "other.yaml": "kind: Policy" })).contains("a YAML file"));
+        assert!(refused(json!({ "a.md": "x", "./a.md": "y" })).contains("sent twice"));
+        let big = "x".repeat(MAX_SIDECAR_BYTES / 2 + 1);
+        assert!(refused(json!({ "a.md": big, "b.md": big })).contains("more than"));
+    }
+
     /// T-6471: a Policy `jc_space_complete` filed under the space it names is found there, the
     /// path `resolve_repo_path` gives wins when it holds the file, and no file leaves the path.
     #[tokio::test]

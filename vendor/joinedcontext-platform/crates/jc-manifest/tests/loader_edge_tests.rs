@@ -36,6 +36,92 @@ metadata: { name: city, namespace: org }
 spec: { domain: city.example, locales: [en], defaultLocale: en }
 ";
 
+/// A manifest file that is not UTF-8 is an I/O error naming the file, not a parse error at a
+/// line nobody can find.
+#[test]
+fn a_manifest_that_is_not_utf8_is_refused_by_its_path() {
+    let dir = temp_dir("not-utf8");
+    write(&dir, "org.yaml", ORG);
+    std::fs::write(dir.join("broken.yaml"), [0xff, 0xfe, b'k', b':']).expect("write");
+    match Repository::load_for(&dir, None) {
+        Err(LoadError::Io { path, .. }) => assert_eq!(path, PathBuf::from("broken.yaml")),
+        other => panic!("expected an io error, got {other:?}"),
+    }
+}
+
+/// A folder the walk cannot read is an I/O error, unlike a dangling link, which is skipped.
+#[test]
+fn an_unreadable_folder_stops_the_walk() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = temp_dir("unreadable");
+    write(&dir, "org.yaml", ORG);
+    write(&dir, "projects/p/project.yaml", "");
+    let locked = dir.join("projects/p");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("lock");
+    let readable = std::fs::read_dir(&locked).is_ok();
+    let result = Repository::load_for(&dir, None);
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+    if readable {
+        // Root reads every folder: nothing to refuse.
+        return;
+    }
+    assert!(matches!(result, Err(LoadError::Io { .. })), "{result:?}");
+}
+
+/// An overlay whose spec parses but fails its validation (an organization domain that is no
+/// domain) refuses the load at the overlay's file.
+#[test]
+fn an_overlay_that_fails_validation_refuses_the_load() {
+    let dir = temp_dir("overlay-invalid");
+    write(&dir, "org.yaml", ORG);
+    write(
+        &dir,
+        "environments/dev.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Environment\nmetadata: { name: dev, namespace: org }\nspec: { orgDomain: 'not a domain' }\n",
+    );
+    match Repository::load_for(&dir, Some("dev")) {
+        Err(LoadError::Overlay { path, message }) => {
+            assert_eq!(path, PathBuf::from("environments/dev.yaml"));
+            assert!(message.contains("orgDomain"), "{message}");
+        }
+        other => panic!("expected an overlay error, got {other:?}"),
+    }
+}
+
+/// A preview keeps a slug or a pinned segment that is not a string as it is: the typed check
+/// refuses it later, the preview render does not invent one.
+#[test]
+fn a_preview_leaves_a_slug_or_segment_that_is_no_string_alone() {
+    let dir = temp_dir("preview-no-string");
+    write(&dir, "org.yaml", ORG);
+    write(
+        &dir,
+        "projects/p/project.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata: { name: p, namespace: org }\nspec: { organizationRef: city }\n",
+    );
+    write(
+        &dir,
+        "projects/p/spaces/air/space.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata: { name: air, namespace: p }\nspec: { urnSegment: 7 }\n",
+    );
+    write(
+        &dir,
+        "projects/p/spaces/air/endpoints/e.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata: { name: e, namespace: p }\nspec: { slug: 5, contextSpaceRef: air }\n",
+    );
+    let repo = Repository::load_preview(&dir, None, "pv-").expect("the preview loads");
+    let endpoint = repo
+        .iter()
+        .find(|(id, _)| id.kind == "Endpoint")
+        .expect("the endpoint");
+    assert_eq!(endpoint.1.manifest.spec["slug"], 5);
+    let space = repo
+        .iter()
+        .find(|(id, _)| id.kind == "ContextSpace")
+        .expect("the space");
+    assert_eq!(space.1.manifest.spec["urnSegment"], 7);
+}
+
 #[test]
 fn an_api_version_without_a_group_is_its_own_group_and_an_id_without_namespace_prints_bare() {
     let raw = manifest("apiVersion: v1\nkind: Organization\nmetadata: { name: city }\nspec: {}\n");

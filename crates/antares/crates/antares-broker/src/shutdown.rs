@@ -111,12 +111,15 @@ pub async fn drain(
         || pending_changes.load(Ordering::SeqCst) > 0
     {
         if started.elapsed() >= deadline {
-            tracing::warn!(
-                "drain deadline {deadline:?} hit with {} connection(s), {} task(s) and {} change batch(es) still open — closing anyway",
+            let (conns, tasks) = (
                 inflight.load(Ordering::Relaxed),
                 antares_api::background_tasks(),
-                pending_changes.load(Ordering::SeqCst)
             );
+            let batches = pending_changes.load(Ordering::SeqCst);
+            let open = format!(
+                "{conns} connection(s), {tasks} task(s), {batches} change batch(es) still open"
+            );
+            tracing::warn!("drain deadline {deadline:?} hit with {open} — closing anyway");
             break;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
@@ -173,6 +176,7 @@ pub fn begin(draining: &Arc<AtomicBool>, delay: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env;
 
     /// The two drain variables are process-global: every test that sets or
     /// clears them holds this, or a parallel test reads its value (T-3772).
@@ -295,6 +299,34 @@ mod tests {
             1,
             "the temporal driver must be closed by the drain, not by process exit"
         );
+        // The double answers every operation the way `NoTemporal` does.
+        use antares_store::TemporalDriver as _;
+        let t = antares_model::TenantId::default();
+        let filter = antares_store::filter::TemporalFilter::default();
+        let v = serde_json::json!({});
+        let off = |r: Result<(), antares_model::NgsiError>| {
+            assert!(matches!(
+                r,
+                Err(antares_model::NgsiError::OperationNotSupported(_))
+            ));
+        };
+        off(temporal.temporal_append(&t, "urn:x", &v, &v).await);
+        off(temporal.query_temporal(&t, &filter).await.map(drop));
+        off(temporal.get_temporal(&t, "urn:x", &filter).await.map(drop));
+        off(temporal.get(&t, "urn:x").await.map(drop));
+        off(temporal.create(&t, "urn:x", v.clone()).await.map(drop));
+        off(temporal.upsert(&t, "urn:x", v.clone()).await.map(drop));
+        off(temporal.delete(&t, "urn:x").await.map(drop));
+        off(temporal.list(&t).await.map(drop));
+        // a mutation the double never runs, run here once
+        fn touch(doc: &mut serde_json::Value) -> Result<(), ()> {
+            doc.as_object().map(drop).ok_or(())
+        }
+        assert_eq!(touch(&mut serde_json::json!({})), Ok(()));
+        off(temporal
+            .mutate_boxed(&t, "urn:x", Box::new(touch))
+            .await
+            .map(drop));
     }
 
     /// The book states these two defaults, and their SUM is an operator
@@ -317,7 +349,7 @@ mod tests {
             let row = book
                 .lines()
                 .find(|l| l.starts_with(&format!("| `{var}` |")))
-                .unwrap_or_else(|| panic!("{var} has no row in the configuration table"));
+                .expect("each drain variable has a row in the configuration table");
             row.split('|')
                 .nth(2)
                 .expect("the default column")
@@ -342,14 +374,8 @@ mod tests {
         // the same two defaults, in a comment an operator copies the number
         // out of. Both said 0.5 s long after the delay became 2 s.
         let secs = drain_delay().expect("absent").as_secs_f64();
-        let want = format!(
-            "drain delay ({} s)",
-            if secs.fract() == 0.0 {
-                format!("{secs:.0}")
-            } else {
-                format!("{secs}")
-            }
-        );
+        // `{}` of an f64 prints 2.0 as "2" and 0.5 as "0.5", as the comments do
+        let want = format!("drain delay ({secs} s)");
         for name in ["docker-compose-ha.yml", "docker-compose-roles.yml"] {
             let path = format!(
                 concat!(env!("CARGO_MANIFEST_DIR"), "/../../compose-files/{}"),
@@ -421,8 +447,55 @@ mod tests {
             ));
             assert!(err.contains("ANTARES_DRAIN_DEADLINE_SECS"), "{err}");
         }
+        // A value that is no UTF-8 is unreadable, and fatal like garbage.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            std::env::set_var(
+                "ANTARES_DRAIN_DEADLINE_SECS",
+                std::ffi::OsStr::from_bytes(&[0x32, 0xff]),
+            );
+            let err = drain_deadline().expect_err("a non-UTF-8 value must be fatal");
+            assert!(
+                err.starts_with("ANTARES_DRAIN_DEADLINE_SECS is unreadable"),
+                "{err}"
+            );
+        }
         std::env::remove_var("ANTARES_DRAIN_DELAY_MS");
         std::env::remove_var("ANTARES_DRAIN_DEADLINE_SECS");
+    }
+
+    /// What this thread logs while the guard lives.
+    #[derive(Clone, Default)]
+    struct Logged(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Logged {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log").extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Logged {
+        fn start() -> (Self, tracing::subscriber::DefaultGuard) {
+            let log = Self::default();
+            let writer = log.clone();
+            let guard = tracing::subscriber::set_default(
+                tracing_subscriber::fmt()
+                    .with_ansi(false)
+                    .with_writer(move || writer.clone())
+                    .finish(),
+            );
+            (log, guard)
+        }
+
+        fn text(&self) -> String {
+            std::io::Write::flush(&mut self.clone()).expect("flush");
+            String::from_utf8_lossy(&self.0.lock().expect("log")).into_owned()
+        }
     }
 
     fn rt() -> tokio::runtime::Runtime {
@@ -494,6 +567,7 @@ mod tests {
     /// finishes must not hold the process open forever.
     #[test]
     fn drain_gives_up_at_the_deadline_with_a_stuck_connection() {
+        let (log, _guard) = Logged::start();
         let inflight = Arc::new(AtomicUsize::new(1)); // never released
         let store = mem_store();
         let started = Instant::now();
@@ -514,6 +588,50 @@ mod tests {
             waited < Duration::from_secs(3),
             "the drain must give up AT the deadline, not later: {waited:?}"
         );
+        assert!(
+            log.text()
+                .contains("hit with 1 connection(s), 0 task(s), 0 change batch(es) still open"),
+            "the give-up names what it left open: {}",
+            log.text()
+        );
+    }
+
+    /// An outbox the store cannot read is not a flushed one: the flush gives
+    /// up at once, says why, and the pools still close.
+    #[test]
+    fn an_unreadable_outbox_ends_the_flush_and_still_closes() {
+        let (log, _guard) = Logged::start();
+        let started = Instant::now();
+        rt().block_on(async {
+            let pool = antares_sql::sqlx::postgres::PgPoolOptions::new()
+                .acquire_timeout(Duration::from_millis(50))
+                .connect_lazy("postgres://nobody@localhost:1/antares_no_such_db")
+                .expect("lazy pool");
+            let store = antares_sql::store::any::AnyStore::Pg(
+                antares_sql::store::any::PgBackend::new(pool),
+            );
+            let closes = Arc::new(AtomicUsize::new(0));
+            drain(
+                &Arc::new(AtomicUsize::new(0)),
+                &AtomicUsize::new(0),
+                &store,
+                &CountsCloses(Arc::clone(&closes)),
+                Duration::from_secs(20),
+                true,
+            )
+            .await;
+            assert_eq!(closes.load(Ordering::SeqCst), 1, "closed after the give-up");
+        });
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "a dead outbox must not hold the drain to its deadline: {:?}",
+            started.elapsed()
+        );
+        assert!(
+            log.text().contains("outbox flush gave up"),
+            "{}",
+            log.text()
+        );
     }
 
     /// The outbox flush must WAIT while rows are still pending, and only when
@@ -522,12 +640,11 @@ mod tests {
     /// the outbox table exists on the Pg arm alone, so the memory store can
     /// never exercise the wait (it answers an empty page and falls through).
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "needs a live database (ANTARES_TEST_DATABASE_URL)"]
     async fn outbox_flush_waits_for_pending_rows_and_only_when_asked() {
         use antares_sql::store::any::{AnyStore, PgBackend};
         use antares_sql::store::Kind;
-        let url = std::env::var("ANTARES_TEST_DATABASE_URL")
-            .expect("ANTARES_TEST_DATABASE_URL: this test is asked for by name where a DB exists");
+        let Some(url) = test_env::db() else { return };
+        let (log, _guard) = Logged::start();
         // a nested fn, not a closure: connecting is awaited, and an async
         // closure is not a stable language feature
         async fn connect(url: &str) -> AnyStore {
@@ -610,6 +727,11 @@ mod tests {
             waited < Duration::from_secs(5),
             "the flush must give up AT the deadline, not later: {waited:?}"
         );
+        assert!(
+            log.text().contains("hit with outbox rows still pending"),
+            "{}",
+            log.text()
+        );
 
         // Leave the shared table as it was found: ack only our own seqs (a
         // blanket ack would delete another test's pending rows) and drop the
@@ -626,7 +748,7 @@ mod tests {
                 .await
                 .expect("peek")
                 .into_iter()
-                .all(|(_, t, _)| t != tenant.as_str()),
+                .all(|row| row.1 != tenant.as_str()),
             "the test left its own rows in the shared outbox"
         );
     }

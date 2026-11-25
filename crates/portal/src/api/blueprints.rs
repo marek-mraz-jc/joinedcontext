@@ -556,6 +556,58 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// CC-63: a template's own lane never lowers the blueprint's, and a Red side wins.
+    #[test]
+    fn the_stricter_lane_of_a_blueprint_and_its_manifest_wins() {
+        assert_eq!(declared_lane(RiskClass::Green), Lane::Green);
+        assert_eq!(declared_lane(RiskClass::Yellow), Lane::Yellow);
+        assert_eq!(declared_lane(RiskClass::Red), Lane::Red);
+        assert_eq!(stricter(Lane::Green, Lane::Red), Lane::Red);
+        assert_eq!(stricter(Lane::Red, Lane::Green), Lane::Red);
+        assert_eq!(stricter(Lane::Yellow, Lane::Green), Lane::Yellow);
+        assert_eq!(stricter(Lane::Green, Lane::Green), Lane::Green);
+    }
+
+    /// MF-04, MF-24 (T-7815): a template that renders no YAML, no manifest, another apiVersion,
+    /// an unknown kind, another namespace or a status block is refused naming the template.
+    #[test]
+    fn a_rendered_manifest_the_project_may_not_receive_is_refused_naming_the_template() {
+        let space = |extra: &str| {
+            format!("apiVersion: {API_VERSION}\nkind: ContextSpace\nmetadata:\n  name: air\n{extra}spec: {{}}\n")
+        };
+        let accepted = accept_rendered(&space(""), "space.yaml", "city").expect("accepted");
+        assert_eq!(accepted.0.metadata.namespace.as_deref(), Some("city"));
+        for (yaml, needle) in [
+            ("kind: [".to_owned(), "rendered invalid yaml"),
+            ("just text".to_owned(), "did not render a manifest"),
+            (
+                space("").replace(API_VERSION, "joinedcontext.com/v0"),
+                "rendered apiVersion",
+            ),
+            (
+                space("").replace("ContextSpace", "Spaceship"),
+                "unknown kind 'Spaceship'",
+            ),
+            (
+                space("").replace("name: air", "name: air\n  namespace: town"),
+                "namespace 'town'",
+            ),
+            (
+                format!("{}status: {{ phase: Live }}\n", space("")),
+                "status block",
+            ),
+        ] {
+            let why = match accept_rendered(&yaml, "space.yaml", "city") {
+                Err(ApiError::BadRequest(why)) => why,
+                other => format!("{other:?}"),
+            };
+            assert!(
+                why.contains(needle) && why.contains("space.yaml"),
+                "{needle}: {why}"
+            );
+        }
+    }
+
     /// A library blueprint in miniature: one Endpoint whose slug the Portal fills.
     fn blueprint() -> jc_core::kinds::Blueprint {
         jc_core::kinds::Blueprint::from_yaml(

@@ -62,7 +62,7 @@ pub struct GitImportPlan {
 
 /// The archive's files by path. An entry that leaves the root, or an archive past the upload
 /// limits, is refused before anything is read into the import.
-pub(crate) fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, ApiError> {
+pub fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, ApiError> {
     const MAX_ENTRIES: usize = 256;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
         .map_err(|err| ApiError::BadRequest(format!("the upload is not a zip archive: {err}")))?;
@@ -218,12 +218,8 @@ fn check(bytes: &[u8]) -> Result<Checked, ApiError> {
             "bundle.yaml carries no checksum of project.yaml; export again (MF-42)".into(),
         ));
     }
-    let own = files.get("project.yaml").ok_or_else(|| {
-        ApiError::BadRequest(
-            "the archive has no project.yaml beside its bundles; export it again (MF-45)".into(),
-        )
-    })?;
-    let own = String::from_utf8_lossy(own);
+    // verify_files found every file bundle.yaml lists, project.yaml among them.
+    let own = String::from_utf8_lossy(files.get("project.yaml").map_or(&[][..], Vec::as_slice));
     // MF-47: this release reads its own apiVersion; an older export goes through `jcctl
     // migrate`, which needs git the Portal does not hold, and a newer one is refused.
     let api_version = serde_norway::from_str::<Value>(&own)
@@ -621,7 +617,201 @@ async fn judge_head(
 
 #[cfg(test)]
 mod tests {
-    use super::tags;
+    use super::*;
+    use std::io::Write;
+
+    const HEAD: &str = "2c245c6bb1efa7a20938c5b11b70379be6838eec";
+    const OWN: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  \
+                       name: ovzdusie\n  namespace: org\nspec:\n  organizationRef: bb\n";
+
+    fn bundle_file(head: &str) -> Vec<u8> {
+        format!("# v2 git bundle\n{head} refs/heads/bundle\n{head} HEAD\n\nPACK").into_bytes()
+    }
+
+    fn zipped(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (path, bytes) in files {
+            writer.start_file(path.as_str(), options).expect("entry");
+            writer.write_all(bytes).expect("write");
+        }
+        writer.finish().expect("zip").into_inner()
+    }
+
+    /// An export of project `ovzdusie` whose bundle.yaml lists `repositories`, written after
+    /// `edit` changed the files the index checksums; `listed` drops files from the index.
+    fn export(
+        own: &str,
+        repositories: serde_json::Value,
+        listed: impl Fn(&str) -> bool,
+        edit: impl Fn(&mut Vec<(String, Vec<u8>)>),
+    ) -> Vec<u8> {
+        let mut files: Vec<(String, Vec<u8>)> = vec![
+            ("ovzdusie.bundle".into(), bundle_file(HEAD)),
+            ("project.yaml".into(), own.as_bytes().to_vec()),
+        ];
+        let index = serde_json::json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Bundle",
+            "metadata": { "name": "ovzdusie", "namespace": "org" },
+            "spec": {
+                "exportedAt": "2026-09-22T12:00:00Z",
+                "exportedBy": "jana",
+                "sourceRevision": HEAD,
+                "items": [],
+                "files": files.iter().filter(|(path, _)| listed(path)).map(|(path, bytes)| serde_json::json!({
+                    "path": path, "sha256": format!("{:x}", Sha256::digest(bytes))
+                })).collect::<Vec<_>>(),
+                "omitted": 0,
+                "repositories": repositories,
+            },
+        });
+        edit(&mut files);
+        files.push((
+            "bundle.yaml".into(),
+            serde_norway::to_string(&index).expect("yaml").into_bytes(),
+        ));
+        zipped(&files)
+    }
+
+    fn project_only() -> serde_json::Value {
+        serde_json::json!([{ "name": "ovzdusie", "role": "project", "file": "ovzdusie.bundle", "head": HEAD }])
+    }
+
+    fn refusal(bytes: &[u8]) -> String {
+        match check(bytes) {
+            Err(ApiError::BadRequest(why)) => why,
+            Err(other) => format!("refused as {other:?}"),
+            Ok(_) => "accepted".to_owned(),
+        }
+    }
+
+    /// MF-42, MF-45, MF-46, MF-47: each archive a format=git export would not write is refused
+    /// with the reason, before anything is created.
+    #[test]
+    fn an_archive_no_export_writes_is_refused_with_its_reason() {
+        let all = |_: &str| true;
+        let keep = |_: &mut Vec<(String, Vec<u8>)>| {};
+        assert_eq!(refusal(&export(OWN, project_only(), all, keep)), "accepted");
+        let cases: Vec<(Vec<u8>, &str)> = vec![
+            (b"not a zip".to_vec(), "not a zip archive"),
+            (
+                zipped(&[("README.md".into(), b"hi".to_vec())]),
+                "no bundle.yaml",
+            ),
+            (
+                zipped(&[("bundle.yaml".into(), b"kind: [".to_vec())]),
+                "not a Bundle",
+            ),
+            (
+                export(
+                    OWN,
+                    serde_json::json!([{ "name": "Bad Name", "role": "project", "file": "ovzdusie.bundle", "head": HEAD }]),
+                    all,
+                    keep,
+                ),
+                "bundle.yaml",
+            ),
+            (
+                export(
+                    OWN,
+                    serde_json::json!([
+                        { "name": "ovzdusie", "role": "project", "file": "ovzdusie.bundle", "head": HEAD },
+                        { "name": "org", "role": "organization", "file": "ovzdusie.bundle", "head": HEAD }
+                    ]),
+                    all,
+                    keep,
+                ),
+                "organization repository",
+            ),
+            (
+                export(
+                    OWN,
+                    serde_json::json!([{ "name": "air-map", "role": "application", "file": "ovzdusie.bundle", "head": HEAD }]),
+                    all,
+                    keep,
+                ),
+                "no project repository",
+            ),
+            (
+                export(OWN, project_only(), all, |files| {
+                    files.retain(|(p, _)| p != "project.yaml")
+                }),
+                "which the archive does not hold",
+            ),
+            (
+                export(OWN, project_only(), |p| p != "ovzdusie.bundle", keep),
+                "carries no checksum in bundle.yaml",
+            ),
+            (
+                export(
+                    OWN,
+                    serde_json::json!([{ "name": "ovzdusie", "role": "project", "file": "ovzdusie.bundle", "head": "b47f8079d2df9e7986d2babf4539cec802f4e68e" }]),
+                    all,
+                    keep,
+                ),
+                "does not end at",
+            ),
+            (
+                export(OWN, project_only(), |p| p != "project.yaml", keep),
+                "no checksum of project.yaml",
+            ),
+            (
+                export(&format!("{OWN}  nonsense: 1\n"), project_only(), all, keep),
+                "project.yaml does not load",
+            ),
+            (
+                export(
+                    &format!("{OWN}  repository: {{ name: ovzdusie }}\n"),
+                    project_only(),
+                    all,
+                    keep,
+                ),
+                "registry entry",
+            ),
+        ];
+        for (bytes, needle) in cases {
+            let why = refusal(&bytes);
+            assert!(why.contains(needle), "{needle}: {why}");
+        }
+    }
+
+    /// An archive of more entries than a git export writes, an entry leaving the root or one
+    /// unpacking past the upload limit is refused before it is read whole; a directory is skipped.
+    #[test]
+    fn unpack_refuses_too_many_entries_an_escape_and_a_bomb_and_skips_directories() {
+        let many: Vec<(String, Vec<u8>)> =
+            (0..257).map(|i| (format!("f{i}"), Vec::new())).collect();
+        assert!(
+            matches!(unpack(&zipped(&many)), Err(ApiError::BadRequest(why)) if why.contains("257 entries"))
+        );
+        let escape = zipped(&[("../outside".into(), b"x".to_vec())]);
+        assert!(
+            matches!(unpack(&escape), Err(ApiError::BadRequest(why)) if why.contains("leaves the archive"))
+        );
+        let bomb = zipped(&[("zeros".into(), vec![0u8; MAX_UPLOAD_BYTES + 1])]);
+        assert!(
+            matches!(unpack(&bomb), Err(ApiError::BadRequest(why)) if why.contains("unpacks past"))
+        );
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .add_directory("dir/", zip::write::SimpleFileOptions::default())
+            .expect("a directory");
+        writer
+            .start_file("dir/a", zip::write::SimpleFileOptions::default())
+            .expect("entry");
+        writer.write_all(b"a").expect("write");
+        let files = unpack(&writer.finish().expect("zip").into_inner()).expect("unpacked");
+        assert_eq!(files.keys().collect::<Vec<_>>(), ["dir/a"]);
+    }
+
+    #[test]
+    fn a_tags_file_that_is_not_text_is_refused() {
+        assert!(
+            matches!(tags(&[0xff, 0xfe], "p"), Err(ApiError::BadRequest(why)) if why == "p.tags is not text")
+        );
+    }
 
     const COMMIT: &str = "3a386a2d5ff9fc1e18d3032677ae5bbf2ea5d4e7";
 

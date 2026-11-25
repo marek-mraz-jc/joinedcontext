@@ -63,8 +63,7 @@ struct Broker(Child);
 
 impl Drop for Broker {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        common::stop(&mut self.0);
     }
 }
 
@@ -905,6 +904,117 @@ fn health_probe_follows_the_broker() {
     assert!(
         !probe(free_port()),
         "a port nobody serves must fail the probe"
+    );
+}
+
+/// A broker that answers but not with 200 (a drain's 503) fails the probe,
+/// and the probe says what it read.
+#[test]
+fn health_probe_fails_on_a_non_200_answer() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let server = std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().expect("accept");
+        let mut head = [0u8; 64];
+        let _ = s.read(&mut head);
+        s.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+            .expect("answer");
+    });
+    let out = Command::new(env!("CARGO_BIN_EXE_antares"))
+        .arg("--health")
+        .env("ANTARES_HTTP_PORT", port.to_string())
+        .output()
+        .expect("run probe");
+    server.join().expect("server");
+    assert!(!out.status.success(), "a 503 must fail the probe");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("health: HTTP/1.1 503"), "{err}");
+}
+
+/// Without ANTARES_HTTP_PORT the probe asks the broker's default port 9090;
+/// what it answers there depends on the host, so only the run is asserted.
+#[test]
+fn health_probe_defaults_to_the_broker_port() {
+    let out = Command::new(env!("CARGO_BIN_EXE_antares"))
+        .arg("--health")
+        .env_remove("ANTARES_HTTP_PORT")
+        .output()
+        .expect("run probe");
+    assert!(
+        out.status.code().is_some(),
+        "the probe exits, it is not killed"
+    );
+}
+
+/// An ANTARES_MEMORY_BUDGET that is no size stops the boot before anything
+/// is built, naming the key.
+#[test]
+fn a_memory_budget_that_is_no_size_stops_the_boot() {
+    let dir = tempdir("budget");
+    let out = Command::new(env!("CARGO_BIN_EXE_antares"))
+        .env("ANTARES_HTTP_PORT", free_port().to_string())
+        .env("ANTARES_STORE", "file")
+        .env("ANTARES_DATA_DIR", &dir)
+        .env("ANTARES_MEMORY_BUDGET", "plenty")
+        .output()
+        .expect("run antares");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!out.status.success(), "a garbage budget is a failed start");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("ANTARES_MEMORY_BUDGET"), "{err}");
+}
+
+/// ANTARES_SELF_URLS in a build without the internal-csr feature is said at
+/// boot: every federation forward goes over HTTP, and the broker serves.
+#[cfg(not(feature = "internal-csr"))]
+#[test]
+fn self_urls_without_internal_csr_are_said_and_the_broker_serves() {
+    let dir = tempdir("selfurls");
+    let port = free_port();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_antares"))
+        .env("ANTARES_HTTP_PORT", port.to_string())
+        .env("ANTARES_STORE", "file")
+        .env("ANTARES_DATA_DIR", &dir)
+        .env("ANTARES_SELF_URLS", "http://antares-0.antares:9090")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn antares");
+    wait_healthy(port);
+    common::stop(&mut child);
+    let mut log = String::new();
+    for pipe in [
+        child.stdout.take().map(|p| Box::new(p) as Box<dyn Read>),
+        child.stderr.take().map(|p| Box::new(p) as Box<dyn Read>),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let mut pipe = pipe;
+        let _ = pipe.read_to_string(&mut log);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        log.contains("ANTARES_SELF_URLS is set and this build has no internal-csr feature"),
+        "{log}"
+    );
+}
+
+/// `antares --version` answers without starting anything: no port is bound
+/// and no store opened, whatever the environment says.
+#[test]
+fn version_answers_without_starting_a_broker() {
+    let out = Command::new(env!("CARGO_BIN_EXE_antares"))
+        .arg("--version")
+        .env("ANTARES_STORE", "file")
+        .env_remove("ANTARES_DATA_DIR")
+        .output()
+        .expect("run --version");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.starts_with(&format!("antares {} (", env!("CARGO_PKG_VERSION"))),
+        "{text}"
     );
 }
 

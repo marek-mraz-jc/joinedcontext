@@ -155,15 +155,10 @@ impl<T: Sink + ?Sized + Send> Sink for &mut T {
     }
 }
 
-/// Canonicalises a URL by removing fragment identifiers and default ports (80 for http, 443 for https).
+/// Canonicalises a URL by removing its fragment; `Url` itself drops a default port (80 for http,
+/// 443 for https) when it parses one.
 pub fn canonicalise_url(mut url: Url) -> Url {
     url.set_fragment(None);
-    if url.scheme() == "http" && url.port() == Some(80) {
-        let _ = url.set_port(None);
-    }
-    if url.scheme() == "https" && url.port() == Some(443) {
-        let _ = url.set_port(None);
-    }
     url
 }
 
@@ -1613,6 +1608,23 @@ async fn mark_doc_not_modified(pool: &PgPool, project: &str, doc_id: i64) -> Res
 mod tests {
     use super::*;
     use jc_core::kinds::assistant::PdfPolicy;
+
+    /// The frontier's key drops the fragment; a scheme's default port is gone already, since
+    /// `Url` drops it when it parses or joins one.
+    #[test]
+    fn a_canonical_url_has_no_fragment_and_no_default_port() {
+        for (raw, key) in [
+            ("http://h.example:80/a#top", "http://h.example/a"),
+            ("https://h.example:443/a?q=1#x", "https://h.example/a?q=1"),
+            ("https://h.example:8443/a", "https://h.example:8443/a"),
+        ] {
+            let url = Url::parse(raw).expect("parses");
+            assert_eq!(canonicalise_url(url).as_str(), key);
+        }
+        let base = Url::parse("https://h.example/").expect("parses");
+        let joined = base.join("https://h.example:443/b").expect("joins");
+        assert_eq!(joined.port(), None);
+    }
 
     fn website(start_urls: &[&str]) -> KnowledgeSourceSpec {
         KnowledgeSourceSpec {

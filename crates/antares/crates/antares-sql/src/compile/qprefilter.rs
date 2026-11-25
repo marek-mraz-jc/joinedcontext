@@ -526,4 +526,30 @@ mod tests {
             c.sql
         );
     }
+
+    /// A timeproperty with no parsed column keeps the exact text window but
+    /// no btree bound; `between` without an end has no window at all, so the
+    /// leaf stays a superset and is not exact.
+    #[test]
+    fn a_window_without_a_column_or_an_end_still_widens() {
+        let ast = parse_q("speed>25").expect("parse");
+        let r = InstanceRange {
+            timeproperty: "expiresAt",
+            ..between()
+        };
+        let c = compile_prefilter(&ast, Some(&r), "m", 1, &ex).expect("compiles");
+        assert!(!c.sql.contains("qi.observed_at"), "{}", c.sql);
+        assert!(c.binds.iter().any(|b| b == "expiresAt"), "{:?}", c.binds);
+        assert_dense(&c, 1);
+        assert!(prefilter_exact(&ast, Some(&r), &ex));
+
+        let open = InstanceRange {
+            end_time_at: None,
+            ..between()
+        };
+        let c = compile_prefilter(&ast, Some(&open), "m", 1, &ex).expect("compiles");
+        assert!(!c.binds.iter().any(|b| b == "observedAt"), "{:?}", c.binds);
+        assert_dense(&c, 1);
+        assert!(!prefilter_exact(&ast, Some(&open), &ex));
+    }
 }

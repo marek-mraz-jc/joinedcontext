@@ -740,6 +740,38 @@ async fn a_service_account_is_never_an_operator() {
     assert!(refused.to_string().contains("service account"), "{refused}");
 }
 
+/// A person the installation realm does not hold is refused at the proposal, naming the subject;
+/// a realm with no operators' group is 409 at approval and the Change stays open.
+#[tokio::test]
+async fn an_unknown_person_or_a_realm_without_the_group_changes_nothing() {
+    let (mut state, _) = world().await;
+    let subject = fresh_subject();
+    let kc = realm(&mut state, &subject, "f@ops.example", true, &[]).await;
+    let (status, refused) = propose(
+        &state,
+        operator(&state, "ops-a"),
+        json!({ "kind": "OperatorAdd", "subject": fresh_subject() }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(refused.to_string().contains("has no person"), "{refused}");
+    assert!(refused.to_string().contains("subject"), "{refused}");
+
+    let id = propose_operator(&state, "OperatorAdd", &subject).await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/ops/groups"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .with_priority(1)
+        .mount(&kc)
+        .await;
+    expect_write(&kc, "PUT", &subject, 204, 0).await;
+    let (status, refused) = decide(&state, operator(&state, "ops-b"), &id, "approve").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert!(refused.to_string().contains("has no group"), "{refused}");
+    assert_eq!(change_state(&state, &id).await, "proposed");
+    kc.verify().await;
+}
+
 /// A removal that would leave one operator is refused at approval, so nobody needs the cluster
 /// to approve a Change again; with a third operator it applies (bounce row 2).
 #[tokio::test]
@@ -862,8 +894,13 @@ fn with_age_key(state: &mut AppState) {
 /// Organization's administrator reads and asks for nothing; the proposer never approves; the
 /// password is sealed until a second operator approves, written to the sign-in service then,
 /// and never in a read, the payload, the audit or a decided row.
+/// The installation has one `smtp` target and one open operator Change on it at a time, and the
+/// tests share the database: the two tests that open an `SmtpSet` Change take turns.
+static SMTP_TARGET: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 async fn the_e_mail_server_waits_for_a_second_operator_and_its_password_is_never_read_back() {
+    let _smtp = SMTP_TARGET.lock().await;
     let (mut state, _) = world().await;
     with_age_key(&mut state);
     let kc = realm(&mut state, "sub-ops-b", "ops-b", true, &[]).await;
@@ -1032,6 +1069,68 @@ async fn the_e_mail_server_waits_for_a_second_operator_and_its_password_is_never
         .map(|r| serde_json::from_slice(&r.body).unwrap_or_default())
         .collect();
     assert_eq!(to, vec![json!({ "to": "ops-a@hel.fi" })]);
+}
+
+/// An e-mail server user needs a password once: none typed and none stored is 422 on
+/// `smtp.password`; a seal that went missing is 409 at approval; a realm that refuses the
+/// settings is 422 on `smtp` and the Change stays open.
+#[tokio::test]
+async fn the_e_mail_server_password_and_the_realms_refusal_are_named() {
+    let _smtp = SMTP_TARGET.lock().await;
+    let (mut state, _) = world().await;
+    with_age_key(&mut state);
+    let kc = realm(&mut state, "sub-ops-b", "ops-b", true, &[]).await;
+    let smtp_door = "/admin/realms/ops/smtp-server";
+    Mock::given(method("GET"))
+        .and(path(smtp_door))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&kc)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(smtp_door))
+        .respond_with(
+            ResponseTemplate::new(422)
+                .set_body_json(json!({ "error": "the host does not answer" })),
+        )
+        .mount(&kc)
+        .await;
+    let smtp = |password: Option<&str>| {
+        let mut smtp = json!({
+            "host": "smtp.example.org", "port": 587, "tls": "starttls",
+            "from": "noreply@example.org", "user": "mailer",
+        });
+        if let Some(password) = password {
+            smtp["password"] = json!(password);
+        }
+        json!({ "kind": "SmtpSet", "smtp": smtp })
+    };
+    let (status, refused) = propose(&state, operator(&state, "ops-a"), smtp(None)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(refused.to_string().contains("smtp.password"), "{refused}");
+
+    let secret = format!("smtp-pw-{}", run("q"));
+    let pool = state.db.clone().expect("db");
+    for (unsealed, want, words) in [
+        (true, StatusCode::CONFLICT, "no longer sealed"),
+        (false, StatusCode::UNPROCESSABLE_ENTITY, "does not answer"),
+    ] {
+        let (status, made) = propose(&state, operator(&state, "ops-a"), smtp(Some(&secret))).await;
+        assert_eq!(status, StatusCode::CREATED, "{made}");
+        let id = made["id"].as_str().expect("id").to_owned();
+        if unsealed {
+            sqlx::query("UPDATE operator_changes SET sealed_secret = NULL WHERE id = $1::uuid")
+                .bind(&id)
+                .execute(&pool)
+                .await
+                .expect("the seal goes");
+        }
+        let (status, refused) = decide(&state, operator(&state, "ops-b"), &id, "approve").await;
+        assert_eq!(status, want, "{refused}");
+        assert!(refused.to_string().contains(words), "{words}: {refused}");
+        assert!(!refused.to_string().contains(&secret), "{refused}");
+        assert_eq!(change_state(&state, &id).await, "proposed");
+        decide(&state, operator(&state, "ops-b"), &id, "reject").await;
+    }
 }
 
 /// T-7188: the installation's look is an operator Change. An Organization's administrator asks

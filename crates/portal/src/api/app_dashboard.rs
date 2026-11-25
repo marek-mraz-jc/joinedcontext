@@ -1119,6 +1119,117 @@ mod tests {
         }
     }
 
+    /// Each malformed part of a dashboard file is refused at its own path, beside the cases the
+    /// SDK shares.
+    #[test]
+    fn each_malformed_part_is_refused_at_its_path() {
+        let known = names(&["a", "b"]);
+        let before = serde_json::json!({ "grid": { "source": "s", "type": "T" } });
+        let grid = |extra: Value| {
+            let mut grid = serde_json::json!({ "source": "s", "type": "T" });
+            for (key, value) in extra.as_object().expect("an object") {
+                grid[key] = value.clone();
+            }
+            serde_json::json!({ "grid": grid })
+        };
+        let many = |n: usize| Value::Array(vec![serde_json::json!({ "attr": "a" }); n]);
+        for (config, path) in [
+            (serde_json::json!([]), ""),
+            (serde_json::json!({ "grid": 5 }), "/grid"),
+            (
+                grid(serde_json::json!({ "columns": many(MAX_COLUMNS + 1) })),
+                "/grid/columns",
+            ),
+            (
+                grid(serde_json::json!({ "columns": [5] })),
+                "/grid/columns/0",
+            ),
+            (
+                grid(serde_json::json!({ "columns": [{ "attr": "a", "width": 0 }] })),
+                "/grid/columns/0/width",
+            ),
+            (
+                grid(serde_json::json!({ "columns": [{ "attr": "a", "pinned": "yes" }] })),
+                "/grid/columns/0/pinned",
+            ),
+            (
+                grid(serde_json::json!({ "columns": [{ "attr": "a", "show": 1 }] })),
+                "/grid/columns/0/show",
+            ),
+            (
+                grid(serde_json::json!({ "columns": [{ "attr": "a", "formula": "a + 1" }] })),
+                "/grid/columns/0/formula",
+            ),
+            (
+                grid(serde_json::json!({ "columns": [{ "attr": "occ", "formula": 5 }] })),
+                "/grid/columns/0/formula",
+            ),
+            (
+                grid(serde_json::json!({ "columns": [{ "attr": 5 }] })),
+                "/grid/columns/0/attr",
+            ),
+            (grid(serde_json::json!({ "pageSize": 0 })), "/grid/pageSize"),
+            (
+                grid(serde_json::json!({ "density": "tight" })),
+                "/grid/density",
+            ),
+            (
+                grid(serde_json::json!({ "entityTimestamps": "yes" })),
+                "/grid/entityTimestamps",
+            ),
+            (grid(serde_json::json!({ "map": 5 })), "/grid/map"),
+            (
+                grid(serde_json::json!({ "map": { "enabled": "yes" } })),
+                "/grid/map/enabled",
+            ),
+            (
+                serde_json::json!({ "filters": many(MAX_FILTERS + 1) }),
+                "/filters",
+            ),
+            (serde_json::json!({ "filters": [5] }), "/filters/0"),
+            (
+                serde_json::json!({ "filters": [{ "attr": "a", "op": "==", "value": [1] }] }),
+                "/filters/0/value",
+            ),
+            (serde_json::json!({ "colour": 5 }), "/colour"),
+            (
+                serde_json::json!({ "colour": { "attr": "a", "bands": [] } }),
+                "/colour/bands",
+            ),
+            (
+                serde_json::json!({ "colour": { "attr": "a", "bands": [5] } }),
+                "/colour/bands/0",
+            ),
+            (serde_json::json!({ "chart": 5 }), "/chart"),
+            (
+                serde_json::json!({ "chart": { "x": 5, "agg": "count" } }),
+                "/chart/x",
+            ),
+            (
+                serde_json::json!({ "kpis": Value::Array(vec![serde_json::json!({ "label": "n", "agg": "count" }); MAX_KPIS + 1]) }),
+                "/kpis",
+            ),
+            (serde_json::json!({ "kpis": [5] }), "/kpis/0"),
+            (
+                serde_json::json!({ "kpis": [{ "label": " ", "agg": "count" }] }),
+                "/kpis/0/label",
+            ),
+        ] {
+            let found = check(&config, &before, &known);
+            let want = format!("config{path}:");
+            assert!(
+                found.iter().any(|f| f.starts_with(&want)),
+                "{config}: {want} not among {found:?}"
+            );
+        }
+        let fine = serde_json::json!({ "grid": { "source": "s", "type": "T" }, "filters": [{ "attr": "a", "op": "==", "value": true }] });
+        assert_eq!(check(&fine, &before, &known), Vec::<String>::new());
+        assert_eq!(
+            formula::parse("* a", Some(&known)).map_err(|(_, at)| at),
+            Err(0)
+        );
+    }
+
     /// Project ovzdusie with App `bikes`, which pia@hel.fi may read when `granted`; no forge.
     fn world(granted: bool) -> AppState {
         use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};

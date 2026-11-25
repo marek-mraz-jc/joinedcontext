@@ -226,6 +226,179 @@ fn a_peer_model_becomes_a_read_only_foreign_data_model() {
     );
 }
 
+/// The name a plan prints for each outcome.
+#[test]
+fn each_outcome_prints_its_plan_word() {
+    assert_eq!(Outcome::Created.as_str(), "created");
+    assert_eq!(Outcome::Unchanged.as_str(), "unchanged");
+    assert_eq!(Outcome::Changed.as_str(), "changed");
+}
+
+/// A reference of a kind that mirrors nothing, or one without a project, is refused before the
+/// peer is asked for anything.
+#[test]
+fn only_a_reference_with_a_project_mirrors() {
+    let dir = repo_dir("not-a-reference");
+    let peer = Peer::air();
+    let mut endpoint = reference();
+    endpoint.kind = "Endpoint".to_owned();
+    let error = foreign_models::mirror(&endpoint, BASE, "2026-09-07T08:00:00Z", &load(&dir), &peer)
+        .expect_err("an Endpoint is no reference");
+    assert!(matches!(error, MirrorError::NotAReference), "{error}");
+
+    let mut homeless = reference();
+    homeless.metadata.namespace = None;
+    let error = foreign_models::mirror(&homeless, BASE, "2026-09-07T08:00:00Z", &load(&dir), &peer)
+        .expect_err("a reference outside a project");
+    assert!(matches!(error, MirrorError::NoProject), "{error}");
+    assert!(peer.asked.borrow().is_empty(), "{:?}", peer.asked.borrow());
+}
+
+/// A reference whose spec does not parse, or parses and fails its own validation, is a spec
+/// error naming the problem, for either kind of reference.
+#[test]
+fn a_reference_with_a_broken_spec_is_a_spec_error() {
+    let dir = repo_dir("broken-spec");
+    let repo = load(&dir);
+    let spec_error = |spec: Value, kind: &str| {
+        let mut broken = reference();
+        broken.kind = kind.to_owned();
+        broken.spec = spec;
+        match foreign_models::mirror(&broken, BASE, "2026-09-07T08:00:00Z", &repo, &Peer::air()) {
+            Err(MirrorError::Spec(message)) => message,
+            other => panic!("{kind}: expected a spec error, got {other:?}"),
+        }
+    };
+    let unknown = spec_error(
+        json!({ "alias": "partner-air", "token": "x" }),
+        "SharedSpaceReference",
+    );
+    assert!(unknown.contains("token"), "{unknown}");
+    spec_error(
+        json!({ "endpointSlug": "zt4qm7ge2xdv6ksb3ncf5arw2y", "alias": "Not A Label" }),
+        "SharedSpaceReference",
+    );
+    spec_error(
+        json!({ "contextSpaceRef": "hub", "bogus": 1 }),
+        "ContextSourceRegistration",
+    );
+    spec_error(
+        json!({ "contextSpaceRef": "hub", "federation": { "identity": "caller" },
+                "information": [{ "entities": [{ "type": "AirQualityObserved" }] }] }),
+        "ContextSourceRegistration",
+    );
+}
+
+/// A registration mirrors into the space it registers into, inside its own project.
+#[test]
+fn a_registration_mirrors_into_the_space_it_registers_into() {
+    let dir = repo_dir("registration");
+    let mut registration = reference();
+    registration.kind = "ContextSourceRegistration".to_owned();
+    registration.spec = json!({
+        "contextSpaceRef": "partner-air",
+        "endpoint": "https://peer.example/ngsi-ld/v1",
+        "federation": { "identity": "caller" },
+        "information": [{ "entities": [{ "type": "AirQualityObserved" }] }],
+    });
+    let mirror = foreign_models::mirror(
+        &registration,
+        BASE,
+        "2026-09-07T08:00:00Z",
+        &load(&dir),
+        &Peer::air(),
+    )
+    .expect("the registration mirrors");
+    assert_eq!(mirror.models.len(), 1, "{:?}", mirror.flags);
+    assert!(
+        mirror.models[0]
+            .path
+            .starts_with("projects/ovzdusie/spaces/partner-air"),
+        "{}",
+        mirror.models[0].path.display()
+    );
+}
+
+/// A catalogue that is JSON but lists no models array is refused as an index error.
+#[test]
+fn a_catalogue_without_a_models_array_is_an_index_error() {
+    let dir = repo_dir("no-models");
+    let mut peer = Peer::air();
+    peer.documents.insert(
+        format!("{BASE}/schema/index.json"),
+        br#"{"models":{}}"#.to_vec(),
+    );
+    let error = foreign_models::mirror(
+        &reference(),
+        BASE,
+        "2026-09-07T08:00:00Z",
+        &load(&dir),
+        &peer,
+    )
+    .expect_err("no models array");
+    assert!(
+        matches!(error, MirrorError::Index(ref m) if m.contains("models")),
+        "{error}"
+    );
+}
+
+/// An example the catalogue vouches for but the peer answers 404 on is left out; the model is
+/// still mirrored with its two required documents.
+#[test]
+fn a_vouched_example_answering_404_is_left_out() {
+    let dir = repo_dir("example-404");
+    let peer = Peer::air().without(&format!("{BASE}/schema/v1/{EXAMPLE}"));
+    let mirror = run(&dir, &peer);
+    assert!(mirror.flags.is_empty(), "{:?}", mirror.flags);
+    assert_eq!(mirror.models.len(), 1);
+    assert!(mirror.models[0]
+        .files
+        .iter()
+        .all(|(path, _)| !path.to_string_lossy().ends_with(EXAMPLE)));
+}
+
+/// A catalogue entry that parses into a DataModel but fails its validation (a type that is no
+/// entity type name) is skipped with the validation error.
+#[test]
+fn an_entry_with_a_type_that_is_no_entity_type_is_skipped() {
+    let dir = repo_dir("bad-type");
+    let peer = peer_listing(json!([
+        { "name": "air", "version": 1, "semver": "1.2.0", "types": ["not a type"], "artifacts": air_artifacts() }
+    ]));
+    let mirror = run(&dir, &peer);
+    assert!(mirror.models.is_empty());
+    assert!(
+        mirror.flags[0].contains("does not mirror into a DataModel"),
+        "{:?}",
+        mirror.flags
+    );
+}
+
+/// A mirror written where a file stands in for a folder, or onto a folder, fails naming the
+/// path, and writes nothing half way.
+#[test]
+fn a_mirror_written_onto_a_file_or_a_folder_is_an_io_error() {
+    let dir = repo_dir("write-blocked");
+    let mirror = run(&dir, &Peer::air());
+    let model_dir = dir
+        .join(&mirror.models[0].path)
+        .parent()
+        .expect("a parent")
+        .to_path_buf();
+    std::fs::create_dir_all(model_dir.parent().expect("a grandparent")).expect("create");
+    std::fs::write(&model_dir, b"a file where the folder goes").expect("block the folder");
+    let error = foreign_models::write(&dir, &mirror).expect_err("the folder is a file");
+    assert!(matches!(error, MirrorError::Io { .. }), "{error}");
+
+    let dir = repo_dir("write-onto-folder");
+    std::fs::create_dir_all(dir.join(&mirror.models[0].path)).expect("a folder at the file");
+    let error = foreign_models::write(&dir, &mirror).expect_err("the file is a folder");
+    match error {
+        MirrorError::Io { path, .. } => assert_eq!(path, mirror.models[0].path),
+        other => panic!("expected an io error, got {other}"),
+    }
+}
+
 /// DM-48: a peer without a schema surface is flagged, and the reference stands without a model.
 #[test]
 fn a_peer_without_a_schema_surface_is_flagged_and_still_referenced() {

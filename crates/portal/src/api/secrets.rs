@@ -506,24 +506,36 @@ mod tests {
             "bad name",
             &[("ok", "  "), ("bad key", "v"), ("big", long.as_str())],
         ));
-        let Err(ApiError::Unprocessable { errors, .. }) = refused else {
-            panic!("expected 422, got {refused:?}");
-        };
+        let refused = refused.expect_err("refused");
         assert_eq!(
-            errors
+            refused
+                .field_errors()
                 .iter()
                 .map(|e| e.split(':').next().unwrap_or_default())
                 .collect::<Vec<_>>(),
             vec!["name", "values.bad key", "values.big", "values.ok"]
         );
-        let Err(ApiError::Unprocessable { errors, .. }) = refuse_invalid(&form("empty", &[]))
-        else {
-            panic!("an empty form passed");
-        };
+        let refused = refuse_invalid(&form("empty", &[])).expect_err("refused");
+        let errors = refused.field_errors();
         assert!(
-            matches!(errors.as_slice(), [only] if only.starts_with("values: 1 to")),
+            matches!(errors, [only] if only.starts_with("values: 1 to")),
             "{errors:?}"
         );
+    }
+
+    /// A secret's values never show in a `{:?}`; its name and keys do.
+    #[test]
+    fn a_secret_write_shows_its_keys_and_never_its_values() {
+        let write = SecretWrite {
+            name: "counters-api".into(),
+            values: [("apiKey".to_owned(), "typed-value-1".to_owned())].into(),
+        };
+        let shown = format!("{write:?}");
+        assert!(
+            shown.contains("counters-api") && shown.contains("apiKey"),
+            "{shown}"
+        );
+        assert!(!shown.contains("typed-value-1"), "{shown}");
     }
 
     /// A replace keeps every reader of the old file once, the Portal's own recipient first.

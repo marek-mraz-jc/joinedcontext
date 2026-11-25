@@ -595,6 +595,29 @@ async fn an_imported_organization_model_travels_with_the_project() {
     );
 }
 
+/// MF-49: a project importing a model the organization does not hold is not exported, and the
+/// refusal names the missing model.
+#[tokio::test]
+async fn an_import_of_a_model_the_organization_lacks_is_not_exported() {
+    let (server, state) = world(HEAD).await;
+    importing(&server, &state, "1.3.0").await;
+    state
+        .mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: ORG_NAMESPACE.into(),
+            kind: "DataModel".into(),
+            name: "stations".into(),
+        })
+        .expect("the organization model was there");
+    let answer = export(&state, steward(), "?format=git").await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(
+        answer.text.contains("holds no model 'stations'"),
+        "{}",
+        answer.text
+    );
+}
+
 /// MF-49: a project importing a major the organization no longer holds is not exported, and the
 /// refusal names the import.
 #[tokio::test]
