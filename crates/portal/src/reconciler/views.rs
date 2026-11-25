@@ -4399,7 +4399,7 @@ mod tests {
         at
     }
 
-    const PIPELINE: &str = "  class: resident\n  sources: [{dataSourceRef: {kind: DataSource, name: feed}}]\n  outputs:\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-air:air-public\", type: Car}\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-air:air-public\", type: Bus}\n  history: [{type: Car, attributes: [{names: [speed], keep: changes, heartbeat: PT15M}]}]\n";
+    const PIPELINE: &str = "  class: resident\n  sources: [{dataSourceRef: {kind: DataSource, name: feed}}]\n  outputs:\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-air:air-public\", type: Car}\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-air:air-public\", type: Bus}\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-plain:plain-public\", type: Car}\n  history: [{type: Car, attributes: [{names: [speed], keep: changes, heartbeat: PT15M}]}]\n";
 
     /// Every kind the views read, each with a manifest whose spec does not read beside a good
     /// one: the bad one is left out (the load reported it), the good one is read, a declared
@@ -4442,6 +4442,14 @@ mod tests {
             "air",
             "air-public",
             &format!("  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n"),
+        );
+        put_manifest(
+            &dir,
+            "Endpoint",
+            "city",
+            "plain",
+            "plain-public",
+            "  contextSpaceRef: plain\n  slug: aaaaaaaaaaaaaaaaaaaaaaaaaa\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n",
         );
         put_manifest(&dir, "Endpoint", "city", "air", "broken-endpoint", bad);
         let grant = "  contextSpaceRef: air\n  assigner: did:web:city.example\n  assignee: { kind: role, id: public }\n  operations: [retrieveOps]\n  information:\n    - entities: [{ type: Car }]\n";
@@ -4521,14 +4529,17 @@ mod tests {
         let plain = ("city".to_owned(), "plain".to_owned());
         assert!(read.quarantines.contains(&air));
         assert!(read.quality.contains_key(&air) && !read.quality.contains_key(&plain));
-        assert!(!read.retention.contains_key(&plain));
+        assert!(
+            !read.retention.contains_key(&plain),
+            "a space that does not read keeps no retention, a Pipeline's history included"
+        );
         assert!(
             read.retention[&air][0].attributes.contains_key("speed"),
             "the Pipeline's Car history is recorded in the space's retention: {:?}",
             read.retention[&air]
         );
         let endpoints: Vec<&str> = read.endpoints.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(endpoints, ["air-public"]);
+        assert_eq!(endpoints, ["air-public", "plain-public"]);
         let policies: Vec<&str> = read.policies[&air]
             .iter()
             .map(|(n, _)| n.as_str())
@@ -6903,8 +6914,9 @@ mod tests {
     /// admin token. ci-full's `test-all`, the job that starts it, without them is a failure,
     /// never a pass; elsewhere the test returns, other ci-full jobs (the README's commands) too.
     fn jc_broker() -> Option<(String, PathBuf)> {
-        let ci_full = std::env::var("GITHUB_WORKFLOW").as_deref() == Ok("ci-full")
-            && std::env::var("GITHUB_JOB").as_deref() == Ok("test-all");
+        let ci_full = [("GITHUB_WORKFLOW", "ci-full"), ("GITHUB_JOB", "test-all")]
+            .iter()
+            .all(|(name, value)| std::env::var(name).as_deref() == Ok(*value));
         jc_broker_from(
             std::env::var("JC_PORTAL_TEST_BROKER_URL").ok(),
             std::env::var("JC_PORTAL_TEST_BROKER_TOKEN_FILE").ok(),
@@ -7029,9 +7041,8 @@ mod tests {
     /// renders from the platform's `senzor.linkml.yaml` fixture.
     #[tokio::test]
     async fn the_writer_converges_the_jc_broker() {
-        let Some((broker, token_file)) = jc_broker() else {
-            return;
-        };
+        let Some(named) = jc_broker() else { return };
+        let (broker, token_file) = named;
         let token = std::fs::read_to_string(&token_file).expect("the token file reads");
         let token = token.trim();
         let http = reqwest::Client::new();
