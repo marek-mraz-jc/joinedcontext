@@ -213,8 +213,9 @@ impl Spool {
     }
 
     fn volume_has_room(&self, more: u64) -> ShakoResult<()> {
-        let volume =
-            rustix::fs::fstatvfs(&self.file).map_err(|e| spool_io(std::io::Error::from(e)))?;
+        let volume = rustix::fs::fstatvfs(&self.file)
+            .map_err(std::io::Error::from)
+            .map_err(spool_io)?;
         if volume.f_bavail.saturating_mul(volume.f_frsize) < more.saturating_add(VOLUME_RESERVE) {
             return Err(ShakoError::Overloaded(
                 "the repository volume is nearly full".into(),
@@ -315,6 +316,10 @@ mod tests {
         GitWork::new(dir.to_path_buf(), spool, MEMORY_BYTES)
     }
 
+    fn nothing(_admit: shako_git::Admit<'_>) -> ShakoResult<()> {
+        Ok(())
+    }
+
     fn quota(e: &ShakoError) -> Option<(&str, u64)> {
         match e {
             ShakoError::QuotaExceeded { resource, limit } => Some((resource.as_str(), *limit)),
@@ -325,7 +330,8 @@ mod tests {
     /// A body declared or sent past its limit is refused naming `request_body_bytes`; one within
     /// it is spooled and answered back with its length.
     #[tokio::test]
-    async fn a_body_past_its_limit_is_refused_and_one_within_is_spooled() -> ShakoResult<()> {
+    async fn a_body_past_its_limit_is_refused_and_one_within_is_spooled()
+    -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir().map_err(spool_io)?;
         let work = work(dir.path(), 64 * MIB);
         let org = OrgId::from_u128(1);
@@ -348,10 +354,51 @@ mod tests {
             .await?;
         let response = spool.respond("application/x-git").await?;
         assert_eq!(response.headers()[header::CONTENT_LENGTH], "5");
-        let bytes = axum::body::to_bytes(response.into_body(), 1024)
-            .await
-            .map_err(|e| ShakoError::Internal(e.to_string()))?;
+        let bytes = axum::body::to_bytes(response.into_body(), 1024).await?;
         assert_eq!(&bytes[..], b"hello");
+        Ok(())
+    }
+
+    /// A body that stops arriving is dropped after the send idle time, as a bad request that
+    /// says so; the clock is paused, so the test waits no 30 s.
+    #[tokio::test(start_paused = true)]
+    async fn a_body_that_stops_arriving_is_a_bad_request() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use futures_util::StreamExt as _;
+        let dir = tempfile::tempdir()?;
+        let work = work(dir.path(), 64 * MIB);
+        let first = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(b"0"))]);
+        let stalled = first.chain(futures_util::stream::pending());
+        let started = tokio::time::Instant::now();
+        let answer = work
+            .receive(
+                OrgId::from_u128(10),
+                &HeaderMap::new(),
+                Body::from_stream(stalled),
+                MIB,
+            )
+            .await;
+        assert!(
+            matches!(&answer, Err(ShakoError::BadRequest(m)) if m == "the request body stopped arriving")
+        );
+        assert!(started.elapsed() >= SEND_IDLE);
+        Ok(())
+    }
+
+    /// A spool or a growth the volume cannot hold beside its reserve is an overload naming the
+    /// volume, before a byte is written.
+    #[tokio::test]
+    async fn a_spool_the_volume_cannot_hold_is_an_overload() -> ShakoResult<()> {
+        let dir = tempfile::tempdir().map_err(spool_io)?;
+        let huge = 1u64 << 60;
+        let work = work(dir.path(), huge * 2);
+        let full = |r: &ShakoResult<()>| matches!(r, Err(ShakoError::Overloaded(m)) if m == "the repository volume is nearly full");
+        let spool = work.spool(OrgId::from_u128(11), huge).await.map(drop);
+        assert!(full(&spool), "{spool:?}");
+        let mut spool = work.spool(OrgId::from_u128(11), 0).await?;
+        spool.cap(u64::MAX);
+        assert!(full(&spool.hold(huge)));
+        assert!(spool.hold(8 * MIB).is_ok(), "a small growth still fits");
         Ok(())
     }
 
@@ -493,10 +540,12 @@ mod tests {
             }
         });
         held_rx.await?;
-        let ran = work.run(OrgId::from_u128(9), |_admit| Ok(())).await;
+        let ran = work.run(OrgId::from_u128(9), nothing).await;
         let _ = done_tx.send(());
         holder.await??;
         assert!(matches!(&ran, Err(ShakoError::Overloaded(m)) if m.contains("git_memory_bytes")));
+        // Once the holder is done, the same job runs.
+        work.run(OrgId::from_u128(9), nothing).await?;
         Ok(())
     }
 }

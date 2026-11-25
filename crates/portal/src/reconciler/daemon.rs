@@ -20,7 +20,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +48,17 @@ const PIPELINE_RUNNER_DEPLOYMENT: &str = "pipeline-runner";
 /// What a merged change takes live ahead of the whole run (T-6455): what a new space takes its
 /// first write through. Every other kind has a step of a run that compares it with the mirror.
 const GO_LIVE_KINDS: [&str; 4] = ["ContextSpace", "DataModel", "Endpoint", "Policy"];
+
+/// Log lines kept as consts so each `tracing` call stays on one line.
+const LAST_RUN_SERVES: &str =
+    "the last completed run's mirror serves until this process's first run ends";
+const WAVE_SKIPPED: &str =
+    "the catalogue wave of the last run is still running: this run's is skipped";
+const HANDED_TO_HOST: &str = "the pipeline runner's secrets are handed to the host runner";
+const NO_RUNNER: &str = "no cluster: a pipeline's credentials resolve and reach no runner";
+const KEYS_LOOKUP_ONLY: &str =
+    "no gateway namespace or no cluster: the personal-data keys reach only the subject lookup";
+const CATALOGUE_UPDATED: &str = "the NGSI-LD catalogue was brought up to date";
 
 /// How long a managed roles file seen held is taken as held before the branch is read again.
 const ROLES_HELD_FOR: std::time::Duration = std::time::Duration::from_secs(300);
@@ -162,11 +173,8 @@ fn drift_summary(err: &SyncError) -> String {
 /// One line when warnings of a family stopped standing since the last cycle, with how many.
 fn cleared(what: &str, change: &super::warned::Change) {
     if change.cleared > 0 {
-        tracing::info!(
-            cleared = change.cleared,
-            standing = change.standing,
-            "{what}: some no longer stand"
-        );
+        let (cleared, standing) = (change.cleared, change.standing);
+        tracing::info!(cleared, standing, "{what}: some no longer stand");
     }
 }
 
@@ -893,7 +901,7 @@ impl Syncer {
     pub fn with_leadership(mut self, leadership: Arc<Leadership>) -> Self {
         self.status
             .write()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .leader = leadership.is_leader();
         self.leadership = Some(leadership);
         self
@@ -913,7 +921,7 @@ impl Syncer {
     pub fn accepted(&self) -> Option<Arc<Repository>> {
         self.accepted
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
@@ -930,7 +938,7 @@ impl Syncer {
     pub fn status(&self) -> SyncStatus {
         self.status
             .read()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone()
     }
 
@@ -965,16 +973,11 @@ impl Syncer {
                 let landed = before.revision.as_deref() != Some(revision.as_str());
                 // How long a merge waits for the mirror is this run's length, and a run in
                 // flight before it (PL-61, T-4270).
-                tracing::info!(
-                    %revision,
-                    manifests = count,
-                    leader,
-                    elapsed_ms = started.elapsed().as_millis() as u64,
-                    "sync run finished"
-                );
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                tracing::info!(%revision, manifests = count, leader, elapsed_ms, "sync run finished");
                 {
                     let now = crate::auth::session::now_unix();
-                    let mut status = self.status.write().unwrap_or_else(|p| p.into_inner());
+                    let mut status = self.status.write().unwrap_or_else(PoisonError::into_inner);
                     status.last_sync = Some(now);
                     status.revision = Some(revision.clone());
                     status.manifests = count;
@@ -1000,7 +1003,7 @@ impl Syncer {
                 let repeated = before.last_error.as_deref() == Some(message.as_str());
                 self.status
                     .write()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .last_error = Some(message.clone());
                 if !repeated {
                     self.say_drifted(&drift_summary(&err)).await;
@@ -1067,12 +1070,8 @@ impl Syncer {
             *merges = merges.wrapping_add(1);
         }
         drop(merges);
-        tracing::info!(
-            %revision,
-            changed,
-            elapsed_ms = started.elapsed().as_millis() as u64,
-            "merged change live"
-        );
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        tracing::info!(%revision, changed, elapsed_ms, "merged change live");
         Ok(())
     }
 
@@ -1092,10 +1091,7 @@ impl Syncer {
             Ok(resources) => {
                 self.provisional
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                tracing::info!(
-                    resources,
-                    "the last completed run's mirror serves until this process's first run ends"
-                );
+                tracing::info!(resources, "{LAST_RUN_SERVES}");
             }
             Err(error) => {
                 tracing::warn!(%error, path = %path.display(), "the last run's mirror does not load: the Portal answers 'starting' until the first run ends");
@@ -1159,12 +1155,7 @@ impl Syncer {
         match loaded {
             Ok((mirror, manifests)) => {
                 self.mirror.replace_all(&mirror);
-                tracing::warn!(
-                    error = %err,
-                    manifests,
-                    assembly = %self.assembly.display(),
-                    "the first run read nothing from the forge: the last assembly serves until a run does"
-                );
+                tracing::warn!(error = %err, manifests, assembly = %self.assembly.display(), "the first run read nothing from the forge: the last assembly serves until a run does");
             }
             Err(error) => {
                 tracing::warn!(%error, assembly = %self.assembly.display(), "the last assembly does not load either: nothing serves until the forge answers");
@@ -1257,7 +1248,10 @@ impl Syncer {
             .map(|refusal| (refusal.slug.clone(), refusal.reason.clone()))
             .collect();
         let told = {
-            let mut told = self.told_refused.lock().unwrap_or_else(|p| p.into_inner());
+            let mut told = self
+                .told_refused
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
             told.retain(|key| current.contains(key));
             told.clone()
         };
@@ -1299,7 +1293,7 @@ impl Syncer {
             self.tell_refusal(refusal, &sha, &authors).await;
             self.told_refused
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(PoisonError::into_inner)
                 .insert(key);
         }
     }
@@ -1459,7 +1453,7 @@ impl Syncer {
             Ok(leader) => {
                 self.status
                     .write()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .leader = leader;
                 leader
             }
@@ -1467,7 +1461,7 @@ impl Syncer {
                 tracing::warn!(error = %err, "cannot reach the database to elect a reconciler");
                 self.status
                     .write()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .leader = false;
                 false
             }
@@ -1490,7 +1484,7 @@ impl Syncer {
         let last = self
             .last_render
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         if let Some((render, _)) = last {
             if render.unchanged(&org).await {
@@ -1512,7 +1506,7 @@ impl Syncer {
         let last = self
             .last_render
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         if let Some((render, repository)) = last {
             if render.unchanged(&org).await {
@@ -1523,7 +1517,10 @@ impl Syncer {
             .render(stage_listed(&self.shako, revision, &org).await?, org, None)
             .await?;
         let fresh = (Arc::new(render), Arc::new(repository));
-        *self.last_render.lock().unwrap_or_else(|p| p.into_inner()) = Some(fresh.clone());
+        *self
+            .last_render
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(fresh.clone());
         Ok(fresh)
     }
 
@@ -1688,7 +1685,8 @@ impl Syncer {
         //     serves in its place, or nothing does (CHG-04).
         let (repository, refusals) =
             off_runtime(|| self.refuse_invalid(&scratch, repository, &revision, &default_branch));
-        *self.accepted.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::clone(&repository));
+        *self.accepted.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some(Arc::clone(&repository));
         steps.mark("stage");
 
         // 4b. The author's mapping beside a Pipeline manifest (PL-03): the loader leaves
@@ -2015,9 +2013,7 @@ impl Syncer {
             return None;
         }
         let Ok(mut previous) = Arc::clone(&self.catalogue).try_lock_owned() else {
-            tracing::info!(
-                "the catalogue wave of the last run is still running: this run's is skipped"
-            );
+            tracing::info!("{WAVE_SKIPPED}");
             return None;
         };
         if previous.is_none() {
@@ -2064,10 +2060,8 @@ impl Syncer {
     ) -> Result<(Arc<Render>, Arc<Repository>), SyncError> {
         let staging = std::time::Instant::now();
         let (scratch, repository) = self.staged(revision).await?;
-        tracing::info!(
-            elapsed_ms = staging.elapsed().as_millis() as u64,
-            "repository staged and loaded"
-        );
+        let elapsed_ms = staging.elapsed().as_millis() as u64;
+        tracing::info!(elapsed_ms, "repository staged and loaded");
         let misplaced = repository
             .misplaced()
             .into_iter()
@@ -2153,7 +2147,7 @@ impl Syncer {
         let accepted = self
             .accepted
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let mut served = (*repository).clone();
         for (id, refusal) in refusals.iter_mut() {
@@ -2182,7 +2176,7 @@ impl Syncer {
         let accepted = self
             .accepted
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let mut ids = BTreeMap::new();
         let mut held = std::collections::BTreeSet::new();
@@ -2558,7 +2552,7 @@ impl Syncer {
         let mut held_from = self
             .held_from
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .unwrap_or_else(PoisonError::into_inner);
         if fresh_mirror.removals_held() {
             held_from.get_or_insert_with(|| Arc::new(self.last_run_mirror()));
             let now = Mirror::new();
@@ -2577,7 +2571,7 @@ impl Syncer {
         let done = self
             .protected
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let mut due = Vec::new();
         if !done.contains(&self.shako.repo) {
@@ -2595,7 +2589,10 @@ impl Syncer {
                 .await;
             due.push((repository, protected));
         }
-        let mut protected = self.protected.lock().unwrap_or_else(|p| p.into_inner());
+        let mut protected = self
+            .protected
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         for (repository, result) in due {
             match result {
                 Ok(()) => {
@@ -2767,7 +2764,7 @@ impl Syncer {
                 *self
                     .app_client_secrets
                     .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = run.secrets;
+                    .unwrap_or_else(PoisonError::into_inner) = run.secrets;
             }
         }
         for clients in &self.organization_app_clients {
@@ -2847,7 +2844,7 @@ impl Syncer {
         let mut values = self
             .host_runner_values
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         if let Some(clients) = self.workload_clients.as_ref() {
             for (project, secrets) in clients.host_secrets_by_project() {
@@ -2919,7 +2916,7 @@ impl Syncer {
         let secrets = self
             .app_client_secrets
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let (apps, mut skipped) =
             super::edge_file::edge_apps(fresh_mirror, &secrets, settings, edge_file.wasm_host());
@@ -3391,12 +3388,7 @@ impl Syncer {
                 .await;
             match store.ensure_project(&key, legacy.as_ref()).await {
                 Ok(credentials) => {
-                    tracing::info!(
-                        project = %project,
-                        issued = credentials.len(),
-                        old_layout_read = legacy.is_some(),
-                        "artifact store credentials are in place"
-                    );
+                    tracing::info!(project = %project, issued = credentials.len(), old_layout_read = legacy.is_some(), "artifact store credentials are in place");
                     self.hand_over_reader(&key, store.as_ref()).await;
                 }
                 Err(err) => {
@@ -3699,19 +3691,15 @@ impl Syncer {
             *self
                 .host_runner_values
                 .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = runner.by_project().clone();
+                .unwrap_or_else(PoisonError::into_inner) = runner.by_project().clone();
             self.hand_to_host(host.as_ref());
-            tracing::info!(
-                variables = runner.variables().count(),
-                "the pipeline runner's secrets are handed to the host runner"
-            );
+            let variables = runner.variables().count();
+            tracing::info!(variables, "{HANDED_TO_HOST}");
         } else if !runner.is_empty() {
             let written = match self.credentials.as_ref() {
                 Some((kube, namespace)) => self.write_runner_secret(kube, namespace, &runner).await,
                 None => {
-                    tracing::info!(
-                        "no cluster: a pipeline's credentials resolve and reach no runner"
-                    );
+                    tracing::info!("{NO_RUNNER}");
                     false
                 }
             };
@@ -3755,8 +3743,7 @@ impl Syncer {
                 ) {
                     Ok(block) => block.key_ref,
                     Err(err) => {
-                        tracing::warn!(project = %namespace, space = %space, error = %err,
-                            "a space's personalData block is not one; its keyedHash slots have no key");
+                        tracing::warn!(project = %namespace, space = %space, error = %err, "a space's personalData block is not one; its keyedHash slots have no key");
                         continue;
                     }
                 };
@@ -3770,14 +3757,12 @@ impl Syncer {
                     Ok(raw) => crate::personal_keys::usable(&raw),
                     // The reference is named, the value never is (PL-17, MF-24).
                     Err(err) => {
-                        tracing::warn!(project = %namespace, space = %space, secret_ref = %reference.name, error = %err,
-                            "a space's personal-data key does not resolve; its keyedHash slots have no key");
+                        tracing::warn!(project = %namespace, space = %space, secret_ref = %reference.name, error = %err, "a space's personal-data key does not resolve; its keyedHash slots have no key");
                         continue;
                     }
                 };
                 let Some(key) = key else {
-                    tracing::warn!(project = %namespace, space = %space, secret_ref = %reference.name,
-                        "a space's personal-data key is shorter than 32 bytes; its keyedHash slots have no key");
+                    tracing::warn!(project = %namespace, space = %space, secret_ref = %reference.name, "a space's personal-data key is shorter than 32 bytes; its keyedHash slots have no key");
                     continue;
                 };
                 by_segment.insert(
@@ -3791,17 +3776,17 @@ impl Syncer {
         let (Some((kube, _)), Some(gateway)) = (self.credentials.as_ref(), gateway_namespace)
         else {
             if !by_segment.is_empty() {
-                tracing::info!(spaces = by_segment.len(),
-                    "no gateway namespace or no cluster: the personal-data keys reach only the subject lookup");
+                let spaces = by_segment.len();
+                tracing::info!(spaces, "{KEYS_LOOKUP_ONLY}");
             }
             return;
         };
         let secret = crate::personal_keys::secret(gateway, &by_segment);
         match kube.apply(&secret).await {
-            Ok(()) => tracing::debug!(
-                spaces = by_segment.len(),
-                "the gateway's personal-data keys are in place"
-            ),
+            Ok(()) => {
+                let spaces = by_segment.len();
+                tracing::debug!(spaces, "the gateway's personal-data keys are in place")
+            }
             Err(err) => {
                 tracing::warn!(error = %err, "the gateway's personal-data keys were not written")
             }
@@ -3839,8 +3824,7 @@ impl Syncer {
                 ) {
                     Ok(block) => block,
                     Err(err) => {
-                        tracing::warn!(project = %namespace, source = %name, error = %err,
-                                "the webhook block of a sync source is not one; it is not reachable through the webhook");
+                        tracing::warn!(project = %namespace, source = %name, error = %err, "the webhook block of a sync source is not one; it is not reachable through the webhook");
                         continue;
                     }
                 };
@@ -3853,14 +3837,14 @@ impl Syncer {
                                 Ok(secret) => secrets.push(secret),
                                 // The reference is named, the value never is: this line travels into
                                 // a log collector (PL-17, MF-24).
-                                Err(err) => tracing::warn!(project = %namespace, source = %name,
-                                secret = %reference.name, error = %err,
-                                "a sync source's webhook secret does not resolve"),
+                                Err(err) => {
+                                    tracing::warn!(project = %namespace, source = %name, secret = %reference.name, error = %err, "a sync source's webhook secret does not resolve")
+                                }
                             }
                         }
-                        None => tracing::warn!(project = %namespace, source = %name,
-                            secret = %reference.name,
-                            "this Portal has no secret backend, so a webhook-driven sync source is not reachable"),
+                        None => {
+                            tracing::warn!(project = %namespace, source = %name, secret = %reference.name, "this Portal has no secret backend, so a webhook-driven sync source is not reachable")
+                        }
                     }
                 }
                 if !secrets.is_empty() {
@@ -3868,10 +3852,8 @@ impl Syncer {
                 }
             }
         }
-        tracing::debug!(
-            sources = resolved.len(),
-            "sync sources reachable through the webhook"
-        );
+        let sources = resolved.len();
+        tracing::debug!(sources, "sync sources reachable through the webhook");
         accepted.replace_all(resolved);
     }
 
@@ -3893,10 +3875,8 @@ impl Syncer {
             tracing::warn!(error = %err, "the pipeline runner's secrets were not written");
             return false;
         }
-        tracing::info!(
-            variables = runner.variables().count(),
-            "the pipeline runner's secrets are in place"
-        );
+        let variables = runner.variables().count();
+        tracing::info!(variables, "the pipeline runner's secrets are in place");
         let rollout = serde_json::json!({
             "apiVersion": "apps/v1",
             "kind": "Deployment",
@@ -3929,15 +3909,12 @@ impl Syncer {
         let secret = crate::artifact_store::reader_secret(namespace, key, &reader);
         let name = crate::artifact_store::reader_secret_name(key);
         match kube.apply(&secret).await {
-            Ok(()) => tracing::info!(
-                secret = %name,
-                "the artifact store reader is in the namespace that serves"
-            ),
-            Err(err) => tracing::warn!(
-                secret = %name,
-                error = %err,
-                "the reader credential was minted and not handed over"
-            ),
+            Ok(()) => {
+                tracing::info!(secret = %name, "the artifact store reader is in the namespace that serves")
+            }
+            Err(err) => {
+                tracing::warn!(secret = %name, error = %err, "the reader credential was minted and not handed over")
+            }
         }
     }
 
@@ -3968,14 +3945,19 @@ impl Syncer {
                     .get(path)
                     .is_some_and(|(seen, at)| *seen == digest && at.elapsed() < ROLES_HELD_FOR)
             };
-            if held(&self.roles_held.lock().unwrap_or_else(|p| p.into_inner())) {
+            if held(
+                &self
+                    .roles_held
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner),
+            ) {
                 continue;
             }
             let existing = self.shako.get_file(path, branch).await?;
             let hold = || {
                 self.roles_held
                     .lock()
-                    .unwrap_or_else(|p| p.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .insert(path.to_owned(), (digest, std::time::Instant::now()));
             };
             if existing.as_ref().map(|f| f.content.as_str()) == Some(&*committed) {
@@ -4288,7 +4270,7 @@ fn writing_verdict(
 /// Errors and nothing sent is a stream that runs and never lands: a source that refuses the
 /// runner's token, a mapping that throws on every message. Errors beside writes are the ordinary
 /// weather of a stream — a page that failed and was retried — and say nothing on their own.
-fn failing(metrics: &str, stream: &str) -> Option<String> {
+pub fn failing(metrics: &str, stream: &str) -> Option<String> {
     let counters = crate::api::pipelines::scrape(metrics, stream, String::new());
     let errors = counters.errors?;
     if errors == 0 || counters.sent.unwrap_or(0) > 0 {
@@ -4370,31 +4352,25 @@ impl CatalogueWave {
         if let Some(catalogue) = self.ckan.as_ref() {
             let started = std::time::Instant::now();
             let reports = catalogue.converge(repository, previous, scratch).await;
-            tracing::info!(
-                reports = reports.len(),
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "the CKAN wave finished"
-            );
+            let (reports_len, elapsed_ms) = (reports.len(), started.elapsed().as_millis() as u64);
+            tracing::info!(reports = reports_len, elapsed_ms, "the CKAN wave finished");
             self.say_published(&reports).await;
         }
         // 5g. The same public Endpoints as NGSI-LD entities an agent searches first (T-4500).
         if let Some(catalog) = self.catalog.as_ref() {
             let started = std::time::Instant::now();
             match catalog.converge(repository).await {
-                Ok(Some(run)) if run.upserted + run.deleted > 0 => tracing::info!(
-                    upserted = run.upserted,
-                    deleted = run.deleted,
-                    "the NGSI-LD catalogue was brought up to date"
-                ),
+                Ok(Some(run)) if run.upserted + run.deleted > 0 => {
+                    let (upserted, deleted) = (run.upserted, run.deleted);
+                    tracing::info!(upserted, deleted, "{CATALOGUE_UPDATED}")
+                }
                 Ok(_) => {}
                 Err(err) => {
                     tracing::warn!(error = %err, "the NGSI-LD catalogue was not brought up to date")
                 }
             }
-            tracing::info!(
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "the NGSI-LD catalogue wave finished"
-            );
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            tracing::info!(elapsed_ms, "the NGSI-LD catalogue wave finished");
         }
     }
 
@@ -4672,7 +4648,7 @@ impl Syncer {
         }
         self.status
             .write()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .held_removals = held;
     }
 }
@@ -4947,7 +4923,7 @@ output_error{stream="kpi"} 6
             fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
                 self.0
                     .lock()
-                    .map_err(|_| std::io::Error::other("poisoned"))?
+                    .unwrap_or_else(PoisonError::into_inner)
                     .extend_from_slice(bytes);
                 Ok(bytes.len())
             }
@@ -4964,6 +4940,7 @@ output_error{stream="kpi"} 6
             .finish();
         let staged =
             tracing::subscriber::with_default(subscriber, || stageable(content).expect("YAML"));
+        std::io::Write::flush(&mut log.clone()).expect("an in-memory log flushes");
         let said = String::from_utf8_lossy(&log.0.lock().expect("log")).into_owned();
         (staged, said)
     }
@@ -6139,11 +6116,14 @@ output_error{stream="kpi"} 6
     async fn until_the_feed_is_asked(gateway: &MockServer, times: usize) {
         for _ in 0..200 {
             if feeds_read(gateway).await >= times {
-                return;
+                break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        panic!("the catalogue wave never asked the gateway");
+        assert!(
+            feeds_read(gateway).await >= times,
+            "the catalogue wave never asked the gateway"
+        );
     }
 
     /// T-5519: a catalogue that answers after seconds no longer holds the mirror swap. On dev one
@@ -6312,6 +6292,103 @@ output_error{stream="kpi"} 6
             !copy.path().join("projects/hel/endpoints").exists(),
             "a manifest was copied"
         );
+    }
+
+    /// EP-67: a secrets copy names the root it could not open and the file it could not read;
+    /// a path that is no UTF-8 is no secrets file and is left out.
+    #[test]
+    fn a_secrets_copy_names_what_it_could_not_read() {
+        use std::os::unix::ffi::OsStrExt;
+        let missing = std::env::temp_dir().join("t7806-no-such-root");
+        let err = secrets_copy(&missing)
+            .err()
+            .expect("a missing root is refused");
+        assert!(err.contains("t7806-no-such-root"), "{err}");
+
+        let dir = Scratch::new("t7806-secrets").expect("a scratch directory");
+        write_tree(
+            dir.path(),
+            &[(
+                "projects/hel/secrets/ckan.enc.yaml",
+                "ckan-api-token: ENC[x]\n",
+            )],
+        );
+        std::fs::write(
+            dir.path()
+                .join("projects/hel/secrets")
+                .join(std::ffi::OsStr::from_bytes(b"\xff.enc.yaml")),
+            "not read\n",
+        )
+        .expect("a file whose name is no UTF-8");
+        let unreadable = dir.path().join("projects/hel/secrets/broken.enc.yaml");
+        std::fs::write(&unreadable, [0xff, 0xfe, 0x00]).expect("a file that is no text");
+        let err = secrets_copy(dir.path())
+            .err()
+            .expect("an unreadable file is refused");
+        assert!(err.contains("broken.enc.yaml"), "{err}");
+
+        std::fs::remove_file(&unreadable).expect("removed");
+        let copy = secrets_copy(dir.path()).expect("the secrets copy");
+        let copied: Vec<_> = std::fs::read_dir(copy.path().join("projects/hel/secrets"))
+            .expect("the copied directory")
+            .map(|entry| entry.expect("an entry").file_name())
+            .collect();
+        assert_eq!(copied, [std::ffi::OsString::from("ckan.enc.yaml")]);
+    }
+
+    /// T-6455: a merge before the first run, or on a follower, takes nothing live and asks the
+    /// forge nothing.
+    #[tokio::test]
+    async fn a_merge_goes_live_only_on_a_leader_that_has_run() {
+        bare_syncer()
+            .go_live()
+            .await
+            .expect("before the first run nothing goes live");
+        let follower = Syncer::new(forge_at_dead(), Arc::new(Mirror::new()))
+            .with_leadership(Arc::new(Leadership::reconciler(dead_pool())));
+        follower
+            .status
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .revision = Some("rev-1".to_owned());
+        follower
+            .go_live()
+            .await
+            .expect("a follower converges nothing");
+    }
+
+    fn edge_settings() -> crate::apps::reconciler::Settings {
+        crate::apps::reconciler::Settings {
+            host: "portal.bb.sk".to_owned(),
+            apex: "apps.bb.sk".to_owned(),
+            gateway_url: None,
+            service_url: None,
+            namespace: "jc-apps".to_owned(),
+            release: None,
+            service_account: None,
+            org_domain: "bb.sk".to_owned(),
+            apisix_namespace: "jc-edge".to_owned(),
+            image_repository: None,
+            pull_secret: None,
+            basemap_base: None,
+        }
+    }
+
+    /// AP-112: the edge file a cluster refuses is said, and the edge keeps the file it read;
+    /// without an edge file nothing is composed and the registry's hosts wait.
+    #[tokio::test]
+    async fn an_edge_file_the_cluster_refuses_is_said_and_not_current() {
+        let mirror = Mirror::new();
+        assert!(!bare_syncer().converge_edge_file(&mirror).await);
+        let kube = answering(500).await;
+        let edge = super::super::edge_file::EdgeFile::new(
+            crate::apps::kube::KubeClient::with_token(&kube.uri(), "kube-token").expect("kube"),
+            "jc-edge".to_owned(),
+        );
+        let syncer = bare_syncer().with_edge_file(Arc::new(edge), edge_settings());
+        let (current, log) = crate::reconciler::logged(syncer.converge_edge_file(&mirror)).await;
+        assert!(!current);
+        assert!(log.contains("edge file not written"), "{log}");
     }
 
     #[test]
@@ -7000,15 +7077,10 @@ output_error{stream="kpi"} 6
             .await;
 
         let err = syncer.sync_once().await.unwrap_err();
-        match err {
-            SyncError::Empty(message) => {
-                assert!(
-                    message.contains("none of the 1 candidate files"),
-                    "{message}"
-                );
-            }
-            other => panic!("expected an empty-repository error, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, SyncError::Empty(message) if message.contains("none of the 1 candidate files")),
+            "expected an empty-repository error, got {err:?}"
+        );
 
         // Mirror still holds the pre-seeded resource: a repository that does not load leaves
         // the last one that did in place.
@@ -7328,6 +7400,1911 @@ output_error{stream="kpi"} 6
         }
     }
 
+    // T-7806: the realm, cluster and database parts a deployment wires into the reconciler,
+    // each driven to what it can answer: refused, empty, unreachable. One part's failure is a
+    // line in the log and its own status, never the run's.
+
+    /// An address nothing listens on: every call to it is refused at once.
+    const DEAD: &str = "http://127.0.0.1:9";
+
+    /// A pool whose every acquire fails: the database is down.
+    fn dead_pool() -> sqlx::PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(300))
+            .connect_lazy("postgres://jc:jc@127.0.0.1:9/jc")
+            .expect("a lazy pool")
+    }
+
+    fn auth() -> crate::config::ClientAuth {
+        crate::config::ClientAuth::Secret("s3cret".into())
+    }
+
+    fn reconciler_id() -> String {
+        "portal-reconciler".to_owned()
+    }
+
+    fn dead_kube() -> crate::apps::kube::KubeClient {
+        crate::apps::kube::KubeClient::with_token(DEAD, "kube-token").expect("a kube client")
+    }
+
+    /// A realm that answers every call, its token endpoint included, with 500.
+    async fn refusing_realm() -> MockServer {
+        let realm = MockServer::start().await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&realm)
+            .await;
+        realm
+    }
+
+    /// A realm that hands out a token and holds nothing: every list is empty, every write lands.
+    async fn empty_realm() -> MockServer {
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "access_token": "admin-token", "expires_in": 60 })),
+            )
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&realm)
+            .await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&realm)
+            .await;
+        realm
+    }
+
+    /// Every realm wave of a deployment, against `realm`, with an activity feed.
+    fn realm_syncer(realm: &MockServer) -> (Syncer, ActivityStore) {
+        use super::super::{app_clients, hub_scopes, mcp_clients, mqtt_brokers, workload_clients};
+        let issuer = format!("{}/realms/bb", realm.uri());
+        let activity = ActivityStore::new(None, Default::default());
+        let syncer = bare_syncer()
+            .with_activity(activity.clone())
+            .with_groups(Arc::new(
+                GroupSync::new(&issuer, reconciler_id(), auth()).expect("groups"),
+            ))
+            .with_organization_groups(Arc::new(
+                GroupSync::new(&issuer, reconciler_id(), auth()).expect("groups"),
+            ))
+            .with_app_clients(Arc::new(
+                app_clients::AppClientSync::new(
+                    &issuer,
+                    reconciler_id(),
+                    auth(),
+                    "apps.bb.sk".into(),
+                )
+                .expect("app clients"),
+            ))
+            .with_organization_app_clients(Arc::new(
+                app_clients::AppClientSync::new(
+                    &issuer,
+                    reconciler_id(),
+                    auth(),
+                    "apps.bb.sk".into(),
+                )
+                .expect("app clients"),
+            ))
+            .with_hub_scopes(Arc::new(
+                hub_scopes::HubScopeSync::new(&issuer, reconciler_id(), auth()).expect("hub"),
+            ))
+            .with_mcp_clients(Arc::new(
+                mcp_clients::McpClientSync::new(&issuer, reconciler_id(), auth()).expect("mcp"),
+            ))
+            .with_workload_clients(Arc::new(
+                workload_clients::WorkloadClientSync::new(&issuer, reconciler_id(), auth())
+                    .expect("workload clients"),
+            ))
+            .with_mqtt_clients(Arc::new(
+                mqtt_brokers::MqttClientSync::new(&issuer, reconciler_id(), auth())
+                    .expect("mqtt clients"),
+            ));
+        (syncer, activity)
+    }
+
+    fn feed_filter() -> crate::activity::ActivityFilter {
+        crate::activity::ActivityFilter {
+            limit: 50,
+            ..Default::default()
+        }
+    }
+
+    /// A realm that refuses the reconciler's token fails each realm wave as a whole: every wave
+    /// says so in the log, the groups' failure reaches the feed as an error, and the App client
+    /// secrets the edge is composed with stay as the last run left them.
+    #[tokio::test]
+    async fn a_realm_that_refuses_its_token_fails_each_realm_wave_and_keeps_the_app_secrets() {
+        let realm = refusing_realm().await;
+        let (syncer, activity) = realm_syncer(&realm);
+        syncer
+            .app_client_secrets
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert("parking".to_owned(), "kept-secret".to_owned().into());
+        let mirror = Mirror::new();
+        let (_, log) = crate::reconciler::logged(async {
+            syncer.converge_groups(&mirror, &BTreeMap::new()).await;
+            syncer.converge_app_clients(&mirror).await;
+            syncer
+                .converge_workload_accounts(&mirror, &Default::default())
+                .await;
+            syncer.converge_hub_scopes(&mirror).await;
+            syncer.converge_mcp_clients(&mirror).await;
+        })
+        .await;
+        for line in [
+            "group did not converge",
+            "group did not converge in its Organization's realm",
+            "app client did not converge",
+            "app client did not converge in its Organization's realm",
+            "workload client did not converge",
+            "hub scope did not converge",
+            "MCP server client did not converge",
+        ] {
+            assert!(log.contains(line), "{line} in {log}");
+        }
+        assert_eq!(
+            syncer
+                .app_client_secrets
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .keys()
+                .collect::<Vec<_>>(),
+            ["parking"],
+            "a realm that is down takes no App off the edge"
+        );
+        let page = activity
+            .list(crate::permissions::ORG_NAMESPACE, &feed_filter())
+            .await
+            .expect("the feed");
+        assert_eq!(page.items.len(), 1, "{:?}", page.items);
+        assert_eq!(page.items[0].kind, "config.drifted");
+        assert_eq!(page.items[0].severity, "error");
+        assert!(
+            page.items[0].summary.starts_with("Group *: "),
+            "{}",
+            page.items[0].summary
+        );
+    }
+
+    /// A realm that answers and holds nothing: the App client secrets become what this run read
+    /// (none), the hub's missing client is a warning and not a failure, and nothing reaches the
+    /// feed.
+    #[tokio::test]
+    async fn an_empty_realm_replaces_the_app_secrets_and_waits_for_the_hub() {
+        let realm = empty_realm().await;
+        let (syncer, activity) = realm_syncer(&realm);
+        syncer
+            .app_client_secrets
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert("retired".to_owned(), "old-secret".to_owned().into());
+        let mirror = Mirror::new();
+        let (_, log) = crate::reconciler::logged(async {
+            syncer.converge_groups(&mirror, &BTreeMap::new()).await;
+            syncer.converge_app_clients(&mirror).await;
+            syncer
+                .converge_workload_accounts(&mirror, &Default::default())
+                .await;
+            syncer.converge_hub_scopes(&mirror).await;
+            syncer.converge_mcp_clients(&mirror).await;
+        })
+        .await;
+        assert!(log.contains("hub scopes wait for the realm"), "{log}");
+        for line in [
+            "group did not converge",
+            "app client did not converge",
+            "workload client did not converge",
+            "hub scope did not converge",
+        ] {
+            assert!(!log.contains(line), "{line} in {log}");
+        }
+        assert!(syncer
+            .app_client_secrets
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty());
+        let page = activity
+            .list(crate::permissions::ORG_NAMESPACE, &feed_filter())
+            .await
+            .expect("the feed");
+        assert!(page.items.is_empty(), "{:?}", page.items);
+    }
+
+    /// The group feed: a drifted group is a warning naming what changed, a failed one an error,
+    /// a group in place no event; a Portal without a feed records nothing and fails nothing.
+    #[tokio::test]
+    async fn group_drift_reaches_the_feed_as_warning_or_error() {
+        use super::super::groups::GroupOutcome;
+        let outcome = |name: &str, drift: &[&str], error: Option<&str>| GroupOutcome {
+            name: name.to_owned(),
+            drift: drift.iter().map(|d| (*d).to_owned()).collect(),
+            warnings: Vec::new(),
+            error: error.map(str::to_owned),
+        };
+        let outcomes = [
+            outcome("city-readers", &["added eva", "removed jan"], None),
+            outcome("city-writers", &[], Some("realm answered 403")),
+            outcome("city-admins", &[], None),
+        ];
+        bare_syncer().say_group_drift(&outcomes).await;
+
+        let activity = ActivityStore::new(None, Default::default());
+        let syncer = bare_syncer().with_activity(activity.clone());
+        syncer.say_group_drift(&outcomes).await;
+        let page = activity
+            .list(crate::permissions::ORG_NAMESPACE, &feed_filter())
+            .await
+            .expect("the feed");
+        let mut seen: Vec<(String, String)> = page
+            .items
+            .iter()
+            .map(|event| (event.severity.clone(), event.summary.clone()))
+            .collect();
+        seen.sort();
+        assert_eq!(
+            seen,
+            [
+                (
+                    "error".to_owned(),
+                    "Group city-writers: realm answered 403".to_owned()
+                ),
+                (
+                    "warning".to_owned(),
+                    "Group city-readers: added eva; removed jan".to_owned()
+                ),
+            ]
+        );
+        assert!(page
+            .items
+            .iter()
+            .all(|event| event.details["group"].is_string() && event.source == "reconciler"));
+
+        syncer.say_group_drift(&outcomes[2..]).await;
+        let after = activity
+            .list(crate::permissions::ORG_NAMESPACE, &feed_filter())
+            .await
+            .expect("the feed");
+        assert_eq!(after.items.len(), 2, "a group in place is no event");
+    }
+
+    /// A database that cannot be reached demotes the replica (T-0191): it reports itself a
+    /// follower and says why; a Portal without an election leads.
+    #[tokio::test]
+    async fn an_unreachable_database_demotes_the_replica() {
+        assert!(bare_syncer().claim_leadership().await);
+        let syncer = bare_syncer().with_leadership(Arc::new(Leadership::reconciler(dead_pool())));
+        let (leader, log) = crate::reconciler::logged(syncer.claim_leadership()).await;
+        assert!(!leader);
+        assert!(!syncer.status().leader);
+        assert!(!syncer.is_leader());
+        assert!(
+            log.contains("cannot reach the database to elect a reconciler"),
+            "{log}"
+        );
+    }
+
+    /// Stores the leader writes through, down: the phases read as none, the gone pipelines'
+    /// records and the deleted projects' ids stay for the next run, each said once.
+    #[tokio::test]
+    async fn stores_that_are_down_cost_the_run_a_line_each() {
+        let mirror = Arc::new(Mirror::new());
+        let mut organization = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        organization.spec = json!({});
+        mirror.upsert(organization);
+        let mut project = envelope("Project", crate::permissions::ORG_NAMESPACE, "city");
+        project.spec = json!({ "organization": "bbsk" });
+        mirror.upsert(project.clone());
+        let syncer = bare_syncer()
+            .with_pipeline_status(Arc::new(crate::pipeline_status::Store::new(
+                dead_pool(),
+                Arc::clone(&mirror),
+            )))
+            .with_pipeline_outcomes(
+                Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+                    Some(dead_pool()),
+                    Arc::clone(&mirror),
+                )),
+                Arc::new(crate::pipeline_log::LogStore::new(
+                    Some(dead_pool()),
+                    Arc::clone(&mirror),
+                )),
+            )
+            .with_project_registry(Some(dead_pool()));
+        let fresh = Mirror::new();
+        fresh.upsert(project);
+        fresh.upsert(envelope("Pipeline", "city", "hsl"));
+        let (phases, log) = crate::reconciler::logged(async {
+            let phases = syncer.leaders_phases().await;
+            syncer.forget_gone_pipelines(&fresh).await;
+            syncer.retire_deleted_projects(&fresh).await;
+            phases
+        })
+        .await;
+        assert!(phases.is_empty());
+        for line in [
+            "the leader's pipeline phases could not be read",
+            "the refused records of deleted pipelines were not dropped",
+            "the run logs of deleted pipelines were not dropped",
+            "deleted projects' ids were not retired; the next run tries again",
+        ] {
+            assert!(log.contains(line), "{line} in {log}");
+        }
+
+        // A run that holds a removal retires nothing and asks the registry nothing.
+        fresh.hold_removals(true);
+        let (_, held) = crate::reconciler::logged(syncer.retire_deleted_projects(&fresh)).await;
+        assert!(!held.contains("not retired"), "{held}");
+    }
+
+    /// T-7557 on a database: a project the registry recorded and this run no longer finds has
+    /// its id retired and said; one still live keeps it.
+    #[tokio::test]
+    async fn a_project_this_run_no_longer_finds_has_its_id_retired() {
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+        // A database of its own: a retirement reaches every project the registry saw.
+        let own = format!("t7806_{}", uuid::Uuid::new_v4().simple());
+        let admin = crate::db::connect(&url).await.expect("connect and migrate");
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {own}")))
+            .execute(&admin)
+            .await
+            .expect("a database of this test's own");
+        let base = url.rsplit_once('/').map_or(url.as_str(), |(base, _)| base);
+        let pool = crate::db::connect(&format!("{base}/{own}"))
+            .await
+            .expect("connect and migrate");
+        let (gone, live) = ("gone-project".to_owned(), "live-project".to_owned());
+        let both = [gone.clone(), live.clone()];
+        crate::project_ids::ensure(&pool, &both)
+            .await
+            .expect("minted");
+        crate::project_ids::retire_deleted(&pool, &both)
+            .await
+            .expect("seen by a complete run");
+        let fresh = Mirror::new();
+        let mut envelope = envelope("Project", crate::permissions::ORG_NAMESPACE, &live);
+        envelope.status = None;
+        fresh.upsert(envelope);
+        let syncer = bare_syncer().with_project_registry(Some(pool.clone()));
+        let (_, log) = crate::reconciler::logged(syncer.retire_deleted_projects(&fresh)).await;
+        assert!(log.contains("a deleted project's id is retired"), "{log}");
+        assert!(log.contains(&gone), "{log}");
+        assert!(!log.contains(&live), "{log}");
+    }
+
+    /// The periodic loop runs a sync every tick and logs a failed one; a zero interval never
+    /// starts it (zero_duration_does_not_loop).
+    #[tokio::test]
+    async fn the_periodic_loop_logs_a_failed_sync_and_keeps_ticking() {
+        let syncer = Arc::new(bare_syncer());
+        let (_, log) = crate::reconciler::logged(async {
+            let handle = Arc::clone(&syncer).spawn_periodic(Duration::from_millis(20));
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while syncer.status().last_error.is_none() && std::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            handle.abort();
+        })
+        .await;
+        assert!(syncer.status().last_error.is_some());
+        assert!(syncer.status().last_sync.is_none(), "no run loaded");
+        assert!(log.contains("periodic mirror sync failed"), "{log}");
+    }
+
+    /// T-7806: a leader run with every part a deployment wires, each part unreachable, still
+    /// loads the repository and serves it; each part says what it could not do.
+    #[tokio::test]
+    async fn a_leader_run_whose_every_part_is_unreachable_still_serves_the_repository() {
+        let server = MockServer::start().await;
+        mount_repository(&server).await;
+        let realm = refusing_realm().await;
+        let issuer = format!("{}/realms/bb", realm.uri());
+        let client = Arc::new(
+            ShakoClient::new(
+                server.uri().parse().expect("url"),
+                "test-owner",
+                "test-repo",
+                "token",
+            )
+            .expect("client"),
+        );
+        let mirror = Arc::new(Mirror::new());
+        let cache = Scratch::new("t7806-apps-cache").expect("scratch");
+        let token_file = cache.path().join("mirror-token");
+        std::fs::write(&token_file, "mirror-token").expect("token file");
+        let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror))
+            .with_activity(ActivityStore::new(None, Default::default()))
+            .with_audit(
+                Arc::new(crate::connectors::ConnectorStore::new(
+                    Some((dead_pool(), Arc::clone(&mirror))),
+                    None,
+                )),
+                30,
+            )
+            .with_pipeline_status(Arc::new(crate::pipeline_status::Store::new(
+                dead_pool(),
+                Arc::clone(&mirror),
+            )))
+            .with_pipeline_outcomes(
+                Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+                    Some(dead_pool()),
+                    Arc::clone(&mirror),
+                )),
+                Arc::new(crate::pipeline_log::LogStore::new(
+                    Some(dead_pool()),
+                    Arc::clone(&mirror),
+                )),
+            )
+            .with_project_registry(Some(dead_pool()))
+            .with_apps_cache_dir(Some(cache.path().display().to_string()))
+            .with_apps_dir(Some(cache.path().join("apps").display().to_string()))
+            .with_removal_hold_percent(50)
+            .with_pipeline_identity(true)
+            .with_author_rights(super::super::pipeline_authors::AuthorRights::new(
+                "jc-admins".to_owned(),
+                None,
+            ))
+            .with_people(
+                Arc::new(
+                    crate::people::People::new(&issuer, reconciler_id(), auth()).expect("people"),
+                ),
+                dead_pool(),
+            )
+            .with_config_mirror(Arc::new(
+                crate::forge::config_mirror::ConfigMirror::new(
+                    &format!("{DEAD}/jc-{{repo}}.git"),
+                    token_file,
+                )
+                .expect("a config mirror"),
+            ))
+            .with_dashboards(Arc::new(crate::grafana_builder::DashboardSync::new(
+                crate::config::GrafanaConfig {
+                    url: DEAD.to_owned(),
+                    public_url: DEAD.to_owned(),
+                    user: "admin".to_owned(),
+                    password: "grafana-password".to_owned(),
+                },
+            )))
+            .with_subscriptions(Arc::new(
+                super::super::subscriptions::SubscriptionSync::new(
+                    DEAD,
+                    &issuer,
+                    reconciler_id(),
+                    auth(),
+                    "bb.sk",
+                ),
+            ))
+            .with_registrations(Arc::new(
+                super::super::registrations::RegistrationSync::new(DEAD),
+            ))
+            .with_drift(
+                Arc::new(super::super::drift::Watch::new(
+                    DEAD,
+                    &issuer,
+                    reconciler_id(),
+                    auth(),
+                )),
+                Arc::new(super::super::drift::Store::default()),
+            )
+            .with_alerts(Arc::new(crate::alerts::Evaluator::new(
+                Arc::clone(&mirror),
+                Arc::new(crate::quality::Store::new(None, Arc::clone(&mirror))),
+                Arc::new(crate::alerts::AlertStore::new(None, Arc::clone(&mirror))),
+            )))
+            .with_domain_verification(Arc::new(crate::domain_verification::Verifier::new(
+                dead_pool(),
+                crate::domain_verification::NetLookup::new().expect("a resolver"),
+                "portal.bb.sk",
+            )))
+            .with_org_hosts(Arc::new(super::super::org_hosts::OrgHosts::new(
+                dead_kube(),
+                "jc".to_owned(),
+                dead_pool(),
+                Arc::new(crate::domain_verification::NetLookup::new().expect("a resolver")),
+            )))
+            .with_wasm_shards(Arc::new(super::super::wasm_shards::WasmShards::new(
+                dead_kube(),
+                "jc-apps".to_owned(),
+                2,
+                "apps".to_owned(),
+            )))
+            .with_mqtt_brokers(Arc::new(super::super::mqtt_brokers::MqttBrokers::new(
+                dead_kube(),
+                "jc-mqtt".to_owned(),
+            )))
+            .with_mqtt_capture(Arc::new(crate::mqtt_capture::Capture::new(
+                Arc::new(crate::mqtt_capture::CaptureStore::new(
+                    None,
+                    Arc::clone(&mirror),
+                )),
+                "jc-mqtt".to_owned(),
+            )))
+            .with_app_hosts(Arc::new(super::super::app_hosts::AppHosts::new(
+                dead_kube(),
+                "jc".to_owned(),
+            )))
+            .with_pipeline_service_accounts(Arc::new(dead_kube()), "jc-pipelines")
+            .with_app_job_service_accounts(Arc::new(dead_kube()), "jc-app-jobs")
+            .with_judge_settings(
+                Default::default(),
+                Some("apps.bb.sk".to_owned()),
+                Some("bb.sk".to_owned()),
+                None,
+            );
+        let (count, log) = crate::reconciler::logged(async {
+            let count = syncer.sync_once().await;
+            // The trims run beside the run; give them their turn.
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            count
+        })
+        .await;
+        assert_eq!(count.expect("the run loads"), 1);
+        assert_eq!(syncer.status().last_error, None);
+        assert!(syncer.status().leader);
+        assert!(
+            syncer.accepted().is_some(),
+            "the run's repository is accepted"
+        );
+        assert!(syncer.views().is_none());
+        assert!(syncer.streams().is_none());
+        assert_eq!(
+            mirror
+                .get("ovzdusie", "ContextSpace", "mobility")
+                .and_then(|envelope| envelope.status)
+                .map(|status| status.phase),
+            Some(crate::resource::Phase::Live)
+        );
+        for line in [
+            "pipeline ServiceAccount did not converge",
+            "App job ServiceAccount did not converge",
+            "a WASM shard is not as it should be",
+            "a WASM shard's job runs were not read",
+            "the MQTT brokers did not converge",
+            "activity trimmed",
+            "the audit trim failed",
+        ] {
+            assert!(log.contains(line), "{line} in {log}");
+        }
+    }
+
+    fn forge_at_dead() -> Arc<ShakoClient> {
+        Arc::new(
+            ShakoClient::new(DEAD.parse().expect("url"), "o", "r", "token")
+                .expect("a forge client"),
+        )
+    }
+
+    fn status_of_in(mirror: &Mirror, kind: &str, name: &str) -> crate::resource::Status {
+        mirror
+            .find(|envelope| envelope.kind == kind && envelope.metadata.name == name)
+            .and_then(|envelope| envelope.status)
+            .expect("the resource and its status")
+    }
+
+    /// A forge, a kube API or a secret store that answers every call with `status`.
+    async fn answering(status: u16) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(status).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn forge_at(server: &MockServer) -> Arc<ShakoClient> {
+        Arc::new(
+            ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "token")
+                .expect("a forge client"),
+        )
+    }
+
+    fn space(project: &str, name: &str, spec: serde_json::Value) -> ResourceEnvelope {
+        let mut envelope = envelope("ContextSpace", project, name);
+        envelope.spec = spec;
+        envelope
+    }
+
+    /// OpenBao holding `holds` (name, value) under the pod's login.
+    async fn openbao(holds: &[(&str, &str)]) -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/auth/kubernetes/login"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "auth": { "client_token": "a-session-token", "lease_duration": 3600, "renewable": true }
+            })))
+            .mount(&server)
+            .await;
+        for (name, value) in holds {
+            Mock::given(method("GET"))
+                .and(path(format!("/v1/secret/data/{name}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "data": { "data": { "secret": value }, "metadata": { "version": 1 } }
+                })))
+                .mount(&server)
+                .await;
+        }
+        server
+    }
+
+    fn resolver(bao: &MockServer, scratch: &Scratch) -> crate::pipeline_secrets::Resolver {
+        let jwt = scratch.path().join("sa-token");
+        std::fs::write(&jwt, "a.service.account.token").expect("the token");
+        crate::pipeline_secrets::Resolver::new(crate::pipeline_secrets::Backend::OpenBao {
+            address: bao.uri(),
+            role: "portal".to_owned(),
+            jwt_path: jwt,
+        })
+    }
+
+    /// DM-121: each space's personal-data key resolves through its reference; a block that is
+    /// no block, a reference the backend does not hold and a key shorter than 32 bytes each
+    /// leave that space without a key and say so naming the reference, never the value. A
+    /// cluster that refuses the gateway's Secret keeps the keys for the subject lookup.
+    #[tokio::test]
+    async fn each_spaces_personal_data_key_resolves_or_says_why_not() {
+        const KEY: &str = "0123456789abcdef0123456789abcdef-long-enough";
+        let bao = openbao(&[("space-key", KEY), ("short-key", "too-short")]).await;
+        let scratch = Scratch::new("t7806-keys").expect("scratch");
+        let mirror = Mirror::new();
+        let key_ref = |name: &str| json!({ "personalData": { "keyRef": { "name": name } } });
+        mirror.upsert(space("city", "plain", json!({})));
+        mirror.upsert(space("city", "broken", json!({ "personalData": "a key" })));
+        mirror.upsert(space("city", "unheld", key_ref("missing-key")));
+        mirror.upsert(space("city", "short", key_ref("short-key")));
+        mirror.upsert(space("city", "kept", key_ref("space-key")));
+        let kube = answering(500).await;
+        let keys = Arc::new(crate::personal_keys::Keys::default());
+        let syncer = bare_syncer()
+            .with_personal_keys(Arc::clone(&keys), Some("jc-gateway".to_owned()))
+            .with_pipeline_secrets(resolver(&bao, &scratch))
+            .with_credential_secrets(
+                Arc::new(
+                    crate::apps::kube::KubeClient::with_token(&kube.uri(), "kube-token")
+                        .expect("kube"),
+                ),
+                "jc",
+            );
+        let (_, log) =
+            crate::reconciler::logged(syncer.resolve_personal_keys(&mirror, scratch.path())).await;
+        assert!(keys.of("city", "kept").is_some());
+        for space in ["plain", "broken", "unheld", "short"] {
+            assert!(keys.of("city", space).is_none(), "{space} holds no key");
+        }
+        for line in [
+            "a space's personalData block is not one",
+            "a space's personal-data key does not resolve",
+            "secret_ref=missing-key",
+            "a space's personal-data key is shorter than 32 bytes",
+            "secret_ref=short-key",
+            "the gateway's personal-data keys were not written",
+        ] {
+            assert!(log.contains(line), "{line} in {log}");
+        }
+        assert!(!log.contains(KEY) && !log.contains("too-short"), "{log}");
+
+        // Without a cluster the keys reach the subject lookup alone, and the log says so.
+        let alone = bare_syncer()
+            .with_personal_keys(Arc::clone(&keys), Some("jc-gateway".to_owned()))
+            .with_pipeline_secrets(resolver(&bao, &scratch));
+        let (_, log) =
+            crate::reconciler::logged(alone.resolve_personal_keys(&mirror, scratch.path())).await;
+        assert!(log.contains(KEYS_LOOKUP_ONLY), "{log}");
+        assert!(keys.of("city", "kept").is_some());
+
+        // A cluster that takes the Secret: no warning.
+        let taking = answering(200).await;
+        let written = bare_syncer()
+            .with_personal_keys(Arc::clone(&keys), Some("jc-gateway".to_owned()))
+            .with_pipeline_secrets(resolver(&bao, &scratch))
+            .with_credential_secrets(
+                Arc::new(
+                    crate::apps::kube::KubeClient::with_token(&taking.uri(), "kube-token")
+                        .expect("kube"),
+                ),
+                "jc",
+            );
+        let (_, log) =
+            crate::reconciler::logged(written.resolve_personal_keys(&mirror, scratch.path())).await;
+        assert!(!log.contains("were not written"), "{log}");
+        assert!(!taking
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+
+        // No secret backend: every reference fails to resolve, and no space keeps a key.
+        let unbacked = bare_syncer().with_personal_keys(Arc::clone(&keys), None);
+        let (_, log) =
+            crate::reconciler::logged(unbacked.resolve_personal_keys(&mirror, scratch.path()))
+                .await;
+        assert!(keys.of("city", "kept").is_none());
+        assert!(log.contains("secret_ref=space-key"), "{log}");
+        assert!(
+            !log.contains(KEYS_LOOKUP_ONLY),
+            "no key, nothing to say: {log}"
+        );
+    }
+
+    /// MF-44: a sync source's webhook block that is no block, or whose secret does not resolve
+    /// or has no backend to resolve from, leaves the source shut to the webhook and says why.
+    #[tokio::test]
+    async fn a_webhook_secret_that_does_not_resolve_leaves_its_source_shut() {
+        let source = |name: &str, webhook: serde_json::Value| {
+            let mut envelope = envelope("SyncSource", "city", name);
+            envelope.spec = json!({ "webhook": webhook });
+            envelope
+        };
+        let mirror = Mirror::new();
+        mirror.upsert(source("broken", json!("a secret")));
+        mirror.upsert(source(
+            "unheld",
+            json!({ "secretRef": { "name": "hook-secret" } }),
+        ));
+        let polled = envelope("SyncSource", "city", "polled");
+        mirror.upsert(polled);
+        let scratch = Scratch::new("t7806-hooks").expect("scratch");
+        let bao = openbao(&[]).await;
+        let accepted = Arc::new(crate::sync::webhook_secrets::Accepted::new());
+        let syncer = bare_syncer()
+            .with_webhook_secrets(Arc::clone(&accepted))
+            .with_pipeline_secrets(resolver(&bao, &scratch));
+        let (_, log) =
+            crate::reconciler::logged(syncer.resolve_webhook_secrets(&mirror, scratch.path()))
+                .await;
+        assert!(accepted.is_empty());
+        assert!(
+            log.contains("the webhook block of a sync source is not one"),
+            "{log}"
+        );
+        assert!(
+            log.contains("a sync source's webhook secret does not resolve"),
+            "{log}"
+        );
+        assert!(log.contains("secret=hook-secret"), "{log}");
+
+        let unbacked = bare_syncer().with_webhook_secrets(Arc::clone(&accepted));
+        let (_, log) =
+            crate::reconciler::logged(unbacked.resolve_webhook_secrets(&mirror, scratch.path()))
+                .await;
+        assert!(accepted.is_empty());
+        assert!(log.contains("this Portal has no secret backend"), "{log}");
+    }
+
+    fn app(name: &str, lifecycle: &str, build: Option<serde_json::Value>) -> ResourceEnvelope {
+        let mut envelope = envelope("App", "city", name);
+        envelope.spec = json!({ "lifecycle": lifecycle });
+        envelope.status.as_mut().expect("a status").build =
+            build.map(|build| serde_json::from_value(build).expect("a build"));
+        envelope
+    }
+
+    /// AP-72 and AP-13a: an App whose build is not on this host keeps the previous one serving
+    /// and says `BuildMissing`; a published App with no build at all reads `NoBuild` and is
+    /// warned of once while it stands, and the warning clears when it goes.
+    #[tokio::test]
+    async fn an_app_without_its_build_on_the_host_says_so() {
+        let cache = Scratch::new("t7806-builds").expect("scratch");
+        let build = json!({
+            "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "commit": "abc123",
+            "sdkVersion": "1.0.0",
+            "builtAt": "2026-11-24T10:00:00Z"
+        });
+        let mirror = Arc::new(Mirror::new());
+        mirror.upsert(app("parking", "published", Some(build)));
+        mirror.upsert(app("draft", "published", None));
+        mirror.upsert(app("idea", "draft", None));
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+            .with_apps_cache_dir(Some(cache.path().display().to_string()));
+        let transitions = super::super::transitions::Transitions::of(&mirror);
+        let log = crate::reconciler::logged(async { syncer.report_missing_builds(&transitions) })
+            .await
+            .1;
+        let reason = |name: &str| {
+            status_of_in(&mirror, "App", name)
+                .conditions
+                .first()
+                .and_then(|condition| condition.reason.clone())
+        };
+        assert_eq!(reason("parking").as_deref(), Some("BuildMissing"));
+        assert_eq!(reason("draft").as_deref(), Some("NoBuild"));
+        assert_eq!(
+            reason("idea").as_deref(),
+            Some("Before"),
+            "a draft serves nothing"
+        );
+        assert!(
+            log.contains("the build the manifest names is not on the host"),
+            "{log}"
+        );
+        assert!(
+            log.contains("a published App has no build to serve"),
+            "{log}"
+        );
+
+        // The same App unbuilt next run is not news; once it goes, the warning clears.
+        let again = crate::reconciler::logged(async { syncer.report_missing_builds(&transitions) })
+            .await
+            .1;
+        assert!(
+            !again.contains("a published App has no build to serve"),
+            "{again}"
+        );
+        mirror.remove(&crate::resource::ResourceKey {
+            namespace: "city".to_owned(),
+            kind: "App".to_owned(),
+            name: "draft".to_owned(),
+        });
+        let cleared =
+            crate::reconciler::logged(async { syncer.report_missing_builds(&transitions) })
+                .await
+                .1;
+        assert!(
+            cleared.contains("published Apps with no build to serve: some no longer stand"),
+            "{cleared}"
+        );
+    }
+
+    /// PF-31: an Organization the artifact store refused says so on its status; one that is not
+    /// in the mirror is left alone, and a registry that cannot be read issues nothing.
+    #[tokio::test]
+    async fn an_artifact_store_refusal_marks_the_organization() {
+        let mirror = Arc::new(Mirror::new());
+        let mut organization = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        organization.spec = json!({});
+        mirror.upsert(organization);
+        let store = crate::artifact_store::Client::new(crate::artifact_store::Settings {
+            endpoint: DEAD.to_owned(),
+            bucket: "artifacts".to_owned(),
+            region: "eu".to_owned(),
+            root_access_key: "root".to_owned(),
+            root_secret_key: "root-secret".to_owned(),
+        })
+        .expect("a store client");
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+            .with_artifact_store(Arc::new(store), Some(dead_pool()));
+        let transitions = super::super::transitions::Transitions::of(&mirror);
+        syncer.mark_artifact_store(&transitions, "bbsk", "the store answered 403");
+        syncer.mark_artifact_store(&transitions, "unknown", "never shown");
+        let marked = status_of_in(&mirror, "Organization", "bbsk");
+        assert_eq!(marked.conditions.len(), 1);
+        assert_eq!(marked.conditions[0].r#type, "ArtifactStoreCredentials");
+        assert_eq!(marked.conditions[0].reason.as_deref(), Some("StoreRefused"));
+        assert_eq!(
+            marked.conditions[0].message.as_deref(),
+            Some("the store answered 403")
+        );
+        assert!(mirror
+            .get(crate::permissions::ORG_NAMESPACE, "Organization", "unknown")
+            .is_none());
+
+        let (_, log) =
+            crate::reconciler::logged(syncer.converge_artifact_store(&transitions)).await;
+        assert!(
+            log.contains("the project registry was not read, so no artifact credential is issued"),
+            "{log}"
+        );
+    }
+
+    /// PF-41: an Organization that declares a domain is checked; a database that cannot store
+    /// the check is a line in the log and the Organization shows no state. One without a domain
+    /// is not checked.
+    #[tokio::test]
+    async fn a_domain_check_that_cannot_be_stored_shows_no_state() {
+        let mirror = Arc::new(Mirror::new());
+        let mut declared = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        declared.spec = json!({ "domain": "bb.sk" });
+        mirror.upsert(declared);
+        mirror.upsert(envelope(
+            "Organization",
+            crate::permissions::ORG_NAMESPACE,
+            "nodomain",
+        ));
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror)).with_domain_verification(
+            Arc::new(crate::domain_verification::Verifier::new(
+                dead_pool(),
+                crate::domain_verification::NetLookup::new().expect("a resolver"),
+                "portal.bb.sk",
+            )),
+        );
+        let (_, log) = crate::reconciler::logged(syncer.verify_domains()).await;
+        assert!(
+            log.contains("the domain verification was not stored"),
+            "{log}"
+        );
+        assert!(log.contains("organization=bbsk"), "{log}");
+        assert!(!log.contains("organization=nodomain"), "{log}");
+        assert!(status_of_in(&mirror, "Organization", "bbsk")
+            .domain_verification
+            .is_none());
+    }
+
+    /// PF-77 and T-6706: a project whose registry entry is gone has its repository archived,
+    /// and every repository gets its branch rules once; a forge that refuses either is said and
+    /// tried again next run, one that takes them is not asked again.
+    #[tokio::test]
+    async fn deleted_repositories_are_archived_and_branch_rules_set_once() {
+        let fresh = Mirror::new();
+        fresh.set_repositories(BTreeMap::from([(
+            "kept".to_owned(),
+            "kept-repo".to_owned(),
+        )]));
+        for (status, archived) in [(500, false), (200, true)] {
+            let forge = answering(status).await;
+            let mirror = Arc::new(Mirror::new());
+            mirror.set_repositories(BTreeMap::from([
+                ("gone".to_owned(), "gone-repo".to_owned()),
+                ("kept".to_owned(), "kept-repo".to_owned()),
+            ]));
+            let syncer = Syncer::new(forge_at(&forge), Arc::clone(&mirror));
+            let (_, log) = crate::reconciler::logged(syncer.archive_deleted_projects(&fresh)).await;
+            let line = if archived {
+                "a deleted project's repository is archived"
+            } else {
+                "a deleted project's repository did not archive"
+            };
+            assert!(log.contains(line), "{line} in {log}");
+            assert!(log.contains("repository=gone-repo"), "{log}");
+            assert!(
+                !log.contains("repository=kept-repo"),
+                "a live project is not archived: {log}"
+            );
+        }
+
+        // A forge that refuses the rules: each repository is said and asked again next run.
+        let forge = answering(500).await;
+        let syncer = Syncer::new(forge_at(&forge), Arc::new(Mirror::new()));
+        let (_, log) = crate::reconciler::logged(syncer.protect_repositories(&fresh)).await;
+        for repository in ["repository=r ", "repository=kept-repo "] {
+            assert!(log.contains(repository), "{repository} in {log}");
+        }
+        assert!(
+            log.contains("the repository's branch rules were not set"),
+            "{log}"
+        );
+        assert!(syncer
+            .protected
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty());
+        let asked = forge.received_requests().await.unwrap_or_default().len();
+        syncer.protect_repositories(&fresh).await;
+        assert!(forge.received_requests().await.unwrap_or_default().len() > asked);
+    }
+
+    // T-7806, second batch: the waves that need a part answering (a runner, a cluster, a forge
+    // with history), each driven through what that part can answer.
+
+    /// A state directory that cannot be created is said and its paths still taken; the quality
+    /// scanner and the App converger a deployment wires are kept as given.
+    #[tokio::test]
+    async fn a_state_directory_under_a_file_is_said_and_the_parts_are_kept() {
+        let scratch = Scratch::new("t7806-state").expect("scratch");
+        let file = scratch.path().join("a-file");
+        std::fs::write(&file, "not a directory").expect("a file");
+        let (syncer, log) =
+            crate::reconciler::logged(async { bare_syncer().with_state_dir(Some(file.join("s"))) })
+                .await;
+        assert!(
+            log.contains("the reconciler's state directory was not created"),
+            "{log}"
+        );
+        assert_eq!(syncer.assembly, file.join("s").join("assembly"));
+        let mirror = Arc::new(Mirror::new());
+        let syncer = syncer
+            .with_converger(Arc::new(Converger::new(dead_kube(), edge_settings())))
+            .with_quality(Arc::new(crate::quality::Scanner {
+                watch: Arc::new(super::super::drift::Watch::new(
+                    DEAD,
+                    &format!("{DEAD}/realms/bb"),
+                    reconciler_id(),
+                    auth(),
+                )),
+                schemas: Arc::new(crate::pipeline_validation::ModelSchemas::default()),
+                mirror: Arc::clone(&mirror),
+                org_domain: "bb.sk".to_owned(),
+                store: Arc::new(crate::quality::Store::new(None, Arc::clone(&mirror))),
+            }))
+            .with_activity(ActivityStore::new(Some(dead_pool()), keyed_mirror("city")))
+            .with_audit(
+                Arc::new(crate::connectors::ConnectorStore::new(None, None)),
+                30,
+            );
+        assert!(syncer.converger.is_some() && syncer.quality.is_some());
+        let render = render_of(scratch.path(), 1, BTreeMap::new());
+        let (_, log) = crate::reconciler::logged(async {
+            syncer.scan_and_start_background(&render).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        })
+        .await;
+        assert!(log.contains("the activity trim failed"), "{log}");
+        assert!(log.contains("audit trimmed rows=0"), "{log}");
+        let (_, log) = crate::reconciler::logged(syncer.record(vec![refused_event("city")])).await;
+        assert!(log.contains("the run is not in the activity feed"), "{log}");
+    }
+
+    /// A mirror whose project `project` belongs to an Organization, so the keyed stores ask
+    /// their database for it.
+    fn keyed_mirror(project: &str) -> Arc<Mirror> {
+        let mirror = Arc::new(Mirror::new());
+        let mut organization = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        organization.spec = json!({});
+        mirror.upsert(organization);
+        let mut registered = envelope("Project", crate::permissions::ORG_NAMESPACE, project);
+        registered.spec = json!({ "organization": "bbsk" });
+        mirror.upsert(registered);
+        mirror
+    }
+
+    fn refused_event(project: &str) -> ActivityEvent {
+        ActivityEvent {
+            time: jc_time::TimestampTz::now(),
+            project: project.to_owned(),
+            space: None,
+            kind: "config.refused".to_owned(),
+            source: "reconciler".to_owned(),
+            summary: "refused".to_owned(),
+            severity: "error".to_owned(),
+            correlation_id: None,
+            details: json!({}),
+        }
+    }
+
+    fn render_of(
+        root: &Path,
+        layout: u32,
+        projects: BTreeMap<String, (ShakoClient, String)>,
+    ) -> Render {
+        Render {
+            layout,
+            root: root.to_path_buf(),
+            _staged: Vec::new(),
+            projects,
+            unstaged: Vec::new(),
+            unloaded: Vec::new(),
+            refused: Vec::new(),
+            listings: BTreeMap::new(),
+        }
+    }
+
+    fn client_at(uri: &str) -> ShakoClient {
+        ShakoClient::new(uri.parse().expect("url"), "o", "p", "token").expect("a forge client")
+    }
+
+    /// A follower stops its MQTT subscribers, so the leader's keep the brokers' client ids; a
+    /// merged change on a replica whose forge is down is said and waits for the whole run.
+    #[tokio::test]
+    async fn a_follower_stops_its_capture_and_a_merge_on_a_dead_forge_is_said() {
+        let mirror = Arc::new(Mirror::new());
+        let syncer = Arc::new(
+            Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+                .with_leadership(Arc::new(Leadership::reconciler(dead_pool())))
+                .with_mqtt_capture(Arc::new(crate::mqtt_capture::Capture::new(
+                    Arc::new(crate::mqtt_capture::CaptureStore::new(
+                        None,
+                        Arc::clone(&mirror),
+                    )),
+                    "jc-mqtt".to_owned(),
+                ))),
+        );
+        let (outcome, _) = crate::reconciler::logged(syncer.sync_once()).await;
+        assert!(outcome.is_err(), "a follower with no forge loads nothing");
+        assert!(!syncer.is_leader());
+
+        let leader = Arc::new(Syncer::new(forge_at_dead(), Arc::new(Mirror::new())));
+        let (_, log) = crate::reconciler::logged(async {
+            Arc::clone(&leader).merged();
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while leader.status().last_error.is_none() && std::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        })
+        .await;
+        assert!(log.contains("sync after a merge failed"), "{log}");
+    }
+
+    /// T-7213: a first run that reads nothing from the forge serves the last assembly on the
+    /// state directory when it loads, says so when it does not, and leaves a replica that
+    /// serves something alone.
+    #[tokio::test]
+    async fn the_last_assembly_serves_a_first_run_that_reads_nothing() {
+        let dir = state_dir("t7806-assembly");
+        let assembly = dir.join("assembly");
+        write_tree(
+            &assembly,
+            &[
+                (".jc/layout", "2\n"),
+                (
+                    "projects/city/spaces/air/space.yaml",
+                    &manifest("ContextSpace", "air", json!({})),
+                ),
+            ],
+        );
+        let mirror = Arc::new(Mirror::new());
+        let syncer =
+            Syncer::new(forge_at_dead(), Arc::clone(&mirror)).with_state_dir(Some(dir.clone()));
+        let (_, log) =
+            crate::reconciler::logged(async { syncer.serve_last_assembly(&SyncError::Superseded) })
+                .await;
+        assert!(
+            log.contains("the first run read nothing from the forge"),
+            "{log}"
+        );
+        assert!(mirror.get("city", "ContextSpace", "air").is_some(), "{log}");
+
+        // A replica that serves something keeps it.
+        let (_, again) =
+            crate::reconciler::logged(async { syncer.serve_last_assembly(&SyncError::Superseded) })
+                .await;
+        assert!(!again.contains("the first run read nothing"), "{again}");
+
+        // An assembly of layout 2 that holds no manifest does not load either.
+        std::fs::remove_dir_all(assembly.join("projects")).expect("emptied");
+        let empty = Arc::new(Mirror::new());
+        let syncer =
+            Syncer::new(forge_at_dead(), Arc::clone(&empty)).with_state_dir(Some(dir.clone()));
+        let (_, log) =
+            crate::reconciler::logged(async { syncer.serve_last_assembly(&SyncError::Superseded) })
+                .await;
+        assert!(
+            log.contains("the last assembly does not load either"),
+            "{log}"
+        );
+        assert!(empty.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// CC-08: a refused project is told once per commit and reason: a forge that cannot say who
+    /// changed it is tried next run, a project with no commit at the path names its ref, a
+    /// reason that quotes a credential is not repeated, and with nobody named the project's
+    /// approvers are told; a notice that cannot be stored is said.
+    #[tokio::test]
+    async fn a_refused_project_is_told_once_and_never_quotes_a_secret() {
+        let history = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"Shako\.History"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .mount(&history)
+            .await;
+        let refusing = answering(500).await;
+        let unread = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"Shako\.History"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [{ "Sha": "feedbeef00", "Message": "edit" }]
+            })))
+            .mount(&unread)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"Commits\("))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&unread)
+            .await;
+        let token = format!("ghp_{}", "0123456789abcdef".repeat(3));
+        let scratch = Scratch::new("t7806-refused").expect("scratch");
+        let mut render = render_of(
+            scratch.path(),
+            2,
+            BTreeMap::from([
+                (
+                    "quiet".to_owned(),
+                    (client_at(&history.uri()), "main".to_owned()),
+                ),
+                (
+                    "down".to_owned(),
+                    (client_at(&refusing.uri()), "main".to_owned()),
+                ),
+                (
+                    "unread".to_owned(),
+                    (client_at(&unread.uri()), "main".to_owned()),
+                ),
+            ]),
+        );
+        let refusal = |slug: &str, path: Option<&str>, reason: &str| ProjectRefusal {
+            slug: slug.to_owned(),
+            path: path.map(PathBuf::from),
+            reason: reason.to_owned(),
+        };
+        render.refused = vec![
+            refusal("quiet", None, &format!("rotated {token} after the leak")),
+            refusal("down", Some("spaces/air.yaml"), "a bad indent"),
+            refusal("unread", Some("spaces/air.yaml"), "a bad indent"),
+            refusal("unregistered", None, "not staged"),
+        ];
+        let activity = ActivityStore::new(None, Default::default());
+        let mirror = Arc::new(Mirror::new());
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+            .with_activity(activity.clone())
+            .with_notices(Arc::new(crate::entity_comments::CommentStore::new(
+                Some(dead_pool()),
+                Arc::clone(&mirror),
+            )));
+        let (_, log) = crate::reconciler::logged(syncer.tell_refused(&render)).await;
+        assert_eq!(
+            log.matches("who changed the refused project is not known yet")
+                .count(),
+            2,
+            "{log}"
+        );
+        assert!(
+            log.contains("the proposer of a refused change is not notified"),
+            "{log}"
+        );
+        assert!(!log.contains(&token), "{log}");
+        let told = activity
+            .list("quiet", &feed_filter())
+            .await
+            .expect("the feed");
+        assert_eq!(told.items.len(), 1, "{:?}", told.items);
+        let summary = &told.items[0].summary;
+        assert!(
+            summary.contains("project.yaml does not load; open it in the repository"),
+            "{summary}"
+        );
+        assert!(summary.starts_with("Commit main was refused"), "{summary}");
+        assert!(!summary.contains(&token), "{summary}");
+
+        // Told once: the next run with the same refusal says nothing of it again.
+        let (_, again) = crate::reconciler::logged(syncer.tell_refused(&render)).await;
+        assert!(!again.contains("not notified"), "{again}");
+        let told = activity
+            .list("quiet", &feed_filter())
+            .await
+            .expect("the feed");
+        assert_eq!(told.items.len(), 1);
+    }
+
+    /// A project whose removal is held is confirmed only by a destructive approval: a project
+    /// the render did not stage, a forge with no default branch or no branch head, and a head
+    /// whose message carries no approval all hold it.
+    #[tokio::test]
+    async fn a_held_removal_needs_a_confirmed_head_of_the_projects_own_branch() {
+        let forge = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"Branches\("))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "abc" })))
+            .mount(&forge)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"Commits\("))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "Message": "a plain edit" })),
+            )
+            .mount(&forge)
+            .await;
+        let refusing = answering(500).await;
+        let scratch = Scratch::new("t7806-held").expect("scratch");
+        let render = render_of(
+            scratch.path(),
+            2,
+            BTreeMap::from([
+                (
+                    "named".to_owned(),
+                    (client_at(&forge.uri()), "main".to_owned()),
+                ),
+                (
+                    "nobranch".to_owned(),
+                    (client_at(&refusing.uri()), String::new()),
+                ),
+                (
+                    "nohead".to_owned(),
+                    (client_at(&refusing.uri()), "main".to_owned()),
+                ),
+            ]),
+        );
+        let syncer = Syncer::new(forge_at_dead(), Arc::new(Mirror::new()));
+        for project in ["named", "nobranch", "nohead", "unstaged"] {
+            assert!(
+                !syncer.removal_confirmed(&render, "rev", project).await,
+                "{project}"
+            );
+        }
+        let asked = forge.received_requests().await.unwrap_or_default();
+        assert!(asked
+            .iter()
+            .any(|request| request.url.path().contains("Commits('abc')")));
+    }
+
+    fn stream_world() -> Mirror {
+        let mirror = Mirror::new();
+        let source = |name: &str, spec: serde_json::Value| {
+            let mut envelope = envelope("DataSource", "helsinki", name);
+            envelope.spec = spec;
+            envelope.status = None;
+            envelope
+        };
+        mirror.upsert(source(
+            "bikes",
+            json!({ "type": "websocket", "webSocket": { "url": "wss://gbfs.example.org/status" } }),
+        ));
+        mirror.upsert(source(
+            "harvest-src",
+            json!({ "type": "http", "http": { "url": "https://example.org/data.json" } }),
+        ));
+        let mut endpoint = envelope("Endpoint", "helsinki", "helsinki-all");
+        endpoint.spec = json!({
+            "contextSpaceRef": "helsinki",
+            "slug": "abc123456789012345678901234",
+            "audience": "public",
+            "enabledRepresentations": ["ngsi-ld"]
+        });
+        mirror.upsert(endpoint);
+        let pipeline = |name: &str, source: &str, status: bool| {
+            let mut envelope = envelope("Pipeline", "helsinki", name);
+            envelope.spec = json!({
+                "class": "resident",
+                "source": { "dataSourceRef": { "kind": "DataSource", "name": source } },
+                "compute": { "kind": "bloblang", "bloblang": "root = this" },
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:example.org:helsinki:helsinki-all"
+            });
+            if !status {
+                envelope.status = None;
+            }
+            envelope
+        };
+        let mut silent = pipeline("silent", "bikes", true);
+        silent.spec["expiry"] = json!({ "after": "30m", "types": ["Vehicle"] });
+        mirror.upsert(silent);
+        mirror.upsert(pipeline("bare", "bikes", false));
+        mirror.upsert(pipeline("refused", "bikes", false));
+        let mut off = pipeline("off", "bikes", true);
+        off.spec["enabled"] = json!(false);
+        mirror.upsert(off);
+        let mut harvest = pipeline("harvest", "harvest-src", true);
+        harvest.spec["class"] = json!("scheduled");
+        harvest.spec["schedule"] = json!("0 5 * * *");
+        mirror.upsert(harvest);
+        mirror
+    }
+
+    /// T-0914, PL-64, PL-78: the stream wave against a runner that takes every stream: a Live
+    /// stream that only errors reads `StreamWriting` false, a sweep the door refuses is said on
+    /// its pipeline, a refused credential is `Error`, a disabled stream `Pending` and a
+    /// scheduled poll `Scheduled`; a run log that cannot be read is said for each of its reads
+    /// and the wave goes on.
+    #[tokio::test]
+    async fn the_stream_wave_says_each_outcome_on_its_pipeline() {
+        let runner = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/metrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "input_received{stream=\"helsinki.silent\"} 6\n\
+                 output_error{stream=\"helsinki.silent\"} 6\n",
+            ))
+            .mount(&runner)
+            .await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "active": true })))
+            .mount(&runner)
+            .await;
+        let deployer = Arc::new(
+            StreamDeployer::new(runner.uri())
+                .with_models(Arc::new(crate::pipeline_validation::ModelSchemas::default())),
+        );
+        let store_mirror = Arc::new(Mirror::new());
+        let mut organization = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        organization.spec = json!({});
+        store_mirror.upsert(organization);
+        let mut project = envelope("Project", crate::permissions::ORG_NAMESPACE, "helsinki");
+        project.spec = json!({ "organization": "bbsk" });
+        store_mirror.upsert(project);
+        let scratch = Scratch::new("t7806-streams").expect("scratch");
+        write_tree(scratch.path(), &[("README.md", "nothing here\n")]);
+        let repository = Repository::load(scratch.path()).expect("an empty repository loads");
+        let render = render_of(scratch.path(), 1, BTreeMap::new());
+        let refused = BTreeMap::from([(
+            ("helsinki".to_owned(), "refused".to_owned()),
+            "the secret `city-key` did not resolve".to_owned(),
+        )]);
+        let mut said = Vec::new();
+        for pool in [None, Some(dead_pool())] {
+            let syncer = Syncer::new(forge_at_dead(), Arc::new(Mirror::new()))
+                .with_streams(Arc::clone(&deployer))
+                .with_pipeline_outcomes(
+                    Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+                        pool.clone(),
+                        Arc::clone(&store_mirror),
+                    )),
+                    Arc::new(crate::pipeline_log::LogStore::new(
+                        pool,
+                        Arc::clone(&store_mirror),
+                    )),
+                );
+            let fresh = stream_world();
+            let (_, log) = crate::reconciler::logged(async {
+                syncer
+                    .converge_streams(&fresh, &repository, &render, &Bentos::new(), &refused)
+                    .await;
+                // The same refusal next run is not news.
+                syncer
+                    .converge_streams(&fresh, &repository, &render, &Bentos::new(), &refused)
+                    .await;
+            })
+            .await;
+            let silent = status_of_in(&fresh, "Pipeline", "silent");
+            assert_eq!(silent.phase, crate::resource::Phase::Live);
+            let types: Vec<&str> = silent
+                .conditions
+                .iter()
+                .map(|condition| condition.r#type.as_str())
+                .collect();
+            assert!(types.contains(&"StreamWriting"), "{types:?}");
+            assert!(types.contains(&"ExpirySweep"), "{types:?}");
+            let off = status_of_in(&fresh, "Pipeline", "off");
+            assert_eq!(off.phase, crate::resource::Phase::Pending);
+            assert_eq!(off.conditions[0].r#type, "StreamDeployed");
+            let harvest = status_of_in(&fresh, "Pipeline", "harvest");
+            assert_eq!(harvest.conditions[0].r#type, "Scheduled");
+            assert!(fresh
+                .get("helsinki", "Pipeline", "refused")
+                .is_some_and(|envelope| envelope.status.is_none()));
+            assert_eq!(log.matches("pipeline not run").count(), 2, "{log}");
+            said.push(log);
+        }
+        assert!(!said[0].contains("the run log was not read"), "{}", said[0]);
+        for line in [
+            "new scheduled pipelines wait for their clock",
+            "changed replace pipelines wait for their clock",
+            "failed runs wait for their clock",
+        ] {
+            assert!(said[1].contains(line), "{line} in {}", said[1]);
+        }
+    }
+
+    /// PL-93: a run log that cannot be read pauses nothing and says so.
+    #[tokio::test]
+    async fn an_unread_run_log_pauses_no_pipeline() {
+        let mirror = keyed_mirror("city");
+        let syncer = bare_syncer().with_pipeline_outcomes(
+            Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+                Some(dead_pool()),
+                Arc::clone(&mirror),
+            )),
+            Arc::new(crate::pipeline_log::LogStore::new(
+                Some(dead_pool()),
+                Arc::clone(&mirror),
+            )),
+        );
+        let lost = BTreeMap::from([(
+            ("city".to_owned(), "hsl".to_owned()),
+            "an author lost a reference".to_owned(),
+        )]);
+        let (kept, log) =
+            crate::reconciler::logged(syncer.paused_for_access(&Mirror::new(), lost.clone())).await;
+        assert_eq!(kept, lost);
+        assert!(
+            log.contains("no pipeline is paused for refused access this run"),
+            "{log}"
+        );
+    }
+
+    /// T-2976: a pipeline whose spec does not read, a disabled one and one with no status are
+    /// passed over by the phases a leader shares, a follower serves and a Portal with no runner
+    /// marks; an eligible one with a status gets each.
+    #[test]
+    fn the_shared_stream_phases_pass_over_what_is_not_a_stream() {
+        let mirror = stream_world();
+        let mut unreadable = envelope("Pipeline", "helsinki", "unreadable");
+        unreadable.spec = json!({ "class": 7 });
+        mirror.upsert(unreadable);
+        let phases = stream_phases(&mirror);
+        let mut names: Vec<&str> = phases.keys().map(|(_, name)| name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["harvest", "silent"]);
+        serve_leaders_phases(&mirror, &HashMap::new(), FOLLOWER);
+        assert_eq!(
+            status_of_in(&mirror, "Pipeline", "silent").conditions[0]
+                .reason
+                .as_deref(),
+            Some("Follower")
+        );
+        mark_streams_pending(&mirror, "NoRunner", "no runner");
+        assert_eq!(
+            status_of_in(&mirror, "Pipeline", "silent").conditions[0]
+                .reason
+                .as_deref(),
+            Some("NoRunner")
+        );
+        assert_eq!(
+            status_of_in(&mirror, "Pipeline", "off").conditions[0]
+                .reason
+                .as_deref(),
+            Some("Before"),
+            "a disabled stream is passed over"
+        );
+        assert!(mirror
+            .get("helsinki", "Pipeline", "bare")
+            .is_some_and(|envelope| envelope.status.is_none()));
+    }
+
+    fn app_manifest(name: &str, kind: &str, lifecycle: &str) -> String {
+        serde_json::to_string(&json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "App",
+            "metadata": { "name": name, "namespace": "city" },
+            "spec": {
+                "kind": kind,
+                "source": { "path": "./src" },
+                "build": { "rust": "1.90", "node": "22" },
+                "visibility": "project",
+                "lifecycle": lifecycle,
+                "dataNeeds": [{
+                    "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+                    "types": ["AirQualityObserved"],
+                    "attrs": ["pm10"],
+                    "operations": ["queryEntity"],
+                    "representations": ["ngsi-ld"]
+                }]
+            }
+        }))
+        .expect("JSON")
+    }
+
+    /// T-0411, AP-116: the App wave on a cluster that cannot be reached: the project's namespace
+    /// fails, so its App waits for it, each said; with a converger and no App nothing is said.
+    #[tokio::test]
+    async fn the_app_wave_says_what_each_app_did() {
+        let scratch = Scratch::new("t7806-apps").expect("scratch");
+        write_tree(
+            scratch.path(),
+            &[(
+                "projects/city/apps/web/app.yaml",
+                &app_manifest("web", "fullstack", "published"),
+            )],
+        );
+        let repository = Repository::load(scratch.path()).expect("the repository loads");
+        let syncer =
+            bare_syncer().with_converger(Arc::new(Converger::new(dead_kube(), edge_settings())));
+        let (_, log) = crate::reconciler::logged(syncer.converge_apps(&repository)).await;
+        assert!(log.contains("app did not converge"), "{log}");
+
+        let kube = answering(200).await;
+        let syncer = bare_syncer().with_converger(Arc::new(Converger::new(
+            crate::apps::kube::KubeClient::with_token(&kube.uri(), "kube-token").expect("kube"),
+            edge_settings(),
+        )));
+        let (_, log) = crate::reconciler::logged(syncer.converge_apps(&repository)).await;
+        assert!(log.contains("app=namespace city"), "{log}");
+        let empty = Scratch::new("t7806-noapps").expect("scratch");
+        write_tree(empty.path(), &[("README.md", "nothing\n")]);
+        let none = Repository::load(empty.path()).expect("an empty repository loads");
+        let (_, log) = crate::reconciler::logged(syncer.converge_apps(&none)).await;
+        assert!(!log.contains("app="), "{log}");
+    }
+
+    fn published_wasm(name: &str, jobs: bool) -> ResourceEnvelope {
+        let mut app = envelope("App", "city", name);
+        app.spec = json!({ "kind": "wasm", "lifecycle": "published" });
+        if jobs {
+            app.spec["server"] = json!({ "jobs": [{ "name": "nightly", "schedule": "0 3 * * *", "export": "run" }] });
+        }
+        if let Some(status) = app.status.as_mut() {
+            status.shard = Some(0);
+            status.build = Some(
+                serde_json::from_value(json!({
+                    "digest": format!("sha256:{}", "0".repeat(64)),
+                    "commit": "abc123",
+                    "sdkVersion": "1.0.0",
+                    "builtAt": "2026-11-24T10:00:00Z",
+                    "component": format!("sha256:{}", "1".repeat(64)),
+                }))
+                .expect("a build"),
+            );
+        }
+        app
+    }
+
+    /// AP-133, AP-154: published Apps on a cluster whose edge Ingress cannot be read are each
+    /// `HostRefused`; with the wildcard certificate issued and on the edge every App is served.
+    /// A run where a project did not stage retires no host. A WASM App's job runs come from its
+    /// shard, the artifact store passed along.
+    #[tokio::test]
+    async fn the_app_host_wave_marks_each_app_it_cannot_serve() {
+        let mirror = Arc::new(Mirror::new());
+        mirror.upsert(published_wasm("parking", true));
+        mirror.upsert(published_wasm("map", false));
+        let store = crate::artifact_store::Client::new(crate::artifact_store::Settings {
+            endpoint: DEAD.to_owned(),
+            bucket: "artifacts".to_owned(),
+            region: "eu".to_owned(),
+            root_access_key: "root".to_owned(),
+            root_secret_key: "root-secret".to_owned(),
+        })
+        .expect("a store client");
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+            .with_edge_file(
+                Arc::new(super::super::edge_file::EdgeFile::new(
+                    dead_kube(),
+                    "jc-edge".to_owned(),
+                )),
+                edge_settings(),
+            )
+            .with_app_hosts(Arc::new(super::super::app_hosts::AppHosts::new(
+                dead_kube(),
+                "jc".to_owned(),
+            )))
+            .with_wasm_shards(Arc::new(super::super::wasm_shards::WasmShards::new(
+                dead_kube(),
+                "jc-apps".to_owned(),
+                1,
+                "apps".to_owned(),
+            )))
+            .with_artifact_store(Arc::new(store), None);
+        let scratch = Scratch::new("t7806-hosts").expect("scratch");
+        let mut render = render_of(scratch.path(), 2, BTreeMap::new());
+        let transitions = super::super::transitions::Transitions::of(&mirror);
+        let (_, log) = crate::reconciler::logged(async {
+            syncer.converge_app_hosts(&render, &transitions).await;
+            syncer.converge_wasm_shards().await;
+        })
+        .await;
+        assert!(log.contains("the App's host is not served yet"), "{log}");
+        assert!(!log.contains("no App host is retired this run"), "{log}");
+        let refused = status_of_in(&mirror, "App", "parking");
+        assert_eq!(refused.conditions[0].reason.as_deref(), Some("HostRefused"));
+        assert!(refused.jobs.is_empty(), "no shard answered");
+        render.unstaged = vec!["other".to_owned()];
+        let (_, log) =
+            crate::reconciler::logged(syncer.converge_app_hosts(&render, &transitions)).await;
+        assert!(log.contains("no App host is retired this run"), "{log}");
+
+        let kube = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/apis/networking.k8s.io/v1/namespaces/jc/ingresses/apisix",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "spec": { "tls": [{
+                    "hosts": ["*.apps.apps.bb.sk"],
+                    "secretName": "apisix-apps-wildcard-tls"
+                }] }
+            })))
+            .mount(&kube)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/apis/cert-manager.io/v1/namespaces/jc/certificates/apisix-apps-wildcard",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "spec": {
+                    "secretName": "apisix-apps-wildcard-tls",
+                    "dnsNames": ["*.apps.apps.bb.sk"]
+                },
+                "status": { "conditions": [{ "type": "Ready", "status": "True" }] }
+            })))
+            .mount(&kube)
+            .await;
+        let served = Arc::new(Mirror::new());
+        served.upsert(published_wasm("parking", true));
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&served))
+            .with_edge_file(
+                Arc::new(super::super::edge_file::EdgeFile::new(
+                    dead_kube(),
+                    "jc-edge".to_owned(),
+                )),
+                edge_settings(),
+            )
+            .with_app_hosts(Arc::new(super::super::app_hosts::AppHosts::new(
+                crate::apps::kube::KubeClient::with_token(&kube.uri(), "kube-token").expect("kube"),
+                "jc".to_owned(),
+            )));
+        render.unstaged.clear();
+        let (_, log) =
+            crate::reconciler::logged(syncer.converge_app_hosts(&render, &transitions)).await;
+        assert!(!log.contains("the App's host is not served yet"), "{log}");
+        assert_ne!(
+            status_of_in(&served, "App", "parking").conditions[0]
+                .reason
+                .as_deref(),
+            Some("HostRefused")
+        );
+    }
+
+    /// T-5874: a broker whose spec does not read is `Invalid` with its release unchanged, one
+    /// that reads waits on nothing; a cluster that cannot be reached is one line for every broker.
+    #[tokio::test]
+    async fn an_mqtt_broker_that_does_not_read_is_invalid() {
+        let mirror = Arc::new(Mirror::new());
+        let mut organization = envelope("Organization", crate::permissions::ORG_NAMESPACE, "bbsk");
+        organization.spec = json!({ "domain": "bb.sk", "limits": { "mqtt": {
+            "enabled": true, "brokers": 2, "connections": 20000, "messagesPerSecond": 100000,
+            "addresses": ["platform"]
+        } } });
+        mirror.upsert(organization);
+        let mut account = envelope("ServiceAccount", "city", "camera-1");
+        account.spec = json!({});
+        mirror.upsert(account);
+        let mut good = envelope("MqttBroker", "city", "cameras");
+        good.spec = json!({
+            "roles": [{
+                "name": "camera",
+                "serviceAccounts": ["camera-1"],
+                "publish": ["cameras/${clientid}/#"]
+            }],
+            "limits": { "maxMessageBytes": 2048 }
+        });
+        mirror.upsert(good);
+        let mut bad = envelope("MqttBroker", "city", "broken");
+        bad.spec = json!({ "roles": "not a list" });
+        mirror.upsert(bad);
+        let syncer = Syncer::new(forge_at_dead(), Arc::clone(&mirror))
+            .with_mqtt_brokers(Arc::new(super::super::mqtt_brokers::MqttBrokers::new(
+                dead_kube(),
+                "jc-mqtt".to_owned(),
+            )))
+            .with_mqtt_capture(Arc::new(crate::mqtt_capture::Capture::new(
+                Arc::new(crate::mqtt_capture::CaptureStore::new(
+                    None,
+                    Arc::clone(&mirror),
+                )),
+                "jc-mqtt".to_owned(),
+            )));
+        let scratch = Scratch::new("t7806-mqtt").expect("scratch");
+        let render = render_of(scratch.path(), 2, BTreeMap::new());
+        let transitions = super::super::transitions::Transitions::of(&mirror);
+        let (_, log) =
+            crate::reconciler::logged(syncer.converge_mqtt_brokers(&render, &transitions)).await;
+        assert!(log.contains("the MQTT brokers did not converge"), "{log}");
+        let broken = status_of_in(&mirror, "MqttBroker", "broken");
+        assert_eq!(broken.conditions[0].reason.as_deref(), Some("Invalid"));
+        assert!(broken.conditions[0]
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("running release, if any, is unchanged")));
+        let cameras = status_of_in(&mirror, "MqttBroker", "cameras");
+        assert_ne!(
+            cameras.conditions[0].reason.as_deref(),
+            Some("Invalid"),
+            "{:?}",
+            cameras.conditions[0].message
+        );
+    }
+
+    /// PL-95: each Pipeline of the render is asked of its own repository: one under a staged
+    /// project of that project's forge and ref, one elsewhere of the organization's; a
+    /// manifest with no namespace takes its path's.
+    #[tokio::test]
+    async fn lost_authors_reads_each_pipeline_from_its_own_repository() {
+        let scratch = Scratch::new("t7806-authors").expect("scratch");
+        let spec = json!({
+            "class": "resident",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "bikes" } },
+            "compute": { "kind": "bloblang", "bloblang": "root = this" },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:example.org:city:all"
+        });
+        let unplaced = serde_json::to_string(&json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Pipeline",
+            "metadata": { "name": "org-wide" },
+            "spec": spec,
+        }))
+        .expect("JSON");
+        write_tree(
+            scratch.path(),
+            &[
+                (
+                    "projects/b/pipelines/bikes.yaml",
+                    &manifest("Pipeline", "bikes", spec.clone()),
+                ),
+                ("projects/city/pipelines/org-wide.yaml", &unplaced),
+                (
+                    "projects/city/spaces/air/space.yaml",
+                    &manifest("ContextSpace", "air", json!({})),
+                ),
+            ],
+        );
+        let repository = Repository::load(scratch.path()).expect("the repository loads");
+        let project_forge = answering(500).await;
+        let render = render_of(
+            scratch.path(),
+            2,
+            BTreeMap::from([(
+                "b".to_owned(),
+                (client_at(&project_forge.uri()), "main".to_owned()),
+            )]),
+        );
+        let syncer = bare_syncer();
+        assert!(syncer
+            .lost_authors(&Mirror::new(), &repository, &render, "rev")
+            .await
+            .is_empty());
+        let syncer = Syncer::new(forge_at_dead(), Arc::new(Mirror::new())).with_author_rights(
+            super::super::pipeline_authors::AuthorRights::new("jc-admins".to_owned(), None),
+        );
+        let lost = syncer
+            .lost_authors(&Mirror::new(), &repository, &render, "rev")
+            .await;
+        assert!(lost.is_empty(), "{lost:?}");
+        assert!(
+            !project_forge
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .is_empty(),
+            "the staged project's pipeline is read from its own forge"
+        );
+    }
+
+    /// T-5305: an Endpoint naming a retired representation is rewritten in its own repository:
+    /// the organization's on its default branch, a project's at its ref or its default branch;
+    /// a project the render did not stage, a forge with no default branch and a forge that
+    /// refuses the file leave it, each said.
+    #[tokio::test]
+    async fn retired_representations_are_dropped_in_each_repository() {
+        let scratch = Scratch::new("t7806-retired").expect("scratch");
+        let endpoint = |space: &str| {
+            manifest(
+                "Endpoint",
+                &format!("{space}-all"),
+                json!({
+                    "contextSpaceRef": space,
+                    "slug": "abc123456789012345678901234",
+                    "audience": "public",
+                    "enabledRepresentations": ["ngsi-ld", "xlsx"]
+                }),
+            )
+        };
+        write_tree(
+            scratch.path(),
+            &[
+                ("endpoints/org.yaml", &endpoint("org")),
+                ("projects/gone/endpoints/e.yaml", &endpoint("gone")),
+                ("projects/nobranch/endpoints/e.yaml", &endpoint("nobranch")),
+                ("projects/refusing/endpoints/e.yaml", &endpoint("refusing")),
+            ],
+        );
+        let repository = Repository::load(scratch.path()).expect("the repository loads");
+        let refusing = answering(500).await;
+        let missing = answering(404).await;
+        let render = render_of(
+            scratch.path(),
+            2,
+            BTreeMap::from([
+                (
+                    "nobranch".to_owned(),
+                    (client_at(&refusing.uri()), String::new()),
+                ),
+                (
+                    "refusing".to_owned(),
+                    (client_at(&refusing.uri()), "main".to_owned()),
+                ),
+            ]),
+        );
+        let syncer = Syncer::new(forge_at(&missing), Arc::new(Mirror::new()));
+        let (_, log) = crate::reconciler::logged(syncer.drop_retired_representations(
+            &render,
+            &repository,
+            "main",
+        ))
+        .await;
+        assert!(
+            log.contains("retired representations stay: no default branch"),
+            "{log}"
+        );
+        assert!(
+            log.contains("retired representations stay in the repository"),
+            "{log}"
+        );
+        assert!(!log.contains("project=gone"), "{log}");
+        assert!(
+            !log.contains("dropped from Endpoint and App manifests"),
+            "{log}"
+        );
+        assert!(!missing
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+    }
+
     const PIPELINE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: NAME\n  namespace: ovzdusie\nspec:\n  class: auto\n  period: 60s\n  source:\n    dataSourceRef:\n      kind: DataSource\n      name: hsl\n  compute:\n    kind: bloblang\n    bloblang: root = this\n  targetEndpoint: urn:ngsi-ld:Endpoint:example.org:ovzdusie:all\n";
 
     #[test]
@@ -7630,11 +9607,7 @@ output_error{stream="kpi"} 6
             .expect("the Endpoint Change binding the refused Policy passes the door");
 
         let refusals = run(&files(LIVE), "bbbb2222");
-        assert!(
-            refusals.is_empty(),
-            "{:?}",
-            refusals.values().map(|r| &r.reason).collect::<Vec<_>>()
-        );
+        assert!(refusals.is_empty(), "{:?}", refusals.keys());
         assert!(syncer
             .mirror
             .get("city", "Policy", "sensors-write")
@@ -7669,10 +9642,7 @@ output_error{stream="kpi"} 6
             *syncer.accepted.lock().expect("lock") = Some(Arc::clone(&served));
             let (fresh, _) = syncer
                 .load_mirror(&render(dir.path()), &served, &refusals, revision, "main")
-                .unwrap_or_else(|e| {
-                    let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
-                    panic!("the mirror loads: {e:?} {reasons:?}")
-                });
+                .expect("the mirror loads");
             syncer.mirror.replace_all(&fresh);
             refusals
         };
@@ -7789,8 +9759,7 @@ output_error{stream="kpi"} 6
         assert_eq!(planned, ["air-a"]);
 
         let (refusals, planned) = run(&files(2), "bbbb2222");
-        let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
-        assert!(reasons.is_empty(), "{reasons:?}");
+        assert!(refusals.is_empty(), "{:?}", refusals.keys());
         assert_eq!(planned, ["air-a", "air-b"]);
         let (refusals, planned) = run(&files(2), "cccc3333");
         assert!(refusals.is_empty(), "the next run keeps it");
@@ -7865,8 +9834,7 @@ output_error{stream="kpi"} 6
         let loaded = Repository::load(dir.path()).expect("the repository loads");
         let (served, refusals) =
             syncer.refuse_invalid(&render, Arc::new(loaded), "aaaa1111", "main");
-        let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
-        assert!(refusals.is_empty(), "{reasons:?}");
+        assert!(refusals.is_empty(), "{:?}", refusals.keys());
         let (fresh, _) = syncer
             .load_mirror(&render, &served, &refusals, "aaaa1111", "main")
             .expect("the mirror loads");
@@ -7924,10 +9892,7 @@ output_error{stream="kpi"} 6
             *syncer.accepted.lock().expect("lock") = Some(Arc::clone(&served));
             let (fresh, _) = syncer
                 .load_mirror(&render(dir.path()), &served, &refusals, revision, "main")
-                .unwrap_or_else(|e| {
-                    let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
-                    panic!("the mirror loads: {e:?} {reasons:?}")
-                });
+                .expect("the mirror loads");
             syncer.mirror.replace_all(&fresh);
             (served, refusals)
         };
@@ -8166,11 +10131,12 @@ output_error{stream="kpi"} 6
         use super::super::views::{Owner, ViewOutcome, CONDITION};
         let mirror = Mirror::new();
         let mut endpoint = envelope("Endpoint", "p", "e");
-        if let Some(status) = endpoint.status.as_mut() {
-            status
-                .conditions
-                .push(make_condition(CONDITION, "True", "Written", "a run ago"));
-        }
+        endpoint
+            .status
+            .as_mut()
+            .expect("a status")
+            .conditions
+            .push(make_condition(CONDITION, "True", "Written", "a run ago"));
         mirror.upsert(endpoint);
         mirror.upsert(envelope("ContextSpace", "p", "s"));
         let owner = |kind, name: &str| Owner {

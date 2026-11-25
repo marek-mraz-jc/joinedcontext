@@ -1926,18 +1926,19 @@ fn policy_tenant() -> Result<antares_model::TenantId, String> {
 /// A store that refuses every call (a Postgres pool on a port nobody
 /// listens on): each read and write of the state answers the store's error,
 /// never an empty success.
+#[cfg(all(test, feature = "postgres"))]
+pub(crate) fn refusing_state() -> AppState {
+    let pool = antares_sql::sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(300))
+        .connect_lazy("postgres://antares@127.0.0.1:1/antares")
+        .expect("a lazy pool parses");
+    let store = AnyStore::Pg(antares_sql::store::any::PgBackend::new(pool));
+    AppState::with_store("http://localhost:0".into(), Arc::new(store), "postgres")
+}
+
 #[cfg(all(test, feature = "postgres", feature = "views"))]
 mod refusing_store {
-    use super::*;
-
-    fn refusing() -> AppState {
-        let pool = antares_sql::sqlx::postgres::PgPoolOptions::new()
-            .acquire_timeout(std::time::Duration::from_millis(300))
-            .connect_lazy("postgres://antares@127.0.0.1:1/antares")
-            .expect("a lazy pool parses");
-        let store = AnyStore::Pg(antares_sql::store::any::PgBackend::new(pool));
-        AppState::with_store("http://localhost:0".into(), Arc::new(store), "postgres")
-    }
+    use super::refusing_state as refusing;
 
     #[tokio::test]
     async fn every_entity_call_answers_the_stores_error() {

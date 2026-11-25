@@ -167,9 +167,9 @@ pub async fn handle_connector(
 /// `Retry-After` in seconds (T-5968).
 fn limited(why: &str, wait: i64) -> Response {
     let mut response = ApiError::TooManyRequests(why.to_owned()).into_response();
-    if let Ok(value) = wait.to_string().parse() {
-        response.headers_mut().insert(header::RETRY_AFTER, value);
-    }
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, header::HeaderValue::from(wait));
     response
 }
 
@@ -240,9 +240,7 @@ fn merged(lists: impl Iterator<Item = Vec<Value>>) -> Vec<Value> {
                 }
                 // One project reaches every Endpoint: the list holds no bound.
                 (Some(_), None) if field == "endpoint" => {
-                    if let Some(have) = have.as_object_mut() {
-                        have.remove("enum");
-                    }
+                    have.as_object_mut().and_then(|have| have.remove("enum"));
                 }
                 _ => {}
             }
@@ -615,10 +613,11 @@ fn tab_action(
         );
         return refused(403, "forbidden", "Forbidden", &why, "refused: target");
     };
+    // `project` was read off the arguments above, so they are an object.
     let mut checked = arguments.clone();
-    if let Some(fields) = checked.as_object_mut() {
-        fields.remove("project");
-    }
+    checked
+        .as_object_mut()
+        .and_then(|fields| fields.remove("project"));
     let asker = ui_actions::Asker {
         state,
         identity,
@@ -674,8 +673,9 @@ fn tab_action(
 
 /// Puts the connector's one project into a `tools/call` that names none (T-6064). The project
 /// comes from the stored scope only; a call that names a project keeps it, so a foreign one is
-/// still refused by `admits`. `true` when the message changed.
-fn defaults_project(connector: &Connector, message: &mut Value) -> bool {
+/// still refused by `admits`. `true` when the message changed. Public for the fuzz target
+/// `mcp_connector_defaults`: the message is outside input.
+pub fn defaults_project(connector: &Connector, message: &mut Value) -> bool {
     let [only] = connector.projects()[..] else {
         return false;
     };
@@ -1403,5 +1403,564 @@ mod tests {
                     .as_array()
                     .is_some_and(|r| r.contains(&json!("project")))));
         assert!(!UI_TOOLS.contains(&"jc_ui_submit"));
+    }
+
+    /// One call through `judge`, as the door hands it on past the token: the status, the verdict
+    /// and the JSON answer (`null` for an empty one).
+    async fn judged(
+        state: &AppState,
+        connector: &Connector,
+        identity: crate::auth::session::Identity,
+        message: Value,
+    ) -> (StatusCode, String, Value) {
+        let body = Bytes::from(message.to_string());
+        let (response, verdict) =
+            judge(state, connector, identity, "a-token", &message, body).await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (
+            status,
+            verdict,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    fn doprava() -> Connector {
+        connectors::of_conversation("r1", "f:1:ana", "doprava", "pipeline")
+    }
+
+    fn rpc(method: &str, params: Value) -> Value {
+        json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params })
+    }
+
+    /// AG-153: a connector bound to named clients refuses a token that names none, and says so.
+    #[tokio::test]
+    async fn a_token_of_no_named_client_is_refused_by_a_bound_connector() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut connector = doprava();
+        connector.allowed_clients = vec!["claude-ai".to_owned()];
+        let mut nobody = ana();
+        nobody.client = None;
+        let (status, verdict, body) =
+            judged(&state, &connector, nobody, rpc("ping", json!({}))).await;
+        assert_eq!(
+            (status, verdict.as_str()),
+            (StatusCode::FORBIDDEN, "refused: client")
+        );
+        let detail = body["detail"].as_str().expect("detail");
+        assert!(
+            detail.contains("answers only claude-ai") && detail.contains("no named client"),
+            "{detail}"
+        );
+        let (_, verdict, body) = judged(&state, &connector, ana(), rpc("ping", json!({}))).await;
+        assert_eq!(verdict, "refused: client");
+        assert!(body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("obtained by mcp-local")));
+    }
+
+    /// AG-150: a connector older than the ceiling's longest life is refused at the door.
+    #[tokio::test]
+    async fn a_connector_older_than_the_ceiling_allows_is_refused() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut connector = doprava();
+        connector.granted_at =
+            jc_time::TimestampTz::now() - jiff::SignedDuration::from_hours(24 * 3650);
+        let (status, verdict, body) =
+            judged(&state, &connector, ana(), rpc("ping", json!({}))).await;
+        assert_eq!(
+            (status, verdict.as_str()),
+            (StatusCode::FORBIDDEN, "refused: ceiling")
+        );
+        assert!(
+            body["detail"].as_str().is_some_and(|d| d.contains("days")),
+            "{body}"
+        );
+    }
+
+    /// AG-60: a request past the byte limit is a 413 naming the limit, and nothing is dispatched.
+    #[tokio::test]
+    async fn a_request_past_the_limit_is_refused_before_anything_runs() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let message = rpc("tools/list", json!({}));
+        let body = Bytes::from(vec![b' '; MAX_REQUEST_BYTES + 1]);
+        let (response, verdict) = judge(&state, &doprava(), ana(), "t", &message, body).await;
+        assert_eq!(verdict, "refused: too large");
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let answer = answer_of(response).await;
+        assert!(answer["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains(&format!("at most {MAX_REQUEST_BYTES}"))));
+    }
+
+    /// A notification, or a message without an id, is the Portal MCP's answer: 202, allowed.
+    #[tokio::test]
+    async fn a_notification_through_a_connector_is_accepted() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        for message in [
+            json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+            json!({ "jsonrpc": "2.0", "method": "ping" }),
+            json!([1, 2]),
+        ] {
+            let (status, verdict, _) = judged(&state, &doprava(), ana(), message.clone()).await;
+            assert_eq!(verdict, "allowed", "{message}");
+            assert!(
+                status == StatusCode::ACCEPTED || status == StatusCode::OK,
+                "{message}: {status}"
+            );
+        }
+    }
+
+    /// T-5967, T-6501: the UI tools are offered only while a tab is paired, a UI call goes to the
+    /// tab, and `initialize` says the tab follows the work.
+    #[tokio::test]
+    async fn a_paired_tab_adds_the_ui_tools_and_the_note_and_takes_ui_calls() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let connector = doprava();
+        let now = crate::auth::session::now_unix();
+        let names = |body: &Value| -> Vec<String> {
+            body["result"]["tools"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|t| t["name"].as_str().map(str::to_owned))
+                .collect()
+        };
+        let (_, _, unpaired) =
+            judged(&state, &connector, ana(), rpc("tools/list", json!({}))).await;
+        assert!(
+            // ana reads nothing and no tab is paired: no tool at all, the UI tools included.
+            names(&unpaired).is_empty(),
+            "{unpaired}"
+        );
+        let call = rpc(
+            "tools/call",
+            json!({ "name": "jc_ui_filter_table",
+            "arguments": { "project": "doprava", "query": "air" } }),
+        );
+        let (_, verdict, refused) = judged(&state, &connector, ana(), call.clone()).await;
+        assert_eq!(verdict, "refused: no tab");
+        let detail = refused["result"]["structuredContent"]["detail"]
+            .as_str()
+            .expect("detail");
+        assert!(
+            !detail.contains("address to open"),
+            "no page to name: {detail}"
+        );
+
+        let tab = state
+            .paired_tabs
+            .pair(&connector.id, "f:1:ana", 5, now + 3600);
+        let (mut heard, _) = state
+            .paired_tabs
+            .listen(&connector.id, &tab, "f:1:ana", 5, now + 3600, now)
+            .expect("paired");
+        let (_, verdict, listed) =
+            judged(&state, &connector, ana(), rpc("tools/list", json!({}))).await;
+        assert_eq!(verdict, "allowed");
+        let tools = names(&listed);
+        assert!(
+            UI_TOOLS.iter().all(|ui| tools.iter().any(|t| t == ui)),
+            "{tools:?}"
+        );
+        // One project: no tool requires `project`.
+        assert!(listed["result"]["tools"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .all(|t| !t["inputSchema"]["required"]
+                .as_array()
+                .is_some_and(|r| r.contains(&json!("project")))));
+
+        let (_, verdict, shown) = judged(&state, &connector, ana(), call).await;
+        assert_eq!(verdict, "allowed");
+        assert_eq!(shown["result"]["structuredContent"]["shown"], "filter");
+        let action = heard.try_recv().expect("the tab hears the filter");
+        assert_eq!(action["frame"], "ui");
+
+        let (status, verdict, init) = judged(
+            &state,
+            &connector,
+            ana(),
+            rpc("initialize", json!({ "protocolVersion": "2025-06-18" })),
+        )
+        .await;
+        assert_eq!((status, verdict.as_str()), (StatusCode::OK, "allowed"));
+        let instructions = init["result"]["instructions"]
+            .as_str()
+            .expect("instructions");
+        assert!(
+            instructions.contains("This connector reaches project doprava;"),
+            "{instructions}"
+        );
+        assert!(instructions.ends_with(PAIRED_TAB_NOTE), "{instructions}");
+        assert_eq!(
+            init["result"]["capabilities"],
+            json!({ "tools": {}, "resources": {} })
+        );
+    }
+
+    /// AG-158: a scope item with personal data ticked passes the answer as the call made it.
+    #[tokio::test]
+    async fn a_scope_item_with_personal_data_passes_the_answer_unchanged() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        // The organization default ceiling carries data-read alone.
+        let mut connector = connectors::of_conversation("r1", "f:1:ana", "doprava", "data-read");
+        connector.scope[0].personal_data = true;
+        // An administrator reads every project: the default ceiling reaches doprava.
+        let mut admin = ana();
+        admin.groups = vec![state.config.bootstrap_admins.clone()];
+        let call = rpc(
+            "tools/call",
+            json!({ "name": "jc_resource_list",
+            "arguments": { "project": "doprava", "kind": "Endpoint" } }),
+        );
+        let (status, verdict, body) = judged(&state, &connector, admin, call).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            !verdict.starts_with("refused: target") && !verdict.starts_with("refused: personal"),
+            "{verdict} {body}"
+        );
+        assert_eq!(body["id"], 1);
+    }
+
+    #[tokio::test]
+    async fn the_challenge_names_the_scope_only_of_a_connector_id() {
+        let id = "abcdefghijklmnopqrstuvwxyz";
+        assert!(connectors::is_id(id));
+        let challenge = |id: &str| {
+            unauthorized("https://p/c/x", id)
+                .headers()
+                .get(header::WWW_AUTHENTICATE)
+                .map(|v| v.to_str().expect("text").to_owned())
+        };
+        assert_eq!(
+            challenge(id).as_deref(),
+            Some("Bearer resource_metadata=\"https://p/c/x/.well-known/oauth-protected-resource\", scope=\"connector:abcdefghijklmnopqrstuvwxyz\"")
+        );
+        assert_eq!(
+            challenge("x").as_deref(),
+            Some("Bearer resource_metadata=\"https://p/c/x/.well-known/oauth-protected-resource\"")
+        );
+        // A path that decodes to a control character is still a 401, without a challenge.
+        let response = unauthorized("https://p/c/a\nb", "a\nb");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(response.headers().get(header::WWW_AUTHENTICATE).is_none());
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let metadata = connector_metadata(State(state), Path("not-an-id".to_owned())).await;
+        assert_eq!(metadata.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The door answers 401 without a bearer and when no realm checks the token, before it reads
+    /// the connector or the body.
+    #[tokio::test]
+    async fn no_bearer_and_no_verifier_are_both_401() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let id = "abcdefghijklmnopqrstuvwxyz".to_owned();
+        let call = |headers: HeaderMap| {
+            handle_connector(
+                State(state.clone()),
+                Path(id.clone()),
+                headers,
+                Bytes::from_static(b"{}"),
+            )
+        };
+        assert_eq!(
+            call(HeaderMap::new()).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let mut empty = HeaderMap::new();
+        empty.insert(header::AUTHORIZATION, "Bearer   ".parse().expect("header"));
+        assert_eq!(call(empty).await.status(), StatusCode::UNAUTHORIZED);
+        let mut bearer = HeaderMap::new();
+        bearer.insert(
+            header::AUTHORIZATION,
+            "Bearer a.b.c".parse().expect("header"),
+        );
+        let response = call(bearer).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(response.headers()[header::WWW_AUTHENTICATE]
+            .to_str()
+            .is_ok_and(|c| c.contains("scope=\"connector:abcdefghijklmnopqrstuvwxyz\"")));
+    }
+
+    #[tokio::test]
+    async fn the_connector_door_takes_post_alone_and_a_limit_says_when_to_retry() {
+        use tower::ServiceExt;
+        let config = crate::config::Config::for_tests();
+        let state = AppState::new(config.clone(), None);
+        let app = router(&config).with_state(state);
+        let get = axum::http::Request::builder()
+            .uri("/c/abcdefghijklmnopqrstuvwxyz")
+            .body(Body::empty())
+            .expect("request");
+        let response = app.oneshot(get).await.expect("answer");
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let limited = limited("too many", 7);
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(limited.headers()[header::RETRY_AFTER], "7");
+    }
+
+    /// A kind bound in one list and none in another keeps the bound; only `endpoint` opens.
+    #[test]
+    fn a_kind_list_without_a_bound_keeps_the_other_lists_kinds() {
+        let tool = |kinds: Option<&[&str]>| {
+            let mut kind = json!({ "type": "string" });
+            if let Some(kinds) = kinds {
+                kind["enum"] = json!(kinds);
+            }
+            vec![
+                json!({ "name": "jc_resource_list", "inputSchema": { "properties": { "kind": kind } } }),
+            ]
+        };
+        let both = merged([tool(Some(&["Endpoint"])), tool(None)].into_iter());
+        assert_eq!(
+            both[0]["inputSchema"]["properties"]["kind"]["enum"],
+            json!(["Endpoint"])
+        );
+        let none = merged([tool(None), tool(Some(&["Pipeline"]))].into_iter());
+        assert!(none[0]["inputSchema"]["properties"]["kind"]
+            .get("enum")
+            .is_none());
+    }
+
+    #[test]
+    fn only_a_question_or_an_applied_change_needs_the_person() {
+        let apply = |requests: Value| json!({ "result": { "structuredContent": { "changeRequests": requests } } });
+        assert_eq!(
+            page_needing_the_person("p", "jc_change_apply", &apply(json!([]))),
+            None
+        );
+        assert_eq!(
+            page_needing_the_person("p", "jc_change_apply", &apply(json!([{ "id": 7 }]))),
+            None
+        );
+        assert_eq!(
+            page_needing_the_person("p", "jc_change_apply", &apply(json!("x"))),
+            None
+        );
+        assert_eq!(
+            page_needing_the_person("p", "jc_data_query", &apply(json!([{ "id": "a" }]))),
+            None
+        );
+    }
+
+    /// An answer larger than the door reads is a 500 at each step that re-reads it, never a
+    /// truncated answer passed on.
+    #[tokio::test]
+    async fn an_answer_past_the_door_limit_is_never_passed_on_cut() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let connector = doprava();
+        let now = crate::auth::session::now_unix();
+        let huge = || Response::new(Body::from(vec![b'x'; MAX_RESPONSE_BYTES + 1]));
+        let (response, verdict) = verdict_of(huge(), json!(1), usize::MAX).await;
+        assert_eq!(
+            (response.status(), verdict.as_str()),
+            (StatusCode::INTERNAL_SERVER_ERROR, "error")
+        );
+        assert_eq!(
+            without_personal(&state, Some("doprava"), huge())
+                .await
+                .status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        let portal: url::Url = "https://portal.test/".parse().expect("url");
+        assert_eq!(
+            with_projects_named(huge(), &["doprava"], &portal, false)
+                .await
+                .status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        let tab = state
+            .paired_tabs
+            .pair(&connector.id, "f:1:ana", 5, now + 3600);
+        let _listening = state
+            .paired_tabs
+            .listen(&connector.id, &tab, "f:1:ana", 5, now + 3600, now)
+            .expect("paired");
+        let call = Followed {
+            connector: &connector,
+            client: None,
+            project: Some("doprava"),
+            tool: "jc_data_query",
+        };
+        assert_eq!(
+            follow_in_tab(&state, &call, huge(), "allowed")
+                .await
+                .status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        // A refused call or one without a project is never followed: the answer passes as it is.
+        let small = || json_response(StatusCode::OK, &json!({ "id": 1 }));
+        assert_eq!(
+            answer_of(follow_in_tab(&state, &call, small(), "refused: tool").await).await["id"],
+            1
+        );
+        let nowhere = Followed {
+            project: None,
+            ..call
+        };
+        assert_eq!(
+            answer_of(follow_in_tab(&state, &nowhere, small(), "allowed").await).await["id"],
+            1
+        );
+    }
+
+    /// T-6064: an answer without instructions passes; several projects are named, each call names one.
+    #[tokio::test]
+    async fn initialize_names_every_project_of_a_wider_connector() {
+        let portal: url::Url = "https://portal.test/".parse().expect("url");
+        let plain = json_response(StatusCode::OK, &json!({ "result": { "serverInfo": {} } }));
+        let kept = answer_of(with_projects_named(plain, &["a", "b"], &portal, false).await).await;
+        assert_eq!(kept, json!({ "result": { "serverInfo": {} } }));
+        let init = json_response(
+            StatusCode::OK,
+            &json!({ "result": { "instructions": "Hi." } }),
+        );
+        let named = answer_of(with_projects_named(init, &["a", "b"], &portal, false).await).await;
+        let text = named["result"]["instructions"].as_str().expect("text");
+        assert!(
+            text.starts_with(
+                "Hi. This connector reaches projects a, b; name one as `project` in each call."
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("https://portal.test/projects/<project>/explore?"),
+            "{text}"
+        );
+        assert!(!text.contains(PAIRED_TAB_NOTE));
+    }
+
+    #[test]
+    fn a_wider_connector_defaults_no_project_and_odd_schemas_stay() {
+        let mut two = doprava();
+        let mut other = two.scope[0].clone();
+        other.project = "espoo".to_owned();
+        two.scope.push(other);
+        let mut call =
+            json!({ "method": "tools/call", "params": { "name": "x", "arguments": {} } });
+        assert!(!defaults_project(&two, &mut call));
+        assert!(call["params"]["arguments"].get("project").is_none());
+        let mut flat = json!({ "method": "tools/call", "params": "x" });
+        assert!(!defaults_project(&doprava(), &mut flat));
+        assert_eq!(flat["params"], "x");
+        let mut tools = vec![
+            json!({ "inputSchema": { "required": "project" } }),
+            json!({}),
+        ];
+        optional_project(&mut tools);
+        assert_eq!(tools[0]["inputSchema"]["required"], "project");
+    }
+
+    /// T-6867: a read past the door through no connector is the caller's own; one through a
+    /// connector is held to its scope.
+    #[tokio::test]
+    async fn a_read_past_the_door_is_checked_only_through_a_connector() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let own = crate::ops::Caller::new(ana(), crate::ops::Via::Mcp);
+        assert_eq!(admits_read(&state, &own, "espoo", &json!({})).await, Ok(()));
+        let through = caller(&doprava(), ana(), "t");
+        let refused = admits_read(
+            &state,
+            &through,
+            "espoo",
+            &json!({ "data": { "query": { "endpoint": "air" } } }),
+        )
+        .await
+        .expect_err("another project");
+        assert!(refused.contains("espoo"), "{refused}");
+    }
+
+    /// AG-158: an indicator read from an Endpoint names its project; a call of another tool, or
+    /// an indicator from rows the client sent, is not checked.
+    #[tokio::test]
+    async fn an_indicator_from_an_endpoint_names_its_project() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let refused = indicator_stays_open(
+            &state,
+            None,
+            "jc_kpi_compute",
+            &json!({ "endpoint": "air", "attribute": "pm10" }),
+        )
+        .await
+        .expect_err("no project");
+        assert!(refused.contains("names its project"), "{refused}");
+        assert_eq!(
+            indicator_stays_open(&state, None, "jc_kpi_compute", &json!({ "rows": [] })).await,
+            Ok(())
+        );
+        assert_eq!(
+            indicator_stays_open(&state, None, "jc_resource_list", &json!({})).await,
+            Ok(())
+        );
+        let entities = json_response(
+            StatusCode::OK,
+            &json!({ "jsonrpc": "2.0", "id": 1,
+            "result": { "structuredContent": { "entities": [{ "id": "urn:ngsi-ld:A:1", "type": "A" }] } } }),
+        );
+        let answer = answer_of(without_personal(&state, None, entities).await).await;
+        assert_eq!(answer["result"]["isError"], true, "{answer}");
+        assert!(answer["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("names its project")));
+    }
+
+    #[test]
+    fn a_refusal_without_grounding_carries_none() {
+        let answer = without(
+            json!({ "structuredContent": {} }),
+            Err("no models".to_owned()),
+        );
+        assert_eq!(answer["isError"], true);
+        assert!(answer.get("_meta").is_none(), "{answer}");
+    }
+
+    /// T-6442: on a Portal whose address is no base for a path, the refusal names the route alone.
+    #[tokio::test]
+    async fn a_portal_address_that_is_no_base_names_the_route_alone() {
+        let mut config = crate::config::Config::for_tests();
+        config.public_base_url = "mailto:portal@example.org".parse().expect("url");
+        let state = AppState::new(config, None);
+        let navigate = json!({ "project": "doprava", "page": "spaces" });
+        let (response, verdict) = tab_action(
+            &state,
+            &doprava(),
+            &ana(),
+            "jc_ui_navigate",
+            &navigate,
+            json!(1),
+        );
+        assert_eq!(verdict, "refused: no tab");
+        let detail = answer_of(response).await["result"]["structuredContent"]["detail"].to_string();
+        assert!(
+            detail.contains("this address to open: /projects/doprava/spaces"),
+            "{detail}"
+        );
+    }
+
+    /// JC1-22, T-6058: a connector over two projects keeps `project` required in every tool.
+    #[tokio::test]
+    async fn a_wider_connector_keeps_project_required() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut two = doprava();
+        let mut other = two.scope[0].clone();
+        other.project = "espoo".to_owned();
+        two.scope.push(other);
+        let now = crate::auth::session::now_unix();
+        let tab = state.paired_tabs.pair(&two.id, "f:1:ana", 5, now + 3600);
+        let _listening = state
+            .paired_tabs
+            .listen(&two.id, &tab, "f:1:ana", 5, now + 3600, now)
+            .expect("paired");
+        let (_, verdict, body) = judged(&state, &two, ana(), rpc("tools/list", json!({}))).await;
+        assert_eq!(verdict, "allowed");
+        let tools = body["result"]["tools"].as_array().expect("tools");
+        assert!(!tools.is_empty());
+        assert!(tools.iter().all(|t| t["inputSchema"]["required"]
+            .as_array()
+            .is_some_and(|r| r.contains(&json!("project")))));
     }
 }

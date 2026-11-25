@@ -246,28 +246,26 @@ pub(super) fn with_source_events(stream: &mut Value, url: &str) {
 /// its inputs' drops.
 pub(super) fn with_source_failures(stream: &mut Value, url: &str) {
     let drops = |p: &Value| p.get("mutation").and_then(Value::as_str) == Some(DROP_ERRORED);
-    let Some(processors) = stream
+    // Taken out while the input is read, put back at the end.
+    let Some(Value::Array(mut processors)) = stream
         .pointer_mut("/pipeline/processors")
-        .and_then(Value::as_array_mut)
+        .filter(|processors| processors.is_array())
+        .map(Value::take)
     else {
         return;
     };
     if let Some(at) = processors.iter().position(drops) {
         let mut report = crate::pipeline_log::source_failure(url);
-        if let Some(slot) = processors.get_mut(at) {
-            if let Some(label) = slot.get("label").cloned() {
-                report["label"] = label;
-            }
-            *slot = report;
+        if let Some(label) = processors[at].get("label").cloned() {
+            report["label"] = label;
         }
+        processors[at] = report;
         processors.retain(|p| !drops(p));
-        return;
-    }
-    let mut dropped = false;
-    if let Some(input) = stream.get_mut("input") {
-        if input.to_string().contains("\"http_client\"") {
-            return;
-        }
+    } else if let Some(input) = stream
+        .get_mut("input")
+        .filter(|input| !input.to_string().contains("\"http_client\""))
+    {
+        let mut dropped = false;
         let mut inputs = vec![input];
         while let Some(input) = inputs.pop() {
             if let Some(own) = input.get_mut("processors").and_then(Value::as_array_mut) {
@@ -282,15 +280,11 @@ pub(super) fn with_source_failures(stream: &mut Value, url: &str) {
                 inputs.extend(broker.iter_mut());
             }
         }
-    }
-    if dropped {
-        if let Some(processors) = stream
-            .pointer_mut("/pipeline/processors")
-            .and_then(Value::as_array_mut)
-        {
+        if dropped {
             processors.insert(0, crate::pipeline_log::source_failure(url));
         }
     }
+    stream["pipeline"]["processors"] = Value::Array(processors);
 }
 
 /// `spec.history` as its one Bento step (PL-107, T-4845): the planned `observedAt` of each
@@ -710,12 +704,10 @@ pub(super) fn datasource_input(
             .into_iter()
             .find_map(|v| v.as_deref().filter(|s| !s.trim().is_empty()))
             .unwrap_or("60s");
-        let http_client = match input_json {
-            Value::Object(mut map) => map
-                .remove("http_client")
-                .unwrap_or_else(|| serde_json::json!({})),
-            _ => serde_json::json!({}),
-        };
+        let mut input_json = input_json;
+        let http_client = input_json
+            .get_mut("http_client")
+            .map_or(serde_json::json!({}), Value::take);
         let p1 = serde_json::json!({
             "try": [{
                 "http": http_client
@@ -1254,10 +1246,13 @@ fn kpi_mapping(
 ) -> Result<Value, RenderError> {
     let custom = |err: jc_core::Error| RenderError::Custom(err.to_string());
     let mut inputs = pipeline.kpi_inputs().map_err(custom)?;
-    for (input, source) in inputs.iter_mut().zip(&pipeline.sources) {
-        if let Some(reference) = &source.endpoint_ref {
-            input.endpoint = reference.name().to_owned();
-        }
+    // `kpi_inputs` holds one input per source, each naming its Endpoint.
+    let references = pipeline
+        .sources
+        .iter()
+        .filter_map(|s| s.endpoint_ref.as_ref());
+    for (input, reference) in inputs.iter_mut().zip(references) {
+        input.endpoint = reference.name().to_owned();
     }
     let expr = kpi.validate(&inputs).map_err(custom)?;
     let target = jc_core::kpi_join::Target {
@@ -1393,4 +1388,474 @@ pub(super) fn input_ends_by_itself(input: &Value) -> bool {
             .is_some_and(|count| count > 0);
     }
     jc_core::kinds::data_source::input_terminates(kind)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+
+    const TARGET: &str = "urn:ngsi-ld:Endpoint:example.org:helsinki:helsinki-all";
+
+    fn put(mirror: &Mirror, kind: &str, ns: &str, name: &str, spec: Value) {
+        mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_string(),
+            kind: kind.to_string(),
+            metadata: ObjectMeta {
+                name: name.to_string(),
+                namespace: Some(ns.to_string()),
+                ..Default::default()
+            },
+            spec,
+            status: None,
+        });
+    }
+
+    fn spec(value: Value) -> PipelineSpec {
+        serde_json::from_value(value).expect("a PipelineSpec")
+    }
+
+    fn feed() -> DataSourceSpec {
+        serde_json::from_value(
+            serde_json::json!({ "type": "http", "http": { "url": "https://example.org/feed.json" } }),
+        )
+        .expect("a DataSourceSpec")
+    }
+
+    /// A polled DataSource pipeline with `extra` merged over it.
+    fn polled(extra: Value) -> PipelineSpec {
+        let mut value = serde_json::json!({
+            "class": "auto",
+            "period": "60s",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "feed" } },
+            "compute": { "kind": "bloblang", "bloblang": "root = this" },
+            "targetEndpoint": TARGET
+        });
+        for (key, field) in extra.as_object().into_iter().flatten() {
+            value[key.as_str()] = field.clone();
+        }
+        spec(value)
+    }
+
+    fn render(pipeline: &PipelineSpec, bento: Option<&str>) -> Result<Value, RenderError> {
+        render_stream(pipeline, "p", "helsinki", &feed(), "feed", "slug", bento)
+    }
+
+    fn merged(value: Value) -> Result<Value, RenderError> {
+        let sources = vec![ResolvedSource::Data {
+            spec: Box::new(feed()),
+            name: "feed".to_owned(),
+        }];
+        render_merged(
+            &spec(value),
+            "p",
+            "helsinki",
+            &sources,
+            &["a".to_owned(), "b".to_owned()],
+        )
+    }
+
+    fn labels(stream: &Value) -> Vec<String> {
+        stream["pipeline"]["processors"]
+            .as_array()
+            .expect("processors")
+            .iter()
+            .filter_map(|p| p["label"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    #[test]
+    fn a_stream_without_the_marking_step_gets_no_post() {
+        for stream in [
+            serde_json::json!({}),
+            serde_json::json!({ "pipeline": { "processors": [{ "label": "compute" }] } }),
+        ] {
+            let mut posted = stream.clone();
+            with_source_events(&mut posted, "http://portal/source-events");
+            assert_eq!(posted, stream);
+        }
+    }
+
+    /// T-5721: the report takes the drop's place and its label when it has one; a stream with no
+    /// processors, or no drop and no input, is left as it is.
+    #[test]
+    fn a_failure_report_takes_the_drops_place_and_a_label_only_if_there_was_one() {
+        let url = "http://portal/outcomes";
+        let mut stream = serde_json::json!({ "pipeline": { "processors": [
+            { "mutation": DROP_ERRORED }, { "mutation": DROP_ERRORED }
+        ] } });
+        with_source_failures(&mut stream, url);
+        assert_eq!(
+            stream["pipeline"]["processors"],
+            serde_json::json!([crate::pipeline_log::source_failure(url)])
+        );
+        for untouched in [
+            serde_json::json!({ "input": { "generate": {} } }),
+            serde_json::json!({ "pipeline": { "processors": [{ "mapping": "root = this" }] } }),
+            serde_json::json!({ "input": { "generate": { "processors": [{ "mapping": "root = 1" }] } },
+                                "pipeline": { "processors": [] } }),
+        ] {
+            let mut stream = untouched.clone();
+            with_source_failures(&mut stream, url);
+            assert_eq!(stream, untouched);
+        }
+    }
+
+    #[test]
+    fn a_duration_takes_one_of_four_units() {
+        assert_eq!(duration_of("500ms"), Some(Duration::from_millis(500)));
+        assert_eq!(duration_of("2m"), Some(Duration::from_secs(120)));
+        assert_eq!(duration_of("1h"), Some(Duration::from_secs(3600)));
+        assert_eq!(duration_of("10x"), None);
+        assert_eq!(duration_of("10"), None);
+        assert_eq!(duration_of("s"), None);
+    }
+
+    /// PL-51: with no watched attributes a whole entity changing passes the gate.
+    #[test]
+    fn a_change_gate_without_watched_attributes_hashes_whole_entities() {
+        let whole = change_gate("helsinki/p", &[]);
+        assert!(
+            whole[0]["mutation"]
+                .as_str()
+                .is_some_and(|m| m.contains("[e.id, e]")),
+            "{whole:?}"
+        );
+        let watched = change_gate("helsinki/p", &["speed".to_owned()]);
+        assert!(watched[0]["mutation"]
+            .as_str()
+            .is_some_and(|m| m.contains("e.get(\"speed.value\")")));
+    }
+
+    #[test]
+    fn the_first_compute_step_is_found_past_a_processor_step() {
+        let pipeline = spec(serde_json::json!({
+            "class": "auto",
+            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }],
+            "steps": [
+                { "processor": { "unarchive": { "format": "json_array" } } },
+                { "kind": "bloblang", "bloblang": "root = 1" }
+            ],
+            "outputs": [{ "targetEndpoint": TARGET }]
+        }));
+        let compute = first_compute(&pipeline).expect("a compute step");
+        assert_eq!(compute.bloblang.as_deref(), Some("root = 1"));
+    }
+
+    #[test]
+    fn a_query_with_neither_ids_nor_type_reads_every_entity_of_the_endpoint() {
+        let query: jc_core::kinds::pipeline::SourceQuery =
+            serde_json::from_value(serde_json::json!({ "attrs": ["speed"] })).expect("a query");
+        let url = endpoint_source_url("slug", &query).expect("a url");
+        assert!(
+            !url.contains("type=") && !url.contains("id=") && url.contains("speed"),
+            "{url}"
+        );
+    }
+
+    /// PL-51: an on-change period that is no duration polls at the default; an Endpoint source
+    /// with no query renders nothing.
+    #[test]
+    fn an_on_change_period_that_is_no_duration_polls_at_the_default() {
+        let source = |query: Option<Value>| {
+            let mut source = serde_json::json!({
+                "endpointRef": { "kind": "Endpoint", "name": "bikes" },
+                "trigger": { "subscription": { "type": "Bike" } }
+            });
+            if let Some(query) = query {
+                source["query"] = query;
+            }
+            source
+        };
+        let pipeline = polled(serde_json::json!({
+            "period": "soon",
+            "source": source(Some(serde_json::json!({ "type": "Bike" })))
+        }));
+        let stream =
+            render_endpoint_stream(&pipeline, "helsinki", "helsinki/p", "src", true, "dst")
+                .expect("renders");
+        assert_eq!(stream["input"]["generate"]["interval"], CHANGE_POLL);
+        let unslotted = polled(serde_json::json!({
+            "source": source(Some(serde_json::json!({ "type": "Bike" }))),
+            "attributes": [{ "type": "Bike", "rules": [{ "names": ["not a slot"], "observedAt": "now" }] }]
+        }));
+        let refused =
+            render_endpoint_stream(&unslotted, "helsinki", "helsinki/p", "src", true, "dst");
+        assert!(
+            matches!(refused, Err(RenderError::Custom(_))),
+            "{refused:?}"
+        );
+        let unqueried = polled(serde_json::json!({ "source": source(None) }));
+        let refused =
+            render_endpoint_stream(&unqueried, "helsinki", "helsinki/p", "src", true, "dst");
+        assert!(refused.is_err_and(|err| err.to_string().contains("missing query")));
+    }
+
+    #[test]
+    fn a_source_space_with_no_segment_stays_the_variable() {
+        let mut value = serde_json::json!({ "mapping": [
+            "root.a = env(\"JC_SOURCE_SPACE\")", "root.b = \"${JC_SOURCE_SPACE_2}\"", 7
+        ] });
+        inject_source_space(&mut value, &[String::new(), "air".to_owned()]);
+        assert_eq!(
+            value,
+            serde_json::json!({ "mapping": ["root.a = env(\"JC_SOURCE_SPACE\")", "root.b = \"air\"", 7] })
+        );
+    }
+
+    /// PL-90: an Endpoint admits by its audience: the public, its own Organization's projects,
+    /// the projects it lists, and nobody without one.
+    #[test]
+    fn an_endpoint_admits_readers_by_its_audience() {
+        let mirror = Mirror::new();
+        let ns = crate::permissions::ORG_NAMESPACE;
+        for (project, org) in [("a", "x"), ("b", "x"), ("c", "y")] {
+            put(
+                &mirror,
+                "Project",
+                ns,
+                project,
+                serde_json::json!({ "organizationRef": { "name": org } }),
+            );
+        }
+        let admits_with = |spec: Value, reader: &str| admits(&mirror, &spec, "a", reader);
+        assert!(admits_with(
+            serde_json::json!({ "audience": "public" }),
+            "c"
+        ));
+        assert!(admits_with(
+            serde_json::json!({ "audience": "organization" }),
+            "b"
+        ));
+        assert!(!admits_with(
+            serde_json::json!({ "audience": "organization" }),
+            "c"
+        ));
+        let listed = serde_json::json!({ "audience": "project-list", "allowedProjects": ["b"] });
+        assert!(admits_with(listed.clone(), "b"));
+        assert!(!admits_with(listed, "c"));
+        assert!(!admits_with(serde_json::json!({}), "b"));
+    }
+
+    #[test]
+    fn a_source_that_does_not_resolve_says_why() {
+        let mirror = Mirror::new();
+        put(
+            &mirror,
+            "DataSource",
+            "helsinki",
+            "broken",
+            serde_json::json!({ "type": 7 }),
+        );
+        put(
+            &mirror,
+            "Endpoint",
+            "helsinki",
+            "noslug",
+            serde_json::json!({ "audience": "public" }),
+        );
+        let resolve = |source: Value| {
+            let source: PipelineSource = serde_json::from_value(source).expect("a source");
+            resolve_source(&mirror, "helsinki", source)
+                .err()
+                .unwrap_or_default()
+        };
+        let broken = resolve(
+            serde_json::json!({ "dataSourceRef": { "kind": "DataSource", "name": "broken" } }),
+        );
+        assert!(broken.contains("invalid data source spec"), "{broken}");
+        let neither = resolve(serde_json::json!({ "query": { "type": "Bike" } }));
+        assert!(
+            neither.contains("neither a DataSource nor an Endpoint"),
+            "{neither}"
+        );
+        let unslugged = resolve(serde_json::json!({
+            "endpointRef": { "kind": "Endpoint", "name": "noslug" }, "query": { "type": "Bike" }
+        }));
+        assert_eq!(unslugged, "source endpoint noslug has no slug");
+    }
+
+    /// A compute that is no mapping, a page size in a `bento.yaml` that is no YAML, and generated
+    /// steps whose names are no slot names render nothing; an empty mapping renders no step.
+    #[test]
+    fn a_stream_whose_steps_do_not_compile_is_not_rendered() {
+        assert!(matches!(
+            render(
+                &polled(serde_json::json!({ "compute": { "kind": "wasm" } })),
+                None
+            ),
+            Err(RenderError::MissingCompute)
+        ));
+        let empty = render(
+            &polled(serde_json::json!({ "compute": { "kind": "bloblang", "bloblang": " " } })),
+            None,
+        )
+        .expect("renders");
+        assert!(!empty.to_string().contains("\"mapping\":\" \""), "{empty}");
+        assert!(matches!(
+            render(&polled(serde_json::json!({})), Some(": : not yaml : [")),
+            Err(RenderError::Bento(_))
+        ));
+        let bad_slot = serde_json::json!(["not a slot"]);
+        for extra in [
+            serde_json::json!({ "lifetime": [{ "type": "Bus", "attributes": [{ "names": bad_slot, "rolling": "PT5M" }] }] }),
+            serde_json::json!({ "history": [{ "type": "Bus", "attributes": [{ "names": bad_slot, "keep": "every", "observedAt": "received" }] }] }),
+            serde_json::json!({ "attributes": [{ "type": "Bus", "rules": [{ "names": bad_slot, "observedAt": "now" }] }] }),
+        ] {
+            let refused = render(&polled(extra.clone()), None);
+            assert!(
+                matches!(refused, Err(RenderError::Custom(_))),
+                "{extra}: {refused:?}"
+            );
+        }
+    }
+
+    /// PL-53, PL-73: an empty mapping step renders nothing in the steps or in a route, and a
+    /// datacube step whose parameters do not check refuses the stream.
+    #[test]
+    fn merged_steps_with_no_mapping_render_nothing() {
+        let base = |steps: Value, routes: Value| {
+            serde_json::json!({
+                "class": "auto",
+                "period": "60s",
+                "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }],
+                "steps": steps,
+                "routes": routes,
+                "outputs": [{ "targetEndpoint": TARGET }]
+            })
+        };
+        let empty = serde_json::json!({ "kind": "bloblang", "bloblang": " " });
+        let mapping = serde_json::json!({ "kind": "bloblang", "bloblang": "root = this" });
+        let stream = merged(base(
+            serde_json::json!([empty, mapping]),
+            serde_json::json!([]),
+        ))
+        .expect("renders");
+        let labelled = labels(&stream);
+        assert!(
+            labelled.contains(&"compute_1".to_owned()) && !labelled.contains(&"compute".to_owned()),
+            "{labelled:?}"
+        );
+        let routed = merged(base(
+            serde_json::json!([mapping]),
+            serde_json::json!([{ "name": "hot", "when": "this.t > 1", "steps": [empty],
+                                 "outputs": [{ "targetEndpoint": TARGET }] }]),
+        ))
+        .expect("renders");
+        assert!(!routed.to_string().contains("route_steps"), "{routed}");
+        let cube = serde_json::json!({ "kind": "datacube", "datacube": {
+            "wholeArea": "not a code!", "datasetPage": "https://example.org/{cube}", "cubes": {} } });
+        let refused = merged(base(
+            serde_json::json!([cube, mapping]),
+            serde_json::json!([]),
+        ));
+        assert!(refused.is_err_and(|err| err.to_string().contains("wholeArea")));
+    }
+
+    /// The kpi pipeline of two Endpoint sources (PL-102), with `edit` applied to its value.
+    fn kpi(edit: impl FnOnce(&mut Value)) -> PipelineSpec {
+        let mut value = serde_json::json!({
+            "class": "scheduled",
+            "schedule": "0 * * * *",
+            "sources": [
+                { "name": "parking", "endpointRef": { "kind": "Endpoint", "name": "helsinki-parking" },
+                  "query": { "type": "ParkingSite", "attrs": ["occupiedSpotNumber", "district"] } },
+                { "name": "stops", "endpointRef": { "kind": "Endpoint", "name": "helsinki-transit" },
+                  "query": { "type": "TransitStop", "attrs": ["district"] } }
+            ],
+            "steps": [{ "kind": "kpi", "kpi": {
+                "name": "parking-per-stop",
+                "formula": "sum(parking.occupiedSpotNumber) / count(stops)",
+                "unitCode": "C62",
+                "join": { "by": "area", "keys": { "parking": "district", "stops": "district" } }
+            } }],
+            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:example.org:helsinki-kpi:kpi" }]
+        });
+        edit(&mut value);
+        spec(value)
+    }
+
+    fn endpoints(pipeline: &PipelineSpec) -> Vec<ResolvedSource> {
+        pipeline
+            .sources()
+            .into_iter()
+            .map(|source| ResolvedSource::Endpoint {
+                source: Box::new(source),
+                slug: "slug".to_owned(),
+                public: false,
+            })
+            .collect()
+    }
+
+    /// PL-102: a formula that does not parse, a source on a subscription, a source with no name
+    /// and a source query with no entity type each refuse the kpi stream, naming the rule.
+    #[test]
+    fn a_kpi_step_that_does_not_check_is_not_rendered() {
+        let refused = |edit: fn(&mut Value)| {
+            let pipeline = kpi(edit);
+            render_merged(
+                &pipeline,
+                "p",
+                "helsinki",
+                &endpoints(&pipeline),
+                &["s".to_owned()],
+            )
+            .expect_err("refused")
+            .to_string()
+        };
+        let parse = refused(|v| v["steps"][0]["kpi"]["formula"] = serde_json::json!("sum("));
+        assert!(!parse.is_empty());
+        let subscribed = refused(|v| {
+            v["sources"][0]["trigger"] =
+                serde_json::json!({ "subscription": { "type": "ParkingSite" } })
+        });
+        assert!(subscribed.contains("not on a subscription"), "{subscribed}");
+        let unnamed = refused(|v| {
+            v["sources"][0]
+                .as_object_mut()
+                .expect("a source")
+                .remove("name");
+        });
+        assert!(unnamed.contains("has a name"), "{unnamed}");
+        let untyped = refused(|v| {
+            v["sources"][1]["query"]
+                .as_object_mut()
+                .expect("a query")
+                .remove("type");
+        });
+        assert!(untyped.contains("query.type"), "{untyped}");
+    }
+
+    /// PL-117: a read back is taken only from the Endpoint source its formula names.
+    #[test]
+    fn a_read_back_reads_only_the_source_it_names() {
+        let pipeline = kpi(|v| {
+            v["steps"][0]["kpi"]["formula"] = serde_json::json!(
+                "sum(parking.occupiedSpotNumber) - prev(sum(parking.occupiedSpotNumber), P7D)"
+            );
+        });
+        let step = kpi_step(&pipeline).expect("a kpi step");
+        let mut sources = endpoints(&pipeline);
+        sources.insert(
+            0,
+            ResolvedSource::Data {
+                spec: Box::new(feed()),
+                name: "feed".to_owned(),
+            },
+        );
+        let inputs =
+            kpi_earlier_inputs(&pipeline, "p", "helsinki", &sources, step).expect("inputs");
+        assert_eq!(inputs.len(), 1, "{inputs:?}");
+    }
+
+    #[test]
+    fn an_input_takes_processors_only_when_it_is_a_map_and_there_are_some() {
+        let value = serde_json::json!("stdin");
+        assert_eq!(
+            with_processors(value.clone(), vec![serde_json::json!({})]),
+            value
+        );
+        let input = serde_json::json!({ "generate": {} });
+        assert_eq!(with_processors(input.clone(), Vec::new()), input);
+    }
 }

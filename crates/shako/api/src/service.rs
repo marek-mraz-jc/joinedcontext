@@ -41,9 +41,19 @@ const MERGE_OPERATION_BYTES: u64 = 8 * 1024 * 1024;
 pub async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> ShakoResult<T> + Send + 'static,
 ) -> ShakoResult<T> {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))?
+    tokio::task::spawn_blocking(f).await.map_err(task_failed)?
+}
+
+/// Runs `f` as a task of its own, to its end even when the caller stops waiting; a task that
+/// panicked is an internal error.
+pub(crate) async fn spawned<T: Send + 'static>(
+    f: impl std::future::Future<Output = T> + Send + 'static,
+) -> ShakoResult<T> {
+    tokio::spawn(f).await.map_err(task_failed)
+}
+
+fn task_failed(e: tokio::task::JoinError) -> ShakoError {
+    ShakoError::Internal(e.to_string())
 }
 
 /// Writes without an operation of their own in the registry, with their audit kind.
@@ -1660,9 +1670,7 @@ pub async fn sync_push_mirrors(
     // Outside the request's unit: the sync claims and records in transactions of its own while
     // this request waits for it, which a mark held open in the unit would block.
     let (state, repo) = (state.clone(), repo);
-    tokio::spawn(async move { crate::mirror::sync_now(&state, &repo).await })
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))?
+    spawned(async move { crate::mirror::sync_now(&state, &repo).await }).await?
 }
 
 /// Where a webhook's signing secret comes from.

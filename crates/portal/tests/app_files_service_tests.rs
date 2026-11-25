@@ -381,6 +381,160 @@ async fn a_member_of_another_project_reaches_no_service_of_a_project_app() {
     );
 }
 
+/// A store that fails answers 503 on every verb, without the store's own words; a key the
+/// store does not hold is 404 naming it; a key with a backslash is 400 before the store is
+/// asked; an action other than `:url` is 404 naming the URL action.
+#[tokio::test]
+async fn a_failing_store_answers_503_and_a_missing_key_404() {
+    let failing = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(
+            ResponseTemplate::new(500).set_body_string("<Error>bucket secret-name</Error>"),
+        )
+        .mount(&failing)
+        .await;
+    let state = state(&failing, json!(["files"]));
+    for (verb, uri, body) in [
+        ("GET", "", Vec::new()),
+        ("GET", "/old.txt", Vec::new()),
+        ("PUT", "/new.jpg", b"jpeg".to_vec()),
+        ("DELETE", "/old.txt", Vec::new()),
+        (
+            "POST",
+            "/new.jpg:url",
+            br#"{"method":"PUT","size":4}"#.to_vec(),
+        ),
+    ] {
+        let (status, body, text) = call(&state, verb, uri, body).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{verb} {uri}: {text}"
+        );
+        assert_eq!(
+            body["detail"], "the file store did not answer",
+            "{verb} {uri}"
+        );
+        assert!(!text.contains("secret-name"), "{text}");
+    }
+
+    let typeless = MockServer::start().await;
+    let listing = format!(
+        "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>{}old.txt</Key>\
+         <Size>4</Size><LastModified>2026-10-10T20:00:00.000Z</LastModified></Contents>\
+         </ListBucketResult>",
+        prefix()
+    );
+    Mock::given(method("GET"))
+        .and(path("/apps"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(listing))
+        .mount(&typeless)
+        .await;
+    Mock::given(method("HEAD"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&typeless)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&typeless)
+        .await;
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&typeless)
+        .await;
+    let state = self::state(&typeless, json!(["files"]));
+    // A type the store does not tell (its HEAD refused) is listed as octet-stream.
+    let (status, body, text) = call(&state, "GET", "", Vec::new()).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(body[0]["contentType"], "application/octet-stream");
+    let (status, body, _) = call(&state, "GET", "/gone.txt", Vec::new()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["detail"], "no file 'gone.txt'");
+    let (status, body, _) = call(&state, "PUT", "/new.jpg", b"jpeg".to_vec()).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "a refused write: {body}"
+    );
+
+    let asked_before = typeless.received_requests().await.unwrap_or_default().len();
+    let (status, body, _) = call(&state, "GET", "/a%5Cb.txt", Vec::new()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body, _) = call(&state, "POST", "/new.jpg:copy", Vec::new()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        body["detail"],
+        "no action on 'new.jpg:copy'; a URL is asked at 'new.jpg:copy:url'"
+    );
+    assert_eq!(
+        typeless.received_requests().await.unwrap_or_default().len(),
+        asked_before,
+        "neither reached the store"
+    );
+}
+
+/// A write that carries the edge's cookie token needs the CSRF pair beside it, and a call off
+/// the App's own host is sent there before any service runs (AP-84, RTE-12).
+#[tokio::test]
+async fn a_write_with_the_edges_token_needs_csrf_and_a_foreign_host_is_redirected() {
+    let store = store(0).await;
+    let mut state = state(&store, json!(["files"]));
+    let token = common::REALM.person_token(APP, "jana", &[]);
+    let mut config = (*state.config).clone();
+    config.trust_edge_token = true;
+    state.config = std::sync::Arc::new(config.clone());
+    let request = Request::builder()
+        .method("PUT")
+        .uri(format!("/apps/{APP}/api/services/files/new.jpg"))
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header("x-access-token", token.as_str())
+        .body(Body::from("jpeg"))
+        .expect("a request");
+    let response = joinedcontext_portal::server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("a response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(asked(&store, "PUT").await.is_empty());
+
+    config.apps_url = Some("https://dev.example".parse().expect("a url"));
+    state.config = std::sync::Arc::new(config);
+    let request = Request::builder()
+        .uri(format!("/apps/{APP}/api/services/files/old.txt"))
+        .header(header::HOST, "portal.dev.example")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .expect("a request");
+    let response = joinedcontext_portal::server::app(state)
+        .oneshot(request)
+        .await
+        .expect("a response");
+    assert!(response.status().is_redirection(), "{}", response.status());
+    assert_eq!(
+        response.headers()[header::LOCATION],
+        format!("https://{APP}.apps.dev.example/api/services/files/old.txt")
+    );
+}
+
+/// An installation without a public store origin hands out no URL, and says so.
+#[tokio::test]
+async fn an_installation_without_a_store_origin_hands_out_no_url() {
+    let store = store(0).await;
+    let mut state = state(&store, json!(["files"]));
+    let mut config = (*state.config).clone();
+    config.apps_store_origin = None;
+    state.config = std::sync::Arc::new(config);
+    let (status, body, _) = call(
+        &state,
+        "POST",
+        "/old.txt:url",
+        br#"{"method":"GET"}"#.to_vec(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["detail"], "this installation hands out no file URLs");
+}
+
 /// F-POR2-016: concurrent PUTs that each fit `filesMiB` alone but not together: the quota check
 /// and the write run one App upload at a time, so the stored total stays within the quota.
 #[tokio::test]
