@@ -230,6 +230,7 @@ mod tests {
             .await
             .expect("answer");
         assert!(response.status().is_success());
+        std::io::Write::flush(&mut lines.clone()).expect("an in-memory log flushes");
         let text = String::from_utf8(lines.0.lock().expect("lines").clone()).expect("utf-8");
         assert!(
             text.contains(&format!("project={}", mine.project)),
