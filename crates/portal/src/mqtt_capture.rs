@@ -461,7 +461,12 @@ impl Capture {
                     continue;
                 }
                 let host = format!("{release}.{}.svc.cluster.local", self.namespace);
-                let task = tokio::spawn(subscribe(Arc::clone(&self.store), target.clone(), host));
+                let task = tokio::spawn(subscribe(
+                    Arc::clone(&self.store),
+                    target.clone(),
+                    host,
+                    PORT,
+                ));
                 running.insert(release.clone(), (target.clone(), task.abort_handle()));
             }
         }
@@ -484,15 +489,10 @@ impl Capture {
     }
 }
 
-/// One broker's subscriber: dials the internal listener, subscribes after every CONNACK (a clean
+/// One broker's subscriber: dials the internal listener on `port` (tests pass their own), subscribes after every CONNACK (a clean
 /// session forgets them) and writes what arrived once per [`FLUSH`]. The buffer holds at most
 /// what the broker's capture could keep, so a burst costs no more memory than that.
-async fn subscribe(store: Arc<CaptureStore>, target: Target, host: String) {
-    subscribe_at(store, target, host, PORT).await;
-}
-
-/// [`subscribe`] on a port of the caller's choosing.
-async fn subscribe_at(store: Arc<CaptureStore>, target: Target, host: String, port: u16) {
+async fn subscribe(store: Arc<CaptureStore>, target: Target, host: String, port: u16) {
     let mut options = MqttOptions::new(format!("{USERNAME}-{}", target.release), host, port);
     options
         .set_credentials(USERNAME, "")
@@ -1115,6 +1115,7 @@ mod tests {
             Arc::clone(&store),
             cams_target(),
             "127.0.0.1".to_owned(),
+            PORT,
         ));
         let started = std::time::Instant::now();
         let mut found = Vec::new();
@@ -1147,7 +1148,12 @@ mod tests {
 
         // A store whose database is down: the batch is lost with a warning, the subscriber lives.
         let refusing = Arc::new(CaptureStore::new(Some(dead_pool()), mirror_placing_p()));
-        let second = tokio::spawn(subscribe(refusing, cams_target(), "127.0.0.1".to_owned()));
+        let second = tokio::spawn(subscribe(
+            refusing,
+            cams_target(),
+            "127.0.0.1".to_owned(),
+            PORT,
+        ));
         while served.load(std::sync::atomic::Ordering::SeqCst) < 2
             && started.elapsed() < Duration::from_secs(40)
         {
@@ -1179,7 +1185,7 @@ mod tests {
         let (_, log) = crate::test_log::logged(tracing::level_filters::LevelFilter::WARN, async {
             tokio::time::timeout(
                 Duration::from_secs(3),
-                subscribe_at(store, target, "127.0.0.1".to_owned(), port),
+                subscribe(store, target, "127.0.0.1".to_owned(), port),
             )
             .await
         })
