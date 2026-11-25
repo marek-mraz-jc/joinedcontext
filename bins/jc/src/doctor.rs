@@ -1661,7 +1661,13 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
                 ("zone.test.", RecordType::NS, "", ns("ns.zone.test.")),
                 // An alias answers every question with its CNAME first: no NS, no CNAME of the
                 // asked type first, no A or CAA of its own; the adapter skips those records.
-                ("odd.zone.test.", RecordType::NS, "", cname("a.zone.test.")),
+                ("odd.zone.test.", RecordType::NS, "", cname("zone.test.")),
+                (
+                    "odd.zone.test.",
+                    RecordType::NS,
+                    "zone.test.",
+                    ns("ns.zone.test."),
+                ),
                 ("odd.zone.test.", RecordType::A, "", cname("a.zone.test.")),
                 (
                     "odd.zone.test.",
