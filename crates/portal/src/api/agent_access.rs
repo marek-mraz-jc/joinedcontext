@@ -518,6 +518,50 @@ mod tests {
         assert!(reapable(&spec(json!([open])), now).is_empty());
     }
 
+    /// An account whose manifest does not read, or that holds no expired grant, is passed by; one
+    /// with an expired grant is tried, and tried again only after an hour, here without a forge.
+    #[tokio::test]
+    async fn the_reaper_tries_an_account_with_an_expired_grant_once_an_hour() {
+        use super::{reap_expired_grants, KIND};
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let ended = json!({ "role": "writer", "scope": { "project": "p" }, "validity": { "notAfter": "2026-10-21T11:59:59Z" } });
+        let open = json!({ "role": "reader", "scope": { "project": "p" } });
+        let account = |roles: serde_json::Value| {
+            json!({
+                "owner": { "user": "jana" }, "purpose": "test", "roles": roles,
+                "credentials": [{ "kind": "oauth-client", "name": "main" }]
+            })
+        };
+        for (name, spec) in [
+            ("garbled", json!({ "roles": 5 })),
+            ("current", account(json!([open]))),
+            ("lapsed", account(json!([open, ended]))),
+        ] {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: API_VERSION.into(),
+                kind: KIND.into(),
+                metadata: ObjectMeta::new(name, "p"),
+                spec,
+                status: None,
+            });
+        }
+        let at = |t: &str| -> jc_time::TimestampTz { t.parse().expect("a time") };
+        let mut tried = std::collections::HashMap::new();
+        reap_expired_grants(&state, at("2026-10-21T12:00:00Z"), &mut tried).await;
+        assert_eq!(tried.keys().collect::<Vec<_>>(), ["p/lapsed"]);
+        reap_expired_grants(&state, at("2026-10-21T12:30:00Z"), &mut tried).await;
+        assert!(
+            tried["p/lapsed"] == at("2026-10-21T12:00:00Z"),
+            "tried again within the hour"
+        );
+        reap_expired_grants(&state, at("2026-10-21T13:30:00Z"), &mut tried).await;
+        assert!(
+            tried["p/lapsed"] == at("2026-10-21T13:30:00Z"),
+            "not tried again after the hour"
+        );
+    }
+
     #[tokio::test]
     async fn a_bearer_token_never_revokes() {
         use crate::auth::session::{Identity, Session};

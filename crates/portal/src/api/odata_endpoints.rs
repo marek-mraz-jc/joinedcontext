@@ -483,6 +483,47 @@ pub fn spec_patch(body: &[u8]) -> Result<Value, String> {
 mod tests {
     use super::*;
 
+    /// Each op a row cannot take is refused with what to do instead; a key the list lacks is
+    /// not found, a row whose Endpoint left the project says to reload.
+    #[test]
+    fn each_op_a_row_cannot_take_is_refused_with_its_reason() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let identity = Identity {
+            subject: "sub-pia".into(),
+            username: "pia".into(),
+            email: Some("pia@hel.fi".into()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            client: None,
+            second_factor: false,
+        };
+        let rows = [json!({ "id": "k1", "name": "gone", "kind": "own" })];
+        let decide =
+            |op: &str, key: Option<&str>| decide(&state, &identity, "espoo", &rows, op, key);
+        assert!(decide("read", None).allowed);
+        let unknown = decide("read", Some("k9"));
+        assert!(!unknown.allowed && unknown.not_found);
+        for (op, key, says) in [
+            ("export", None, "no $export"),
+            ("create", None, "New endpoint"),
+            ("update", None, "takes a key"),
+            ("delete", Some("k1"), "reload the list"),
+            ("frobnicate", None, "not 'frobnicate'"),
+        ] {
+            let refused = decide(op, key);
+            assert!(!refused.allowed && !refused.not_found, "{op}");
+            assert!(
+                refused.reason.as_deref().is_some_and(|r| r.contains(says)),
+                "{op}: {:?}",
+                refused.reason
+            );
+        }
+        let other = Decision::of(Err(ApiError::Conflict("a change is open".into())));
+        assert!(!other.allowed);
+        assert!(other.reason.is_some_and(|r| r.contains("a change is open")));
+    }
+
     #[test]
     fn a_patch_changes_only_the_editable_properties_each_of_its_type() {
         assert_eq!(
@@ -500,9 +541,7 @@ mod tests {
             (br#"{}"#, "changes nothing"),
             (br#"[1]"#, "a JSON object"),
         ] {
-            let Err(message) = spec_patch(body) else {
-                panic!("{body:?} was taken");
-            };
+            let message = spec_patch(body).expect_err("refused");
             assert!(message.contains(says), "{message}");
         }
     }
@@ -514,7 +553,7 @@ mod tests {
             "metadata": { "name": name, "namespace": "espoo" },
             "spec": spec,
         }))
-        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("an Endpoint manifest")
     }
 
     #[test]

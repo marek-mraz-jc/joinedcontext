@@ -209,6 +209,14 @@ async fn the_session_endpoint_token_answers_the_gateways_token_alone() {
         call(&app, "POST", uri, bad, Some(&gateway)).await,
         StatusCode::BAD_REQUEST
     );
+    // A body that is no ask at all is the gateway's mistake, told as such.
+    for garbled in ["not json", r#"{"slug":5}"#, r#"{"slug":"a","other":1}"#] {
+        assert_eq!(
+            call(&app, "POST", uri, garbled, Some(&gateway)).await,
+            StatusCode::BAD_REQUEST,
+            "{garbled}"
+        );
+    }
 }
 
 /// A Portal that was not told whose token to expect refuses every call rather than falling back

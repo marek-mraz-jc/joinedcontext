@@ -106,3 +106,103 @@ pub fn router() -> Router<AppState> {
         .route("/projects/{project}/health-checks", get(list_project))
         .route("/organization/health-checks", get(list_all))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::session::{Identity, Session};
+    use crate::health_log::{Finding, HealthStore, Kind};
+    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+
+    fn pia() -> CurrentUser {
+        CurrentUser(Session {
+            identity: Identity {
+                client: None,
+                subject: "sub-pia".into(),
+                username: "pia".into(),
+                email: Some("pia@hel.fi".into()),
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: "dummy".into(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        })
+    }
+
+    /// pia reads the Pipelines of `air` and nothing else.
+    fn world() -> AppState {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        for (kind, name, namespace, spec) in [
+            (
+                "Role",
+                "pipeline-reader",
+                ORG_NAMESPACE,
+                serde_json::json!({ "rules": [{ "kinds": ["Pipeline"], "verbs": ["read"] }] }),
+            ),
+            (
+                "RoleBinding",
+                "pia-reads",
+                ORG_NAMESPACE,
+                serde_json::json!({ "subjects": [{ "user": "pia@hel.fi" }], "role": "pipeline-reader", "scope": { "project": "air" } }),
+            ),
+            ("Pipeline", "feed", "air", serde_json::json!({})),
+        ] {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: API_VERSION.into(),
+                kind: kind.to_owned(),
+                metadata: ObjectMeta::new(name, namespace),
+                spec,
+                status: None,
+            });
+        }
+        state
+    }
+
+    /// A check of a kind the caller reads is listed whether its manifest is there or gone; a
+    /// check of a kind they do not read is not.
+    #[tokio::test]
+    async fn the_list_holds_only_the_checks_the_caller_reads() {
+        let state = world();
+        let now = jc_time::TimestampTz::now();
+        state
+            .health_log
+            .record(
+                now,
+                vec![
+                    Finding::new("air", Kind::Pipeline, "feed", "reconcile"),
+                    Finding::new("air", Kind::Pipeline, "gone", "reconcile"),
+                    Finding::new("air", Kind::Endpoint, "hidden", "reconcile"),
+                ],
+            )
+            .await
+            .expect("recorded");
+        let Json(list) = list_project(pia(), State(state.clone()), Path("air".into()))
+            .await
+            .expect("listed");
+        let mut names: Vec<&str> = list.items.iter().map(|c| c.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["feed", "gone"]);
+        let refused = list_project(pia(), State(state), Path("Not_A_Project".into())).await;
+        assert!(matches!(refused, Err(ApiError::NotFound(_))));
+    }
+
+    /// A health log that cannot be read is a 503 that says to try again.
+    #[tokio::test]
+    async fn an_unreadable_health_log_is_503() {
+        let mut state = world();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_secs(2))
+            .connect_lazy("postgres://portal@127.0.0.1:1/never-reached")
+            .expect("a lazy pool");
+        state.health_log = std::sync::Arc::new(HealthStore::new(Some(pool), state.mirror.clone()));
+        let refused = list_project(pia(), State(state), Path("air".into())).await;
+        assert!(matches!(refused, Err(ApiError::Unavailable(m)) if m.contains("try again")));
+    }
+}

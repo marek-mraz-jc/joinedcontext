@@ -433,3 +433,27 @@ pub fn router() -> Router<AppState> {
                 .layer(DefaultBodyLimit::max(MAX_BODY)),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each refusal of the file store is the answer a person can act on; a store failure keeps
+    /// its detail in the log and out of the answer.
+    #[test]
+    fn each_refusal_maps_to_its_answer() {
+        let invalid = refusal(FileRefusal::Invalid("name: at most 120 characters".into()));
+        assert_eq!(invalid.first_field(), "name");
+        assert!(
+            matches!(refusal(DeskError::NotFound.into()), ApiError::NotFound(m) if m.contains("reload"))
+        );
+        assert!(
+            matches!(refusal(DeskError::Busy.into()), ApiError::Conflict(m) if m.contains("try again"))
+        );
+        let failed = refusal(DeskError::Failed("s3: secret-host refused".into()).into());
+        assert!(
+            matches!(&failed, ApiError::Internal(m) if !m.contains("secret-host")),
+            "{failed:?}"
+        );
+    }
+}

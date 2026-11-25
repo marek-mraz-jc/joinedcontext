@@ -510,6 +510,38 @@ pub(crate) async fn answer(
 mod tests {
     use super::*;
 
+    /// A function call is parsed from outside text: each malformed part is a 400 that names it,
+    /// and a bare name or a boolean literal is taken.
+    #[test]
+    fn a_function_call_names_what_is_malformed() {
+        let (name, params) = function_call("jc_schema_list", "").expect("a bare name");
+        assert_eq!((name.as_str(), params.len()), ("jc_schema_list", 0));
+        let (_, params) =
+            function_call("f(a=false,b=@x,c='it''s')", "@x=%7B%22k%22%3A1%7D").expect("taken");
+        assert_eq!(
+            Value::Object(params),
+            serde_json::json!({ "a": false, "b": { "k": 1 }, "c": "it's" })
+        );
+        for (call, query, says) in [
+            ("f%ZZ", "", "percent-encoding"),
+            ("f(a=1", "", "ends with ')'"),
+            ("f(a=@x)", "@x=%ZZ", "@x is not valid"),
+            ("f(a=@x)", "x=1", "in the call"),
+            ("f(a)", "", "name=value"),
+            ("f(a='it's')", "", "written ''"),
+            ("f(a='open)", "", "closed with '"),
+            ("f(1a=1)", "", "no parameter name"),
+            ("f(a=@y)", "", "has no value"),
+            ("f(a=1,a=2)", "", "given twice"),
+            ("f(a=nope)", "", "is no value"),
+            ("f(a=NaN)", "", "is no value"),
+        ] {
+            let (status, _, message) = function_call(call, query).expect_err("refused");
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{call}");
+            assert!(message.contains(says), "{call}: {message}");
+        }
+    }
+
     #[test]
     fn every_operation_of_the_registry_has_one_class() {
         let classes: Vec<&str> = ENTITY_READS

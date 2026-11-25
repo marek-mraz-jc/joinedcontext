@@ -623,6 +623,26 @@ mod tests {
         headers
     }
 
+    /// A cache folder that cannot be made, or a tile that cannot be written, leaves the tile
+    /// served and the cache as it was.
+    #[test]
+    fn a_cache_that_cannot_be_written_is_left_alone() {
+        let root = std::env::temp_dir().join(format!("jc-bm-unit-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("root");
+        let file = root.join("a-file");
+        std::fs::write(&file, b"x").expect("file");
+        // A folder inside a file cannot be made.
+        let under_file = file.join("cache");
+        save_and_evict(&under_file, &under_file.join("t.png"), b"tile", 1024);
+        assert!(!under_file.exists());
+        // A tile path that is a folder cannot be written.
+        let folder = root.join("folder.png");
+        std::fs::create_dir_all(&folder).expect("folder");
+        save_and_evict(&root, &folder, b"tile", 1024);
+        assert!(folder.is_dir());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_forged_leftmost_forwarded_for_buys_no_new_bucket() {
         let edge_saw = "198.51.100.77";

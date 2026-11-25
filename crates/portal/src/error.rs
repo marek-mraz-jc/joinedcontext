@@ -216,6 +216,24 @@ impl IntoResponse for ApiError {
 }
 
 impl ApiError {
+    /// The field errors of a `422`, none for any other answer: what a test names.
+    #[cfg(test)]
+    pub(crate) fn field_errors(&self) -> &[String] {
+        match self {
+            Self::Unprocessable { errors, .. } => errors,
+            _ => &[],
+        }
+    }
+
+    /// The field a `422` names first (`smtp.host: …` names `smtp.host`), empty for any other.
+    #[cfg(test)]
+    pub(crate) fn first_field(&self) -> &str {
+        self.field_errors()
+            .first()
+            .and_then(|e| e.split(':').next())
+            .unwrap_or_default()
+    }
+
     /// An error of ours as a 500, worded by the error, for `.map_err(ApiError::internal)`: the
     /// answer keeps the wording out (`internal_error_hides_message`), the log keeps it.
     pub fn internal(err: impl std::fmt::Display) -> Self {
@@ -422,6 +440,20 @@ pub fn type_uri(slug: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// Only a `422` names fields.
+    #[test]
+    fn only_a_422_names_fields() {
+        let named = super::ApiError::Unprocessable {
+            detail: "d".into(),
+            errors: vec!["smtp.host: no host".into()],
+        };
+        assert_eq!(named.first_field(), "smtp.host");
+        assert!(super::ApiError::NotFound("x".into())
+            .field_errors()
+            .is_empty());
+        assert_eq!(super::ApiError::NotFound("x".into()).first_field(), "");
+    }
+
     use super::*;
     use http_body_util::BodyExt;
 

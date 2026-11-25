@@ -612,8 +612,35 @@ async fn an_archive_that_does_not_check_creates_nothing() {
     newer.insert("app.yaml".into(), app.into_bytes());
     let index = String::from_utf8_lossy(&newer["bundle.yaml"]).replace(&old, &digest);
     newer.insert("bundle.yaml".into(), index.into_bytes());
+    let mut no_index = files.clone();
+    no_index.remove("bundle.yaml");
+    let mut garbled = files.clone();
+    garbled.insert("bundle.yaml".into(), b"spec: [".to_vec());
+    let mut broken_app = files.clone();
+    let digest = format!("{:x}", Sha256::digest(b"kind: [".as_slice()));
+    broken_app.insert("app.yaml".into(), b"kind: [".to_vec());
+    let index = String::from_utf8_lossy(&broken_app["bundle.yaml"]).replace(&old, &digest);
+    broken_app.insert("bundle.yaml".into(), index.into_bytes());
 
     for (file, fields, status, needle) in [
+        (
+            zip_of(&no_index),
+            vec![],
+            StatusCode::BAD_REQUEST,
+            "no bundle.yaml",
+        ),
+        (
+            zip_of(&garbled),
+            vec![],
+            StatusCode::BAD_REQUEST,
+            "is not a Bundle",
+        ),
+        (
+            zip_of(&broken_app),
+            vec![],
+            StatusCode::BAD_REQUEST,
+            "app.yaml is not a manifest",
+        ),
         (
             zip_of(&tampered),
             vec![],
