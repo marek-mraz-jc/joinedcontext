@@ -559,14 +559,7 @@ impl Gateway {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (id, owner) in foreign {
             if first_this_hour(&mut reported, (space.to_owned(), owner.clone()), now) {
-                tracing::warn!(
-                    slug,
-                    space,
-                    owner = %owner,
-                    example = %id,
-                    "written under JC_GATEWAY_URN_OWNER_PREFIX=warn: the URN does not name the \
-                     Organization owning the space (ADR-N-068); re-mint before the window ends"
-                );
+                tracing::warn!(slug, space, owner = %owner, example = %id, "written under JC_GATEWAY_URN_OWNER_PREFIX=warn: the URN does not name the Organization owning the space (ADR-N-068); re-mint before the window ends");
             }
         }
     }
@@ -681,11 +674,7 @@ impl Gateway {
             .map(|member| member.name.as_str())
             .collect();
         if !outside.is_empty() {
-            tracing::warn!(
-                slug = %endpoint.slug,
-                registrations = %outside.join(", "),
-                "caller identity on a source outside this platform or not served here"
-            );
+            tracing::warn!(slug = %endpoint.slug, registrations = %outside.join(", "), "caller identity on a source outside this platform or not served here");
             return Err(Box::new(
                 ProblemDetails::new(501, "federation-identity-unavailable", "Not Implemented")
                     .with_detail(

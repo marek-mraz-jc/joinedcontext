@@ -91,9 +91,7 @@ pub fn contents(uri: &str, public_base_url: &url::Url) -> Option<Value> {
     let view = VIEWS.iter().find(|view| view.uri == uri)?;
     let origin = public_base_url.origin().ascii_serialization();
     // A JSON string literal inside a <script>: `<` escaped, so no value closes the element.
-    let literal = serde_json::to_string(&origin)
-        .unwrap_or_else(|_| "\"\"".to_owned())
-        .replace('<', "\\u003c");
+    let literal = Value::String(origin).to_string().replace('<', "\\u003c");
     Some(json!([{
         "uri": view.uri,
         "mimeType": MIME,
@@ -154,5 +152,57 @@ mod tests {
         let served = contents(CHART_URI, &base).expect("the chart view");
         let text = served[0]["text"].as_str().expect("text");
         assert!(text.contains(r#"var PORTAL = "https://portal.example.org";"#));
+    }
+
+    #[test]
+    fn each_tool_names_the_view_that_renders_it_and_others_none() {
+        assert_eq!(view_of("jc_change_plan"), Some(URI));
+        assert_eq!(view_of("jc_pipeline_try_mapping"), Some(URI));
+        assert_eq!(view_of("jc_render"), Some(CHART_URI));
+        assert_eq!(view_of("jc_resource_list"), None);
+        assert_eq!(view_of(""), None);
+        assert_eq!(
+            tool_meta("jc_render"),
+            Some(json!({ "resourceUri": CHART_URI, "visibility": ["model", "app"] }))
+        );
+        assert_eq!(tool_meta("jc_resource_list"), None);
+    }
+
+    /// Both views are listed as MCP Apps HTML with a CSP that lets them reach nothing.
+    #[test]
+    fn the_views_are_listed_with_a_csp_that_connects_nowhere() {
+        let listed = listed();
+        let uris: Vec<&str> = listed.iter().filter_map(|v| v["uri"].as_str()).collect();
+        assert_eq!(uris, [URI, CHART_URI]);
+        for view in &listed {
+            assert_eq!(view["mimeType"], MIME);
+            assert_eq!(view["_meta"]["ui"]["csp"]["connectDomains"], json!([]));
+            assert_eq!(view["_meta"]["ui"]["csp"]["resourceDomains"], json!([]));
+            assert_eq!(view["_meta"]["ui"]["prefersBorder"], true);
+            assert!(view["title"].as_str().is_some_and(|t| !t.is_empty()));
+        }
+    }
+
+    /// The plan view is served with the Portal origin alone, path and query dropped; an unknown
+    /// URI reads nothing; an origin that is opaque is written as the JSON string "null".
+    #[test]
+    fn the_plan_view_carries_the_portal_origin_and_nothing_else_of_the_url() {
+        let base = url::Url::parse("https://portal.example.org:8443/x?<script>#y").expect("url");
+        let served = contents(URI, &base).expect("the plan view");
+        assert_eq!(served[0]["uri"], URI);
+        assert_eq!(served[0]["mimeType"], MIME);
+        let text = served[0]["text"].as_str().expect("text");
+        assert!(
+            text.contains("\"https://portal.example.org:8443\""),
+            "the origin"
+        );
+        assert!(!text.contains("__PORTAL_ORIGIN__"));
+        assert!(!text.contains("?<script>"));
+        assert_eq!(contents("ui://joinedcontext/other.html", &base), None);
+        assert_eq!(contents("", &base), None);
+        let opaque = url::Url::parse("data:text/plain,hi").expect("url");
+        let served = contents(CHART_URI, &opaque).expect("the chart view");
+        let text = served[0]["text"].as_str().expect("text");
+        assert!(text.contains(r#"var PORTAL = "null";"#), "opaque origin");
     }
 }

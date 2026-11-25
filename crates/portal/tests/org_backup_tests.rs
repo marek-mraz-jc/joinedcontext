@@ -942,6 +942,338 @@ async fn a_seal_from_before_the_binding_is_bound_to_its_row_once() {
     assert!(joinedcontext_portal::org_backup::bucket(&world.state, &moved).is_ok());
 }
 
+/// An operator Change's SMTP password sealed before the binding (T-7268) is bound to its realm
+/// once; a bound one and one that does not open stay as they are.
+#[tokio::test]
+async fn an_smtp_password_sealed_before_the_binding_is_bound_to_its_realm_once() {
+    use joinedcontext_portal::org_backup::{reseal_unbound, seal, smtp_context, unseal};
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    let world = world_with("alfa", "Enabled", Some(db.clone())).await;
+    let legacy = unbound_seal(&world.state, "smtp-legacy-pass");
+    let bound = seal(&world.state, &smtp_context("mail.bravo"), "smtp-bound-pass").expect("sealed");
+    for (target, sealed) in [
+        ("mail.alfa", legacy.as_str()),
+        ("mail.bravo", bound.as_str()),
+        ("mail.charlie", "not a seal"),
+    ] {
+        sqlx::query(
+            "INSERT INTO operator_changes (kind, target, payload, proposed_by, sealed_secret) \
+             VALUES ('SmtpSet', $1, '{}', 'ada', $2)",
+        )
+        .bind(target)
+        .bind(sealed)
+        .execute(&db)
+        .await
+        .expect("an open Change");
+    }
+    assert_eq!(reseal_unbound(&world.state).await.expect("moved"), 1);
+    assert_eq!(reseal_unbound(&world.state).await.expect("again"), 0);
+    let stored = |target: &'static str| {
+        let db = db.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT sealed_secret FROM operator_changes WHERE target = $1",
+            )
+            .bind(target)
+            .fetch_one(&db)
+            .await
+            .expect("the Change")
+        }
+    };
+    let moved = stored("mail.alfa").await;
+    assert_eq!(
+        unseal(&world.state, &smtp_context("mail.alfa"), &moved)
+            .expect("opens for its realm")
+            .as_str(),
+        "smtp-legacy-pass"
+    );
+    assert!(
+        unseal(&world.state, &smtp_context("mail.bravo"), &moved).is_err(),
+        "bound to its own realm only"
+    );
+    assert_eq!(stored("mail.bravo").await, bound);
+    assert_eq!(stored("mail.charlie").await, "not a seal");
+}
+
+fn store_target(organization: &str, kind: &str) -> org_backup::Target {
+    org_backup::Target {
+        organization: organization.into(),
+        kind: kind.into(),
+        endpoint: "https://s3.example".into(),
+        region: "eu-central-1".into(),
+        bucket: "backups".into(),
+        prefix: "jc/".into(),
+        access_key_id: "AKID".into(),
+        sealed_secret: String::new(),
+        enabled: true,
+        every_hours: 24,
+        keep_days: 30,
+        recipients: Vec::new(),
+        updated_by: "ada@hel.fi".into(),
+        updated_at: String::new(),
+        last_run_at: None,
+        key: None,
+    }
+}
+
+fn entry<'a>(organization: &'a str) -> org_backup::NewEntry<'a> {
+    org_backup::NewEntry {
+        organization,
+        kind: org_backup::CONFIGURATION,
+        action: "run",
+        actor: "ada@hel.fi",
+        ok: true,
+        bytes: 1,
+        object_key: "jc/x",
+        version_id: "v1",
+        message: "ran",
+        sha256: "",
+    }
+}
+
+/// The Postgres store (ARCH/STO-07): each Organization's targets in its own keyed transaction,
+/// claimed by one replica at a time, a run fenced by its lease token, stamped only on success;
+/// an Organization outside the registry has no row.
+#[tokio::test]
+async fn the_postgres_store_claims_fences_and_stamps_each_organization_apart() {
+    use org_backup::{BackupStore, CONFIGURATION, DATA};
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    let store = BackupStore::new(Some(db.clone()));
+    {
+        let outside = "zulu";
+        assert_eq!(
+            store.target(outside, CONFIGURATION).await.expect("read"),
+            None
+        );
+        let refused = store
+            .save(&store_target(outside, CONFIGURATION))
+            .await
+            .expect_err("unregistered");
+        assert!(
+            matches!(refused, joinedcontext_portal::error::ApiError::NotFound(_)),
+            "{refused}"
+        );
+        assert!(
+            refused.to_string().contains("Organizations page"),
+            "{refused}"
+        );
+        let refused = store
+            .claim(outside, CONFIGURATION)
+            .await
+            .expect_err("unregistered");
+        assert!(
+            matches!(refused, joinedcontext_portal::error::ApiError::NotFound(_)),
+            "{refused}"
+        );
+        let refused = store.log(entry(outside)).await.expect_err("unregistered");
+        assert!(
+            matches!(refused, joinedcontext_portal::error::ApiError::NotFound(_)),
+            "{refused}"
+        );
+        assert!(store
+            .entries(outside, CONFIGURATION, 10)
+            .await
+            .expect("read")
+            .is_empty());
+    }
+
+    for (organization, kind) in [
+        ("alfa", CONFIGURATION),
+        ("alfa", DATA),
+        ("bravo", CONFIGURATION),
+    ] {
+        store
+            .save(&store_target(organization, kind))
+            .await
+            .expect("saved");
+    }
+    let first = store.claim_due(1).await.expect("claim");
+    assert_eq!(first.len(), 1, "a claim takes no more than its limit");
+    assert_eq!(
+        (first[0].0.organization.as_str(), first[0].0.kind.as_str()),
+        ("alfa", CONFIGURATION)
+    );
+    assert!(first[0].0.key.is_some(), "a claimed target carries its key");
+    let rest = store.claim_due(10).await.expect("claim");
+    assert_eq!(rest.len(), 2, "{rest:?}");
+    assert!(
+        store.claim_due(10).await.expect("claim").is_empty(),
+        "every due target is held"
+    );
+    let refused = store.claim("alfa", CONFIGURATION).await.expect_err("held");
+    assert!(
+        matches!(refused, joinedcontext_portal::error::ApiError::Conflict(_)),
+        "{refused}"
+    );
+
+    let (_, lease) = &first[0];
+    assert!(store.renew(lease).await.expect("renew"));
+    store.finished(lease, true).await.expect("ended");
+    assert!(
+        !store.renew(lease).await.expect("renew"),
+        "an ended lease is fenced out"
+    );
+    let stamped = store
+        .target("alfa", CONFIGURATION)
+        .await
+        .expect("read")
+        .expect("saved");
+    assert!(
+        stamped.last_run_at.is_some(),
+        "a run that succeeded is stamped"
+    );
+    for (target, lease) in &rest {
+        store.finished(lease, false).await.expect("ended");
+        let read = store
+            .target(&target.organization, &target.kind)
+            .await
+            .expect("read")
+            .expect("saved");
+        assert!(read.last_run_at.is_none(), "a failed run is not stamped");
+    }
+    assert!(
+        store.claim_due(10).await.expect("claim").is_empty(),
+        "backoff and not due"
+    );
+    let manual = store
+        .claim("bravo", CONFIGURATION)
+        .await
+        .expect("a backoff holds only the schedule back");
+    store.finished(&manual, true).await.expect("ended");
+
+    // A lease of an Organization the registry does not hold neither renews nor writes.
+    let memory = BackupStore::new(None);
+    memory
+        .save(&store_target("zulu", CONFIGURATION))
+        .await
+        .expect("saved");
+    let foreign = memory.claim("zulu", CONFIGURATION).await.expect("claimed");
+    assert!(!store.renew(&foreign).await.expect("renew"));
+    store
+        .finished(&foreign, true)
+        .await
+        .expect("nothing to end");
+
+    store.log(entry("alfa")).await.expect("logged");
+    let entries = store
+        .entries("alfa", CONFIGURATION, 10)
+        .await
+        .expect("read");
+    assert_eq!(entries.len(), 1);
+    assert!(store
+        .entries("bravo", CONFIGURATION, 10)
+        .await
+        .expect("read")
+        .is_empty());
+}
+
+/// A store whose database is gone answers an error a person can act on, and the schedule,
+/// the reseal at start and the restore requests skip a turn instead of failing the Portal.
+#[tokio::test]
+async fn a_store_whose_database_is_gone_says_so_and_the_schedule_skips_a_turn() {
+    use org_backup::{restore, BackupStore, CONFIGURATION};
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    let gone = sqlx::PgPool::connect_with((*db.connect_options()).clone())
+        .await
+        .expect("a pool of its own");
+    gone.close().await;
+    let store = BackupStore::new(Some(gone.clone()));
+    let refused = store.claim_due(2).await.expect_err("closed");
+    assert!(
+        refused.to_string().contains("the backup store failed"),
+        "{refused}"
+    );
+    let world = world_with("alfa", "Enabled", Some(gone)).await;
+    let slots = Arc::new(tokio::sync::Semaphore::new(org_backup::SCHEDULED_RUNS));
+    assert!(org_backup::schedule(&world.state, &slots).await.is_empty());
+    let none = Arc::new(tokio::sync::Semaphore::new(0));
+    assert!(
+        org_backup::schedule(&world.state, &none).await.is_empty(),
+        "no free slot"
+    );
+    assert!(org_backup::reseal_unbound(&world.state).await.is_err());
+    let refused = restore::requests(&world.state, "alfa")
+        .await
+        .expect_err("closed");
+    assert!(
+        refused.to_string().contains("backup store failed"),
+        "{refused}"
+    );
+    assert!(world
+        .state
+        .org_backups
+        .target("alfa", CONFIGURATION)
+        .await
+        .is_err());
+    // The schedule's own task logs the failures and keeps ticking.
+    org_backup::spawn_schedule(world.state.clone());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+}
+
+/// Restore requests of an Organization outside the registry, or of a Portal without a
+/// database, are empty; deciding one that does not exist is a 404 naming it.
+#[tokio::test]
+async fn a_restore_request_that_does_not_exist_is_named_and_an_unregistered_one_is_empty() {
+    use org_backup::restore;
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    let world = world_with("alfa", "Enabled", Some(db)).await;
+    let state = &world.state;
+    assert!(restore::requests(state, "zulu")
+        .await
+        .expect("read")
+        .is_empty());
+    assert!(!restore::any_pending(state, "zulu").await.expect("read"));
+    assert!(restore::pending(state, "alfa", 999)
+        .await
+        .expect("read")
+        .is_none());
+    assert!(restore::decide(state, "alfa", 999, "ada", "declined", "no")
+        .await
+        .expect("decided")
+        .is_none());
+    let refused = restore::decide(state, "zulu", 1, "ada", "declined", "no")
+        .await
+        .expect_err("unregistered");
+    assert!(
+        refused.to_string().contains("not an active Organization"),
+        "{refused}"
+    );
+    let declined = send(
+        state,
+        person("ada"),
+        "POST",
+        &format!("{DATA_DOOR}/restores/999/decline"),
+        None,
+    )
+    .await;
+    assert_eq!(declined.status, StatusCode::NOT_FOUND, "{}", declined.text);
+    assert!(declined.text.contains("999"), "{}", declined.text);
+
+    let bare = world_with("alfa", "Enabled", None).await;
+    assert!(restore::requests(&bare.state, "alfa")
+        .await
+        .expect("read")
+        .is_empty());
+    assert!(!restore::any_pending(&bare.state, "alfa")
+        .await
+        .expect("read"));
+    let refused = restore::decide(&bare.state, "alfa", 1, "ada", "declined", "no")
+        .await
+        .expect_err("no database");
+    assert!(
+        matches!(refused, joinedcontext_portal::error::ApiError::Conflict(_)),
+        "{refused}"
+    );
+}
+
 #[tokio::test]
 async fn only_the_organizations_administrators_reach_its_backup() {
     let world = world("alfa", "Enabled").await;
@@ -1805,6 +2137,100 @@ async fn a_backup_that_cannot_ask_daiya_exports_no_dashboards() {
     );
 }
 
+/// An Organization the registry no longer holds as active has no keyed rows: its archive keeps
+/// one flat file per table, so no unkeyed project row goes missing.
+#[tokio::test]
+async fn an_organization_outside_the_registry_gets_one_flat_file_per_table() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    sqlx::query("UPDATE organizations SET state = 'removed' WHERE name = 'alfa'")
+        .execute(&db)
+        .await
+        .expect("removed");
+    let mut world = world_with("alfa", "Enabled", Some(db)).await;
+    // The registry refuses a removed Organization's targets; a memory store holds them.
+    world.state.org_backups = Arc::new(org_backup::BackupStore::new(None));
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    assert_eq!(run["ok"], true, "{run}");
+    let files = unzip(&decrypt(
+        &latest(&world.bucket, &key_of(&world, "alfa", "data").await),
+        &ids[0],
+    ));
+    assert!(
+        files.keys().all(|name| !name.contains("/project/")),
+        "{:?}",
+        files.keys()
+    );
+    assert!(
+        files.contains_key("module/portal/activity.jsonl"),
+        "{:?}",
+        files.keys()
+    );
+}
+
+/// A module database the reader reaches but cannot read fails the run with the module named,
+/// and nothing is uploaded or stamped.
+#[tokio::test]
+async fn a_module_database_that_cannot_be_read_fails_the_run_naming_it() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("the test database");
+    let world = world_configured("alfa", "Enabled", Some(db), |config| {
+        config.backup_modules = joinedcontext_portal::org_backup::modules::BackupModules::from_lookup(|k| match k {
+            "JC_PORTAL_BACKUP_DATAROOM_DATABASE_URL" => Some(url.clone()),
+            "JC_PORTAL_BACKUP_TENANTS" => Some(
+                r#"{"dataroom":{"alfa":{"org":"00000000-0000-0000-0000-000000000002","catalogue":"00000000-0000-0000-0000-000000000003"}}}"#
+                    .into(),
+            ),
+            _ => None,
+        })
+        .expect("modules");
+    })
+    .await;
+    let ids = identities();
+    let saved = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DATA_DOOR,
+        Some(data_target(&world.endpoint, &ids)),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.text);
+    let run = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DATA_DOOR}/run"),
+        None,
+    )
+    .await;
+    assert_eq!(run.status, StatusCode::SERVICE_UNAVAILABLE, "{}", run.text);
+    assert!(
+        run.text.contains("the dataroom database could not be read"),
+        "{}",
+        run.text
+    );
+    let target = world
+        .state
+        .org_backups
+        .target("alfa", "data")
+        .await
+        .expect("read")
+        .expect("saved");
+    assert!(target.last_run_at.is_none(), "a failed run is not stamped");
+    let logged = world
+        .state
+        .org_backups
+        .entries("alfa", "data", 1)
+        .await
+        .expect("log");
+    assert!(!logged[0].ok, "the failure is in the log");
+}
+
 #[tokio::test]
 async fn a_data_archive_without_a_database_says_what_it_left_out() {
     let world = world("alfa", "Enabled").await;
@@ -2390,6 +2816,159 @@ async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_unto
         body(&listed),
         json!({ "projects": [], "deleted": ["alfa-city"] })
     );
+}
+
+/// A copy rewrites each row's id that names another copied row (a notice's subscription, a
+/// notification's comment) to the copy's id of that row, mints a new text id where a row is
+/// addressed by one, and refuses a row that would point at a row it does not hold; a name that
+/// is no DNS label is refused naming the field.
+#[tokio::test]
+async fn a_project_copys_rows_point_at_each_other_and_never_at_the_source() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    as_project(
+        &db,
+        "bravo-town",
+        "INSERT INTO alert_subscriptions (subject, project, scope, target, events, delivery) \
+         VALUES ('bob', 'bravo-town', 'pipeline', 'bravo-feed', '{failure}', 'portal')",
+    )
+    .await;
+    let foreign: i64 =
+        sqlx::query_scalar("SELECT id FROM alert_subscriptions WHERE project = 'bravo-town'")
+            .fetch_one(&db)
+            .await
+            .expect("bravo's subscription");
+    for sql in [
+        "INSERT INTO alert_subscriptions (subject, project, scope, target, events, delivery) \
+         VALUES ('ada', 'alfa-city', 'pipeline', 'alfa-feed', '{failure}', 'portal')"
+            .to_owned(),
+        "INSERT INTO alert_notices (recipient, subscription, project, pipeline, event, change) \
+         SELECT 'ada', id, 'alfa-city', 'alfa-feed', 'failure', 'opened' FROM alert_subscriptions \
+         WHERE target = 'alfa-feed'"
+            .to_owned(),
+        format!(
+            "INSERT INTO alert_notices (recipient, subscription, project, pipeline, event, change) \
+             VALUES ('ada', {foreign}, 'alfa-city', 'bravo-feed', 'failure', 'opened')"
+        ),
+        "INSERT INTO notifications (recipient, project, space, urn, comment_id, author, author_name, excerpt) \
+         SELECT 'mia', 'alfa-city', 'air', urn, id, 'ada', 'Ada', 'see this' FROM entity_comments \
+         WHERE body = 'alfa-comment-mark'"
+            .to_owned(),
+        "INSERT INTO grafana_visualizations (id, project, title, endpoint, entity_type, attribute, kind) \
+         VALUES ('viz-alfa-1', 'alfa-city', 'Air', 'air', 'X', 'pm10', 'stat')"
+            .to_owned(),
+        "INSERT INTO data_views (id, project, space, entity_type, kind, mode, title, owner_subject, owner_name, config) \
+         VALUES ('view-alfa-1', 'alfa-city', 'air', 'X', 'table', 'private', 'Air table', 'sub-ada', 'Ada', '{}')"
+            .to_owned(),
+    ] {
+        as_project(&db, "alfa-city", &sql).await;
+    }
+    let world = world_with("alfa", "Enabled", Some(db.clone())).await;
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    assert_eq!(run["ok"], true, "{run}");
+    let version = run["versionId"].as_str().expect("a version").to_owned();
+    let source = joinedcontext_portal::project_ids::recorded(&db, "alfa-city")
+        .await
+        .expect("registry")
+        .expect("alfa-city's key");
+    let door = format!("{DATA_DOOR}/versions/{version}/copy");
+    let ask = |name: &str| json!({ "identity": secret_of(&ids[0]), "project": source.project.path_segment(), "name": name, "apply": true });
+    let refused = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(ask("Alfa_Twin")),
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
+    assert!(
+        refused.text.contains("name: use lower-case letters"),
+        "{}",
+        refused.text
+    );
+    let taken = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(ask("bravo")),
+    )
+    .await;
+    assert_eq!(
+        taken.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        taken.text
+    );
+    assert!(taken.text.contains("is taken"), "{}", taken.text);
+
+    let applied = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(ask("alfa-twin")),
+    )
+    .await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.text);
+    let plan = body(&applied);
+    let tables = &plan["tables"];
+    assert_eq!(
+        tables["alert_subscriptions"],
+        json!({ "create": 1, "refused": 0 }),
+        "{plan}"
+    );
+    assert_eq!(
+        tables["alert_notices"],
+        json!({ "create": 1, "refused": 1 }),
+        "the notice of bravo's subscription is refused: {plan}"
+    );
+    assert_eq!(tables["notifications"]["create"], 1, "{plan}");
+    assert_eq!(tables["grafana_visualizations"]["create"], 1, "{plan}");
+    assert_eq!(tables["data_views"]["create"], 1, "{plan}");
+
+    let twin = jc_types::ProjectId::from_path_segment(plan["projectId"].as_str().expect("id"))
+        .expect("path form");
+    let mut tx =
+        joinedcontext_portal::db::tenant_tx(&db, jc_types::ProjectKey::new(source.org, twin))
+            .await
+            .expect("the copy's key");
+    let pointed: (i64, i64) = sqlx::query_as(
+        "SELECT n.subscription, s.id FROM alert_notices n JOIN alert_subscriptions s \
+         ON s.id = n.subscription WHERE n.project = 'alfa-twin' AND s.project = 'alfa-twin'",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .expect("the copy's notice points at the copy's subscription");
+    assert_eq!(pointed.0, pointed.1);
+    let comment: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM notifications n JOIN entity_comments c ON c.id = n.comment_id \
+         WHERE n.project = 'alfa-twin' AND c.project = 'alfa-twin')",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .expect("read");
+    assert!(comment, "the copy's notification names the copy's comment");
+    let viz: String =
+        sqlx::query_scalar("SELECT id FROM grafana_visualizations WHERE project = 'alfa-twin'")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("the copy's visualization");
+    assert_ne!(viz, "viz-alfa-1", "a text id is minted anew");
+    let view: String = sqlx::query_scalar("SELECT id FROM data_views WHERE project = 'alfa-twin'")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the copy's data view");
+    assert_ne!(view, "view-alfa-1", "a text id is minted anew");
+    tx.rollback().await.expect("rollback");
 }
 
 /// T-7208: the copy doors answer the Organization's administrators only.

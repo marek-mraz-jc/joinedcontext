@@ -1113,6 +1113,40 @@ mod tests {
         serde_json::from_value(value).expect("an edit call")
     }
 
+    /// Removing the calendar and the last hidden attribute drops their now-empty blocks, so the
+    /// manifest holds no `representations: {}` or `projection: {}` (T-7818).
+    #[test]
+    fn an_edit_that_empties_a_block_drops_the_block() {
+        let calendar = json!({
+            "metadata": { "name": "events", "namespace": "helsinki" },
+            "spec": {
+                "contextSpaceRef": "helsinki",
+                "slug": "eventseventseventseventsev",
+                "audience": "public",
+                "enabledRepresentations": ["ngsi-ld", "ical"],
+                "representations": { "ical": { "entityType": "Event" } },
+                "projection": { "hiddenAttributes": ["organizer"] }
+            }
+        });
+        let edited = edit(
+            &[calendar],
+            &edit_of(json!({ "name": "events", "removeRepresentations": ["ical"], "hiddenAttributes": [] })),
+        )
+        .expect("edits");
+        let spec = &edited.endpoint["spec"];
+        assert_eq!(spec["enabledRepresentations"], json!(["ngsi-ld"]));
+        assert!(spec.get("representations").is_none(), "{spec}");
+        assert!(spec.get("projection").is_none(), "{spec}");
+        assert!(
+            edit(
+                &endpoints(),
+                &edit_of(json!({ "name": "helsinki-kpi", "hiddenAttributes": ["not a name"] })),
+            )
+            .is_err_and(|reason| reason.contains("'not a name' is not an attribute name")),
+            "a bad hidden attribute is refused"
+        );
+    }
+
     #[test]
     fn an_edit_adds_and_removes_representations_and_keeps_the_slug_space_and_labels() {
         let edited = edit(

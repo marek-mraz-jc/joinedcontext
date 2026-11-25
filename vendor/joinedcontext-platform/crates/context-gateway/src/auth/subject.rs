@@ -184,11 +184,7 @@ fn exchanged_subject(
     claims: &Claims,
 ) -> Result<Subject, Box<ProblemDetails>> {
     if claims.azp.as_deref() != Some(tenancy::GATEWAY_CLIENT) {
-        tracing::warn!(
-            azp = claims.azp.as_deref().unwrap_or_default(),
-            slug = %endpoint.slug,
-            "a broker-audience token not from the gateway's exchange"
-        );
+        tracing::warn!(azp = claims.azp.as_deref().unwrap_or_default(), slug = %endpoint.slug, "a broker-audience token not from the gateway's exchange");
         return Err(Box::new(ProblemDetails::unauthorized()));
     }
     let mut subject = subject_from(gateway, endpoint, claims)?;
@@ -444,12 +440,7 @@ pub(crate) fn subject_of(
         // Its client stays enabled in the realm after the credentials end, so the gateway is
         // where an ended account stops: for its own calls and for the people it acts for.
         if let Some(account) = account.filter(|account| account.has_ended(crate::pdp::now())) {
-            tracing::warn!(
-                azp,
-                slug = %endpoint.slug,
-                project = %account.project,
-                "the account's credentials have ended"
-            );
+            tracing::warn!(azp, slug = %endpoint.slug, project = %account.project, "the account's credentials have ended");
             return Err(Box::new(ProblemDetails::forbidden()));
         }
         // A person's token the account's client exchanged (ADR-N-038, AG-95): the subject is
@@ -487,21 +478,11 @@ pub(crate) fn subject_of(
             if !endpoint.admits(Some(&account.project)) {
                 // No decision line follows a refusal here, so this is the one that names it
                 // (T-3033): the account, the endpoint, the project; never the token.
-                tracing::warn!(
-                    azp,
-                    slug = %endpoint.slug,
-                    project = %account.project,
-                    "the account's project is not one this endpoint admits"
-                );
+                tracing::warn!(azp, slug = %endpoint.slug, project = %account.project, "the account's project is not one this endpoint admits");
                 return Err(Box::new(ProblemDetails::forbidden()));
             }
             if !of_its_organization(gateway, endpoint, &account.project) {
-                tracing::warn!(
-                    azp,
-                    slug = %endpoint.slug,
-                    project = %account.project,
-                    "the account's project is of another organization"
-                );
+                tracing::warn!(azp, slug = %endpoint.slug, project = %account.project, "the account's project is of another organization");
                 return Err(Box::new(ProblemDetails::not_found()));
             }
             return Ok(Subject {
@@ -547,12 +528,7 @@ pub(crate) fn subject_of(
     // `service-account-portal-reconciler`) is that client's token or nobody's: the guard sits
     // here, not in the realm's username rules (T-5358).
     if !owns_its_name(&user, claims.azp.as_deref()) {
-        tracing::warn!(
-            user = %claims.sub,
-            azp = claims.azp.as_deref().unwrap_or_default(),
-            slug = %endpoint.slug,
-            "a service-account username from a client it does not name"
-        );
+        tracing::warn!(user = %claims.sub, azp = claims.azp.as_deref().unwrap_or_default(), slug = %endpoint.slug, "a service-account username from a client it does not name");
         return Err(Box::new(ProblemDetails::forbidden()));
     }
     let Some(mut subject) = person(

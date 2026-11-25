@@ -1989,9 +1989,7 @@ mod tests {
             ("pipeline runs", "jc_pipeline_metrics"),
             ("happened lately", "jc_activity_list"),
         ] {
-            let at = pack
-                .find(operation)
-                .unwrap_or_else(|| panic!("{operation} is not in the prompt"));
+            let at = pack.find(operation).expect("is not in the prompt");
             let line = pack[..at].rsplit('\n').next().unwrap_or_default();
             assert!(
                 !line.is_empty(),
@@ -2726,9 +2724,7 @@ mod tests {
                 "{detail}: a spent limit is refused again, so it is not asked again"
             );
             let said = said(&state).await;
-            let (text, failed) = said
-                .last()
-                .unwrap_or_else(|| panic!("{detail}: nothing said"));
+            let (text, failed) = said.last().expect("nothing said");
             assert!(failed, "{text}");
             assert!(text.contains(limit), "{detail}: {text}");
         }
@@ -2810,9 +2806,7 @@ mod tests {
             );
             assert!(conversation.is_empty(), "{case}");
             let said = said(&state).await;
-            let (text, failed) = said
-                .last()
-                .unwrap_or_else(|| panic!("{case}: nothing said"));
+            let (text, failed) = said.last().expect("nothing said");
             assert!(failed, "{case}: {text}");
             assert!(text.contains(reason), "{case}: {text}");
             assert!(!text.contains(leak), "{case}: {text}");
@@ -2906,5 +2900,103 @@ mod tests {
         let (a, b) = (turn_starts(&first), turn_starts(&later));
         assert_eq!(first[..a], later[..b]);
         assert!(later[b..].contains("## WHAT THE CATALOG SEARCH FOUND"));
+    }
+}
+
+#[cfg(test)]
+mod loop_tests {
+    //! The conversation's event loop (T-7818): a continuation reads the run it continues, a
+    //! person's message is a turn, an empty answer is none, a terminal status or the lease ends
+    //! the loop.
+
+    use super::*;
+    use crate::state::AppState;
+    use std::time::Duration;
+
+    async fn conversing(state: &AppState) {
+        let mut run =
+            crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        run.kind = "conversation".to_owned();
+        state.agents.create_run(&run).await.expect("a run");
+    }
+
+    async fn thoughts(state: &AppState) -> Vec<Value> {
+        state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|event| event.kind == "thought")
+            .map(|event| event.payload)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn the_loop_answers_a_message_skips_an_empty_answer_and_ends_on_a_terminal_status() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut prior = Driver::for_tests(state.clone(), "helsinki");
+        prior.run_id = "prior".into();
+        prior
+            .event(
+                "message",
+                json!({ "sentBy": "test-user", "text": "earlier" }),
+            )
+            .await
+            .expect("stored");
+        conversing(&state).await;
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.continues = Some("prior".into());
+        let feeder = Driver::for_tests(state.clone(), "helsinki");
+        let live = state.agent_events.subscribe("test-run").await;
+        let mut inbox = crate::agents::events::RunInbox::new(live, "test-run", 0);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let feed = async {
+            feeder
+                .event("answer", json!({ "answers": { "answer": "  " } }))
+                .await
+                .expect("stored");
+            feeder
+                .event(
+                    "message",
+                    json!({ "sentBy": "test-user", "text": "how many bikes?", "page": { "nonsense": true }, "access": null }),
+                )
+                .await
+                .expect("stored");
+            for _ in 0..200 {
+                if thoughts(&state).await.iter().any(|t| t["failed"] == true) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            feeder
+                .event("status", json!({ "status": "cancelled" }))
+                .await
+                .expect("stored");
+        };
+        let (ended, ()) = tokio::join!(driver.drive_conversation(&mut inbox, deadline), feed);
+        ended.expect("the loop ends");
+        let said = thoughts(&state).await;
+        assert!(
+            said.iter().any(|t| t["failed"] == true
+                && t["text"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("The answer failed: "))),
+            "{said:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_lease_ends_a_quiet_conversation() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        conversing(&state).await;
+        let driver = Driver::for_tests(state.clone(), "helsinki");
+        let live = state.agent_events.subscribe("test-run").await;
+        let mut inbox = crate::agents::events::RunInbox::new(live, "test-run", 0);
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
+        driver
+            .drive_conversation(&mut inbox, deadline)
+            .await
+            .expect("the lease ends it");
     }
 }

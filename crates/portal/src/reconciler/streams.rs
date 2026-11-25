@@ -108,9 +108,11 @@ pub fn runner_client(builder: reqwest::ClientBuilder, token: Option<&str>) -> re
                 value.set_sensitive(true);
                 headers.insert(reqwest::header::AUTHORIZATION, value);
             }
-            Err(_) => tracing::warn!(
-                "the pipeline runner's token is no header value: runner calls go without it"
-            ),
+            Err(_) => {
+                let why =
+                    "the pipeline runner's token is no header value: runner calls go without it";
+                tracing::warn!("{why}");
+            }
         }
     }
     builder.default_headers(headers).build().unwrap_or_default()
@@ -311,7 +313,7 @@ fn config_hash(config: &Value) -> u64 {
 ///
 /// ponytail: a render that changed only the name of a variable reads as held; the runner is rolled
 /// when its environment changes (`joinedcontext.com/pipeline-secrets`), which re-sends it anyway.
-fn held_as_rendered(rendered: &Value, held: &Value) -> bool {
+pub fn held_as_rendered(rendered: &Value, held: &Value) -> bool {
     match (rendered, held) {
         (Value::String(rendered), Value::String(held)) => interpolated(rendered, held),
         (Value::Array(rendered), Value::Array(held)) => {
@@ -366,6 +368,14 @@ fn interpolated(rendered: &str, held: &str) -> bool {
     pattern.push_str(&regex::escape(&rendered[from..]));
     pattern.push('$');
     regex::Regex::new(&pattern).is_ok_and(|pattern| pattern.is_match(held))
+}
+
+/// The value behind `mutex`, a poisoned one included: each map here is a record of what was sent
+/// or planned, and a panic in one pass must not stop every later one.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl StreamDeployer {
@@ -442,49 +452,34 @@ impl StreamDeployer {
     /// (T-4421), and one that missed its due time while no Portal held it runs under that time
     /// (T-5778).
     pub fn ran(&self, ran: std::collections::HashMap<(String, String), jc_time::TimestampTz>) {
-        self.queue
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .ran(ran);
+        lock(&self.queue).ran(ran);
     }
 
     /// Tells the run queue the stream hash of each pipeline's newest logged run, so a replace
     /// pipeline whose stream changed while no Portal held it runs at once (T-5825).
     pub fn streams(&self, streams: std::collections::HashMap<(String, String), String>) {
-        self.queue
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .streams(streams);
+        lock(&self.queue).streams(streams);
     }
 
     /// Tells the run queue which pipelines' newest run failed for a cause outside their source,
     /// with that run and the cause, so each is retried with backoff (T-5687).
     pub fn failed(&self, failed: std::collections::BTreeMap<(String, String), (String, String)>) {
-        self.queue
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .failed(failed);
+        lock(&self.queue).failed(failed);
     }
 
     /// Tells the run queue which workload accounts (`project/name`) have no Keycloak client
     /// after this reconcile, so their pipelines are not started into a 401 loop (T-4426).
     pub fn unbound(&self, accounts: HashSet<String>) {
-        self.queue
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .unbound(accounts);
+        lock(&self.queue).unbound(accounts);
     }
 
     /// Queues one run of a run-and-delete pipeline now (T-4349) and returns its id, the one its
     /// log lists it under.
     pub fn run_now(&self, project: &str, name: &str) -> Result<String, run_queue::RunNow> {
-        self.queue
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .run_now(
-                &(project.to_owned(), name.to_owned()),
-                jc_time::TimestampTz::now(),
-            )
+        lock(&self.queue).run_now(
+            &(project.to_owned(), name.to_owned()),
+            jc_time::TimestampTz::now(),
+        )
     }
 
     /// Renders every stream with its own pipeline's identity (PL-19): set once the runner carries
@@ -566,11 +561,7 @@ impl StreamDeployer {
             return;
         };
         if spaces.iter().any(|other| other != space) {
-            tracing::warn!(
-                project,
-                pipeline,
-                "the outputs write into several spaces; the stream is not validated"
-            );
+            tracing::warn!(%project, %pipeline, "the outputs write into several spaces; the stream is not validated");
             return;
         }
         let Some(schema) = schemas.get(project, space) else {
@@ -582,11 +573,7 @@ impl StreamDeployer {
         );
         let linkml = schemas.stage_linkml(project, space);
         if !crate::pipeline_validation::insert_stage(stream, &schema, linkml.as_deref(), &sink) {
-            tracing::warn!(
-                project,
-                pipeline,
-                "the stream has no batch split; the stage is not rendered"
-            );
+            tracing::warn!(%project, %pipeline, "the stream has no batch split; the stage is not rendered");
         }
     }
 
@@ -685,11 +672,7 @@ impl StreamDeployer {
         let mut queued = Queued::new();
         // What the queue holds, so a stream this pass finds unchanged is handed over by its
         // digest and deflated only when it changed (T-6820).
-        let known = self
-            .queue
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .digests();
+        let known = lock(&self.queue).digests();
 
         for ns in mirror.namespaces() {
             // What the project may keep resident (PF-74): the ones beyond its quota are not
@@ -741,22 +724,20 @@ impl StreamDeployer {
                 }
 
                 let first = spec.sources().into_iter().next();
-                let ds_ref_name = first
-                    .as_ref()
-                    .and_then(|s| s.data_source_ref.as_ref())
-                    .map(|r| r.name().to_string());
-
-                let ep_ref = first.as_ref().and_then(|s| s.endpoint_ref.clone());
-                let ep_ref_name = ep_ref.as_ref().map(|r| r.name().to_string());
-
-                if ds_ref_name.is_none() && ep_ref_name.is_none() {
+                // The first source's DataSource, else its Endpoint; neither renders no stream.
+                let Some(read) = first.as_ref().and_then(|s| {
+                    s.data_source_ref
+                        .as_ref()
+                        .map(|r| FirstSource::Data(r.name().to_string()))
+                        .or_else(|| s.endpoint_ref.clone().map(FirstSource::Endpoint))
+                }) else {
                     outcomes.push((
                         ns.clone(),
                         name,
                         StreamOutcome::Skipped("not a supported stream pipeline"),
                     ));
                     continue;
-                }
+                };
 
                 if !eligible(&spec) {
                     let reason = if !spec.enabled {
@@ -864,98 +845,109 @@ impl StreamDeployer {
                     .as_ref()
                     .is_some_and(|source| source.trigger.is_some());
 
-                let stream_json = if let Some(ds_name) = ds_ref_name {
-                    let ds_env = match mirror.get(&ns, "DataSource", &ds_name) {
-                        Some(e) => e,
-                        None => {
-                            outcomes.push((
-                                ns.clone(),
-                                name,
-                                StreamOutcome::Error(format!(
-                                    "data source {ds_name} is not in the mirror"
-                                )),
-                            ));
-                            continue;
-                        }
-                    };
+                let stream_json = match read {
+                    FirstSource::Data(ds_name) => {
+                        let ds_env = match mirror.get(&ns, "DataSource", &ds_name) {
+                            Some(e) => e,
+                            None => {
+                                outcomes.push((
+                                    ns.clone(),
+                                    name,
+                                    StreamOutcome::Error(format!(
+                                        "data source {ds_name} is not in the mirror"
+                                    )),
+                                ));
+                                continue;
+                            }
+                        };
 
-                    let ds_spec: DataSourceSpec = match serde_json::from_value(ds_env.spec.clone())
-                    {
-                        Ok(s) => s,
-                        Err(err) => {
-                            outcomes.push((
-                                ns.clone(),
-                                name,
-                                StreamOutcome::Error(format!("invalid data source spec: {err}")),
-                            ));
-                            continue;
-                        }
-                    };
+                        let ds_spec: DataSourceSpec =
+                            match serde_json::from_value(ds_env.spec.clone()) {
+                                Ok(s) => s,
+                                Err(err) => {
+                                    outcomes.push((
+                                        ns.clone(),
+                                        name,
+                                        StreamOutcome::Error(format!(
+                                            "invalid data source spec: {err}"
+                                        )),
+                                    ));
+                                    continue;
+                                }
+                            };
 
-                    resident = run_queue::is_resident(&ds_spec.source_type);
-                    let bento = bentos.get(&(ns.clone(), name.clone())).map(String::as_str);
-                    match render_stream(&spec, &name, &ns, &ds_spec, &ds_name, &target_slug, bento)
-                    {
-                        Ok(val) => val,
-                        Err(err) => {
-                            outcomes.push((
-                                ns.clone(),
-                                name,
-                                StreamOutcome::Error(err.to_string()),
-                            ));
-                            continue;
+                        resident = run_queue::is_resident(&ds_spec.source_type);
+                        let bento = bentos.get(&(ns.clone(), name.clone())).map(String::as_str);
+                        match render_stream(
+                            &spec,
+                            &name,
+                            &ns,
+                            &ds_spec,
+                            &ds_name,
+                            &target_slug,
+                            bento,
+                        ) {
+                            Ok(val) => val,
+                            Err(err) => {
+                                outcomes.push((
+                                    ns.clone(),
+                                    name,
+                                    StreamOutcome::Error(err.to_string()),
+                                ));
+                                continue;
+                            }
                         }
                     }
-                } else if let Some(reference) = ep_ref {
-                    let source_ep_name = reference.name().to_owned();
-                    let source_ep_env = match source_endpoint(mirror, &ns, &reference) {
-                        Ok(e) => e,
-                        Err(reason) => {
-                            outcomes.push((ns.clone(), name, StreamOutcome::Error(reason)));
-                            continue;
-                        }
-                    };
+                    FirstSource::Endpoint(reference) => {
+                        let source_ep_name = reference.name().to_owned();
+                        let source_ep_env = match source_endpoint(mirror, &ns, &reference) {
+                            Ok(e) => e,
+                            Err(reason) => {
+                                outcomes.push((ns.clone(), name, StreamOutcome::Error(reason)));
+                                continue;
+                            }
+                        };
 
-                    let source_slug = match source_ep_env.spec.get("slug").and_then(Value::as_str) {
-                        Some(s) => s,
-                        None => {
-                            outcomes.push((
-                                ns.clone(),
-                                name,
-                                StreamOutcome::Error(format!(
-                                    "source endpoint {source_ep_name} has no slug"
-                                )),
-                            ));
-                            continue;
-                        }
-                    };
+                        let source_slug =
+                            match source_ep_env.spec.get("slug").and_then(Value::as_str) {
+                                Some(s) => s,
+                                None => {
+                                    outcomes.push((
+                                        ns.clone(),
+                                        name,
+                                        StreamOutcome::Error(format!(
+                                            "source endpoint {source_ep_name} has no slug"
+                                        )),
+                                    ));
+                                    continue;
+                                }
+                            };
 
-                    let source_is_public = source_ep_env
-                        .spec
-                        .get("audience")
-                        .and_then(Value::as_str)
-                        .is_none_or(|audience| audience == "public");
+                        let source_is_public = source_ep_env
+                            .spec
+                            .get("audience")
+                            .and_then(Value::as_str)
+                            .is_none_or(|audience| audience == "public");
 
-                    match render_endpoint_stream(
-                        &spec,
-                        &ns,
-                        &format!("{ns}/{name}"),
-                        source_slug,
-                        source_is_public,
-                        &target_slug,
-                    ) {
-                        Ok(val) => val,
-                        Err(err) => {
-                            outcomes.push((
-                                ns.clone(),
-                                name,
-                                StreamOutcome::Error(err.to_string()),
-                            ));
-                            continue;
+                        match render_endpoint_stream(
+                            &spec,
+                            &ns,
+                            &format!("{ns}/{name}"),
+                            source_slug,
+                            source_is_public,
+                            &target_slug,
+                        ) {
+                            Ok(val) => val,
+                            Err(err) => {
+                                outcomes.push((
+                                    ns.clone(),
+                                    name,
+                                    StreamOutcome::Error(err.to_string()),
+                                ));
+                                continue;
+                            }
                         }
                     }
-                } else {
-                    unreachable!();
                 };
 
                 let mut stream_json = stream_json;
@@ -983,7 +975,7 @@ impl StreamDeployer {
                     (ns, fingerprint)
                 })
                 .collect();
-            let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+            let mut queue = lock(&self.queue);
             queue.rules(rules);
             queue.plan(queued, jc_time::TimestampTz::now());
             for (ns, name, outcome) in outcomes.iter_mut() {
@@ -1054,7 +1046,7 @@ impl StreamDeployer {
 
         // Retire streams that were deployed previously but are no longer active or eligible.
         let to_retire: Vec<(String, String)> = {
-            let deployed = self.deployed.lock().unwrap_or_else(|p| p.into_inner());
+            let deployed = lock(&self.deployed);
             // A queued pipeline's stream is its run's, which the queue deletes itself.
             deployed
                 .difference(&current_live)
@@ -1078,9 +1070,7 @@ impl StreamDeployer {
             self.retire(&project, &names).await;
         }
 
-        if let Ok(mut deployed) = self.deployed.lock() {
-            *deployed = current_live;
-        }
+        *lock(&self.deployed) = current_live;
 
         outcomes
     }
@@ -1094,25 +1084,30 @@ impl StreamDeployer {
         current_live: &mut HashSet<(String, String)>,
     ) {
         use futures_util::StreamExt;
-        let running: HashMap<String, Running> = sends
-            .iter()
-            .map(|(_, ns, _, _)| (ns.clone(), Running::new()))
+        // One list per project, shared by its sends.
+        let mut running: HashMap<String, Arc<Running>> = HashMap::new();
+        let sends: Vec<_> = sends
+            .into_iter()
+            .map(|(at, ns, name, stream)| {
+                let list = Arc::clone(running.entry(ns.clone()).or_default());
+                (at, ns, name, stream, list)
+            })
             .collect();
-        let running = &running;
         let mut applied = futures_util::stream::iter(sends)
-            .map(|(at, ns, name, stream)| async move {
-                let outcome = match running.get(&ns) {
-                    Some(running) => self.apply(&ns, &name, stream, running).await,
-                    None => StreamOutcome::Error("no runner list for the project".to_owned()),
-                };
+            .map(|(at, ns, name, stream, running)| async move {
+                let outcome = self.apply(&ns, &name, stream, &running).await;
                 (at, ns, name, outcome)
             })
             .buffer_unordered(SENDS_AT_ONCE);
+        let mut sent = HashMap::new();
         while let Some((at, ns, name, outcome)) = applied.next().await {
             if outcome == StreamOutcome::Live {
                 current_live.insert((ns, name));
             }
-            if let Some(slot) = outcomes.get_mut(at) {
+            sent.insert(at, outcome);
+        }
+        for (at, slot) in outcomes.iter_mut().enumerate() {
+            if let Some(outcome) = sent.remove(&at) {
                 slot.2 = outcome;
             }
         }
@@ -1130,11 +1125,7 @@ impl StreamDeployer {
         own_credential(&mut stream_json, ns);
         let key = (ns.to_owned(), name.to_owned());
         let hash = config_hash(&stream_json);
-        let stored = self
-            .rendered
-            .lock()
-            .map(|rendered| rendered.get(&key).copied())
-            .unwrap_or(None);
+        let stored = lock(&self.rendered).get(&key).copied();
         let mut unchanged = stored == Some(hash);
         // Why the stream is sent, when it is: a PUT restarts it and fires a clock's first tick
         // out of schedule, so every one is logged with its reason (T-3007).
@@ -1164,12 +1155,7 @@ impl StreamDeployer {
                         why = "the runner holds it but it is not running";
                         let finished = input_ends_by_itself(&stream_json["input"]);
                         if !finished {
-                            tracing::warn!(
-                                project = %ns,
-                                pipeline = %name,
-                                "the runner holds this stream but it is not running; sending it \
-                                 again"
-                            );
+                            tracing::warn!(project = %ns, pipeline = %name, "the runner holds this stream but it is not running; sending it again");
                         }
                         finished
                     }
@@ -1188,24 +1174,16 @@ impl StreamDeployer {
         } else if let Some(waiting) = self.waiting(&key, hash) {
             waiting
         } else {
-            tracing::info!(
-                project = %ns,
-                pipeline = %name,
-                render = format_args!("{hash:016x}"),
-                "sending the stream to the runner, which restarts it: {why}"
-            );
+            tracing::info!(project = %ns, pipeline = %name, render = format_args!("{hash:016x}"), "sending the stream to the runner, which restarts it: {why}");
             match self.deploy_stream(ns, name, &stream_json).await {
-                Ok(outcome) => outcome,
+                Ok(Ok(())) => StreamOutcome::Live,
+                Ok(Err(refused)) => StreamOutcome::Error(refused),
                 Err(reason) => self.back_off(key.clone(), hash, reason),
             }
         };
         if outcome == StreamOutcome::Live {
-            if let Ok(mut rendered) = self.rendered.lock() {
-                rendered.insert(key.clone(), hash);
-            }
-            if let Ok(mut backoff) = self.backoff.lock() {
-                backoff.remove(&key);
-            }
+            lock(&self.rendered).insert(key.clone(), hash);
+            lock(&self.backoff).remove(&key);
         }
         outcome
     }
@@ -1237,11 +1215,7 @@ impl StreamDeployer {
             .get("config")
             .is_some_and(|config| held_as_rendered(stream_json, config));
         if same && alive {
-            tracing::info!(
-                project = %project,
-                pipeline = %name,
-                "the runner already runs this stream as rendered; not sent again"
-            );
+            tracing::info!(project = %project, pipeline = %name, "the runner already runs this stream as rendered; not sent again");
         }
         same && alive
     }
@@ -1249,7 +1223,7 @@ impl StreamDeployer {
     /// The outcome of a stream whose last PUT of this same render the runner did not answer,
     /// while its wait lasts; `None` when it is due, or when the render changed since.
     fn waiting(&self, key: &(String, String), hash: u64) -> Option<StreamOutcome> {
-        let backoff = self.backoff.lock().ok()?;
+        let backoff = lock(&self.backoff);
         let last = backoff.get(key)?;
         let left = last.until.checked_duration_since(Instant::now())?;
         (last.hash == hash).then(|| {
@@ -1265,39 +1239,24 @@ impl StreamDeployer {
     /// Records a PUT the runner did not answer and says when the next one goes out: the wait
     /// doubles while the same render keeps missing, and starts over for a new one.
     fn back_off(&self, key: (String, String), hash: u64, reason: String) -> StreamOutcome {
-        let wait = self
-            .backoff
-            .lock()
-            .ok()
-            .and_then(|backoff| {
-                backoff
-                    .get(&key)
-                    .filter(|last| last.hash == hash)
-                    .map(|last| last.wait)
-            })
-            .map_or(BACKOFF_START, |last| (last * 2).min(BACKOFF_CEILING));
-        tracing::warn!(
-            project = %key.0,
-            pipeline = %key.1,
-            wait_secs = wait.as_secs(),
-            %reason,
-            "the pipeline runner did not answer the stream's PUT; waiting before the next one"
-        );
+        let wait = lock(&self.backoff)
+            .get(&key)
+            .filter(|last| last.hash == hash)
+            .map_or(BACKOFF_START, |last| (last.wait * 2).min(BACKOFF_CEILING));
+        tracing::warn!(project = %key.0, pipeline = %key.1, wait_secs = wait.as_secs(), %reason, "the pipeline runner did not answer the stream's PUT; waiting before the next one");
         let said = format!(
             "the pipeline runner did not answer: {reason}; the Portal sends it again in {} s",
             wait.as_secs()
         );
-        if let Ok(mut backoff) = self.backoff.lock() {
-            backoff.insert(
-                key,
-                Backoff {
-                    hash,
-                    until: Instant::now() + wait,
-                    wait,
-                    reason,
-                },
-            );
-        }
+        lock(&self.backoff).insert(
+            key,
+            Backoff {
+                hash,
+                until: Instant::now() + wait,
+                wait,
+                reason,
+            },
+        );
         StreamOutcome::Error(said)
     }
 
@@ -1323,11 +1282,7 @@ impl StreamDeployer {
     async fn remove(&self, runner: &str, project: &str, name: &str, why: &str) -> bool {
         {
             let url = format!("{runner}/streams/{}", stream_id(project, name));
-            tracing::info!(
-                project = %project,
-                pipeline = %name,
-                "removing the stream from the runner: {why}"
-            );
+            tracing::info!(project = %project, pipeline = %name, "removing the stream from the runner: {why}");
             let answered = match self
                 .http
                 .delete(&url)
@@ -1339,35 +1294,19 @@ impl StreamDeployer {
                     if !resp.status().is_success()
                         && resp.status() != reqwest::StatusCode::NOT_FOUND
                     {
-                        tracing::warn!(
-                            project = %project,
-                            pipeline = %name,
-                            status = %resp.status(),
-                            "failed to delete stream from runner"
-                        );
+                        tracing::warn!(project = %project, pipeline = %name, status = %resp.status(), "failed to delete stream from runner");
                     }
                     true
                 }
                 Err(err) => {
-                    tracing::warn!(
-                        project = %project,
-                        pipeline = %name,
-                        error = %err,
-                        "failed to delete stream from runner"
-                    );
+                    tracing::warn!(project = %project, pipeline = %name, error = %err, "failed to delete stream from runner");
                     !err.is_timeout()
                 }
             };
             let key = (project.to_string(), name.to_string());
-            if let Ok(mut deployed) = self.deployed.lock() {
-                deployed.remove(&key);
-            }
-            if let Ok(mut rendered) = self.rendered.lock() {
-                rendered.remove(&key);
-            }
-            if let Ok(mut backoff) = self.backoff.lock() {
-                backoff.remove(&key);
-            }
+            lock(&self.deployed).remove(&key);
+            lock(&self.rendered).remove(&key);
+            lock(&self.backoff).remove(&key);
             answered
         }
     }
@@ -1378,12 +1317,7 @@ impl StreamDeployer {
     /// the next pass. On a runner shared by several projects the bare name may be another
     /// project's old stream; that one is re-sent under its own id in the same pass.
     async fn retire_unqualified<'a>(&self, project: &str, names: impl Iterator<Item = &'a str>) {
-        let done = self
-            .unqualified_retired
-            .lock()
-            .map(|done| done.contains(project))
-            .unwrap_or(true);
-        if done {
+        if lock(&self.unqualified_retired).contains(project) {
             return;
         }
         let (Some(runner), Some(held)) = (self.runner_for(project), self.running(project).await)
@@ -1419,9 +1353,7 @@ impl StreamDeployer {
                 }
             }
         }
-        if let Ok(mut done) = self.unqualified_retired.lock() {
-            done.insert(project.to_owned());
-        }
+        lock(&self.unqualified_retired).insert(project.to_owned());
     }
 
     /// What the runner holds for one project, each with whether it is still running, or `None`
@@ -1449,22 +1381,21 @@ impl StreamDeployer {
     }
 
     /// PUTs (or, for a stream the runner does not hold, POSTs) one stream: the runner's answer,
-    /// or `Err` with what the transport said when the runner did not answer at all.
+    /// `Ok(Err)` with its refusal, or `Err` with what the transport said when the runner did not
+    /// answer at all.
     async fn deploy_stream(
         &self,
         project: &str,
         name: &str,
         stream_json: &Value,
-    ) -> Result<StreamOutcome, String> {
+    ) -> Result<Result<(), String>, String> {
         let Some(runner) = self.runner_for(project) else {
-            return Ok(StreamOutcome::Error(format!(
-                "`{project}` is not a project name"
-            )));
+            return Ok(Err(format!("`{project}` is not a project name")));
         };
         // The project's write budget first: the stream names it, and the runner refuses a
         // stream naming a rate limit it does not hold (T-5803).
         if let Some(refused) = declare_egress(&self.http, &runner, project).await? {
-            return Ok(StreamOutcome::Error(refused));
+            return Ok(Err(refused));
         }
         let url = format!("{runner}/streams/{}", stream_id(project, name));
 
@@ -1490,12 +1421,18 @@ impl StreamDeployer {
 
         let status = response.status();
         if status.is_success() {
-            Ok(StreamOutcome::Live)
+            Ok(Ok(()))
         } else {
             let body = response.text().await.unwrap_or_default();
-            Ok(StreamOutcome::Error(runner_refusal(status, &body)))
+            Ok(Err(runner_refusal(status, &body)))
         }
     }
+}
+
+/// What a pipeline of one source reads (PL-31): a DataSource by name, or an Endpoint.
+enum FirstSource {
+    Data(String),
+    Endpoint(jc_core::Ref),
 }
 
 /// Puts one rendered pipeline where it runs (PL-78): a resident one is sent to the runner on
@@ -1555,17 +1492,13 @@ impl Runner for StreamDeployer {
                 .dropped_reports(key)
                 .await
                 .map(Option::unwrap_or_default);
-            let mut drops = self.report_drops.lock().unwrap_or_else(|p| p.into_inner());
+            let mut drops = lock(&self.report_drops);
             match base {
                 Ok(base) => drops.insert(key.clone(), base),
                 Err(_) => drops.remove(key),
             };
         }
-        match self.deploy_stream(&key.0, &key.1, stream).await? {
-            StreamOutcome::Live => Ok(()),
-            StreamOutcome::Error(reason) => Err(reason),
-            other => Err(format!("{other:?}")),
-        }
+        self.deploy_stream(&key.0, &key.1, stream).await?
     }
 
     async fn state(&self, key: &run_queue::Key) -> RunState {
@@ -1596,11 +1529,7 @@ impl Runner for StreamDeployer {
             // Bento keeps a deleted stream's series until it restarts, so the count outlives the
             // stream this run ran in.
             let end = self.dropped_reports(key).await;
-            let base = self
-                .report_drops
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .remove(key);
+            let base = lock(&self.report_drops).remove(key);
             let _ = ends.send(crate::pipeline_source_deletes::RunEnd {
                 project: key.0.clone(),
                 pipeline: key.1.clone(),
@@ -1717,7 +1646,7 @@ pub fn make_condition(
 
 /// The runner's refusal in words: its lint errors when it sent them (the row said "Why: ... 400
 /// Bad Request: {\"lint_errors\":[...]}", raw JSON, UI judge 2026-11-09), else its body cut short.
-fn runner_refusal(status: reqwest::StatusCode, body: &str) -> String {
+pub fn runner_refusal(status: reqwest::StatusCode, body: &str) -> String {
     let lints: Vec<String> = serde_json::from_str::<Value>(body)
         .ok()
         .and_then(|v| v.get("lint_errors").and_then(Value::as_array).cloned())
@@ -1753,6 +1682,8 @@ fn truncate_body(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod edges;
 
     #[test]
     fn a_runner_refusal_reads_as_its_lint_errors_not_as_json() {
@@ -3002,10 +2933,10 @@ output:
             "query": { "type": "Road" }
         }))
         .expect("a source");
-        match resolve_source(&mirror, "helsinki", source) {
-            Ok(ResolvedSource::Endpoint { slug, .. }) => assert_eq!(slug, "roadsslug"),
-            _ => panic!("the cross-project source did not resolve"),
-        }
+        assert!(
+            matches!(resolve_source(&mirror, "helsinki", source), Ok(ResolvedSource::Endpoint { slug, .. }) if slug == "roadsslug"),
+            "the cross-project source did not resolve"
+        );
     }
 
     #[tokio::test]
@@ -3329,7 +3260,7 @@ output:
         let stream = serde_json::json!({ "pipeline": { "processors": [] } });
         for project in ["helsinki", "praha"] {
             let sent = deployer.deploy_stream(project, "feed", &stream).await;
-            assert_eq!(sent, Ok(StreamOutcome::Live));
+            assert_eq!(sent, Ok(Ok(())));
         }
         let paths: Vec<(String, String)> = server
             .received_requests()
@@ -3362,12 +3293,13 @@ output:
             .mount(&refusing)
             .await;
         let deployer = StreamDeployer::new(refusing.uri());
-        match deployer.deploy_stream("praha", "feed", &stream).await {
-            Ok(StreamOutcome::Error(said)) => {
-                assert!(said.contains("praha__pipeline_egress"), "{said}")
-            }
-            other => panic!("a refused budget was not said: {other:?}"),
-        }
+        let said = deployer.deploy_stream("praha", "feed", &stream).await;
+        assert!(
+            said.as_ref().is_ok_and(|said| said
+                .as_ref()
+                .is_err_and(|said| said.contains("praha__pipeline_egress"))),
+            "a refused budget was not said: {said:?}"
+        );
         let sent = refusing.received_requests().await.expect("recorded");
         assert_eq!(sent.len(), 1, "a stream followed a refused budget");
     }
@@ -3621,13 +3553,12 @@ output:
                 StreamOutcome::Live
             )
         );
-        match &outcomes[1] {
-            (_, name, StreamOutcome::Error(said)) => {
-                assert_eq!(name, "citybikes-free.expiry");
-                assert!(said.contains("`30m`"), "{said}");
-            }
-            other => panic!("the sweep was not refused: {other:?}"),
-        }
+        assert_eq!(outcomes[1].1, "citybikes-free.expiry");
+        let said = format!("{:?}", outcomes[1].2);
+        assert!(
+            said.starts_with("Error(") && said.contains("`30m`"),
+            "the sweep was not refused: {said}"
+        );
         let sent = server.received_requests().await.expect("recorded");
         assert!(
             sent.iter().all(|r| !r.url.path().ends_with(".expiry")),
@@ -4349,7 +4280,8 @@ output:
         let log = Arc::clone(&seen);
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
-            while let Ok((mut socket, _)) = listener.accept().await {
+            loop {
+                let (mut socket, _) = listener.accept().await.expect("a connection");
                 let mut buffer = [0u8; 16];
                 let read = socket.read(&mut buffer).await.unwrap_or(0);
                 let head = String::from_utf8_lossy(&buffer[..read]).to_string();
@@ -4373,22 +4305,23 @@ output:
         let first = deployer
             .converge(&mirror, &Bentos::new(), &Default::default())
             .await;
-        let StreamOutcome::Error(said) = &first[0].2 else {
-            panic!("an unanswered PUT is not live: {first:?}");
-        };
+        let said = format!("{:?}", first[0].2);
         assert!(
-            said.contains("did not answer") && said.contains("again in 60 s"),
-            "{said}"
+            said.starts_with("Error(")
+                && said.contains("did not answer")
+                && said.contains("again in 60 s"),
+            "an unanswered PUT is not live: {said}"
         );
         assert_eq!(puts(), 1, "{:?}", verbs());
 
         let second = deployer
             .converge(&mirror, &Bentos::new(), &Default::default())
             .await;
-        let StreamOutcome::Error(said) = &second[0].2 else {
-            panic!("a stream waiting to be sent is not live: {second:?}");
-        };
-        assert!(said.contains("the last change of this stream"), "{said}");
+        let said = format!("{:?}", second[0].2);
+        assert!(
+            said.starts_with("Error(") && said.contains("the last change of this stream"),
+            "a stream waiting to be sent is not live: {said}"
+        );
         assert_eq!(puts(), 1, "the waiting stream was PUT again: {:?}", verbs());
 
         let mut pipeline = mirror
@@ -5463,7 +5396,7 @@ output:
             processors
                 .iter()
                 .position(|p| p["label"] == label)
-                .unwrap_or_else(|| panic!("no {label} in {processors:#?}"))
+                .expect("a processor of that label")
         };
         let pick = processors[at("route_pick")]["mutation"]
             .as_str()
@@ -5917,6 +5850,29 @@ output:
         }
     }
 
+    /// Whether this run rewrites the golden files (`JC_UPDATE_GOLDEN=1`).
+    fn update_golden() -> bool {
+        std::env::var_os("JC_UPDATE_GOLDEN").is_some()
+    }
+
+    /// The golden file at `path`, first written from `yaml` when `update`.
+    fn golden_file(path: &std::path::Path, yaml: &str, update: bool) -> String {
+        if update {
+            std::fs::create_dir_all(path.parent().expect("a directory")).expect("the directory");
+            std::fs::write(path, yaml).expect("golden written");
+        }
+        std::fs::read_to_string(path).expect("the golden file: run with JC_UPDATE_GOLDEN=1")
+    }
+
+    #[test]
+    fn a_golden_file_is_written_only_on_request() {
+        let dir = std::env::temp_dir().join(format!("jc-golden-{}", std::process::id()));
+        let path = dir.join("nested/stream.yaml");
+        assert_eq!(golden_file(&path, "input: {}\n", true), "input: {}\n");
+        assert_eq!(golden_file(&path, "changed\n", false), "input: {}\n");
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+
     /// The four shapes of `spec.lifetime` (PL-80) on one Bus pipeline, by golden file name.
     fn lifetimes() -> [(&'static str, Value); 4] {
         [
@@ -6035,13 +5991,7 @@ output:
             let yaml = serde_norway::to_string(&stream).expect("yaml");
             let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join(format!("tests/fixtures/lifetime/{mode}.yaml"));
-            if std::env::var_os("JC_UPDATE_GOLDEN").is_some() {
-                std::fs::create_dir_all(golden.parent().expect("dir")).expect("dir");
-                std::fs::write(&golden, &yaml).expect("golden written");
-            }
-            let expected = std::fs::read_to_string(&golden).unwrap_or_else(|_| {
-                panic!("{} missing: run with JC_UPDATE_GOLDEN=1", golden.display())
-            });
+            let expected = golden_file(&golden, &yaml, update_golden());
             assert_eq!(
                 yaml, expected,
                 "{mode}: the rendered stream moved from its golden file"
@@ -6197,12 +6147,7 @@ output:
         let yaml = serde_norway::to_string(&stream).expect("yaml");
         let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/source-deletes/events.yaml");
-        if std::env::var_os("JC_UPDATE_GOLDEN").is_some() {
-            std::fs::write(&golden, &yaml).expect("golden written");
-        }
-        let expected = std::fs::read_to_string(&golden).unwrap_or_else(|_| {
-            panic!("{} missing: run with JC_UPDATE_GOLDEN=1", golden.display())
-        });
+        let expected = golden_file(&golden, &yaml, update_golden());
         assert_eq!(
             yaml, expected,
             "the events stream moved from its golden file"

@@ -785,6 +785,44 @@ mod tests {
         assert_eq!(logged(&state, "endpoints").await.len(), 5);
     }
 
+    /// A call naming an endpoint the conversation does not read goes back with the ones it
+    /// does; a store that cannot record an opened endpoint opens nothing (T-7818).
+    #[tokio::test]
+    async fn a_query_of_an_endpoint_not_read_lists_the_read_ones_and_a_lost_open_opens_nothing() {
+        let (driver, _state, _proxy) = world().await;
+        let call = data_query::QueryCall {
+            endpoint: "zzz".into(),
+            name: "read-slug-a".into(),
+            arguments: json!({}),
+        };
+        let answer = driver
+            .query_endpoint(&[run_endpoint("a"), run_endpoint("b")], &call, &[])
+            .await
+            .unwrap_or_else(|reason| reason);
+        assert!(
+            answer
+                .contains("'zzz' is not an endpoint of this conversation; the endpoints are: a, b"),
+            "{answer}"
+        );
+
+        let (mut driver, _state, _proxy) = world().await;
+        let dead = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        driver.state.agents = std::sync::Arc::new(crate::agents::store::AgentStore::new(
+            Some(dead),
+            driver.state.mirror.clone(),
+        ));
+        let (mut chosen, mut tools) = (Vec::new(), Vec::new());
+        let refused = driver
+            .open_endpoint(&mut chosen, &mut tools, "a")
+            .await
+            .expect_err("not recorded");
+        assert!(!refused.contains("127.0.0.1"), "{refused}");
+        assert!(tools.is_empty());
+    }
+
     /// T-2515: an endpoint the conversation already reads is its index again: nothing stored,
     /// logged or asked of the proxy. Two opens at once cannot race: `chosen` is `&mut`, so the
     /// borrow checker serialises them (the `two_concurrent_opens…` case is struck).

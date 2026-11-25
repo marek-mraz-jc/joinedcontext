@@ -202,6 +202,44 @@ enum Worked {
     Again(String),
 }
 
+#[cfg(test)]
+impl Worked {
+    /// The person's answer, when the step ended the tool.
+    fn done(self) -> Option<String> {
+        match self {
+            Worked::Done(prose) => Some(prose),
+            Worked::Again(_) => None,
+        }
+    }
+
+    /// What goes back to the model, when the step did not end the tool.
+    fn again(self) -> Option<String> {
+        match self {
+            Worked::Again(reason) => Some(reason),
+            Worked::Done(_) => None,
+        }
+    }
+}
+
+/// Places `helsinki` under an Organization in the registry, so a database-backed store reaches
+/// its pool for the project's rows (a test of a store that cannot answer).
+#[cfg(test)]
+fn placed(state: &AppState) {
+    let org = crate::permissions::ORG_NAMESPACE;
+    for (kind, name, spec) in [
+        ("Organization", "hel", json!({ "domain": "hel.fi" })),
+        ("Project", "helsinki", json!({ "organizationRef": "hel" })),
+    ] {
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, org),
+            spec,
+            status: None,
+        });
+    }
+}
+
 /// Whether a message asks for an indicator kept up to date rather than one number: a pipeline, a
 /// period, a schedule or recomputing on change.
 fn asks_for_pipeline(text: &str) -> bool {
@@ -1062,6 +1100,36 @@ fn urlencoding(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Unreadable blocks are logged as refusals and named for the repair call; an empty answer
+    /// falls back; declarations merge with a re-export kept once and the first file's winning
+    /// (T-7818).
+    #[test]
+    fn unread_blocks_fallbacks_and_reexports_read_as_they_should() {
+        let refused = with_unread(&[], 2);
+        assert_eq!(refused.len(), 2);
+        assert!(refused
+            .iter()
+            .all(|r| r.path.is_empty() && r.reason.contains("closing marker")));
+        assert!(unread_problem(2).starts_with("2 block(s) of the answer could not be read"));
+        assert_eq!(or_else("  ".to_owned(), "nothing said"), "nothing said");
+        assert_eq!(or_else(" said ".to_owned(), "nothing said"), "said");
+        assert_eq!(merge_declarations(&[]), "");
+        let merged = merge_declarations(&[
+            "export const a = 1;\n".to_owned(),
+            "export * from './b';\nexport const a = 2;\n".to_owned(),
+            "export * from './b';\n".to_owned(),
+        ]);
+        assert_eq!(
+            merged.matches("export * from './b';").count(),
+            1,
+            "{merged}"
+        );
+        assert!(
+            merged.contains("a = 1") && !merged.contains("a = 2"),
+            "{merged}"
+        );
+    }
 
     /// T-6532 (live walk T-6490, S-20): a test red on every row of a page was pasted to the person
     /// as two lines per row; each finding is named once with how many records repeat it.

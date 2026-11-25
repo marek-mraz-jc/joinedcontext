@@ -171,7 +171,7 @@ pub fn request_of(input: &DataQueryInput) -> Result<(String, Query), OpError> {
         if let Some(format) = &input.format {
             put(&mut query, "format", format);
         }
-        return Ok((entity_path("ngsi-ld/v1/entities", id)?, query));
+        return Ok((entity_path("ngsi-ld/v1/entities", id), query));
     }
     let mut query = Query::new();
     for (key, value) in [
@@ -201,14 +201,18 @@ pub fn request_of(input: &DataQueryInput) -> Result<(String, Query), OpError> {
 
 /// `{collection}/{id}` with the id one percent-encoded path segment, whatever `/`, `?` or `#` it
 /// holds.
-fn entity_path(collection: &str, id: &str) -> Result<String, OpError> {
-    let mut url = url::Url::parse("http://entity.invalid/")
-        .map_err(|_| invalid("/id", "not an entity id this tool can address"))?;
-    url.path_segments_mut()
-        .map_err(|()| invalid("/id", "not an entity id this tool can address"))?
-        .extend(collection.split('/'))
-        .push(id);
-    Ok(url.path().trim_start_matches('/').to_owned())
+fn entity_path(collection: &str, id: &str) -> String {
+    // A constant http base: it parses and takes path segments, so the empty default never shows.
+    url::Url::parse("http://entity.invalid/")
+        .ok()
+        .and_then(|mut url| {
+            url.path_segments_mut()
+                .ok()?
+                .extend(collection.split('/'))
+                .push(id);
+            Some(url.path().trim_start_matches('/').to_owned())
+        })
+        .unwrap_or_default()
 }
 
 /// The geo-query pairs: georel, geometry and coordinates together or none of them.
@@ -702,9 +706,13 @@ mod tests {
     fn a_broker_404_names_the_missing_entity_and_a_bare_404_the_endpoint() {
         let broker = json!({ "type": "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound",
                              "detail": "urn:ngsi-ld:BikeCounter:x" });
-        let refused = |body: &Value| match refusal_of(404, false, "counters", "s", body) {
-            Err(OpError::Api(ApiError::NotFound(text))) => text,
-            other => panic!("not a 404 refusal: {other:?}"),
+        let refused = |body: &Value| {
+            let err = refusal_of(404, false, "counters", "s", body).expect_err("a 404 refusal");
+            assert!(
+                matches!(&err, OpError::Api(ApiError::NotFound(_))),
+                "{err:?}"
+            );
+            err.to_string().replacen("not found: ", "", 1)
         };
         assert_eq!(
             refused(&broker),
@@ -833,6 +841,112 @@ mod tests {
 
     /// A Portal whose mirror holds Helsinki's public stops Endpoint and a project-only one, and a
     /// person of another project with no grant in Helsinki (T-6272).
+    #[test]
+    fn a_temporal_read_needs_its_times_and_methods_together() {
+        let refused = |temporal: Value| {
+            path_of(request_of(&input(
+                json!({ "endpoint": "air", "type": "T", "temporal": temporal }),
+            )))
+        };
+        let at = "2026-10-28T00:00:00Z";
+        assert_eq!(
+            refused(json!({ "timerel": "between", "timeAt": at })),
+            "/temporal/endTimeAt"
+        );
+        assert_eq!(
+            refused(json!({ "timerel": "between", "timeAt": at, "endTimeAt": "tomorrow" })),
+            "/temporal/endTimeAt"
+        );
+        assert_eq!(
+            refused(json!({ "timerel": "after", "timeAt": at, "aggrPeriodDuration": "P1D" })),
+            "/temporal/aggrMethods"
+        );
+        let (_, q) = query(
+            json!({ "endpoint": "air", "type": "T", "format": "temporalValues",
+            "temporal": { "timerel": "between", "timeAt": at, "endTimeAt": "2026-10-29T00:00:00Z", "lastN": 3 } }),
+        );
+        assert_eq!(param(&q, "endTimeAt"), Some("2026-10-29T00:00:00Z"));
+        assert_eq!(param(&q, "lastN"), Some("3"));
+        assert_eq!(param(&q, "format"), Some("temporalValues"));
+        let (_, q) = query(json!({ "endpoint": "air", "type": "T",
+            "temporal": { "timerel": "after", "timeAt": at, "aggrMethods": ["avg", "max"] } }));
+        assert_eq!(param(&q, "aggrMethods"), Some("avg,max"));
+        assert_eq!(param(&q, "aggrPeriodDuration"), None);
+    }
+
+    fn path_of<T: std::fmt::Debug>(result: Result<T, OpError>) -> String {
+        let text = result.expect_err("refused").to_string();
+        text.strip_prefix("invalid input at ")
+            .and_then(|rest| rest.split_once(": "))
+            .map_or(text.clone(), |(path, _)| path.to_owned())
+    }
+
+    #[test]
+    fn each_gateway_status_is_an_error_the_caller_can_act_on() {
+        let detail = json!({ "detail": "bad q" });
+        let status_of = |status: u16, history: bool, body: &Value| {
+            let err = refusal_of(status, history, "air", "slug-x", body).expect_err("refused");
+            let text = err.to_string();
+            (
+                axum::response::IntoResponse::into_response(err)
+                    .status()
+                    .as_u16(),
+                text,
+            )
+        };
+        assert!(refusal_of(200, false, "air", "s", &Value::Null).is_ok());
+        let (code, text) = status_of(400, false, &detail);
+        assert_eq!(code, 400);
+        assert!(text.contains("bad q"), "{text}");
+        for status in [401, 403] {
+            assert!(status_of(status, false, &detail)
+                .1
+                .contains("does not let you read"));
+        }
+        assert!(status_of(404, true, &detail)
+            .1
+            .contains("serves no history"));
+        assert!(status_of(404, false, &Value::Null)
+            .1
+            .contains("does not serve Endpoint air yet"));
+        let (code, text) = status_of(502, false, &detail);
+        assert_eq!(code, 503);
+        assert!(
+            text.contains("answered 502") && !text.contains("slug-x"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn an_answer_is_entities_one_entity_or_refused() {
+        let read = input(json!({ "endpoint": "air", "limit": 2 }));
+        let one = answer_of(&read, json!({ "id": "urn:a" }), None).expect("one entity");
+        assert_eq!(one["entities"], json!([{ "id": "urn:a" }]));
+        let full = answer_of(
+            &read,
+            json!([{ "id": "urn:a" }, { "id": "urn:b" }]),
+            Some(5),
+        )
+        .expect("a page");
+        assert_eq!(
+            (full["total"].clone(), full["nextCursor"].clone()),
+            (json!(5), json!("2"))
+        );
+        let last = answer_of(
+            &read,
+            json!([{ "id": "urn:a" }, { "id": "urn:b" }]),
+            Some(2),
+        )
+        .expect("the last page");
+        assert!(last.get("nextCursor").is_none(), "{last}");
+        let err = answer_of(&read, json!("text"), None).expect_err("not entities");
+        assert!(err.to_string().contains("not entities"), "{err}");
+        assert_eq!(
+            entity_path("entities", "urn:a/b?c#d"),
+            "entities/urn:a%2Fb%3Fc%23d"
+        );
+    }
+
     fn helsinki(gateway: Option<String>) -> (AppState, Caller) {
         let mut config = crate::config::Config::for_tests();
         config.gateway_url = gateway;
@@ -874,15 +988,11 @@ mod tests {
         // A project-only Endpoint of another project, by slug or by name, and a public one by
         // its name: each reads as missing, the same words as an unknown name.
         for name in [PRIVATE, "staff", "stops", "helsinki-transport"] {
-            match readable_slug(&caller, &state, "t6025-full", name) {
-                Err(OpError::Api(ApiError::NotFound(text))) => {
-                    assert!(
-                        text.starts_with(&format!("no Endpoint {name} in project t6025-full")),
-                        "{text}"
-                    );
-                }
-                other => panic!("{name} is not missing: {other:?}"),
-            }
+            let err = readable_slug(&caller, &state, "t6025-full", name).expect_err("missing");
+            assert!(
+                matches!(&err, OpError::Api(ApiError::NotFound(text)) if text.starts_with(&format!("no Endpoint {name} in project t6025-full"))),
+                "{name}: {err:?}"
+            );
         }
     }
 
@@ -1015,9 +1125,12 @@ mod tests {
         )
         .await
         .expect_err("a missing Endpoint");
-        let words = |err: OpError| match err {
-            OpError::Api(ApiError::NotFound(text)) => text.replace("nobody", "staff"),
-            other => panic!("not the missing answer: {other:?}"),
+        let words = |err: OpError| {
+            assert!(
+                matches!(&err, OpError::Api(ApiError::NotFound(_))),
+                "{err:?}"
+            );
+            err.to_string().replace("nobody", "staff")
         };
         let missing = words(missing);
         // The realm refuses the first exchange (invalid_scope), then the gateway answers 503.

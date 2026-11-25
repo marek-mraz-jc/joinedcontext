@@ -735,13 +735,7 @@ pub(crate) async fn member_call(
         ACCEPT,
         HeaderValue::from_static("application/json, text/event-stream"),
     );
-    tracing::info!(
-        slug = %endpoint.slug,
-        space = %endpoint.space,
-        principal = %principal_of(subject),
-        tool = message["params"]["name"].as_str().unwrap_or_default(),
-        "member call forwarded to the broker's view"
-    );
+    tracing::info!(slug = %endpoint.slug, space = %endpoint.space, principal = %principal_of(subject), tool = message["params"]["name"].as_str().unwrap_or_default(), "member call forwarded to the broker's view");
     let path = format!("/x/views/{}/mcp", endpoint.slug);
     let answer = match gateway
         .broker
@@ -804,12 +798,7 @@ pub(crate) async fn member_call(
         }
         _ if status.is_client_error() => member_refusal(id, mcp::writes::problem_text(&held)),
         _ => {
-            tracing::warn!(
-                slug = %endpoint.slug,
-                status = status.as_u16(),
-                bytes = held.len(),
-                "the broker failed a member call; its answer is neither logged nor passed on"
-            );
+            tracing::warn!(slug = %endpoint.slug, status = status.as_u16(), bytes = held.len(), "the broker failed a member call; its answer is neither logged nor passed on");
             member_refusal(id, None)
         }
     }

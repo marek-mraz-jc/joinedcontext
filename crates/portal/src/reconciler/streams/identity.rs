@@ -671,4 +671,60 @@ mod tests {
             "idother-pipelines"
         );
     }
+
+    /// DM-113: a delete toward the gateway gets its reason whatever headers it came with; a
+    /// header map that is no map is left for the runner to refuse, and a step with no address
+    /// is no delete.
+    #[test]
+    fn a_gateway_delete_gets_its_reason_with_any_headers_it_came_with() {
+        let delete = |headers: Option<Value>| {
+            let mut http = serde_json::json!({ "url": "${JC_GATEWAY_URL}/ngsi-ld/v1/entityOperations/delete" });
+            if let Some(headers) = headers {
+                http["headers"] = headers;
+            }
+            let mut stream =
+                serde_json::json!({ "pipeline": { "processors": [{ "http": http }] } });
+            reasoned_deletes(&mut stream, "helsinki", "trees");
+            stream["pipeline"]["processors"][0]["http"]["headers"].clone()
+        };
+        for headers in [None, Some(Value::Null)] {
+            let set = delete(headers);
+            assert!(
+                set[REASON_HEADER]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("trees")),
+                "{set}"
+            );
+        }
+        assert_eq!(delete(Some(serde_json::json!("text"))), "text");
+        let mut addressless = serde_json::json!({ "http": { "verb": "DELETE" } });
+        let before = addressless.clone();
+        reasoned_deletes(&mut addressless, "helsinki", "trees");
+        assert_eq!(addressless, before);
+    }
+
+    /// F-BNT3-002: only a rate limit named by text becomes the project's budget; a resource that
+    /// is no name and a limit that is no text stay as written.
+    #[test]
+    fn a_rate_limit_that_names_no_bucket_stays_as_written() {
+        for mut limit in [serde_json::json!({ "resource": 5 }), serde_json::json!(5)] {
+            let before = limit.clone();
+            own_egress(&mut limit, "helsinki");
+            assert_eq!(limit, before);
+        }
+        let mut named = serde_json::json!({ "resource": "pipeline_egress" });
+        own_egress(&mut named, "helsinki");
+        assert_eq!(named["resource"], egress_label("helsinki"));
+    }
+
+    /// A stream with no pipeline section gets no write window, and a pipeline with no output
+    /// writes nowhere.
+    #[test]
+    fn no_pipeline_no_window_and_no_output_no_write() {
+        let mut stream = serde_json::json!({ "input": {} });
+        bound_in_flight(&mut stream, 4);
+        assert_eq!(stream, serde_json::json!({ "input": {} }));
+        assert!(writes("helsinki", &[], "")
+            .is_err_and(|err| err.to_string().contains("at least one output")));
+    }
 }

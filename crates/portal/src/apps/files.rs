@@ -15,7 +15,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use jc_core::kinds::AppService;
+use jc_core::kinds::{AppService, AppSpec};
 use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -125,6 +125,8 @@ struct Files {
     legacy: Option<String>,
     project: String,
     app: String,
+    /// The App's spec as the gate read it: its `filesMiB` limit.
+    spec: AppSpec,
 }
 
 impl Files {
@@ -171,7 +173,7 @@ async fn open(
     name: &str,
     method: &Method,
 ) -> Result<Files, Box<Response>> {
-    let (project, _, _) =
+    let (project, spec, _) =
         services::gate(state, headers, uri, name, (AppService::Files, method)).await?;
     let wasm = state.wasm_apps.as_ref().ok_or_else(|| {
         Box::new(
@@ -205,6 +207,7 @@ async fn open(
         legacy,
         project,
         app: name.to_owned(),
+        spec,
     })
 }
 
@@ -306,9 +309,12 @@ pub(super) async fn get(
     match answer {
         Ok((200, stored, body)) => {
             let mut response = (StatusCode::OK, body).into_response();
-            if let Ok(value) = HeaderValue::from_str(&content_type(&stored)) {
-                response.headers_mut().insert(header::CONTENT_TYPE, value);
-            }
+            // The type the store kept is visible ASCII or the octet-stream default.
+            response.headers_mut().extend(
+                HeaderValue::from_str(&content_type(&stored))
+                    .ok()
+                    .map(|value| (header::CONTENT_TYPE, value)),
+            );
             // An App's object is the App's data, never a page of the App's origin.
             response.headers_mut().insert(
                 header::CONTENT_DISPOSITION,
@@ -324,24 +330,14 @@ pub(super) async fn get(
 
 /// Whether `size` bytes under `key` fit: at most 25 MiB, and the App's `filesMiB` with the object
 /// it replaces taken out of the total as this one enters it.
-async fn room(
-    state: &AppState,
-    files: &Files,
-    (name, key): (&str, &str),
-    size: u64,
-) -> Result<(), Box<Response>> {
+async fn room(state: &AppState, files: &Files, key: &str, size: u64) -> Result<(), Box<Response>> {
     if size > MAX_OBJECT_BYTES as u64 {
         return Err(Box::new(services::file_too_large(MAX_OBJECT_BYTES)));
     }
-    let Some((_, spec, _)) = super::static_host::published_app(state, name) else {
-        return Err(Box::new(
-            ApiError::NotFound(format!("app '{name}' not found")).into_response(),
-        ));
-    };
     let limit = u64::from(services::quota(
         &state.mirror,
         &files.project,
-        &spec,
+        &files.spec,
         Quota::FilesMiB,
     )) * MIB;
     let held = files
@@ -382,7 +378,7 @@ pub(super) async fn put(
         Err(why) => return bad(why),
     };
     let _turn = PUTS.lock(&files.prefix).await;
-    if let Err(refused) = room(&state, &files, (&name, &key), body.len() as u64).await {
+    if let Err(refused) = room(&state, &files, &key, body.len() as u64).await {
         return *refused;
     }
     let kind = headers
@@ -503,7 +499,7 @@ pub(super) async fn url(
         }
     };
     if let Some(size) = size {
-        if let Err(refused) = room(&state, &files, (&name, &key), size).await {
+        if let Err(refused) = room(&state, &files, &key, size).await {
             return *refused;
         }
     }

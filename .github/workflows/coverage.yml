@@ -29,7 +29,9 @@ env:
   JC_AUDIT_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
   # jc-pool's release rule (T-7538) ends a session on the same server.
   JC_POOL_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
-  ANTARES_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/antares
+  # Antares as ci.yml antares-test runs it: the antares:antares superuser (created below), whose
+  # tests swap it for the RLS-bound antares_app; postgres:postgres fails them (T-7811).
+  ANTARES_TEST_DATABASE_URL: postgresql://antares:antares@127.0.0.1:5432/antares
   JC_PORTAL_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/portal
   JC_APPS_DB_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
   JC_WASM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
@@ -75,6 +77,8 @@ jobs:
           for db in kaisatsu dataroom daiya shako antares portal; do
             psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
           done
+          psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE antares LOGIN SUPERUSER PASSWORD 'antares'" -c "ALTER DATABASE antares OWNER TO antares"
       # The assistant's PDFium, model and ONNX Runtime and its pgvector server, as ci.yml root-test.
       - if: matrix.ws == 'root'
         working-directory: .
@@ -113,6 +117,17 @@ jobs:
           sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
           sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal
           { echo CARGO_PROFILE_DEV_DEBUG=0; echo CARGO_PROFILE_TEST_DEBUG=0; } >> "$GITHUB_ENV"
+      # The preview, the kit and the sample gallery embed sdk/dist (rust-embed): an unbuilt SDK
+      # leaves the preview document and those embeds unrun (run 45522482025: preview.rs 66 %,
+      # kit.rs 63 %, T-7818). Built as ci.yml's ui job builds it.
+      - if: matrix.ws == 'portal'
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
+      - if: matrix.ws == 'portal'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 24 }
+      - if: matrix.ws == 'portal'
+        run: cd sdk && pnpm install --frozen-lockfile && pnpm build
       # The platform's lockfile repeats the root one's versions (ci.yml platform-test). Its test
       # targets, but jc-core's (the `then` pass) and context-gateway's in_flight_tests, which reads
       # the platform repository's Dockerfile, not vendored.
@@ -322,6 +337,8 @@ jobs:
           for db in kaisatsu dataroom daiya shako antares portal; do
             psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $db"
           done
+          psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE antares LOGIN SUPERUSER PASSWORD 'antares'" -c "ALTER DATABASE antares OWNER TO antares"
       - if: needs.mutants-plan.outputs.ws == 'root'
         working-directory: .
         run: |

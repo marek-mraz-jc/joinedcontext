@@ -222,3 +222,30 @@ pub(crate) fn routes() -> Router<Arc<Gateway>> {
         // The read surface as OpenAPI, generated per caller (EP-99).
         .route("/api/endpoint/{slug}/openapi.json", get(openapi))
 }
+
+#[cfg(test)]
+mod rehome_tests {
+    use super::*;
+
+    /// Every `$ref` under `$defs` or `definitions`, in objects and arrays alike, points into
+    /// the components; another `$ref` and a non-string one stay.
+    #[test]
+    fn every_schema_reference_moves_into_the_components() {
+        let mut schema = json!({
+            "a": {"$ref": "#/$defs/A"},
+            "b": [{"$ref": "#/definitions/B"}, {"items": {"$ref": "#/$defs/C"}}],
+            "c": {"$ref": "https://x.org/s.json"},
+            "d": {"$ref": 7},
+            "e": "plain",
+        });
+        rehome(&mut schema);
+        assert_eq!(schema["a"]["$ref"], json!("#/components/schemas/A"));
+        assert_eq!(schema["b"][0]["$ref"], json!("#/components/schemas/B"));
+        assert_eq!(
+            schema["b"][1]["items"]["$ref"],
+            json!("#/components/schemas/C")
+        );
+        assert_eq!(schema["c"]["$ref"], json!("https://x.org/s.json"));
+        assert_eq!(schema["d"]["$ref"], json!(7));
+    }
+}

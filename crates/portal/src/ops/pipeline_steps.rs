@@ -1183,6 +1183,54 @@ pub(super) async fn candidate(
 mod tests {
     use super::*;
 
+    /// T-7817: messages past the stream's bytes together, a source that streams or names no
+    /// URL, and too many records to validate are each refused at their field.
+    #[test]
+    fn what_a_sample_cannot_take_is_refused_at_its_field() {
+        let message = Value::String("m".repeat(60 * 1024));
+        let refused = messages_bounded(&vec![message; 5]).expect_err("past the stream's bytes");
+        assert!(
+            refused.to_string().contains(&STREAM_BYTES.to_string()),
+            "{refused}"
+        );
+        assert!(messages_bounded(&[json!({ "n": 1 })]).is_ok());
+        let words = |spec: Value| {
+            sample_of_spec("feed", &spec)
+                .expect_err("not sampled")
+                .to_string()
+        };
+        assert!(words(json!({ "type": "mqtt" })).contains("of type mqtt, which streams"));
+        assert!(words(json!({})).contains("of type unknown"));
+        assert!(
+            words(json!({ "type": "http", "http": { "url": "ftp://x" } }))
+                .contains("names no http(s) URL")
+        );
+        let validate = super::super::find("jc_pipeline_validate").expect("registered");
+        let refused = (validate.validate)(&json!({ "records": vec![json!({}); MAX_RECORDS + 1] }));
+        assert!(
+            matches!(&refused, Err(OpError::InvalidInput { path, .. }) if path == "/records"),
+            "{refused:?}"
+        );
+        assert!((validate.validate)(&json!({ "records": [] })).is_ok());
+    }
+
+    #[test]
+    fn a_sample_without_a_record_list_or_under_the_cap_is_left_alone() {
+        for answer in [
+            json!({ "records": "text" }),
+            json!({ "records": [{ "n": 1 }] }),
+        ] {
+            assert_eq!(bounded_sample(answer.clone()), answer);
+        }
+        assert_eq!(longest_array(&json!([1, 2]), "", 0), None);
+        let deep = json!({ "a": { "b": { "c": { "d": { "e": { "f": [1] } } } } }, "g": [1, 2] });
+        assert_eq!(
+            longest_array(&deep, "", 0),
+            Some(("/g".to_owned(), 2)),
+            "five levels down is too deep"
+        );
+    }
+
     /// T-6393: a 250 KB feed that is one JSON document answers under the cap with its first
     /// stations, the array's pointer and the size it had; a small sample is left alone.
     #[test]

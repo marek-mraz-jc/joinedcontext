@@ -158,9 +158,11 @@ impl BearerVerifier {
             tracing::warn!(jwks = %self.jwks_url, "the realm's key set holds no usable key; the keys held stay");
             return 0;
         }
-        if let Ok(mut cache) = self.keys.write() {
-            *cache = keys;
-        }
+        // A poisoned lock still holds a whole map: the swap below is one assignment.
+        *self
+            .keys
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = keys;
         n
     }
 
@@ -171,9 +173,13 @@ impl BearerVerifier {
             let mut last = self
                 .last_refresh
                 .lock()
-                .map_err(|_| ApiError::Internal("jwks lock".into()))?;
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if last.is_some_and(|t| t.elapsed() < REFRESH_INTERVAL) {
-                return Ok(self.keys.read().map(|k| k.len()).unwrap_or(0));
+                return Ok(self
+                    .keys
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .len());
             }
             *last = Some(Instant::now());
         }
@@ -203,7 +209,11 @@ impl BearerVerifier {
     }
 
     fn key(&self, kid: &str) -> Option<DecodingKey> {
-        self.keys.read().ok()?.get(kid).cloned()
+        self.keys
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(kid)
+            .cloned()
     }
 
     /// Verifies signature (ES256 or RS256, known `kid`), `iss`, `aud`, `exp` and `nbf`; anything
@@ -448,9 +458,8 @@ pub(crate) mod tests {
     fn a_refreshed_token_keeps_its_sessions_start() {
         let claims = |extra: serde_json::Value| {
             let mut c = serde_json::json!({ "sub": "ana", "exp": 400, "iat": 300 });
-            if let (Some(c), Some(extra)) = (c.as_object_mut(), extra.as_object()) {
-                c.extend(extra.clone());
-            }
+            let extra = extra.as_object().cloned().unwrap_or_default();
+            c.as_object_mut().expect("an object").extend(extra);
             serde_json::from_value::<super::Claims>(c).expect("claims")
         };
         let (session, _) = super::session_of(claims(serde_json::json!({ "auth_time": 100 })));
@@ -543,6 +552,121 @@ pub(crate) mod tests {
         assert_eq!(identity(json!(false)), None);
         assert_eq!(identity(serde_json::Value::Null), None);
         assert_eq!(identity(json!(true)).as_deref(), Some("admin@city.example"));
+    }
+
+    /// A server that answers one request with a promised body of 1000 bytes, sends one and
+    /// closes its side; the handle ends once the client let go.
+    pub(crate) async fn truncating_server() -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0u8; 16 * 1024];
+            let _ = socket.read(&mut request).await;
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{",
+                )
+                .await
+                .expect("write");
+            socket.shutdown().await.expect("half-close");
+            let _ = socket.read_to_end(&mut Vec::new()).await;
+        });
+        (format!("http://{address}"), served)
+    }
+
+    #[tokio::test]
+    async fn a_key_set_cut_off_mid_body_is_a_failed_fetch_and_the_held_keys_stay() {
+        let (server, served) = truncating_server().await;
+        let v = BearerVerifier::with_jwks_url(
+            &Url::parse(ISSUER).expect("issuer"),
+            "portal-api",
+            Url::parse(&format!("{server}/certs")).expect("jwks"),
+        );
+        let (_, set) = keypair("held");
+        assert_eq!(v.install(&set), 1);
+        let failed = format!("{:?}", v.refresh().await);
+        assert!(
+            failed.starts_with("Err(Unavailable(\"JWKS fetch failed"),
+            "{failed}"
+        );
+        assert!(v.key("held").is_some());
+        served.await.expect("served");
+    }
+
+    #[tokio::test]
+    async fn a_verifier_reaching_its_realm_through_jc_verifies_like_any_other() {
+        let issuer = Url::parse("https://idm.hel.test/realms/hel/").expect("issuer");
+        let jwks = "http://127.0.0.1:9/realms/hel/protocol/openid-connect/certs";
+        let v = BearerVerifier::reached(&issuer, "portal", Url::parse(jwks).expect("jwks"));
+        assert_eq!(v.jwks_url.as_str(), jwks);
+        assert_eq!(v.issuer, "https://idm.hel.test/realms/hel");
+        let (signer, set) = keypair("r1");
+        assert_eq!(v.install(&set), 1);
+        let token = sign(
+            &signer,
+            "r1",
+            &json!({ "iss": v.issuer, "aud": "portal", "sub": "ana", "typ": ACCESS, "exp": now() + 60 }),
+        );
+        let session = v.verify(&token).await.expect("verified");
+        assert_eq!(session.identity.subject, "ana");
+        let other = sign(
+            &signer,
+            "r1",
+            &json!({ "iss": ISSUER, "aud": "portal", "sub": "ana", "typ": ACCESS, "exp": now() + 60 }),
+        );
+        assert!(matches!(
+            v.verify(&other).await,
+            Err(ApiError::Unauthorized)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_lock_neither_stops_an_install_nor_starts_a_fetch() {
+        let v = verifier();
+        let (signer, set) = keypair("p1");
+        std::thread::scope(|scope| {
+            let poisoner = scope.spawn(|| {
+                let _held = v.keys.write().expect("keys");
+                let mut last = v.last_refresh.lock().expect("last");
+                *last = Some(Instant::now());
+                panic!("poison both locks while holding them");
+            });
+            assert!(poisoner.join().is_err());
+        });
+        assert!(v.keys.is_poisoned() && v.last_refresh.is_poisoned());
+        assert_eq!(v.install(&set), 1);
+        assert!(v.key("p1").is_some());
+        assert_eq!(v.refresh().await.expect("inside the interval"), 1);
+        let token = sign(
+            &signer,
+            "p1",
+            &json!({ "iss": ISSUER, "aud": "portal-api", "sub": "svc", "typ": ACCESS, "exp": now() + 60 }),
+        );
+        assert_eq!(
+            v.verify(&token).await.expect("verified").identity.subject,
+            "svc"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_test_verifier_signs_what_it_verifies_and_nothing_it_does_not_hold() {
+        let (v, sign) = test_verifier(ISSUER, "portal", "t1");
+        let token = sign(
+            &json!({ "iss": ISSUER, "aud": "portal", "sub": "ana", "typ": ACCESS, "exp": now() + 60 }),
+        );
+        assert_eq!(
+            v.verify(&token).await.expect("verified").identity.username,
+            "ana"
+        );
+        let (other, _) = test_verifier(ISSUER, "portal", "t1");
+        assert!(matches!(
+            other.verify(&token).await,
+            Err(ApiError::Unauthorized)
+        ));
     }
 
     pub(crate) fn sign(signer: &EncodingKey, kid: &str, claims: &serde_json::Value) -> String {
@@ -658,10 +782,11 @@ pub(crate) mod tests {
         // and the verification itself answers a bare 401. Asserted here so a caller that starts
         // propagating it is noticed.
         let v = verifier();
-        let Err(ApiError::Unavailable(message)) = v.refresh().await else {
-            panic!("a refused connection should be Unavailable");
-        };
-        assert!(message.starts_with("JWKS fetch failed"));
+        let message = format!("{:?}", v.refresh().await);
+        assert!(
+            message.starts_with("Err(Unavailable(\"JWKS fetch failed"),
+            "{message}"
+        );
 
         // The door a caller actually knocks on: an unknown kid with the realm unreachable is 401
         // with nothing about the realm in it.

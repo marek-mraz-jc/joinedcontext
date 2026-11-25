@@ -1,0 +1,4 @@
+{"endpoint": {"contextSpaceRef": "air", "slug": "k4y7pq2mzt6vhx3nbwrs5cjdaf", "audience": "public", "enabledRepresentations": ["ngsi-ld"], "projectionRef": {"kind": "ModelProjection", "name": "cars-only"}, "projection": {"hiddenAttributes": ["owner"]}},
+ "policies": [{"contextSpaceRef": "air", "assigner": "did:web:city.example", "assignee": {"kind": "role", "id": "public"}, "operations": ["retrieveOps"], "information": [{"entities": [{"type": "Car"}]}]}],
+ "projection": {"contextSpaceRef": "air", "dataModelRef": {"name": "air", "version": "1.0.0"}, "classes": [{"name": "Car", "slots": ["speed", "owner"]}], "filter": {"q": "speed>0", "geoQ": "georel=near;maxDistance==2000;geometry=Point;coordinates=[1,2]"}},
+ "model": "classes:\n  Vehicle: {slots: [speed]}\n  Car: {is_a: Vehicle, slots: [owner]}\nslots:\n  id: {identifier: true}\n"}

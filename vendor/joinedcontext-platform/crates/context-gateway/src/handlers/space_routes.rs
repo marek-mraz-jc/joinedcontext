@@ -13,7 +13,6 @@ use axum::http::{HeaderValue, Response};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
-use jc_core::ProblemDetails;
 use std::sync::Arc;
 
 /// The catalog of spaces this caller may discover (SP-11).
@@ -73,10 +72,8 @@ pub(crate) async fn space_record(
         space_surface::Format::Turtle => space_surface::dataset_turtle(&space, base),
         space_surface::Format::Html => space_surface::dataset_html(&space, base),
     };
-    match HeaderValue::from_str(format.media_type()) {
-        Ok(media) => ([(axum::http::header::CONTENT_TYPE, media)], body).into_response(),
-        Err(_) => ProblemDetails::internal().into_response(),
-    }
+    let media = HeaderValue::from_static(format.media_type());
+    ([(axum::http::header::CONTENT_TYPE, media)], body).into_response()
 }
 
 /// This surface's routes; `app::router` merges them under its guards.

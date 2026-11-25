@@ -136,9 +136,9 @@ impl McpTasks {
             }
         });
         if let Ok(mut map) = self.tasks.lock() {
-            if let Some(task) = map.get_mut(&id) {
-                task.handle = Some(handle);
-            }
+            // The entry went in above, before the work started.
+            map.entry(id.clone())
+                .and_modify(|task| task.handle = Some(handle));
         }
         self.describe(owner, &id).unwrap_or_else(|| json!({}))
     }
@@ -164,11 +164,14 @@ impl McpTasks {
         };
         match map.get(id).filter(|task| task.owner == owner) {
             None => Ok(None),
-            Some(task) => match (&task.status, &task.result) {
-                (Status::Working, _) => Err("the task is still working"),
-                (Status::Cancelled, _) => Err("the task was cancelled"),
-                (_, Some(result)) => Ok(Some(result.clone())),
-                (_, None) => Err("the task left no result"),
+            Some(task) => match task.status {
+                Status::Working => Err("the task is still working"),
+                Status::Cancelled => Err("the task was cancelled"),
+                Status::Completed | Status::Failed => task
+                    .result
+                    .clone()
+                    .map(Some)
+                    .ok_or("the task left no result"),
             },
         }
     }
@@ -299,10 +302,9 @@ mod tests {
     #[tokio::test]
     async fn a_cancelled_task_keeps_nothing_the_call_had_not_finished() {
         let tasks = McpTasks::new();
-        let started = tasks.start("owner-1", async {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            json!({ "isError": false, "written": true })
-        });
+        let started = tasks.start("owner-1", std::future::pending());
+        // The call is under way, waiting, when it is cancelled.
+        tokio::task::yield_now().await;
         let id = started["taskId"].as_str().expect("an id").to_owned();
         let cancelled = tasks.cancel("owner-1", &id).expect("the task");
         assert_eq!(cancelled["status"], json!("cancelled"));
@@ -357,6 +359,13 @@ mod tests {
             ["createdAt", "pollInterval", "status", "taskId", "ttl"]
         );
         assert_eq!(started["status"], json!("working"));
+        // Every call runs to its answer; none of them is the client's to read but the owner's.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let id = started["taskId"].as_str().expect("an id");
+        assert_eq!(
+            tasks.result("sub-1", id),
+            Ok(Some(json!({ "isError": false, "secret": "x" })))
+        );
     }
 
     #[tokio::test]
@@ -420,10 +429,8 @@ mod tests {
     #[tokio::test]
     async fn a_task_still_working_is_told_to_wait_and_never_handed_half_an_answer() {
         let tasks = McpTasks::new();
-        let started = tasks.start("owner-1", async {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            json!({ "isError": false, "written": true })
-        });
+        let started = tasks.start("owner-1", std::future::pending());
+        tokio::task::yield_now().await;
         let id = started["taskId"].as_str().expect("an id").to_owned();
         assert_eq!(
             tasks.result("owner-1", &id),
@@ -465,12 +472,194 @@ mod tests {
         // The store still works for everybody else.
         let other = tasks.start("owner-1", async { json!({ "isError": false, "ok": 2 }) });
         assert!(other["taskId"].as_str().is_some());
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let other = other["taskId"].as_str().expect("an id");
+        assert!(matches!(tasks.result("owner-1", other), Ok(Some(_))));
     }
 
-    // Struck as impossible to drive from here:
-    // - the TTL sweep (`forget_expired`, `TASK_TTL_SECONDS`) has no clock seam and `created_at` is
-    //   private, so ageing a task would mean sleeping for the whole TTL;
-    // - `result`'s last arm, `(_, None) => Err("the task left no result")`, cannot be reached:
-    //   `Working` and `Cancelled` are answered above it, and the only writer of any other status
-    //   (line 106) sets `result` in the same breath.
+    /// A store whose lock a panicking thread poisoned: every reader answers as if the task
+    /// never existed, and nothing panics on the request path.
+    fn poisoned() -> McpTasks {
+        let tasks = McpTasks::new();
+        let held = tasks.tasks.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = held.lock().expect("the lock");
+            panic!("poison the store");
+        })
+        .join();
+        assert!(tasks.tasks.is_poisoned());
+        tasks
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_store_answers_nothing_and_never_panics() {
+        let tasks = poisoned();
+        let started = tasks.start("owner-1", async { json!({ "ok": 1 }) });
+        assert_eq!(started, json!({}), "no task can be described");
+        assert_eq!(tasks.describe("owner-1", "task-1"), None);
+        assert_eq!(
+            tasks.result("owner-1", "task-1"),
+            Err("the task store is unavailable")
+        );
+        assert_eq!(tasks.cancel("owner-1", "task-1"), None);
+        assert!(tasks.list("owner-1").is_empty());
+        // The work itself still runs to its end on its own task.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    #[tokio::test]
+    async fn a_finished_task_is_forgotten_after_its_ttl_and_a_working_one_is_kept() {
+        let tasks = McpTasks::new();
+        let done = tasks.start("owner-1", async { json!({ "ok": 1 }) });
+        let done = done["taskId"].as_str().expect("id").to_owned();
+        let slow = tasks.start("owner-1", std::future::pending());
+        let slow = slow["taskId"].as_str().expect("id").to_owned();
+        for _ in 0..50 {
+            if tasks.result("owner-1", &done).is_ok() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        // One second short of the TTL it is still read; at the TTL it is gone.
+        let finished_at = |ago: i64| {
+            let mut map = tasks.tasks.lock().expect("lock");
+            let task = map.get_mut(&done).expect("the task");
+            task.finished_at = Some(now_unix() - ago);
+        };
+        finished_at(TASK_TTL_SECONDS - 5);
+        tasks.start("owner-2", std::future::ready(json!({})));
+        assert!(tasks.describe("owner-1", &done).is_some());
+        finished_at(TASK_TTL_SECONDS + 1);
+        tasks.start("owner-2", std::future::ready(json!({})));
+        assert_eq!(tasks.describe("owner-1", &done), None);
+        assert_eq!(tasks.result("owner-1", &done), Ok(None));
+        // A task that never finished has no age to expire by.
+        assert_eq!(
+            tasks.describe("owner-1", &slow).expect("kept")["status"],
+            "working"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_finished_task_without_a_result_says_so_and_cancelling_it_changes_nothing() {
+        let tasks = McpTasks::new();
+        tasks.tasks.lock().expect("lock").insert(
+            "task-empty".to_owned(),
+            Task {
+                owner: "owner-1".to_owned(),
+                status: Status::Completed,
+                result: None,
+                created_at: 1,
+                finished_at: Some(2),
+                handle: None,
+            },
+        );
+        assert_eq!(
+            tasks.result("owner-1", "task-empty"),
+            Err("the task left no result")
+        );
+        let after = tasks.cancel("owner-1", "task-empty").expect("the task");
+        assert_eq!(after["status"], "completed");
+        assert_eq!(after["ttl"], TASK_TTL_SECONDS);
+        assert_eq!(after["pollInterval"], POLL_INTERVAL_MS);
+    }
+
+    #[tokio::test]
+    async fn a_caller_lists_only_their_own_tasks_newest_first() {
+        let tasks = McpTasks::new();
+        assert!(tasks.list("owner-1").is_empty());
+        for _ in 0..3 {
+            tasks.start("owner-1", std::future::pending());
+        }
+        tasks.start("owner-2", std::future::pending());
+        // Age the tasks apart: created_at is in whole seconds.
+        {
+            let mut map = tasks.tasks.lock().expect("lock");
+            for (age, task) in map
+                .values_mut()
+                .filter(|t| t.owner == "owner-1")
+                .enumerate()
+            {
+                task.created_at -= 10 * i64::try_from(age).expect("small");
+            }
+        }
+        let rows = tasks.list("owner-1");
+        assert_eq!(rows.len(), 3);
+        let created: Vec<i64> = rows
+            .iter()
+            .map(|row| row["createdAt"].as_i64().expect("createdAt"))
+            .collect();
+        assert!(created.windows(2).all(|w| w[0] > w[1]), "{created:?}");
+        assert!(rows.iter().all(|row| row["status"] == "working"));
+        assert_eq!(tasks.list("owner-2").len(), 1);
+        assert!(tasks.list("owner-3").is_empty());
+    }
+
+    #[test]
+    fn every_status_has_its_word_and_the_store_prints_no_task() {
+        let words: Vec<&str> = [
+            Status::Working,
+            Status::Completed,
+            Status::Failed,
+            Status::Cancelled,
+        ]
+        .iter()
+        .map(Status::as_str)
+        .collect();
+        assert_eq!(words, ["working", "completed", "failed", "cancelled"]);
+        assert_eq!(format!("{:?}", McpTasks::new()), "McpTasks");
+        assert!(is_long("jc_pipeline_test"));
+        assert!(!is_long("jc_resource_list"));
+        assert!(!is_long(""));
+        assert_ne!(rand_id(), rand_id());
+    }
+
+    /// An answer that arrives after the task was cancelled, or after the task was forgotten,
+    /// changes nothing; cancelling a task whose work never got its handle still cancels it.
+    #[tokio::test]
+    async fn a_late_answer_changes_nothing_and_a_task_without_a_handle_still_cancels() {
+        let tasks = McpTasks::new();
+        let (release_late, late) = tokio::sync::oneshot::channel::<()>();
+        let (release_gone, gone) = tokio::sync::oneshot::channel::<()>();
+        let cancelled = tasks.start("owner-1", async move {
+            let _ = late.await;
+            json!({ "late": true })
+        });
+        let cancelled = cancelled["taskId"].as_str().expect("id").to_owned();
+        let forgotten = tasks.start("owner-1", async move {
+            let _ = gone.await;
+            json!({ "late": true })
+        });
+        let forgotten = forgotten["taskId"].as_str().expect("id").to_owned();
+        {
+            let mut map = tasks.tasks.lock().expect("lock");
+            // Cancelled while its handle was elsewhere: the work runs on to its answer.
+            let task = map.get_mut(&cancelled).expect("the task");
+            task.status = Status::Cancelled;
+            task.handle = None;
+            map.remove(&forgotten);
+        }
+        let _ = release_late.send(());
+        let _ = release_gone.send(());
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(
+            tasks.result("owner-1", &cancelled),
+            Err("the task was cancelled")
+        );
+        assert_eq!(tasks.describe("owner-1", &forgotten), None);
+
+        tasks.tasks.lock().expect("lock").insert(
+            "task-bare".to_owned(),
+            Task {
+                owner: "owner-1".to_owned(),
+                status: Status::Working,
+                result: None,
+                created_at: 1,
+                finished_at: None,
+                handle: None,
+            },
+        );
+        let after = tasks.cancel("owner-1", "task-bare").expect("the task");
+        assert_eq!(after["status"], "cancelled");
+    }
 }

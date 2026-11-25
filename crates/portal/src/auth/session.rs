@@ -256,10 +256,7 @@ pub fn store_in(
     session: &Session,
     realm: Option<&str>,
 ) -> Result<PrivateCookieJar, ApiError> {
-    let serialize = |sealed: &Sealed| {
-        serde_json::to_string(sealed)
-            .map_err(|e| ApiError::Internal(format!("serialize session: {e}")))
-    };
+    let serialize = |sealed: &Sealed| serde_json::to_string(sealed).map_err(ApiError::internal);
     let organization = crate::organization_host::organization();
     let mut value = serialize(&Sealed {
         session: session.clone(),
@@ -435,17 +432,17 @@ impl FromRequestParts<AppState> for CurrentUser {
         // another: a bad token is 401, not a look at the cookie.
         let front = Front::of(&parts.headers, state.config.trust_edge_token);
         if front != Front::Portal {
-            let token = match front {
-                Front::Bearer => parts
+            let token = if front == Front::Bearer {
+                parts
                     .headers
                     .get(header::AUTHORIZATION)
                     .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.strip_prefix("Bearer ")),
-                Front::Edge => parts
+                    .and_then(|v| v.strip_prefix("Bearer "))
+            } else {
+                parts
                     .headers
                     .get(&EDGE_TOKEN_HEADER)
-                    .and_then(|v| v.to_str().ok()),
-                Front::Portal => None,
+                    .and_then(|v| v.to_str().ok())
             }
             .map(str::trim)
             .filter(|t| !t.is_empty())
@@ -532,13 +529,13 @@ mod tests {
         let connectors = crate::config::Config::for_tests().connector_clients;
         for method in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
             for client in ["mcp-mobile", "mcp-hub", "mcp-local"] {
-                match refuse_connector_write(&connectors, client, &method) {
-                    Err(ApiError::Denied(message)) => {
-                        assert!(message.contains("/api/v1/mcp"), "{message}");
-                        assert!(message.contains(client), "{message}");
-                    }
-                    other => panic!("{method} with {client} gave {other:?}"),
-                }
+                let verdict = format!("{:?}", refuse_connector_write(&connectors, client, &method));
+                assert!(
+                    verdict.starts_with("Err(Denied(")
+                        && verdict.contains("/api/v1/mcp")
+                        && verdict.contains(client),
+                    "{method} with {client} gave {verdict}"
+                );
             }
             assert!(refuse_connector_write(&connectors, "pipeline-runner", &method).is_ok());
             assert!(refuse_connector_write(&connectors, "mcp-mobile-x", &method).is_ok());
@@ -623,6 +620,214 @@ mod tests {
             let seconds = cookie.max_age().expect("an age").whole_seconds();
             assert!(seconds >= 0, "{name} {age} produced Max-Age={seconds}");
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // T-7783: the second-factor gate, the realm a session names, the cookie person and the
+    // token fronts' refusals.
+    // ---------------------------------------------------------------------------------------
+
+    use crate::auth::oidc::tests::{hel, realm_at};
+    use axum::http::HeaderName;
+
+    #[test]
+    fn a_decision_without_a_second_factor_is_refused_only_where_the_installation_asks_for_one() {
+        let mut config = crate::config::Config::for_tests();
+        let mut identity = sample(600).identity;
+        config.decisions_need_second_factor = false;
+        assert!(require_second_factor(&identity, &config).is_ok());
+        config.decisions_need_second_factor = true;
+        assert!(matches!(
+            require_second_factor(&identity, &config),
+            Err(ApiError::SecondFactorRequired)
+        ));
+        identity.second_factor = true;
+        assert!(require_second_factor(&identity, &config).is_ok());
+    }
+
+    /// A Portal with no realm of its own and, when `organization_realm`, `hel`'s.
+    fn portal(organization_realm: bool) -> AppState {
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        if organization_realm {
+            let realm = realm_at(
+                "hel",
+                "https://idm.hel.test/realms/hel",
+                "http://127.0.0.1:9/realms/hel/protocol/openid-connect/certs",
+                &hel().base,
+            );
+            state.organization_realms = crate::auth::realms::OrganizationRealms::new(
+                std::collections::BTreeMap::from([("hel".to_owned(), std::sync::Arc::new(realm))]),
+            );
+        }
+        state
+    }
+
+    #[tokio::test]
+    async fn a_session_of_a_realm_the_portal_no_longer_signs_in_through_is_over() {
+        let with = portal(true);
+        let mut without = with.clone();
+        without.organization_realms = crate::auth::realms::OrganizationRealms::default();
+        let session = sample(600);
+        let key = with.config.cookie_key.clone();
+        let headers = crate::organization_host::scope(hel(), async {
+            replay_cookies(
+                store_in(PrivateCookieJar::new(key), &session, Some("hel")).expect("store"),
+            )
+        })
+        .await;
+        crate::organization_host::scope(hel(), async {
+            let (read, realm) = load_with_realm(&headers, &with).expect("the realm's session");
+            assert_eq!(realm.as_deref(), Some("hel"));
+            assert_eq!(read.identity, session.identity);
+            assert!(load_with_realm(&headers, &without).is_none());
+            assert!(load_with(&headers, &without).is_none());
+        })
+        .await;
+        assert!(
+            load_with_realm(&headers, &with).is_none(),
+            "off the Organization's host the cookie opens nowhere"
+        );
+    }
+
+    #[test]
+    fn a_realms_session_sealed_off_its_organizations_host_opens_nowhere() {
+        let key = Key::generate();
+        let stray = replay_cookies(
+            store_in(
+                PrivateCookieJar::new(key.clone()),
+                &sample(600),
+                Some("hel"),
+            )
+            .expect("store"),
+        );
+        assert!(load(&PrivateCookieJar::from_headers(&stray, key.clone())).is_none());
+        let plain = replay_cookies(
+            store_in(PrivateCookieJar::new(key.clone()), &sample(600), None).expect("store"),
+        );
+        let (_, realm) = load_in(&PrivateCookieJar::from_headers(&plain, key)).expect("opens");
+        assert_eq!(realm, None);
+    }
+
+    #[tokio::test]
+    async fn the_cookie_person_is_a_live_unrevoked_session_on_a_request_without_a_bearer() {
+        let state = portal(false);
+        let key = state.config.cookie_key.clone();
+        let live = sample(600);
+        let headers =
+            replay_cookies(store(PrivateCookieJar::new(key.clone()), &live).expect("store"));
+        assert_eq!(
+            cookie_person(&headers, &state).map(|s| s.identity),
+            Some(live.identity.clone())
+        );
+        let mut bearer = headers.clone();
+        bearer.insert(header::AUTHORIZATION, "Bearer x".parse().expect("header"));
+        assert!(
+            cookie_person(&bearer, &state).is_none(),
+            "the token names the person there"
+        );
+        let mut spent = sample(600);
+        spent.access_expires_at = now_unix() - 1;
+        let spent = replay_cookies(store(PrivateCookieJar::new(key), &spent).expect("store"));
+        assert!(cookie_person(&spent, &state).is_none());
+        assert!(cookie_person(&HeaderMap::new(), &state).is_none());
+        state
+            .revoke_subject(&live.identity.subject, live.issued_at)
+            .await;
+        assert!(
+            cookie_person(&headers, &state).is_none(),
+            "a revoked session names nobody"
+        );
+    }
+
+    async fn current_user(
+        state: &AppState,
+        headers: &[(HeaderName, String)],
+    ) -> Result<CurrentUser, ApiError> {
+        let mut request = axum::http::Request::builder().uri("/api/v1/projects");
+        for (name, value) in headers {
+            request = request.header(name, value);
+        }
+        let (mut parts, ()) = request.body(()).expect("request").into_parts();
+        CurrentUser::from_request_parts(&mut parts, state).await
+    }
+
+    #[tokio::test]
+    async fn a_revoked_bearer_and_an_empty_token_are_refused() {
+        let mut state = portal(false);
+        let issuer = "https://idm.example.test/realms/jc";
+        let (verifier, sign) = crate::auth::bearer::test_verifier(issuer, "portal", "k1");
+        state.bearer = Some(std::sync::Arc::new(verifier));
+        let now = now_unix();
+        let token = sign(&serde_json::json!({
+            "iss": issuer, "aud": "portal", "sub": "ana", "typ": "Bearer",
+            "iat": now - 10, "exp": now + 300,
+        }));
+        let bearer = [(header::AUTHORIZATION, format!("Bearer {token}"))];
+        let user = current_user(&state, &bearer).await.expect("a live bearer");
+        assert_eq!(user.0.identity.subject, "ana");
+        state.revoke_subject("ana", now).await;
+        assert!(matches!(
+            current_user(&state, &bearer).await,
+            Err(ApiError::Unauthorized)
+        ));
+        for empty in ["Bearer ", "Bearer    ", "Basic YW5hOng="] {
+            assert!(
+                matches!(
+                    current_user(&state, &[(header::AUTHORIZATION, empty.to_owned())]).await,
+                    Err(ApiError::Unauthorized)
+                ),
+                "{empty:?}"
+            );
+        }
+        let mut config = crate::config::Config::for_tests();
+        config.trust_edge_token = true;
+        let edge = AppState::new(config, None);
+        assert!(matches!(
+            current_user(&edge, &[(EDGE_TOKEN_HEADER, "   ".to_owned())]).await,
+            Err(ApiError::Unauthorized)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_token_of_the_organizations_own_realm_is_checked_there_and_holds_no_bootstrap_group()
+    {
+        let mut state = portal(true);
+        let admins = state.config.bootstrap_admins.clone();
+        let realm = realm_at(
+            "hel",
+            "https://idm.hel.test/realms/hel",
+            "http://127.0.0.1:9/realms/hel/protocol/openid-connect/certs",
+            &hel().base,
+        );
+        let (signer, set) = crate::auth::bearer::tests::keypair("hk");
+        assert_eq!(realm.bearer.install(&set), 1);
+        state.organization_realms = crate::auth::realms::OrganizationRealms::new(
+            std::collections::BTreeMap::from([("hel".to_owned(), std::sync::Arc::new(realm))]),
+        );
+        let now = now_unix();
+        let token = crate::auth::bearer::tests::sign(
+            &signer,
+            "hk",
+            &serde_json::json!({
+                "iss": "https://idm.hel.test/realms/hel", "aud": "portal", "sub": "hel:ana",
+                "typ": "Bearer", "iat": now, "exp": now + 300,
+                "groups": [format!("/{admins}"), "/rangers"],
+                "realm_access": { "roles": [admins.clone(), "viewer"] },
+            }),
+        );
+        let bearer = [(header::AUTHORIZATION, format!("Bearer {token}"))];
+        let user = crate::organization_host::scope(hel(), current_user(&state, &bearer))
+            .await
+            .expect("the realm's own token");
+        assert_eq!(user.0.identity.groups, ["rangers"]);
+        assert_eq!(user.0.identity.roles, ["viewer"]);
+        assert!(
+            matches!(
+                current_user(&state, &bearer).await,
+                Err(ApiError::Unauthorized)
+            ),
+            "off its host the installation realm, here none, checks it"
+        );
     }
 
     fn sample(expires_in: i64) -> Session {
@@ -781,11 +986,9 @@ mod tests {
         let refresh = lines
             .iter()
             .find(|line| line.starts_with(&format!("{REFRESH_COOKIE}=")))
-            .unwrap_or_else(|| panic!("no line for {REFRESH_COOKIE} in {lines:?}"));
+            .expect("a line for the refresh cookie");
         assert!(
-            refresh.starts_with(&format!("{REFRESH_COOKIE}=;"))
-                || refresh.contains("Max-Age=0")
-                || refresh.contains("Expires=Thu, 01 Jan 1970"),
+            refresh.starts_with(&format!("{REFRESH_COOKIE}=;")) && refresh.contains("Max-Age=0"),
             "the refresh cookie was not removed: {refresh}",
         );
 
@@ -1184,7 +1387,7 @@ mod tests {
             let cookie = headers
                 .iter()
                 .find(|c| c.starts_with(&format!("{name}=")))
-                .unwrap_or_else(|| panic!("{name} is not cleared: {headers:?}"));
+                .expect("a removal of each session cookie");
             assert!(cookie.contains("Max-Age=0"), "{cookie}");
             assert!(cookie.contains("Path=/"), "{cookie}");
         }

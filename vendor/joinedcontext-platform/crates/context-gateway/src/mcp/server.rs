@@ -337,19 +337,11 @@ pub(crate) async fn serve(
             };
             let projects = projects_of(&gateway, &claims);
             if !server.admits(Some(&projects)) {
-                tracing::warn!(
-                    principal = %claims.sub,
-                    server = %server.path(),
-                    "the token names no project this server admits"
-                );
+                tracing::warn!(principal = %claims.sub, server = %server.path(), "the token names no project this server admits");
                 return ProblemDetails::forbidden().into_response();
             }
             if !of_its_organization(&gateway, &server, &claims, &projects) {
-                tracing::warn!(
-                    principal = %claims.sub,
-                    server = %server.path(),
-                    "the caller is of another organization than the server"
-                );
+                tracing::warn!(principal = %claims.sub, server = %server.path(), "the caller is of another organization than the server");
                 return ProblemDetails::not_found().into_response();
             }
             let reach = members

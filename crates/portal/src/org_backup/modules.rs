@@ -1044,11 +1044,10 @@ mod tests {
 
     #[test]
     fn no_secret_column_of_a_module_is_on_an_allow_list() {
-        let mut flagged = Vec::new();
         for (module, _, tables) in MODULE_TABLES {
             for table in *tables {
                 for column in table.columns {
-                    if [
+                    let named = [
                         "secret",
                         "token",
                         "hash",
@@ -1058,10 +1057,12 @@ mod tests {
                         "challenge",
                     ]
                     .iter()
-                    .any(|s| column.contains(s))
-                    {
-                        flagged.push(format!("{module}.{}.{column}", table.name));
-                    }
+                    .any(|s| column.contains(s));
+                    assert!(
+                        !named,
+                        "looks like secret material: {module}.{}.{column}",
+                        table.name
+                    );
                 }
                 assert!(
                     ![
@@ -1083,9 +1084,93 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Blank variables are unset: no reader, and no tenants for a standalone Portal.
+    #[test]
+    fn blank_readers_and_tenants_are_unset() {
+        let parsed = BackupModules::from_lookup(|k| match k {
+            "JC_PORTAL_BACKUP_ANTARES_DATABASE_URL" => Some("  ".into()),
+            "JC_PORTAL_BACKUP_TENANTS" => Some(" ".into()),
+            "JC_PORTAL_BACKUP_DATAROOM_DATABASE_URL" => {
+                Some("postgresql://dataroom_backup@db/jc".into())
+            }
+            _ => None,
+        })
+        .expect("parsed");
+        assert_eq!(parsed.readers.keys().collect::<Vec<_>>(), vec![&"dataroom"]);
+        assert!(parsed.tenants.shako.is_none() && parsed.tenants.dataroom.is_empty());
+        let none = BackupModules::from_lookup(|_| None).expect("parsed");
+        assert!(none.readers.is_empty() && none.tenants.daiya_installation.is_none());
+    }
+
+    fn state_with(tweak: impl FnOnce(&mut crate::config::Config)) -> AppState {
+        let mut config = crate::config::Config::for_tests();
+        tweak(&mut config);
+        AppState::new(config, None)
+    }
+
+    /// Each module that cannot be exported says why: no tenant, no reader, a reader that does
+    /// not answer, a daiya that does not answer.
+    #[tokio::test]
+    async fn each_module_that_cannot_be_exported_says_why() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let daiya = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&daiya)
+            .await;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let closed = listener.local_addr().expect("address").port();
+        drop(listener);
+        let unreachable = format!("postgres://reader@127.0.0.1:{closed}/jc");
+        let state = state_with(|config| {
+            config.backup_modules = BackupModules::from_lookup(|k| match k {
+                "JC_PORTAL_BACKUP_ANTARES_DATABASE_URL" => Some(unreachable.clone()),
+                "JC_PORTAL_BACKUP_TENANTS" => Some(
+                    r#"{"daiyaInstallation":"00000000-0000-0000-0000-000000000001","dataroom":{"alfa":{"org":"00000000-0000-0000-0000-000000000002","catalogue":"00000000-0000-0000-0000-000000000003"}}}"#
+                        .into(),
+                ),
+                _ => None,
+            })
+            .expect("modules");
+            config.grafana = Some(crate::config::GrafanaConfig {
+                url: daiya.uri(),
+                public_url: daiya.uri(),
+                user: "admin".into(),
+                password: "pw".into(),
+            });
+        });
+        let api_version = crate::resource::API_VERSION.to_owned();
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version,
+            kind: "Project".into(),
+            metadata: crate::resource::ObjectMeta::new(
+                "alfa-city",
+                crate::permissions::ORG_NAMESPACE,
+            ),
+            spec: serde_json::json!({ "organizationRef": "alfa" }),
+            status: None,
+        });
+        let why: BTreeMap<&str, String> = sources(&state, "alfa")
+            .await
+            .into_iter()
+            .map(|(module, source)| (module, source.err().unwrap_or_default()))
+            .collect();
         assert!(
-            flagged.is_empty(),
-            "looks like secret material: {flagged:?}"
+            why["antares"].starts_with("the antares database could not be reached"),
+            "{why:?}"
+        );
+        assert!(why["kaisatsu"].contains("shared realm"), "{why:?}");
+        assert!(why["shako"].contains("no shako tenant"), "{why:?}");
+        assert!(
+            why["daiya"].starts_with("daiya did not name the organization of alfa-city"),
+            "{why:?}"
+        );
+        assert!(
+            why["dataroom"].contains("JC_PORTAL_BACKUP_DATAROOM_DATABASE_URL is not set"),
+            "{why:?}"
         );
     }
 

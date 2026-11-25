@@ -1045,6 +1045,7 @@ async fn keyed_of(
 
 #[cfg(test)]
 mod tests {
+    use super::super::data::ModuleIndex;
     use super::*;
 
     async fn served(body: Vec<u8>) -> (wiremock::MockServer, reqwest::Response) {
@@ -1125,9 +1126,8 @@ mod tests {
         let packed = zip.by_index_raw(0).expect("entry").compressed_size();
         assert!(packed < 4 << 10, "deflate packs it to {packed} bytes");
         let entry = zip.by_index(0).expect("entry");
-        let Err(refused) = read_capped(entry, 16 << 10, "module/portal/activity.jsonl") else {
-            panic!("64 KiB past a 16 KiB cap");
-        };
+        let refused = read_capped(entry, 16 << 10, "module/portal/activity.jsonl")
+            .expect_err("64 KiB past a 16 KiB cap");
         assert!(
             refused
                 .to_string()
@@ -1143,16 +1143,16 @@ mod tests {
 
     #[test]
     fn an_identity_that_is_not_age_is_named() {
-        let Err(refused) = identity_of(&Zeroizing::new("age1notasecret".into())) else {
-            panic!("a public key is no identity");
-        };
+        let refused = identity_of(&Zeroizing::new("age1notasecret".into()))
+            .err()
+            .expect("a public key is no identity");
         assert!(
             refused.to_string().contains("this is a public key"),
             "{refused}"
         );
-        let Err(refused) = identity_of(&Zeroizing::new("not-a-key".into())) else {
-            panic!("a word is no identity");
-        };
+        let refused = identity_of(&Zeroizing::new("not-a-key".into()))
+            .err()
+            .expect("a word is no identity");
         assert!(
             refused.to_string().contains("not an age identity"),
             "{refused}"
@@ -1161,5 +1161,293 @@ mod tests {
         let text =
             Zeroizing::new(age::secrecy::ExposeSecret::expose_secret(&id.to_string()).to_owned());
         assert!(identity_of(&text).is_ok());
+    }
+
+    /// A zip of `files` (name, bytes), stored.
+    fn zipped(files: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, bytes) in files {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .expect("entry");
+            zip.write_all(bytes).expect("write");
+        }
+        zip.finish().expect("zip").into_inner()
+    }
+
+    fn index_of(format_version: u32, modules: BTreeMap<String, ModuleIndex>) -> Vec<u8> {
+        serde_norway::to_string(&DataIndex {
+            format_version,
+            organization: "alfa".into(),
+            taken_at: "2026-11-24T10:00:00Z".into(),
+            taken_by: "ada@hel.fi".into(),
+            modules,
+        })
+        .expect("yaml")
+        .into_bytes()
+    }
+
+    fn portal(projects: &[(&str, &str)]) -> BTreeMap<String, ModuleIndex> {
+        BTreeMap::from([(
+            "portal".to_owned(),
+            ModuleIndex {
+                exported: true,
+                projects: projects
+                    .iter()
+                    .map(|(id, name)| ((*id).to_owned(), (*name).to_owned()))
+                    .collect(),
+                ..ModuleIndex::default()
+            },
+        )])
+    }
+
+    /// `plain` sealed to a new identity, fetched as a restore fetches it and opened under `caps`.
+    async fn opened(plain: &[u8], caps: Caps) -> Result<Opened, ApiError> {
+        let identity = age::x25519::Identity::generate();
+        let sealed =
+            super::super::data::encrypt_bytes(&[identity.to_public()], plain).expect("sealed");
+        let (_server, response) = served(sealed).await;
+        let sealed = receive(response).await.expect("received");
+        open(sealed, identity, "alfa", caps).await
+    }
+
+    fn refusal(result: Result<Opened, ApiError>) -> String {
+        result.err().expect("refused").to_string()
+    }
+
+    /// What is not a backup of this code is refused before a row is read: not a zip, an index
+    /// past its cap, another format, an archive past the total cap.
+    #[tokio::test]
+    async fn an_archive_that_is_not_this_codes_backup_is_refused() {
+        let wide = CAPS;
+        assert!(refusal(opened(b"not a zip", wide).await).contains("not a data backup archive"));
+        let huge = vec![b'#'; (INDEX_CAP + 1) as usize];
+        let refused = refusal(opened(&zipped(&[("index.yaml", &huge)]), wide).await);
+        assert!(
+            refused.contains("index.yaml unpacks to more than"),
+            "{refused}"
+        );
+        let refused = refusal(
+            opened(
+                &zipped(&[("index.yaml", &index_of(7, BTreeMap::new()))]),
+                wide,
+            )
+            .await,
+        );
+        assert!(refused.contains("archive format 7"), "{refused}");
+        let small = Caps { entry: 8, total: 8 };
+        let refused = refusal(
+            opened(
+                &zipped(&[("index.yaml", &index_of(FORMAT_VERSION, BTreeMap::new()))]),
+                small,
+            )
+            .await,
+        );
+        assert!(
+            refused.contains("the archive unpacks to more than"),
+            "{refused}"
+        );
+        let binary = refusal(opened(&zipped(&[("index.yaml", &[0xff, 0xfe])]), wide).await);
+        assert!(binary.contains("not a data backup archive"), "{binary}");
+    }
+
+    /// A sealed archive past what a run uploads is refused by its length; one cut short says the
+    /// bucket did not answer whole.
+    #[tokio::test]
+    async fn a_sealed_archive_past_its_cap_or_cut_short_is_refused() {
+        let over = super::super::s3::tests::raw_server(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2000000000\r\n\r\nx",
+        )
+        .await;
+        let response = reqwest::get(over).await.expect("answer");
+        let refused = receive(response)
+            .await
+            .err()
+            .expect("past the cap")
+            .to_string();
+        assert!(
+            refused.contains("the sealed archive unpacks to more than"),
+            "{refused}"
+        );
+        let short =
+            super::super::s3::tests::raw_server(b"HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\nx")
+                .await;
+        let response = reqwest::get(short).await.expect("answer");
+        let refused = receive(response).await.err().expect("cut short");
+        assert!(matches!(refused, ApiError::Unavailable(_)), "{refused}");
+    }
+
+    struct Broken;
+
+    impl std::io::Read for Broken {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("a torn entry"))
+        }
+    }
+
+    /// An entry that cannot be read is not an archive; table lines are capped by what is left of
+    /// the archive, must be text, and come from the flat file and every project folder.
+    #[tokio::test]
+    async fn table_lines_are_capped_text_from_every_folder() {
+        assert!(read_capped(Broken, 10, "x")
+            .expect_err("torn")
+            .to_string()
+            .contains("not a data backup archive"));
+        let project = jc_types::ProjectId::mint();
+        let folder = format!(
+            "{}activity.jsonl",
+            super::super::data::project_folder(&project)
+        );
+        let archive = zipped(&[
+            ("index.yaml", &index_of(FORMAT_VERSION, portal(&[]))),
+            ("module/portal/activity.jsonl", b"{\"flat\":1}\n\n"),
+            (folder.as_str(), b"{\"folder\":1}\n"),
+            (
+                "module/portal/project/nested/x/activity.jsonl",
+                b"{\"nested\":1}\n",
+            ),
+            ("module/portal/binary.jsonl", &[0xff, 0xfe, b'\n']),
+            ("module/portal/big.jsonl", &[b'x'; 64]),
+        ]);
+        let mut archive_of = opened(&archive, CAPS).await.expect("opened");
+        assert_eq!(
+            lines(&mut archive_of, "activity").expect("lines"),
+            vec!["{\"flat\":1}".to_owned(), "{\"folder\":1}".to_owned()]
+        );
+        assert_eq!(
+            folder_lines(&mut archive_of, &project, "activity").expect("lines"),
+            vec!["{\"folder\":1}".to_owned()]
+        );
+        assert!(folder_lines(&mut archive_of, &project, "absent")
+            .expect("none")
+            .is_empty());
+        let refused = lines(&mut archive_of, "binary").expect_err("not text");
+        assert!(
+            refused.to_string().contains("not a data backup archive"),
+            "{refused}"
+        );
+        archive_of.left = 10;
+        let refused = lines(&mut archive_of, "big").expect_err("past what is left");
+        assert!(
+            refused
+                .to_string()
+                .contains("the archive unpacks to more than"),
+            "{refused}"
+        );
+    }
+
+    /// A table of key columns only has nothing to update on a conflict.
+    #[test]
+    fn a_table_of_keys_only_does_nothing_on_conflict() {
+        let table = Table {
+            name: "pairs",
+            columns: &["project", "id"],
+            keys: "projects",
+            filter: "",
+        };
+        let sql = upsert_sql(&table, &["project".into(), "id".into()]);
+        assert!(
+            sql.ends_with("DO NOTHING") || sql.contains("DO NOTHING"),
+            "{sql}"
+        );
+    }
+
+    fn state_without_db() -> AppState {
+        AppState::new(crate::config::Config::for_tests(), None)
+    }
+
+    fn state_with_unreached_db() -> AppState {
+        let lazy = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("lazy pool");
+        state_without_db().with_db(lazy)
+    }
+
+    fn ada() -> crate::auth::session::Identity {
+        crate::auth::session::Identity {
+            client: None,
+            subject: "sub-ada".into(),
+            username: "ada".into(),
+            email: Some("ada@hel.fi".into()),
+            name: Some("Ada".into()),
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        }
+    }
+
+    /// Without a database there is nothing to restore or copy into; an archive without the
+    /// Portal's part, or with a folder that is no project id, lists nothing to copy; a format 1
+    /// archive is restored whole, never copied per project.
+    #[tokio::test]
+    async fn a_restore_or_copy_without_a_database_or_its_folders_is_refused_in_words() {
+        use super::super::copy::{copy, projects, CopyRequest};
+        let mut target = super::super::Target {
+            organization: "alfa".into(),
+            kind: DATA.into(),
+            endpoint: String::new(),
+            region: String::new(),
+            bucket: String::new(),
+            prefix: String::new(),
+            access_key_id: String::new(),
+            sealed_secret: String::new(),
+            enabled: true,
+            every_hours: 24,
+            keep_days: 30,
+            recipients: Vec::new(),
+            updated_by: String::new(),
+            updated_at: String::new(),
+            last_run_at: None,
+            key: None,
+        };
+        target.prefix = "jc/".into();
+        let flat = zipped(&[("index.yaml", &index_of(FORMAT_FLAT, BTreeMap::new()))]);
+        let mut archive = opened(&flat, CAPS).await.expect("opened");
+        let bare = state_without_db();
+        let refused = run(&bare, &target, "v1", &mut archive, None)
+            .await
+            .expect_err("no database");
+        assert!(
+            matches!(&refused, ApiError::Conflict(m) if m.contains("without a database")),
+            "{refused}"
+        );
+        let request = CopyRequest {
+            organization: "alfa",
+            version: "v1",
+            source: "x",
+            name: "alfa-copy",
+            apply: false,
+            by: "ada",
+        };
+        let refused = copy(&bare, &ada(), &mut archive, &request)
+            .await
+            .expect_err("no database");
+        assert!(matches!(&refused, ApiError::Conflict(_)), "{refused}");
+        let lazy = state_with_unreached_db();
+        let refused = copy(&lazy, &ada(), &mut archive, &request)
+            .await
+            .expect_err("format 1");
+        assert!(refused.to_string().contains("format 1"), "{refused}");
+        assert_eq!(
+            projects(&lazy, &ada(), "alfa", &archive)
+                .await
+                .expect("none"),
+            super::super::copy::ArchivedProjects {
+                projects: Vec::new(),
+                deleted: Vec::new()
+            }
+        );
+        let folders = zipped(&[(
+            "index.yaml",
+            &index_of(FORMAT_VERSION, portal(&[("not-a-project-id", "alfa-city")])),
+        )]);
+        let archive = opened(&folders, CAPS).await.expect("opened");
+        let listed = projects(&lazy, &ada(), "alfa", &archive)
+            .await
+            .expect("none");
+        assert!(
+            listed.projects.is_empty() && listed.deleted.is_empty(),
+            "{listed:?}"
+        );
     }
 }

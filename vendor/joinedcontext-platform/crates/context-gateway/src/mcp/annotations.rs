@@ -19,13 +19,13 @@ pub(crate) fn annotate(tools: &mut [Value]) {
             Some(own) if !own.trim().is_empty() => own.to_owned(),
             _ => in_words(name),
         };
-        if !tool.get("annotations").is_some_and(Value::is_object) {
-            tool.insert("annotations".to_owned(), json!({}));
-        }
-        if let Some(annotations) = tool.get_mut("annotations").and_then(Value::as_object_mut) {
-            annotations.insert("title".to_owned(), json!(title));
-            hinted(annotations);
-        }
+        let mut annotations = match tool.remove("annotations") {
+            Some(Value::Object(own)) => own,
+            _ => Map::new(),
+        };
+        annotations.insert("title".to_owned(), json!(title));
+        hinted(&mut annotations);
+        tool.insert("annotations".to_owned(), Value::Object(annotations));
         tool.insert("title".to_owned(), json!(title));
     }
 }
@@ -52,4 +52,35 @@ fn in_words(name: &str) -> String {
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tool without a name is left as it is; one whose annotations are no object gets an
+    /// object; an own title and own hints stay.
+    #[test]
+    fn a_nameless_tool_stays_and_odd_annotations_are_replaced() {
+        let mut tools = vec![
+            json!({"description": "no name"}),
+            json!("not a tool"),
+            json!({"name": "query_entities", "annotations": "odd"}),
+            json!({"name": "x", "title": "Own", "annotations": {"readOnlyHint": false, "openWorldHint": true}}),
+            json!({"name": "", "title": "  "}),
+        ];
+        annotate(&mut tools);
+        assert_eq!(tools[0], json!({"description": "no name"}));
+        assert_eq!(tools[1], json!("not a tool"));
+        assert_eq!(tools[2]["title"], json!("Query entities"));
+        assert_eq!(
+            tools[2]["annotations"],
+            json!({"title": "Query entities", "openWorldHint": false})
+        );
+        assert_eq!(
+            tools[3]["annotations"],
+            json!({"title": "Own", "readOnlyHint": false, "destructiveHint": true, "openWorldHint": true})
+        );
+        assert_eq!(tools[4]["title"], json!(""));
+    }
 }

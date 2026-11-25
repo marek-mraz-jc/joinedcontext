@@ -235,12 +235,7 @@ pub(crate) async fn broker_failure(
         .await
         .unwrap_or_default();
     let (kind, detail) = explanation(&held);
-    tracing::warn!(
-        status = status.as_u16(),
-        broker_type = %kind,
-        broker_detail = %detail,
-        "the broker failed; its own explanation is not passed on"
-    );
+    tracing::warn!(status = status.as_u16(), broker_type = %kind, broker_detail = %detail, "the broker failed; its own explanation is not passed on");
     if timed_out(status, &held) {
         return query_timeout().into_response();
     }
@@ -766,19 +761,7 @@ pub(crate) fn log_personal_read_of(
     let parts = id_parts(entities);
     let count = parts.len();
     for (part, ids) in (1..).zip(parts) {
-        tracing::info!(
-            target: "personal_read",
-            slug = %endpoint.slug,
-            space = %endpoint.space,
-            surface,
-            principal = %principal_of(subject),
-            attributes = %personal.join(","),
-            entities = %ids.join(","),
-            part,
-            parts = count,
-            parameters = %parameter_names(query.unwrap_or_default()),
-            "personal attributes read"
-        );
+        tracing::info!(target: "personal_read", slug = %endpoint.slug, space = %endpoint.space, surface, principal = %principal_of(subject), attributes = %personal.join(","), entities = %ids.join(","), part, parts = count, parameters = %parameter_names(query.unwrap_or_default()), "personal attributes read");
     }
 }
 

@@ -1280,6 +1280,47 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// T-7817: each store error is the answer a client can act on, and a first put that expects
+    /// a version the draft never had is a conflict at 0.
+    #[tokio::test]
+    async fn each_draft_error_maps_to_its_answer() {
+        let status = |err: DraftError| {
+            axum::response::IntoResponse::into_response(draft_error(err))
+                .status()
+                .as_u16()
+        };
+        assert_eq!(status(DraftError::Conflict { current: 3 }), 409);
+        assert_eq!(status(DraftError::Db("pool closed".into())), 500);
+        assert_eq!(
+            status(DraftError::NotFound {
+                project: "p".into(),
+                kind: "Endpoint".into(),
+                name: "n".into()
+            }),
+            404
+        );
+        assert_eq!(status(DraftError::Unplaced("p".into())), 404);
+        let hub = DraftHub::default();
+        drop(hub);
+        let store = DraftStore::new(None, Arc::default());
+        let refused = store
+            .put(
+                "helsinki",
+                "DataSource",
+                "new",
+                json!({}),
+                Some(3),
+                "steward",
+                "person",
+            )
+            .await
+            .expect_err("no version 3 yet");
+        assert!(
+            matches!(refused, DraftError::Conflict { current: 0 }),
+            "{refused:?}"
+        );
+    }
+
     #[tokio::test]
     async fn memory_store_lifecycle() {
         let store = DraftStore::new(None, Arc::default());
@@ -1332,10 +1373,10 @@ mod tests {
             )
             .await
             .unwrap_err();
-        match conflict {
-            DraftError::Conflict { current } => assert_eq!(current, 2),
-            other => panic!("expected conflict, got {other:?}"),
-        }
+        assert!(
+            matches!(conflict, DraftError::Conflict { current: 2 }),
+            "{conflict:?}"
+        );
 
         // 4. Literal secret is refused
         let secret_manifest =

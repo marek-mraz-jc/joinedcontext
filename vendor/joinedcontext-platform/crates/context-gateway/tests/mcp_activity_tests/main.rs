@@ -134,6 +134,9 @@ async fn a_tool_call_reaches_the_collector_as_one_record_without_its_arguments()
             Box::new(PolicyPdp),
             "banskabystrica.sk",
         )
+        // A loaded repository with no Organization manifest: until one loads, an organization
+        // Endpoint admits nobody (I-4), and every call below is refused.
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
         .serve([endpoint()])
         .authenticate(
             Arc::new(realm.verifier()),
@@ -183,6 +186,16 @@ async fn a_tool_call_reaches_the_collector_as_one_record_without_its_arguments()
             .await
             .expect("the gateway answers");
         assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        // The hub and a named server answer a refusal as a JSON-RPC error with 200: only a
+        // result is a call the gateway made.
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("the answer");
+        let answer: Value = serde_json::from_slice(&body).expect("a JSON-RPC answer");
+        assert!(
+            answer.get("error").is_none() && answer.get("result").is_some(),
+            "{uri}: {answer}"
+        );
     }
 
     let (url, bodies) = receiver().await;
@@ -191,7 +204,7 @@ async fn a_tool_call_reaches_the_collector_as_one_record_without_its_arguments()
     let posted = bodies.lock().expect("the bodies").clone();
     assert_eq!(posted.len(), 1, "one post: {posted:?}");
     let text = posted[0].to_string();
-    for absent in [SECRET_FILTER, "AirQualityObserved", token.as_str(), "0f5a"] {
+    for absent in [SECRET_FILTER, "AirQualityObserved", token.as_str(), "jana"] {
         assert!(
             !text.contains(absent),
             "{absent} reached the record: {text}"

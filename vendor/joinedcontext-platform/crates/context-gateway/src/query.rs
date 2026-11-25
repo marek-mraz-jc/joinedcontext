@@ -639,6 +639,62 @@ mod tests {
         assert_eq!(encode(&text), escaped);
     }
 
+    /// `geoproperty` rides only with a geo compound; `geometryProperty` always rides; `lastN`
+    /// and `joinLevel` are held to their caps, and a value that is no number rides as sent.
+    #[test]
+    fn selector_parameters_ride_only_where_they_narrow_and_counts_are_capped() {
+        let params =
+            parse("geoproperty=loc&geometryProperty=shape&lastN=5000&joinLevel=9&limit=x&flag");
+        let open = parse(&upstream(&params, &Constraints::default(), &[]));
+        assert_eq!(
+            first(&open, "geoproperty"),
+            None,
+            "alone it selects nothing"
+        );
+        assert_eq!(first(&open, "geometryProperty"), Some("shape"));
+        assert_eq!(first(&open, "lastN"), Some("1000"));
+        assert_eq!(first(&open, "joinLevel"), Some("3"));
+        let area = Constraints {
+            geo_q: Some("georel=near;maxDistance==5;geometry=Point;coordinates=[1,2]".to_owned()),
+            ..Constraints::default()
+        };
+        let narrowed = parse(&upstream(&params, &area, &[]));
+        assert_eq!(first(&narrowed, "geoproperty"), Some("loc"));
+        assert_eq!(first(&narrowed, "georel"), Some("near;maxDistance==5"));
+        assert_eq!(first(&narrowed, "coordinates"), Some("[1,2]"));
+        let small = parse(&upstream(
+            &parse("lastN=7&joinLevel=2"),
+            &Constraints::default(),
+            &[],
+        ));
+        assert_eq!(
+            (first(&small, "lastN"), first(&small, "joinLevel")),
+            (Some("7"), Some("2"))
+        );
+    }
+
+    /// A pair without `=` is a name with an empty value; empty pairs are dropped; a compound
+    /// member without `=` adds nothing.
+    #[test]
+    fn a_bare_name_parses_to_an_empty_value() {
+        assert_eq!(
+            parse("a&&b=1&"),
+            vec![
+                ("a".to_owned(), String::new()),
+                ("b".to_owned(), "1".to_owned())
+            ]
+        );
+        assert!(parse("").is_empty());
+        assert_eq!(
+            split_compound("georel=near;junk;geometry=Point"),
+            vec![
+                ("georel".to_owned(), "near;junk".to_owned()),
+                ("geometry".to_owned(), "Point".to_owned()),
+            ]
+        );
+        assert!(split_compound("junk").is_empty());
+    }
+
     #[test]
     fn the_three_geo_parameters_are_one_policy_string() {
         let params = parse("georel=within&geometry=Polygon&coordinates=%5B%5B0%2C0%5D%5D&limit=5");
