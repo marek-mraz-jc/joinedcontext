@@ -90,7 +90,11 @@ pub fn paging_cursor(data: &[u8]) -> bool {
     params.insert(crate::paging::CURSOR.to_owned(), signed);
     let back = crate::paging::cursor_after("view", "tenant", &params);
     if fits {
-        assert_eq!(back.ok().flatten().as_deref(), Some(text), "a signed cursor reads back");
+        assert_eq!(
+            back.ok().flatten().as_deref(),
+            Some(text),
+            "a signed cursor reads back"
+        );
     }
     read
 }

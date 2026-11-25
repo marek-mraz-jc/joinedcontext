@@ -100,6 +100,9 @@ mod tests {
             json!({"channel": "ui", "actor": "alice", "organization": "org-a"}),
             || stamp_by(&mut sent),
         );
-        assert_eq!(sent[MODIFIED_BY_KEY], json!({"actor": "alice", "organization": "org-a"}));
+        assert_eq!(
+            sent[MODIFIED_BY_KEY],
+            json!({"actor": "alice", "organization": "org-a"})
+        );
     }
 }

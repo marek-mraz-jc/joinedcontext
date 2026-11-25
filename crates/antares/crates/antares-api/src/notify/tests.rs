@@ -13,14 +13,22 @@ mod projection_of_notified_entities {
 
     fn only(names: &[&'static str]) -> Option<crate::policy::Shown<'static>> {
         Some(crate::policy::Shown {
-            only: Some(names.iter().map(|n| Cow::Borrowed(*n)).collect::<BTreeSet<_>>()),
+            only: Some(
+                names
+                    .iter()
+                    .map(|n| Cow::Borrowed(*n))
+                    .collect::<BTreeSet<_>>(),
+            ),
             omitted: BTreeSet::new(),
         })
     }
 
     fn shown() -> HashMap<String, Option<crate::policy::Shown<'static>>> {
         HashMap::from([
-            ("urn:a".to_owned(), only(&["speed", "ref", "ref2", "list", "plain"])),
+            (
+                "urn:a".to_owned(),
+                only(&["speed", "ref", "ref2", "list", "plain"]),
+            ),
             ("urn:b".to_owned(), None),
             ("urn:c".to_owned(), only(&["speed"])),
         ])
@@ -36,8 +44,11 @@ mod projection_of_notified_entities {
             "ref2": {"id": "urn:c", "type": "T", "speed": 2, "other": 3},
             "plain": ["a", "b"]});
         project_shown(&shown(), &mut e, true);
-        assert_eq!(e, json!({"id": "urn:a", "type": "T", "speed": 1, "ref": "urn:b",
-            "ref2": {"id": "urn:c", "type": "T", "speed": 2}, "plain": ["a", "b"]}));
+        assert_eq!(
+            e,
+            json!({"id": "urn:a", "type": "T", "speed": 1, "ref": "urn:b",
+            "ref2": {"id": "urn:c", "type": "T", "speed": 2}, "plain": ["a", "b"]})
+        );
     }
 
     /// Normalized: an `entity` no rule holds for is dropped and its
@@ -57,8 +68,14 @@ mod projection_of_notified_entities {
         project_shown(&shown(), &mut e, false);
         assert!(e["ref"].get("entity").is_none(), "{e}");
         assert_eq!(e["ref"]["object"], "urn:b");
-        assert_eq!(e["ref2"]["entity"], json!({"id": "urn:c", "type": "T", "speed": 1}));
-        assert_eq!(e["list"][0]["entityList"], json!([{"id": "urn:c", "type": "T", "speed": 1}]));
+        assert_eq!(
+            e["ref2"]["entity"],
+            json!({"id": "urn:c", "type": "T", "speed": 1})
+        );
+        assert_eq!(
+            e["list"][0]["entityList"],
+            json!([{"id": "urn:c", "type": "T", "speed": 1}])
+        );
         let mut odd = json!("urn:a");
         project_shown(&shown(), &mut odd, false);
         assert_eq!(odd, json!("urn:a"));
@@ -78,8 +95,14 @@ mod projection_of_notified_entities {
                 "entityList": [{"id": "urn:c", "type": "T", "x": 1}]}, "text"]});
         project_joined(&f, &mut e, false);
         assert!(e.get("x").is_none(), "{e}");
-        assert_eq!(e["ref"]["entity"], json!({"id": "urn:b", "type": "T", "speed": 2}));
-        assert_eq!(e["list"][0]["entityList"], json!([{"id": "urn:c", "type": "T"}]));
+        assert_eq!(
+            e["ref"]["entity"],
+            json!({"id": "urn:b", "type": "T", "speed": 2})
+        );
+        assert_eq!(
+            e["list"][0]["entityList"],
+            json!([{"id": "urn:c", "type": "T"}])
+        );
         let mut kv = json!({"id": "urn:a", "type": "T", "ref": {"id": "urn:b", "type": "T", "x": 1},
             "speed": [1, 2]});
         project_joined(&f, &mut kv, true);
@@ -106,7 +129,10 @@ mod projection_of_notified_entities {
     fn an_instance_swapped_for_another_is_deleted_and_updated() {
         let before = json!({"id": "urn:a", "speed": [{"value": 1, "datasetId": "urn:ds:1"}]});
         let after = json!({"id": "urn:a", "speed": [{"value": 1, "datasetId": "urn:ds:2"}]});
-        let classes: Vec<ChangeClass> = diff(Some(&before), Some(&after)).into_iter().map(|(_, c)| c).collect();
+        let classes: Vec<ChangeClass> = diff(Some(&before), Some(&after))
+            .into_iter()
+            .map(|(_, c)| c)
+            .collect();
         assert_eq!(classes, vec![ChangeClass::Deleted, ChangeClass::Updated]);
     }
 }
@@ -1311,7 +1337,10 @@ mod clause_5_8_6_deletion_payload {
         assert!(e.get("fuel").is_some(), "{e}");
         let quiet = json!({"notification": {}});
         let e = build(&quiet, &before, None, &[], true).await;
-        assert!(e.get("speed").is_none() && e.get("createdAt").is_none(), "{e}");
+        assert!(
+            e.get("speed").is_none() && e.get("createdAt").is_none(),
+            "{e}"
+        );
         let named = vec![format!("{D}fuel"), format!("{D}never")];
         let e = build(&quiet, &before, None, &named, false).await;
         assert!(e.get("fuel").is_some() && e.get("speed").is_none(), "{e}");
@@ -1374,9 +1403,12 @@ mod clause_5_8_6_deletion_payload {
         assert!(e["fuel"].get("previousValue").is_none(), "{e}");
         let gear = insts(&e, "gear");
         assert_eq!(gear.len(), 2, "{e}");
-        assert!(gear.iter().any(|g| g["value"] == "urn:ngsi-ld:null"
-            && g["datasetId"] == "urn:ds:b"
-            && g["previousValue"] == 2), "{e}");
+        assert!(
+            gear.iter().any(|g| g["value"] == "urn:ngsi-ld:null"
+                && g["datasetId"] == "urn:ds:b"
+                && g["previousValue"] == 2),
+            "{e}"
+        );
         assert_eq!(e["note"], "no list", "{e}");
         let only_a = json!({"datasetId": ["urn:ds:a"], "notification": {}});
         let e = build(&only_a, &before, Some(&after), &[], false).await;

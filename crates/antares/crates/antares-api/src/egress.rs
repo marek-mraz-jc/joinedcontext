@@ -435,7 +435,10 @@ mod tests {
         e.reg_record("t\u{1f}reg", false);
         e.reg_record("t\u{1f}reg", false);
         assert!(e.reg_in_cooldown("t\u{1f}reg", 60_000));
-        assert!(!e.reg_in_cooldown("t\u{1f}reg", 0), "a zero window is spent at once");
+        assert!(
+            !e.reg_in_cooldown("t\u{1f}reg", 0),
+            "a zero window is spent at once"
+        );
         e.reg_record("t\u{1f}reg", true);
         assert!(!e.reg_in_cooldown("t\u{1f}reg", 60_000));
     }
@@ -453,7 +456,9 @@ mod tests {
         assert!(e.is_open("a", url));
         assert!(!e.is_open("b", url), "another tenant's breaker is its own");
         assert_eq!(Egress::key("a", url), "a\u{1f}not a url");
-        let past = Instant::now().checked_sub(COOLDOWN).expect("an instant 30 s back");
+        let past = Instant::now()
+            .checked_sub(COOLDOWN)
+            .expect("an instant 30 s back");
         e.breakers
             .lock()
             .expect("breaker lock")

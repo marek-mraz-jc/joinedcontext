@@ -1626,14 +1626,46 @@ mod tests {
             }
         };
         for (q, temporal, want) in [
-            (json!({"entities": [{"type": "T", "id": 7}]}), false, "id must be a URI string or array"),
-            (json!({"entities": [{"type": "T", "id": [7]}]}), false, "id entries must be URIs"),
-            (json!({"entities": [{"type": "T", "idPattern": 7}]}), false, "idPattern must be a string"),
-            (json!({"entityMapLifetime": 60}), false, "entityMapLifetime must be a string"),
-            (json!({"geoQ": {"georel": 1}}), false, "geoQ georel must be a string"),
-            (json!({"geoQ": "near"}), false, "geoQ must be a GeoQuery object"),
-            (json!({"temporalQ": "x"}), true, "temporalQ must be a TemporalQuery object"),
-            (json!({"temporalQ": {}}), false, "only allowed for Query Temporal"),
+            (
+                json!({"entities": [{"type": "T", "id": 7}]}),
+                false,
+                "id must be a URI string or array",
+            ),
+            (
+                json!({"entities": [{"type": "T", "id": [7]}]}),
+                false,
+                "id entries must be URIs",
+            ),
+            (
+                json!({"entities": [{"type": "T", "idPattern": 7}]}),
+                false,
+                "idPattern must be a string",
+            ),
+            (
+                json!({"entityMapLifetime": 60}),
+                false,
+                "entityMapLifetime must be a string",
+            ),
+            (
+                json!({"geoQ": {"georel": 1}}),
+                false,
+                "geoQ georel must be a string",
+            ),
+            (
+                json!({"geoQ": "near"}),
+                false,
+                "geoQ must be a GeoQuery object",
+            ),
+            (
+                json!({"temporalQ": "x"}),
+                true,
+                "temporalQ must be a TemporalQuery object",
+            ),
+            (
+                json!({"temporalQ": {}}),
+                false,
+                "only allowed for Query Temporal",
+            ),
             (
                 json!({"temporalQ": {"aggrMethods": [1]}}),
                 true,
@@ -1644,8 +1676,16 @@ mod tests {
                 true,
                 "aggrMethods entries must be strings",
             ),
-            (json!({"ordering": {"orderBy": "id"}}), false, "orderBy must be an array"),
-            (json!({"ordering": {"orderBy": [1]}}), false, "orderBy entries must be strings"),
+            (
+                json!({"ordering": {"orderBy": "id"}}),
+                false,
+                "orderBy must be an array",
+            ),
+            (
+                json!({"ordering": {"orderBy": [1]}}),
+                false,
+                "orderBy entries must be strings",
+            ),
         ] {
             let m = refused(q.clone(), temporal);
             assert!(m.contains(want), "{q}: {m}");
@@ -1671,8 +1711,11 @@ mod tests {
         );
         assert_eq!(vp.get("id").map(String::as_str), Some("urn:a,urn:b"));
         assert_eq!(vp.get("coordinates").map(String::as_str), Some("[1,2]"));
-        let vp = lift(json!({"entities": [{"type": "T", "idPattern": "urn:.*"}],
-                             "geoQ": {"georel": "near"}}), false);
+        let vp = lift(
+            json!({"entities": [{"type": "T", "idPattern": "urn:.*"}],
+                             "geoQ": {"georel": "near"}}),
+            false,
+        );
         assert_eq!(vp.get("idPattern").map(String::as_str), Some("urn:.*"));
         assert!(!vp.contains_key("coordinates"), "{vp:?}");
         let vp = lift(json!({"aggrParams": {"aggrPeriodDuration": "P1D"}}), true);
@@ -1690,9 +1733,21 @@ mod tests {
             ("n;sideways", none.clone(), "invalid orderBy direction"),
             ("n[x", none.clone(), "unclosed bracket"),
             ("[x]", none.clone(), "invalid orderBy"),
-            ("n", params(&[("collation", "not a tag!")]), "not an RFC 6067 tag"),
-            ("n", params(&[("collation", "de-u-ks-level9")]), "unknown collation strength"),
-            ("n;dist-asc", params(&[("orderFrom", "[1,")]), "invalid orderFrom"),
+            (
+                "n",
+                params(&[("collation", "not a tag!")]),
+                "not an RFC 6067 tag",
+            ),
+            (
+                "n",
+                params(&[("collation", "de-u-ks-level9")]),
+                "unknown collation strength",
+            ),
+            (
+                "n;dist-asc",
+                params(&[("orderFrom", "[1,")]),
+                "invalid orderFrom",
+            ),
         ] {
             match order_entities(&mut docs, spec, &p, &ctx) {
                 Err(NgsiError::BadRequestData(m)) => assert!(m.contains(want), "{spec}: {m}"),
@@ -1753,14 +1808,23 @@ mod tests {
         for c in ["zz.tag", "abc.tag", "ff.tag", "nodot", ".tag"] {
             let p = params(&[(CURSOR, c)]);
             assert!(
-                matches!(cursor_after("v", "t", &p), Err(NgsiError::BadRequestData(_))),
+                matches!(
+                    cursor_after("v", "t", &p),
+                    Err(NgsiError::BadRequestData(_))
+                ),
                 "{c}"
             );
         }
         let good = encode_cursor("v", "t", &params(&[]), "urn:a");
         let p = params(&[(CURSOR, good.as_str())]);
-        assert_eq!(cursor_after("v", "t", &p).expect("own"), Some("urn:a".into()));
-        assert!(cursor_after("v", "other", &p).is_err(), "another Tenant's cursor");
+        assert_eq!(
+            cursor_after("v", "t", &p).expect("own"),
+            Some("urn:a".into())
+        );
+        assert!(
+            cursor_after("v", "other", &p).is_err(),
+            "another Tenant's cursor"
+        );
         assert_eq!(cursor_after("v", "t", &params(&[])).expect("none"), None);
     }
 
@@ -1775,10 +1839,22 @@ mod tests {
         assert_eq!(sent, vec!["199 ok"]);
         assert_eq!(link_media_type(Accept::GeoJson), "application/geo+json");
         let st = state();
-        let (_, _, links) =
-            paginate_pre_accept(&st, &params(&[]), items(1), "/csourceRegistrations", Accept::Json, 300, true)
-                .expect("page");
-        assert!(links.iter().any(|l| l.contains("offset=100") && l.contains("rel=\"next\"")), "{links:?}");
+        let (_, _, links) = paginate_pre_accept(
+            &st,
+            &params(&[]),
+            items(1),
+            "/csourceRegistrations",
+            Accept::Json,
+            300,
+            true,
+        )
+        .expect("page");
+        assert!(
+            links
+                .iter()
+                .any(|l| l.contains("offset=100") && l.contains("rel=\"next\"")),
+            "{links:?}"
+        );
     }
 
     /// 5.2.33: the `entities` EntitySelectors are a union and "id takes
