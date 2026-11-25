@@ -1245,21 +1245,69 @@ mod tests {
             ("pipeline_record_hashes", "hash"),
             ("pipeline_runs", "stream_hash"),
         ];
-        let mut flagged = Vec::new();
         for table in PORTAL_TABLES {
             for column in table.columns {
                 let named = ["secret", "token", "salt", "challenge", "password", "hash"]
                     .iter()
                     .any(|secret| column.contains(secret));
-                if named && !NOT_SECRET.contains(&(table.name, column)) {
-                    flagged.push(format!("{}.{column}", table.name));
-                }
+                assert!(
+                    !named || NOT_SECRET.contains(&(table.name, column)),
+                    "looks like secret material: {}.{column}",
+                    table.name
+                );
             }
         }
+    }
+
+    /// No recipient, no encryption: an empty list is refused in words, never an archive that
+    /// nobody can open; a sealed file that cannot be written is refused too.
+    #[test]
+    fn an_archive_without_recipients_or_a_writable_file_is_refused() {
+        assert!(test_encrypt(&[]).is_err());
+        assert!(encrypt_bytes(&[], b"bundle").is_err());
+        let dir = std::env::temp_dir().join(format!("data-encrypt-{}", std::process::id()));
+        std::fs::write(&dir, b"plain archive").expect("plain");
+        let sealed = || std::fs::File::create(dir.with_extension("age")).expect("sealed");
+        assert!(encrypt(&[], &dir, sealed()).is_err());
+        let recipient = age::x25519::Identity::generate().to_public();
         assert!(
-            flagged.is_empty(),
-            "looks like secret material: {flagged:?}"
+            encrypt(
+                std::slice::from_ref(&recipient),
+                &dir.with_extension("missing"),
+                sealed()
+            )
+            .is_err(),
+            "a plain file that is gone"
         );
+        let read_only = std::fs::File::open(&dir).expect("read only");
+        assert!(
+            encrypt(std::slice::from_ref(&recipient), &dir, read_only).is_err(),
+            "a sealed file that cannot be written"
+        );
+        encrypt(std::slice::from_ref(&recipient), &dir, sealed()).expect("sealed");
+        test_encrypt(std::slice::from_ref(&recipient)).expect("a test encryption");
+        assert!(
+            encrypt_bytes(&[recipient], b"bundle")
+                .expect("sealed")
+                .len()
+                > 6
+        );
+        std::fs::remove_file(dir.with_extension("age")).ok();
+        std::fs::remove_file(&dir).ok();
+    }
+
+    /// The fingerprint ignores the whitespace around a pasted key and differs per key.
+    #[test]
+    fn a_fingerprint_is_four_groups_of_four_hex_digits() {
+        let one = fingerprint("age1abc");
+        assert_eq!(one, fingerprint("  age1abc\n"));
+        assert_ne!(one, fingerprint("age1abd"));
+        assert!(one
+            .split(':')
+            .all(|g| g.len() == 4 && g.bytes().all(|b| b.is_ascii_hexdigit())));
+        assert_eq!(parse_recipients(&[]), Ok(Vec::new()));
+        let refused = parse_recipients(&["".into()]).unwrap_err();
+        assert!(refused.starts_with("workingRecipient:"), "{refused}");
     }
 
     #[test]
