@@ -686,6 +686,145 @@ async fn each_path_shape_answers_its_status() {
     assert!(body["@odata.etag"].is_string(), "{body}");
 }
 
+/// Each path or option the resource dispatcher refuses answers its OData status, every mismatch
+/// listed at once (T-7837): a malformed path, a bad `$skiptoken` on each set's page and count, a
+/// property path, and a key of the wrong shape for projects, kinds, members and Organization sets;
+/// a `$count` reads no `$skiptoken`, so a garbled one changes nothing.
+#[tokio::test]
+async fn each_refused_resource_shape_answers_its_status() {
+    let state = state();
+    let mode = Mode::Path("hel");
+    let cookie = cookies(&state.config, person("hel-only", &[]), "hel").await;
+    let root = cookies(&state.config, person("root", groups_of("root")), "hel").await;
+    let mut wrong = Vec::new();
+    for (who, uri, want) in [
+        (
+            &cookie,
+            "/api/v1/projects('helsinki'",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects/$count?$skiptoken=garbage",
+            StatusCode::OK,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects?$skiptoken=garbage",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects?$expand=spaces&$skiptoken=garbage",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects(name='helsinki',x='y')/spaces",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects('helsinki')/spaces/$count?$skiptoken=garbage",
+            StatusCode::OK,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects('helsinki')/spaces('a')/name",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects('nowhere')/spaces",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects('nowhere')",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            &cookie,
+            "/api/v1/spaces/$count?$skiptoken=garbage",
+            StatusCode::OK,
+        ),
+        (
+            &cookie,
+            "/api/v1/spaces?$skiptoken=garbage",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/spaces(project='helsinki')",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &cookie,
+            "/api/v1/spaces(project='nowhere',name='x')",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            &cookie,
+            "/api/v1/spaces(project='helsinki',name='x')/name",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (&root, "/api/v1/members/$count", StatusCode::OK),
+        (
+            &root,
+            "/api/v1/members/$count?$skiptoken=garbage",
+            StatusCode::OK,
+        ),
+        (&root, "/api/v1/members(1)", StatusCode::BAD_REQUEST),
+        (
+            &root,
+            "/api/v1/members('a')/name",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (&root, "/api/v1/organizationRoles/$count", StatusCode::OK),
+        (
+            &root,
+            "/api/v1/organizationRoles/$count?$skiptoken=garbage",
+            StatusCode::OK,
+        ),
+        (
+            &root,
+            "/api/v1/organizationRoles(1)",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            &root,
+            "/api/v1/organizationRoles('x')/name",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (&root, "/api/v1/nothings", StatusCode::NOT_FOUND),
+    ] {
+        let answer = send(&state, mode, who, uri, &[]).await;
+        if answer.status != want {
+            wrong.push(format!("{uri}: {} {}", answer.status, answer.text));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+
+    // An OData request whose body is over 1 MiB is refused before anything reads it.
+    let big = vec![b' '; (1 << 20) + 16];
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/api/v1/projects")
+        .header(header::HOST, SHARED)
+        .header(header::COOKIE, &cookie)
+        .header("odata-version", "4.01")
+        .body(Body::from(big))
+        .expect("request");
+    request
+        .extensions_mut()
+        .insert(RequestOrganization("hel".to_owned()));
+    let response = server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
 /// The `portals` set (ODP-08): 401 to nobody, refused to a reader without a Portal rule, and
 /// an Organization's portal reader sees only that Organization's portals.
 /// The router placed the request in an Organization this Portal holds no host for (one the
@@ -2038,6 +2177,83 @@ async fn a_decided_change_answers_by_its_key() {
     let merged = change_alike(&state, &id).await;
     assert_eq!(merged["status"]["phase"], "Merged", "{merged}");
     assert_eq!(merged["name"], id, "{merged}");
+}
+
+/// T-7837: `approve` and `reject` bound to a Change ask its `If-Match` first (428 without it),
+/// take only their own parameter, and then answer as the REST door's approval and rejection.
+#[tokio::test]
+async fn a_changes_approve_and_reject_actions_ask_the_etag_and_answer_as_the_rest_door() {
+    let (_shako, state) = one_change(false).await;
+    let open = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-only",
+        "/api/v1/projects/helsinki/changes",
+    )
+    .await;
+    let id = open.json()["items"][0]["metadata"]["name"]
+        .as_str()
+        .expect("one change")
+        .to_owned();
+    let entity = format!("/api/v1/changes(project='helsinki',name='{id}')");
+    // The tag a bound action checks is the list row's, as a grid sends it.
+    let row = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-only",
+        "/api/v1/projects('helsinki')/changes",
+    )
+    .await;
+    let etag = row.json()["value"][0]["@odata.etag"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(!etag.is_empty(), "{}", row.text);
+    let cookie = cookies(&state.config, person("hel-only", &[]), "hel").await;
+    let mut wrong = Vec::new();
+    for (action, body, tag, want) in [
+        (
+            "reject",
+            json!({ "reason": "no" }),
+            None,
+            StatusCode::PRECONDITION_REQUIRED,
+        ),
+        (
+            "approve",
+            json!({ "reason": "no" }),
+            Some(etag.as_str()),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "reject",
+            json!({ "confirm": "x" }),
+            Some(etag.as_str()),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "approve",
+            json!({}),
+            Some(etag.as_str()),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "reject",
+            json!({ "reason": "no" }),
+            Some(etag.as_str()),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let uri = format!("{entity}/JoinedContext.Portal.{action}");
+        let body = Some(("application/json", body.to_string().into_bytes()));
+        let answer = raw_sent(&state, "POST", &uri, &cookie, body, tag).await;
+        if answer.status != want {
+            wrong.push(format!(
+                "{action} {tag:?}: {} {}",
+                answer.status, answer.text
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 /// T-7097: a refusal naming fields keeps them over OData, as the REST door's `errors[]`: each a

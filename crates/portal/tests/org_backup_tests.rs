@@ -883,7 +883,32 @@ async fn a_bundle_that_is_not_this_organizations_plans_no_restore() {
             )
         })
         .collect();
+    // A project folder the Organization does not hold, and a manifest whose namespace is not
+    // the folder's project: the import would write across Organizations (T-7154).
+    let gone: BTreeMap<String, String> = files
+        .iter()
+        .map(|(path, text)| {
+            (
+                path.replace("projects/alfa-city/", "projects/zeta/"),
+                text.replace("projects/alfa-city/", "projects/zeta/"),
+            )
+        })
+        .collect();
+    let mut foreign = files.clone();
+    let endpoint = "projects/alfa-city/spaces/air/endpoints/alfa-air.yaml";
+    let renamed = foreign[endpoint].replace("namespace: alfa-city", "namespace: bravo-town");
+    assert_ne!(
+        renamed, foreign[endpoint],
+        "the endpoint names its namespace"
+    );
+    foreign.insert(endpoint.into(), renamed);
     for (version, bundle, says) in [
+        (
+            "gone",
+            gone,
+            "project 'zeta' of the bundle is not a project of alfa",
+        ),
+        ("foreign", foreign, "names another namespace"),
         ("no-index", no_index, "no index.yaml"),
         ("other-org", other_org, "of Organization 'bravo'"),
         (
@@ -3690,6 +3715,52 @@ async fn a_bundle_item_naming_another_organizations_namespace_is_not_planned() {
         "{}",
         refused.text
     );
+}
+
+/// An applied restore runs the import's own dry run of each drifted project first: a bundle
+/// manifest the import refuses (this fixture's endpoint carries a `publish.apiKey` the Endpoint
+/// schema no longer takes) restores nothing and names the file (T-7154).
+#[tokio::test]
+async fn an_applied_restore_is_held_to_the_imports_dry_run_and_writes_nothing_it_refuses() {
+    let world = world("alfa", "Enabled").await;
+    saved_and_run(&world, "ada").await;
+    let key = key_of(&world, "alfa", "configuration").await;
+    let version = world.bucket.lock().expect("bucket").objects[&key][0]
+        .0
+        .clone();
+    // The endpoint drifted since the bundle was taken, and the forge would take the restore.
+    let drifted: ResourceEnvelope =
+        serde_norway::from_str(&ALFA_ENDPOINT.replace("alfaairslug", "driftedslug"))
+            .expect("endpoint");
+    world.state.mirror.upsert(drifted);
+    common::mount_repository(&world._forge, "/odata/Repositories(Owner='jc',Name='org')").await;
+
+    let refused = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DOOR}/versions/{version}/restore"),
+        Some(json!({ "identity": identity(), "apply": true })),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert!(
+        refused
+            .text
+            .contains("projects/alfa-city/spaces/air/endpoints/alfa-air.yaml"),
+        "{}",
+        refused.text
+    );
+    let writes: Vec<String> = world
+        ._forge
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.method.as_str() != "GET")
+        .map(|r| r.url.path().to_owned())
+        .collect();
+    assert!(writes.is_empty(), "a refused restore wrote {writes:?}");
 }
 
 #[tokio::test]

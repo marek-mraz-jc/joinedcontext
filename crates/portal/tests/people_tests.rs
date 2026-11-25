@@ -1357,6 +1357,58 @@ async fn a_list_takes_its_own_parameters_and_an_edit_keeps_the_address_unique() 
     )
     .await;
     assert_eq!(empty.status, StatusCode::BAD_REQUEST, "{}", empty.text);
+    for (field, bad) in [("firstName", " "), ("lastName", "a\u{7}b")] {
+        let refused = send(
+            &state,
+            person("pia"),
+            "PATCH",
+            &format!("{PEOPLE}/ola-id"),
+            Some(json!({ field: bad })),
+        )
+        .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+        assert!(refused.text.contains(field), "{}", refused.text);
+    }
+
+    // A person with no attributes yet whose address already waits for verification gets the
+    // locale's map and keeps one VERIFY_EMAIL; a realm that fails the write says so.
+    let (kc, shako) = (realm(true).await, forge().await);
+    let mut bare = user("ola-id", "ola@hel.fi");
+    bare.as_object_mut().expect("user").remove("attributes");
+    bare["requiredActions"] = json!(["VERIFY_EMAIL"]);
+    Mock::given(method("GET"))
+        .and(path(format!("{ADMIN}/users/ola-id")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(bare))
+        .with_priority(1)
+        .mount(&kc)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(format!("{ADMIN}/users/ola-id")))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&kc)
+        .await;
+    let state = state_with(&kc, &shako);
+    ola(&kc, &state, None).await;
+    let failed = send(
+        &state,
+        person("pia"),
+        "PATCH",
+        &format!("{PEOPLE}/ola-id"),
+        Some(json!({ "email": "ola.new@hel.fi", "locale": "sk" })),
+    )
+    .await;
+    assert!(
+        failed.status.is_server_error(),
+        "{}: {}",
+        failed.status,
+        failed.text
+    );
+    let sent = received(&kc, "PUT", "/users/ola-id").await;
+    let rep: Value = serde_json::from_slice(&sent[0].body).expect("a representation");
+    assert_eq!(rep["attributes"]["locale"], json!(["sk"]));
+    assert_eq!(rep["requiredActions"], json!(["VERIFY_EMAIL"]));
+    assert_eq!(rep["email"], json!("ola.new@hel.fi"));
 }
 
 /// PF-94: a person's page lists their groups, platform roles with scope and way, and app roles.
