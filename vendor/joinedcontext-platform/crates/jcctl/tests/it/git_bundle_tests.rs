@@ -109,10 +109,7 @@ fn an_export_or_import_that_cannot_be_a_git_bundle_is_refused() {
     )
     .expect("write");
     let refused = import(&out, &temp_dir("bundle-refusals-in")).expect_err("no repository");
-    assert!(
-        refused.to_string().contains("MF-45"),
-        "{refused}"
-    );
+    assert!(refused.to_string().contains("MF-45"), "{refused}");
 }
 
 /// MF-45, MF-46: a project and its application travel as bundles with their whole history and
