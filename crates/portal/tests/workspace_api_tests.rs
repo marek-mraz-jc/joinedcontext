@@ -385,6 +385,46 @@ async fn compare_names_the_field_both_sides_changed_and_merges_the_rest() {
     );
 }
 
+/// T-7817: a file the workspace removed while main changed it is one whole-file choice, and a
+/// changed file that is no manifest nor a native kind is not listed.
+#[tokio::test]
+async fn compare_names_a_removal_against_mains_change_as_the_whole_file() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    tree(&server, "workspace/air-v2", &[("notes.txt", "n-ours")]).await;
+    tree(
+        &server,
+        "base1",
+        &[(AIR, "s-base"), ("notes.txt", "n-base")],
+    )
+    .await;
+    tree(&server, "main", &[(AIR, "s-main"), ("notes.txt", "n-base")]).await;
+    file(&server, "base1", &space("en", 10)).await;
+    file(&server, "main", &space("fi", 10)).await;
+    let compare = ops::find("jc_workspace_compare").unwrap();
+    let cmp = ops::call(
+        compare,
+        &Caller::new(steward(), Via::Session),
+        &state,
+        PROJECT,
+        json!({ "name": "air-v2" }),
+    )
+    .await
+    .expect("compared");
+    let files: Vec<&str> = cmp["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f["path"].as_str())
+        .collect();
+    assert_eq!(files, [AIR], "{cmp}");
+    assert_eq!(cmp["files"][0]["operation"], "Delete", "{cmp}");
+    let conflict = &cmp["conflicts"][0];
+    assert_eq!(conflict["path"], AIR, "{cmp}");
+    assert_eq!(conflict["fields"][0]["ours"], "removed");
+    assert_eq!(conflict["fields"][0]["theirs"], "changed");
+}
+
 #[tokio::test]
 async fn update_from_main_refuses_an_unanswered_conflict_and_merges_an_answered_one() {
     let (server, state) = world().await;
@@ -619,6 +659,43 @@ async fn the_listing_an_agent_reads_offers_the_work_and_neither_way_out() {
             "{allowed} is the work itself and is not offered"
         );
     }
+}
+
+/// The registry's update, bring-back and discard run the same functions as the REST doors for a
+/// person in a session (T-7817).
+#[tokio::test]
+async fn a_person_updates_brings_back_and_discards_through_the_registry() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    changed(&server, &space("en", 10), "s-base").await;
+    let person = Caller::new(steward(), Via::Session);
+    let name = json!({ "name": "air-v2" });
+    let update = ops::find("jc_workspace_update_from_main").unwrap();
+    let report = ops::call(
+        update,
+        &person,
+        &state,
+        PROJECT,
+        json!({ "name": "air-v2", "resolutions": [] }),
+    )
+    .await
+    .expect("updated");
+    assert_eq!(report["merged"], json!([]), "{report}");
+    let propose = ops::find("jc_workspace_propose").unwrap();
+    let change = ops::call(propose, &person, &state, PROJECT, name.clone())
+        .await
+        .expect("proposed");
+    assert_eq!(change["lane"], "yellow", "{change}");
+    assert_eq!(
+        calls(&server, "POST", "/Shako.OpenPullRequest").await.len(),
+        1
+    );
+    let discard = ops::find("jc_workspace_discard").unwrap();
+    let gone = ops::call(discard, &person, &state, PROJECT, name)
+        .await
+        .expect("discarded");
+    assert_eq!(gone, json!({ "discarded": "air-v2" }));
+    assert!(state.workspaces.get("air-v2").await.unwrap().is_none());
 }
 
 #[tokio::test]

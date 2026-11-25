@@ -646,6 +646,59 @@ mod tests {
         }
     }
 
+    /// A steward's editor: a prefill that is no object, a `new` of a taken name and a name the
+    /// project lacks are refused in words; a create form opens on the new manifest and an
+    /// existing object without values opens as it is, without its status (T-7818).
+    #[test]
+    fn a_form_opens_on_the_object_or_says_what_is_wrong() {
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.identity.roles = vec![state.config.bootstrap_admins.clone()];
+        let asker = driver.asker();
+        let refused = asker
+            .open_form(&json!({ "kind": "Endpoint", "name": "counters" }))
+            .expect_err("no such endpoint");
+        assert_eq!(
+            refused,
+            "Endpoint 'counters' does not exist; the project has none"
+        );
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "Endpoint".to_owned(),
+            metadata: ObjectMeta::new("counters", "helsinki"),
+            spec: json!({ "contextSpaceRef": "air" }),
+            status: serde_json::from_value(json!({ "sourceUrl": "https://forge.invalid/Live" }))
+                .ok(),
+        });
+        let refused = asker
+            .open_form(&json!({ "kind": "Endpoint", "name": "counters", "prefill": [1] }))
+            .expect_err("an array");
+        assert_eq!(refused, "`prefill` is a JSON merge patch: an object");
+        let refused = asker
+            .open_form(&json!({ "kind": "Endpoint", "name": "counters", "new": true }))
+            .expect_err("taken");
+        assert_eq!(
+            refused,
+            "Endpoint 'counters' exists already; open it without `new`"
+        );
+        let (action, payload) = asker
+            .open_form(&json!({ "kind": "Endpoint", "name": "counters", "prefill": null }))
+            .expect("opens");
+        assert_eq!(action, "navigate");
+        assert!(!payload.to_string().contains("Live"), "{payload}");
+        let kind = CREATE_FORMS[0];
+        let (_, created) = asker
+            .open_form(&json!({ "kind": kind, "name": "fresh", "new": true }))
+            .expect("a create form");
+        assert!(
+            created["route"]
+                .as_str()
+                .is_some_and(|r| r.contains("pipelines")),
+            "{created}"
+        );
+    }
+
     #[test]
     fn a_field_is_named_by_its_manifest_path() {
         let (_, schema) = kind_schema("Pipeline").expect("Pipeline");

@@ -376,6 +376,60 @@ classes:
         assert_eq!(found[0].path, "spec.rules.1.information.0.propertyNames.0");
     }
 
+    /// T-7817: another kind, a spec naming nothing, a space that is not there and a spec the
+    /// model cannot judge each give no finding.
+    #[tokio::test]
+    async fn a_policy_without_names_or_a_readable_model_has_no_findings() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let named = json!({
+            "contextSpaceRef": "nowhere",
+            "information": [{ "entities": [{ "type": "OnStreetParking" }], "propertyNames": ["typo"] }],
+        });
+        for manifest in [
+            json!({ "kind": "Endpoint", "spec": named }),
+            json!({ "kind": "Policy", "spec": {} }),
+            json!({ "kind": "Policy", "spec": named }),
+        ] {
+            assert!(
+                findings(&state, "parking", &manifest).await.is_empty(),
+                "{manifest}"
+            );
+        }
+        assert!(of_model(&json!({}), "parking", MODEL).is_empty());
+        assert_eq!(of_model(&named, "parking", MODEL).len(), 1);
+    }
+
+    #[test]
+    fn an_endpoint_auditing_changes_is_told_its_field_is_superseded() {
+        let warned =
+            superseded_audit(&json!({ "kind": "Endpoint", "spec": { "audit": "changes" } }))
+                .expect("a warning");
+        assert_eq!(
+            (warned.level, warned.path.as_str()),
+            (Level::Warning, "spec.audit")
+        );
+        assert!(
+            warned.message.contains("versions: [keep]"),
+            "{}",
+            warned.message
+        );
+        assert!(superseded_audit(&json!({ "kind": "Endpoint", "spec": {} })).is_none());
+        assert!(
+            superseded_audit(&json!({ "kind": "Policy", "spec": { "audit": "changes" } }))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn classes_that_reach_each_other_are_read_once() {
+        let cyclic: serde_norway::Value = serde_norway::from_str(
+            "classes:\n  A: { is_a: B, slots: [a] }\n  B: { mixins: [A], slots: [b] }\n",
+        )
+        .expect("parses");
+        let slots = class_slots(&cyclic, "A").expect("both defined here");
+        assert_eq!(slots.into_iter().collect::<Vec<_>>(), ["a", "b"]);
+    }
+
     #[test]
     fn what_the_source_cannot_judge_passes() {
         let spec = json!({

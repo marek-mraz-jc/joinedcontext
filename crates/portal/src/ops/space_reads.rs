@@ -152,10 +152,11 @@ mod tests {
                 .is_ok()
         );
         assert!(validate(&json!({ "space": "air", "aspect": "metrics" })).is_err());
-        match validate(&json!({ "space": "air", "aspect": "usage", "pipeline": "p" })) {
-            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/pipeline"),
-            other => panic!("{other:?}"),
-        }
+        let refused = validate(&json!({ "space": "air", "aspect": "usage", "pipeline": "p" }));
+        assert!(
+            matches!(&refused, Err(OpError::InvalidInput { path, .. }) if path == "/pipeline"),
+            "{refused:?}"
+        );
     }
 
     #[test]
@@ -174,10 +175,14 @@ mod tests {
 
     fn outcome(result: Result<Value, OpError>) -> String {
         match result {
-            Ok(Value::Object(map)) => {
-                format!("200 {}", map.keys().cloned().collect::<Vec<_>>().join(","))
-            }
-            Ok(other) => format!("200 {other}"),
+            Ok(answer) => format!(
+                "200 {}",
+                answer.as_object().map_or(String::new(), |map| map
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(","))
+            ),
             Err(err) => err.into_response().status().as_u16().to_string(),
         }
     }

@@ -771,6 +771,8 @@ mod tests {
         assert!(bad(json!({ "config": { "hidden": ["a b"] } })).contains("'a b'"));
         assert!(bad(json!({ "config": { "width": { "a": 5 } } })).contains("width"));
         assert!(bad(json!({ "config": { "order": ["a", "b c"] } })).contains("'b c'"));
+        let columns: Vec<String> = (0..=MAX_COLUMNS).map(|n| format!("a{n}")).collect();
+        assert!(bad(json!({ "config": { "order": columns } })).contains("at most"));
         assert!(
             bad(json!({ "config": { "labels": { "a": "  " } } })).contains("config.labels['a']")
         );
