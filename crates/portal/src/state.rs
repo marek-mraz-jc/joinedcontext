@@ -547,21 +547,7 @@ impl AppState {
                 let mut every = tokio::time::interval(std::time::Duration::from_secs(300));
                 loop {
                     every.tick().await;
-                    match crate::host_registry::report_drift(&pool, &mirror).await {
-                        // A loaded mirror only: before the first sync every project looks empty.
-                        Ok(Some(_)) => {
-                            if let Err(err) =
-                                crate::host_registry::report_unplaced_pipelines(&pool, &mirror)
-                                    .await
-                            {
-                                tracing::warn!(error = %err, "the unplaced projects could not be read");
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(err) => {
-                            tracing::warn!(error = %err, "the Organization drift could not be read")
-                        }
-                    }
+                    crate::host_registry::report_round(&pool, &mirror).await;
                 }
             });
         }
@@ -2024,6 +2010,10 @@ mod tests {
         state.keep_access_token(&session, "access".into());
         state.keep_exchanged(&session, "s", "t".into(), now_unix() + 60);
         assert_eq!(state.session_groups(&session), None);
+        assert_eq!(state.session_access_token(&session, now_unix()), None);
+        assert_eq!(state.session_exchanged(&session, "s", now_unix()), None);
+        assert_eq!(state.session_id_token(&session), None);
+        assert_eq!(state.take_id_token(&session), None);
         poison(Arc::clone(&state.installation_look));
         state.set_installation_look(jc_core::kinds::OrganizationAppearance::default());
         assert!(state.installation_look().is_none());
@@ -2047,9 +2037,50 @@ mod tests {
         let now = now_unix();
         state.revoke_subject("f:1:gone", now).await;
         assert!(state.is_revoked(&session_of("f:1:gone", now - 10)));
+        // A mark past the calendar's end still holds in this process; its expiry falls back.
+        let far = 300_000_000_000;
+        state.revoke_subject("f:1:far", far).await;
+        assert!(state.is_revoked(&session_of("f:1:far", far - 10)));
         state.load_revocations().await;
         state.load_installation_look().await;
         assert!(state.installation_look().is_none());
+    }
+
+    /// T-7816: an approved look that no longer reads as an appearance leaves the branding file
+    /// in place. The session's own temporary `operator_changes` holds the row, so no shared table
+    /// changes.
+    #[tokio::test]
+    async fn an_approved_look_that_fails_its_check_shows_the_file() {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .after_connect(|conn, _| {
+                Box::pin(async move {
+                    sqlx::raw_sql(
+                        "CREATE TEMP TABLE operator_changes \
+                           (kind text, state text, decided_at timestamptz, payload jsonb); \
+                         INSERT INTO operator_changes VALUES \
+                           ('BrandingSet', 'applied', now(), '{\"branding\": 42}')",
+                    )
+                    .execute(conn)
+                    .await
+                    .map(|_| ())
+                })
+            })
+            .connect(&url)
+            .await
+            .expect("a pool");
+        let mut state = AppState::new(Config::for_tests(), None);
+        state.db = Some(pool);
+        state.load_installation_look().await;
+        assert!(state.installation_look().is_none());
+        assert_eq!(state.installation_branding(), Branding::load(None));
     }
 
     /// T-7816: an SDM mirror directory that does not read leaves the Portal without one, and a

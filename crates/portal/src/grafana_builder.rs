@@ -2406,6 +2406,23 @@ mod tests {
         assert!(serde_json::from_value::<Board>(sent).is_err());
     }
 
+    /// T-7816: a pie chart shape the builder never writes is refused by name, and a path
+    /// outside `projects/` is no dashboard file.
+    #[test]
+    fn a_pie_shape_or_a_path_the_builder_does_not_write_is_refused() {
+        let board = board();
+        let mut file = compile("jcd-0123456789abcdef", &board, &sources(&board), &[vec![]]);
+        assert_eq!(file["panels"][5]["type"], "piechart");
+        file["panels"][5]["options"]["pieType"] = json!("rose");
+        let refused = decompile(&file, &|_| Some("open".into())).expect_err("a rose");
+        assert!(refused.contains("pieType"), "{refused}");
+        assert_eq!(
+            parse_path("dashboards/zilina/jcd-0123456789abcdef.json"),
+            None
+        );
+        assert_eq!(parse_path(""), None);
+    }
+
     #[test]
     fn a_file_the_builder_did_not_write_is_not_read_back_as_choices() {
         let board = board();

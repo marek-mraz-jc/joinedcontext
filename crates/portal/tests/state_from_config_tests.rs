@@ -292,6 +292,7 @@ struct Setup {
     namespaces: bool,
     mount: Option<std::path::PathBuf>,
     db: bool,
+    branding: Option<String>,
 }
 
 const APPS_DB: &str = "postgres://apps@127.0.0.1:1/apps";
@@ -332,6 +333,7 @@ fn everything(issuer: &str, token_file: &std::path::Path, setup: &Setup) -> Conf
             "JC_PORTAL_PIPELINE_NAMESPACE" if namespaces => "pipelines",
             "JC_PORTAL_APP_IDENTITY_NAMESPACE" if namespaces => "app-jobs",
             "JC_PORTAL_PIPELINE_RUNNER_URL" => "http://runner.{project}.svc:4195",
+            "JC_PORTAL_PIPELINE_IDENTITY" => "pipeline-secret",
             "JC_PORTAL_PIPELINE_TEST_CAPTURE_URL" if capture => "http://portal.test:8081",
             "JC_PORTAL_GRAFANA_URL" => "http://grafana.test:3000",
             "JC_PORTAL_GRAFANA_PUBLIC_URL" => "https://grafana.test",
@@ -354,6 +356,7 @@ fn everything(issuer: &str, token_file: &std::path::Path, setup: &Setup) -> Conf
     })
     .expect("config");
     config.public_base_url = "https://portal.bb.example".parse().expect("url");
+    config.branding_file = setup.branding.clone();
     config.database_url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
         .ok()
         .filter(|_| setup.db);
@@ -397,6 +400,12 @@ async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
     let (_plain, plain_issuer) = live_realm("/idp", 500).await;
     let token = std::env::temp_dir().join(format!("t7816-broker-token-{}", std::process::id()));
     std::fs::write(&token, "fixture").expect("token file");
+    let branding = std::env::temp_dir().join(format!("t7816-branding-{}", std::process::id()));
+    std::fs::write(
+        &branding,
+        "organisation: Mesto Banská Bystrica\ndocumentationBaseUrl: https://docs.bb.example\n",
+    )
+    .expect("branding file");
     let good = mount("good", None);
     let bad = mount(
         "bad",
@@ -413,6 +422,21 @@ async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
                 namespaces: true,
                 mount: Some(good.clone()),
                 db: true,
+                branding: Some(branding.display().to_string()),
+            },
+            None,
+        ),
+        (
+            &issuer,
+            Setup {
+                capture: false,
+                wasm_host: false,
+                apps_db: APPS_DB,
+                store: STORE,
+                namespaces: true,
+                mount: Some(good.clone()),
+                db: false,
+                branding: None,
             },
             None,
         ),
@@ -426,6 +450,7 @@ async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
                 namespaces: true,
                 mount: Some(good.clone()),
                 db: true,
+                branding: None,
             },
             Some("Not_A_Name"),
         ),
@@ -439,6 +464,7 @@ async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
                 namespaces: true,
                 mount: Some(bad.clone()),
                 db: false,
+                branding: None,
             },
             None,
         ),
@@ -452,6 +478,7 @@ async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
                 namespaces: false,
                 mount: None,
                 db: true,
+                branding: None,
             },
             None,
         ),
@@ -465,6 +492,7 @@ async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
                 namespaces: true,
                 mount: None,
                 db: false,
+                branding: None,
             },
             None,
         ),
@@ -518,7 +546,45 @@ async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
         .await
         .expect("the Portal starts");
     assert!(state.syncer.is_some() && state.views.is_none() && state.drift_watch.is_none());
-    for path in [token, good, bad] {
+
+    // The two copies off the pod, read from the process environment (AP-79, T-6892): wired with
+    // a forge; the GitHub copy has nothing to copy without one and is left out.
+    let mirrors = [
+        ("JC_APP_MIRROR_GITHUB_OWNER", "city-apps".to_owned()),
+        ("JC_APP_MIRROR_GITHUB_TOKEN", "fixture".to_owned()),
+        (
+            "JC_CONFIG_MIRROR_REMOTE",
+            "https://git.example.org/city/jc-{repo}.git".to_owned(),
+        ),
+        ("JC_CONFIG_MIRROR_TOKEN_FILE", token.display().to_string()),
+    ];
+    for (key, value) in &mirrors {
+        std::env::set_var(key, value);
+    }
+    let mut mirrored = Config::for_tests();
+    forge(&mut mirrored);
+    let with_forge = AppState::from_config(mirrored).await;
+    let without_forge = AppState::from_config(Config::for_tests()).await;
+    for (key, _) in &mirrors {
+        std::env::remove_var(key);
+    }
+    let with_forge = with_forge.expect("the Portal starts");
+    assert!(with_forge.github_mirror.is_some() && with_forge.config_mirror.is_some());
+    let without_forge = without_forge.expect("the Portal starts");
+    assert!(without_forge.github_mirror.is_none() && without_forge.config_mirror.is_none());
+
+    // A public URL naming no host verifies no domain, and the Portal still starts.
+    if let Ok(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL") {
+        let mut hostless = Config::for_tests();
+        forge(&mut hostless);
+        hostless.database_url = Some(url);
+        hostless.public_base_url = "file:///portal".parse().expect("url");
+        let state = AppState::from_config(hostless)
+            .await
+            .expect("the Portal starts");
+        assert!(state.db.is_some() && state.syncer.is_some());
+    }
+    for path in [token, branding, good, bad] {
         let _ = std::fs::remove_dir_all(&path);
         let _ = std::fs::remove_file(&path);
     }

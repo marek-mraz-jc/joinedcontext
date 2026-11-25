@@ -2967,6 +2967,34 @@ mod tests {
                 owned(&[("JC_PORTAL_BACKUP_TENANTS", "no such module ###")]),
                 "JC_PORTAL_BACKUP_TENANTS",
             ),
+            (
+                with_realm(&[("JC_OIDC_CLIENT_ASSERTION_FILE", missing)]),
+                "JC_OIDC_CLIENT_ASSERTION_FILE",
+            ),
+            (
+                with_realm(&[
+                    ("JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID", "portal-reconciler"),
+                    ("JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SECRET", "test-secret"),
+                    ("JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ASSERTION_FILE", missing),
+                ]),
+                "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ASSERTION_FILE",
+            ),
+            (
+                owned(&[
+                    ("JC_PORTAL_APPS_NAMESPACE", "joinedcontext"),
+                    ("JC_PORTAL_ORG_DOMAIN", "bb.example"),
+                    ("JC_PORTAL_SERVICE_ACCOUNT", "Not_A_Name"),
+                ]),
+                "JC_PORTAL_SERVICE_ACCOUNT",
+            ),
+            (
+                owned(&[
+                    ("JC_PORTAL_CKAN_URL", "https://opendata.example.org"),
+                    ("JC_PORTAL_CKAN_API_URL", "http://localhost:5000"),
+                    ("JC_PORTAL_CKAN_API_REACH", "nowhere"),
+                ]),
+                "JC_PORTAL_CKAN_API_REACH",
+            ),
         ];
         for (pairs, named) in cases {
             let shown = format!("{pairs:?}");
@@ -3020,8 +3048,39 @@ mod tests {
                 "JC_PORTAL_APPS_DB_URL",
                 "postgres://apps:db-password@db/apps",
             ),
+            (
+                "JC_PORTAL_PIPELINE_TEST_CAPTURE_URL",
+                "http://capture.test/hook/",
+            ),
+            ("JC_PORTAL_KNOWLEDGE_URL", "http://assistant.test/"),
+            ("JC_PORTAL_BOOTSTRAP_ADMINS", " city-admins "),
+            ("JC_PORTAL_JOURNEY_USERS", " journey-1, ,journey-2 "),
+            ("JC_PORTAL_GATEWAY_CLIENT_ID", "gateway"),
+            ("JC_PORTAL_AGENT_PROXY_CLIENT_ID", "agent-proxy"),
+            ("JC_PORTAL_PIPELINE_RUNNER_CLIENT_ID", "pipeline-runner"),
+            ("JC_PORTAL_CKAN_URL", "https://opendata.example.org"),
+            ("JC_PORTAL_CKAN_API_URL", "http://localhost:5000"),
+            ("JC_PORTAL_CKAN_API_REACH", "[::1]:5000"),
         ])))
         .expect("parses");
+        assert_eq!(
+            config.pipeline_test_capture_url.as_deref(),
+            Some("http://capture.test/hook")
+        );
+        assert_eq!(
+            config.knowledge_url.as_deref(),
+            Some("http://assistant.test")
+        );
+        assert_eq!(config.bootstrap_admins, "city-admins");
+        assert_eq!(config.journey_users, ["journey-1", "journey-2"]);
+        assert_eq!(config.gateway_client_id.as_deref(), Some("gateway"));
+        assert_eq!(config.agent_proxy_client_id.as_deref(), Some("agent-proxy"));
+        assert_eq!(
+            config.pipeline_runner_client_id.as_deref(),
+            Some("pipeline-runner")
+        );
+        assert!(config.ckan_api_route.is_some());
+        assert_eq!(config.ckan_api_reach.map(|addr| addr.port()), Some(5000));
         assert_eq!(
             config.ingest_url.as_deref(),
             Some("https://portal.example.org/ingest/default")

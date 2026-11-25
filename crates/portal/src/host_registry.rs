@@ -315,6 +315,21 @@ pub async fn report_unplaced_pipelines(pool: &PgPool, mirror: &Mirror) -> Result
     Ok(())
 }
 
+/// One round of the Organization reports (T-7319, T-7458): the drift, then, with a loaded mirror
+/// only (before the first sync every project looks empty), the projects whose Pipelines run with
+/// no Organization. A failure is logged and the next round reads again.
+pub async fn report_round(pool: &PgPool, mirror: &Mirror) {
+    match report_drift(pool, mirror).await {
+        Ok(Some(_)) => {
+            if let Err(err) = report_unplaced_pipelines(pool, mirror).await {
+                tracing::warn!(error = %err, "the unplaced projects could not be read");
+            }
+        }
+        Ok(None) => {}
+        Err(err) => tracing::warn!(error = %err, "the Organization drift could not be read"),
+    }
+}
+
 /// Every row, removed ones included, by host.
 pub async fn rows(pool: &PgPool) -> Result<Vec<HostRow>, sqlx::Error> {
     sqlx::query_as(
@@ -610,6 +625,85 @@ mod tests {
         }
         assert!(rows(&pool).await.is_err());
         assert!(remove(&pool, "maps.jcdev.example").await.is_err());
+    }
+
+    /// What `run` logs, as the operators read it.
+    async fn logged<F: std::future::Future>(run: F) -> String {
+        #[derive(Clone, Default)]
+        struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("sink").extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        assert!(std::io::Write::flush(&mut sink.clone()).is_ok());
+        let guard = tracing::subscriber::set_default(subscriber);
+        run.await;
+        drop(guard);
+        let text = String::from_utf8_lossy(&sink.0.lock().expect("sink")).into_owned();
+        text
+    }
+
+    /// T-7816: a report round stays quiet before the first sync and logs each report it could
+    /// not read, the drift's and the unplaced projects', then lets the next round try again.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_report_round_logs_each_report_it_could_not_read() {
+        let mirror = Mirror::new();
+        let quiet = logged(report_round(&unreachable(), &mirror)).await;
+        assert!(!quiet.contains("could not be read"), "{quiet}");
+        organization(&mirror, "smartcity");
+        let drift = logged(report_round(&unreachable(), &mirror)).await;
+        assert!(
+            drift.contains("the Organization drift could not be read"),
+            "{drift}"
+        );
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        crate::db::connect(&url).await.expect("migrate");
+        // A session whose project_ids is a temporary table of another shape: the drift reads the
+        // organizations, the project key lookup fails.
+        let shadowed = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .after_connect(|conn, _| {
+                Box::pin(async move {
+                    sqlx::query("CREATE TEMP TABLE project_ids (shadow int)")
+                        .execute(conn)
+                        .await
+                        .map(|_| ())
+                })
+            })
+            .connect(&url)
+            .await
+            .expect("a pool");
+        pipeline(&mirror, "zilina");
+        mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Project".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("zilina", crate::permissions::ORG_NAMESPACE),
+            spec: serde_json::json!({ "organizationRef": "smartcity" }),
+            status: None,
+        });
+        let unplaced = logged(report_round(&shadowed, &mirror)).await;
+        assert!(
+            unplaced.contains("the unplaced projects could not be read")
+                && !unplaced.contains("drift could not be read"),
+            "{unplaced}"
+        );
     }
 
     /// The drift and unplaced-pipeline reports read the database only when the mirror holds
