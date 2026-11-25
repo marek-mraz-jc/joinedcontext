@@ -2503,6 +2503,79 @@ mod upload_gate_tests {
     use super::*;
     use std::io::Write;
 
+    /// PF-10 (T-7815): a domain is dot-separated labels of letters, digits and inner hyphens.
+    #[test]
+    fn a_domain_is_labels_of_letters_digits_and_inner_hyphens() {
+        for good in ["hel.fi", "a-b.example", "x"] {
+            assert!(is_domain(good), "{good}");
+        }
+        let long = format!("{}.fi", "a".repeat(64));
+        let longer = vec!["a"; 128].join(".");
+        for bad in [
+            "",
+            "hel..fi",
+            "-hel.fi",
+            "hel-.fi",
+            "hel_fi",
+            "hel.fi:8080",
+            long.as_str(),
+            longer.as_str(),
+        ] {
+            assert!(!is_domain(bad), "{bad}");
+        }
+    }
+
+    /// MF-22: an id of another shape, of a space the bundle does not carry or already in the
+    /// target's domain is left as it is; a pattern gets the escaped domain.
+    #[test]
+    fn an_id_is_moved_only_when_it_names_a_carried_space_in_another_domain() {
+        let spaces: BTreeSet<String> = ["air".to_owned()].into();
+        assert_eq!(
+            remap_urn("urn:ngsi-ld:T:hel.fi:air", "bb.sk", &spaces),
+            None
+        );
+        assert_eq!(remap_urn("urn:x:T:hel.fi:air:1", "bb.sk", &spaces), None);
+        assert_eq!(
+            remap_urn("urn:ngsi-ld:T:hel.fi:water:1", "bb.sk", &spaces),
+            None
+        );
+        assert_eq!(
+            remap_urn("urn:ngsi-ld:T:bb.sk:air:1", "bb.sk", &spaces),
+            None
+        );
+        assert_eq!(
+            remap_urn("urn:ngsi-ld:T:hel.fi:air:1", "bb.sk", &spaces).as_deref(),
+            Some("urn:ngsi-ld:T:bb.sk:air:1")
+        );
+        assert_eq!(
+            remap_urn("^urn:ngsi-ld:T:hel\\.fi:air:.*$", "bb.sk", &spaces).as_deref(),
+            Some("^urn:ngsi-ld:T:bb\\.sk:air:.*$")
+        );
+    }
+
+    /// MF-23: a rename follows a typed reference and a bare `contextSpaceRef`, and leaves a
+    /// reference to another kind or another name alone.
+    #[test]
+    fn a_rename_follows_every_reference_to_the_renamed_resource() {
+        let mut spec = serde_json::json!({
+            "contextSpaceRef": "air",
+            "policyRef": { "kind": "Policy", "name": "air" },
+            "sources": [{ "endpointRef": { "kind": "Endpoint", "name": "air" } }],
+            "other": { "contextSpaceRef": "water" }
+        });
+        rewrite_reference(&mut spec, "ContextSpace", "air", "air-hel");
+        rewrite_reference(&mut spec, "Endpoint", "air", "air-hel");
+        assert_eq!(spec["contextSpaceRef"], "air-hel");
+        assert_eq!(
+            spec["policyRef"]["name"], "air",
+            "another kind keeps its name"
+        );
+        assert_eq!(spec["sources"][0]["endpointRef"]["name"], "air-hel");
+        assert_eq!(spec["other"]["contextSpaceRef"], "water");
+        assert_eq!(renamed("air", "hel sinki!"), "air-helsinki");
+        assert_eq!(renamed("air", "!!"), "air-imported");
+    }
+
     /// A manifest small enough to sit beside whatever the case under test is really about.
     const SPACE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: ovzdusie\n  namespace: helsinki\nspec:\n  title: { en: Air }\n";
 

@@ -2384,3 +2384,35 @@ async fn the_migration_dry_run_plans_the_rewrite_and_proposes_nothing() {
     .await;
     assert_eq!(jana.status, StatusCode::FORBIDDEN, "{}", jana.text);
 }
+
+/// ADR-N-061 (T-7815): without `dryRun` the migration proposes one Change for the
+/// organization's repository, writing every rewritten manifest in one commit; its title and
+/// body name counts, never a person.
+#[tokio::test]
+async fn the_migration_proposes_one_change_naming_counts_alone() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    let mut pia = person("pia");
+    pia.second_factor = true;
+    let answer = send(&state, pia, "POST", &format!("{PEOPLE}/name-by-id"), None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let plan: Value = serde_json::from_str(&answer.text).expect("json");
+    let organization = &plan["repositories"][0];
+    assert_eq!(organization["repository"], "organization");
+    assert!(organization["change"].is_string(), "{}", answer.text);
+    let opened: Vec<String> = shako
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.url.path().ends_with("/Shako.OpenPullRequest"))
+        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+        .collect();
+    assert_eq!(opened.len(), 1, "one Change per repository");
+    assert!(opened[0].contains("1 address(es)"), "{}", opened[0]);
+    assert!(
+        !opened[0].contains("eva@hel.fi"),
+        "the Change names no person: {}",
+        opened[0]
+    );
+}
