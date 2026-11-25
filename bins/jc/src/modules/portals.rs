@@ -1555,6 +1555,99 @@ mod desk_tests {
         ));
     }
 
+    fn dataset(org: OrgId, cat: CatalogueId, name: &str, extra: serde_json::Value) -> Dataset {
+        let mut v = serde_json::json!({
+            "orgId": org, "catalogueId": cat, "id": "", "name": name,
+            "title": {"sk": name}, "description": {}, "publisherId": "city",
+            "visibility": "public", "state": "active", "tags": [], "distributions": [],
+            "issued": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
+        });
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            v[key] = value.clone();
+        }
+        serde_json::from_value(v).expect("a dataset")
+    }
+
+    /// ODP-10: a further portal's `endpoints` source lists the published Endpoints' datasets of
+    /// its Organization's `default` catalogue, withdraws them when the source goes, and a
+    /// portal whose catalogue is not served is retried next round.
+    #[tokio::test]
+    async fn an_endpoints_source_lists_published_datasets_and_withdraws_them() {
+        use dataroom_core::{RequestCtx, Store, Subject};
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(MemoryStore::new());
+        let w = writer(store.clone(), dir.path());
+        let orgs = city();
+        let (org, own) = (orgs[0].org_id, orgs[0].catalogue_id);
+        w.upsert(catalogue_of(&portal("default", serde_json::json!([])), &orgs).unwrap())
+            .await
+            .expect("the default catalogue is served");
+        let ctx = RequestCtx::new(org, own, Subject::anonymous());
+        let published = serde_json::json!({
+            "generatedBy": PUBLISHED_BY,
+            "endpointUrl": "https://api.city.test/endpoint/air-quality/",
+            "tags": ["air"],
+        });
+        store
+            .upsert_dataset(&ctx, dataset(org, own, "air", published))
+            .await
+            .unwrap();
+        store
+            .upsert_dataset(&ctx, dataset(org, own, "handmade", serde_json::json!({})))
+            .await
+            .unwrap();
+        let listing_portal = portal(
+            "mobility",
+            serde_json::json!([{ "name": "own", "type": "endpoints", "tags": ["air"] }]),
+        );
+        let mut done = BTreeMap::new();
+        apply(
+            &w,
+            &orgs,
+            &mut done,
+            served(&[("m", listing_portal.clone())]),
+        )
+        .await;
+        let endpoints = [EndpointRow {
+            project: "doprava".into(),
+            space: "ovzdusie".into(),
+            name: "air".into(),
+            slug: "air-quality".into(),
+            published: true,
+        }];
+        let mut listing = BTreeSet::new();
+        list_endpoints(&w, &orgs, &done, &endpoints, &mut listing).await;
+        assert!(listing.contains("m"));
+        let desk = Desk {
+            writer: w.clone(),
+            orgs: orgs.clone(),
+            active: Arc::default(),
+        };
+        let page = desk.datasets(&listing_portal, 0, 10).await.unwrap();
+        assert_eq!(page.total, 1, "the published dataset alone");
+        assert_eq!(page.datasets[0].name, "air");
+        assert_eq!(page.datasets[0].title, "air");
+        // The source left the manifest: the copies are withdrawn and the portal leaves the list.
+        let bare = portal("mobility", serde_json::json!([]));
+        apply(&w, &orgs, &mut done, served(&[("m", bare)])).await;
+        list_endpoints(&w, &orgs, &done, &endpoints, &mut listing).await;
+        assert!(listing.is_empty());
+        assert_eq!(
+            desk.datasets(&listing_portal, 0, 10).await.unwrap().total,
+            0
+        );
+        // A portal no round served yet: kept in the list so the next round lists it.
+        let ghost = served(&[(
+            "g",
+            portal(
+                "ghost",
+                serde_json::json!([{ "name": "own", "type": "endpoints" }]),
+            ),
+        )]);
+        list_endpoints(&w, &orgs, &ghost, &endpoints, &mut listing).await;
+        assert!(listing.contains("g"));
+    }
+
     #[test]
     fn each_dataroom_error_maps_to_its_desk_answer() {
         use dataroom_core::DataroomError as E;

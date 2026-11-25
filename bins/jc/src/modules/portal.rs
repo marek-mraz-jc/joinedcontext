@@ -145,8 +145,11 @@ pub async fn build(
                         "Organization registry: the jc.toml Organizations could not be seeded: {e}"
                     ))
                 })?;
-        #[rustfmt::skip]
-        tracing::info!(added, of = registry.organizations.len(), "Organization registry: jc.toml Organizations seeded");
+        tracing::info!(
+            added,
+            of = registry.organizations.len(),
+            "Organization registry: jc.toml Organizations seeded"
+        );
         let added = joinedcontext_portal::host_registry::seed(pool, &registry.seed)
             .await
             .map_err(|e| {
@@ -154,8 +157,11 @@ pub async fn build(
                     "host registry: the jc.toml hosts could not be seeded: {e}"
                 ))
             })?;
-        #[rustfmt::skip]
-        tracing::info!(added, of = registry.seed.len(), "host registry: jc.toml hosts seeded");
+        tracing::info!(
+            added,
+            of = registry.seed.len(),
+            "host registry: jc.toml hosts seeded"
+        );
     }
     // Set once the state is built: a failed attempt's listener goes, the next binds anew.
     if let Some(addr) = listener.as_ref().and_then(|l| l.local_addr().ok()) {
@@ -178,8 +184,10 @@ pub async fn build(
             let held = catalogues.len();
             let catalogues = configured.iter().cloned().chain(catalogues).collect();
             portal.replace_run_time_organizations(catalogues, addresses, &set.removed);
-            #[rustfmt::skip]
-            tracing::info!(catalogues = held, "portal: run-time Organizations' catalogues and addresses replaced");
+            tracing::info!(
+                catalogues = held,
+                "portal: run-time Organizations' catalogues and addresses replaced"
+            );
         });
     }
     if let Some(reach) = follow_realms {
@@ -599,8 +607,9 @@ fn organization_realm_vars(
     }
     if env("JC_PORTAL_REACH").is_some() || env("JC_PORTAL_REACH_HOSTS").is_some() {
         if !sign_ins.is_empty() {
-            #[rustfmt::skip]
-            tracing::warn!("portal: JC_PORTAL_REACH is set, so no Organization signs in through its own realm; set JC_PORTAL_ORGANIZATION_REALMS beside it");
+            tracing::warn!(
+                "portal: JC_PORTAL_REACH is set, so no Organization signs in through its own realm; set JC_PORTAL_ORGANIZATION_REALMS beside it"
+            );
         }
         return None;
     }

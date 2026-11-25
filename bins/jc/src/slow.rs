@@ -157,7 +157,6 @@ fn flush(now: Instant) {
     };
     lines.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     for (fingerprint, seen) in lines {
-        #[rustfmt::skip]
         tracing::warn!(target: "jc::slow_statement", fingerprint, statements = seen.statements, slowest_seconds = seen.slowest, "slow statements in the last minute: execution time exceeded alert threshold");
     }
 }

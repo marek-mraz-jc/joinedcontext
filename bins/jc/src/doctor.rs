@@ -1681,8 +1681,10 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
     /// names a superuser connection (as tests/restart_pg.rs).
     #[test]
     fn the_registry_rows_come_from_the_portals_organization_hosts() {
-        #[rustfmt::skip]
-        let Some(admin) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else { println!("SKIP: JC_PG_TEST_DATABASE_URL is unset"); return };
+        let Some(admin) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
+            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
+            return;
+        };
         let db = format!("doctor{}", std::process::id());
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()

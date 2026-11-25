@@ -343,8 +343,10 @@ mod tests {
     static ROLES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     async fn prepare(tag: &str) -> Option<Db> {
-        #[rustfmt::skip]
-        let Some(url) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else { println!("SKIP: JC_PG_TEST_DATABASE_URL is unset"); return None };
+        let Some(url) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
+            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
+            return None;
+        };
         let base = PgConnectOptions::from_str(&url).unwrap();
         let admin = PgPoolOptions::new()
             .max_connections(1)
@@ -395,8 +397,9 @@ mod tests {
 
     #[tokio::test]
     async fn saved_streams_and_resources_come_back_per_organization() {
-        #[rustfmt::skip]
-        let Some(db) = prepare("rt").await else { return };
+        let Some(db) = prepare("rt").await else {
+            return;
+        };
         let owner = db.login("jc_ekpg_owner").await;
         migrate(&owner, "jc_ekpg_app").await.unwrap();
         // A second start finds the migration done and grants again.
@@ -475,8 +478,9 @@ mod tests {
 
     #[tokio::test]
     async fn the_boot_check_refuses_each_unsafe_request_role_and_table() {
-        #[rustfmt::skip]
-        let Some(db) = prepare("boot").await else { return };
+        let Some(db) = prepare("boot").await else {
+            return;
+        };
         let owner = db.login("jc_ekpg_owner").await;
         // Before the migration the schema has no table: missing.
         let app = db.login("jc_ekpg_app").await;
@@ -516,8 +520,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_statement_or_commit_reaches_the_caller() {
-        #[rustfmt::skip]
-        let Some(db) = prepare("fail").await else { return };
+        let Some(db) = prepare("fail").await else {
+            return;
+        };
         let owner = db.login("jc_ekpg_owner").await;
         migrate(&owner, "jc_ekpg_app").await.unwrap();
         // jc_ekpg_ro may name an organization and read it, nothing else; a write of
