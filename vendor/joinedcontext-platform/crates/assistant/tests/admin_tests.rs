@@ -643,17 +643,57 @@ async fn a_store_failing_mid_handler_is_a_503_on_every_path() {
         ("sites", "GET", format!("{BASE}/sources/web/errors"), None),
         ("chunks", "GET", format!("{BASE}/sources/web/errors"), None),
         ("chunks", "GET", pages.clone(), None),
-        ("chunks", "GET", format!("{BASE}/sources/web/documents"), None),
-        ("chunks", "GET", format!("{BASE}/sources/web/search?q=odpad"), None),
+        (
+            "chunks",
+            "GET",
+            format!("{BASE}/sources/web/documents"),
+            None,
+        ),
+        (
+            "chunks",
+            "GET",
+            format!("{BASE}/sources/web/search?q=odpad"),
+            None,
+        ),
         ("pages", "GET", links.clone(), None),
         ("links", "GET", links, None),
         ("chunks", "GET", passages, None),
-        ("pages", "POST", format!("{BASE}/sources/web/inclusion"), Some(inclusion)),
-        ("crawl_jobs", "POST", format!("{BASE}/sources/web/recrawl"), None),
-        ("usage", "GET", format!("{BASE}/deployments/obcania/usage"), None),
-        ("feedback", "GET", format!("{BASE}/deployments/obcania/usage"), None),
-        ("documents", "GET", format!("{BASE}/sources/subory/files"), None),
-        ("documents", "DELETE", format!("{BASE}/sources/subory/files/{file}"), None),
+        (
+            "pages",
+            "POST",
+            format!("{BASE}/sources/web/inclusion"),
+            Some(inclusion),
+        ),
+        (
+            "crawl_jobs",
+            "POST",
+            format!("{BASE}/sources/web/recrawl"),
+            None,
+        ),
+        (
+            "usage",
+            "GET",
+            format!("{BASE}/deployments/obcania/usage"),
+            None,
+        ),
+        (
+            "feedback",
+            "GET",
+            format!("{BASE}/deployments/obcania/usage"),
+            None,
+        ),
+        (
+            "documents",
+            "GET",
+            format!("{BASE}/sources/subory/files"),
+            None,
+        ),
+        (
+            "documents",
+            "DELETE",
+            format!("{BASE}/sources/subory/files/{file}"),
+            None,
+        ),
     ];
     for (table, verb, uri, body) in calls {
         let owner = table_away(&w, table).await;
@@ -665,16 +705,20 @@ async fn a_store_failing_mid_handler_is_a_503_on_every_path() {
             "{verb} {uri} without {table}: {problem}"
         );
         assert_eq!(
-            problem["detail"],
-            "The assistant's store could not be read; try again shortly.",
+            problem["detail"], "The assistant's store could not be read; try again shortly.",
             "{verb} {uri}"
         );
     }
     // An upload whose site cannot be written, then one whose file cannot be stored.
     for table in ["sites", "documents"] {
         let owner = table_away(&w, table).await;
-        let (status, problem) =
-            send_file(&w.app, "subory", "odvoz.md", b"# Odvoz\n\nV piatok.".to_vec()).await;
+        let (status, problem) = send_file(
+            &w.app,
+            "subory",
+            "odvoz.md",
+            b"# Odvoz\n\nV piatok.".to_vec(),
+        )
+        .await;
         table_back(owner, table).await;
         assert_eq!(
             status,
@@ -696,19 +740,44 @@ async fn a_store_failing_mid_handler_is_a_503_on_every_path() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
     // A source that was never crawled, and files asked of a source that takes none.
     for (verb, uri, expected) in [
-        ("GET", format!("{BASE}/sources/nikde/documents"), StatusCode::NOT_FOUND),
-        ("GET", format!("{BASE}/sources/nikde/pages/{}/links", w.root), StatusCode::NOT_FOUND),
-        ("GET", format!("{BASE}/sources/nikde/passages?page={}", w.root), StatusCode::NOT_FOUND),
-        ("GET", format!("{BASE}/sources/web/files"), StatusCode::CONFLICT),
-        ("DELETE", format!("{BASE}/sources/web/files/{file}"), StatusCode::CONFLICT),
+        (
+            "GET",
+            format!("{BASE}/sources/nikde/documents"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            format!("{BASE}/sources/nikde/pages/{}/links", w.root),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            format!("{BASE}/sources/nikde/passages?page={}", w.root),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            format!("{BASE}/sources/web/files"),
+            StatusCode::CONFLICT,
+        ),
+        (
+            "DELETE",
+            format!("{BASE}/sources/web/files/{file}"),
+            StatusCode::CONFLICT,
+        ),
     ] {
         let (status, problem) = call(&w.app, verb, &uri, Some(PORTAL_TOKEN), None).await;
         assert_eq!(status, expected, "{verb} {uri}: {problem}");
     }
     // An internal source of no one language takes a file; a declared source under a name that
     // is no project is refused as no project.
-    let (status, internal) =
-        send_file(&w.app, "intern", "pravidla.md", b"# Pravidla\n\nInterne.".to_vec()).await;
+    let (status, internal) = send_file(
+        &w.app,
+        "intern",
+        "pravidla.md",
+        b"# Pravidla\n\nInterne.".to_vec(),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "{internal}");
     let request = Request::builder()
         .method("POST")
@@ -752,7 +821,11 @@ async fn a_store_failing_mid_handler_is_a_503_on_every_path() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{listed}");
-    assert_eq!(listed["items"].as_array().map(Vec::len), Some(1), "{listed}");
+    assert_eq!(
+        listed["items"].as_array().map(Vec::len),
+        Some(1),
+        "{listed}"
+    );
 
     // A day with verdicts and no requests is listed with zero requests; a page left out by the
     // source's patterns says so.
@@ -830,8 +903,16 @@ async fn a_store_failing_mid_handler_is_a_503_on_every_path() {
     }
     // An erasure's body: not the shape, no term, and a project name that is none.
     for (uri, body, expected) in [
-        (format!("{BASE}/erasures"), json!({"terms": 1}), StatusCode::BAD_REQUEST),
-        (format!("{BASE}/erasures"), json!({"terms": []}), StatusCode::BAD_REQUEST),
+        (
+            format!("{BASE}/erasures"),
+            json!({"terms": 1}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            format!("{BASE}/erasures"),
+            json!({"terms": []}),
+            StatusCode::BAD_REQUEST,
+        ),
         (
             format!("{bad}/erasures"),
             json!({"terms": ["urn:ngsi-ld:BikeTrip:t-0"]}),

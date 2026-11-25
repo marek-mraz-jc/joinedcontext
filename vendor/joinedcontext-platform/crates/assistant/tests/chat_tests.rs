@@ -930,7 +930,9 @@ async fn a_split_count_reads_every_page_and_a_history_names_its_places() {
     // The split's pages: the first names a cursor, the second is the last.
     mcp()
         .and(body_string_contains("\"cursor\":\"c2\""))
-        .respond_with(said(json!({"entities": [{"managerName": "SSC"}, {"managerName": "BBSK"}]})))
+        .respond_with(said(
+            json!({"entities": [{"managerName": "SSC"}, {"managerName": "BBSK"}]}),
+        ))
         .with_priority(1)
         .mount(&w.gateway)
         .await;
@@ -940,18 +942,25 @@ async fn a_split_count_reads_every_page_and_a_history_names_its_places() {
         .with_priority(2)
         .mount(&w.gateway)
         .await;
-    let length = |name: &str, metres: [f64; 2]| json!({"id": format!("urn:ngsi-ld:Bridge:{name}"), "type": "Bridge",
+    let length = |name: &str, metres: [f64; 2]| {
+        json!({"id": format!("urn:ngsi-ld:Bridge:{name}"), "type": "Bridge",
         "bridgedLength": [{"type": "Property", "value": metres[0], "observedAt": "2026-10-01T08:00:00Z"},
-                          {"type": "Property", "value": metres[1], "observedAt": "2026-10-02T08:00:00Z"}]});
+                          {"type": "Property", "value": metres[1], "observedAt": "2026-10-02T08:00:00Z"}]})
+    };
     mcp()
         .and(body_string_contains("\"query_temporal\""))
-        .respond_with(said(json!([length("M21", [9.0, 9.5]), length("M22", [4.0, 4.5])])))
+        .respond_with(said(json!([
+            length("M21", [9.0, 9.5]),
+            length("M22", [4.0, 4.5])
+        ])))
         .with_priority(2)
         .mount(&w.gateway)
         .await;
     mcp()
         .and(body_string_contains("\"query_entities\""))
-        .respond_with(said(json!({"entities": [bridge("M21", "BBSK"), bridge("M22", "SSC")], "total": 5})))
+        .respond_with(said(
+            json!({"entities": [bridge("M21", "BBSK"), bridge("M22", "SSC")], "total": 5}),
+        ))
         .with_priority(3)
         .mount(&w.gateway)
         .await;
@@ -975,12 +984,22 @@ async fn a_split_count_reads_every_page_and_a_history_names_its_places() {
         ],
         vec![judged(), judged()],
         vec![
-            completion(json!({"role": "assistant", "content": "BBSK spravuje 3 z 5 mostov [1]."}), 300),
             completion(
-                tool_call("c1", "query_temporal", json!({"endpoint": "ovzdusie", "type": ["Bridge"], "attrs": ["bridgedLength"]})),
+                json!({"role": "assistant", "content": "BBSK spravuje 3 z 5 mostov [1]."}),
                 300,
             ),
-            completion(json!({"role": "assistant", "content": "Most M21 sa predĺžil na 9,5 m [2]."}), 300),
+            completion(
+                tool_call(
+                    "c1",
+                    "query_temporal",
+                    json!({"endpoint": "ovzdusie", "type": ["Bridge"], "attrs": ["bridgedLength"]}),
+                ),
+                300,
+            ),
+            completion(
+                json!({"role": "assistant", "content": "Most M21 sa predĺžil na 9,5 m [2]."}),
+                300,
+            ),
         ],
     )
     .await;
@@ -1015,7 +1034,11 @@ async fn a_split_count_reads_every_page_and_a_history_names_its_places() {
     let split = shown[0].iter().map(Value::to_string).collect::<String>();
     assert!(split.contains("BBSK"), "{:?}", shown[0]);
     let history = shown[1].iter().map(Value::to_string).collect::<String>();
-    assert!(history.contains("M21") && history.contains("M22"), "{:?}", shown[1]);
+    assert!(
+        history.contains("M21") && history.contains("M22"),
+        "{:?}",
+        shown[1]
+    );
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 

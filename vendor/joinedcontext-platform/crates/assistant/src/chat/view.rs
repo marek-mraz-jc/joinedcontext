@@ -1106,7 +1106,12 @@ mod tests {
             .mount(&gateway)
             .await;
         let parts = Parts::new();
-        let c = connector(&gateway.uri(), "most", &[("query_entities", schema.clone())], token);
+        let c = connector(
+            &gateway.uri(),
+            "most",
+            &[("query_entities", schema.clone())],
+            token,
+        );
         let connectors = [c];
         let ask = parts.ask(&connectors);
         let arguments = json!({"type": ["Bridge"], "q": "name~=\"M\""});
@@ -1137,7 +1142,10 @@ mod tests {
             "pick": {"type": "array"}, "limit": {"type": "integer", "maximum": 10}}});
         assert!(count_by(small, &page, None).await.is_none());
         for broken in ["not json", "{\"rows\": []}"] {
-            assert!(count_by(picked.clone(), broken, None).await.is_none(), "{broken}");
+            assert!(
+                count_by(picked.clone(), broken, None).await.is_none(),
+                "{broken}"
+            );
         }
         let person = json!({"entities": [{"id": "urn:ngsi-ld:Bridge:a", "type": "Bridge", "managerName": "BBSK"}]})
             .to_string();
@@ -1165,19 +1173,28 @@ mod tests {
         let parts = Parts::new();
         let picked = json!({"type": "object", "properties": {"type": {"type": "array"},
             "id": {"type": "array"}, "pick": {"type": "array"}, "limit": {"type": "integer"}}});
-        let named = [connector(&gateway.uri(), "most", &[("query_entities", picked)], None)];
+        let named = [connector(
+            &gateway.uri(),
+            "most",
+            &[("query_entities", picked)],
+            None,
+        )];
         let ask = parts.ask(&named);
         let read = ("Bridge", history.as_str(), &arguments);
         let table = history_of(&ask, &named[0], read, Duration::from_secs(2))
             .await
             .expect("a table");
-        assert!(serde_json::to_string(&table.rows).expect("rows").contains("Most A"));
+        assert!(serde_json::to_string(&table.rows)
+            .expect("rows")
+            .contains("Most A"));
         let none = [connector(&gateway.uri(), "most", &[], None)];
         let ask = parts.ask(&none);
         let table = history_of(&ask, &none[0], read, Duration::from_secs(2))
             .await
             .expect("a table");
-        assert!(!serde_json::to_string(&table.rows).expect("rows").contains("Most A"));
+        assert!(!serde_json::to_string(&table.rows)
+            .expect("rows")
+            .contains("Most A"));
     }
 
     /// The register as measured on 2026-11-22: 1,651 bridges, their managers' own names.

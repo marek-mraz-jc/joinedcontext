@@ -357,8 +357,8 @@ mod tests {
     /// nothing; a verifier of no roots is refused the same way.
     #[test]
     fn no_root_certificate_is_a_tls_error_that_says_so() {
-        let none = native_tls(rustls_native_certs::CertificateResult::default())
-            .expect_err("no roots");
+        let none =
+            native_tls(rustls_native_certs::CertificateResult::default()).expect_err("no roots");
         assert!(none.starts_with("no native root certificate"), "{none}");
         let empty = tls_config(RootCertStore::empty(), Vec::new()).expect_err("no roots");
         assert!(empty.starts_with("no TLS verifier"), "{empty}");
@@ -375,9 +375,15 @@ mod tests {
         assert!(allowed("https://93.184.216.34/"));
         assert!(allowed("https://[2606:4700:4700::1111]/"));
         for url in ["https:///x", "http:x", "https://a/../b"] {
-            assert!(Url::parse(url).map_or(true, |u| u.host().is_some()), "{url}");
+            assert!(
+                Url::parse(url).map_or(true, |u| u.host().is_some()),
+                "{url}"
+            );
         }
-        assert!(!is_url_allowed(&Url::parse("data:text/plain,x").expect("a URL"), true));
+        assert!(!is_url_allowed(
+            &Url::parse("data:text/plain,x").expect("a URL"),
+            true
+        ));
     }
 
     /// A body the server cuts short is a failed read naming the error, never a short page.

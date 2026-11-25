@@ -393,11 +393,17 @@ mod tests {
         assert!(slot().await.is_some(), "a freed slot is taken again");
         drop(second);
         // One test holds the process's slots, so the drawing outcomes run here too.
-        let png = paint(tiny(), RENDER_CAP).await.expect("a small chart is drawn");
+        let png = paint(tiny(), RENDER_CAP)
+            .await
+            .expect("a small chart is drawn");
         assert!(png.starts_with(b"\x89PNG"));
         let past = paint(tiny(), Duration::ZERO).await;
         assert!(past.expect_err("no time to draw").starts_with("limited: "));
-        assert_eq!(SLOTS.available_permits(), RENDER_SLOTS, "every slot is back");
+        assert_eq!(
+            SLOTS.available_permits(),
+            RENDER_SLOTS,
+            "every slot is back"
+        );
     }
 
     fn tiny() -> raster::Chart {

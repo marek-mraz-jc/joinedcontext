@@ -4683,7 +4683,10 @@ mod tests {
         assert_eq!(page_step(&ask, &endpoint, "Bridge").await, None);
         let rows = json!([{"id": "urn:ngsi-ld:Bridge:a", "isPartOf": {"value": "https://data.example/dataset/mosty"}}])
             .to_string();
-        assert_eq!(dataset_or(&ask, &endpoint, "Bridge", &rows, None).await, None);
+        assert_eq!(
+            dataset_or(&ask, &endpoint, "Bridge", &rows, None).await,
+            None
+        );
         let own = Some(Some("https://data.example/dataset/vlastne".to_owned()));
         assert_eq!(
             dataset_or(&ask, &endpoint, "Bridge", "[]", own.clone()).await,
@@ -4691,7 +4694,9 @@ mod tests {
         );
         endpoint.dataset = Some("https://data.example/dataset/manifest".into());
         assert_eq!(
-            dataset_or(&ask, &endpoint, "Bridge", "[]", own).await.as_deref(),
+            dataset_or(&ask, &endpoint, "Bridge", "[]", own)
+                .await
+                .as_deref(),
             Some("https://data.example/dataset/manifest")
         );
     }
@@ -4921,18 +4926,20 @@ mod tests {
     fn the_day_s_limit_says_when_the_day_starts_again() {
         use super::super::clock::Zone;
         use time::macros::datetime;
-        let said = |now, zone| match Limit::Day.event(now, zone) {
-            Event::Error {
-                status,
-                title,
-                detail,
-            } => {
-                assert_eq!((status, title), (429, "Daily Limit Reached"));
-                Some(detail)
+        let said = |now, zone| {
+            match Limit::Day.event(now, zone) {
+                Event::Error {
+                    status,
+                    title,
+                    detail,
+                } => {
+                    assert_eq!((status, title), (429, "Daily Limit Reached"));
+                    Some(detail)
+                }
+                _ => None,
             }
-            _ => None,
-        }
-        .expect("a limit error");
+            .expect("a limit error")
+        };
         let day = "Asistent dnes dosiahol denný limit. Skúste to znova";
         let summer = datetime!(2026-10-18 18:30 UTC);
         assert_eq!(

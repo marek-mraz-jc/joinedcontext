@@ -333,7 +333,15 @@ mod tests {
         .map(Setting::field);
         assert_eq!(
             fields,
-            ["gateway_url", "proxy_url", "functions_url", "endpoint_url", "portal_url", "viz_url", "reach"]
+            [
+                "gateway_url",
+                "proxy_url",
+                "functions_url",
+                "endpoint_url",
+                "portal_url",
+                "viz_url",
+                "reach"
+            ]
         );
         let endpoint = endpoint_base("https://Data.City.test/").expect("an origin");
         assert_eq!(endpoint.as_str(), "https://data.city.test/");

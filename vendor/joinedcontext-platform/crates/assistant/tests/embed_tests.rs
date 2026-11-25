@@ -359,19 +359,33 @@ async fn an_embedder_outage_fails_the_round_whole() {
         client_secret: "s".into(),
     })
     .expect("remote");
-    corpus::pages(&pool, "presov", "web", &[("https://presov.example/a", "sk", "VYPADOK celej dávky.")]).await;
-    assert!(embed_missing(&pool, &embedder, "presov", 100).await.is_err());
+    corpus::pages(
+        &pool,
+        "presov",
+        "web",
+        &[("https://presov.example/a", "sk", "VYPADOK celej dávky.")],
+    )
+    .await;
+    assert!(embed_missing(&pool, &embedder, "presov", 100)
+        .await
+        .is_err());
     corpus::pages(
         &pool,
         "kosice",
         "web",
         &[
             ("https://kosice.example/a", "sk", "ODMIETNI tento odsek."),
-            ("https://kosice.example/b", "sk", "VYPADOK pri samostatnom odseku."),
+            (
+                "https://kosice.example/b",
+                "sk",
+                "VYPADOK pri samostatnom odseku.",
+            ),
         ],
     )
     .await;
-    assert!(embed_missing(&pool, &embedder, "kosice", 100).await.is_err());
+    assert!(embed_missing(&pool, &embedder, "kosice", 100)
+        .await
+        .is_err());
     db::drop_database(admin, pool, &name).await;
 }
 

@@ -351,7 +351,12 @@ mod tests {
     /// A page that opens a front matter block and never closes it keeps every line as text.
     #[test]
     fn an_unclosed_front_matter_is_read_as_the_page_s_text() {
-        let found = sections("01-x.md", "---\ntitle: X\n\n## 1. Rest\n\nBody.", PORTAL, "z");
+        let found = sections(
+            "01-x.md",
+            "---\ntitle: X\n\n## 1. Rest\n\nBody.",
+            PORTAL,
+            "z",
+        );
         let headings: Vec<&str> = found.iter().map(|s| s.html.as_str()).collect();
         assert_eq!(found.len(), 2, "{headings:?}");
         assert!(found[0].html.contains("title: X"), "{headings:?}");
