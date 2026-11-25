@@ -28,6 +28,8 @@ antares-mcp = { path = "../crates/antares-mcp", features = ["fuzzing"] }
 odata-batch = { path = "../crates/odata-batch" }
 antares-sta = { path = "../crates/antares-sta" }
 antares-bus = { path = "../crates/antares-bus" }
+# broker_mirror_delta, broker_config_value: the composition root's bus and config parsers.
+antares-broker = { path = "../crates/antares-broker", default-features = false, features = ["fuzzing"] }
 antares-ogc = { path = "../crates/antares-ogc", default-features = false, features = ["fuzzing"] }
 antares-ws = { path = "../crates/antares-ws" }
 antares-residual = { package = "ngsild-residual", path = "../crates/antares-residual" }
@@ -288,3 +290,17 @@ bench = false
 # options until geo releases rstar 0.14 (RUSTSEC-2026-0574..0582; crates/antares/vendor/rstar/README.md, T-7429).
 rstar = { path = "../vendor/rstar" }
 geo-types = { path = "../vendor/geo-types" }
+
+[[bin]]
+name = "broker_mirror_delta"
+path = "fuzz_targets/broker_mirror_delta.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "broker_config_value"
+path = "fuzz_targets/broker_config_value.rs"
+test = false
+doc = false
+bench = false

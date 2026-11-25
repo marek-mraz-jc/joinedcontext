@@ -73,6 +73,10 @@ antares-jsonstat = { workspace = true, optional = true }
 # panicking at startup.
 console = ["dep:console-subscriber"]
 default = ["mqtt"]
+# `antares_broker::fuzzing`: the bus delta and configuration parsers,
+# reachable by the fuzz targets under fuzz/ (T-7829). Adds no dependency and
+# no route; no broker build turns it on.
+fuzzing = []
 # MQTT notification delivery (rumqttc + rustls); off drops the client and
 # its TLS stack from the binary, MQTT endpoints then fail at subscription
 # creation.

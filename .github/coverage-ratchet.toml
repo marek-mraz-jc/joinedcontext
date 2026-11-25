@@ -3,6 +3,7 @@
 # crate commits the new line with it. Lowering a floor is a hand edit with its reason in the commit.
 [crates]
 "agent-proxy" = { lines = 99.79, functions = 99.81 }
+"antares-broker" = { lines = 96.00, functions = 98.00 }
 "antares-bus" = { lines = 99.69, functions = 100.00 }
 "antares-export" = { lines = 100.00, functions = 100.00 }
 "antares-feed" = { lines = 99.80, functions = 99.37 }

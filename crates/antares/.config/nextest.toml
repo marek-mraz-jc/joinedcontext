@@ -43,9 +43,11 @@ store-failure-output = true
 # pg_temporal_last_n judges a plan by the statistics its own ANALYZE gathered: pg's ANALYZE of a
 # near-empty history between the two turned the week read into a full scan of the window
 # (4360 rows for 436, runs 45088137464 .. 45082408704).
+# The broker's outbox flush test leaves one row pending and times the drain against it: a
+# concurrent broker's outbox drain publishes and acks that row, and the flush returns early.
 [test-groups]
 db-exclusive = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = 'binary(nats_e2e) or binary(pg_rls_pentest) or binary(pg_outbox) or binary(pg_temporal) or binary(pg_doc) or binary(pg_entity) or binary(pg) or binary(ws) or binary(pg_retention) or binary(store_combos) or binary(secret_logs) or binary(upsert_transactions) or binary(read_statement_budget) or binary(pg_seal) or binary(pg_tenant_rename) or binary(pg_temporal_last_n)'
+filter = 'binary(nats_e2e) or binary(pg_rls_pentest) or binary(pg_outbox) or binary(pg_temporal) or binary(pg_doc) or binary(pg_entity) or binary(pg) or binary(ws) or binary(pg_retention) or binary(store_combos) or binary(secret_logs) or binary(upsert_transactions) or binary(read_statement_budget) or binary(pg_seal) or binary(pg_tenant_rename) or binary(pg_temporal_last_n) or (binary_id(antares-broker) and test(outbox_flush_waits_for_pending_rows))'
 test-group = 'db-exclusive'
