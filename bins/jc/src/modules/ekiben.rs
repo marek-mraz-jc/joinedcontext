@@ -1393,6 +1393,46 @@ mod tests {
         assert!(status.is_success(), "{status}: {}", r.text().await.unwrap());
     }
 
+    /// A resources file that cannot be read or that the runner refuses stops the start with the
+    /// file named, and a setup without ekiben's API token has no runner to start.
+    #[tokio::test]
+    async fn an_unreadable_or_refused_resources_file_and_a_missing_token_stop_the_start() {
+        use crate::setup::Setup;
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &[Module::Ekiben], &Default::default()).unwrap();
+        let siblings = Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let refused = dir.path().join("refused.yaml");
+        std::fs::write(&refused, "cache_resources: [ {label: \"x\"").unwrap();
+        for path in [dir.path().join("missing.yaml"), refused] {
+            let cfg = EkibenSection {
+                file_root: Some(dir.path().join("files")),
+                resources_file: Some(path.clone()),
+                ..Default::default()
+            };
+            let e = build(&cfg, &setup, &Default::default(), &siblings, false)
+                .await
+                .expect_err("refused")
+                .to_string();
+            assert!(
+                e.contains(&format!("resources file {}: ", path.display())),
+                "{e}"
+            );
+        }
+        let bare = tempfile::tempdir().unwrap();
+        let none = Setup::prepare(bare.path(), &[], &Default::default()).unwrap();
+        let e = build(
+            &EkibenSection::default(),
+            &none,
+            &Default::default(),
+            &siblings,
+            false,
+        )
+        .await
+        .expect_err("refused")
+        .to_string();
+        assert!(e.contains("no API token"), "{e}");
+    }
+
     /// The Portal's stream deletes reach jc's ekiben: the deployer sends the bearer of the token
     /// file siblings.rs hands the Portal (`JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE`); a deployer
     /// without it is refused 401 and the stream stays (jc-migrate's rehearsal, G15).
