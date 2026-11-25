@@ -557,8 +557,9 @@ mod tests {
 
     #[test]
     fn a_wfs_listing_cut_by_the_byte_cap_keeps_the_whole_feature_types_and_says_it_is_cut() {
-        #[rustfmt::skip]
-        let Value::String(text) = recorded("wfs/discover.xml") else { panic!("xml") };
+        let Value::String(text) = recorded("wfs/discover.xml") else {
+            panic!("xml")
+        };
         // Cut inside the seventh feature type, as the runner's byte cap cuts a long listing.
         let seventh = text
             .match_indices("</FeatureType>")

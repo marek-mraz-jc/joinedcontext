@@ -365,8 +365,9 @@ mod tests {
 
     fn refused_at(args: Value) -> String {
         let result = validate_write(&args);
-        #[rustfmt::skip]
-        let Err(OpError::InvalidInput { path, .. }) = result else { panic!("{args}: {result:?}") };
+        let Err(OpError::InvalidInput { path, .. }) = result else {
+            panic!("{args}: {result:?}")
+        };
         path
     }
 

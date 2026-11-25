@@ -1301,8 +1301,9 @@ mod tests {
 
     /// The spec of a checked `jc_data_query` call.
     fn query_spec(input: &Value) -> Box<Spec> {
-        #[rustfmt::skip]
-        let Ok(Request::Query(parsed, _)) = spec_of(input) else { panic!("a spec: {input}") };
+        let Ok(Request::Query(parsed, _)) = spec_of(input) else {
+            panic!("a spec: {input}")
+        };
         parsed
     }
 
@@ -2239,8 +2240,15 @@ mod tests {
         // What a valid call sets comes through.
         let call = json!({ "title": "Mine", "description": "d", "width": 300, "height": 200,
                            "data": { "widget": widget } });
-        #[rustfmt::skip]
-        let Ok(Request::Widget { at, title, width, height }) = spec_of(&call) else { unreachable!("{call}") };
+        let Ok(Request::Widget {
+            at,
+            title,
+            width,
+            height,
+        }) = spec_of(&call)
+        else {
+            unreachable!("{call}")
+        };
         assert_eq!(
             (at.dashboard.as_str(), at.page, at.widget),
             ("air-quality", 0, 1)
@@ -2250,8 +2258,9 @@ mod tests {
             (Some("Mine"), Some(300), Some(200))
         );
         let whole = json!({ "description": "all", "data": { "dashboard": "air-quality" } });
-        #[rustfmt::skip]
-        let Ok(Request::Dashboard(name)) = spec_of(&whole) else { unreachable!("a dashboard") };
+        let Ok(Request::Dashboard(name)) = spec_of(&whole) else {
+            unreachable!("a dashboard")
+        };
         assert_eq!(name, "air-quality");
         // A member put under its place; another error passes as it is.
         let moved = under("/data/query", invalid("/", "whole"));

@@ -865,8 +865,9 @@ mod tests {
     }
 
     fn invalid_at(result: Result<Value, OpError>) -> (String, String) {
-        #[rustfmt::skip]
-        let Err(OpError::InvalidInput { path, message }) = result else { panic!("expected a refusal, got {result:?}") };
+        let Err(OpError::InvalidInput { path, message }) = result else {
+            panic!("expected a refusal, got {result:?}")
+        };
         (path, message)
     }
 

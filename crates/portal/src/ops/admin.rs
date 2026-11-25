@@ -513,8 +513,9 @@ mod tests {
     }
 
     fn refused_at(result: Result<Value, OpError>) -> String {
-        #[rustfmt::skip]
-        let Err(OpError::InvalidInput { path, .. }) = result else { panic!("an input refusal, got {result:?}") };
+        let Err(OpError::InvalidInput { path, .. }) = result else {
+            panic!("an input refusal, got {result:?}")
+        };
         path
     }
 
