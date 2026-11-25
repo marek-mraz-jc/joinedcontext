@@ -53,16 +53,16 @@ struct Breaker {
 // one if a profile ever disagrees.
 fn evict_oldest<V>(map: &mut HashMap<String, V>, key: &str, stamp: impl Fn(&V) -> Option<Instant>) {
     let prefix = format!("{}\u{1f}", key.split('\u{1f}').next().unwrap_or(""));
-    while map.len() >= MAX_TRACKED {
-        let oldest = |mine: bool| {
-            map.iter()
-                .filter(|(k, _)| k.starts_with(&prefix) == mine)
-                .min_by_key(|(_, v)| stamp(v))
-                .map(|(k, _)| k.clone())
-        };
-        let Some(victim) = oldest(true).or_else(|| oldest(false)) else {
-            return;
-        };
+    let oldest = |map: &HashMap<String, V>, mine: bool| {
+        map.iter()
+            .filter(|(k, _)| k.starts_with(&prefix) == mine)
+            .min_by_key(|(_, v)| stamp(v))
+            .map(|(k, _)| k.clone())
+    };
+    while let Some(victim) = (map.len() >= MAX_TRACKED)
+        .then(|| oldest(map, true).or_else(|| oldest(map, false)))
+        .flatten()
+    {
         map.remove(&victim);
     }
 }
@@ -424,6 +424,46 @@ mod tests {
         e.record_success("tenant-a", url);
         assert!(!e.is_open("tenant-a", url));
         assert!(e.is_open("tenant-b", url));
+    }
+
+    /// 5.2.34: a second failure inside the window restamps it, a success
+    /// closes it, and a registration never seen is not cooling.
+    #[test]
+    fn a_registration_cooldown_restamps_and_clears() {
+        let e = Egress::default();
+        assert!(!e.reg_in_cooldown("t\u{1f}reg", 60_000));
+        e.reg_record("t\u{1f}reg", false);
+        e.reg_record("t\u{1f}reg", false);
+        assert!(e.reg_in_cooldown("t\u{1f}reg", 60_000));
+        assert!(!e.reg_in_cooldown("t\u{1f}reg", 0), "a zero window is spent at once");
+        e.reg_record("t\u{1f}reg", true);
+        assert!(!e.reg_in_cooldown("t\u{1f}reg", 60_000));
+    }
+
+    /// A tripped destination admits one probe once its cooldown has passed
+    /// and stays open for the calls behind it; a destination that is no URL
+    /// keys on its own text, still per tenant.
+    #[test]
+    fn a_tripped_breaker_lets_one_probe_through_after_the_cooldown() {
+        let e = Egress::default();
+        let url = "not a url";
+        for _ in 0..TRIP_AFTER {
+            e.record_failure("a", url);
+        }
+        assert!(e.is_open("a", url));
+        assert!(!e.is_open("b", url), "another tenant's breaker is its own");
+        assert_eq!(Egress::key("a", url), "a\u{1f}not a url");
+        let past = Instant::now().checked_sub(COOLDOWN).expect("an instant 30 s back");
+        e.breakers
+            .lock()
+            .expect("breaker lock")
+            .get_mut(&Egress::key("a", url))
+            .expect("tripped breaker")
+            .tripped_at = Some(past);
+        assert!(!e.is_open("a", url), "the probe goes through");
+        assert!(e.is_open("a", url), "the calls behind the probe wait");
+        e.record_success("a", url);
+        assert!(!e.is_open("a", url));
     }
 
     /// The ceiling is shared; the isolation must not be. A tenant churning

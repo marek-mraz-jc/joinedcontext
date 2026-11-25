@@ -3,6 +3,114 @@
 
 use super::*;
 
+#[cfg(test)]
+mod projection_of_notified_entities {
+    use super::matching::{diff, project_joined, project_shown, read_or_warn};
+    use super::*;
+    use serde_json::json;
+    use std::borrow::Cow;
+    use std::collections::{BTreeSet, HashMap};
+
+    fn only(names: &[&'static str]) -> Option<crate::policy::Shown<'static>> {
+        Some(crate::policy::Shown {
+            only: Some(names.iter().map(|n| Cow::Borrowed(*n)).collect::<BTreeSet<_>>()),
+            omitted: BTreeSet::new(),
+        })
+    }
+
+    fn shown() -> HashMap<String, Option<crate::policy::Shown<'static>>> {
+        HashMap::from([
+            ("urn:a".to_owned(), only(&["speed", "ref", "ref2", "list", "plain"])),
+            ("urn:b".to_owned(), None),
+            ("urn:c".to_owned(), only(&["speed"])),
+        ])
+    }
+
+    /// ADR-0023 rule 6, keyValues: an embedded Entity no rule holds for
+    /// falls back to its id, one a rule holds for is projected by its own
+    /// rule, and an Attribute the rule does not name goes.
+    #[test]
+    fn key_values_embeds_are_projected_or_reduced_to_their_id() {
+        let mut e = json!({"id": "urn:a", "type": "T", "speed": 1, "hidden": 2,
+            "ref": {"id": "urn:b", "type": "T", "x": 1},
+            "ref2": {"id": "urn:c", "type": "T", "speed": 2, "other": 3},
+            "plain": ["a", "b"]});
+        project_shown(&shown(), &mut e, true);
+        assert_eq!(e, json!({"id": "urn:a", "type": "T", "speed": 1, "ref": "urn:b",
+            "ref2": {"id": "urn:c", "type": "T", "speed": 2}, "plain": ["a", "b"]}));
+    }
+
+    /// Normalized: an `entity` no rule holds for is dropped and its
+    /// Relationship stays; an `entityList` keeps the Entities a rule holds
+    /// for, each projected; a document that is no object is left alone.
+    #[test]
+    fn normalized_embeds_keep_only_what_a_rule_holds_for() {
+        let mut e = json!({"id": "urn:a", "type": "T",
+            "ref": {"type": "Relationship", "object": "urn:b",
+                "entity": {"id": "urn:b", "type": "T", "x": 1}},
+            "ref2": {"type": "Relationship", "object": "urn:c",
+                "entity": {"id": "urn:c", "type": "T", "speed": 1, "other": 2}},
+            "list": [{"type": "ListRelationship",
+                "entityList": [{"id": "urn:c", "type": "T", "speed": 1, "other": 2},
+                               {"id": "urn:b", "type": "T"}]}],
+            "plain": "text"});
+        project_shown(&shown(), &mut e, false);
+        assert!(e["ref"].get("entity").is_none(), "{e}");
+        assert_eq!(e["ref"]["object"], "urn:b");
+        assert_eq!(e["ref2"]["entity"], json!({"id": "urn:c", "type": "T", "speed": 1}));
+        assert_eq!(e["list"][0]["entityList"], json!([{"id": "urn:c", "type": "T", "speed": 1}]));
+        let mut odd = json!("urn:a");
+        project_shown(&shown(), &mut odd, false);
+        assert_eq!(odd, json!("urn:a"));
+    }
+
+    /// ADR-0020: a Policy's pick reaches every Entity join=inline embedded,
+    /// under `entity`, under `entityList` and in keyValues in place.
+    #[test]
+    fn a_policy_pick_reaches_every_joined_entity() {
+        let f = crate::policy::Filter {
+            pick: vec!["speed".into(), "ref".into(), "list".into()],
+            ..Default::default()
+        };
+        let mut e = json!({"id": "urn:a", "type": "T", "speed": 1, "x": 2,
+            "ref": {"type": "Relationship", "entity": {"id": "urn:b", "type": "T", "x": 1, "speed": 2}},
+            "list": [{"type": "ListRelationship",
+                "entityList": [{"id": "urn:c", "type": "T", "x": 1}]}, "text"]});
+        project_joined(&f, &mut e, false);
+        assert!(e.get("x").is_none(), "{e}");
+        assert_eq!(e["ref"]["entity"], json!({"id": "urn:b", "type": "T", "speed": 2}));
+        assert_eq!(e["list"][0]["entityList"], json!([{"id": "urn:c", "type": "T"}]));
+        let mut kv = json!({"id": "urn:a", "type": "T", "ref": {"id": "urn:b", "type": "T", "x": 1},
+            "speed": [1, 2]});
+        project_joined(&f, &mut kv, true);
+        assert_eq!(kv["ref"], json!({"id": "urn:b", "type": "T"}));
+        let mut odd = json!(7);
+        project_joined(&f, &mut odd, true);
+        assert_eq!(odd, json!(7));
+    }
+
+    /// A failed read is logged and read as nothing found, never a panic.
+    #[test]
+    fn a_failed_read_is_read_as_nothing() {
+        let got: Vec<Value> = read_or_warn(
+            Err(antares_model::NgsiError::InternalError("store down".into())),
+            "the test rows",
+        );
+        assert!(got.is_empty());
+        assert_eq!(read_or_warn(Ok(vec![1]), "rows"), vec![1]);
+    }
+
+    /// 5.8.6: deleting one instance and adding another of the same Attribute
+    /// is both attributeDeleted and attributeUpdated.
+    #[test]
+    fn an_instance_swapped_for_another_is_deleted_and_updated() {
+        let before = json!({"id": "urn:a", "speed": [{"value": 1, "datasetId": "urn:ds:1"}]});
+        let after = json!({"id": "urn:a", "speed": [{"value": 1, "datasetId": "urn:ds:2"}]});
+        let classes: Vec<ChangeClass> = diff(Some(&before), Some(&after)).into_iter().map(|(_, c)| c).collect();
+        assert_eq!(classes, vec![ChangeClass::Deleted, ChangeClass::Updated]);
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod deleted_subscription_delivery {
     use super::*;
