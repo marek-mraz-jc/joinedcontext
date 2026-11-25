@@ -157,13 +157,8 @@ fn flush(now: Instant) {
     };
     lines.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     for (fingerprint, seen) in lines {
-        tracing::warn!(
-            target: "jc::slow_statement",
-            fingerprint,
-            statements = seen.statements,
-            slowest_seconds = seen.slowest,
-            "slow statements in the last minute: execution time exceeded alert threshold"
-        );
+        #[rustfmt::skip]
+        tracing::warn!(target: "jc::slow_statement", fingerprint, statements = seen.statements, slowest_seconds = seen.slowest, "slow statements in the last minute: execution time exceeded alert threshold");
     }
 }
 
@@ -223,17 +218,7 @@ mod tests {
     fn slow(sql: &str, seconds: f64) {
         let threshold = Duration::from_secs(1);
         let elapsed = Duration::from_secs_f64(seconds);
-        tracing::warn!(
-            target: "sqlx::query",
-            summary = "select id from …",
-            db.statement = format!("\n\n{sql}\n"),
-            rows_affected = 0u64,
-            rows_returned = 1u64,
-            ?elapsed,
-            elapsed_secs = seconds,
-            slow_threshold = ?threshold,
-            "slow statement: execution time exceeded alert threshold"
-        );
+        tracing::warn!(target: "sqlx::query", summary = "select id from …", db.statement = format!("\n\n{sql}\n"), rows_affected = 0u64, rows_returned = 1u64, ?elapsed, elapsed_secs = seconds, slow_threshold = ?threshold, "slow statement: execution time exceeded alert threshold");
     }
 
     #[test]
@@ -270,16 +255,7 @@ mod tests {
     #[test]
     fn a_statement_without_its_text_is_counted_by_its_summary() {
         let log = logged(|| {
-            tracing::warn!(
-                target: "sqlx::query",
-                summary = "update ledger set n = 5 where k = 'x' …",
-                db.statement = "  ",
-                db.system = "postgresql",
-                elapsed_secs = 3.0,
-                rows_secs = 0.5,
-                slow_threshold = ?Duration::from_secs(1),
-                "slow statement: execution time exceeded alert threshold"
-            );
+            tracing::warn!(target: "sqlx::query", summary = "update ledger set n = 5 where k = 'x' …", db.statement = "  ", db.system = "postgresql", elapsed_secs = 3.0, rows_secs = 0.5, slow_threshold = ?Duration::from_secs(1), "slow statement: execution time exceeded alert threshold");
             slow("select a from aardvark", 1.0);
         });
         // One line per fingerprint, in fingerprint order.

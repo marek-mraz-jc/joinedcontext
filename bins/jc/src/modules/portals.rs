@@ -1264,3 +1264,322 @@ mod tests {
         );
     }
 }
+
+/// The writer half of the reconciler and the Portal's desks on a memory dataroom (T-7820):
+/// each round writes, moves and deletes what it should, and each desk call reaches its own
+/// portal's catalogue alone.
+#[cfg(test)]
+mod desk_tests {
+    use super::*;
+    use dataroom_core::LiveAuthorizer;
+    use dataroom_core::files::FileStore;
+    use dataroom_store_memory::MemoryStore;
+    use std::sync::Arc;
+
+    fn city() -> Vec<OrganizationPortals> {
+        let installation = OrgId::parse_verified("00000000-0000-7000-8000-000000000001").unwrap();
+        vec![OrganizationPortals {
+            name: "city".into(),
+            org_id: OrgId::of_organization(installation, "city"),
+            catalogue_id: CatalogueId::parse_verified("00000000-0000-7000-8000-0000000000c1")
+                .unwrap(),
+            scheme: "https".into(),
+            opendata: "data.city.test".into(),
+            listed: vec!["mobility.city.test".into()],
+            harvest_hosts: vec!["data.kosice.sk".into()],
+            config_dir: None,
+            own_gateway: None,
+        }]
+    }
+
+    fn portal(path: &str, sources: serde_json::Value) -> PortalSpec {
+        serde_json::from_value(serde_json::json!({
+            "organizationRef": "city", "path": path, "sources": sources,
+        }))
+        .unwrap()
+    }
+
+    /// A source the harvest guard refuses before any request (a loopback address).
+    fn loopback() -> serde_json::Value {
+        serde_json::json!([{ "name": "local", "type": "dcat-ap",
+            "url": "http://127.0.0.1:9/catalog.ttl", "allowedHosts": ["127.0.0.1"] }])
+    }
+
+    fn writer(store: Arc<MemoryStore>, files: &std::path::Path) -> CatalogueWriter {
+        let orgs = city();
+        let authorizer = Arc::new(LiveAuthorizer::new(Vec::new()));
+        let state = dataroom_api::DataroomState::new(
+            store,
+            authorizer.clone(),
+            orgs[0].org_id,
+            orgs[0].catalogue_id,
+        )
+        .with_files(Arc::new(FileStore::new(files.to_path_buf())));
+        CatalogueWriter::new(state, authorizer, Arc::default())
+    }
+
+    fn served(names: &[(&str, PortalSpec)]) -> BTreeMap<String, PortalSpec> {
+        names
+            .iter()
+            .map(|(n, p)| ((*n).to_owned(), p.clone()))
+            .collect()
+    }
+
+    async fn sources(w: &CatalogueWriter, path: &str) -> Vec<String> {
+        let (org, id) = (
+            city()[0].org_id,
+            CatalogueId::of_portal(city()[0].org_id, path),
+        );
+        let answer = w
+            .run_op(org, id, "harvest_source.list", serde_json::json!({}))
+            .await
+            .expect("the catalogue is served");
+        let mut names: Vec<String> = answer["sources"]
+            .as_array()
+            .or_else(|| answer.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|s| s["name"].as_str().map(str::to_owned))
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[tokio::test]
+    async fn a_round_writes_moves_and_deletes_further_portals_and_their_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = writer(Arc::new(MemoryStore::new()), dir.path());
+        let orgs = city();
+        let mut done = BTreeMap::new();
+        let two = serde_json::json!([
+            { "name": "a", "type": "dcat-ap", "url": "https://data.kosice.sk/a.ttl" },
+            { "name": "b", "type": "dcat-ap", "url": "https://data.kosice.sk/b.ttl" },
+        ]);
+        let mobility = portal("mobility", two);
+        apply(&w, &orgs, &mut done, served(&[("m", mobility.clone())])).await;
+        assert_eq!(done.get("m"), Some(&mobility));
+        assert_eq!(sources(&w, "mobility").await, ["a", "b"]);
+        // The same manifest again writes nothing new.
+        apply(&w, &orgs, &mut done, served(&[("m", mobility.clone())])).await;
+        // A source left out of the manifest is deleted, an endpoints source is never harvested.
+        let fewer = portal(
+            "mobility",
+            serde_json::json!([
+                { "name": "a", "type": "dcat-ap", "url": "https://data.kosice.sk/a.ttl" },
+                { "name": "own", "type": "endpoints" },
+            ]),
+        );
+        apply(&w, &orgs, &mut done, served(&[("m", fewer.clone())])).await;
+        assert_eq!(sources(&w, "mobility").await, ["a"]);
+        // A move to another path leaves the old catalogue.
+        let moved = portal("transit", serde_json::json!([]));
+        apply(&w, &orgs, &mut done, served(&[("m", moved.clone())])).await;
+        assert_eq!(done.get("m"), Some(&moved));
+        let old = CatalogueId::of_portal(orgs[0].org_id, "mobility");
+        assert!(
+            w.datasets(orgs[0].org_id, old).await.is_err(),
+            "the old path is gone"
+        );
+        // A portal that left the manifests is deleted.
+        apply(&w, &orgs, &mut done, BTreeMap::new()).await;
+        assert!(done.is_empty());
+        let gone = CatalogueId::of_portal(orgs[0].org_id, "transit");
+        assert!(w.datasets(orgs[0].org_id, gone).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_refused_portal_or_source_is_left_for_the_next_round() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = writer(Arc::new(MemoryStore::new()), dir.path());
+        let orgs = city();
+        let mut done = BTreeMap::new();
+        // A host the Organization does not list: never served.
+        let mut far: PortalSpec = portal("far", serde_json::json!([]));
+        far.host = Some("data.town.test".into());
+        // A source outside the harvest allow-list: the catalogue is written, the round retried.
+        let wide = portal(
+            "wide",
+            serde_json::json!([{ "name": "x", "type": "dcat-ap",
+                "url": "https://data.praha.eu/c.ttl", "allowedHosts": ["files.praha.eu"] }]),
+        );
+        // A portal of an Organization jc does not serve.
+        let mut stranger = portal("other", serde_json::json!([]));
+        stranger.organization_ref = "town".into();
+        apply(
+            &w,
+            &orgs,
+            &mut done,
+            served(&[
+                ("far", far),
+                ("wide", wide.clone()),
+                ("x", stranger.clone()),
+            ]),
+        )
+        .await;
+        assert!(done.is_empty(), "{:?}", done.keys().collect::<Vec<_>>());
+        assert!(!sync_sources(&w, &orgs, None, &stranger).await);
+        assert!(!sync_sources(&w, &orgs, None, &wide).await);
+    }
+
+    #[tokio::test]
+    async fn the_default_portal_keeps_its_catalogue_and_drops_only_its_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = writer(Arc::new(MemoryStore::new()), dir.path());
+        let orgs = city();
+        let mut done = BTreeMap::new();
+        let default = portal("default", serde_json::json!([]));
+        apply(&w, &orgs, &mut done, served(&[("d", default.clone())])).await;
+        assert!(
+            done.contains_key("d"),
+            "a default without sources writes nothing"
+        );
+        assert!(further_catalogue(&default, &orgs).is_none());
+        apply(&w, &orgs, &mut done, BTreeMap::new()).await;
+        assert!(
+            done.is_empty(),
+            "default left the manifests: its sources went"
+        );
+        // A default naming a source before its own catalogue is routed: the source is not
+        // written and the next round tries again.
+        let with = portal("default", loopback());
+        apply(&w, &orgs, &mut done, served(&[("d", with.clone())])).await;
+        assert!(done.is_empty(), "retried next round");
+    }
+
+    #[tokio::test]
+    async fn the_desks_reach_their_own_portals_catalogue_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = writer(Arc::new(MemoryStore::new()), dir.path());
+        let orgs = city();
+        let mut done = BTreeMap::new();
+        let mobility = portal("mobility", loopback());
+        apply(&w, &orgs, &mut done, served(&[("m", mobility.clone())])).await;
+        let desk = Desk {
+            writer: w.clone(),
+            orgs: orgs.clone(),
+            active: Arc::default(),
+        };
+        let mut stranger = portal("mobility", serde_json::json!([]));
+        stranger.organization_ref = "town".into();
+        let unserved = portal("unserved", serde_json::json!([]));
+
+        // Sources.
+        assert_eq!(
+            SourceDesk::test(&desk, &stranger, "local")
+                .await
+                .unwrap_err(),
+            DeskError::NotFound
+        );
+        assert!(SourceDesk::test(&desk, &unserved, "local").await.is_err());
+        assert!(SourceDesk::test(&desk, &mobility, "nope").await.is_err());
+        let tested = SourceDesk::test(&desk, &mobility, "local").await;
+        assert!(
+            !matches!(tested, Err(DeskError::NotFound)),
+            "a served source answers: {tested:?}"
+        );
+        assert_eq!(
+            desk.runs(&mobility, "local").await.unwrap(),
+            Vec::<serde_json::Value>::new()
+        );
+        assert!(desk.runs(&stranger, "local").await.is_err());
+        // A start holds the source until its run ends: a second start meanwhile is busy.
+        desk.active.lock().unwrap().insert((
+            CatalogueId::of_portal(orgs[0].org_id, "mobility"),
+            "local".into(),
+        ));
+        assert_eq!(
+            desk.start(&mobility, "local").await.unwrap_err(),
+            DeskError::Busy
+        );
+        desk.active.lock().unwrap().clear();
+        desk.start(&mobility, "local").await.expect("started");
+        for _ in 0..100 {
+            if desk.active.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(desk.active.lock().unwrap().is_empty(), "the run ended");
+        assert!(desk.start(&stranger, "local").await.is_err());
+
+        // Datasets.
+        let page = desk.datasets(&mobility, 0, 10).await.unwrap();
+        assert_eq!((page.total, page.datasets.len()), (0, 0));
+        assert_eq!(
+            desk.datasets(&stranger, 0, 10).await.unwrap_err(),
+            DeskError::NotFound
+        );
+
+        // Files.
+        let (files, limits) = FileDesk::list(&desk, &mobility).await.unwrap();
+        assert!(files.is_empty() && limits.files == 0);
+        let up = desk
+            .upload(&mobility, "ana", "plan.csv", b"a,b\n1,2\n".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(
+            (up.name.as_str(), up.uploaded_by.as_str()),
+            ("plan.csv", "ana")
+        );
+        let renamed = desk
+            .rename(&mobility, "ana", &up.id, "plan-2026.csv")
+            .await
+            .unwrap();
+        assert_eq!(renamed.name, "plan-2026.csv");
+        let replaced = desk
+            .replace(&mobility, "ana", &up.id, b"a,b\n3,4\n".to_vec())
+            .await
+            .unwrap();
+        assert_ne!(replaced.sha256, up.sha256);
+        assert_eq!(FileDesk::list(&desk, &mobility).await.unwrap().0.len(), 1);
+        FileDesk::delete(&desk, &mobility, "ana", &up.id)
+            .await
+            .unwrap();
+        assert!(matches!(
+            FileDesk::delete(&desk, &mobility, "ana", &up.id).await,
+            Err(FileRefusal::Desk(DeskError::NotFound))
+        ));
+        // A name the store refuses names the problem, without the field prefix.
+        assert!(matches!(
+            desk.upload(&mobility, "ana", "../x.exe", b"MZ".to_vec())
+                .await,
+            Err(FileRefusal::Invalid(_))
+        ));
+        assert!(matches!(
+            FileDesk::list(&desk, &stranger).await,
+            Err(DeskError::NotFound)
+        ));
+        assert!(matches!(
+            desk.upload(&stranger, "ana", "plan.csv", Vec::new()).await,
+            Err(FileRefusal::Desk(DeskError::NotFound))
+        ));
+    }
+
+    #[test]
+    fn each_dataroom_error_maps_to_its_desk_answer() {
+        use dataroom_core::DataroomError as E;
+        assert_eq!(desk_error(E::NotFound("x".into())), DeskError::NotFound);
+        assert_eq!(desk_error(E::Conflict("x".into())), DeskError::Busy);
+        assert!(matches!(
+            desk_error(E::Storage("down".into())),
+            DeskError::Failed(why) if why.contains("down")
+        ));
+        let invalid = E::Validation {
+            message: "file: too big".into(),
+            fields: BTreeMap::from([("file".into(), vec!["too big".into()])]),
+        };
+        assert_eq!(
+            file_refusal(invalid),
+            FileRefusal::Invalid("too big".into())
+        );
+        let bare = E::Validation {
+            message: "refused".into(),
+            fields: BTreeMap::new(),
+        };
+        assert_eq!(file_refusal(bare), FileRefusal::Invalid("refused".into()));
+        assert_eq!(
+            file_refusal(E::NotFound("f".into())),
+            FileRefusal::Desk(DeskError::NotFound)
+        );
+    }
+}

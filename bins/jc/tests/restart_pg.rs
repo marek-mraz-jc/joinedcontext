@@ -709,17 +709,21 @@ async fn a_superuser_request_role_is_refused_by_every_module() {
             .await
             .unwrap();
     }
-    let password = url::Url::parse(&admin_url)
-        .unwrap()
-        .password()
-        .unwrap_or_default()
-        .to_owned();
+    // A superuser login of its own, its password unlike any name a message may carry (the
+    // admin's `postgres:postgres` would be "printed" by every message naming the login).
+    let password = "pw-jc-rls-super-7820".to_owned();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DO $$ BEGIN CREATE ROLE jc_rls_super; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+         ALTER ROLE jc_rls_super LOGIN SUPERUSER PASSWORD '{password}';"
+    )))
+    .execute(&admin)
+    .await
+    .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let pw = dir.path().join("pw");
     std::fs::write(&pw, &password).unwrap();
     let url = format!(
-        "postgres://{}@{}:{}/{db}",
-        base.get_username(),
+        "postgres://jc_rls_super@{}:{}/{db}",
         base.get_host(),
         base.get_port()
     );
@@ -729,13 +733,7 @@ async fn a_superuser_request_role_is_refused_by_every_module() {
         let config = dir.path().join(format!("{module}.toml"));
         // Antares names its owner and maintenance logins too (T-7488); the refusal comes first.
         let split = if module == "antares" {
-            let other = |role: &str| {
-                url.replacen(
-                    &format!("://{}@", base.get_username()),
-                    &format!("://{role}@"),
-                    1,
-                )
-            };
+            let other = |role: &str| url.replacen("://jc_rls_super@", &format!("://{role}@"), 1);
             format!(
                 "migrate_url = \"{}\"\nmigrate_password_file = {pw:?}\nmaintenance_url = \"{}\"\nmaintenance_password_file = {pw:?}\n",
                 other("antares_owner"),
@@ -772,10 +770,7 @@ async fn a_superuser_request_role_is_refused_by_every_module() {
             lower.contains("superuser") || lower.contains("bypass"),
             "{module} names the refused role attribute: {stderr}"
         );
-        assert!(
-            password.is_empty() || !stderr.contains(&password),
-            "{module} printed the password"
-        );
+        assert!(!stderr.contains(&password), "{module} printed the password");
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "DROP DATABASE IF EXISTS {db} WITH (FORCE)"
