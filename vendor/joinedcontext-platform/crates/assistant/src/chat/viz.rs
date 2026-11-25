@@ -1087,4 +1087,60 @@ mod tests {
         table.aggregation = None;
         assert_eq!(aggregated(&table), None);
     }
+
+    /// A count by value lays each name over its bar, the height growing with the bars; each
+    /// history period has its own axis format, and a period it does not know has none.
+    #[test]
+    fn a_count_by_value_and_each_history_period_draw_their_own_axes() {
+        let mut table = air();
+        table.columns = vec!["operator".into(), "count".into()];
+        table.rows = vec![
+            vec![json!("Mesto"), json!(12)],
+            vec![json!("Kraj"), json!(5)],
+            vec![json!("Štát"), json!(1)],
+        ];
+        table.units = vec![None, None];
+        table.labels = vec![None, None];
+        table.enums = vec![
+            Some([("Mesto".to_owned(), [("en".to_owned(), "City".to_owned())].into())].into()),
+            None,
+        ];
+        let made = |method: &str, per: &'static str| super::super::view::Aggregation {
+            method: method.into(),
+            per,
+            of: "operator".into(),
+            shown: 18,
+            total: 18,
+            partial: false,
+            days: None,
+            years: None,
+        };
+        table.aggregation = Some(made("count", "value"));
+        let bars = aggregated(&table).expect("a chart");
+        assert_eq!(bars["spec"]["layer"][0]["mark"]["yOffset"], 8);
+        assert_eq!(bars["spec"]["height"], 120);
+        assert_eq!(bars["spec"]["encoding"]["y"]["axis"], Value::Null);
+        assert_eq!(bars["enums"]["Mesto"]["en"], "City");
+
+        let mut history = air();
+        history.columns = vec!["observedAt".into(), "station".into(), "pm10".into()];
+        history.rows = vec![
+            vec![json!("2026-01-01T00:00:00Z"), json!("Centrum"), json!(21.0)],
+            vec![json!("2026-02-01T00:00:00Z"), json!("Centrum"), json!(25.5)],
+        ];
+        history.units = vec![None, None, None];
+        history.labels = vec![None, None, None];
+        history.enums = vec![None, None, None];
+        for (per, format) in [
+            ("day", json!("%-d %b")),
+            ("month", json!("%b %Y")),
+            ("year", json!("%Y")),
+            ("hour", Value::Null),
+        ] {
+            history.aggregation = Some(made("avg", per));
+            let line = aggregated(&history).expect("a chart");
+            assert_eq!(line["spec"]["encoding"]["x"]["axis"]["format"], format, "{per}");
+            assert_eq!(line["spec"]["encoding"]["x"]["scale"]["type"], "utc");
+        }
+    }
 }

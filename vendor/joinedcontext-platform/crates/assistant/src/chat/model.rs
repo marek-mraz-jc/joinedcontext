@@ -1258,6 +1258,122 @@ mod tests {
         );
     }
 
+    /// A realm answering `template` to the token path, and the model asking it.
+    async fn realm_answering(template: wiremock::ResponseTemplate) -> (Model, wiremock::MockServer) {
+        use wiremock::{matchers::method, Mock, MockServer};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(template)
+            .mount(&realm)
+            .await;
+        (a_model(&realm.uri(), "http://127.0.0.1:9"), realm)
+    }
+
+    /// A token that lives a second is renewed at half its life: past it the next question asks
+    /// the realm again rather than sending an expired token.
+    #[tokio::test]
+    async fn an_expired_service_token_is_asked_for_again() {
+        let (model, realm) = realm_answering(
+            wiremock::ResponseTemplate::new(200)
+                .set_body_json(json!({"access_token": "short", "expires_in": 1})),
+        )
+        .await;
+        assert_eq!(model.token().await.expect("a token"), "short");
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(model.token().await.expect("a token again"), "short");
+        let asked = realm.received_requests().await.expect("recorded");
+        assert_eq!(asked.len(), 2, "the expired token was not reused");
+    }
+
+    #[tokio::test]
+    async fn a_token_answer_without_a_token_or_not_json_is_unavailable() {
+        for template in [
+            wiremock::ResponseTemplate::new(200).set_body_json(json!({"token_type": "Bearer"})),
+            wiremock::ResponseTemplate::new(200).set_body_string("<html>"),
+        ] {
+            let (model, _realm) = realm_answering(template).await;
+            let got = model.token().await;
+            assert!(
+                matches!(&got, Err(CallError::Unavailable(why)) if why == MODEL_UNREACHABLE),
+                "{got:?}"
+            );
+        }
+    }
+
+    /// A projected token file that cannot be read fails before the realm is asked, for the
+    /// service token and for a caller's introspection alike.
+    #[tokio::test]
+    async fn an_unreadable_assertion_file_is_unavailable_without_asking_the_realm() {
+        let (mut model, realm) =
+            realm_answering(wiremock::ResponseTemplate::new(200).set_body_json(json!({}))).await;
+        model.config.credential =
+            jc_core::ClientCredential::Assertion("/nonexistent/jc-assistant-token".into());
+        assert!(matches!(model.token().await, Err(CallError::Unavailable(_))));
+        assert!(matches!(
+            model.is_service_account("t", "portal-api").await,
+            Err(CallError::Unavailable(_))
+        ));
+        assert!(realm.received_requests().await.expect("recorded").is_empty());
+    }
+
+    /// AG-113: only an active token of the client's own service account, whose audience names
+    /// this service, passes; every other introspection answer is a refusal, and a realm that
+    /// fails is unavailable.
+    #[tokio::test]
+    async fn a_service_account_token_passes_only_when_the_realm_vouches_for_every_claim() {
+        let account = |extra: Value| {
+            let mut seen = json!({
+                "active": true,
+                "azp": "portal-api",
+                "username": "service-account-portal-api",
+                "aud": "jc-assistant",
+            });
+            for (key, value) in extra.as_object().expect("an object") {
+                seen[key] = value.clone();
+            }
+            wiremock::ResponseTemplate::new(200).set_body_json(seen)
+        };
+        let cases = [
+            (account(json!({})), true),
+            (account(json!({"username": "SERVICE-ACCOUNT-PORTAL-API"})), true),
+            (account(json!({"aud": ["account", "jc-assistant"]})), true),
+            (account(json!({"aud": ["account"]})), false),
+            (account(json!({"aud": 7})), false),
+            (account(json!({"active": false})), false),
+            (account(json!({"azp": "other-client"})), false),
+            (account(json!({"username": "alice"})), false),
+        ];
+        for (template, passes) in cases {
+            let (model, realm) = realm_answering(template).await;
+            let got = model
+                .is_service_account("bearer-under-test", "portal-api")
+                .await
+                .expect("judged");
+            assert_eq!(got, passes);
+            let asked = realm.received_requests().await.expect("recorded");
+            assert_eq!(asked[0].url.path(), "/token/introspect");
+            let form = String::from_utf8_lossy(&asked[0].body).into_owned();
+            assert!(form.contains("token=bearer-under-test"), "{form}");
+        }
+        for template in [
+            wiremock::ResponseTemplate::new(503),
+            wiremock::ResponseTemplate::new(200).set_body_string("not json"),
+        ] {
+            let (model, _realm) = realm_answering(template).await;
+            assert!(matches!(
+                model.is_service_account("t", "portal-api").await,
+                Err(CallError::Unavailable(_))
+            ));
+        }
+        let unreachable = a_model("http://127.0.0.1:9", "http://127.0.0.1:9");
+        assert!(matches!(
+            unreachable.is_service_account("t", "portal-api").await,
+            Err(CallError::Unavailable(_))
+        ));
+        let mut log = Log::default();
+        std::io::Write::flush(&mut log).expect("a log flushes");
+    }
+
     fn a_model(realm: &str, proxy: &str) -> Model {
         Model::new(
             ModelConfig {
