@@ -63,8 +63,7 @@ struct Broker(Child);
 
 impl Drop for Broker {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        common::stop(&mut self.0);
     }
 }
 
@@ -905,6 +904,48 @@ fn health_probe_follows_the_broker() {
     assert!(
         !probe(free_port()),
         "a port nobody serves must fail the probe"
+    );
+}
+
+/// A broker that answers but not with 200 (a drain's 503) fails the probe,
+/// and the probe says what it read.
+#[test]
+fn health_probe_fails_on_a_non_200_answer() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let server = std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().expect("accept");
+        let mut head = [0u8; 64];
+        let _ = s.read(&mut head);
+        s.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+            .expect("answer");
+    });
+    let out = Command::new(env!("CARGO_BIN_EXE_antares"))
+        .arg("--health")
+        .env("ANTARES_HTTP_PORT", port.to_string())
+        .output()
+        .expect("run probe");
+    server.join().expect("server");
+    assert!(!out.status.success(), "a 503 must fail the probe");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("health: HTTP/1.1 503"), "{err}");
+}
+
+/// `antares --version` answers without starting anything: no port is bound
+/// and no store opened, whatever the environment says.
+#[test]
+fn version_answers_without_starting_a_broker() {
+    let out = Command::new(env!("CARGO_BIN_EXE_antares"))
+        .arg("--version")
+        .env("ANTARES_STORE", "file")
+        .env_remove("ANTARES_DATA_DIR")
+        .output()
+        .expect("run --version");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.starts_with(&format!("antares {} (", env!("CARGO_PKG_VERSION"))),
+        "{text}"
     );
 }
 

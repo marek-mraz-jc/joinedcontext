@@ -17,8 +17,7 @@ struct Broker(Child);
 
 impl Drop for Broker {
     fn drop(&mut self) {
-        let _killed = self.0.kill();
-        let _waited = self.0.wait();
+        common::stop(&mut self.0);
     }
 }
 

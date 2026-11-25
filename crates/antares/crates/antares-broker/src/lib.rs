@@ -12,6 +12,8 @@
 //! broker per process.
 #![cfg_attr(not(test), warn(clippy::expect_used))]
 
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
 #[cfg(feature = "mcp")]
 mod mcp_relay;
 pub mod shutdown;
@@ -437,6 +439,29 @@ pub struct BrokerConfig {
     /// cross-Tenant work (0042, 0043).
     pub maintenance_database_url: Option<Secret>,
 }
+
+// The boot's log lines, held here so each call stays on one line.
+const HYPERTABLE: &str = "attr_instances is a hypertable (migrations ran with the timescaledb \
+    extension present); the plain-mode partition job stands down, retention runs via drop_chunks";
+const RLS_BYPASSED: &str = "database role bypasses row-level security (superuser or BYPASSRLS) \
+    — tenant isolation rests on the explicit predicates only; use a non-superuser role in \
+    production (set ANTARES_REQUIRE_RLS=1 to enforce)";
+const SERVING: &str = "pool up, migrations applied, serving from postgres";
+const RESERVED: &str = "connections are kept for batch writes";
+const SEALED: &str = "receiverInfo and contextSourceInfo are sealed at rest";
+const SEALED_NOW: &str = "row(s) written before the key sealed now";
+const PLAINTEXT: &str = "Subscription receiverInfo and Registration contextSourceInfo \
+    (credentials) are stored in plaintext";
+const ASYNC_COMMIT: &str = "batch writes commit with synchronous_commit = off";
+#[cfg(not(feature = "internal-csr"))]
+const NO_ICSR: &str =
+    "this build has no internal-csr feature: every federation forward goes over HTTP";
+const ADMIN_OPEN: &str = "/q admin routes (tenants, dead letters, metrics) answer without a \
+    credential: ANTARES_ADMIN_OPEN=1 and ANTARES_ADMIN_TOKEN_FILE is unset";
+const ADMIN_CLOSED: &str = "/q admin routes (tenants, dead letters, views, policy) answer 401: \
+    ANTARES_ADMIN_TOKEN_FILE is unset; set it to use them (ANTARES_ADMIN_OPEN=1 opens them on a \
+    test stack)";
+const SUBJECT_FROM: &str = "policy subject headers believed from these mesh identities alone";
 
 /// Connections of the owner's pool (ANTARES_MIGRATION_DATABASE_URL): one
 /// for the migration at start, one for the maintenance job's DDL.
@@ -1181,11 +1206,7 @@ async fn build_builtin(
                             .into());
                         }
                         if mode == StoreMode::Postgres && backend == TemporalBackend::Hypertable {
-                            tracing::info!(
-                                "attr_instances is a hypertable (migrations ran with \
-                                 the timescaledb extension present); the plain-mode partition \
-                                 job stands down, retention runs via drop_chunks"
-                            );
+                            tracing::info!("{HYPERTABLE}");
                         }
                         // RLS is a belt only when the role wears it —
                         // superuser/BYPASSRLS makes every policy inert. Warn
@@ -1207,17 +1228,9 @@ async fn build_builtin(
                                         .into(),
                                 );
                             }
-                            tracing::warn!(
-                                "database role bypasses row-level security (superuser or \
-                                 BYPASSRLS) — tenant isolation rests on the explicit \
-                                 predicates only; use a non-superuser role in production \
-                                 (set ANTARES_REQUIRE_RLS=1 to enforce)"
-                            );
+                            tracing::warn!("{RLS_BYPASSED}");
                         }
-                        tracing::info!(
-                            "ANTARES_STORE={mode}: pool up, migrations applied, serving \
-                             from postgres (temporal backend: {backend:?})"
-                        );
+                        tracing::info!(?backend, "ANTARES_STORE={mode}: {SERVING}");
                         // Read once, here: /q/health is polled, so what it
                         // says about the server is captured at startup and
                         // never queried on the request.
@@ -1242,10 +1255,8 @@ async fn build_builtin(
                             .map_err(|e| {
                                 format!("ANTARES_PG_WRITE_RESERVE: reserve pool not opened: {e}")
                             })?;
-                            tracing::info!(
-                                "ANTARES_PG_WRITE_RESERVE: {write_reserve} of {pool_size} \
-                                 connections are kept for batch writes"
-                            );
+                            let (of, kept) = (pool_size, write_reserve);
+                            tracing::info!("ANTARES_PG_WRITE_RESERVE: {kept} of {of} {RESERVED}");
                             backend_pg = backend_pg.with_write_reserve(reserve);
                         }
                         // T-7307: the outbox drain, the reaps, retention and
@@ -1269,21 +1280,12 @@ async fn build_builtin(
                                     "ANTARES_SECRET_KEY: sealing stored credentials failed: {e}"
                                 )
                             })?;
-                            tracing::info!(
-                                "ANTARES_SECRET_KEY: receiverInfo and contextSourceInfo are sealed \
-                                 at rest ({sealed} row(s) written before the key sealed now)"
-                            );
+                            tracing::info!("ANTARES_SECRET_KEY: {SEALED} ({sealed} {SEALED_NOW})");
                         } else {
-                            tracing::warn!(
-                                "ANTARES_SECRET_KEY is not set: Subscription receiverInfo and \
-                                 Registration contextSourceInfo (credentials) are stored in plaintext"
-                            );
+                            tracing::warn!("ANTARES_SECRET_KEY is not set: {PLAINTEXT}");
                         }
                         if async_batch {
-                            tracing::info!(
-                                "ANTARES_PG_BATCH_ASYNC_COMMIT: batch writes commit with \
-                                 synchronous_commit = off"
-                            );
+                            tracing::info!("ANTARES_PG_BATCH_ASYNC_COMMIT: {ASYNC_COMMIT}");
                         }
                         store.set_async_batch_commit(async_batch);
                         return Ok((store, Some(backend)));
@@ -1596,10 +1598,7 @@ pub async fn build_state(
     }
     #[cfg(not(feature = "internal-csr"))]
     if std::env::var_os("ANTARES_SELF_URLS").is_some() {
-        tracing::warn!(
-            "ANTARES_SELF_URLS is set and this build has no internal-csr feature: \
-             every federation forward goes over HTTP"
-        );
+        tracing::warn!("ANTARES_SELF_URLS is set and {NO_ICSR}");
     }
     // The /q admin credential, before the router mounts the admin surface.
     // Unconfigured, /q is closed (a secret nobody holds) unless the deployment
@@ -1623,17 +1622,10 @@ pub async fn build_state(
             tracing::info!("/q admin routes require the admin token ({auth:?})");
             state = state.with_admin_auth(auth);
         }
-        (None, true) => tracing::warn!(
-            "/q admin routes (tenants, dead letters, metrics) answer without a credential: \
-             ANTARES_ADMIN_OPEN=1 and ANTARES_ADMIN_TOKEN_FILE is unset"
-        ),
+        (None, true) => tracing::warn!("{ADMIN_OPEN}"),
         (None, false) => {
             let open = admin_metrics.as_deref().map(str::trim) == Some("open");
-            tracing::warn!(
-                "/q admin routes (tenants, dead letters, views, policy) answer 401: \
-                 ANTARES_ADMIN_TOKEN_FILE is unset; set it to use them \
-                 (ANTARES_ADMIN_OPEN=1 opens them on a test stack)"
-            );
+            tracing::warn!("{ADMIN_CLOSED}");
             state = state.with_admin_auth(antares_api::admin_auth::AdminAuth::closed(open));
         }
     }
@@ -1891,10 +1883,7 @@ pub fn router(broker: Broker) -> Result<Served, Box<dyn std::error::Error>> {
     .layer(antares_api::compression());
     let routed = match subject_from {
         Some(from) => {
-            tracing::info!(
-                ?from,
-                "policy subject headers believed from these mesh identities alone"
-            );
+            tracing::info!(?from, "{SUBJECT_FROM}");
             routed.layer(tower::util::MapRequestLayer::new(
                 move |mut req: axum::extract::Request| {
                     let path = req.uri().path().to_owned();
@@ -2245,6 +2234,27 @@ async fn wait_drain(rx: &mut tokio::sync::watch::Receiver<bool>) {
     }
 }
 
+/// The live services a test reads from the harness namespace; unset, the test
+/// skips loudly (each caller returns on `None`).
+#[cfg(test)]
+pub(crate) mod test_env {
+    pub fn db() -> Option<String> {
+        var("ANTARES_TEST_DATABASE_URL")
+    }
+
+    pub fn nats() -> Option<String> {
+        var("ANTARES_TEST_NATS_URL")
+    }
+
+    fn var(key: &str) -> Option<String> {
+        let value = std::env::var(key).ok();
+        if value.is_none() {
+            eprintln!("SKIP: {key} not set");
+        }
+        value
+    }
+}
+
 #[cfg(test)]
 mod config_key_tests {
     use super::unknown_config_key;
@@ -2444,7 +2454,24 @@ mod config_key_tests {
 
 #[cfg(test)]
 mod accept_loop_tests {
-    use super::{accept, accept_backoff};
+    use super::{accept, accept_backoff, wait_drain};
+
+    /// The drain signal reaches a connection once it fires, and a dropped
+    /// sender (the accept loop gone) never reads as a drain: the wait pends
+    /// and the connection future ends on its own.
+    #[tokio::test]
+    async fn wait_drain_fires_on_the_signal_and_pends_without_a_sender() {
+        let (tx, mut rx) = tokio::sync::watch::channel(false);
+        tx.send(true).expect("a receiver");
+        tokio::time::timeout(std::time::Duration::from_secs(1), wait_drain(&mut rx))
+            .await
+            .expect("a sent drain ends the wait");
+        let (tx, mut rx) = tokio::sync::watch::channel(false);
+        drop(tx);
+        let waited =
+            tokio::time::timeout(std::time::Duration::from_millis(100), wait_drain(&mut rx)).await;
+        assert!(waited.is_err(), "a gone sender is no drain");
+    }
 
     /// An accept() error must never end the serve loop: tokio propagates
     /// every non-WouldBlock errno straight from the syscall, so ECONNABORTED
@@ -2605,6 +2632,23 @@ mod metrics_port_tests {
 mod driver_registry_tests {
     use super::{built_with, shared_state, store_shelf, temporal_choice, TemporalChoice};
     use antares_sql::StoreMode;
+
+    /// A backend name off the shelf, reaching the builder by any path, is
+    /// refused with the shelf this binary was built with.
+    #[tokio::test]
+    async fn the_builder_refuses_a_name_off_the_shelf() {
+        let err = super::build_store("cassandra", false, &super::PgSettings::default())
+            .await
+            .err()
+            .expect("refused");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "unknown store backend \"cassandra\"; built with {}",
+                store_shelf().join("|")
+            )
+        );
+    }
 
     /// The shelf in the message is rendered from the backend list, so a
     /// backend added to `StoreMode` — or compiled in from outside this
@@ -2903,6 +2947,20 @@ mod policy_shelf_tests {
         POLICY_SHELF.iter().map(|(n, _)| *n).collect()
     }
 
+    /// Every engine on the shelf constructs: a name whose constructor
+    /// panicked would take the broker down at the first request it gates.
+    #[test]
+    fn every_engine_on_the_shelf_constructs() {
+        for (name, ctor) in POLICY_SHELF {
+            let engine = ctor();
+            assert_eq!(
+                std::sync::Arc::strong_count(&engine),
+                1,
+                "{name} builds a fresh engine"
+            );
+        }
+    }
+
     /// ADR-0020: the broker ships one engine, and conformance is asserted
     /// against it. A release build carries no other — an engine reaches the
     /// shelf only through an off-by-default feature, so this assertion is
@@ -3098,5 +3156,143 @@ mod host_defaults_tests {
         ] {
             assert!(!unknown_config_key(key), "{key}");
         }
+    }
+
+    /// A host-given admin token never reaches a log line through `Debug`,
+    /// neither alone nor inside the config that carries it.
+    #[test]
+    fn a_host_admin_token_debugs_as_redacted() {
+        let token = AdminToken("t7829-host-token".into());
+        assert_eq!(format!("{token:?}"), "<redacted>");
+        let mut cfg = config_from_env().expect("config");
+        cfg.admin_token = Some(token);
+        let printed = format!("{cfg:?}");
+        assert!(!printed.contains("t7829-host-token"), "{printed}");
+        assert!(printed.contains("<redacted>"), "{printed}");
+    }
+}
+
+#[cfg(test)]
+mod build_state_tests {
+    use super::*;
+    use tower::ServiceExt;
+
+    const TOKEN: &str = "t7829-host-admin-token-0123456789abcdef";
+
+    async fn status(app: App, path: &str, headers: &[(&str, &str)]) -> (u16, String) {
+        let mut req = axum::http::Request::get(path);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        let res = app
+            .oneshot(req.body(axum::body::Body::empty()).expect("request"))
+            .await
+            .expect("answered");
+        let code = res.status().as_u16();
+        let body = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .expect("body");
+        (code, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// A host (`jc`) builds the broker with its own admin token, defaults and
+    /// metrics port: `/q` answers the host's token alone, the metrics move to
+    /// their own listener and the subject guard sits in front of the router.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_host_built_broker_answers_its_token_alone_and_moves_the_metrics() {
+        let mut cfg = config_from_env().expect("config");
+        cfg.admin_token = Some(AdminToken(TOKEN.into()));
+        cfg.metrics_port = Some(cfg.port.wrapping_add(1).max(1));
+        cfg.defaults = [
+            ("ANTARES_POLICY_SUBJECT_HEADERS", "x-jc-client"),
+            ("ANTARES_HISTORY_BACKFILL", "off"),
+            ("ANTARES_EGRESS_ALLOW_PRIVATE", "false"),
+            (
+                "ANTARES_POLICY_SUBJECT_FROM",
+                "gateway.jc.serviceaccount.identity",
+            ),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect();
+        let render: telemetry::MetricsRender = std::sync::Arc::new(|| "t7829_probe 1\n".into());
+        let broker = build_state(&cfg, Some(render)).await.expect("built");
+        let served = router(broker).expect("routed");
+
+        let (code, _) = status(served.app.clone(), "/q/tenants", &[]).await;
+        assert_eq!(code, 401, "no token, no /q");
+        let wrong = format!("Bearer {TOKEN}x");
+        let (code, _) = status(
+            served.app.clone(),
+            "/q/tenants",
+            &[("authorization", &wrong)],
+        )
+        .await;
+        assert_eq!(code, 401, "a near miss is no token");
+        let bearer = format!("Bearer {TOKEN}");
+        let (code, _) = status(
+            served.app.clone(),
+            "/q/tenants",
+            &[("authorization", &bearer), ("x-jc-client", "spoofed")],
+        )
+        .await;
+        assert_eq!(code, 200, "the host's token opens /q");
+
+        let (code, _) = status(
+            served.app.clone(),
+            "/q/metrics",
+            &[("authorization", &bearer)],
+        )
+        .await;
+        assert_eq!(code, 404, "the API port no longer renders metrics");
+        let (port, metrics) = served.metrics_app.expect("a metrics listener");
+        assert_eq!(Some(port), cfg.metrics_port);
+        let res = metrics
+            .oneshot(
+                axum::http::Request::get("/q/metrics")
+                    .header("authorization", &bearer)
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answered");
+        assert_eq!(res.status(), 200);
+        let body = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .expect("body");
+        assert!(String::from_utf8_lossy(&body).contains("t7829_probe 1"));
+    }
+
+    /// A host default under a key the broker does not read, or outside the
+    /// `ANTARES_` namespace, is refused before anything is built.
+    #[tokio::test]
+    async fn a_host_default_the_broker_does_not_read_is_refused() {
+        for key in ["ANTARES_T7829_TYPO", "PATH"] {
+            let mut cfg = config_from_env().expect("config");
+            cfg.defaults = [(key.to_owned(), "1".to_owned())].into_iter().collect();
+            let err = build_state(&cfg, None).await.err().expect("refused");
+            assert_eq!(
+                err.to_string(),
+                format!("unknown config key {key} in the host's defaults")
+            );
+        }
+    }
+
+    /// A NATS bus over a per-process store would split one broker's state
+    /// across pods: refused, naming the store; an unknown bus is refused too.
+    #[tokio::test]
+    async fn a_nats_bus_needs_a_shared_store_and_an_unknown_bus_is_refused() {
+        let mut cfg = config_from_env().expect("config");
+        cfg.bus_mode = "nats".into();
+        let err = build_state(&cfg, None).await.err().expect("refused");
+        assert!(
+            err.to_string()
+                .contains("ANTARES_BUS=nats requires a shared store")
+                && err.to_string().contains("memory state is per-process"),
+            "{err}"
+        );
+        cfg.bus_mode = "kafka".into();
+        let err = build_state(&cfg, None).await.err().expect("refused");
+        assert_eq!(err.to_string(), "unknown ANTARES_BUS=kafka (local|nats)");
     }
 }
