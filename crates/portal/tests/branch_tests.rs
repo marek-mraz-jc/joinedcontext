@@ -273,6 +273,53 @@ async fn the_branch_door_opens_for_a_proposer_and_answers_others_like_an_unknown
     assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.text);
 }
 
+/// A parent at its branch limit refuses another with a 409 that says what to do; a malformed id
+/// is an unknown branch; a branch renewed to its 30 days refuses a further renewal (T-7813).
+#[tokio::test]
+async fn a_full_parent_and_a_branch_at_its_30_days_refuse_with_what_to_do() {
+    let (_, pool) = state().await;
+    let mut config = Config::for_tests();
+    config.branches.per_parent = 1;
+    let state = AppState::new(config, None).with_db(pool.clone());
+    let project = parent(&state, &pool, "brfull").await;
+    let door = format!("/api/v1/projects/{project}/branches");
+    let opened = send(&state, person("ana"), "POST", &door, None).await;
+    assert_eq!(opened.status, StatusCode::CREATED, "{}", opened.text);
+    let full = send(&state, person("ana"), "POST", &door, None).await;
+    assert_eq!(full.status, StatusCode::CONFLICT, "{}", full.text);
+    assert!(full.text.contains("let one expire"), "{}", full.text);
+
+    let malformed = send(
+        &state,
+        person("ana"),
+        "POST",
+        &format!("{door}/not-an-id/renewal"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        malformed.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        malformed.text
+    );
+
+    let id = serde_json::from_str::<Value>(&opened.text).expect("json")["id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+    let renewal = format!("{door}/{id}/renewal");
+    let mut last = send(&state, person("ana"), "POST", &renewal, None).await;
+    for _ in 0..6 {
+        if last.status != StatusCode::OK {
+            break;
+        }
+        last = send(&state, person("ana"), "POST", &renewal, None).await;
+    }
+    assert_eq!(last.status, StatusCode::CONFLICT, "{}", last.text);
+    assert!(last.text.contains("30 days"), "{}", last.text);
+}
+
 /// A branch with `ana` as creator in a fresh parent, `carl` approving and `dan` proposing there.
 async fn branch_of(
     state: &AppState,
