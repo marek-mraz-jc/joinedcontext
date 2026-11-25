@@ -1259,7 +1259,9 @@ mod tests {
     }
 
     /// A realm answering `template` to the token path, and the model asking it.
-    async fn realm_answering(template: wiremock::ResponseTemplate) -> (Model, wiremock::MockServer) {
+    async fn realm_answering(
+        template: wiremock::ResponseTemplate,
+    ) -> (Model, wiremock::MockServer) {
         use wiremock::{matchers::method, Mock, MockServer};
         let realm = MockServer::start().await;
         Mock::given(method("POST"))
@@ -1308,12 +1310,19 @@ mod tests {
             realm_answering(wiremock::ResponseTemplate::new(200).set_body_json(json!({}))).await;
         model.config.credential =
             jc_core::ClientCredential::Assertion("/nonexistent/jc-assistant-token".into());
-        assert!(matches!(model.token().await, Err(CallError::Unavailable(_))));
+        assert!(matches!(
+            model.token().await,
+            Err(CallError::Unavailable(_))
+        ));
         assert!(matches!(
             model.is_service_account("t", "portal-api").await,
             Err(CallError::Unavailable(_))
         ));
-        assert!(realm.received_requests().await.expect("recorded").is_empty());
+        assert!(realm
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
     }
 
     /// AG-113: only an active token of the client's own service account, whose audience names
@@ -1335,7 +1344,10 @@ mod tests {
         };
         let cases = [
             (account(json!({})), true),
-            (account(json!({"username": "SERVICE-ACCOUNT-PORTAL-API"})), true),
+            (
+                account(json!({"username": "SERVICE-ACCOUNT-PORTAL-API"})),
+                true,
+            ),
             (account(json!({"aud": ["account", "jc-assistant"]})), true),
             (account(json!({"aud": ["account"]})), false),
             (account(json!({"aud": 7})), false),

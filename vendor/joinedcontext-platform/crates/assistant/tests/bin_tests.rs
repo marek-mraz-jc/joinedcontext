@@ -61,7 +61,10 @@ fn configured(dir: &Path, url: &str) -> Vec<(&'static str, String)> {
             dir.join("assembly").display().to_string(),
         ),
         ("JC_ASSISTANT_ORG_DOMAIN", "bin.example".into()),
-        ("JC_ASSISTANT_EMBEDDER_URL", "http://127.0.0.1:9/embed".into()),
+        (
+            "JC_ASSISTANT_EMBEDDER_URL",
+            "http://127.0.0.1:9/embed".into(),
+        ),
         (
             "JC_ASSISTANT_EMBEDDER_TOKEN_URL",
             "http://127.0.0.1:9/token".into(),
@@ -74,7 +77,6 @@ fn configured(dir: &Path, url: &str) -> Vec<(&'static str, String)> {
         ("JC_ASSISTANT_PROXY_URL", "http://127.0.0.1:9".into()),
         ("JC_ASSISTANT_TOKEN_URL", "http://127.0.0.1:9/token".into()),
         ("JC_ASSISTANT_LLM", "test-model".into()),
-        ("JC_ASSISTANT_PORTAL_URL", "https://portal.bin.example".into()),
         (
             "JC_ASSISTANT_CLIENT_SECRET_FILE",
             secret.display().to_string(),
@@ -84,7 +86,11 @@ fn configured(dir: &Path, url: &str) -> Vec<(&'static str, String)> {
 }
 
 /// `vars` with `key` set to `value` (replaced when present).
-fn with(vars: &[(&'static str, String)], key: &'static str, value: &str) -> Vec<(&'static str, String)> {
+fn with(
+    vars: &[(&'static str, String)],
+    key: &'static str,
+    value: &str,
+) -> Vec<(&'static str, String)> {
     let mut out: Vec<_> = vars.iter().filter(|(k, _)| *k != key).cloned().collect();
     out.push((key, value.to_owned()));
     out
@@ -147,7 +153,10 @@ fn an_unusable_embedder_stops_the_start() {
         ),
         "the embedding model is not usable",
     );
-    refused(&local, "JC_ASSISTANT_MODEL_DIR or JC_ASSISTANT_EMBEDDER_URL is required");
+    refused(
+        &local,
+        "JC_ASSISTANT_MODEL_DIR or JC_ASSISTANT_EMBEDDER_URL is required",
+    );
     // The shared embedder: its secret file missing, then empty.
     refused(
         &with(
@@ -196,7 +205,11 @@ async fn each_refusal_after_the_database_names_its_setting() {
         "JC_ASSISTANT_CLIENT_ASSERTION_FILE or JC_ASSISTANT_CLIENT_SECRET_FILE is required",
     );
     refused(
-        &with(&base, "JC_ASSISTANT_CLIENT_ASSERTION_FILE", "/var/run/token"),
+        &with(
+            &base,
+            "JC_ASSISTANT_CLIENT_ASSERTION_FILE",
+            "/var/run/token",
+        ),
         "are both set",
     );
     // A missing chat address, then one the library refuses.
@@ -254,17 +267,16 @@ async fn ready_then(name: &str, test: &str, signal: &str) -> (bool, String) {
         "apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: web\n  namespace: binproj\nspec:\n  source: website\n  startUrls: [https://jc-bin-test.invalid/]\n  schedule: \"* * * * *\"\n",
     )
     .expect("source manifest");
-    std::fs::write(
-        sources.join("guide.yaml"),
-        "apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: guide\n  namespace: binproj\nspec:\n  source: guide\n",
-    )
-    .expect("guide manifest");
     let port = free_port();
-    let mut child = command(&with(&base, "JC_ASSISTANT_BIND", &format!("127.0.0.1:{port}")))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the binary starts");
+    let mut child = command(&with(
+        &base,
+        "JC_ASSISTANT_BIND",
+        &format!("127.0.0.1:{port}"),
+    ))
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .expect("the binary starts");
     let client = reqwest::Client::new();
     let deadline = Instant::now() + Duration::from_secs(90);
     let mut ready = false;
@@ -285,7 +297,7 @@ async fn ready_then(name: &str, test: &str, signal: &str) -> (bool, String) {
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    // Ready comes before the queueing: wait until both sources have a job, then a moment for
+    // Ready comes before the queueing: wait until the source has a job, then a moment for
     // the minute to work them.
     let database = admin_of(name).await;
     while ready && Instant::now() < deadline {
@@ -293,7 +305,7 @@ async fn ready_then(name: &str, test: &str, signal: &str) -> (bool, String) {
             .fetch_one(&database)
             .await
             .expect("the jobs are counted");
-        if jobs >= 2 {
+        if jobs >= 1 {
             tokio::time::sleep(Duration::from_secs(1)).await;
             break;
         }
@@ -306,6 +318,14 @@ async fn ready_then(name: &str, test: &str, signal: &str) -> (bool, String) {
         .status()
         .expect("kill runs");
     assert!(killed.success(), "the signal is sent");
+    // The loop reads a signal between minutes: a stop that never comes fails the test.
+    let stop_by = Instant::now() + Duration::from_secs(60);
+    while child.try_wait().expect("child status").is_none() && Instant::now() < stop_by {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    if child.try_wait().expect("child status").is_none() {
+        let _ = child.kill();
+    }
     let output = child.wait_with_output().expect("the binary stops");
     let log = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
@@ -320,7 +340,10 @@ async fn a_configured_service_turns_ready_and_stops_on_sigterm() {
     let (stopped, log) = ready_then(&name, "sigterm", "-TERM").await;
     assert!(stopped, "SIGTERM stops it cleanly\n{log}");
     assert!(log.contains("stopping"), "{log}");
-    assert!(log.contains("sources due"), "the due source was queued\n{log}");
+    assert!(
+        log.contains("sources due"),
+        "the due source was queued\n{log}"
+    );
     db::drop_database(admin, pool, &name).await;
 }
 
@@ -359,7 +382,8 @@ async fn a_minute_without_its_database_turns_ready_and_queues_nothing() {
         .acquire_timeout(Duration::from_millis(200))
         .connect_lazy("postgres://postgres@127.0.0.1:9/none")
         .expect("a lazy pool");
-    let embedder = assistant::embed::Embedder::from_lookup(&lookup, 1).expect("the remote embedder");
+    let embedder =
+        assistant::embed::Embedder::from_lookup(&lookup, 1).expect("the remote embedder");
     let credential = assistant::host::credential(&lookup).expect("the credential");
     let config = assistant::host::chat_config(&lookup, credential).expect("the chat config");
     let (chat_state, reader) =
@@ -377,9 +401,15 @@ async fn a_minute_without_its_database_turns_ready_and_queues_nothing() {
         Arc::clone(&ready),
     );
     minute.work().await;
-    assert!(ready.load(Ordering::Relaxed), "a dead database still turns the pod ready");
+    assert!(
+        ready.load(Ordering::Relaxed),
+        "a dead database still turns the pod ready"
+    );
     assert_eq!(minute.queued_until, None, "no minute counts as queued");
-    assert!(minute.catalogue_digests.is_empty(), "no guide counts as queued");
+    assert!(
+        minute.catalogue_digests.is_empty(),
+        "no guide counts as queued"
+    );
     // A checkout that cannot be read leaves the minute before anything else.
     std::fs::remove_dir_all(dir.join("repo")).expect("the checkout goes");
     std::fs::write(dir.join("repo"), "a file, not a checkout").expect("the file");

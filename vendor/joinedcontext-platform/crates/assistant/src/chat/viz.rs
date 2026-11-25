@@ -1102,7 +1102,13 @@ mod tests {
         table.units = vec![None, None];
         table.labels = vec![None, None];
         table.enums = vec![
-            Some([("Mesto".to_owned(), [("en".to_owned(), "City".to_owned())].into())].into()),
+            Some(
+                [(
+                    "Mesto".to_owned(),
+                    [("en".to_owned(), "City".to_owned())].into(),
+                )]
+                .into(),
+            ),
             None,
         ];
         let made = |method: &str, per: &'static str| super::super::view::Aggregation {
@@ -1139,7 +1145,10 @@ mod tests {
         ] {
             history.aggregation = Some(made("avg", per));
             let line = aggregated(&history).expect("a chart");
-            assert_eq!(line["spec"]["encoding"]["x"]["axis"]["format"], format, "{per}");
+            assert_eq!(
+                line["spec"]["encoding"]["x"]["axis"]["format"], format,
+                "{per}"
+            );
             assert_eq!(line["spec"]["encoding"]["x"]["scale"]["type"], "utc");
         }
     }
