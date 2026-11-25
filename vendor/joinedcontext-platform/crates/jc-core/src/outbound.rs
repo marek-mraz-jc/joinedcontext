@@ -250,10 +250,10 @@ mod tests {
     fn a_hop_is_judged_by_its_count_its_scheme_and_its_address() {
         let public = url("https://opendata.example.org/a");
         let plain = url("http://opendata.example.org/b");
-        assert_eq!(judge_hop(&public, &[plain.clone()], 1), Ok(()));
-        assert_eq!(judge_hop(&plain, &[plain.clone()], 1), Ok(()));
+        assert_eq!(judge_hop(&public, std::slice::from_ref(&plain), 1), Ok(()));
+        assert_eq!(judge_hop(&plain, std::slice::from_ref(&plain), 1), Ok(()));
         assert_eq!(
-            judge_hop(&plain, &[public.clone()], 1),
+            judge_hop(&plain, std::slice::from_ref(&public), 1),
             Err(Refusal::Downgrade)
         );
         assert_eq!(

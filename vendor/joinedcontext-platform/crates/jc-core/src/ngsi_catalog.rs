@@ -269,10 +269,10 @@ pub fn entities(
                 continue;
             };
             // The dataset of a list a CKAN dataset publishes by its name, else the Endpoint's.
-            let &(_, record) = list
+            let slice = list
                 .iter()
-                .find(|(name, _)| *name == Some(package.name.as_str()))
-                .unwrap_or(first);
+                .find(|(name, _)| *name == Some(package.name.as_str()));
+            let &(_, record) = slice.unwrap_or(first);
             // A CKAN name equal to another Endpoint's slug replaces that Endpoint's own Dataset:
             // the published dataset wins, and [`link`] clears the DataService's `refDataset`.
             out.insert(

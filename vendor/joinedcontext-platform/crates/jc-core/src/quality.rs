@@ -241,12 +241,15 @@ fn instances_mut<'v>(object: &'v mut Map<String, Value>, attribute: &str) -> Vec
     let Some(value) = object.get_mut(attribute) else {
         return Vec::new();
     };
-    match value {
-        Value::Array(all) if !all.is_empty() && all.iter().all(Value::is_object) => {
-            all.iter_mut().collect()
-        }
-        Value::Null => Vec::new(),
-        other => vec![other],
+    let instances =
+        matches!(value, Value::Array(all) if !all.is_empty() && all.iter().all(Value::is_object));
+    if instances {
+        return value.as_array_mut().into_iter().flatten().collect();
+    }
+    if value.is_null() {
+        Vec::new()
+    } else {
+        vec![value]
     }
 }
 
