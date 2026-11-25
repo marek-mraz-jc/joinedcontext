@@ -324,11 +324,7 @@ fn strings<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
 fn admission(hosts: Vec<PrivateHost>) -> Admission {
     Arc::new(move |stream, filled| {
         admit(&hosts, stream, filled).inspect_err(|reason| {
-            tracing::warn!(
-                stream = stream.unwrap_or("(an API resource)"),
-                %reason,
-                "ekiben refused a stream"
-            );
+            tracing::warn!(stream = stream.unwrap_or("(an API resource)"), %reason, "ekiben refused a stream");
         })
     })
 }

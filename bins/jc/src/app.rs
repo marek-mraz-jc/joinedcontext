@@ -777,12 +777,8 @@ pub async fn build_router(
     };
     for plan in plans {
         for spec in plan.specs() {
-            tracing::info!(
-                module = plan.module.name(),
-                host = spec.host.as_deref().unwrap_or("*"),
-                prefix = spec.path_prefix.as_deref().unwrap_or("/"),
-                "mounted"
-            );
+            #[rustfmt::skip]
+            tracing::info!(module = plan.module.name(), host = spec.host.as_deref().unwrap_or("*"), prefix = spec.path_prefix.as_deref().unwrap_or("/"), "mounted");
         }
         builder = mount_renamed(builder, &plan);
         #[cfg(feature = "shako")]
@@ -1186,12 +1182,8 @@ pub fn report_secrets(
 /// has the shape of a printed value, which the logs smoke suite (and any log scanner) flags.
 fn report_secret(name: &str, source: jc_secret::Source, profile: crate::config::Profile) {
     if source == jc_secret::Source::Env && profile == crate::config::Profile::Production {
-        tracing::warn!(
-            name,
-            source = source.as_str(),
-            "a secret comes from the environment: in production give it as a file \
-             (NAME_FILE, a compose secret or a mounted Kubernetes Secret)"
-        );
+        #[rustfmt::skip]
+        tracing::warn!(name, source = source.as_str(), "a secret comes from the environment: in production give it as a file (NAME_FILE, a compose secret or a mounted Kubernetes Secret)");
     } else {
         tracing::info!(name, source = source.as_str(), "secret");
     }

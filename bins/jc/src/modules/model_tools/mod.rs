@@ -190,13 +190,8 @@ async fn generate_route(state: State, body: Body) -> Response {
     match tokio::time::timeout(state.timeout, job).await {
         Ok(Ok((status, payload))) => {
             let errors = payload["errors"].as_array().map_or(0, Vec::len);
-            tracing::info!(
-                status = status.as_u16(),
-                errors,
-                broker_schema = payload.get("brokerSchema").is_some(),
-                elapsed_ms = started.elapsed().as_millis() as u64,
-                "model-tools: generate answered"
-            );
+            #[rustfmt::skip]
+            tracing::info!(status = status.as_u16(), errors, broker_schema = payload.get("brokerSchema").is_some(), elapsed_ms = started.elapsed().as_millis() as u64, "model-tools: generate answered");
             answer(status, &payload)
         }
         Ok(Err(e)) => errors(

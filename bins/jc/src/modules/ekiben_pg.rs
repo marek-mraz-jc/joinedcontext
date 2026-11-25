@@ -209,19 +209,15 @@ impl PgStreams {
         for org in orgs.into_iter().map(OrgId) {
             for (kind, id, posted) in self.resources(&org).await? {
                 if let Err(e) = manager.restore_resource(&org, &kind, &id, &posted) {
-                    tracing::error!(
-                        org = %org.0, kind = %kind, resource = %id, error = %e,
-                        "ekiben: a saved resource did not build"
-                    );
+                    tracing::error!(org = %org.0, kind = %kind, resource = %id, error = %e, "ekiben: a saved resource did not build");
                 }
             }
             for (id, posted) in self.list(&org).await? {
                 match manager.restore(org.clone(), id.clone(), posted).await {
                     Ok(()) => started += 1,
-                    Err(e) => tracing::error!(
-                        org = %org.0, stream = %id, error = %e,
-                        "ekiben: a saved stream did not start"
-                    ),
+                    Err(e) => {
+                        tracing::error!(org = %org.0, stream = %id, error = %e, "ekiben: a saved stream did not start")
+                    }
                 }
             }
         }
@@ -347,10 +343,8 @@ mod tests {
     static ROLES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     async fn prepare(tag: &str) -> Option<Db> {
-        let Some(url) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
-            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
-            return None;
-        };
+        #[rustfmt::skip]
+        let Some(url) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else { println!("SKIP: JC_PG_TEST_DATABASE_URL is unset"); return None };
         let base = PgConnectOptions::from_str(&url).unwrap();
         let admin = PgPoolOptions::new()
             .max_connections(1)
@@ -366,6 +360,7 @@ mod tests {
             ("jc_ekpg_owner", true),
             ("jc_ekpg_app", false),
             ("jc_ekpg_ro", false),
+            ("jc_ekpg_none", false),
         ] {
             let create = if create { "CREATE, " } else { "" };
             statements.push(format!(
@@ -400,9 +395,8 @@ mod tests {
 
     #[tokio::test]
     async fn saved_streams_and_resources_come_back_per_organization() {
-        let Some(db) = prepare("rt").await else {
-            return;
-        };
+        #[rustfmt::skip]
+        let Some(db) = prepare("rt").await else { return };
         let owner = db.login("jc_ekpg_owner").await;
         migrate(&owner, "jc_ekpg_app").await.unwrap();
         // A second start finds the migration done and grants again.
@@ -481,9 +475,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_boot_check_refuses_each_unsafe_request_role_and_table() {
-        let Some(db) = prepare("boot").await else {
-            return;
-        };
+        #[rustfmt::skip]
+        let Some(db) = prepare("boot").await else { return };
         let owner = db.login("jc_ekpg_owner").await;
         // Before the migration the schema has no table: missing.
         let app = db.login("jc_ekpg_app").await;
@@ -523,9 +516,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_statement_or_commit_reaches_the_caller() {
-        let Some(db) = prepare("fail").await else {
-            return;
-        };
+        #[rustfmt::skip]
+        let Some(db) = prepare("fail").await else { return };
         let owner = db.login("jc_ekpg_owner").await;
         migrate(&owner, "jc_ekpg_app").await.unwrap();
         // jc_ekpg_ro may name an organization and read it, nothing else; a write of
@@ -584,6 +576,23 @@ mod tests {
                 .unwrap_err(),
         ] {
             assert!(e.contains("permission denied"), "{e}");
+        }
+
+        // jc_ekpg_none may not even name an organization.
+        sqlx::raw_sql("GRANT USAGE ON SCHEMA ekiben TO jc_ekpg_none")
+            .execute(&owner)
+            .await
+            .unwrap();
+        let none = PgStreams {
+            pool: db.login("jc_ekpg_none").await,
+        };
+        for e in [
+            none.saved(&city, "s", &generate).await.unwrap_err(),
+            none.resource_saved(&city, "output", "o", "drop: {}")
+                .await
+                .unwrap_err(),
+        ] {
+            assert!(e.contains("permission denied for table org"), "{e}");
         }
 
         // A pool that is gone: every call answers the error, none panics.

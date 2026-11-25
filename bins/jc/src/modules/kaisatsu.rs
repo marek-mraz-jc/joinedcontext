@@ -73,9 +73,8 @@ pub async fn open_kaisatsu_store(
         pg.spawn_change_listener();
         Ok(Arc::new(pg))
     } else {
-        tracing::warn!(
-            "kaisatsu: database_url_file is not set; mounting kaisatsu on in-memory store (demo/test only)"
-        );
+        #[rustfmt::skip]
+        tracing::warn!("kaisatsu: database_url_file is not set; mounting kaisatsu on in-memory store (demo/test only)");
         Ok(Arc::new(MemoryStore::new(kek)))
     }
 }
@@ -271,12 +270,7 @@ async fn apply_portal_realm(
         {
             tracing::info!(%realm, "kaisatsu: jc-assistant's tokens name jc-functions (T-7774)");
         }
-        tracing::info!(
-            %realm,
-            added,
-            "kaisatsu: the deployment brings the Portal's realm; jc adds only its Organizations' \
-             hosts to the Portal's clients"
-        );
+        tracing::info!(%realm, added, "kaisatsu: the deployment brings the Portal's realm; jc adds only its Organizations' hosts to the Portal's clients");
         return Ok(());
     }
     let mut files = setup::portal_realm_files(&base, &ctx.siblings.organization_portals, realm)
@@ -309,11 +303,8 @@ async fn apply_portal_realm(
     let report = apply_realm_files(store, &files, &options)
         .await
         .map_err(|e| err(&e))?;
-    tracing::info!(
-        realm = %report.realm,
-        changed = report.has_changes(),
-        "kaisatsu: the Portal's realm is applied"
-    );
+    #[rustfmt::skip]
+    tracing::info!(realm = %report.realm, changed = report.has_changes(), "kaisatsu: the Portal's realm is applied");
     Ok(())
 }
 
@@ -509,11 +500,8 @@ impl OrganizationRealmFiles {
         let report = apply_realm_files(store, &files, &options)
             .await
             .map_err(|e| e.to_string())?;
-        tracing::info!(
-            organization,
-            changed = report.has_changes(),
-            "kaisatsu: the Organization's realm is applied"
-        );
+        #[rustfmt::skip]
+        tracing::info!(organization, changed = report.has_changes(), "kaisatsu: the Organization's realm is applied");
         Ok(())
     }
 }
@@ -985,10 +973,8 @@ fn follow_installation_look(
         async move {
             match store.upsert_branding(block).await {
                 Ok(()) => {
-                    tracing::info!(
-                        look = look.is_some(),
-                        "kaisatsu: sign-in pages follow the installation's look"
-                    )
+                    #[rustfmt::skip]
+                    tracing::info!(look = look.is_some(), "kaisatsu: sign-in pages follow the installation's look");
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "kaisatsu: the installation's look not stored")

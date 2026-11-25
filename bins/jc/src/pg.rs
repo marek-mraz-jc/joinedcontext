@@ -437,10 +437,8 @@ mod tests {
     /// `JC_PG_TEST_DATABASE_URL` names a superuser connection (as tests/restart_pg.rs).
     #[tokio::test]
     async fn every_unsafe_request_login_is_refused_with_its_reason() {
-        let Some(admin_url) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
-            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
-            return;
-        };
+        #[rustfmt::skip]
+        let Some(admin_url) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else { println!("SKIP: JC_PG_TEST_DATABASE_URL is unset"); return };
         let admin = connect(PgConnectOptions::from_str(&admin_url).unwrap(), 1)
             .await
             .unwrap();
