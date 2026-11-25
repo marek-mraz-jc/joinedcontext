@@ -812,6 +812,10 @@ async fn a_plain_bundle_from_before_encryption_is_refused_with_its_date() {
     );
     assert!(refused.text.contains("unencrypted"), "{}", refused.text);
     assert!(refused.text.contains(&taken), "{}", refused.text);
+    // It still downloads as the plain zip it was uploaded as.
+    let download = send(&world.state, person("ada"), "GET", &format!("{DOOR}/versions/plain"), None).await;
+    assert_eq!(download.status, StatusCode::OK, "{}", download.text);
+    assert!(download.text.starts_with("PK"), "a zip");
 
     // The wrong identity opens nothing and says which field.
     let other = secret_of(&age::x25519::Identity::generate());
@@ -1137,6 +1141,17 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
     let run = data_saved_and_run(&world, &ids).await;
     assert_eq!(run["ok"], true, "{run}");
     let sealed = latest(&world.bucket, &key_of(&world, "alfa", "data").await);
+    // The data archive downloads as stored, still encrypted.
+    let download = send(
+        &world.state,
+        person("ada"),
+        "GET",
+        &format!("{DATA_DOOR}/versions/{}", run["versionId"].as_str().expect("version")),
+        None,
+    )
+    .await;
+    assert_eq!(download.status, StatusCode::OK, "{}", download.text);
+    assert!(download.text.starts_with("age-encryption.org/v1"), "encrypted");
     assert!(
         zip::ZipArchive::new(std::io::Cursor::new(&sealed)).is_err(),
         "the stored archive is encrypted"

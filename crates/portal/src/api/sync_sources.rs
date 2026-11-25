@@ -452,3 +452,17 @@ pub fn router() -> Router<AppState> {
 pub fn webhook_router() -> Router<AppState> {
     Router::new().route("/webhooks/sync/{project}/{name}", post(webhook))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A source that is not there is 404 naming it; any other failed run is 503 saying why.
+    #[test]
+    fn a_failed_run_is_404_for_a_missing_source_and_503_else() {
+        let missing = failed(RunError::NoSuchSource("feed".into(), "air".into()));
+        assert!(matches!(missing, ApiError::NotFound(m) if m.contains("'feed'") && m.contains("'air'")));
+        let other = failed(RunError::Task("cancelled".into()));
+        assert!(matches!(other, ApiError::Unavailable(m) if m.contains("cancelled")));
+    }
+}

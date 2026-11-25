@@ -629,6 +629,31 @@ async fn each_refused_option_answers_its_status() {
     assert_eq!(anonymous.json()["error"]["status"], json!(401));
 }
 
+/// Each path shape the service does not serve is refused with its status; a count of a
+/// project's kind, of the projects and of a set answers as text.
+#[tokio::test]
+async fn each_path_shape_answers_its_status() {
+    let state = state();
+    let mode = Mode::Path("hel");
+    let cookie = cookies(&state.config, person("hel-only", &[]), "hel").await;
+    for (uri, want) in [
+        ("/api/v1/projects('helsinki')/spaces?$expand=spaces", StatusCode::BAD_REQUEST),
+        ("/api/v1/projects('helsinki')/spaces(1)", StatusCode::BAD_REQUEST),
+        ("/api/v1/spaces('air')", StatusCode::BAD_REQUEST),
+        ("/api/v1/projects('helsinki')/spaces/$count", StatusCode::OK),
+        ("/api/v1/projects/$count", StatusCode::OK),
+        ("/api/v1/spaces/$count", StatusCode::OK),
+    ] {
+        let answer = send(&state, mode, &cookie, uri, &[]).await;
+        assert_eq!(answer.status, want, "{uri}: {}", answer.text);
+        if want == StatusCode::OK {
+            assert!(answer.text.trim().parse::<u64>().is_ok(), "{uri}: {}", answer.text);
+        } else {
+            assert_eq!(answer.json()["error"]["status"], json!(want.as_u16()), "{uri}");
+        }
+    }
+}
+
 /// The `portals` set (ODP-08): 401 to nobody, refused to a reader without a Portal rule, and
 /// an Organization's portal reader sees only that Organization's portals.
 /// The router placed the request in an Organization this Portal holds no host for (one the

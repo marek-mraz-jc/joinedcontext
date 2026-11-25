@@ -3487,6 +3487,33 @@ mod tests {
             Some("projects('air')")
         );
         assert!(key_as_segment("projects/Not_A_Name/endpoints").is_err());
+        assert_eq!(
+            key_as_segment("projects/$count").ok().as_deref(),
+            Some("projects/$count")
+        );
+        assert_eq!(
+            key_as_segment("projects/air/endpoints/counters").ok().as_deref(),
+            Some("projects('air')/endpoints('counters')")
+        );
+        assert_eq!(
+            key_as_segment("projects/air/nothings/x").ok().as_deref(),
+            Some("projects('air')/nothings/x")
+        );
+    }
+
+    /// A compound key's member is a text or a whole number; any other literal, or a member the
+    /// key lacks, is none.
+    #[test]
+    fn a_compound_key_member_is_a_text_or_a_number() {
+        let pairs = vec![
+            ("project".to_owned(), KeyValue::Literal(Literal::String("air".into()))),
+            ("n".to_owned(), KeyValue::Literal(Literal::Int(7))),
+            ("b".to_owned(), KeyValue::Literal(Literal::Bool(true))),
+        ];
+        assert_eq!(compound(&pairs, "project"), Some(json!("air")));
+        assert_eq!(compound(&pairs, "n"), Some(json!(7)));
+        assert_eq!(compound(&pairs, "b"), None);
+        assert_eq!(compound(&pairs, "missing"), None);
     }
 
     #[test]

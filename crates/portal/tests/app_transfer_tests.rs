@@ -432,6 +432,8 @@ async fn only_an_administrator_exports_an_app() {
     for (who, route) in [
         ("eva", "/api/v1/projects/ovzdusie/apps/air-map/export"),
         ("jana", "/api/v1/projects/ovzdusie/apps/nothing/export"),
+        ("jana", "/api/v1/projects/ovzdusie/apps/Not_A_Name/export"),
+        ("jana", "/api/v1/projects/Not_A_Project/apps/air-map/export"),
     ] {
         let hidden = export(&state, person(who), route).await;
         assert_eq!(hidden.status, StatusCode::NOT_FOUND, "{who} {route}");
