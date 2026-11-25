@@ -75,7 +75,7 @@
 "jc-embedder" = { lines = 96.08, functions = 87.50 }
 "jc-http" = { lines = 100.00, functions = 100.00 }
 "jc-limits" = { lines = 100.00, functions = 100.00 }
-"jc-manifest" = { lines = 94.69, functions = 91.11 }
+"jc-manifest" = { lines = 96.87, functions = 94.52 }
 "jc-ngsi-input" = { lines = 100.00, functions = 100.00 }
 "jc-pool" = { lines = 100.00, functions = 100.00 }
 "jc-relationships" = { lines = 100.00, functions = 100.00 }
@@ -84,7 +84,7 @@
 "jc-tabular" = { lines = 100.00, functions = 100.00 }
 "jc-time" = { lines = 100.00, functions = 100.00 }
 "jc-types" = { lines = 100.00, functions = 100.00 }
-"jcctl" = { lines = 95.80, functions = 89.60 }
+"jcctl" = { lines = 97.14, functions = 91.18 }
 "joinedcontext-policy" = { lines = 99.00, functions = 99.40 }
 "joinedcontext-portal" = { lines = 95.49, functions = 93.39 }
 "kaisatsu-admin" = { lines = 98.52, functions = 99.41 }

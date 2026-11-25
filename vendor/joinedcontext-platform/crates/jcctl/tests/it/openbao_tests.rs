@@ -124,6 +124,44 @@ fn store(bao: &Bao, references: &[SecretRef]) -> Result<BaoStore, BaoError> {
     BaoStore::fetch(bao, &settings(), &session, references)
 }
 
+/// A login answer whose `auth` is no object, or carries no lease, is malformed and issues no
+/// session; a read answer without `data` is malformed, not an empty secret.
+#[test]
+fn a_malformed_login_or_read_answer_is_refused() {
+    for auth in [
+        json!("not an object"),
+        json!({ "client_token": "hvs.short" }),
+    ] {
+        let mut bao = Bao::new().login_answer(auth.clone());
+        match login(&mut bao, &settings(), "a.b.c") {
+            Err(BaoError::Malformed { .. }) => {}
+            other => panic!("{auth}: expected a malformed answer, got {other:?}"),
+        }
+    }
+
+    struct NoData;
+    impl BaoApi for NoData {
+        fn post(&mut self, _: &str, _: &Value) -> Result<Value, BaoError> {
+            Ok(json!({ "auth": { "client_token": "hvs.short", "lease_duration": 60 } }))
+        }
+        fn get(&self, _: &str, _: &str) -> Result<Option<Value>, BaoError> {
+            Ok(Some(json!({ "metadata": {} })))
+        }
+    }
+    let session = login(&mut NoData, &settings(), "a.b.c").expect("the login");
+    match BaoStore::fetch(
+        &NoData,
+        &settings(),
+        &session,
+        &[reference("db", None, None)],
+    ) {
+        Err(BaoError::Malformed { reason, .. }) => assert!(reason.contains("data"), "{reason}"),
+        other => panic!("expected a malformed read, got {other:?}"),
+    }
+    let empty = BaoStore::fetch(&NoData, &settings(), &session, &[]).expect("nothing to read");
+    assert!(empty.is_empty());
+}
+
 #[test]
 fn test_a_pipeline_secret_is_fetched_and_injected() {
     let bao = Bao::new().with(
