@@ -664,4 +664,130 @@ mod tests {
             "a space of such a project too"
         );
     }
+
+    fn new_connector(name: &str) -> NewConnector {
+        NewConnector {
+            name: name.to_owned(),
+            segments: vec!["data-read".to_owned()],
+            scope: vec![item("mesto")],
+            kinds: None,
+            writes: false,
+            autonomous: false,
+            expires_at: TimestampTz::now() + jiff::SignedDuration::from_hours(24),
+            allowed_clients: Vec::new(),
+        }
+    }
+
+    fn client_listing_ceiling(above_ceiling: &str) -> Ceiling {
+        let spec = serde_json::from_value(json!({
+            "subjects": [{ "kind": "Group", "name": "analysts" }],
+            "projects": ["mesto"],
+            "allowedClients": ["claude"],
+            "aboveCeiling": above_ceiling,
+        }))
+        .expect("a policy");
+        Ceiling::of_policies(vec![("clients".to_owned(), spec)])
+    }
+
+    #[test]
+    fn a_connector_the_default_ceiling_admits_has_no_refusal() {
+        let ceiling = Ceiling::of_policies(Vec::new());
+        assert_eq!(refused(&new_connector("fav"), &ceiling), None);
+    }
+
+    #[test]
+    fn a_request_a_queueing_ceiling_would_hold_is_refused_with_its_lines() {
+        let said = refused(&new_connector("fav"), &client_listing_ceiling("queue"))
+            .expect("above the ceiling");
+        assert!(said.starts_with("allowedClients: "), "{said}");
+    }
+
+    #[test]
+    fn a_request_a_refusing_ceiling_would_deny_is_refused_with_the_denial() {
+        let said = refused(&new_connector("fav"), &client_listing_ceiling("refuse"))
+            .expect("above the ceiling");
+        assert!(said.contains("client"), "{said}");
+    }
+
+    #[test]
+    fn a_connector_that_is_malformed_is_refused_with_the_reason() {
+        let said = refused(
+            &new_connector("Not A Label"),
+            &Ceiling::of_policies(Vec::new()),
+        )
+        .expect("refused");
+        assert!(said.contains("DNS-1123"), "{said}");
+    }
+
+    #[test]
+    fn a_database_error_is_a_503_when_the_database_is_down_and_a_500_when_a_call_failed() {
+        assert!(matches!(
+            db_error(sqlx::Error::PoolTimedOut),
+            ApiError::Unavailable(_)
+        ));
+        assert!(matches!(
+            db_error(sqlx::Error::RowNotFound),
+            ApiError::Internal(_)
+        ));
+    }
+
+    #[test]
+    fn a_selector_of_spaces_and_domains_takes_only_endpoints_of_both() {
+        let mut inside = endpoint("doprava", "buses", "transit", Audience::Public, None);
+        inside.domains.insert("traffic".to_owned());
+        let mut other_domain = endpoint("doprava", "bikes", "transit", Audience::Public, None);
+        other_domain.domains.insert("sport".to_owned());
+        let mut other_space = endpoint("doprava", "trams", "depot", Audience::Public, None);
+        other_space.domains.insert("traffic".to_owned());
+        let scope = scope_of(
+            &select(json!({ "spaces": ["doprava/transit"], "domains": ["traffic"] })),
+            &[inside, other_domain, other_space],
+        );
+        assert_eq!(named(&scope), ["doprava endpoint buses"]);
+    }
+
+    #[test]
+    fn a_selector_of_a_theme_no_endpoint_has_takes_nothing() {
+        let scope = scope_of(
+            &select(json!({ "themes": ["ENVI"], "endpoints": ["slug-buses"] })),
+            &catalogue(),
+        );
+        assert!(scope.is_empty(), "{:?}", named(&scope));
+    }
+
+    #[test]
+    fn held_keys_are_carried_and_a_row_that_is_no_object_holds_nothing() {
+        assert!(held(None).is_empty());
+        assert!(held(Some(&json!("text"))).is_empty());
+        assert!(held(Some(&json!({ "theme": "dark" }))).is_empty());
+        let row = json!({ "theme": "dark", "connectors": [], "connectorsNotMoved": "x" });
+        assert_eq!(held(Some(&row)).len(), 2);
+        assert_eq!(without_held(row.clone()), json!({ "theme": "dark" }));
+        assert_eq!(without_held(json!(3)), json!(3));
+        assert!(holds_old(&row));
+        assert!(!holds_old(&json!({})));
+    }
+
+    #[tokio::test]
+    async fn no_database_moves_nothing() {
+        let (state, reader) = reader_world();
+        assert_eq!(
+            move_one(&state, &reader).await.expect("no database"),
+            Moved::default()
+        );
+    }
+
+    #[test]
+    fn a_connector_whose_ceiling_leaves_no_project_is_not_adopted() {
+        let (state, reader) = reader_world();
+        let endpoints = readable_endpoints(&state, &reader);
+        let old = Old {
+            name: "fav".into(),
+            select: select(json!({ "projects": ["espoo"] })),
+        };
+        let ceiling = Ceiling::of(&state.mirror, &reader);
+        assert!(readable(&state, &reader, None).is_none());
+        let adopted_one = adopted(&old, &endpoints, &ceiling);
+        assert!(readable(&state, &reader, adopted_one).is_none());
+    }
 }

@@ -348,4 +348,43 @@ mod tests {
         )
         .is_empty());
     }
+
+    #[tokio::test]
+    async fn brokers_of_the_change_being_checked_are_there_beside_the_mirrors() {
+        let mirror = Mirror::new();
+        let bundle = vec![
+            json!({ "kind": "MqttBroker", "metadata": { "name": "air" },
+                    "spec": { "roles": [{ "name": "sensor", "publish": ["air/${clientid}/pm10"] }] } }),
+            json!({ "kind": "ServiceAccount", "metadata": { "name": "not-a-broker" }, "spec": {} }),
+            json!({ "kind": "MqttBroker", "metadata": { "name": "hidden" }, "spec": { "roles": [] } }),
+            json!({ "kind": "MqttBroker", "spec": {} }),
+        ];
+        let found = crate::references::BUNDLE
+            .scope(bundle, async {
+                brokers(&mirror, "helsinki", &|manifest| {
+                    manifest.pointer("/metadata/name") != Some(&json!("hidden"))
+                })
+            })
+            .await;
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "air");
+        assert_eq!(found[0].1.roles[0].name, "sensor");
+    }
+
+    #[test]
+    fn a_service_account_spec_that_does_not_parse_is_left_to_its_own_check() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let who = crate::auth::session::Identity {
+            client: None,
+            subject: "s".into(),
+            username: "u".into(),
+            email: None,
+            name: None,
+            roles: vec![],
+            groups: vec![],
+            second_factor: false,
+        };
+        assert!(check_grants(&state, &who, "helsinki", "bot", &json!({ "roles": "nope" })).is_ok());
+        assert!(check_grants(&state, &who, "helsinki", "bot", &json!(5)).is_ok());
+    }
 }

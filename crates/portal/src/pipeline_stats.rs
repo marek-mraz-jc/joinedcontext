@@ -245,4 +245,36 @@ mod tests {
         assert_eq!(stats.covered_seconds, 0, "a stale reading is no base");
         assert_eq!(stats.nodes["step_0"].one.received, Some(0));
     }
+
+    #[test]
+    fn a_counter_that_vanished_between_readings_adds_nothing_and_restarts_after() {
+        let samples = Samples::default();
+        record(&samples, 1000, 500, Some(3));
+        record(&samples, 1001, 510, None);
+        let last = record(&samples, 1002, 520, Some(5));
+        assert_eq!(last.nodes["step_0"].fifteen.errors, Some(5));
+        assert_eq!(last.nodes["step_0"].fifteen.received, Some(20));
+    }
+
+    #[test]
+    fn no_readings_answer_the_empty_stats() {
+        assert_eq!(
+            stats("pipe", &VecDeque::new(), 1000),
+            PipelineStats::default()
+        );
+    }
+
+    #[test]
+    fn a_poisoned_sample_table_still_records_and_answers_fresh() {
+        let samples = Samples::default();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = samples.by_pipeline.lock();
+            panic!("poison the lock on purpose");
+        }));
+        assert!(outcome.is_err());
+        record(&samples, 1000, 500, Some(1));
+        assert!(samples.fresh("p", "pipe", 1001).is_some());
+        assert!(samples.fresh("p", "pipe", 1000 + MIN_GAP).is_none());
+        assert!(samples.fresh("p", "other", 1001).is_none());
+    }
 }

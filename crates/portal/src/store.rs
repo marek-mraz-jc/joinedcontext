@@ -792,4 +792,168 @@ mod tests {
         writer.join().expect("writer");
         assert_eq!(mirror.len(), 2);
     }
+
+    fn poison_rw<T: Send + Sync>(lock: &RwLock<T>) {
+        std::thread::scope(|scope| {
+            let joined = scope
+                .spawn(|| {
+                    let _held = lock.write().expect("the lock");
+                    std::panic::resume_unwind(Box::new("poisoning the lock on purpose"));
+                })
+                .join();
+            assert!(joined.is_err());
+        });
+        assert!(lock.is_poisoned());
+    }
+
+    /// A mirror holding one Role and one refused Role, every one of its locks poisoned.
+    fn poisoned() -> Mirror {
+        let mirror = Mirror::new();
+        mirror.upsert(sample("p", "Role", "r", &[("tier", "one")]));
+        mirror.refuse(sample("p", "Role", "bad", &[]));
+        mirror.set_repositories(BTreeMap::from([("p".to_owned(), "repo-p".to_owned())]));
+        mirror.set_workload_clients(BTreeMap::from([("c-1".to_owned(), "p/a".to_owned())]));
+        poison_rw(&mirror.resources);
+        poison_rw(&mirror.repositories);
+        poison_rw(&mirror.refused);
+        poison_rw(&mirror.clients);
+        std::thread::scope(|scope| {
+            let joined = scope
+                .spawn(|| {
+                    let _held = mirror.held_back.lock().expect("the lock");
+                    std::panic::resume_unwind(Box::new("poisoning the lock on purpose"));
+                })
+                .join();
+            assert!(joined.is_err());
+        });
+        mirror
+    }
+
+    #[test]
+    fn a_mirror_whose_locks_were_poisoned_still_reads_and_writes() {
+        let mirror = poisoned();
+        assert_eq!(mirror.len(), 1);
+        assert!(!mirror.is_empty());
+        assert!(mirror.get("p", "Role", "r").is_some());
+        assert!(mirror.get("p", "Role", "none").is_none());
+        assert_eq!(mirror.namespaces(), vec!["p".to_owned()]);
+        assert_eq!(
+            mirror.kinds_in("p").into_iter().collect::<Vec<_>>(),
+            ["Role"]
+        );
+        assert!(mirror.kinds_in("elsewhere").is_empty());
+        assert_eq!(mirror.matching(|_| true).len(), 1);
+        assert!(mirror.find(|e| e.metadata.name == "r").is_some());
+        assert!(mirror.find(|e| e.metadata.name == "zz").is_none());
+        assert_eq!(mirror.kind_where("p", "Role", |_| true).len(), 1);
+        assert_eq!(
+            mirror
+                .list("p", "Role", &ListOptions::default())
+                .items
+                .len(),
+            1
+        );
+        assert_eq!(mirror.refused_of("p", "Role").len(), 1);
+        assert!(mirror.refused("p", "Role", "bad").is_some());
+        assert!(mirror.refused("p", "Role", "r").is_none());
+        assert_eq!(mirror.repository_of("p").as_deref(), Some("repo-p"));
+        assert_eq!(mirror.repository_of("q"), None);
+        assert_eq!(mirror.repositories().len(), 1);
+        assert_eq!(mirror.client_id("p", "a"), "c-1");
+        assert_eq!(
+            mirror.client_id("p", "b"),
+            jc_core::kinds::service_account::keycloak_client_id("p", "b")
+        );
+        assert_eq!(
+            mirror.client_account("c-1"),
+            Some(("p".to_owned(), "a".to_owned()))
+        );
+        assert_eq!(mirror.client_account("c-2"), None);
+        mirror.hold_removals(true);
+        assert!(mirror.hold_removal("Group", "g"));
+        assert_eq!(mirror.held_back(), vec!["Group g".to_owned()]);
+        mirror.upsert(sample("p", "Role", "s", &[]));
+        assert_eq!(mirror.len(), 2);
+        mirror.refuse(sample("p", "Role", "worse", &[]));
+        assert!(mirror
+            .remove(&ResourceKey {
+                namespace: "p".into(),
+                kind: "Role".into(),
+                name: "s".into()
+            })
+            .is_some());
+    }
+
+    #[test]
+    fn a_poisoned_mirror_is_copied_compared_saved_and_restored() {
+        let mirror = poisoned();
+        let other = poisoned();
+        other.upsert(sample("p", "Role", "extra", &[]));
+        assert_eq!(mirror.behind(&other, &["Role"]).len(), 1);
+        assert!(mirror.behind(&other, &["Group"]).is_empty());
+        let copy = mirror.snapshot();
+        assert_eq!(copy.len(), 1);
+        mirror.replace_all(&other);
+        assert_eq!(mirror.len(), 2);
+        let dir = std::env::temp_dir().join(format!("t7823-store-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("mirror.json");
+        mirror.save(&path).expect("saved");
+        let again = Mirror::new();
+        assert_eq!(again.restore(&path).expect("restored"), 2);
+        assert_eq!(again.client_id("p", "a"), "c-1");
+        assert!(again.removals_held());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_refused_manifest_with_a_bad_namespace_or_name_is_not_kept() {
+        let mirror = Mirror::new();
+        mirror.refuse(sample("Not A Namespace", "Role", "r", &[]));
+        mirror.refuse(sample("p", "Role", "Upper", &[]));
+        mirror.refuse(sample("p", "Role", "", &[]));
+        assert!(mirror.refused_of("p", "Role").is_empty());
+        assert!(mirror.refused("Not A Namespace", "Role", "r").is_none());
+    }
+
+    #[test]
+    fn restoring_from_a_path_that_cannot_be_opened_is_an_error_and_a_missing_file_is_zero() {
+        let dir = std::env::temp_dir().join(format!("t7823-restore-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let file = dir.join("a-file");
+        std::fs::write(&file, "x").expect("file");
+        let mirror = Mirror::new();
+        assert!(mirror.restore(&file.join("below")).is_err());
+        assert_eq!(mirror.restore(&dir.join("absent.json")).expect("absent"), 0);
+        std::fs::write(&file, "not json").expect("file");
+        assert!(mirror.restore(&file).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_manifest_of_a_kind_or_version_this_platform_does_not_serve_is_none() {
+        assert!(envelope_of("apiVersion: nope/v9\nkind: Role\nmetadata:\n  name: r\n").is_none());
+        assert!(envelope_of(
+            "apiVersion: joinedcontext.com/v1\nkind: NoSuchKind\nmetadata:\n  name: r\n"
+        )
+        .is_none());
+        assert!(envelope_of("kind: Role").is_none());
+        assert!(envelope_of("apiVersion: joinedcontext.com/v1").is_none());
+        assert!(envelope_of("apiVersion: [").is_none());
+        assert!(envelope_of("").is_none());
+    }
+
+    #[test]
+    fn the_configured_installation_keeps_the_first_name_and_the_layout_reads_at_least_one() {
+        let mirror = Mirror::new();
+        assert_eq!(mirror.configured_installation(), None);
+        mirror.set_configured_installation("smartcity");
+        mirror.set_configured_installation("other");
+        assert_eq!(mirror.configured_installation(), Some("smartcity"));
+        assert_eq!(mirror.layout(), 1);
+        mirror.set_layout(2);
+        assert_eq!(mirror.layout(), 2);
+        assert!(!mirror.hold_removal("Group", "g"));
+        assert!(mirror.held_back().is_empty());
+    }
 }

@@ -947,4 +947,22 @@ mod tests {
             "espoo hears nothing of helsinki"
         );
     }
+
+    #[test]
+    fn an_ordinary_time_converts_both_ways() {
+        let ordinary = odt_to_ts(time::macros::datetime!(2026-11-01 08:00 UTC));
+        assert_eq!(
+            ts_to_odt(ordinary),
+            time::macros::datetime!(2026-11-01 08:00 UTC)
+        );
+    }
+
+    #[test]
+    fn only_three_severities_have_a_rank() {
+        assert_eq!(severity_rank("info"), Some(0));
+        assert_eq!(severity_rank("warning"), Some(1));
+        assert_eq!(severity_rank("error"), Some(2));
+        assert_eq!(severity_rank("fatal"), None);
+        assert_eq!(severity_rank(""), None);
+    }
 }

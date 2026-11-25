@@ -657,4 +657,31 @@ mod tests {
         );
         assert!(surfaces_of("# no front matter\n").is_empty());
     }
+
+    #[test]
+    fn a_page_renders_without_the_sections_of_surfaces_that_are_not_mounted() {
+        let none = BTreeSet::new();
+        let mut checked = 0;
+        for path in Pages::iter().filter(|path| path.ends_with(".md")) {
+            let (chapter, file) = path.split_once('/').expect("chapter/page.md");
+            let page = file.trim_end_matches(".md");
+            let bare = render(chapter, page, &none).expect("the page renders");
+            let full = render(chapter, page, &every()).expect("the page renders");
+            assert!(
+                bare.len() <= full.len(),
+                "{path}: hiding a surface adds nothing"
+            );
+            checked += 1;
+        }
+        assert!(checked > 0);
+    }
+
+    #[test]
+    fn a_chapter_or_page_the_bundle_does_not_hold_renders_nothing() {
+        let all = every();
+        assert!(render("Internal", "index", &all).is_none());
+        assert!(render("API", "no-such-page-here", &all).is_none());
+        assert!(render("API", "", &all).is_none());
+        assert!(render("API", "../COMMIT", &all).is_none());
+    }
 }

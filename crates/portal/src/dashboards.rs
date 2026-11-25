@@ -147,3 +147,74 @@ fn public_dashboards(mirror: &Mirror, project: &str) -> Vec<(String, Vec<String>
         .map(|d| (d.metadata.name.clone(), layer_names(&d.spec)))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+    use serde_json::json;
+
+    fn put(mirror: &Mirror, kind: &str, name: &str, spec: Value) {
+        mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: ObjectMeta::new(name, "city"),
+            spec,
+            status: None,
+        });
+    }
+
+    #[test]
+    fn a_widget_without_an_endpoint_names_none() {
+        let spec =
+            json!({ "pages": [{ "widgets": [{ "kind": "text" }, { "endpointRef": "air" }] }] });
+        assert_eq!(
+            widget_endpoints(&spec),
+            vec![("/spec/pages/0/widgets/1".to_owned(), "air".to_owned())]
+        );
+        assert!(widget_endpoints(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn a_layer_that_reads_another_endpoint_does_not_hold_this_one_public() {
+        let mirror = Mirror::new();
+        put(
+            &mirror,
+            "Layer",
+            "other",
+            json!({ "sourceEndpointRef": "noise" }),
+        );
+        put(
+            &mirror,
+            "Layer",
+            "mine",
+            json!({ "sourceEndpointRef": "air" }),
+        );
+        put(
+            &mirror,
+            "Dashboard",
+            "board",
+            json!({ "visibility": "public", "pages": [{ "layers": ["gone", "other", "mine"] }] }),
+        );
+        let refused = check(
+            &mirror,
+            "city",
+            "Endpoint",
+            "air",
+            &json!({ "audience": "project" }),
+        )
+        .expect_err("a public dashboard draws a layer reading it");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(m) if m.contains("layer mine")),
+            "{refused:?}"
+        );
+        assert!(check(
+            &mirror,
+            "city",
+            "Endpoint",
+            "quiet",
+            &json!({ "audience": "project" })
+        )
+        .is_ok());
+    }
+}

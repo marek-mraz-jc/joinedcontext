@@ -1055,4 +1055,81 @@ mod tests {
             "no rejecting rule, no mapping"
         );
     }
+
+    fn poisoned_schemas() -> ModelSchemas {
+        let schemas = ModelSchemas::with_linkml_stage(true);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _by_space = schemas.by_space.write();
+            let _linkml = schemas.linkml.write();
+            panic!("poison both locks on purpose");
+        }));
+        assert!(outcome.is_err());
+        schemas
+    }
+
+    #[test]
+    fn poisoned_model_tables_still_answer_and_take_a_new_sync() {
+        let schemas = poisoned_schemas();
+        assert!(schemas.get("p", "s").is_none());
+        assert!(schemas.spaces().is_empty());
+        assert!(schemas.stage_linkml("p", "s").is_none());
+        schemas.set_linkml("p", "s", "r1".to_owned(), &json!({}));
+        schemas.set_linkml("p", "s", "r1".to_owned(), &json!({}));
+        schemas.retain_linkml(|_, _| true);
+        let model = ModelSchema::compile("m", "1.0.0", &json!({}), &["Vehicle".to_owned()], false);
+        schemas.replace(HashMap::from([(
+            ("p".to_owned(), "s".to_owned()),
+            Arc::new(model),
+        )]));
+        assert_eq!(schemas.spaces(), vec![("p".to_owned(), "s".to_owned())]);
+        assert!(schemas.get("p", "s").is_some());
+    }
+
+    #[test]
+    fn the_linkml_stage_is_off_unless_asked_for() {
+        let schemas = ModelSchemas::default();
+        assert!(schemas.stage_linkml("p", "s").is_none());
+    }
+
+    #[test]
+    fn an_artifact_outside_the_staged_tree_or_not_there_is_none() {
+        let root = Path::new("/nonexistent-staged-root");
+        let manifest = Path::new("projects/p/m.yaml");
+        assert!(beside(root, manifest, "/etc/passwd").is_none());
+        assert!(beside(root, manifest, "../other/x.json").is_none());
+        assert!(beside(root, manifest, "missing.json").is_none());
+    }
+
+    #[test]
+    fn a_stream_without_a_split_or_processors_takes_no_stage() {
+        let model = ModelSchema::compile("m", "1.0.0", &json!({}), &["Vehicle".to_owned()], false);
+        let mut no_split = json!({ "pipeline": { "processors": [{ "mapping": "root = this" }] } });
+        assert!(!insert_stage(&mut no_split, &model, None, "http://sink"));
+        assert_eq!(
+            no_split["pipeline"]["processors"].as_array().map(Vec::len),
+            Some(1)
+        );
+        let mut none = json!({ "input": {} });
+        assert!(!insert_stage(&mut none, &model, None, "http://sink"));
+    }
+
+    #[test]
+    fn a_space_naming_a_model_the_repository_does_not_hold_compiles_to_nothing() {
+        let dir = std::env::temp_dir().join(format!(
+            "portal-validation-missing-model-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        let file = dir.join("projects/ovzdusie/spaces/air/space.yaml");
+        std::fs::create_dir_all(file.parent().expect("a parent")).expect("a directory");
+        std::fs::write(
+            &file,
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n  dataModelRef: { kind: DataModel, name: ghost }\n",
+        )
+        .expect("a space file");
+        let repo = jcctl::loader::Repository::load(&dir).expect("the repository loads");
+        let compiled = load(&repo, &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(compiled.is_empty(), "{:?}", compiled.keys());
+    }
 }

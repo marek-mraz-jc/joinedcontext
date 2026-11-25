@@ -984,4 +984,35 @@ mod tests {
         }
         assert!(public.parts.iter().all(|p| p.fix.is_none()));
     }
+
+    #[test]
+    fn a_warning_pipeline_is_late_with_the_silent_fix() {
+        let report = report();
+        let warn = [check(Kind::Pipeline, "weather", "runs", Status::Warn)];
+        let late = scored(Some(&report), &warn);
+        let freshness = part(&late, Part::Freshness);
+        assert_eq!(freshness.reason.code, "late");
+        assert_eq!(freshness.fix.as_ref().expect("a fix").code, "fixSilent");
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_health_log_leaves_the_score_unmeasured_not_failed() {
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        let state =
+            crate::state::AppState::new(crate::config::Config::for_tests(), None).with_db(pool);
+        let endpoint = ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "Endpoint".to_owned(),
+            metadata: ObjectMeta::new("weather", "bbsk"),
+            spec: serde_json::json!({}),
+            status: None,
+        };
+        let got = of_endpoint(&state, "bbsk", &endpoint).await;
+        assert_eq!(got.score, None);
+        assert_eq!(got.parts.len(), 4);
+    }
 }

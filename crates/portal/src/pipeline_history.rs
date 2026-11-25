@@ -726,4 +726,115 @@ mod tests {
             other => panic!("not refused: {other:?}"),
         }
     }
+
+    fn writer_world() -> AppState {
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let put = |kind: &str, name: &str, spec: Value| {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: ObjectMeta::new(name, "helsinki"),
+                spec,
+                status: None,
+            });
+        };
+        put(
+            "Endpoint",
+            "ep-s",
+            json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "s" }, "slug": "ep-s" }),
+        );
+        put(
+            "Pipeline",
+            "writer",
+            json!({
+                "class": "resident",
+                "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:ep-s" }],
+                "history": [{ "type": "Vehicle", "attributes": [{ "names": ["speed"], "keep": "every" }] }],
+                "attributes": [{ "type": "Vehicle" }],
+            }),
+        );
+        state
+    }
+
+    #[test]
+    fn plans_of_other_pipelines_are_those_writing_the_space() {
+        let state = writer_world();
+        let there = other_plans(&state.mirror, "helsinki", "s", "someone-else");
+        assert_eq!(there.len(), 1);
+        assert_eq!(there[0].pipeline, "writer");
+        assert!(other_plans(&state.mirror, "helsinki", "s", "writer").is_empty());
+        assert!(other_plans(&state.mirror, "helsinki", "elsewhere", "x").is_empty());
+        assert!(other_plans(&state.mirror, "another-project", "s", "x").is_empty());
+    }
+
+    #[test]
+    fn a_pipeline_into_a_space_with_no_model_is_not_judged_and_other_kinds_pass() {
+        let state = writer_world();
+        let spec = state
+            .mirror
+            .get("helsinki", "Pipeline", "writer")
+            .expect("the pipeline")
+            .spec;
+        assert!(check(&state, "helsinki", "Pipeline", &spec).is_ok());
+        assert!(check_attributes(&state, "helsinki", "Pipeline", &spec).is_ok());
+        assert!(check(&state, "helsinki", "Endpoint", &spec).is_ok());
+        assert!(check_attributes(&state, "helsinki", "Endpoint", &spec).is_ok());
+        assert!(check(&state, "helsinki", "Pipeline", &json!({ "class": 5 })).is_ok());
+    }
+
+    #[test]
+    fn two_pipelines_planning_one_attribute_alike_fold_it_once() {
+        let space = rules(json!([{ "entityType": "*", "history": "P7D" }]));
+        let folded = fold(
+            &space,
+            &[
+                plan("a", "speed", Keep::Changes, Some("PT1H"), None),
+                plan("b", "speed", Keep::Changes, Some("PT1H"), None),
+            ],
+        );
+        assert_eq!(folded.len(), 2, "the space's own rule and one for Vehicle");
+        assert_eq!(folded[1].entity_type, "Vehicle");
+        assert_eq!(folded[1].attributes.len(), 1);
+        assert_eq!(
+            folded[1].attributes["speed"].heartbeat.as_deref(),
+            Some("PT1H")
+        );
+    }
+
+    #[test]
+    fn another_pipelines_plan_is_named_in_the_words_of_its_choice() {
+        let space = rules(json!([{ "entityType": "Vehicle", "history": "P30D" }]));
+        let mine = plan("mine", "speed", Keep::Every, None, None);
+        let theirs = plan("theirs", "speed", Keep::Changes, None, None);
+        let (rule, reason) = refusal(&space, "s", &mine, &[theirs]).expect("a refusal");
+        assert_eq!(rule, "otherPipeline");
+        assert!(reason.contains("keep only changes"), "{reason}");
+        let latest = plan("theirs", "speed", Keep::Latest, None, None);
+        let (_, reason) = refusal(&space, "s", &mine, &[latest]).expect("a refusal");
+        assert!(reason.contains("keep the latest value only"), "{reason}");
+    }
+
+    #[test]
+    fn a_space_rule_with_a_heartbeat_is_named_with_it() {
+        let space = rules(json!([{ "entityType": "Vehicle", "history": "P30D",
+            "attributes": { "speed": { "record": "onChange", "heartbeat": "PT1H" } } }]));
+        let mine = plan("mine", "speed", Keep::Every, None, None);
+        let (rule, reason) = refusal(&space, "s", &mine, &[]).expect("a refusal");
+        assert_eq!(rule, "spaceRule");
+        assert!(reason.contains("onChange with heartbeat PT1H"), "{reason}");
+    }
+
+    #[test]
+    fn a_record_with_the_slots_time_passes_the_record_check() {
+        let mine = plan("mine", "speed", Keep::Changes, None, Some("observedOn"));
+        let record = json!({ "speed": { "value": 3, "observedAt": "2026-10-22T10:00:00Z" } });
+        assert!(record_refusal(&mine, &record).is_none());
+        let bare = json!({ "speed": { "value": 3 } });
+        assert_eq!(
+            record_refusal(&mine, &bare).expect("refused").0,
+            "observedAt"
+        );
+        assert!(record_refusal(&mine, &json!({ "other": 1 })).is_none());
+    }
 }

@@ -539,6 +539,57 @@ root = {
     }
 
     #[test]
+    fn an_object_that_never_closes_names_no_attribute() {
+        let found = scan(
+            r#"root = { "type": "Vehicle", "speed": { "type": "Property", "value": 1"#,
+            None,
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_dataset_id_that_is_an_expression_is_said_to_be_mapped() {
+        let found = scan(
+            r#"root = { "type": "Vehicle", "level": { "type": "Property", "value": 1, "datasetId": this.id } }"#,
+            None,
+        );
+        let level = &found[&("Vehicle".to_owned(), "level".to_owned())];
+        assert_eq!(level.dataset_id, ["mapped".to_owned()].into());
+    }
+
+    #[test]
+    fn a_member_of_the_same_name_in_a_nested_object_is_not_the_attributes_own() {
+        let found = scan(
+            r#"root = { "type": "Vehicle", "speed": { "type": "Property", "value": { "observedAt": this.inner }, "observedAt": "2026-01-01T00:00:00Z" } }"#,
+            None,
+        );
+        let speed = &found[&("Vehicle".to_owned(), "speed".to_owned())];
+        assert_eq!(speed.observed_at, set(&[ObservedAt::Constant]));
+    }
+
+    #[test]
+    fn a_property_with_no_key_before_it_names_no_attribute() {
+        let found = scan(
+            r#"root = { "type": "Vehicle" } { "type": "Property" }"#,
+            None,
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn text_with_multibyte_characters_before_the_key_window_is_cut_on_a_boundary() {
+        let text = format!(
+            "{}root = {{ \"type\": \"Vehicle\", \"speed\": {{ \"type\": \"Property\", \"value\": 1 }} }}",
+            "\u{e9}".repeat(300)
+        );
+        let found = scan(&text, None);
+        assert!(
+            found.contains_key(&("Vehicle".to_owned(), "speed".to_owned())),
+            "{found:?}"
+        );
+    }
+
+    #[test]
     fn each_verdict_rule() {
         let mapped = set(&[ObservedAt::Mapped]);
         let received = set(&[ObservedAt::Received]);
@@ -646,5 +697,38 @@ root = {
             && r.record == "none"
             && r.verdict == Verdict::Ok
             && r.lifetime == ["PT5M"]));
+    }
+
+    #[test]
+    fn a_history_plans_time_and_the_expiry_are_what_the_audit_row_says() {
+        let spec = serde_json::json!({
+            "class": "resident",
+            "expiry": { "after": "14d", "types": ["Vehicle"] },
+            "history": [{ "type": "Vehicle", "attributes": [
+                { "names": ["speed"], "keep": "every", "observedAt": "received" },
+                { "names": ["mode"], "keep": "changes", "observedAt": "observedOn" }
+            ]}]
+        });
+        let mapping = r#"root = { "type": "Vehicle", "expiresAt": "x",
+            "speed": { "type": "Property", "value": 1, "observedAt": "2026-01-01T00:00:00Z" },
+            "mode": { "type": "Property", "value": 2, "observedAt": now() } }"#;
+        let unit = |_: &str, _: &str| None;
+        let input = Input {
+            pipeline: "p",
+            spec: &spec,
+            bento: Some(mapping),
+            default_type: None,
+            retention: &[],
+            unit: &unit,
+        };
+        let rows = rows(&input);
+        let speed = rows.iter().find(|r| r.attribute == "speed").expect("speed");
+        let mode = rows.iter().find(|r| r.attribute == "mode").expect("mode");
+        assert_eq!(speed.observed_at, vec![ObservedAt::Received]);
+        assert_eq!(mode.observed_at, vec![ObservedAt::Mapped]);
+        assert_eq!(
+            speed.lifetime,
+            vec!["expiry 14d".to_owned(), "expiresAt in mapping".to_owned()]
+        );
     }
 }
