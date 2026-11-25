@@ -52,7 +52,7 @@ class Stub:
 
     def __init__(self, fx):
         self.by_ask = {q["ask"]: q["id"] for q in fx["questions"]}
-        self.plan, self.conversations, self.judged = {}, [], []
+        self.plan, self.conversations, self.judged, self.origins = {}, [], [], []
         stub = self
 
         class H(BaseHTTPRequestHandler):
@@ -86,6 +86,10 @@ class Stub:
                     return self.send(200, stub.judge_reply(body))
                 if self.path == "/api/v1/d/gate/chat":
                     assert self.headers.get("X-JC-Visitor") == "visitor-token"
+                    stub.origins.append(self.headers.get("Origin"))
+                    # as chat/mod.rs: callers without an Origin share unplaced_limit(20) = 3 a minute
+                    if self.headers.get("Origin") is None and stub.origins.count(None) > 3:
+                        return self.send(429, {"detail": "Položili ste veľa otázok za krátky čas."})
                     stub.conversations.append(body.get("conversation"))
                     qid = stub.by_ask[body["message"]]
                     p = stub.plan.get(qid, {})
@@ -161,6 +165,8 @@ def test_a_good_run_passes_with_its_cost_and_holds_no_key(tmp_path, stub, fx, mo
     assert v["sha"] == "a" * 40 and v["digest"] == "sha256:" + "b" * 64
     # one conversation: the first question opens it, each later one names it
     assert stub.conversations == [None] + ["conv-1"] * 9
+    # every question names the page it comes from, so none falls into the unplaced pool
+    assert stub.origins == [stub.base] * 10
     # the key goes to the judge in its header only, never into the evidence
     assert stub.judged[0][0] == f"Bearer {KEY}" and KEY not in raw
     assert "visitor-token" not in raw
@@ -169,6 +175,19 @@ def test_a_good_run_passes_with_its_cost_and_holds_no_key(tmp_path, stub, fx, mo
     facts = {r["id"]: r["facts"] for r in answers["rows"]}
     assert facts["gate-01"] == [["3"]] and facts["gate-02"] == [["1"]]
     assert facts["gate-03"] == [["Helsinki Herttoniemi 2"]] and facts["gate-04"] == [["9,1", "9.1"]]
+
+
+def test_the_deployment_admits_the_gate_from_the_jc_dev_widget_page(fx):
+    """Ten questions in a row (and the widget's one) stay under every window of the rateLimit,
+    and the page they come from is an allowed origin."""
+    import yaml
+    spec = yaml.safe_load((suite.HERE / "deployment.yaml").read_text())["spec"]
+    n = len(fx["questions"]) + 1
+    rate = spec["rateLimit"]
+    assert min(rate["requestsPerMinute"], rate["perClientPerMinute"]) >= n
+    assert min(rate["perClientPerHour"], rate["perClientPerDay"]) >= 2 * n, "a red run and its rerun within the hour"
+    assert suite.origin_of("https://jc.jcdev.dev.joinedcontext.com/d/gate/widget") in spec["allowedOrigins"]
+    assert spec["budget"]["messagesPerConversation"] >= len(fx["questions"])
 
 
 def test_a_wrong_expected_fact_makes_the_run_red(tmp_path, stub, fx, monkeypatch):

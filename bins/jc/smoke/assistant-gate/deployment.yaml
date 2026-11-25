@@ -29,7 +29,11 @@ spec:
     - endpoint: helsinki-air-quality
       tools: [list_types, get_type, list_attributes, query_entities, summarize, get_entity]
       timeoutSeconds: 10
+  # The runner's chat and the widget it opens both come from jc-dev's jc host: jc mounts the
+  # assistant under a path there, so JC_ASSISTANT_PUBLIC_ORIGIN is unset and only this list admits
+  # the widget's own page (chat/mod.rs origin()).
   allowedOrigins:
+    - https://jc.jcdev.dev.joinedcontext.com
     - https://dev.joinedcontext.com
   rateLimit:
     requestsPerMinute: 20

@@ -6,9 +6,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jcctl::commands::publish_ckan as publisher;
-use jcctl::publish::ckan::{CkanApi, InMemoryCkan, Outcome, Settings, GENERATOR};
+use jcctl::publish::ckan::{CkanApi, CkanError, InMemoryCkan, Outcome, Settings, GENERATOR};
 use joinedcontext_portal::reconciler::ckan_dashboards::{
-    desired, publish, targets, DashboardTarget, DASHBOARD_TYPE, ENDPOINTS_EXTRA, LAYOUT_EXTRA,
+    desired, publish, targets, DashboardTarget, Desired, DASHBOARD_TYPE, ENDPOINTS_EXTRA,
+    LAYOUT_EXTRA,
 };
 use serde_json::{json, Value};
 
@@ -274,5 +275,210 @@ fn a_package_of_that_name_somebody_else_made_is_never_written_over() {
     assert_eq!(
         api.package("bbsk-ukazovatele").expect("kept")["title"],
         "Hand made"
+    );
+}
+
+/// A Dashboard manifest of `PROJECT` named `name` with `spec`, or of no project at all.
+fn dashboard_manifest(name: &str, namespace: Option<&str>, spec: Value) -> String {
+    let mut metadata = json!({ "name": name });
+    if let Some(namespace) = namespace {
+        metadata["namespace"] = json!(namespace);
+    }
+    serde_norway::to_string(&json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "Dashboard",
+        "metadata": metadata,
+        "spec": spec,
+    }))
+    .expect("yaml")
+}
+
+fn vega(endpoint: &str) -> Value {
+    json!({ "widgetType": "vega-lite", "endpointRef": endpoint,
+            "data": { "source": "csv", "type": "BikeHireDockingStation" }, "spec": chart() })
+}
+
+/// A dashboard of no project, one whose spec does not read, and one reading only an Endpoint
+/// that is not published are left out; one reading a published and an unpublished Endpoint
+/// is published over the published one alone.
+#[test]
+fn only_a_project_dashboard_reading_a_published_endpoint_is_a_target() {
+    let public = |widgets: Value| json!({ "title": "T", "visibility": "public", "pages": [{ "widgets": widgets }] });
+    let found = targets_beside(
+        "public",
+        &[
+            dashboard_manifest("orphan", None, public(json!([vega("bikes")]))),
+            dashboard_manifest(
+                "broken",
+                Some(PROJECT),
+                json!({ "visibility": "public", "pages": "none" }),
+            ),
+            dashboard_manifest("trams", Some(PROJECT), public(json!([vega("trams")]))),
+            dashboard_manifest(
+                "mixed",
+                Some(PROJECT),
+                public(json!([vega("trams"), vega("bikes")])),
+            ),
+        ],
+    );
+    let mut names: Vec<&str> = found.iter().map(|t| t.name.as_str()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["mixed", "ukazovatele"]);
+    let mixed = found.iter().find(|t| t.name == "mixed").expect("mixed");
+    assert_eq!(mixed.endpoints.keys().collect::<Vec<_>>(), ["bikes"]);
+    assert_eq!(mixed.package_name(), "bbsk-mixed");
+}
+
+/// The dashboard is filed under its Endpoint's own organization, else the catalogue's default.
+#[test]
+fn a_dashboard_is_filed_under_its_endpoints_organization_else_the_default() {
+    let mut found = targets_of("public").remove(0);
+    assert_eq!(found.organization().as_deref(), Some("bbsk"));
+    found.anchor.publication.organization = Some("bbsk-mobility".to_owned());
+    assert_eq!(found.organization().as_deref(), Some("bbsk-mobility"));
+    found.anchor.publication.organization = None;
+    found.anchor.instance.organization_default = None;
+    assert_eq!(found.organization(), None);
+}
+
+/// A chart without data, a grid without a type and a widget on an Endpoint not published draw
+/// nothing, and a page left with nothing is not in the layout; a publisher named in one other
+/// language is named all the same; a name past CKAN's 100 characters is refused.
+#[test]
+fn what_the_catalogue_cannot_draw_is_left_out_and_a_long_name_refused() {
+    let mut edited = targets_of("public").remove(0);
+    let titled = {
+        let mut spec = chart();
+        spec["title"] = json!({ "text": "Docks" });
+        spec["description"] = json!("Every dock");
+        spec
+    };
+    edited.spec = serde_json::from_value(json!({
+        "title": "Ukazovatele",
+        "visibility": "public",
+        "pages": [
+            { "title": "Empty", "widgets": [
+                { "widgetType": "vega-lite", "endpointRef": "bikes", "spec": chart() },
+                { "widgetType": "grid", "endpointRef": "bikes" },
+                vega("trams"),
+            ] },
+            { "widgets": [
+                { "widgetType": "vega-lite", "endpointRef": "bikes",
+                  "data": { "source": "csv", "type": "BikeHireDockingStation" }, "spec": titled },
+            ] },
+        ],
+    }))
+    .expect("a dashboard spec");
+    edited.publisher = Some(json!({ "name": { "de": "Stadt" }, "uri": "https://stadt.example" }));
+    let want = desired(&edited, "bbsk", &settings()).expect("desired");
+    let layout: Value = serde_json::from_str(extra(&want.package, LAYOUT_EXTRA)).expect("layout");
+    assert_eq!(
+        layout,
+        json!({ "pages": [{ "title": "", "widgets": [{ "view": "p1w0" }] }] })
+    );
+    assert_eq!(want.views.len(), 1);
+    assert_eq!(want.views[0].1["title"], "Docks");
+    assert_eq!(want.views[0].1["description"], "Every dock");
+    assert_eq!(extra(&want.package, "publisher_name"), "Stadt");
+    assert_eq!(
+        extra(&want.package, "publisher_uri"),
+        "https://stadt.example"
+    );
+
+    edited.name = "n".repeat(100);
+    let refused = desired(&edited, "bbsk", &settings()).expect_err("too long");
+    assert!(refused.contains("longer than 100 characters"), "{refused}");
+}
+
+/// A changed package is updated in place, its resource keeping its id and views; a chart the
+/// dashboard dropped goes, a view the platform did not make stays, and a view on an Endpoint
+/// the package has no resource for is not made.
+#[test]
+fn a_changed_dashboard_is_updated_in_place_and_a_dropped_chart_goes() {
+    let want = desired(&targets_of("public")[0], "bbsk", &settings()).expect("desired");
+    let mut api = InMemoryCkan::new().with_organization("bbsk");
+    assert_eq!(publish(&mut api, &want), Ok(Outcome::Created));
+    let resource = api.package("bbsk-ukazovatele").expect("created")["resources"][0]["id"]
+        .as_str()
+        .expect("a resource id")
+        .to_owned();
+    api.action(
+        "resource_view_create",
+        &json!({ "resource_id": resource, "view_type": "image_view", "title": "Photo" }),
+    )
+    .expect("a hand-made view");
+
+    let mut renamed = want.clone();
+    renamed.package["title"] = json!("Ukazovatele 2026");
+    let trams = json!({ "name": "trams", "url": "https://api.example.sk/api/endpoint/trams", "format": "NGSI-LD" });
+    renamed.package["resources"]
+        .as_array_mut()
+        .expect("resources")
+        .push(trams);
+    assert_eq!(publish(&mut api, &renamed), Ok(Outcome::Updated));
+    let package = api.package("bbsk-ukazovatele").expect("kept");
+    assert_eq!(package["title"], "Ukazovatele 2026");
+    assert_eq!(package["resources"][0]["id"], resource.as_str());
+    assert_eq!(api.views(&resource).len(), 2);
+
+    let chartless = Desired {
+        package: renamed.package.clone(),
+        views: vec![("no-such-endpoint".to_owned(), want.views[0].1.clone())],
+    };
+    assert_eq!(publish(&mut api, &chartless), Ok(Outcome::Updated));
+    assert!(
+        api.actions().contains(&"resource_view_delete"),
+        "{:?}",
+        api.actions()
+    );
+    let left: Vec<&Value> = api.views(&resource).iter().collect();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0]["view_type"], "image_view");
+}
+
+/// The catalogue as the test needs it to answer: refusing one action, or never showing the
+/// package it just made.
+struct Flaky {
+    inner: InMemoryCkan,
+    refuse: Option<&'static str>,
+    forget: bool,
+}
+
+impl CkanApi for Flaky {
+    fn show(&self, action: &str, name: &str) -> Result<Option<Value>, CkanError> {
+        if self.refuse == Some(action) {
+            return Err(CkanError::Unavailable("connection refused".to_owned()));
+        }
+        if self.forget && action == "package_show" {
+            return Ok(None);
+        }
+        self.inner.show(action, name)
+    }
+
+    fn action(&mut self, action: &str, payload: &Value) -> Result<Value, CkanError> {
+        self.inner.action(action, payload)
+    }
+}
+
+/// A catalogue that cannot be read is the dashboard's error; one that does not show the
+/// package it made leaves the views for the next pass.
+#[test]
+fn a_catalogue_that_cannot_be_read_is_the_dashboards_error() {
+    let want = desired(&targets_of("public")[0], "bbsk", &settings()).expect("desired");
+    let mut api = Flaky {
+        inner: InMemoryCkan::new().with_organization("bbsk"),
+        refuse: Some("package_show"),
+        forget: false,
+    };
+    let refused = publish(&mut api, &want).expect_err("unread");
+    assert!(refused.contains("connection refused"), "{refused}");
+
+    api.refuse = None;
+    api.forget = true;
+    assert_eq!(publish(&mut api, &want), Ok(Outcome::Created));
+    assert!(
+        !api.inner.actions().contains(&"resource_view_create"),
+        "{:?}",
+        api.inner.actions()
     );
 }

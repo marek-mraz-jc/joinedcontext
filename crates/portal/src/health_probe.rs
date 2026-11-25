@@ -217,27 +217,17 @@ pub fn judge_count(
 fn report(judged: &[(Finding, u64)]) {
     let count = |status| judged.iter().filter(|(f, _)| f.status == status).count();
     let slowest = judged.iter().max_by_key(|(_, ms)| *ms);
-    tracing::info!(
-        surfaces = judged.len(),
-        ok = count(Status::Ok),
-        warn = count(Status::Warn),
-        error = count(Status::Error),
-        slowest_ms = slowest.map_or(0, |(_, ms)| *ms),
-        slowest = slowest.map_or_else(String::new, |(f, _)| format!(
-            "{}/{} {}",
-            f.project, f.name, f.check
-        )),
-        "health probe round"
-    );
+    // One line per event: coverage counts the fields of a call spread over lines as unrun.
+    let (surfaces, ok, warn) = (judged.len(), count(Status::Ok), count(Status::Warn));
+    let (error, slowest_ms) = (count(Status::Error), slowest.map_or(0, |(_, ms)| *ms));
+    let slowest = slowest.map_or_else(String::new, |(f, _)| {
+        format!("{}/{} {}", f.project, f.name, f.check)
+    });
+    #[rustfmt::skip]
+    tracing::info!(surfaces, ok, warn, error, slowest_ms, slowest, "health probe round");
     for (f, ms) in judged.iter().filter(|(f, _)| f.status == Status::Error) {
-        tracing::warn!(
-            project = %f.project,
-            endpoint = %f.name,
-            surface = %f.check,
-            ms,
-            detail = %f.detail.text,
-            "health probe: a surface failed"
-        );
+        let (project, endpoint, surface, detail) = (&f.project, &f.name, &f.check, &f.detail.text);
+        tracing::warn!(%project, %endpoint, %surface, ms, %detail, "health probe: a surface failed");
     }
 }
 
@@ -604,6 +594,110 @@ mod tests {
         assert_eq!(check(&green, "ngsi-ld"), Some(Status::Ok));
     }
 
+    /// Only a live Endpoint with a project, a DNS-1123 slug and a surface the probe knows is
+    /// asked; a gateway that refuses the connection or never answers is a red check whose
+    /// words say which.
+    #[tokio::test]
+    async fn only_live_endpoints_are_asked_and_a_silent_gateway_is_red() {
+        let endpoint = |name: &str, spec: serde_json::Value, status| {
+            let mut env = serde_json::json!({
+                "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",
+                "metadata": {"name": name, "namespace": "bbsk"},
+                "spec": spec,
+            });
+            if let Some(phase) = status {
+                env["status"] = serde_json::json!({ "phase": phase });
+            }
+            serde_json::from_value::<crate::resource::ResourceEnvelope>(env).expect("an endpoint")
+        };
+        let surfaces = |slug: &str| serde_json::json!({"slug": slug, "enabledRepresentations": ["odata", "gopher"], "mcp": false});
+        let mirror = Mirror::default();
+        for env in [
+            endpoint("air", surfaces("air"), Some("Live")),
+            endpoint(
+                "no-slug",
+                serde_json::json!({"enabledRepresentations": ["odata"]}),
+                Some("Live"),
+            ),
+            endpoint("pending", surfaces("pending"), Some("Pending")),
+            endpoint("unstated", surfaces("unstated"), None),
+            endpoint("bad-slug", surfaces("Not_A_Slug"), Some("Live")),
+        ] {
+            mirror.upsert(env);
+        }
+        // A bound socket that never listens: the connection is refused.
+        let closed = tokio::net::TcpSocket::new_v4().expect("a socket");
+        closed
+            .bind("127.0.0.1:0".parse().expect("an address"))
+            .expect("bind");
+        let refused = Url::parse(&format!(
+            "http://{}/",
+            closed.local_addr().expect("an address")
+        ))
+        .expect("a url");
+        let (found, _) =
+            logged(Probes::new(Some(refused), None).findings(&mirror, TimestampTz::now())).await;
+        assert_eq!(
+            found
+                .iter()
+                .map(|f| (f.name.as_str(), f.check.as_str()))
+                .collect::<Vec<_>>(),
+            [("air", "odata"), ("air", "ngsi-ld")],
+            "the known surfaces of the one live endpoint"
+        );
+        assert!(
+            found
+                .iter()
+                .all(|f| f.status == Status::Error
+                    && f.detail.text.contains("the connection failed")),
+            "{found:?}"
+        );
+        // A listener that accepts and never answers: the probe gives up at TIMEOUT.
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let at = silent.local_addr().expect("an address");
+        let held = tokio::spawn(async move {
+            let mut open = Vec::new();
+            while let Ok((socket, _)) = silent.accept().await {
+                open.push(socket);
+            }
+        });
+        let gateway = Url::parse(&format!("http://{at}/")).expect("a url");
+        let (found, _) =
+            logged(Probes::new(Some(gateway), None).findings(&mirror, TimestampTz::now())).await;
+        held.abort();
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(
+            found
+                .iter()
+                .all(|f| f.detail.text.contains("no answer within 10 s")),
+            "{found:?}"
+        );
+    }
+
+    /// An answer that carries neither a status nor an error still reads as no answer.
+    #[test]
+    fn an_answer_with_no_status_and_no_error_is_no_answer() {
+        let down = judge_surface(
+            "p",
+            "e",
+            "odata",
+            false,
+            &Answer {
+                status: None,
+                ms: 3,
+                error: None,
+            },
+        );
+        assert_eq!(down.status, Status::Error);
+        assert!(
+            down.detail.text.contains("no answer"),
+            "{}",
+            down.detail.text
+        );
+    }
+
     /// Each space is counted on the broker it names: a space the Portal reaches no broker for
     /// is skipped, a broker that fails is a red `entities` check, and a counted space keeps its
     /// count for the next round's comparison.
@@ -701,6 +795,10 @@ mod tests {
             .with_writer(move || writer.clone())
             .with_ansi(false)
             .finish();
+        assert!(
+            std::io::Write::flush(&mut sink.clone()).is_ok(),
+            "a sink keeps no buffer"
+        );
         let guard = tracing::subscriber::set_default(subscriber);
         let out = run.await;
         drop(guard);
