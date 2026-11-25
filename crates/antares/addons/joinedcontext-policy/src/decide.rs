@@ -837,9 +837,10 @@ mod tests {
         let mut p = json!({"id": "p", "assignee": {"kind": "role", "id": "r"},
                            "operations": ["5.6.1", "5.6.8", "5.8.1"],
                            "information": [{"entities": [{"type": "Car"}]}]});
-        if let (Some(o), Some(extra)) = (p.as_object_mut(), policy.as_object()) {
-            o.extend(extra.clone());
-        }
+        let extra = policy.as_object().cloned().unwrap_or_default();
+        p.as_object_mut()
+            .into_iter()
+            .for_each(|o| o.extend(extra.clone()));
         compile(&json!({ "policies": [p] }))
     }
 
@@ -862,6 +863,24 @@ mod tests {
             ..Operation::new(clause)
         };
         decide(Some(table), &caller(), &op, Timestamp::now())
+    }
+
+    /// The filter a narrowing read answers; any other decision is the
+    /// test's error, `what` and the decision.
+    fn narrowed(d: Decision, what: &str) -> Result<std::sync::Arc<Filter>, String> {
+        match d {
+            Decision::Filter(f) => Ok(f),
+            other => Err(format!("{what}: {other:?}")),
+        }
+    }
+
+    /// The condition a held write answers; any other decision is the
+    /// test's error, `what` and the decision.
+    fn held(d: Decision, what: &str) -> Result<Filter, String> {
+        match d {
+            Decision::AllowIf(f) => Ok(f),
+            other => Err(format!("{what}: {other:?}")),
+        }
     }
 
     fn iri(name: &str) -> String {
@@ -1041,6 +1060,12 @@ mod tests {
             with(&conditional, "5.6.11", &[], &[], None, false),
             Decision::Deny(NOT_GRANTED.into())
         );
+        // nor one naming a type: a delete by type is neither a create nor a
+        // write by id, so a condition admits no way to hold it
+        assert_eq!(
+            with(&conditional, "5.6.11", &car(), &[], None, false),
+            Decision::Deny(NOT_GRANTED.into())
+        );
         // a conditional grant of every type decides a typed create by its condition, per type
         let creating = table(&json!({"information": [], "operations": ["5.6.1"],
                                      "q": "speed<100"}))?;
@@ -1133,9 +1158,10 @@ mod tests {
              "operations": ["5.7.2", "5.6.1"], "information": []},
             prohibit_bus]}))?;
         for t in [&selected, &whole] {
-            let Decision::Filter(f) = with(t, "5.7.2", &both, &[], None, false) else {
-                return Err("a read of Car and Bus reads Car".into());
-            };
+            let f = narrowed(
+                with(t, "5.7.2", &both, &[], None, false),
+                "a read of Car and Bus reads Car",
+            )?;
             let shown: Vec<&String> = f.rules.iter().flat_map(|r| &r.types).collect();
             assert_eq!(shown, [&iri("Car")], "no rule shows Bus");
             assert!(f.rules.iter().all(|r| r.every_attribute));
@@ -1161,9 +1187,10 @@ mod tests {
              "information": [{"entities": [{"type": "Bus"}]}]},
             {"id": "no-bus", "assignee": {"kind": "role", "id": "r"}, "effect": "prohibit",
              "operations": ["5.7.2"], "information": [{"entities": [{"type": "Bus"}]}]}]}))?;
-        let Decision::Filter(f) = with(&bus_only, "5.7.2", &both, &[], None, false) else {
-            return Err("a read of Car and Bus is narrowed".into());
-        };
+        let f = narrowed(
+            with(&bus_only, "5.7.2", &both, &[], None, false),
+            "a read of Car and Bus is narrowed",
+        )?;
         assert_eq!(
             f.rules,
             vec![Rule::default()],
@@ -1182,20 +1209,23 @@ mod tests {
              "operations": ["5.7.2"],
              "information": [{"entities": [{"type": "Car"}], "propertyNames": ["vin"]}]}]}))?;
         for restricted in [true, false] {
-            let Decision::Filter(f) = with(&t, "5.7.2", &car(), &[], None, restricted) else {
-                return Err("a read by selector is a filter".into());
-            };
+            let f = narrowed(
+                with(&t, "5.7.2", &car(), &[], None, restricted),
+                "a read by selector is a filter",
+            )?;
             assert_eq!(f.restricted, restricted);
             // a whole grant that a prohibition takes an Attribute back from says so too
-            let Decision::Filter(f) = with(&whole, "5.7.2", &car(), &[], None, restricted) else {
-                return Err("a whole read with an Attribute taken back is a filter".into());
-            };
+            let f = narrowed(
+                with(&whole, "5.7.2", &car(), &[], None, restricted),
+                "a whole read with an Attribute taken back is a filter",
+            )?;
             assert_eq!(f.restricted, restricted);
             assert!(!f.omit_by_type.is_empty());
             // the core-@context answer of a caller without a whole grant says so too
-            let Decision::Filter(f) = with(&t, "5.13.3", &[], &[], None, restricted) else {
-                return Err("a narrowed @context list is a filter".into());
-            };
+            let f = narrowed(
+                with(&t, "5.13.3", &[], &[], None, restricted),
+                "a narrowed @context list is a filter",
+            )?;
             assert_eq!(f.restricted, restricted);
         }
         Ok(())
@@ -1220,9 +1250,10 @@ mod tests {
             s.temporal = window;
         }
         for t in [&t, &whole] {
-            let Decision::AllowIf(held) = with(t, "5.6.3", &car(), &speed, None, false) else {
-                return Err("a conditioned write by id is held".into());
-            };
+            let held = held(
+                with(t, "5.6.3", &car(), &speed, None, false),
+                "a conditioned write by id is held",
+            )?;
             let rule = held.rules.first().ok_or("no rule")?;
             assert!(rule.q.is_some() && rule.types == car());
             assert!(
@@ -1288,11 +1319,16 @@ mod tests {
             "information": [{"entities": [{"type": "Car"}], "propertyNames": ["speed"]}]}))?;
         let no_query = table(&json!({"operations": ["5.13.3", "5.13.4"], "information": []}))?;
         for clause in ["5.13.3", "5.13.4"] {
-            assert_eq!(on(&whole, clause, None), Decision::Allow, "{clause}");
+            assert_eq!(
+                narrowed(on(&whole, clause, None), "whole").err().as_deref(),
+                Some("whole: Allow"),
+                "{clause}"
+            );
             for (name, t) in [("cars", &cars), ("speed", &speed), ("no query", &no_query)] {
-                let Decision::Filter(f) = on(t, clause, None) else {
-                    return Err(format!("{name} {clause}: a narrowing"));
-                };
+                let f = narrowed(
+                    on(t, clause, None),
+                    &format!("{name} {clause}: a narrowing"),
+                )?;
                 assert!(!f.is_empty(), "{name} {clause}");
             }
         }
@@ -1307,7 +1343,11 @@ mod tests {
     #[test]
     fn a_granted_clause_outside_the_entity_operations_is_allowed() -> Result<(), String> {
         let t = table(&json!({"q": "speed>1"}))?;
-        assert_eq!(on(&t, "5.8.1", None), Decision::Allow);
+        assert_eq!(
+            held(on(&t, "5.8.1", None), "5.8.1").err().as_deref(),
+            Some("5.8.1: Allow"),
+            "allowed whole, not held"
+        );
         Ok(())
     }
 
@@ -1317,9 +1357,10 @@ mod tests {
         // T-3668: an upserted member is judged on the stored Entity inside
         // the store write, and a conditioned upsert never creates
         let t = table(&json!({"q": "speed>1"}))?;
-        let Decision::AllowIf(held) = on(&t, "5.6.8", None) else {
-            return Err("a conditioned upsert is held to the condition".into());
-        };
+        let held = held(
+            on(&t, "5.6.8", None),
+            "a conditioned upsert is held to the condition",
+        )?;
         assert_eq!(held.rules.len(), 1);
         assert!(held
             .rules
@@ -1405,19 +1446,18 @@ mod tests {
             {"entities": [{"type": "Bus"}], "propertyNames": ["name"]}]}))?;
         let types: Vec<String> = types.iter().map(|n| iri(n)).collect();
         let attrs: Vec<String> = attrs.iter().map(|n| iri(n)).collect();
-        let q = q
-            .map(antares_ql::parse_q)
-            .transpose()
-            .map_err(|e| e.to_string())?;
+        let q = q.map(antares_ql::parse_q).transpose();
+        let q = q.as_ref().map_err(ToString::to_string)?;
         let op = Operation {
             types: &types,
             attrs: &attrs,
             q: q.as_ref(),
             ..Operation::new("5.7.2")
         };
-        let Decision::Filter(f) = decide(Some(&t), &caller(), &op, Timestamp::now()) else {
-            return Err("a read by selector is a filter".into());
-        };
+        let f = narrowed(
+            decide(Some(&t), &caller(), &op, Timestamp::now()),
+            "a read by selector is a filter",
+        )?;
         Ok(f.warning.as_ref().map(|w| w.texts().join("; ")))
     }
 
@@ -1478,9 +1518,10 @@ mod tests {
             q: Some(&q),
             ..Operation::new("5.7.2")
         };
-        let Decision::Filter(f) = decide(Some(&whole), &caller(), &op, Timestamp::now()) else {
-            return Err("a read by selector is a filter".into());
-        };
+        let f = narrowed(
+            decide(Some(&whole), &caller(), &op, Timestamp::now()),
+            "a read by selector is a filter",
+        )?;
         assert_eq!(f.warning, None);
         Ok(())
     }
@@ -1517,22 +1558,24 @@ mod tests {
                 q: Some(&q),
                 ..Operation::new("5.7.2")
             };
-            let Decision::Filter(f) = decide(Some(&t), &caller(), &op, Timestamp::now()) else {
-                return Err("a read narrowed by an Attribute is a filter".into());
-            };
+            let f = narrowed(
+                decide(Some(&t), &caller(), &op, Timestamp::now()),
+                "a read narrowed by an Attribute is a filter",
+            )?;
             assert_eq!(f.omit_by_type.get(&iri("Car")), Some(&vec![iri("colour")]));
             assert_eq!(f.rules, Vec::new());
             assert_eq!(f.warning.is_some(), warned);
         }
         // a read naming no type loses it too, and is not refused
-        let Decision::Filter(f) = decide(
-            Some(&t),
-            &caller(),
-            &Operation::new("5.7.2"),
-            Timestamp::now(),
-        ) else {
-            return Err("an untyped read narrowed by an Attribute is a filter".into());
-        };
+        let f = narrowed(
+            decide(
+                Some(&t),
+                &caller(),
+                &Operation::new("5.7.2"),
+                Timestamp::now(),
+            ),
+            "an untyped read narrowed by an Attribute is a filter",
+        )?;
         assert_eq!(f.omit_by_type.len(), 1);
         Ok(())
     }
@@ -1603,13 +1646,13 @@ mod tests {
             write(&colour, &json!({ (iri("colour")): [] })),
             Decision::Deny(_)
         ));
-        let shown = |clause: &'static str| match on(&t, clause, None) {
-            Decision::Filter(f) => Ok(f
-                .rules
-                .iter()
-                .flat_map(|r| r.attributes.clone())
-                .collect::<Vec<_>>()),
-            other => Err(format!("{clause}: {other:?}")),
+        let shown = |clause: &'static str| {
+            narrowed(on(&t, clause, None), clause).map(|f| {
+                f.rules
+                    .iter()
+                    .flat_map(|r| r.attributes.clone())
+                    .collect::<Vec<_>>()
+            })
         };
         assert_eq!(shown("5.7.2")?, [iri("speed"), iri("colour")]);
         assert_eq!(shown("5.7.3")?, [iri("speed")]);
@@ -1641,10 +1684,7 @@ mod tests {
     /// the audience defaults; a prohibition takes back what it lists; no block narrows none.
     #[test]
     fn a_capability_block_passes_metadata_members_per_attribute() -> Result<(), String> {
-        let members = |d: Decision| match d {
-            Decision::Filter(f) => Ok(f.metadata.clone()),
-            other => Err(format!("{other:?}")),
-        };
+        let members = |d: Decision| narrowed(d, "members").map(|f| f.metadata.clone());
         let blockless = table(&json!({"operations": ["5.7.2"]}))?;
         assert_eq!(members(on(&blockless, "5.7.2", None))?, None);
         let t = table(&json!({"operations": ["5.7.2", "5.7.6"],
@@ -1665,11 +1705,7 @@ mod tests {
             ])
         );
         // a type list carries no data, so it strips nothing
-        assert!(match on(&t, "5.7.6", None) {
-            Decision::Allow => true,
-            Decision::Filter(f) => f.metadata.is_none(),
-            _ => false,
-        });
+        assert_eq!(narrowed(on(&t, "5.7.6", None), "5.7.6")?.metadata, None);
         let with_prohibition = compile(&json!({"policies": [
             {"id": "p", "assignee": {"kind": "role", "id": "r"}, "operations": ["5.7.2"],
              "information": [{"entities": [{"type": "Car"}]}]},
@@ -1700,9 +1736,10 @@ mod tests {
             types: &types,
             ..Operation::new("5.7.2")
         };
-        let Decision::Filter(f) = decide(Some(&t), &public, &op, Timestamp::now()) else {
-            return Err("a whole public read is a filter of members".into());
-        };
+        let f = narrowed(
+            decide(Some(&t), &public, &op, Timestamp::now()),
+            "a whole public read is a filter of members",
+        )?;
         let got = f.metadata.clone().ok_or("no members")?;
         assert!(got.rest.contains("observedAt") && got.rest.contains("modifiedBy.organization"));
         assert!(!got.rest.contains("modifiedBy.actor") && !got.rest.contains("provenance"));
@@ -1728,10 +1765,10 @@ mod tests {
             {"id": "n", "effect": "prohibit", "assignee": {"kind": "role", "id": "r"},
              "operations": ["5.7.2"],
              "information": [{"entities": [{"type": "Car"}], "propertyNames": ["vin"]}]}]}))?;
-        let got = match on(&t, "5.7.2", None) {
-            Decision::Filter(f) => f.metadata.clone().ok_or("no members")?,
-            other => return Err(format!("{other:?}")),
-        };
+        let got = narrowed(on(&t, "5.7.2", None), "5.7.2")?
+            .metadata
+            .clone()
+            .ok_or("no members")?;
         let only = BTreeSet::from(["observedAt".to_owned()]);
         assert_eq!(
             got.named,
@@ -1757,10 +1794,10 @@ mod tests {
             let t = compile(&json!({"policies": [narrow.clone(),
                 {"id": "b", "assignee": {"kind": "role", "id": "r"}, "operations": ["5.7.2"],
                  "information": other}]}))?;
-            let got = match on(&t, "5.7.2", None) {
-                Decision::Filter(f) => f.metadata.clone().ok_or("no members")?,
-                other => return Err(format!("{other:?}")),
-            };
+            let got = narrowed(on(&t, "5.7.2", None), "5.7.2")?
+                .metadata
+                .clone()
+                .ok_or("no members")?;
             assert_eq!(got.named.get(&iri("speed")), Some(&only), "{got:?}");
         }
         Ok(())

@@ -20,11 +20,9 @@ pub fn ops_router(state: AppState) -> Router {
     // Admin only, deliberately: a worker widening its surface to whatever a
     // deployment registered is the same class of accident this router exists
     // to prevent.
-    let routes = Admin.router(state.clone());
-    let routes = match Admin.streaming_router(state.clone()) {
-        Some(streaming) => routes.merge(streaming),
-        None => routes,
-    };
+    let routes = Admin
+        .router(state.clone())
+        .merge(Admin::import_router(state.clone()));
     Router::new().nest(Admin.prefix(), routes).with_state(state)
 }
 
@@ -259,12 +257,12 @@ pub fn trim_trailing_slash<B>(mut req: axum::http::Request<B>) -> axum::http::Re
     let mut parts = req.uri().clone().into_parts();
     // A path cut from a valid one stays valid; were it ever not, the request
     // goes on as sent rather than failing here.
-    if let Ok(pq) = path_and_query.parse() {
+    let cut = path_and_query.parse().ok().and_then(|pq| {
         parts.path_and_query = Some(pq);
-        if let Ok(uri) = axum::http::Uri::from_parts(parts) {
-            *req.uri_mut() = uri;
-        }
-    }
+        axum::http::Uri::from_parts(parts).ok()
+    });
+    let uri = cut.unwrap_or_else(|| req.uri().clone());
+    *req.uri_mut() = uri;
     req
 }
 
@@ -469,10 +467,14 @@ pub(super) fn panic_500(_: Box<dyn std::any::Any + Send + 'static>) -> Response 
 /// Link header and the NGSILD-Tenant / NGSILD-Results-Count headers are
 /// exposed so a browser client can read them.
 pub(super) fn cors_layer() -> Option<tower_http::cors::CorsLayer> {
+    cors_for(std::env::var("ANTARES_CORS_ORIGINS").ok())
+}
+
+/// [`cors_layer`] for the value the knob holds, `None` when it is unset or
+/// blank.
+fn cors_for(spec: Option<String>) -> Option<tower_http::cors::CorsLayer> {
     use tower_http::cors::{AllowOrigin, CorsLayer};
-    let spec = std::env::var("ANTARES_CORS_ORIGINS")
-        .ok()
-        .filter(|s| !s.trim().is_empty())?;
+    let spec = spec.filter(|s| !s.trim().is_empty())?;
     let origin = if spec.trim() == "*" {
         AllowOrigin::any()
     } else {
@@ -746,6 +748,95 @@ mod not_found_tests {
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("unknown path"), "{text}");
         assert!(!text.contains("no-such-thing-echoed"), "{text}");
+    }
+
+    /// A path with an empty segment under the API root names a resource
+    /// whose methods do not apply: 405, the caller's Tenant echoed
+    /// (016_02_04/06).
+    #[tokio::test]
+    async fn an_empty_segment_under_the_api_root_is_405() {
+        let uri = axum::http::Uri::from_static("/ngsi-ld/v1/entities/urn:x/attrs//speed");
+        let mut h = axum::http::HeaderMap::new();
+        h.insert("NGSILD-Tenant", "acme".parse().expect("header"));
+        let resp = super::not_found(h, uri).await;
+        assert_eq!(resp.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.headers()["NGSILD-Tenant"], "acme");
+        // outside the API root an empty segment is just an unknown path
+        let uri = axum::http::Uri::from_static("/x//y");
+        let resp = super::not_found(axum::http::HeaderMap::new(), uri).await;
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    async fn allowed(layer: tower_http::cors::CorsLayer, origin: &str) -> Option<String> {
+        let app = axum::Router::new()
+            .route("/r", axum::routing::get(|| async { "ok" }))
+            .layer(layer);
+        let req = Request::get("/r")
+            .header("Origin", origin)
+            .body(Body::empty())
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        resp.headers()
+            .get("access-control-allow-origin")
+            .map(|v| v.to_str().expect("ascii").to_owned())
+    }
+
+    /// Unset or blank: no layer. `*`: any origin. A list: the origins it
+    /// names, an entry that is no header value dropped; the Link and NGSI-LD
+    /// headers exposed.
+    #[tokio::test]
+    async fn the_cors_knob_names_the_origins_a_browser_may_read_from() {
+        assert!(super::cors_for(None).is_none());
+        assert!(super::cors_for(Some("  ".into())).is_none());
+        let any = super::cors_for(Some(" * ".into())).expect("a layer");
+        assert_eq!(
+            allowed(any, "https://a.example").await.as_deref(),
+            Some("*")
+        );
+        let list = "https://a.example, bad\u{7f}origin ,https://b.example";
+        let list = super::cors_for(Some(list.into())).expect("a layer");
+        assert_eq!(
+            allowed(list.clone(), "https://b.example").await.as_deref(),
+            Some("https://b.example")
+        );
+        assert_eq!(allowed(list.clone(), "https://c.example").await, None);
+        let app = axum::Router::new()
+            .route("/r", axum::routing::get(|| async { "ok" }))
+            .layer(list);
+        let req = Request::get("/r")
+            .header("Origin", "https://a.example")
+            .body(Body::empty())
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        let exposed = resp.headers()["access-control-expose-headers"]
+            .to_str()
+            .expect("ascii")
+            .to_ascii_lowercase();
+        for h in ["link", "ngsild-tenant", "ngsild-results-count"] {
+            assert!(exposed.contains(h), "{exposed}");
+        }
+    }
+
+    /// A Tenant the store cannot be asked about answers the store's error,
+    /// never a pass to the handler (5.5.10).
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn a_store_that_cannot_say_whether_a_tenant_exists_answers_its_error() {
+        let app = crate::router(crate::state::refusing_state());
+        let req = Request::get("/ngsi-ld/v1/entities?type=T")
+            .header("NGSILD-Tenant", "acme")
+            .body(Body::empty())
+            .expect("request");
+        let resp = app.oneshot(req).await.expect("response");
+        assert!(resp.status().is_server_error(), "{}", resp.status());
     }
 }
 

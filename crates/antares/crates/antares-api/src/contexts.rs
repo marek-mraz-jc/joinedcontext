@@ -209,8 +209,8 @@ pub(crate) async fn host_implicit(
     headers: &HeaderMap,
     source: &Value,
 ) -> ApiResult<Option<String>> {
-    let body = serde_json::to_vec(source)
-        .map_err(|e| NgsiError::InternalError(format!("@context not serializable: {e}")))?;
+    // a JSON value always writes as text: the bytes the row is charged for
+    let body = source.to_string().into_bytes();
     let mut h = Sha256::new();
     h.update(tenant.as_str().as_bytes());
     h.update([0]);
@@ -218,10 +218,13 @@ pub(crate) async fn host_implicit(
     let hex: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
     let local_id = format!("urn:ngsi-ld:Context:v{hex}");
     Ok(match st.store.context_get(Some(tenant), &local_id).await? {
-        Some(row) if row_visible(&row, tenant) => {
-            row.get("url").and_then(Value::as_str).map(str::to_owned)
-        }
-        Some(_) => None,
+        // the store hides another Tenant's row already; this check is the
+        // second of the two `row_visible` documents
+        Some(row) => row
+            .get("url")
+            .and_then(Value::as_str)
+            .filter(|_| row_visible(&row, tenant))
+            .map(str::to_owned),
         None => {
             let url = format!("{}/{local_id}", base_url(headers));
             let put = st
@@ -248,10 +251,8 @@ pub(crate) async fn host_implicit(
                     .await;
                 Some(url)
             } else {
-                tracing::warn!(
-                    tenant = tenant.as_str(),
-                    "ImplicitlyCreated @context cap reached"
-                );
+                let tenant = tenant.as_str();
+                tracing::warn!(tenant, "ImplicitlyCreated @context cap reached");
                 None
             }
         }
@@ -946,6 +947,221 @@ mod tests {
         assert!(
             present(&st, Some(&beta), "hosted-beta").await,
             "still beta's"
+        );
+    }
+
+    /// 5.13.1: what the purge cannot release it leaves to the store's own
+    /// tenant purge — a Cached row filed under the Tenant, a row with no
+    /// local id — and a row with no URL is deleted with nothing to evict.
+    #[tokio::test]
+    async fn clause_5_13_1_a_purge_releases_only_what_it_can_name() {
+        let st = AppState::new("antares-ctx-purge-odd".into());
+        let alpha = TenantId::new("alpha").expect("tenant");
+        let base = "http://broker.example/ngsi-ld/v1/jsonldContexts";
+        let mut cached = hosted_row(&format!("{base}/c"), "cached-alpha", &alpha);
+        cached["kind"] = json!("Cached");
+        let mut nameless = hosted_row(&format!("{base}/n"), "nameless", &alpha);
+        nameless.as_object_mut().expect("row").remove("localId");
+        let mut urlless = hosted_row("", "urlless", &alpha);
+        urlless.as_object_mut().expect("row").remove("url");
+        for (lid, row) in [
+            ("cached-alpha", cached),
+            ("nameless", nameless),
+            ("urlless", urlless),
+        ] {
+            st.store
+                .context_put(Some(&alpha), lid, row)
+                .await
+                .expect("store the row");
+        }
+        purge_tenant(&st, &alpha).await.expect("purge");
+        let present = |lid: &'static str| {
+            let st = st.clone();
+            let alpha = alpha.clone();
+            async move {
+                st.store
+                    .context_get(Some(&alpha), lid)
+                    .await
+                    .expect("store read")
+                    .is_some()
+            }
+        };
+        assert!(present("cached-alpha").await, "a Cached row is no Tenant's");
+        assert!(
+            present("nameless").await,
+            "a row without localId is not named"
+        );
+        assert!(!present("urlless").await, "a row without url still goes");
+    }
+
+    /// 13.1: an inline @context is a lone object in an array as well as an
+    /// object; a lone URL is not. Hosting it again answers the same URL.
+    #[tokio::test]
+    async fn an_inline_context_is_hosted_only_for_its_own_tenant() {
+        let st = AppState::new("antares-ctx-inline".into());
+        let alpha = TenantId::new("alpha").expect("tenant");
+        let ctx_of = |source: Value| {
+            let mut ctx = Context::default();
+            ctx.source = source;
+            Arc::new(ctx)
+        };
+        let url = ctx_of(json!(["https://example.org/c.jsonld"]));
+        let same = linkable(&st, &alpha, &HeaderMap::new(), &url, Accept::Json)
+            .await
+            .expect("linkable");
+        assert_eq!(same.source, url.source, "a lone URL is linked as it is");
+        let inline = ctx_of(json!([{"a": "https://example.org/a"}]));
+        let hosted = linkable(&st, &alpha, &HeaderMap::new(), &inline, Accept::Json)
+            .await
+            .expect("linkable");
+        let hosted_url = hosted.source.as_str().expect("hosted URL").to_owned();
+        assert_eq!(
+            host_implicit(&st, &alpha, &HeaderMap::new(), &inline.source)
+                .await
+                .expect("host"),
+            Some(hosted_url),
+            "the same @context is the same row behind the same URL"
+        );
+    }
+
+    /// 5.13.4.4: an id shaped like a URL names a Cached entry only; a row
+    /// of another kind under the same key is no entry.
+    #[tokio::test]
+    async fn clause_5_13_4_a_url_names_only_a_cached_row() {
+        let st = AppState::new("antares-ctx-url".into());
+        let t = TenantId::default();
+        let url = "https://example.org/not-cached.jsonld";
+        let rid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, url.as_bytes()).to_string();
+        st.store
+            .context_put(Some(&t), &rid, hosted_row(url, &rid, &t))
+            .await
+            .expect("store");
+        let got = find_entry(&st, &t, url).await.expect("store");
+        assert!(
+            got.is_none(),
+            "a Hosted row under a URL key is no Cached entry"
+        );
+    }
+
+    /// 5.13.4/5.13.5 on the Cached and Core kinds: neither is served on
+    /// demand, `core` answers the pair of URLs, the core one is reloaded
+    /// from its pinned copy and is never deleted; a stored row that lost its
+    /// URL is still served and deleted.
+    #[tokio::test]
+    async fn clause_5_13_5_cached_and_core_entries_keep_their_rules() {
+        let st = AppState::new("antares-ctx-kinds".into());
+        let t = TenantId::default();
+        let cached_url = "https://example.org/cached.jsonld";
+        let rid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, cached_url.as_bytes()).to_string();
+        st.store
+            .context_put(
+                Some(&t),
+                &rid,
+                json!({"url": cached_url, "localId": rid, "kind": "Cached",
+                       "createdAt": now_iso(), "numberOfHits": 0, "lastUsage": null,
+                       "body": {"@context": {}}}),
+            )
+            .await
+            .expect("store the Cached row");
+        let params = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        let serve = |id: &str, p: HashMap<String, String>| {
+            serve_context(
+                State(st.clone()),
+                Path(id.to_owned()),
+                CleanParams(p),
+                HeaderMap::new(),
+            )
+        };
+        let body = |r: Response| async move {
+            let b = axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .expect("body");
+            serde_json::from_slice::<Value>(&b).unwrap_or(Value::Null)
+        };
+        let r = serve(cached_url, HashMap::new()).await;
+        assert_eq!(
+            r.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Cached: not served"
+        );
+        let r = serve(cached_url, params(&[("core", "1.9")])).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            body(r).await,
+            json!([cached_url, antares_jsonld::CORE_CONTEXT])
+        );
+        let core = antares_jsonld::CORE_CONTEXT;
+        let r = serve(core, HashMap::new()).await;
+        assert_eq!(
+            r.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Core: not served"
+        );
+        let delete = |id: &str, p: HashMap<String, String>| {
+            delete_context(
+                State(st.clone()),
+                Path(id.to_owned()),
+                CleanParams(p),
+                HeaderMap::new(),
+            )
+        };
+        let r = delete(core, params(&[("reload", "true")])).await;
+        assert_eq!(
+            r.status(),
+            StatusCode::NO_CONTENT,
+            "the pinned copy reloads"
+        );
+        let r = delete(core, HashMap::new()).await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body(r).await["detail"],
+            "the core @context cannot be deleted"
+        );
+
+        let mut legacy = hosted_row("", "urlless", &t);
+        legacy["kind"] = json!("ImplicitlyCreated");
+        legacy.as_object_mut().expect("row").remove("url");
+        st.store
+            .context_put(Some(&t), "urlless", legacy)
+            .await
+            .expect("store");
+        let r = serve("urlless", HashMap::new()).await;
+        assert_eq!(r.status(), StatusCode::OK, "served without a hit to count");
+        let r = delete("urlless", HashMap::new()).await;
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        assert!(st
+            .store
+            .context_get(Some(&t), "urlless")
+            .await
+            .expect("store")
+            .is_none());
+    }
+
+    /// 6.29.3: the core @context has no row and is listed from the
+    /// loader's own usage among the Cached ones.
+    #[tokio::test]
+    async fn clause_6_29_the_core_context_is_listed_as_cached() {
+        let st = AppState::new("antares-ctx-list-core".into());
+        let _ = st.loader.bump_url(None, antares_jsonld::CORE_CONTEXT).await;
+        let p: HashMap<String, String> = [("kind".to_owned(), "Cached".to_owned())]
+            .into_iter()
+            .collect();
+        let resp = list_contexts(State(st.clone()), CleanParams(p), HeaderMap::new()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let b = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let listed: Value = serde_json::from_slice(&b).expect("JSON");
+        assert!(
+            listed
+                .as_array()
+                .is_some_and(|a| a.iter().any(|u| u == antares_jsonld::CORE_CONTEXT)),
+            "{listed}"
         );
     }
 

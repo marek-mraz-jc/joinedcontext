@@ -328,6 +328,27 @@ mod known_tenants_tests {
         known.forget(&tenant("t0"));
         assert!(!known.holds(&tenant("t0")));
     }
+
+    /// A full shard makes room by dropping what aged past the TTL, and the
+    /// new name is held.
+    #[test]
+    fn a_full_shard_takes_a_name_once_its_old_entries_aged_out() {
+        let known = KnownTenants::default();
+        let fresh = tenant("t-fresh");
+        let cap = KnownTenants::CAP.div_ceil(KnownTenants::SHARDS);
+        let old = std::time::Instant::now()
+            .checked_sub(KnownTenants::TTL.saturating_mul(2))
+            .expect("the clock reaches a minute back");
+        {
+            let mut shard = known.map(fresh.as_str());
+            for i in 0..cap {
+                shard.insert(format!("stale-{i}"), old);
+            }
+        }
+        known.remember(&fresh);
+        assert!(known.holds(&fresh));
+        assert_eq!(known.map(fresh.as_str()).len(), 1, "the aged names went");
+    }
 }
 
 /// The handler `wire` installs for a notification that arrives on the
@@ -784,10 +805,8 @@ impl AppState {
                     });
                     if let Err(e) = store.context_put(tenant, &id, doc).await {
                         // a client-named @context URL may carry userinfo
-                        tracing::warn!(
-                            "@context write-through failed for {}: {e}",
-                            antares_notifier::redact_userinfo(url)
-                        );
+                        let url = antares_notifier::redact_userinfo(url);
+                        tracing::warn!("@context write-through failed for {url}: {e}");
                     }
                 })
             }));
@@ -1534,7 +1553,6 @@ impl AppState {
         caller: &axum::http::HeaderMap,
         req: axum::http::Request<axum::body::Body>,
     ) -> axum::response::Response {
-        use axum::response::IntoResponse as _;
         let (mut parts, body) = req.into_parts();
         for name in &PROPAGATED {
             if parts.headers.contains_key(name) {
@@ -1556,21 +1574,14 @@ impl AppState {
             }
         }
         let req = axum::http::Request::from_parts(parts, body);
-        match INPROCESS_DEPTH
+        // `Router`'s error is `Infallible`: the pattern is irrefutable
+        let Ok(r) = INPROCESS_DEPTH
             .scope(
                 depth.saturating_add(1),
                 tower::ServiceExt::oneshot(router.clone(), req),
             )
-            .await
-        {
-            Ok(r) => r,
-            // `Router`'s error is `Infallible`; the arm stays honest rather
-            // than unwrapping (the workspace denies unwrap outside tests).
-            Err(_) => crate::negotiate::ApiError::from(antares_model::NgsiError::InternalError(
-                "the in-process router failed".into(),
-            ))
-            .into_response(),
-        }
+            .await;
+        r
     }
 
     /// [`AppState::call`] on a task of its own, at the caller's in-process
@@ -1789,17 +1800,15 @@ async fn bump_row(
         )
         .await;
     match bumped {
-        Ok(Some(Ok(()))) => true,
-        // a row that cannot carry the counters is left
-        // uncounted, and still exists: it must not be evicted
-        Ok(Some(Err(()))) => true,
+        // counted; or (a row that cannot carry the counters, which the
+        // store's own row checks never let in) left uncounted, and still
+        // there: it must not be evicted either way
+        Ok(Some(_)) => true,
         Ok(None) => false,
         // a store hiccup must never evict a healthy cache entry
         Err(e) => {
-            tracing::warn!(
-                "@context hit bump failed for {}: {e}",
-                antares_notifier::redact_userinfo(url)
-            );
+            let url = antares_notifier::redact_userinfo(url);
+            tracing::warn!("@context hit bump failed for {url}: {e}");
             true
         }
     }
@@ -1908,19 +1917,25 @@ pub fn stamp(t: jiff::Timestamp) -> String {
     jc_time::format_rfc3339(t, jc_time::SecondsFormat::Millis, true)
 }
 
+/// One of the broker's own Tenants by name, the grammar's refusal as text.
+#[cfg(feature = "views")]
+fn internal_tenant(name: &str) -> Result<antares_model::TenantId, String> {
+    antares_model::TenantId::new_internal(name).map_err(|e| e.to_string())
+}
+
 #[cfg(feature = "views")]
 fn view_tenant() -> Result<antares_model::TenantId, String> {
-    antares_model::TenantId::new_internal(crate::views::VIEW_TENANT).map_err(|e| e.to_string())
+    internal_tenant(crate::views::VIEW_TENANT)
 }
 
 #[cfg(feature = "views")]
 fn grant_tenant() -> Result<antares_model::TenantId, String> {
-    antares_model::TenantId::new_internal(crate::views::GRANT_TENANT).map_err(|e| e.to_string())
+    internal_tenant(crate::views::GRANT_TENANT)
 }
 
 #[cfg(feature = "views")]
 fn policy_tenant() -> Result<antares_model::TenantId, String> {
-    antares_model::TenantId::new_internal(crate::views::POLICY_TENANT).map_err(|e| e.to_string())
+    internal_tenant(crate::views::POLICY_TENANT)
 }
 
 /// A store that refuses every call (a Postgres pool on a port nobody
@@ -1976,6 +1991,264 @@ mod refusing_store {
         assert!(st.delete_policy_doc("refused").await.is_err());
         let t = antares_model::TenantId::try_from("refused".to_owned()).unwrap();
         assert!(st.purge_tenant_documents(&t).await.is_err());
+    }
+
+    /// 5.13.3.5: a store hiccup on a hit bump never evicts a warm copy.
+    #[tokio::test]
+    async fn a_refused_hit_bump_keeps_the_row() {
+        let st = refusing();
+        assert!(super::bump_row(&*st.store, None, "http://peer.example/c.jsonld", 1).await);
+    }
+}
+
+#[cfg(test)]
+mod state_seams {
+    use super::*;
+
+    /// A binding that serves one made-up scheme and delivers nothing.
+    struct Nowhere;
+
+    impl antares_notifier::NotificationSink for Nowhere {
+        fn schemes(&self) -> &'static [&'static str] {
+            &["x-nowhere"]
+        }
+        fn parse_endpoint(
+            &self,
+            _uri: &str,
+            _notifier_info: &[(&str, &str)],
+        ) -> Result<(), antares_model::NgsiError> {
+            Ok(())
+        }
+        fn deliver<'a>(
+            &'a self,
+            _uri: &'a str,
+            _out: &'a antares_notifier::Outbound,
+            _timeout: std::time::Duration,
+        ) -> antares_notifier::DeliveryFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// The broker's own Tenants are named by the Tenant grammar; a name
+    /// outside it is refused with the grammar's reason.
+    #[cfg(feature = "views")]
+    #[test]
+    fn an_internal_tenant_takes_the_tenant_grammar() {
+        assert_eq!(
+            view_tenant().map(|t| t.as_str().to_owned()),
+            Ok(crate::views::VIEW_TENANT.to_owned())
+        );
+        let err = internal_tenant("no spaces").expect_err("outside the grammar");
+        assert!(err.contains("invalid NGSILD-Tenant value"), "{err}");
+    }
+
+    /// The profile is read from its three keys; unset, each takes the
+    /// standard's answer.
+    #[test]
+    fn the_profile_reads_its_keys_from_the_environment() {
+        let get = |k: &str| std::env::var(k).ok();
+        let expected = Profile::from_vars(
+            get("ANTARES_NON_OBJECT_BODY"),
+            get("ANTARES_FED_WRITE_SOURCE_404"),
+            get("ANTARES_IMPLICIT_TENANTS"),
+        );
+        assert_eq!(Profile::from_env(), expected);
+        assert_eq!(Profile::from_vars(None, None, None), Ok(Profile::default()));
+    }
+
+    #[test]
+    fn every_temporal_record_mode_parses_and_no_other() {
+        use std::str::FromStr as _;
+        assert_eq!(TemporalRecord::from_str("all"), Ok(TemporalRecord::All));
+        assert_eq!(
+            TemporalRecord::from_str("observed"),
+            Ok(TemporalRecord::Observed)
+        );
+        assert_eq!(TemporalRecord::from_str("none"), Ok(TemporalRecord::None));
+        assert_eq!(TemporalRecord::from_str("ruled"), Ok(TemporalRecord::Ruled));
+        let err = TemporalRecord::from_str("Ruled").expect_err("names are exact");
+        assert!(err.contains("unknown mode Ruled"), "{err}");
+    }
+
+    /// ADR-0016: a sink or a surface registered after the state was shared
+    /// would reach only some of its clones, so it is not registered at all.
+    #[test]
+    fn a_shared_state_takes_no_new_sink_or_surface() {
+        let st = AppState::new("antares-seams".into());
+        let held = st.clone();
+        let st = st.with_sink(Box::new(Nowhere));
+        assert!(
+            st.sinks.sink_for_uri("x-nowhere://a").is_none(),
+            "a shared registry is not changed"
+        );
+        let fresh = AppState::new("antares-seams-2".into()).with_sink(Box::new(Nowhere));
+        let sink = fresh
+            .sinks
+            .sink_for_uri("x-nowhere://a")
+            .expect("a fresh registry takes the sink");
+        assert!(sink.parse_endpoint("x-nowhere://a", &[]).is_ok());
+        let out = antares_notifier::Outbound {
+            body: serde_json::json!({"type": "Notification"}),
+            accept: "application/json".into(),
+            link: String::new(),
+            receiver_info: Vec::new(),
+            notifier_info: Vec::new(),
+        };
+        let delivered = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a runtime")
+            .block_on(sink.deliver("x-nowhere://a", &out, std::time::Duration::from_secs(1)));
+        assert!(
+            delivered.is_ok(),
+            "the registered sink is the one delivering"
+        );
+        drop(held);
+
+        let st = AppState::new("antares-seams-3".into())
+            .with_surfaces(Vec::new())
+            .expect("an empty selection");
+        let held = st.clone();
+        let err = st
+            .with_surface(Box::new(crate::ops::Admin))
+            .err()
+            .expect("a shared list is not changed");
+        assert!(err.contains("already shared"), "{err}");
+        drop(held);
+    }
+
+    /// 5.2.34: a cooldown stamp is shared with the other pods through the
+    /// hook, under the composed key.
+    #[test]
+    fn a_registration_cooldown_stamp_reaches_the_hook() {
+        let seen: Arc<std::sync::Mutex<Vec<(String, bool)>>> = Arc::default();
+        let mut st = AppState::new("antares-cooldown-hook".into());
+        let sink = seen.clone();
+        st.reg_fail_sync = Some(Arc::new(move |k: &str, ok: bool| {
+            sink.lock().expect("lock").push((k.to_owned(), ok));
+        }));
+        let tenant = antares_model::TenantId::default();
+        st.reg_cooldown_stamp(&tenant, "urn:reg:1", false);
+        let got = seen.lock().expect("lock").clone();
+        assert_eq!(
+            got,
+            vec![(crate::egress::reg_key(tenant.as_str(), "urn:reg:1"), false)]
+        );
+    }
+
+    /// Two states narrowed to one view are the same state; to two views,
+    /// or one narrowed and one not, they are not.
+    #[cfg(feature = "views")]
+    #[test]
+    fn states_are_the_same_only_under_the_same_view() {
+        let view = || {
+            Arc::new(
+                crate::views::CompiledView::new(
+                    &["Car".into()],
+                    None,
+                    None,
+                    None,
+                    vec![crate::policy::Rule {
+                        types: vec!["Car".into()],
+                        attributes: vec!["speed".into()],
+                        ..crate::policy::Rule::default()
+                    }],
+                )
+                .expect("a view"),
+            )
+        };
+        let st = AppState::new("antares-same".into());
+        let v = view();
+        let a = st.with_view(v.clone());
+        assert!(a.same(&st.with_view(v)));
+        assert!(!a.same(&st.with_view(view())));
+        assert!(!a.same(&st));
+    }
+
+    /// 5.13.3.5: a URL with no row segment, or a nested one, names no
+    /// hosted row; a bump of a URL without a row reports it gone.
+    #[tokio::test]
+    async fn hit_bumps_without_a_row() {
+        let st = AppState::new("antares-bump".into());
+        let store: &dyn CurrentStateDriver = &*st.store;
+        assert!(
+            hosted_row(store, None, "http://h/ngsi-ld/v1/jsonldContexts/")
+                .await
+                .is_none()
+        );
+        assert!(
+            hosted_row(store, None, "http://h/ngsi-ld/v1/jsonldContexts/a/b")
+                .await
+                .is_none()
+        );
+        assert!(!bump_row(store, None, "http://peer.example/gone.jsonld", 1).await);
+    }
+
+    /// S4-30: purging a Tenant's documents keeps a grant between two other
+    /// Tenants and steps over a view document without an id.
+    #[cfg(feature = "views")]
+    #[tokio::test]
+    async fn a_purge_keeps_what_names_another_tenant() {
+        let st = AppState::new("antares-purge-docs".into());
+        let t = antares_model::TenantId::try_from("gone".to_owned()).expect("tenant");
+        st.put_grant_doc(
+            "a~b",
+            serde_json::json!({"id": "a~b", "target": "a", "source": "b"}),
+        )
+        .await
+        .expect("grant");
+        st.put_grant_doc(
+            "gone~b",
+            serde_json::json!({"id": "gone~b", "target": "gone", "source": "b"}),
+        )
+        .await
+        .expect("grant");
+        st.store
+            .upsert(
+                &view_tenant().expect("tenant"),
+                antares_store::Kind::View,
+                "x",
+                serde_json::json!({"tenant": "gone"}),
+            )
+            .await
+            .expect("an id-less view row");
+        st.purge_tenant_documents(&t).await.expect("purge");
+        let left: Vec<String> = st
+            .grant_docs()
+            .await
+            .expect("grants")
+            .iter()
+            .filter_map(|d| d["id"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(left, ["a~b"]);
+    }
+
+    /// The policy documents are read a page at a time past the first page;
+    /// a full page ending in a document that names no Tenant stops the list
+    /// rather than reading the same page forever.
+    #[cfg(feature = "views")]
+    #[tokio::test]
+    async fn policy_documents_page_and_stop_on_a_nameless_one() {
+        let st = AppState::new("antares-policy-pages".into());
+        for i in 0..1_001 {
+            let name = format!("t{i:05}");
+            st.put_policy_doc(&name, serde_json::json!({"id": name, "tenant": name}))
+                .await
+                .expect("policy doc");
+        }
+        assert_eq!(st.policy_docs().await.expect("every page").len(), 1_001);
+
+        let st = AppState::new("antares-policy-nameless".into());
+        for i in 0..1_000 {
+            let name = format!("t{i:05}");
+            let doc = if i == 999 {
+                serde_json::json!({"id": name})
+            } else {
+                serde_json::json!({"id": name, "tenant": name})
+            };
+            st.put_policy_doc(&name, doc).await.expect("policy doc");
+        }
+        let err = st.policy_docs().await.expect_err("the list stops");
+        assert!(err.contains("names no Tenant"), "{err}");
     }
 }
 
@@ -2055,6 +2328,61 @@ mod jsonld_context_locality_5_13 {
             serde_json::json!(2),
             "both counted uses land on the shared row (5.13.3.5)"
         );
+    }
+
+    /// 5.13.3.5: a refetch of a URL that already has its Cached row swaps
+    /// only the body, under the row lock: the row keeps its identity and
+    /// its counters.
+    #[tokio::test]
+    async fn a_refetch_keeps_the_row_and_swaps_its_body() {
+        let st = AppState::new("me".into());
+        let (url, fetches) = context_server("/ctx/refetched.jsonld");
+        let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, url.as_bytes()).to_string();
+        st.store
+            .context_put(
+                None,
+                &id,
+                serde_json::json!({"url": url, "localId": id, "kind": "Cached",
+                    "createdAt": "2020-01-01T00:00:00.000Z", "numberOfHits": 7,
+                    "lastUsage": null, "body": {"@context": {"old": "http://x/old"}}}),
+            )
+            .await
+            .expect("seed the Cached row");
+        let tenant = antares_model::TenantId::default();
+        st.loader
+            .resolve_for(&tenant, &serde_json::json!(url))
+            .await
+            .expect("resolve");
+        assert_eq!(fetch_count(&fetches), 1);
+        let row = st
+            .store
+            .context_get(None, &id)
+            .await
+            .expect("store")
+            .expect("row");
+        assert_eq!(row["createdAt"], "2020-01-01T00:00:00.000Z", "{row}");
+        assert_eq!(
+            row["body"]["@context"]["peerTemp"], "http://example.org/peerTemp",
+            "{row}"
+        );
+        assert!(row["body"]["@context"].get("old").is_none(), "{row}");
+    }
+
+    /// A store that refuses the write-through still answers the resolution
+    /// it was handed: the document was fetched, only its row is missing.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn a_refused_write_through_still_resolves() {
+        let st = super::refusing_state();
+        let (url, fetches) = context_server("/ctx/unstored.jsonld");
+        let tenant = antares_model::TenantId::default();
+        let ctx = st
+            .loader
+            .resolve_for(&tenant, &serde_json::json!(url))
+            .await
+            .expect("resolved without its row");
+        assert_eq!(ctx.expand_key("peerTemp"), "http://example.org/peerTemp");
+        assert_eq!(fetch_count(&fetches), 1);
     }
 
     /// T-6605 (R1-001): a query resolved its Link @context in the gate,

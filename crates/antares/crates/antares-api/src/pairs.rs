@@ -78,3 +78,48 @@ pub(crate) fn unmask_pairs(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A masked value the stored array holds comes back as the stored
+    /// credential; one it does not hold stays the mask; a value that was
+    /// never masked is the client's new value.
+    #[test]
+    fn a_write_back_restores_only_what_the_store_holds() {
+        let held = json!([{"key": "Authorization", "value": "Bearer s3cret"}]);
+        let mut pairs = json!([
+            {"key": "Authorization", "value": MASKED},
+            {"key": "X-New", "value": MASKED},
+            {"key": "X-Plain", "value": "v"}
+        ]);
+        unmask_pairs("receiverInfo", &mut pairs, Some(&held), false).expect("restored");
+        assert_eq!(
+            pairs,
+            json!([
+                {"key": "Authorization", "value": "Bearer s3cret"},
+                {"key": "X-New", "value": MASKED},
+                {"key": "X-Plain", "value": "v"}
+            ])
+        );
+        let mut none_held = json!([{"key": "Authorization", "value": MASKED}]);
+        unmask_pairs("receiverInfo", &mut none_held, None, true).expect("nothing to restore");
+        assert_eq!(none_held[0]["value"], MASKED);
+    }
+
+    /// A credential stays with the endpoint it was given for.
+    #[test]
+    fn a_masked_value_moving_to_another_endpoint_is_refused() {
+        let held = json!([{"key": "Authorization", "value": "Bearer s3cret"}]);
+        let mut pairs = json!([{"key": "Authorization", "value": MASKED}]);
+        let err = unmask_pairs("receiverInfo", &mut pairs, Some(&held), true)
+            .expect_err("moved with a masked credential");
+        assert!(
+            matches!(&err, NgsiError::BadRequestData(m) if m.contains("send the credential again")),
+            "{err:?}"
+        );
+        assert_eq!(pairs[0]["value"], MASKED, "nothing restored on a refusal");
+    }
+}

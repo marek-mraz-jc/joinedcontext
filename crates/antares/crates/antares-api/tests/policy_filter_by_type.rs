@@ -1621,6 +1621,28 @@ async fn rules_narrowing_a_type_by_their_own_patterns_hold_for_either() {
     }
 }
 
+/// A store that cannot tell which types share an Entity with the selected
+/// ones leaves the united patterns to the rules, judged per Entity: the
+/// answer is the same Entities, never more.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn united_patterns_on_a_store_that_cannot_tell_are_judged_per_entity() {
+    let by = |pattern: &str| Rule {
+        id_patterns: vec![pattern.to_owned()],
+        ..rule("Car", &["speed"])
+    };
+    let mut st = state(Filter {
+        rules: vec![by("urn:ngsi-ld:Car:[01]"), by("urn:ngsi-ld:Car:3")],
+        ..Filter::default()
+    })
+    .await;
+    fleet(&st).await;
+    st.store = Arc::new(crate::common::Double::blind_beside(st.store.clone()));
+    let got = pages(&st, "/ngsi-ld/v1/entities?type=Car").await;
+    let mut seen: Vec<String> = got.iter().flat_map(|p| p.0.clone()).collect();
+    seen.sort();
+    assert_eq!(seen, id_list("Car", &[0, 1, 3]));
+}
+
 /// A conditional rule is judged on the Entity, a page at a time: the page
 /// still holds only what the rule admits, and the last one links nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

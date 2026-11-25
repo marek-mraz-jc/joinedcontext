@@ -820,9 +820,8 @@ pub(crate) fn respond(
 /// rather than failing the response: the page itself is still the answer.
 pub(crate) fn attach_paging(resp: &mut Response, count_hdr: Option<usize>, links: &[String]) {
     if let Some(total) = count_hdr {
-        if let Ok(v) = total.to_string().parse() {
-            resp.headers_mut().insert("NGSILD-Results-Count", v);
-        }
+        resp.headers_mut()
+            .insert("NGSILD-Results-Count", axum::http::HeaderValue::from(total));
     }
     for l in links {
         if let Ok(v) = l.parse() {
@@ -982,10 +981,12 @@ pub(crate) fn inject_context(payload: Value, ctx: &Context) -> Value {
 
 /// 6.3.14: echo NGSILD-Tenant on responses when non-default.
 pub(crate) fn echo_tenant(tenant: &TenantId, resp: &mut Response) {
-    if tenant.as_str() != TenantId::DEFAULT {
-        if let Ok(v) = tenant.as_str().parse() {
-            resp.headers_mut().insert("NGSILD-Tenant", v);
-        }
+    // a TenantId is `[A-Za-z0-9_-]+`, always a header value
+    if let (true, Ok(v)) = (
+        tenant.as_str() != TenantId::DEFAULT,
+        tenant.as_str().parse::<axum::http::HeaderValue>(),
+    ) {
+        resp.headers_mut().insert("NGSILD-Tenant", v);
     }
 }
 
@@ -1448,6 +1449,92 @@ mod negotiation {
         h
     }
 
+    /// A parameter without `=` is skipped in Accept and Link alike, never
+    /// read as the parameter it resembles.
+    #[test]
+    fn bare_parameters_are_skipped() {
+        assert_eq!(
+            parse_accept(&accept("application/ld+json;level")).expect("ld"),
+            Accept::LdJson
+        );
+        let h = hdr(
+            "link",
+            "<https://example.org/c.jsonld>; norel; rel=\"http://www.w3.org/ns/json-ld#context\"",
+        );
+        assert_eq!(
+            link_context(&h).expect("one context").as_deref(),
+            Some("https://example.org/c.jsonld")
+        );
+    }
+
+    /// 039_05: a body without Content-Type is parsed as JSON, so a valid one
+    /// is read and an empty one is the 400 a client can act on.
+    #[tokio::test]
+    async fn a_body_without_content_type_is_read_as_json() {
+        let loader = Loader::new();
+        let h = HeaderMap::new();
+        let parsed = parse_body_in(
+            &loader,
+            crate::Profile::default(),
+            &h,
+            br#"{"a": 1}"#,
+            BodyKind::Standard,
+        )
+        .await
+        .map(|p| p.value)
+        .expect("plain JSON");
+        assert_eq!(parsed["a"], 1);
+        let empty = parse_body_in(
+            &loader,
+            crate::Profile::default(),
+            &h,
+            b"",
+            BodyKind::Standard,
+        )
+        .await;
+        assert!(matches!(
+            empty,
+            Err(ApiError::Ngsi(NgsiError::InvalidRequest(_)))
+        ));
+    }
+
+    /// 6.3.15: GeoJSON carries @context only on an object; a list asked as
+    /// GeoJSON takes the buffered path; ld+json puts @context on each object
+    /// of a list and leaves the rest as they are.
+    #[test]
+    fn context_lands_on_objects_only() {
+        let ctx = Loader::new().core();
+        let t = TenantId::default();
+        let r = respond(StatusCode::OK, json!([1]), &ctx, Accept::GeoJson, &t);
+        assert_eq!(r.headers()[header::CONTENT_TYPE], "application/geo+json");
+        let r = respond_list(
+            StatusCode::OK,
+            vec![json!({"id": "urn:a"})],
+            &ctx,
+            Accept::GeoJson,
+            &t,
+        );
+        assert_eq!(r.headers()[header::CONTENT_TYPE], "application/geo+json");
+        let out = inject_context(json!([{"id": "urn:a"}, 7]), &ctx);
+        assert!(out[0].get("@context").is_some(), "{out}");
+        assert_eq!(out[1], 7);
+        assert_eq!(inject_context(json!("x"), &ctx), json!("x"));
+    }
+
+    /// 6.3.13: the count travels as a header; a Link that is no header
+    /// value is dropped and the page still answers.
+    #[test]
+    fn paging_headers_drop_what_will_not_parse() {
+        let mut r = Response::new(axum::body::Body::empty());
+        attach_paging(
+            &mut r,
+            Some(42),
+            &["<a>; rel=\"next\"".into(), "bad\nlink".into()],
+        );
+        assert_eq!(r.headers()["NGSILD-Results-Count"], "42");
+        assert_eq!(r.headers().get_all(header::LINK).iter().count(), 1);
+    }
+
     fn accept(value: &str) -> HeaderMap {
         hdr("accept", value)
     }
@@ -1481,7 +1568,6 @@ mod negotiation {
         let long = "x".repeat(129);
         for bad in ["", "a b", "a/b", "../etc", "a.b", "tenant;drop", &long] {
             let err = tenant_from(&hdr("NGSILD-Tenant", bad))
-                .map(|t| t.as_str().to_owned())
                 .expect_err("hostile tenant must be rejected");
             assert!(
                 matches!(err, ApiError::Ngsi(NgsiError::BadRequestData(_))),
@@ -1494,9 +1580,7 @@ mod negotiation {
             "NGSILD-Tenant",
             HeaderValue::from_bytes(&[0xff, 0xfe]).expect("opaque header bytes"),
         );
-        let err = tenant_from(&h)
-            .map(|t| t.as_str().to_owned())
-            .expect_err("non-ASCII tenant");
+        let err = tenant_from(&h).expect_err("non-ASCII tenant");
         assert!(matches!(err, ApiError::Ngsi(NgsiError::BadRequestData(_))));
     }
 

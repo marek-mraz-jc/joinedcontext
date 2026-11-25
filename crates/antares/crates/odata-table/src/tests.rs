@@ -9,7 +9,7 @@ use odata_csdl::{
     Property, Schema, TypeRef,
 };
 use odata_url::{CompareOp, Expr, Literal, MemberPath, Method, OrderBy, SelectItem};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use crate::{
     allowed, export, key_options, plan, query, write, Change, Cond, EntityDef, Fetching, Field,
@@ -109,10 +109,7 @@ fn planned(options: &QueryOptions) -> Result<Plan, TableError> {
 }
 
 fn patch(value: Value) -> Change {
-    let Value::Object(map) = value else {
-        return Change::Update(Map::new());
-    };
-    Change::Update(map)
+    Change::Update(serde_json::from_value(value).unwrap_or_default())
 }
 
 async fn update(
@@ -124,10 +121,7 @@ async fn update(
 }
 
 fn refusal(result: Result<impl std::fmt::Debug, TableError>) -> TableError {
-    match result {
-        Ok(v) => panic!("expected a refusal, got {v:?}"),
-        Err(e) => e,
-    }
+    result.expect_err("expected a refusal")
 }
 
 #[test]
@@ -598,6 +592,15 @@ fn literals_become_json_values_or_a_refusal() {
         equal(Literal::Binary("AQ".into())).err(),
         Some(TableError::NotImplemented("binary literals".into()))
     );
+    let point = odata_url::Shape::Point(odata_url::Position(vec!["7.1".into(), "50.7".into()]));
+    assert_eq!(
+        equal(Literal::Geography(odata_url::Geography {
+            srid: 4326,
+            shape: point
+        }))
+        .err(),
+        Some(TableError::NotImplemented("geography literals".into()))
+    );
     // `in` reads null as "is null"
     assert_eq!(
         planned(&filtered(Expr::In(
@@ -687,6 +690,17 @@ async fn a_write_takes_a_filter_and_nothing_else() {
             .await
         ),
         TableError::BadRequest("a write to the set needs $filter, e.g. $filter=org eq 'a'".into())
+    );
+    // a set whose rules offer no delete refuses it before reading a row
+    let mut narrow = info();
+    narrow.rules = vec![Rule {
+        operation: Operation::Update,
+        permission: None,
+    }];
+    let guarded = MemoryTable::new(narrow, things()).expect("keyed rows");
+    assert_eq!(
+        refusal(write(&guarded, &org_is("a"), &scope, Change::Delete, false, 10).await),
+        TableError::Forbidden("Things does not offer delete".into())
     );
 }
 
@@ -805,9 +819,9 @@ async fn a_write_refuses_rows_outside_what_the_caller_may_change() {
         .collect();
     let t = table(rows);
     let scope = Scope::all().changing(&["size"], vec![json!(-1)]);
-    let TableError::Forbidden(why) = refusal(update(&t, &scope, json!({"size": 0})).await) else {
-        panic!("not a 403");
-    };
+    let refused = refusal(update(&t, &scope, json!({"size": 0})).await);
+    assert!(matches!(refused, TableError::Forbidden(_)), "{refused:?}");
+    let why = refused.to_string();
     assert!(
         why.starts_with("12 of the 12 rows the filter matches are outside what you may change (\"r00\", \"r01\""),
         "{why}"
@@ -818,10 +832,9 @@ async fn a_write_refuses_rows_outside_what_the_caller_may_change() {
     let ten: Vec<Value> = (0..10)
         .map(|i| json!({"id": format!("r{i:02}"), "org": "a", "size": i, "must": "x"}))
         .collect();
-    let TableError::Forbidden(why) = refusal(update(&table(ten), &scope, json!({"size": 0})).await)
-    else {
-        panic!("not a 403");
-    };
+    let refused = refusal(update(&table(ten), &scope, json!({"size": 0})).await);
+    assert!(matches!(refused, TableError::Forbidden(_)), "{refused:?}");
+    let why = refused.to_string();
     assert!(why.ends_with("\"r09\"); nothing was changed"), "{why}");
 }
 

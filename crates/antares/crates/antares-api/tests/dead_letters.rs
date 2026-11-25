@@ -353,6 +353,42 @@ async fn replay_delivers_the_same_request_and_deletes_the_letter() {
     assert_eq!(s, StatusCode::NOT_FOUND, "a second replay finds nothing");
 }
 
+/// A replay that delivered but whose letter cannot be deleted answers the
+/// store's error, and the letter stays to be replayed or deleted again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delivered_letter_the_store_cannot_delete_answers_its_error() {
+    use crate::common::faults::{store_down, Faults, StoreFaults};
+    let mut st = state();
+    let (uri, hits, _) = receiver(StatusCode::OK).await;
+    seed(
+        &st,
+        "acme",
+        "urn:ngsi-ld:DeadLetter:1",
+        "urn:s:1",
+        &uri,
+        "2026-01-01T00:00:01Z",
+    )
+    .await;
+    st.store = Arc::new(StoreFaults {
+        inner: st.store.clone(),
+        faults: Faults::new(|m, _| (m == "delete").then(store_down)),
+    });
+    let (s, b) = send(
+        &st,
+        "POST",
+        "/q/dead-letters/urn:ngsi-ld:DeadLetter:1/replay?tenant=acme",
+    )
+    .await;
+    assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR, "{b}");
+    assert_eq!(hits.load(Ordering::SeqCst), 1, "the replay was delivered");
+    assert!(
+        stored(&st, "acme", "urn:ngsi-ld:DeadLetter:1")
+            .await
+            .is_some(),
+        "the letter is kept"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_replay_keeps_the_letter_and_extends_its_history() {
     let st = state();

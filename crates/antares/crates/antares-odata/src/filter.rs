@@ -2438,6 +2438,77 @@ mod tests {
         );
     }
 
+    /// A geometry literal is typed `Edm.Geometry` and is no residual value:
+    /// only a geography is, later.
+    #[test]
+    fn a_geometry_literal_is_typed_and_refused_as_a_value() {
+        let shape = odata_url::Shape::Point(odata_url::Position(vec!["0".into(), "0".into()]));
+        let geometry = Literal::Geometry(Geography { srid: 0, shape });
+        assert_eq!(literal_edm(&geometry), Some("Edm.Geometry"));
+        assert!(matches!(residual_lit(&geometry), Err(Refused::Bad)));
+    }
+
+    /// geo.distance over what no geoQ says is answered later (a lambda
+    /// variable's member, a member the set lacks) or refused (a decimal
+    /// that is no number, a point that is no geography).
+    #[test]
+    fn geo_distance_refuses_what_no_geoq_says() {
+        let point = lit(Literal::Geography(Geography {
+            srid: 4326,
+            shape: odata_url::Shape::Point(odata_url::Position(vec![
+                "19.15".into(),
+                "48.73".into(),
+            ])),
+        }));
+        let distance = |args| call_of(Method::GeoDistance, args);
+        let later = [
+            // a lambda variable's member, and a member the set does not have
+            cmp(
+                distance(vec![
+                    Expr::Member(MemberPath {
+                        variable: Some("x".into()),
+                        path: vec!["location".into()],
+                    }),
+                    point.clone(),
+                ]),
+                CompareOp::Lt,
+                lit(Literal::Int(1)),
+            ),
+            cmp(
+                distance(vec![m("nope"), point.clone()]),
+                CompareOp::Lt,
+                lit(Literal::Int(1)),
+            ),
+        ];
+        for e in later {
+            assert_eq!(
+                translate(&e, &set(), &BTreeMap::new(), &[]),
+                Err(Refused::Later),
+                "{e:?}"
+            );
+        }
+        let bad = [
+            // a decimal that is no number, and a point that is no geography
+            cmp(
+                distance(vec![m("location"), point.clone()]),
+                CompareOp::Lt,
+                lit(Literal::Decimal("x".into())),
+            ),
+            cmp(
+                distance(vec![m("location"), lit(Literal::Int(1))]),
+                CompareOp::Lt,
+                lit(Literal::Int(1)),
+            ),
+        ];
+        for e in bad {
+            assert_eq!(
+                translate(&e, &set(), &BTreeMap::new(), &[]),
+                Err(Refused::Bad),
+                "{e:?}"
+            );
+        }
+    }
+
     #[test]
     fn geo_distance_is_near_as_a_top_level_conjunct() {
         let point = |srid| {

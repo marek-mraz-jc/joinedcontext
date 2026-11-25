@@ -27,13 +27,10 @@ pub(crate) fn parse_version(s: &str) -> Option<(u32, u32)> {
 const NATIVE: (u32, u32) = (1, 9);
 
 /// Amend one compacted entity document in place; true when anything changed.
-pub(crate) fn amend_entity(doc: &mut Value, ver: (u32, u32)) -> bool {
+pub(crate) fn amend_entity(obj: &mut serde_json::Map<String, Value>, ver: (u32, u32)) -> bool {
     if ver >= NATIVE {
         return false;
     }
-    let Some(obj) = doc.as_object_mut() else {
-        return false;
-    };
     let mut changed = false;
     // Table 4.3.6.8-1 entity-level members.
     if ver < (1, 9) && obj.remove("expiresAt").is_some() {
@@ -44,22 +41,21 @@ pub(crate) fn amend_entity(doc: &mut Value, ver: (u32, u32)) -> bool {
     }
     if ver < (1, 3) {
         // Note 1: 1.0 knows a single entity type — keep the first.
-        if let Some(Value::Array(types)) = obj.get("type") {
-            if let Some(first) = types.first().cloned() {
-                obj.insert("type".into(), first);
-                changed = true;
-            }
+        let first = obj
+            .get("type")
+            .and_then(Value::as_array)
+            .and_then(|types| types.first())
+            .cloned();
+        if let Some(first) = first {
+            obj.insert("type".into(), first);
+            changed = true;
         }
     }
-    let attr_names: Vec<String> = obj
-        .keys()
-        .filter(|k| !crate::repr::ENTITY_META.contains(&k.as_str()))
-        .cloned()
-        .collect();
-    for name in attr_names {
-        if let Some(v) = obj.get_mut(&name) {
-            changed |= amend_attr(v, ver);
-        }
+    for (_, v) in obj
+        .iter_mut()
+        .filter(|(k, _)| !crate::repr::ENTITY_META.contains(&k.as_str()))
+    {
+        changed |= amend_attr(v, ver);
     }
     changed
 }
@@ -98,38 +94,23 @@ fn amend_attr(v: &mut Value, ver: (u32, u32)) -> bool {
     match ty {
         // Table 4.3.6.8-1 attribute-type fallbacks.
         "LanguageProperty" if ver < (1, 4) => {
-            obj.insert("type".into(), Value::String("Property".into()));
-            if let Some(lm) = obj.remove("languageMap") {
-                obj.insert("value".into(), lm);
-            }
+            retype(obj, "Property", "languageMap", "value");
             changed = true;
         }
         "JsonProperty" if ver < (1, 8) => {
-            obj.insert("type".into(), Value::String("Property".into()));
-            if let Some(j) = obj.remove("json") {
-                obj.insert("value".into(), j);
-            }
+            retype(obj, "Property", "json", "value");
             changed = true;
         }
         "VocabProperty" if ver < (1, 8) => {
-            obj.insert("type".into(), Value::String("Property".into()));
-            if let Some(vv) = obj.remove("vocab") {
-                obj.insert("value".into(), vv);
-            }
+            retype(obj, "Property", "vocab", "value");
             changed = true;
         }
         "ListProperty" if ver < (1, 8) => {
-            obj.insert("type".into(), Value::String("Property".into()));
-            if let Some(vl) = obj.remove("valueList") {
-                obj.insert("value".into(), vl);
-            }
+            retype(obj, "Property", "valueList", "value");
             changed = true;
         }
         "ListRelationship" if ver < (1, 8) => {
-            obj.insert("type".into(), Value::String("Relationship".into()));
-            if let Some(ol) = obj.remove("objectList") {
-                obj.insert("object".into(), ol);
-            }
+            retype(obj, "Relationship", "objectList", "object");
             changed = true;
         }
         _ => {}
@@ -145,11 +126,11 @@ fn amend_attr(v: &mut Value, ver: (u32, u32)) -> bool {
     if ver < (1, 8) && obj.remove("objectType").is_some() {
         changed = true;
     }
-    if ver < (1, 9) {
-        for k in ["valueType", "expiresAt"] {
-            if obj.remove(k).is_some() {
-                changed = true;
-            }
+    // amend_attr runs only under amend_entity, below NATIVE (1.9), so the
+    // members 1.9 introduced always go
+    for k in ["valueType", "expiresAt"] {
+        if obj.remove(k).is_some() {
+            changed = true;
         }
     }
     // Sub-attributes (properties-of-properties) get the same treatment.
@@ -160,47 +141,56 @@ fn amend_attr(v: &mut Value, ver: (u32, u32)) -> bool {
     // (Table 4.3.6.8-3). Walking one as an Attribute node applies Notes 2/3
     // to a plain JSON array and hands the subscriber a single element where
     // its own previous value had several.
-    let subs: Vec<String> = obj
-        .keys()
-        .filter(|k| {
-            !matches!(
-                k.as_str(),
-                "type"
-                    | "value"
-                    | "object"
-                    | "languageMap"
-                    | "json"
-                    | "vocab"
-                    | "valueList"
-                    | "objectList"
-                    | "previousValue"
-                    | "previousObject"
-                    | "previousLanguageMap"
-                    | "previousJson"
-                    | "previousVocab"
-                    | "previousValueList"
-                    | "previousObjectList"
-                    | "datasetId"
-                    | "observedAt"
-                    | "unitCode"
-                    | "objectType"
-                    | "valueType"
-                    | "expiresAt"
-                    | "createdAt"
-                    | "modifiedAt"
-                    | "instanceId"
-            )
-        })
-        .cloned()
-        .collect();
-    for name in subs {
-        if let Some(sub) = obj.get_mut(&name) {
-            if sub.is_object() || sub.is_array() {
-                changed |= amend_attr(sub, ver);
-            }
+    for (_, sub) in obj.iter_mut().filter(|(k, _)| {
+        !matches!(
+            k.as_str(),
+            "type"
+                | "value"
+                | "object"
+                | "languageMap"
+                | "json"
+                | "vocab"
+                | "valueList"
+                | "objectList"
+                | "previousValue"
+                | "previousObject"
+                | "previousLanguageMap"
+                | "previousJson"
+                | "previousVocab"
+                | "previousValueList"
+                | "previousObjectList"
+                | "datasetId"
+                | "observedAt"
+                | "unitCode"
+                | "objectType"
+                | "valueType"
+                | "expiresAt"
+                | "createdAt"
+                | "modifiedAt"
+                | "instanceId"
+        )
+    }) {
+        if sub.is_object() || sub.is_array() {
+            changed |= amend_attr(sub, ver);
         }
     }
     changed
+}
+
+/// A 4.3.6.8 attribute-type fallback: the earlier `ty`, with the member
+/// that held the content renamed to the one `ty` carries it in.
+fn retype(obj: &mut serde_json::Map<String, Value>, ty: &str, from: &str, to: &str) {
+    obj.insert("type".into(), Value::String(ty.into()));
+    let content = obj.remove(from);
+    obj.extend(content.map(|c| (to.to_owned(), c)));
+}
+
+/// `Preference-Applied: ngsi-ld=<major.minor>` (6.3.6). Two integers and a
+/// dot always parse as a header value; were that ever untrue, omitting the
+/// header beats taking the response down.
+fn stamp_applied(headers: &mut axum::http::HeaderMap, ver: (u32, u32)) {
+    let v = format!("ngsi-ld={}.{}", ver.0, ver.1).parse().ok();
+    headers.extend(v.map(|v| (header::HeaderName::from_static("preference-applied"), v)));
 }
 
 /// Amend whatever entity-bearing payload shape a response carries.
@@ -239,7 +229,7 @@ pub(crate) fn amend_payload(doc: &mut Value, ver: (u32, u32)) -> bool {
                     None => false,
                 }
             } else if o.contains_key("id") && o.contains_key("type") && !is_reserved_resource(o) {
-                amend_entity(doc, ver)
+                amend_entity(o, ver)
             } else {
                 false
             }
@@ -296,9 +286,7 @@ pub async fn prefer_version_layer(req: Request<Body>, next: Next) -> Response {
     // Content-Length intact.
     if ver >= NATIVE {
         let mut resp = resp;
-        if let Ok(v) = format!("ngsi-ld={}.{}", NATIVE.0, NATIVE.1).parse() {
-            resp.headers_mut().insert("Preference-Applied", v);
-        }
+        stamp_applied(resp.headers_mut(), NATIVE);
         return resp;
     }
     let (mut parts, body) = resp.into_parts();
@@ -346,11 +334,7 @@ pub async fn prefer_version_layer(req: Request<Body>, next: Next) -> Response {
         }
         Err(_) => bytes,
     };
-    // Two integers and a dot are always a legal header value; if that ever
-    // stopped being true, omitting the header beats taking the response down.
-    if let Ok(v) = format!("ngsi-ld={}.{}", conformant.0, conformant.1).parse() {
-        parts.headers.insert("Preference-Applied", v);
-    }
+    stamp_applied(&mut parts.headers, conformant);
     if altered {
         // The response tables' "altered Entity" rows: 203 Non-Authoritative.
         parts.status = StatusCode::NON_AUTHORITATIVE_INFORMATION;
@@ -365,6 +349,11 @@ pub async fn prefer_version_layer(req: Request<Body>, next: Next) -> Response {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// [`super::amend_entity`] over a document the test spells as a Value.
+    fn amend_entity(doc: &mut Value, ver: (u32, u32)) -> bool {
+        super::amend_entity(doc.as_object_mut().expect("an entity object"), ver)
+    }
 
     #[test]
     fn version_parsing() {
@@ -522,6 +511,29 @@ mod tests {
         assert_eq!(n["data"][0]["jp"], json!({"type": "Property", "value": 1}));
     }
 
+    /// Plain JSON arrays reach the walk too (a keyValues payload carries
+    /// values, not instances): at 1.0 Notes 2/3 keep the first element and
+    /// leave an empty array as it is; above 1.3 scalar elements and scalar
+    /// sub-members are not Attributes and pass unchanged. A fallback type
+    /// without its content member is retyped and given no value.
+    #[test]
+    fn plain_values_and_bare_fallback_types() {
+        let mut d = json!({"id": "urn:a", "type": "T", "tags": [], "speeds": [3, 4]});
+        assert!(amend_entity(&mut d, (1, 0)));
+        assert_eq!(d["tags"], json!([]));
+        assert_eq!(d["speeds"], 3);
+        let mut d = json!({"id": "urn:a", "type": "T", "speeds": [3, 4],
+            "p": {"type": "Property", "value": 1, "note": "kept"}});
+        let before = d.clone();
+        assert!(!amend_entity(&mut d, (1, 5)));
+        assert_eq!(d, before);
+        let mut d = json!({"id": "urn:a", "type": "T", "l": {"type": "LanguageProperty"}});
+        assert!(amend_entity(&mut d, (1, 3)));
+        assert_eq!(d["l"], json!({"type": "Property"}));
+        let mut d = json!({"id": "urn:a", "type": "T"});
+        assert!(!amend_entity(&mut d, (1, 0)), "a single type stays");
+    }
+
     /// A version string that is not `major.minor` yields no version at all —
     /// the preference is then ignored rather than guessed at.
     #[test]
@@ -657,7 +669,6 @@ mod tests {
 #[cfg(test)]
 mod prefer_layer {
     use super::*;
-    use axum::http::HeaderValue;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
@@ -785,6 +796,21 @@ mod prefer_layer {
         assert_eq!(body, "not json");
     }
 
+    /// A body labelled JSON that does not parse is served as written: the
+    /// preference is applied (there is nothing to amend) and the 200 stays.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unparsable_json_body_passes_through_with_the_preference() {
+        let (status, applied, body) = get(
+            app("/ngsi-ld/v1/entities/{id}", "{not json"),
+            "/ngsi-ld/v1/entities/urn:a",
+            Some("ngsi-ld=1.0"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(applied, "ngsi-ld=1.0");
+        assert_eq!(body, "{not json");
+    }
+
     /// A body that fails mid-stream must not be served as a complete 200.
     #[tokio::test(flavor = "multi_thread")]
     async fn broken_body_stream_is_not_a_success() {
@@ -816,11 +842,10 @@ mod prefer_layer {
     #[tokio::test(flavor = "multi_thread")]
     async fn version_preference_found_on_a_second_prefer_line() {
         let ent = r#"{"id":"urn:a","type":"T"}"#;
-        let mut req = Request::builder().uri("/ngsi-ld/v1/entities/urn:a");
-        if let Some(h) = req.headers_mut() {
-            h.append("Prefer", HeaderValue::from_static("body=json"));
-            h.append("Prefer", HeaderValue::from_static("ngsi-ld=1.5"));
-        }
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities/urn:a")
+            .header("Prefer", "body=json")
+            .header("Prefer", "ngsi-ld=1.5");
         let resp = app("/ngsi-ld/v1/entities/{id}", ent)
             .oneshot(req.body(Body::empty()).expect("request"))
             .await

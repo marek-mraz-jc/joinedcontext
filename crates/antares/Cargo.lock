@@ -280,9 +280,14 @@ dependencies = [
 name = "antares-icsr"
 version = "0.3.0"
 dependencies = [
+ "antares-api",
  "antares-ops",
+ "antares-sql",
+ "antares-store",
+ "async-trait",
  "axum",
  "http-body-util",
+ "ngsild-model",
  "serde",
  "serde_json",
  "tokio",
@@ -324,12 +329,17 @@ dependencies = [
 name = "antares-mcp"
 version = "0.3.0"
 dependencies = [
+ "antares-api",
  "antares-ops",
+ "antares-sql",
+ "antares-store",
+ "async-trait",
  "axum",
  "http-body-util",
  "jc-time",
  "jiff",
  "metrics",
+ "ngsild-model",
  "rmcp",
  "serde_json",
  "tokio",

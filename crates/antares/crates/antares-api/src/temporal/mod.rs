@@ -133,6 +133,28 @@ impl InstancePage {
     }
 }
 
+#[cfg(test)]
+mod instance_page {
+    use super::*;
+
+    /// 6.4.7.3: an aggregated page moves offsetN by N itself, which the
+    /// ceiling never cuts; any other page by its size.
+    #[test]
+    fn an_aggregated_page_steps_by_n_past_the_ceiling() {
+        let p = |pairs: &[(&str, &str)]| {
+            let m: HashMap<String, String> = pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect();
+            InstancePage::parse(&m).expect("valid page")
+        };
+        let last = p(&[("lastN", "500")]);
+        assert_eq!(last.step(true, 20, 100), 500);
+        assert_eq!(last.step(false, 20, 100), 100);
+        assert_eq!(p(&[]).step(true, 20, 100), 20);
+    }
+}
+
 /// The page a read without firstN/lastN serves per Attribute, for the
 /// store's cap: none for an aggregation (it reads the whole window) or a
 /// tenant recording `onChange`, whose window starts at the level carried in.

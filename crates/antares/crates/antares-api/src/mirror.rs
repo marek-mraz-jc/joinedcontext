@@ -624,6 +624,155 @@ impl DocMirror {
 }
 
 #[cfg(test)]
+mod doc_mirror {
+    use super::{DocMirror, Mirror, SubMirror};
+    use serde_json::json;
+
+    fn ids(docs: &[std::sync::Arc<serde_json::Value>]) -> Vec<String> {
+        let mut out: Vec<String> = docs
+            .iter()
+            .filter_map(|d| d["id"].as_str().map(str::to_owned))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// 5.2.9 shapes the index cannot read narrow nothing: no
+    /// `information`, an empty one, an entry without `entities` or with an
+    /// empty list each keep the registration in both broad sets.
+    #[test]
+    fn an_unreadable_registration_stays_broad() {
+        let m = DocMirror::default();
+        let regs = [
+            ("r:none", json!({"id": "r:none"})),
+            ("r:empty", json!({"id": "r:empty", "information": []})),
+            (
+                "r:attrs",
+                json!({"id": "r:attrs", "information": [{"propertyNames": ["p"]}]}),
+            ),
+            (
+                "r:noent",
+                json!({"id": "r:noent", "information": [{"entities": []}]}),
+            ),
+            (
+                "r:car",
+                json!({"id": "r:car", "information": [{"entities": [{"type": "Car"}]}]}),
+            ),
+        ];
+        for (id, doc) in regs {
+            m.apply("t", id, Some(doc));
+        }
+        let bus = ["Bus".to_owned()];
+        assert_eq!(
+            ids(&m.matching("t", None, Some(&bus))),
+            ["r:attrs", "r:empty", "r:noent", "r:none"],
+            "only the Car registration is narrowed out of a Bus lookup"
+        );
+        let id = ["urn:x".to_owned()];
+        assert_eq!(ids(&m.matching("t", Some(&id), Some(&bus))).len(), 4);
+    }
+
+    /// A registration naming one type twice is unfiled cleanly, and `held`
+    /// lists what the mirror holds until the last delete empties a tenant.
+    #[test]
+    fn a_repeated_key_is_unfiled_once_and_held_follows_the_deltas() {
+        let m = DocMirror::default();
+        let twice = json!({"id": "r:1", "information": [
+            {"entities": [{"type": "Car", "id": "urn:c"}, {"type": "Car", "id": "urn:c"}]}]});
+        m.apply("t", "r:1", Some(twice.clone()));
+        m.apply("u", "r:2", Some(twice));
+        let mut held = Mirror::held(&m);
+        held.sort();
+        assert_eq!(
+            held,
+            [
+                ("t".to_owned(), "r:1".to_owned()),
+                ("u".to_owned(), "r:2".to_owned())
+            ]
+        );
+        // csub_written is a no-op for a mirror that serves no sweep
+        Mirror::csub_written(&m);
+        Mirror::apply(&m, "t", "r:1", None);
+        let car = ["Car".to_owned()];
+        assert!(m.matching("t", None, Some(&car)).is_empty());
+        assert_eq!(Mirror::held(&m), [("u".to_owned(), "r:2".to_owned())]);
+        assert_eq!(m.tenants(), ["u"], "an emptied tenant leaves the map");
+        // a delete in a tenant the mirror never held changes nothing
+        Mirror::apply(&m, "absent", "r:9", None);
+        assert_eq!(m.tenants(), ["u"]);
+    }
+
+    /// The subscription index: an empty `entities` list and a
+    /// `watchedAttributes` list with a non-string go broad; a watched-only
+    /// subscription is filed by attribute and unfiled when it changes; a
+    /// type named twice is unfiled once.
+    #[test]
+    fn subscription_keys_are_filed_and_unfiled() {
+        let m = SubMirror::default();
+        m.apply(
+            "t",
+            "s:empty",
+            Some(json!({"id": "s:empty", "entities": []})),
+        );
+        m.apply(
+            "t",
+            "s:odd",
+            Some(json!({"id": "s:odd", "watchedAttributes": ["speed", 3]})),
+        );
+        m.apply(
+            "t",
+            "s:watch",
+            Some(json!({"id": "s:watch", "watchedAttributes": ["speed", "speed"]})),
+        );
+        m.apply(
+            "t",
+            "s:twice",
+            Some(json!({"id": "s:twice", "entities": [{"type": "Car"}, {"type": "Car"}]})),
+        );
+        assert_eq!(ids(&m.candidates("t", &[], &[])), ["s:empty", "s:odd"]);
+        assert_eq!(
+            ids(&m.candidates("t", &["Car"], &["speed"])),
+            ["s:empty", "s:odd", "s:twice", "s:watch"]
+        );
+        m.apply(
+            "t",
+            "s:watch",
+            Some(json!({"id": "s:watch", "watchedAttributes": ["temp"]})),
+        );
+        m.apply("t", "s:twice", None);
+        assert_eq!(
+            ids(&m.candidates("t", &["Car"], &["speed"])),
+            ["s:empty", "s:odd"],
+            "the old attribute and type keys are gone"
+        );
+        assert_eq!(
+            ids(&m.candidates("t", &[], &["temp"])),
+            ["s:empty", "s:odd", "s:watch"]
+        );
+        // an attribute key two subscriptions share outlives one of them
+        m.apply(
+            "t",
+            "s:temp",
+            Some(json!({"id": "s:temp", "watchedAttributes": ["temp"]})),
+        );
+        m.apply("t", "s:watch", None);
+        assert_eq!(
+            ids(&m.candidates("t", &[], &["temp"])),
+            ["s:empty", "s:odd", "s:temp"]
+        );
+        // a CSR subscription written anywhere wakes the sweep at once
+        m.next_csub_sweep_ms
+            .store(99, std::sync::atomic::Ordering::Relaxed);
+        Mirror::csub_written(&m);
+        assert_eq!(
+            m.next_csub_sweep_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+    }
+}
+
+#[cfg(test)]
 mod periodic {
     use super::SubMirror;
     use serde_json::json;

@@ -199,6 +199,11 @@ name = "facade_seam_f0"
 path = "tests/facade_seam_f0.rs"
 
 [[test]]
+# own process: sets ANTARES_TEST_STORE, read by every AppState::new
+name = "test_store_file"
+path = "tests/test_store_file.rs"
+
+[[test]]
 # own process: sets ANTARES_POLICY_SUBJECT_HEADERS
 name = "policy_maps_snapshots_5_14_5_16"
 path = "tests/policy_maps_snapshots_5_14_5_16.rs"

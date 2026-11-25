@@ -202,12 +202,10 @@ fn query_body_params(
 ) -> ApiResult<HashMap<String, String>> {
     let q: Value = serde_json::from_slice(body)
         .map_err(|e| NgsiError::InvalidRequest(format!("body is not valid JSON: {e}")))?;
-    if q.get("type").and_then(Value::as_str) != Some("Query") {
-        return Err(NgsiError::BadRequestData("body type must be Query".into()).into());
-    }
     let qo = q
         .as_object()
-        .ok_or_else(|| NgsiError::BadRequestData("query body must be an object".into()))?;
+        .filter(|o| o.get("type").and_then(Value::as_str) == Some("Query"))
+        .ok_or_else(|| NgsiError::BadRequestData("body type must be Query".into()))?;
     let mut vp: HashMap<String, String> = params.clone();
     crate::paging::query_doc_params(qo, temporal, &mut vp)?;
     Ok(vp)
@@ -357,6 +355,31 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "POST");
     }
 
+    /// 5.2.23: the POST form's body is a Query object; malformed JSON is
+    /// InvalidRequest, any other JSON (an array, another type) is
+    /// BadRequestData, and the Query's members join the parameters.
+    #[test]
+    fn a_query_body_must_be_a_query_object() {
+        let p = params(&[("limit", "5")]);
+        let bad = query_body_params(&Bytes::from_static(b"{nope"), &p, false)
+            .expect_err("malformed JSON is refused");
+        assert_eq!(bad.into_response().status(), StatusCode::BAD_REQUEST);
+        for body in [&b"[]"[..], br#"{"type":"Entity"}"#, br#""Query""#] {
+            let refused = query_body_params(&Bytes::copy_from_slice(body), &p, false)
+                .expect_err("a non-Query body is refused");
+            let resp = refused.into_response();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        }
+        let ok = query_body_params(
+            &Bytes::from_static(br#"{"type":"Query","entities":[{"type":"Vehicle"}]}"#),
+            &p,
+            false,
+        )
+        .expect("a Query object is taken");
+        assert_eq!(ok.get("type").map(String::as_str), Some("Vehicle"));
+        assert_eq!(ok.get("limit").map(String::as_str), Some("5"));
+    }
+
     /// 5.14.1.4 / 5.14.3.4: "If the EntityMap id is not present or it is not
     /// a valid URI, then an error of type BadRequestData shall be raised."
     #[test]
@@ -370,10 +393,11 @@ mod tests {
             ":nostem",
             "urn:",
         ] {
-            match map_id_check(bad) {
-                Err(NgsiError::BadRequestData(_)) => {}
-                other => panic!("{bad:?} must be BadRequestData, got {other:?}"),
-            }
+            let got = map_id_check(bad);
+            assert!(
+                matches!(got, Err(NgsiError::BadRequestData(_))),
+                "{bad:?} must be BadRequestData, got {got:?}"
+            );
         }
     }
 }

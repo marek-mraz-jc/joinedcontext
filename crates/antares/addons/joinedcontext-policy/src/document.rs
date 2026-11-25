@@ -241,7 +241,9 @@ impl Information {
     /// the entry grants nothing for `need` (deny by default). An entry
     /// without `attributes` is today's, whole.
     fn narrowed(&self, need: Need) -> Result<Option<Self>, String> {
-        if self.attributes.is_empty() || need == Need::Schema {
+        // a Schema need is given by every capability, so below it keeps the
+        // entry's lists as they are and drops the capabilities alone
+        if self.attributes.is_empty() {
             return Ok(Some(Self {
                 attributes: BTreeMap::new(),
                 ..self.clone()
@@ -897,11 +899,9 @@ mod tests {
     }
 
     fn with(k: &str, v: serde_json::Value) -> serde_json::Value {
-        let mut p = base();
-        if let Some(o) = p.as_object_mut() {
-            o.insert(k.to_owned(), v);
-        }
-        p
+        let mut p = base().as_object().cloned().unwrap_or_default();
+        p.insert(k.to_owned(), v);
+        serde_json::Value::Object(p)
     }
 
     #[test]
@@ -951,13 +951,11 @@ mod tests {
             .iter()
             .flat_map(|r| &r.attributes)
             .map(|a| {
-                if *a == name {
-                    "name".to_owned()
-                } else if *a == pm10 {
-                    "pm10".to_owned()
-                } else {
-                    a.clone()
-                }
+                [(&name, "name"), (&pm10, "pm10")]
+                    .into_iter()
+                    .find(|(iri, _)| *iri == a)
+                    .map_or(a.as_str(), |(_, short)| short)
+                    .to_owned()
             })
             .collect()
     }
@@ -968,9 +966,9 @@ mod tests {
             &json!({"*": {"history": false}, "name": {"history": true}}),
             &json!(["5.7.1", "5.7.2", "5.7.3", "5.7.4"]),
         ))?;
-        let [(reads, read_rules), (history, history_rules)] = got.as_slice() else {
-            return Err(format!("{} policies, not 2", got.len()));
-        };
+        let [(reads, read_rules), (history, history_rules)] = <&[_; 2]>::try_from(got.as_slice())
+            .ok()
+            .ok_or(format!("{} policies, not 2", got.len()))?;
         assert_eq!(reads, &["5.7.1", "5.7.2"]);
         assert_eq!(names(read_rules), ["name", "pm10"]);
         assert_eq!(history, &["5.7.3", "5.7.4"]);
@@ -1011,9 +1009,9 @@ mod tests {
             &json!(["5.6.2", "5.6.3", "5.6.5", "5.6.8"]),
         ))?;
         // 5.6.2 (update) keeps name; append, delete and the upsert keep none
-        let [(clauses, rules)] = got.as_slice() else {
-            return Err(format!("{} policies, not 1", got.len()));
-        };
+        let [(clauses, rules)] = <&[_; 1]>::try_from(got.as_slice())
+            .ok()
+            .ok_or(format!("{} policies, not 1", got.len()))?;
         assert_eq!(clauses, &["5.6.2"]);
         assert_eq!(names(rules), ["name"]);
         // each kind alone admits the clauses of that kind and no other: an append creates, a
@@ -1028,17 +1026,17 @@ mod tests {
                 &json!({"name": {"write": [kind]}, "*": {"write": []}}),
                 &writes,
             ))?;
-            let [(clauses, rules)] = got.as_slice() else {
-                return Err(format!("{kind}: {} policies, not 1", got.len()));
-            };
+            let [(clauses, rules)] = <&[_; 1]>::try_from(got.as_slice())
+                .ok()
+                .ok_or(format!("{kind}: {} policies, not 1", got.len()))?;
             assert_eq!(clauses, &[admitted], "{kind}");
             assert_eq!(names(rules), ["name"], "{kind}");
         }
         let all = json!({"name": {"write": ["update", "append", "delete"], "read": false}, "*": {"write": []}});
         let got = split(&air(&all, &json!(["5.6.18"])))?;
-        let [(clauses, rules)] = got.as_slice() else {
-            return Err(format!("{} policies, not 1", got.len()));
-        };
+        let [(clauses, rules)] = <&[_; 1]>::try_from(got.as_slice())
+            .ok()
+            .ok_or(format!("{} policies, not 1", got.len()))?;
         assert_eq!(
             (clauses.as_slice(), names(rules)),
             (&["5.6.18".to_owned()][..], vec!["name".to_owned()])
@@ -1110,6 +1108,18 @@ mod tests {
             "information": [{"entities": [{"type": "Air"}],
                              "attributes": {"pm10": {"history": false}}}]});
         assert!(split(&except).is_err_and(|e| e.contains("list propertyNames")));
+        // `*` withholds the history and no name gives it back: the entry
+        // grants no history at all, and still the current value
+        let none = json!({"id": "p", "assignee": {"kind": "role", "id": "public"},
+            "operations": ["5.7.2", "5.7.3"],
+            "information": [{"entities": [{"type": "Air"}],
+                             "attributes": {"*": {"history": false}, "pm10": {"history": false}}}]});
+        let got = split(&none)?;
+        assert!(
+            got.iter().all(|(c, _)| c.iter().all(|x| x != "5.7.3")),
+            "no history policy"
+        );
+        assert!(got.iter().any(|(c, _)| c.iter().any(|x| x == "5.7.2")));
         Ok(())
     }
 
@@ -1288,9 +1298,9 @@ mod tests {
             "2026-06-01",
         ] {
             let mut p = with("q", json!("speed<100"));
-            if let Some(o) = p.as_object_mut() {
+            p.as_object_mut().into_iter().for_each(|o| {
                 o.insert("validity".into(), json!({"from": from}));
-            }
+            });
             let read = one(&p).map(|p| p.in_force(now));
             got.push(format!("{from:?} => {read:?}"));
         }
@@ -1348,24 +1358,17 @@ PT1H => Err("refused")
     #[test]
     fn conditions_and_validity_compile() -> Result<(), String> {
         let mut p = with("q", json!("speed<100"));
-        if let Some(o) = p.as_object_mut() {
-            o.insert("scopeQ".into(), json!("/geo/SK/#"));
-            o.insert("effect".into(), json!("prohibit"));
-            o.insert(
-                "geoQ".into(),
-                json!(
-                    "georel=within;geometry=Polygon;coordinates=[[[0,0],[1,0],[1,1],[0,1],[0,0]]]"
-                ),
-            );
-            o.insert(
-                "temporalQ".into(),
-                json!("timerel=between;timeAt=2026-01-01T00:00:00Z;endTimeAt=-PT1H"),
-            );
-            o.insert(
-                "validity".into(),
-                json!({"from": "2026-01-01T00:00:00Z", "to": "2027-01-01T00:00:00Z"}),
-            );
-        }
+        let conditions = json!({
+            "scopeQ": "/geo/SK/#",
+            "effect": "prohibit",
+            "geoQ": "georel=within;geometry=Polygon;coordinates=[[[0,0],[1,0],[1,1],[0,1],[0,0]]]",
+            "temporalQ": "timerel=between;timeAt=2026-01-01T00:00:00Z;endTimeAt=-PT1H",
+            "validity": {"from": "2026-01-01T00:00:00Z", "to": "2027-01-01T00:00:00Z"},
+        });
+        let conditions = conditions.as_object().cloned().unwrap_or_default();
+        p.as_object_mut()
+            .into_iter()
+            .for_each(|o| o.extend(conditions.clone()));
         let p = one(&p)?;
         assert!(p.prohibit && p.is_conditional());
         assert_eq!(

@@ -118,6 +118,20 @@ doc = false
 bench = false
 
 [[bin]]
+name = "query_document"
+path = "fuzz_targets/query_document.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "paging_cursor"
+path = "fuzz_targets/paging_cursor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "link_header"
 path = "fuzz_targets/link_header.rs"
 test = false

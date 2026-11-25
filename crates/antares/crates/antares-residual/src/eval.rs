@@ -639,6 +639,21 @@ mod tests {
         assert_eq!(e.value(&lit), Err(Error::TooComplex));
     }
 
+    /// `any`/`all` walk a list or a lone string; an object, or a value that
+    /// is no JSON, has no items.
+    #[test]
+    fn only_a_list_or_a_string_has_items() {
+        let (list, one, object) = (
+            serde_json::json!([1, 2]),
+            serde_json::json!("/a"),
+            serde_json::json!({"a": 1}),
+        );
+        assert_eq!(super::items(&Val::Json(&list)).map(<[_]>::len), Some(2));
+        assert_eq!(super::items(&Val::Json(&one)).map(<[_]>::len), Some(1));
+        assert_eq!(super::items(&Val::Json(&object)), None);
+        assert_eq!(super::items(&Val::Int(1)), None);
+    }
+
     /// Two integers order exactly, past where f64 tells them apart.
     #[test]
     fn integers_order_exactly_beyond_f64_precision() {

@@ -237,20 +237,21 @@ mod tests {
         let exact = Limits::from_env(|k| (k == QUEUE_BYTES_ENV).then(|| one.clone()))?;
         assert_eq!(exact.queue_bytes, MAX_NOTIFICATION_BYTES);
         // every variable reaches its own bound
+        let set = [
+            (QUEUE_ENV, "7"),
+            (QUEUE_BYTES_ENV, "2097152"),
+            (RESUME_GRACE_ENV, "2"),
+            (SUBSCRIPTION_LEASE_ENV, "500"),
+            (MAX_LIFETIME_ENV, "60"),
+            (MAX_CONNECTIONS_ENV, "11"),
+            (MAX_CONNECTIONS_PER_TENANT_ENV, "5"),
+            (MAX_SUBSCRIPTIONS_ENV, "3"),
+            (ALLOWED_ORIGINS_ENV, "https://a.example"),
+        ];
         let all = Limits::from_env(|k| {
-            let v = match k {
-                QUEUE_ENV => "7",
-                QUEUE_BYTES_ENV => "2097152",
-                RESUME_GRACE_ENV => "2",
-                SUBSCRIPTION_LEASE_ENV => "500",
-                MAX_LIFETIME_ENV => "60",
-                MAX_CONNECTIONS_ENV => "11",
-                MAX_CONNECTIONS_PER_TENANT_ENV => "5",
-                MAX_SUBSCRIPTIONS_ENV => "3",
-                ALLOWED_ORIGINS_ENV => "https://a.example",
-                _ => return None,
-            };
-            Some(v.to_owned())
+            set.iter()
+                .find(|(name, _)| *name == k)
+                .map(|(_, v)| (*v).to_owned())
         })?;
         let want = Limits {
             queue: 7,

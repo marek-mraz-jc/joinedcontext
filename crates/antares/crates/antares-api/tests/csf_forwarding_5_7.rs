@@ -209,6 +209,38 @@ async fn clause_5_7_2_4_csf_matching_nothing_stays_local() {
     assert_eq!(ids, vec!["urn:ngsi-ld:Vehicle:local2"], "{body}");
 }
 
+/// 6.3.17: a Context Source that fails a forwarded batch query leaves a
+/// warning for the log only, never on entityOperations/query; the answer is
+/// the local data, 200.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_6_3_17_a_failing_source_leaves_the_batch_query_its_local_answer() {
+    allow_private();
+    let st = AppState::new("antares-csf-fail".into());
+    let port = mock("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n".into());
+    register(
+        &st,
+        "urn:ngsi-ld:ContextSourceRegistration:failing",
+        port,
+        "sensor",
+    )
+    .await;
+    let local = json!({"id": "urn:ngsi-ld:Vehicle:here", "type": "Vehicle"}).to_string();
+    let (status, _) = post(&st, "/ngsi-ld/v1/entities", local).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let q = json!({"type": "Query", "entities": [{"type": "Vehicle"}]}).to_string();
+    let (status, body) = post(&st, "/ngsi-ld/v1/entityOperations/query", q).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ids: Vec<&str> = body
+        .get("body")
+        .unwrap_or(&body)
+        .as_array()
+        .expect("array")
+        .iter()
+        .filter_map(|d| d["id"].as_str())
+        .collect();
+    assert_eq!(ids, vec!["urn:ngsi-ld:Vehicle:here"], "{body}");
+}
+
 /// 5.7.2.4: "If the list of Entity identifiers includes a URI which it is not
 /// valid, or the query, geoquery or context source filter are not
 /// syntactically valid (as per the referred clauses 4.9 and 4.10) an error of

@@ -146,10 +146,8 @@ pub(super) async fn park_unretried(
 ) {
     metrics::counter!("antares_notifications_retried_total", "outcome" => "no_slot").increment(1);
     if park_dead_letter(st, tenant, letter).await {
-        tracing::warn!(
-            "notification for {sub_id} to {} dead-lettered without a retry: {why}",
-            redact_userinfo(uri)
-        );
+        let shown = redact_userinfo(uri);
+        tracing::warn!("notification for {sub_id} to {shown} dead-lettered without a retry: {why}");
     }
 }
 

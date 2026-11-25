@@ -1124,10 +1124,7 @@ mod tests {
             (r#"a=="sl\/ash""#, "sl/ash"),
             (r#"a=="""#, ""),
         ] {
-            let node = match parse_q(q) {
-                Ok(node) => node,
-                Err(e) => panic!("{q}: {e:?}"),
-            };
+            let node = parse_q(q).expect("the escape parses");
             assert!(
                 matches!(&node, QNode::Cmp { value: QValue::Str(s), .. } if s == want),
                 "{q}: {node:?}"
@@ -1385,9 +1382,8 @@ mod complexity_tests {
         let whole: Vec<String> = q.paths().iter().map(|p| p.to_string()).collect();
         assert_eq!(whole, ["speed", "brand", "sensor{humidity}", "owner"]);
         let nested = parse_q("a.b[c]==1").expect("parse");
-        let [p] = nested.paths()[..] else {
-            panic!("one path expected");
-        };
+        assert_eq!(nested.paths().len(), 1, "one path expected");
+        let p = nested.paths().first().copied().expect("one path expected");
         assert_eq!(
             (p.path.as_slice(), p.bracket.as_deref()),
             (

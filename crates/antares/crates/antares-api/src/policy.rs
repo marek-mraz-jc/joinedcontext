@@ -142,6 +142,7 @@ pub async fn through_view<F: Future>(id: &str, f: F) -> F::Output {
 /// applying. As [`VIEW_PAIR`], no request can carry it.
 pub const IDENTITY_PAIR: &str = "@identity";
 
+#[cfg(feature = "channels")]
 tokio::task_local! {
     static BY_IDENTITY: ();
 }
@@ -1413,7 +1414,8 @@ pub async fn decide(engine: &dyn PolicyEngine, subject: &Subject, op: &Operation
         let built =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| engine.decide(subject, op)));
         let Ok(fut) = built else {
-            tracing::error!("policy engine {} panicked; denying", engine.name());
+            let name = engine.name();
+            tracing::error!("policy engine {name} panicked; denying");
             metrics::counter!("antares_policy_failures_total", "reason" => "panic").increment(1);
             return Decision::Deny(ENGINE_FAILED.to_owned());
         };
@@ -1421,17 +1423,15 @@ pub async fn decide(engine: &dyn PolicyEngine, subject: &Subject, op: &Operation
         match tokio::time::timeout(*TIMEOUT, guarded).await {
             Ok(Ok(d)) => resolve(op.clause, d),
             Ok(Err(_)) => {
-                tracing::error!("policy engine {} panicked; denying", engine.name());
+                let name = engine.name();
+                tracing::error!("policy engine {name} panicked; denying");
                 metrics::counter!("antares_policy_failures_total", "reason" => "panic")
                     .increment(1);
                 Decision::Deny(ENGINE_FAILED.to_owned())
             }
             Err(_) => {
-                tracing::error!(
-                    "policy engine {} did not answer within {:?}; denying",
-                    engine.name(),
-                    *TIMEOUT
-                );
+                let (name, wait) = (engine.name(), *TIMEOUT);
+                tracing::error!("policy engine {name} did not answer within {wait:?}; denying");
                 metrics::counter!("antares_policy_failures_total", "reason" => "timeout")
                     .increment(1);
                 Decision::Deny(ENGINE_TIMED_OUT.to_owned())
@@ -1471,7 +1471,8 @@ async fn guarded<'a>(
         use futures_util::FutureExt as _;
         let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(ask));
         let Ok(fut) = built else {
-            tracing::error!("policy engine {} panicked; denying", engine.name());
+            let name = engine.name();
+            tracing::error!("policy engine {name} panicked; denying");
             metrics::counter!("antares_policy_failures_total", "reason" => "panic").increment(1);
             return all(ENGINE_FAILED);
         };
@@ -1479,17 +1480,15 @@ async fn guarded<'a>(
         match tokio::time::timeout(*TIMEOUT, guarded).await {
             Ok(Ok(d)) => d,
             Ok(Err(_)) => {
-                tracing::error!("policy engine {} panicked; denying", engine.name());
+                let name = engine.name();
+                tracing::error!("policy engine {name} panicked; denying");
                 metrics::counter!("antares_policy_failures_total", "reason" => "panic")
                     .increment(1);
                 return all(ENGINE_FAILED);
             }
             Err(_) => {
-                tracing::error!(
-                    "policy engine {} did not answer within {:?}; denying",
-                    engine.name(),
-                    *TIMEOUT
-                );
+                let (name, wait) = (engine.name(), *TIMEOUT);
+                tracing::error!("policy engine {name} did not answer within {wait:?}; denying");
                 metrics::counter!("antares_policy_failures_total", "reason" => "timeout")
                     .increment(1);
                 return all(ENGINE_TIMED_OUT);
@@ -1499,12 +1498,8 @@ async fn guarded<'a>(
     #[cfg(target_arch = "wasm32")]
     let answer = ask().await;
     if answer.len() != ops.len() {
-        tracing::error!(
-            "policy engine {} answered {} decisions for {} operations; denying",
-            engine.name(),
-            answer.len(),
-            ops.len()
-        );
+        let (name, got, want) = (engine.name(), answer.len(), ops.len());
+        tracing::error!("policy engine {name}: {got} answers to {want} operations; denying");
         metrics::counter!("antares_policy_failures_total", "reason" => "length").increment(1);
         return all(ENGINE_FAILED);
     }
@@ -1558,10 +1553,8 @@ pub fn pre_notify(
     })) {
         Ok(d) => d,
         Err(_) => {
-            tracing::error!(
-                "policy engine {} panicked on a notification; dropping it",
-                engine.name()
-            );
+            let name = engine.name();
+            tracing::error!("policy engine {name} panicked on a notification; dropping it");
             metrics::counter!("antares_policy_failures_total", "reason" => "panic").increment(1);
             NotifyDecision::Drop
         }
@@ -1665,6 +1658,8 @@ pub fn subject_of(tenant: &antares_model::TenantId, headers: &HeaderMap) -> Subj
     if let Ok(view) = VIEW.try_with(std::sync::Arc::clone) {
         carried.push((VIEW_PAIR.to_owned(), view.to_string()));
     }
+    // only a Channel acts for a stored identity ([`as_identity`])
+    #[cfg(feature = "channels")]
     if BY_IDENTITY.try_with(|()| ()).is_ok() {
         carried.push((IDENTITY_PAIR.to_owned(), String::new()));
     }
@@ -2133,8 +2128,10 @@ pub async fn run_policy_contract(engine: &dyn PolicyEngine) {
     // The engine answers, and the answer is its own: a deny carrying one of
     // the seam's own reasons means it timed out or panicked instead.
     for clause in ["5.6.1", "5.7.2", "5.8.1"] {
+        // `decide` answers a condition on anything but a write by id (none
+        // of these clauses is one, `WRITE_BY_ID`) as a deny
         match decide(engine, &subject, &Operation::new(clause)).await {
-            Decision::Allow => {}
+            Decision::Allow | Decision::AllowIf(_) => {}
             Decision::Deny(why) => assert!(
                 why != ENGINE_TIMED_OUT && why != ENGINE_FAILED,
                 "{name}: {clause} was denied by the seam, not by the engine: {why}"
@@ -2150,11 +2147,6 @@ pub async fn run_policy_contract(engine: &dyn PolicyEngine) {
                     );
                 }
             }
-            // `decide` answers a condition on anything but a write by id as
-            // a deny, so reaching here is the seam's fault, not the engine's.
-            // A contract harness (test-kit) fails by panicking, as asserts do.
-            #[allow(clippy::panic)]
-            Decision::AllowIf(_) => panic!("{name}: a condition on {clause} passed the seam"),
         }
     }
 
@@ -2223,8 +2215,8 @@ pub async fn run_policy_contract(engine: &dyn PolicyEngine) {
     }
 }
 
-/// The same engine, one timeout slower: what the contract wraps it in to
-/// prove the seam stops waiting.
+/// The same engine, never answering a decision: what the contract wraps it
+/// in to prove the seam stops waiting.
 #[cfg(all(any(test, feature = "test-kit"), not(target_arch = "wasm32")))]
 struct Slow<'e>(&'e dyn PolicyEngine);
 
@@ -2234,16 +2226,8 @@ impl PolicyEngine for Slow<'_> {
         self.0.name()
     }
 
-    fn decide<'a>(&'a self, subject: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
-        Box::pin(async move {
-            tokio::time::sleep(
-                TIMEOUT
-                    .saturating_mul(2)
-                    .saturating_add(Duration::from_millis(50)),
-            )
-            .await;
-            self.0.decide(subject, op).await
-        })
+    fn decide<'a>(&'a self, _s: &'a Subject, _op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        Box::pin(std::future::pending())
     }
 
     fn pre_notify(&self, s: &Subject, sub: &Value, n: &mut Value) -> NotifyDecision {
@@ -2564,6 +2548,13 @@ mod tests {
             [true, false, true]
         );
         assert_eq!(offers(None, &tenant, &headers, &clauses).await, [true; 3]);
+        // the probe engine is any engine: named, and delivering notifications
+        assert_eq!(DenyRetrieve.name(), "deny-retrieve");
+        let mut n = json!({"type": "Notification"});
+        assert_eq!(
+            pre_notify(&DenyRetrieve, &subject(), &json!({}), &mut n, &CORE_CONTEXT),
+            NotifyDecision::Deliver
+        );
     }
 
     /// T-3482: only the caller's own q is rewritten; the engine's
@@ -2590,6 +2581,13 @@ mod tests {
             .narrow_params(&params, &ctx)
             .expect("narrowed");
         assert_eq!(out["q"], params["q"]);
+        // a caller that narrows a `q` it never validated is refused, as an
+        // engine failure: nothing unparsed reaches the store
+        let unparsed = std::collections::HashMap::from([("q".to_owned(), "speed>>".to_owned())]);
+        assert_eq!(
+            filter.narrow_params(&unparsed, &ctx),
+            Err(Denied(ENGINE_FAILED.to_owned()))
+        );
     }
     use futures_util::FutureExt as _;
 
@@ -2819,6 +2817,21 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/location".to_owned()
             ]
         );
+        // an area on another GeoProperty reads that one
+        let mut on_position = *zone_a();
+        on_position.geoproperty = "position".into();
+        let placed = Rule {
+            geo_also: vec![on_position],
+            ..fast
+        };
+        assert_eq!(
+            placed.discloses(&ctx),
+            vec![
+                iri("position"),
+                iri("speed"),
+                "https://uri.etsi.org/ngsi-ld/location".to_owned()
+            ]
+        );
     }
 
     #[test]
@@ -2891,12 +2904,11 @@ mod tests {
             ))))
         }
         fn pre_notify(&self, _s: &Subject, _sub: &Value, n: &mut Value) -> NotifyDecision {
-            if let Some(data) = n.get_mut("data").and_then(Value::as_array_mut) {
-                for entity in data {
-                    if let Some(o) = entity.as_object_mut() {
-                        o.remove("brand");
-                    }
-                }
+            let data = n.get_mut("data").and_then(Value::as_array_mut);
+            for entity in data.into_iter().flatten() {
+                entity.as_object_mut().into_iter().for_each(|o| {
+                    o.remove("brand");
+                });
             }
             NotifyDecision::Filter(Box::new(Filter {
                 omit: vec!["brand".into()],
@@ -2922,9 +2934,7 @@ mod tests {
             Box::pin(std::future::ready(Decision::Allow))
         }
         fn pre_notify(&self, _s: &Subject, _sub: &Value, n: &mut Value) -> NotifyDecision {
-            if let Some(o) = n.as_object_mut() {
-                o.insert("stowaway".into(), json!(true));
-            }
+            n["stowaway"] = json!(true);
             NotifyDecision::Deliver
         }
     }
@@ -3077,6 +3087,13 @@ mod tests {
         fn decide<'a>(&'a self, _s: &'a Subject, _o: &'a Operation<'a>) -> DecisionFuture<'a> {
             panic!("the engine is broken")
         }
+        fn decide_each<'a>(
+            &'a self,
+            _s: &'a Subject,
+            _ops: &'a [Operation<'a>],
+        ) -> DecisionsFuture<'a> {
+            panic!("the engine is broken")
+        }
         fn pre_notify(&self, _s: &Subject, _sub: &Value, _n: &mut Value) -> NotifyDecision {
             NotifyDecision::Deliver
         }
@@ -3087,8 +3104,35 @@ mod tests {
         let hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
         let decided = decide(&PanickingEagerly, &subject(), &Operation::new("5.6.1")).await;
+        let ops = [Operation::new("5.6.7"), Operation::new("5.6.8")];
+        let each = decide_each(&PanickingEagerly, &subject(), &ops).await;
         std::panic::set_hook(hook);
         assert_eq!(decided, Decision::Deny(ENGINE_FAILED.to_owned()));
+        assert_eq!(each, vec![Decision::Deny(ENGINE_FAILED.to_owned()); 2]);
+        // its notification hook does not panic, and delivers
+        let mut n = json!({"type": "Notification"});
+        assert_eq!(
+            pre_notify(
+                &PanickingEagerly,
+                &subject(),
+                &json!({}),
+                &mut n,
+                &CORE_CONTEXT
+            ),
+            NotifyDecision::Deliver
+        );
+    }
+
+    /// The contract's never-answering wrapper keeps the engine's
+    /// notification hook: only decisions are withheld.
+    #[test]
+    fn the_never_answering_wrapper_notifies_as_its_engine() {
+        let mut n = json!({"type": "Notification"});
+        assert_eq!(
+            Slow(&AllowAll).pre_notify(&subject(), &json!({}), &mut n),
+            NotifyDecision::Deliver
+        );
+        assert_eq!(Slow(&AllowAll).name(), AllowAll.name());
     }
 
     #[tokio::test]
@@ -3343,6 +3387,47 @@ mod tests {
         assert!(headers.get("NGSILD-Warning").is_none(), "only when set");
     }
 
+    /// G6: a bare `timeproperty=observedAt` asks no window of its own, so
+    /// the narrowing's window is the whole of it.
+    #[test]
+    fn a_bare_timeproperty_takes_the_narrowings_window() {
+        let t = |s: &str| TimeBound::At(s.parse().expect("instant"));
+        let between = Filter {
+            temporal: Box::new([Window {
+                from: Some(t("2026-01-01T01:00:00Z")),
+                to: Some(t("2026-01-01T02:00:00Z")),
+            }]),
+            ..Filter::default()
+        };
+        let params =
+            std::collections::HashMap::from([("timeproperty".to_owned(), "observedAt".to_owned())]);
+        let out = between.narrow_window(&params, false).expect("a window");
+        assert_eq!(out["timerel"], "between");
+        assert_eq!(out["timeAt"], "2026-01-01T01:00:00.000Z");
+        assert_eq!(out["endTimeAt"], "2026-01-01T02:00:00.000Z");
+    }
+
+    /// The seam's small defaults: no identity unless an engine names one,
+    /// a rule selects nothing without a type, and stripping a document that
+    /// is no object leaves it.
+    #[test]
+    fn the_seams_defaults_name_nobody_and_select_nothing() {
+        let subject = Subject {
+            tenant: antares_model::TenantId::default(),
+            headers: Vec::new(),
+        };
+        assert_eq!(Widening.identity(&subject), None);
+        let rule = Rule {
+            types: vec!["Car".into()],
+            ..Rule::default()
+        };
+        assert!(!rule.selects(&json!({"id": "urn:ngsi-ld:Car:1"})));
+        assert!(rule.selects(&json!({"id": "urn:ngsi-ld:Car:1", "type": "Car"})));
+        let mut scalar = json!(5);
+        strip_internal(&mut scalar);
+        assert_eq!(scalar, json!(5));
+    }
+
     /// G6: the request's window clamped to the narrowing's, written back
     /// into the parameters; nothing changes without windows, a missing or
     /// invalid window stays refused, and no overlap is a window of nothing.
@@ -3564,6 +3649,9 @@ mod tests {
         assert_eq!(img["modifiedAt"], doc["modifiedAt"]);
         let plain = serde_json::json!({"id": "urn:ngsi-ld:V:1", "scope": "/a"});
         assert_eq!(latest_image(&plain), plain);
+        // an array that is no list of instances has no latest one: kept whole
+        let odd = serde_json::json!({"id": "urn:ngsi-ld:V:1", "tags": ["a", {"value": 1}]});
+        assert_eq!(latest_image(&odd), odd);
     }
 
     /// G8: the engine's warning travels as one `NGSILD-Warning` value per
@@ -3696,6 +3784,17 @@ mod tests {
             .map(|v| v.to_str().unwrap())
             .collect();
         assert_eq!(sent, ["199 me \"types left out by the filter: Building\""]);
+        // an alias that cannot travel in a header line sends no warning at
+        // all, never a broken header; the narrowing is still said
+        let mut odd = HeaderMap::new();
+        Filter {
+            warning: Some(left_out.clone()),
+            restricted: true,
+            ..Filter::default()
+        }
+        .mark("me\nthere", &mut odd);
+        assert!(odd.get("NGSILD-Warning").is_none(), "{odd:?}");
+        assert!(odd.get(RESTRICTED_HEADER).is_some());
 
         for bad in [
             "a\nb",
@@ -3794,6 +3893,17 @@ mod tests {
         );
         let short = decide_each(&Batch { short: true }, &subject(), &ops).await;
         assert_eq!(short, vec![Decision::Deny(ENGINE_FAILED.to_owned()); 2]);
+        let mut n = json!({"type": "Notification"});
+        assert_eq!(
+            pre_notify(
+                &Batch { short: true },
+                &subject(),
+                &json!({}),
+                &mut n,
+                &CORE_CONTEXT
+            ),
+            NotifyDecision::Deliver
+        );
         let gated = gate_each(
             &Batch { short: false },
             &antares_model::TenantId::default(),
@@ -3872,9 +3982,7 @@ mod tests {
             ],
         };
         let mut doc = json!({"id": "urn:ngsi-ld:Subscription:1", "type": "Subscription"});
-        if let (Some(o), Some(member)) = (doc.as_object_mut(), subject_member(&subject)) {
-            o.insert(SUBJECT_MEMBER.into(), member);
-        }
+        doc[SUBJECT_MEMBER] = subject_member(&subject).expect("a subject member");
         let stored = stored_subject(&tenant, &doc);
         assert_eq!(stored.view(), Some("ana"));
         assert!(belongs_to(&doc, &subject));

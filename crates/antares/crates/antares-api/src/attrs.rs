@@ -319,12 +319,12 @@ async fn write_attrs(
             }
         })
     };
-    if regs.is_empty() {
-        // the local half is skipped only while registrations cover the
-        // attributes, so an empty list always leaves a local response
-        return local_resp
-            .unwrap_or_else(|| Err(NgsiError::InternalError("no local result".into()).into()));
-    }
+    // the local half is skipped only while registrations cover the
+    // attributes, so with none the local response is the answer
+    let local_resp = match local_resp {
+        Some(r) if regs.is_empty() => return r,
+        other => other,
+    };
     let local_outcome = classify_local(&local_resp);
     let query = fwd_query(params, &["options", "type"]);
     let fed_parts = crate::federation::fed_attr_parts(
@@ -873,16 +873,14 @@ fn merge_instance_sets(
                     });
                 if older {
                     any = true;
-                } else if !no_overwrite {
+                } else if let Some(slot) = cur.get_mut(p).filter(|_| !no_overwrite) {
                     // keep original createdAt
-                    if let Some(slot) = cur.get_mut(p) {
-                        let created = slot.get("createdAt").cloned();
-                        *slot = ni.clone();
-                        if let (Some(o), Some(c)) = (slot.as_object_mut(), created) {
-                            o.insert("createdAt".into(), c);
-                        }
-                        any = true;
+                    let created = slot.get("createdAt").cloned();
+                    *slot = ni.clone();
+                    if let (Some(o), Some(c)) = (slot.as_object_mut(), created) {
+                        o.insert("createdAt".into(), c);
                     }
+                    any = true;
                 }
             }
             None => {
@@ -1076,12 +1074,12 @@ async fn partial_update_inner(
         }
         Some(single_attr_local(res, found, id, attr, &tenant))
     };
-    if regs.is_empty() {
-        // the local half is skipped only while registrations cover the
-        // attributes, so an empty list always leaves a local response
-        return local_resp
-            .unwrap_or_else(|| Err(NgsiError::InternalError("no local result".into()).into()));
-    }
+    // the local half is skipped only while registrations cover the
+    // attributes, so with none the local response is the answer
+    let local_resp = match local_resp {
+        Some(r) if regs.is_empty() => return r,
+        other => other,
+    };
     let fed_parts = crate::federation::fed_attr_parts(
         st,
         headers,
@@ -1256,12 +1254,12 @@ pub async fn replace_attr(
             }
             Some(single_attr_local(res, found, &id, &attr, &tenant))
         };
-        if regs.is_empty() {
-            // the local half is skipped only while registrations cover the
-            // attributes, so an empty list always leaves a local response
-            return local_resp
-                .unwrap_or_else(|| Err(NgsiError::InternalError("no local result".into()).into()));
-        }
+        // the local half is skipped only while registrations cover the
+        // attributes, so with none the local response is the answer
+        let local_resp = match local_resp {
+            Some(r) if regs.is_empty() => return r,
+            other => other,
+        };
         let fed_parts = crate::federation::fed_attr_parts(
             &st,
             &headers,
@@ -1447,10 +1445,12 @@ async fn set_attr_value_inner(
         }
         Some(single_attr_local(res, found, id, attr, &tenant))
     };
-    if regs.is_empty() {
-        return local_resp
-            .unwrap_or_else(|| Err(NgsiError::InternalError("no local result".into()).into()));
-    }
+    // the local half is skipped only while registrations cover the
+    // attributes, so with none the local response is the answer
+    let local_resp = match local_resp {
+        Some(r) if regs.is_empty() => return r,
+        other => other,
+    };
     // Decided (T-3450): 9.2 names no operation for 10.2.6, so a source is
     // asked when it supports replaceAttrs, and on its own value resource
     let fed_parts = crate::federation::fed_attr_parts(
@@ -1705,12 +1705,12 @@ async fn delete_attr_inner(
         // and leave the history untouched.
         Some(single_attr_local(res, found, id, attr, &tenant))
     };
-    if regs.is_empty() {
-        // the local half is skipped only while registrations cover the
-        // attributes, so an empty list always leaves a local response
-        return local_resp
-            .unwrap_or_else(|| Err(NgsiError::InternalError("no local result".into()).into()));
-    }
+    // the local half is skipped only while registrations cover the
+    // attributes, so with none the local response is the answer
+    let local_resp = match local_resp {
+        Some(r) if regs.is_empty() => return r,
+        other => other,
+    };
     let query = fwd_query(params, &["datasetId", "deleteAll", "type"]);
     let fed_parts = crate::federation::fed_attr_parts(
         st,
@@ -2269,6 +2269,231 @@ mod attr_name_and_via_paths {
         let entity: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
         assert_eq!(entity["speed"]["value"], 1, "{entity}");
         assert_eq!(hits.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[cfg(test)]
+mod scope_and_type_edges {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    async fn call(
+        st: &AppState,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let b = Request::builder().method(method).uri(uri);
+        let req = match body {
+            Some(v) => {
+                let text = v.to_string();
+                b.header("Content-Type", "application/json")
+                    .header("Content-Length", text.len())
+                    .body(Body::from(text))
+            }
+            None => b.body(Body::empty()),
+        }
+        .expect("request");
+        let res = crate::router(st.clone())
+            .oneshot(req)
+            .await
+            .expect("response");
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    async fn entity(st: &AppState, id: &str) -> Value {
+        let (status, body) = call(st, "GET", &format!("/ngsi-ld/v1/entities/{id}"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    }
+
+    async fn create(st: &AppState, doc: Value) {
+        let (status, body) = call(st, "POST", "/ngsi-ld/v1/entities", Some(doc)).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+
+    /// 5.6.3.4: an appended type joins the Entity's list; an appended scope
+    /// replaces the Entity's, or with noOverwrite (010_07) joins it, and a
+    /// scope it already holds changes nothing.
+    #[tokio::test]
+    async fn clause_5_6_3_append_joins_types_and_scopes() {
+        let st = AppState::new("attrs-scope-append".into());
+        let id = "urn:ngsi-ld:Vehicle:scope-append";
+        create(
+            &st,
+            json!({"id": id, "type": "Vehicle", "scope": "/a",
+                           "speed": {"type": "Property", "value": 1}}),
+        )
+        .await;
+        let attrs = format!("/ngsi-ld/v1/entities/{id}/attrs");
+        let (status, body) = call(&st, "POST", &attrs, Some(json!({"type": "Car"}))).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        assert_eq!(entity(&st, id).await["type"], json!(["Vehicle", "Car"]));
+        let no_overwrite = format!("{attrs}?options=noOverwrite");
+        let (status, body) = call(
+            &st,
+            "POST",
+            &no_overwrite,
+            Some(json!({"scope": ["/a", "/b"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        assert_eq!(entity(&st, id).await["scope"], json!(["/a", "/b"]));
+        let (status, body) = call(&st, "POST", &no_overwrite, Some(json!({"scope": "/a"}))).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        assert_eq!(entity(&st, id).await["scope"], json!(["/a", "/b"]));
+        let (status, body) = call(&st, "POST", &attrs, Some(json!({"scope": "/c"}))).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        assert_eq!(entity(&st, id).await["scope"], "/c");
+    }
+
+    /// 5.6.2.4: a scope updates only an Entity that has one (the other is
+    /// reported not updated), and an NGSI-LD Null that empties an Attribute
+    /// removes it from the Entity.
+    #[tokio::test]
+    async fn clause_5_6_2_update_scope_and_an_emptied_attribute() {
+        let st = AppState::new("attrs-scope-update".into());
+        let bare = "urn:ngsi-ld:Vehicle:scope-none";
+        let scoped = "urn:ngsi-ld:Vehicle:scope-some";
+        create(
+            &st,
+            json!({"id": bare, "type": "Vehicle",
+                           "speed": {"type": "Property", "value": 1}}),
+        )
+        .await;
+        create(
+            &st,
+            json!({"id": scoped, "type": "Vehicle", "scope": "/a",
+                           "speed": {"type": "Property", "value": 1}}),
+        )
+        .await;
+        let (status, body) = call(
+            &st,
+            "PATCH",
+            &format!("/ngsi-ld/v1/entities/{bare}/attrs"),
+            Some(json!({"scope": "/b", "speed": {"type": "Property", "value": 2}})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::MULTI_STATUS, "{body}");
+        assert_eq!(body["notUpdated"][0]["attributeName"], "scope", "{body}");
+        assert_eq!(body["notUpdated"][0]["reason"], "entity has no scope");
+        let (status, body) = call(
+            &st,
+            "PATCH",
+            &format!("/ngsi-ld/v1/entities/{scoped}/attrs"),
+            Some(json!({"scope": "/b",
+                        "speed": {"type": "Property", "value": "urn:ngsi-ld:null"}})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        let after = entity(&st, scoped).await;
+        assert_eq!(after["scope"], "/b");
+        assert!(after.get("speed").is_none(), "{after}");
+    }
+
+    /// 5.6.4.4: the fragment may not change the Attribute type.
+    #[tokio::test]
+    async fn clause_5_6_4_a_partial_update_keeps_the_attribute_type() {
+        let st = AppState::new("attrs-partial-type".into());
+        let id = "urn:ngsi-ld:Vehicle:partial-type";
+        create(
+            &st,
+            json!({"id": id, "type": "Vehicle",
+                           "speed": {"type": "Property", "value": 1}}),
+        )
+        .await;
+        let (status, body) = call(
+            &st,
+            "PATCH",
+            &format!("/ngsi-ld/v1/entities/{id}/attrs/speed"),
+            Some(json!({"type": "Relationship", "object": "urn:ngsi-ld:X:1"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .is_some_and(|d| d.starts_with("attribute type mismatch")),
+            "{body}"
+        );
+        let (status, body) = call(
+            &st,
+            "PATCH",
+            &format!("/ngsi-ld/v1/entities/{id}/attrs/speed"),
+            Some(json!({"value": 5, "createdAt": "2000-01-01T00:00:00Z"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+        let after = entity(&st, id).await;
+        assert_eq!(after["speed"]["value"], 5);
+    }
+
+    /// The local half folded for the 6.3.17 answer: a 404 is NotFound, any
+    /// other NGSI-LD error a failure with its detail, a bare status a
+    /// failure without one.
+    #[test]
+    fn a_local_error_keeps_its_reason() {
+        let nf: Option<ApiResult<Response>> =
+            Some(Err(NgsiError::ResourceNotFound("gone".into()).into()));
+        assert!(matches!(classify_local(&nf), LocalOutcome::NotFound(d) if d == "gone"));
+        let bad: Option<ApiResult<Response>> =
+            Some(Err(NgsiError::BadRequestData("bad".into()).into()));
+        assert!(matches!(classify_local(&bad), LocalOutcome::Failed(d) if d == "bad"));
+        let bare: Option<ApiResult<Response>> = Some(Err(ApiError::Bare(
+            axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        )));
+        assert!(matches!(
+            classify_local(&bare),
+            LocalOutcome::Failed(d) if d == "local operation failed"
+        ));
+    }
+
+    /// Set Attribute Value (10.2.6) writes the member the stored type
+    /// names, for the vocab and list kinds too, and keeps no observedAt a
+    /// value without one would carry.
+    #[test]
+    fn a_value_lands_in_the_member_of_its_type() {
+        let ctx = antares_jsonld::Context::default();
+        let iri = ctx.expand_key("x");
+        for (ty, member, value) in [
+            ("VocabProperty", "vocab", json!("y")),
+            ("ListProperty", "valueList", json!([1, 2])),
+            ("ListRelationship", "objectList", json!(["urn:ngsi-ld:A:1"])),
+        ] {
+            let si = json!({"type": ty, member: json!(null), "observedAt": "2026-01-01T00:00:00Z"});
+            let out = with_value(&si, "x", &iri, &value, &ctx, None).expect("a value");
+            assert!(out.get(member).is_some_and(|v| !v.is_null()), "{ty}: {out}");
+            assert!(out.get("observedAt").is_none(), "{ty}: {out}");
+        }
+    }
+
+    /// Instance sets that are no arrays merge nothing; a deletion of an
+    /// instance that is not there changes nothing; a replaced instance with
+    /// no createdAt takes none.
+    #[test]
+    fn merging_what_is_no_instance_set_changes_nothing() {
+        let mut scalar = json!(5);
+        assert!(!merge_instance_sets(&mut scalar, &json!([]), false, None));
+        let mut cur = json!([{"type": "Property", "value": 1}]);
+        let gone = json!([{"type": "Property", "value": "urn:ngsi-ld:null", "datasetId": "urn:d"}]);
+        assert!(!merge_instance_sets(&mut cur, &gone, false, None));
+        assert!(merge_instance_sets(
+            &mut cur,
+            &json!([{"type": "Property", "value": 2}]),
+            false,
+            None
+        ));
+        assert_eq!(cur, json!([{"type": "Property", "value": 2}]));
     }
 }
 

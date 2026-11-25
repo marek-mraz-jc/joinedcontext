@@ -412,9 +412,10 @@ mod tests {
             "information": [{"entities": [{"type": "AirQualityObserved", "idPattern": "^urn:a:.*$"},
                                           {"type": "Sensor", "id": "urn:ngsi-ld:Sensor:1"}],
                              "propertyNames": ["pm10"]}]});
-        if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
-            o.extend(e.clone());
-        }
+        let extra = extra.as_object().cloned().unwrap_or_default();
+        p.as_object_mut()
+            .into_iter()
+            .for_each(|o| o.extend(extra.clone()));
         p
     }
 
@@ -537,6 +538,22 @@ mod tests {
             json!(["ngsi-ld:retrieveEntity"])
         );
         assert!(!d.to_string().contains("Secret"));
+        Ok(())
+    }
+
+    /// A grant that names no assigner carries none on its rule, and the
+    /// document names none either.
+    #[test]
+    fn a_grant_without_an_assigner_names_none() -> Result<(), String> {
+        let public = caller(&[("x-jc-roles", "")]);
+        let d = doc(
+            &json!([{"id": "open", "assignee": {"kind": "role", "id": "public"},
+                     "operations": ["5.7.2"], "information": [{"entities": [{"type": "Air"}]}]}]),
+            &public,
+        )?;
+        assert!(d.get("assigner").is_none(), "{d}");
+        assert_eq!(at(&d, "/permission/0/target/uid"), "Air", "{d}");
+        assert_eq!(at(&d, "/permission/0/assigner"), Value::Null, "{d}");
         Ok(())
     }
 

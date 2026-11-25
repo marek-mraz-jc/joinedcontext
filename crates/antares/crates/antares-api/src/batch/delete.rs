@@ -185,16 +185,18 @@ async fn decide_deletes(
         return Err(crate::policy::Denied(why).into());
     }
     let mut verdicts = refused.into_iter();
-    ids.retain(|id| match verdicts.next() {
-        Some(Err(why)) => {
-            out.errors.push(denied_entry(id.as_str(), &why));
-            false
-        }
-        Some(Ok(granted)) => {
-            conds.add(id.as_str(), &granted);
-            true
-        }
-        None => true,
+    // one verdict per id, in order
+    ids.retain(|id| {
+        verdicts.next().is_none_or(|verdict| match verdict {
+            Err(why) => {
+                out.errors.push(denied_entry(id.as_str(), &why));
+                false
+            }
+            Ok(granted) => {
+                conds.add(id.as_str(), &granted);
+                true
+            }
+        })
     });
     Ok(())
 }
@@ -384,5 +386,42 @@ fn delete_outcome(
                 &NgsiError::ResourceNotFound(format!("entity {id} not found")),
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod delete_body {
+    use super::*;
+
+    fn typed(ct: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("content-type", ct.parse().expect("header"));
+        h
+    }
+
+    /// 5.6.10: the body is a JSON array of ids in a JSON media type; another
+    /// media type is the bare 415 of 6.3.4, a body that does not parse is
+    /// InvalidRequest, and anything but a non-empty array is BadRequestData.
+    #[test]
+    fn clause_5_6_10_body_shape() {
+        let json = typed("application/json");
+        assert!(matches!(
+            delete_ids(&typed("text/plain"), b"[\"urn:a\"]"),
+            Err(ApiError::Bare(StatusCode::UNSUPPORTED_MEDIA_TYPE))
+        ));
+        let r = delete_ids(&json, b"[\"urn:a\"");
+        assert!(
+            matches!(&r, Err(ApiError::Ngsi(NgsiError::InvalidRequest(m))) if m.starts_with("body is not valid JSON")),
+            "{r:?}"
+        );
+        for body in [&b"[]"[..], b"{}", b"\"urn:a\""] {
+            let r = delete_ids(&json, body);
+            assert!(
+                matches!(&r, Err(ApiError::Ngsi(NgsiError::BadRequestData(m))) if m == "batch delete body must be a non-empty array"),
+                "{r:?}"
+            );
+        }
+        let ok = delete_ids(&typed("application/ld+json"), b"[\"urn:a\"]").expect("an id array");
+        assert_eq!(ok, vec![Value::String("urn:a".into())]);
     }
 }

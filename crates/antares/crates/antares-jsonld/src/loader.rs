@@ -4,8 +4,7 @@
 
 use crate::context::Context;
 use crate::pinned::{
-    core_context, is_pinned, merge_context_value, pinned, CORE_CONTEXT, MAX_CONTEXT_BYTES,
-    MAX_CONTEXT_URLS,
+    core_context, is_pinned, merge_core, pinned, MAX_CONTEXT_BYTES, MAX_CONTEXT_URLS,
 };
 use antares_model::{NgsiError, TenantId};
 use serde_json::Value;
@@ -509,25 +508,39 @@ pub fn client_builder(policy: EgressPolicy) -> reqwest::ClientBuilder {
     install_crypto_provider();
     // No proxy from the environment: a proxy would dial the target itself and skip both the
     // resolver check and the redirect check above.
-    let mut b = reqwest::Client::builder()
+    let b = reqwest::Client::builder()
         .no_proxy()
         .redirect(redirect)
         .dns_resolver(std::sync::Arc::new(PolicyResolver(policy)));
-    if let Ok(path) = std::env::var("ANTARES_EXTRA_CA_FILE") {
-        match std::fs::read(&path) {
-            Ok(pem) => match reqwest::Certificate::from_pem_bundle(&pem) {
-                Ok(certs) => {
-                    for c in certs {
-                        b = b.add_root_certificate(c);
-                    }
+    with_extra_roots(b, std::env::var("ANTARES_EXTRA_CA_FILE").ok().as_deref()).0
+}
+
+/// Add the PEM bundle at `path`, when one is named, to the trust anchors of `b`. Returns the
+/// builder and how many anchors were added; an unreadable file or one that
+/// is not a PEM bundle adds none and says so on stderr (once at startup;
+/// this crate carries no tracing dep).
+#[cfg(not(target_arch = "wasm32"))]
+fn with_extra_roots(
+    mut b: reqwest::ClientBuilder,
+    path: Option<&str>,
+) -> (reqwest::ClientBuilder, usize) {
+    let mut added = 0;
+    let Some(path) = path else {
+        return (b, added);
+    };
+    match std::fs::read(path) {
+        Ok(pem) => match reqwest::Certificate::from_pem_bundle(&pem) {
+            Ok(certs) => {
+                for c in certs {
+                    b = b.add_root_certificate(c);
+                    added = added.saturating_add(1);
                 }
-                // once at startup; this crate carries no tracing dep
-                Err(e) => eprintln!("ANTARES_EXTRA_CA_FILE {path}: not a PEM bundle ({e})"),
-            },
-            Err(e) => eprintln!("ANTARES_EXTRA_CA_FILE {path}: unreadable ({e})"),
-        }
+            }
+            Err(e) => eprintln!("ANTARES_EXTRA_CA_FILE {path}: not a PEM bundle ({e})"),
+        },
+        Err(e) => eprintln!("ANTARES_EXTRA_CA_FILE {path}: unreadable ({e})"),
     }
-    b
+    (b, added)
 }
 
 /// wasm32: the browser owns TLS trust, redirects and name resolution —
@@ -1041,13 +1054,13 @@ impl Loader {
                 // evicts the entry with the oldest lastUsage (RFC 3339
                 // strings order chronologically)
                 if map.len() >= MAX_USAGE_ENTRIES {
-                    if let Some(oldest) = map
+                    // the map is full, so it has an oldest entry
+                    let oldest = map
                         .values()
                         .min_by(|a, b| a.last_usage.cmp(&b.last_usage))
                         .map(|u| u.url.clone())
-                    {
-                        map.remove(&oldest);
-                    }
+                        .unwrap_or_default();
+                    map.remove(&oldest);
                 }
                 map.insert(
                     url.to_owned(),
@@ -1230,12 +1243,7 @@ impl Loader {
             }
         }
         // Core context last: its (protected) terms win — CIM 009 4.4.
-        // CORE_CONTEXT is a PINNED entry and every entry parses: pinned by
-        // `every_pinned_context_parses_and_carries_an_at_context`. A request
-        // reaches this line, so a broken pin is a 500, never a panic (T-3915).
-        let core = pinned(CORE_CONTEXT)
-            .ok_or_else(|| NgsiError::InternalError("the core @context is not pinned".into()))?;
-        merge_context_value(&mut ctx, &core);
+        merge_core(&mut ctx);
         ctx.freeze();
         ctx.source = user.clone();
         let arc = Arc::new(ctx);
@@ -1339,9 +1347,11 @@ impl Loader {
                         )));
                     }
                     let doc = self.fetch(&resolved, tenant).await?;
-                    if let Ok(mut u) = urls.lock() {
-                        u.push(resolved.clone());
-                    }
+                    // nothing panics while holding the lock, so a poisoned
+                    // one still holds a whole list
+                    urls.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(resolved.clone());
                     self.merge_entry(
                         ctx,
                         &doc,
@@ -1513,16 +1523,27 @@ impl Loader {
                 }
                 buf
             };
-            // wasm: the browser fetch hands over the body whole; the
-            // post-read size check below still applies.
+            // wasm: the browser fetch hands over the body whole, so the
+            // size check follows the read.
             #[cfg(target_arch = "wasm32")]
-            let bytes = resp
-                .bytes()
-                .await
-                .map_err(|e| err(format!("reading {url}: {e}")))?
-                .to_vec();
+            let bytes = {
+                let bytes = resp
+                    .bytes()
+                    .await
+                    .map_err(|e| err(format!("reading {url}: {e}")))?
+                    .to_vec();
+                if bytes.len() > MAX_CONTEXT_BYTES {
+                    return Err(err(format!("{url}: @context document too large")));
+                }
+                bytes
+            };
             Ok((ttl, bytes))
         };
+        // Natively the client carries its own timeouts; the browser fetch
+        // has none, so wasm32 bounds the whole interaction here.
+        #[cfg(not(target_arch = "wasm32"))]
+        let (ttl, bytes) = interact.await?;
+        #[cfg(target_arch = "wasm32")]
         let (ttl, bytes) = http_interaction(async {
             match io_deadline(interact, 10_000).await {
                 Some(r) => r,
@@ -1530,9 +1551,6 @@ impl Loader {
             }
         })
         .await?;
-        if bytes.len() > MAX_CONTEXT_BYTES {
-            return Err(err(format!("{url}: @context document too large")));
-        }
         // 5.5.6: unavailability is LdContextNotAvailable, but a RETRIEVED
         // remote @context whose content is invalid is BadRequestData.
         let doc: Value = serde_json::from_slice(&bytes)
@@ -1642,6 +1660,7 @@ impl Loader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pinned::CORE_CONTEXT;
 
     /// 4.4: "the Core @context is protected and shall remain immutable and
     /// invariant during expansion or compaction of terms. […] implementations
@@ -1849,6 +1868,43 @@ mod tests {
         );
     }
 
+    /// `ANTARES_EXTRA_CA_FILE`: a PEM bundle adds its anchors; an unreadable
+    /// file or one holding no valid PEM adds none, and the client still
+    /// builds; no file named adds none.
+    #[test]
+    fn extra_trust_anchors_come_from_a_pem_bundle_only() {
+        const CERT: &str = "MIIBbTCCAROgAwIBAgIUZBgHi6aKHbsSrOzYp/rwPaXINe8wCgYIKoZIzj0EAwIw
+DDEKMAgGA1UEAwwBdDAeFw0yNjEwMjcxNzEzMjNaFw0zNjEwMjQxNzEzMjNaMAwx
+CjAIBgNVBAMMAXQwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQTvKpzOBgI9oN0
+mUeN+qwNutReslstyDChWSTFw76fxaH+e1XBP3Jo7poWQA/loVxmBrKVjp/zQhdH
+MsMrJ0uoo1MwUTAdBgNVHQ4EFgQUW7AAM1uoitseZ8/KcbReUMhjsgUwHwYDVR0j
+BBgwFoAUW7AAM1uoitseZ8/KcbReUMhjsgUwDwYDVR0TAQH/BAUwAwEB/zAKBggq
+hkjOPQQDAgNIADBFAiEAn/CUsZlvEubGf/lY+gy0iU9NYx2X+z7yTGaHtkUsag4C
+IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
+        let dir = std::env::temp_dir().join(format!("jsonld-ca-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let good = dir.join("good.pem");
+        std::fs::write(
+            &good,
+            format!("-----BEGIN CERTIFICATE-----\n{CERT}\n-----END CERTIFICATE-----\n"),
+        )
+        .expect("write good");
+        let bad = dir.join("bad.pem");
+        std::fs::write(&bad, "-----BEGIN CERTIFICATE-----\nnot base64 !!\n").expect("write bad");
+        let added = |path: Option<&std::path::Path>| {
+            install_crypto_provider();
+            let path = path.map(|p| p.to_string_lossy().into_owned());
+            let (b, n) = with_extra_roots(reqwest::Client::builder(), path.as_deref());
+            assert!(b.build().is_ok(), "{path:?}: the client still builds");
+            n
+        };
+        assert_eq!(added(Some(&good)), 1);
+        assert_eq!(added(Some(&bad)), 0);
+        assert_eq!(added(Some(&dir.join("missing.pem"))), 0);
+        assert_eq!(added(None), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The redirect cap is only real if it is installed on the client an open
     /// redirector actually talks to — so bounce one against a server that
     /// always redirects to itself and assert the client gives up.
@@ -1943,6 +1999,54 @@ mod tests {
         );
     }
 
+    // A hop to a host NAME is not an IP literal: the redirect policy follows
+    // it and leaves the check to the DNS-pinning resolver, which with
+    // allow_private passes loopback. The server is hit twice: the start and
+    // the hop by name.
+    #[tokio::test]
+    async fn redirect_to_a_host_name_is_left_to_the_resolver() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let server = tokio::spawn(async move {
+            let mut paths = Vec::new();
+            for _ in 0..2 {
+                let (mut sock, _) = listener.accept().await.expect("accept");
+                let mut buf = vec![0u8; 2048];
+                let n = sock.read(&mut buf).await.expect("read");
+                let head = String::from_utf8_lossy(buf.get(..n).unwrap_or_default()).into_owned();
+                let hop = head.starts_with("GET /hop ");
+                paths.push(head.lines().next().unwrap_or_default().to_owned());
+                let resp = if hop {
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".to_owned()
+                } else {
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/hop\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                    )
+                };
+                sock.write_all(resp.as_bytes()).await.expect("write");
+            }
+            paths
+        });
+        let client = client_builder(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        })
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .expect("client");
+        let resp = client
+            .get(format!("http://127.0.0.1:{port}/start"))
+            .send()
+            .await
+            .expect("the hop by name is followed");
+        assert_eq!(resp.status().as_u16(), 200);
+        let paths = server.await.expect("server");
+        assert_eq!(paths, ["GET /start HTTP/1.1", "GET /hop HTTP/1.1"]);
+    }
+
     // SSRF: the same refusal for the IPv6 spelling of a literal. `Url`
     // returns an IPv6 host BRACKETED (`[::1]`), which `IpAddr::from_str`
     // rejects, so a hop check that parses `host_str()` as it comes waves the
@@ -1951,23 +2055,10 @@ mod tests {
     // never be reached.
     #[tokio::test]
     async fn redirect_to_private_ipv6_literal_is_blocked() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::sync::Arc;
         let target = tokio::net::TcpListener::bind("[::1]:0")
             .await
             .expect("bind v6");
         let target_addr = target.local_addr().expect("addr");
-        let reached = Arc::new(AtomicUsize::new(0));
-        let hit = reached.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = target.accept().await {
-                hit.fetch_add(1, Ordering::SeqCst);
-                use tokio::io::AsyncWriteExt;
-                let _ = sock
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-                    .await;
-            }
-        });
 
         let entry = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -1998,9 +2089,10 @@ mod tests {
             .await
             .expect("stop returns the 3xx, not an error");
         assert_eq!(resp.status().as_u16(), 302, "redirect was not followed");
-        assert_eq!(
-            reached.load(Ordering::SeqCst),
-            0,
+        // nothing ever connected to the target: its backlog stays empty
+        let reached = tokio::time::timeout(std::time::Duration::from_millis(100), target.accept());
+        assert!(
+            reached.await.is_err(),
             "the IPv6-literal hop was followed into loopback"
         );
     }
@@ -2501,6 +2593,87 @@ mod tests {
         );
     }
 
+    /// Past the cap the entry with the oldest lastUsage is the one evicted,
+    /// whatever order the map holds them in.
+    #[tokio::test]
+    async fn usage_eviction_drops_the_least_recently_used_url() {
+        let loader = loopback_loader();
+        {
+            let mut map = loader.usage.write().await;
+            for i in 0..MAX_USAGE_ENTRIES {
+                let url = format!("https://ctx.example/{i}.jsonld");
+                let stamp = if i == 7 {
+                    "2001-01-01T00:00:00.000Z".to_owned()
+                } else {
+                    format!("2026-01-01T00:00:{:02}.000Z", i % 60)
+                };
+                map.insert(
+                    url.clone(),
+                    CtxUsage {
+                        url,
+                        local_id: i.to_string(),
+                        created_at: stamp.clone(),
+                        last_usage: stamp,
+                        hits: 1,
+                    },
+                );
+            }
+        }
+        assert!(
+            !loader
+                .bump_url(None, "https://ctx.example/new.jsonld")
+                .await
+        );
+        assert_eq!(loader.usage_list().await.len(), MAX_USAGE_ENTRIES);
+        assert!(loader
+            .usage_get("https://ctx.example/7.jsonld")
+            .await
+            .is_none());
+        assert!(loader
+            .usage_get("https://ctx.example/8.jsonld")
+            .await
+            .is_some());
+        let new = loader
+            .usage_get("https://ctx.example/new.jsonld")
+            .await
+            .expect("the new URL is admitted");
+        assert_eq!(new.hits, 1);
+    }
+
+    /// A lookup that fails outright (no such name) is a denial naming the
+    /// lookup, not a timeout.
+    #[tokio::test]
+    async fn a_name_that_does_not_resolve_is_denied() {
+        let deny = EgressPolicy {
+            allow_private: false,
+            private_hosts: &[],
+        };
+        let err = deny
+            .check_host_within(
+                "ctx.example.invalid",
+                443,
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            .expect_err("an unresolvable name is denied");
+        assert!(err.starts_with("resolving ctx.example.invalid: "), "{err}");
+    }
+
+    /// A name whose every address is public passes the private-egress deny.
+    /// `ip6-localnet` is `fe00::` in the stock Debian/Ubuntu hosts file —
+    /// neither private nor metadata.
+    #[tokio::test]
+    async fn a_name_resolving_only_to_public_addresses_passes() {
+        let deny = EgressPolicy {
+            allow_private: false,
+            private_hosts: &[],
+        };
+        match deny.check_host("ip6-localnet", 80).await {
+            Ok(()) => {}
+            Err(e) => assert!(e.starts_with("resolving ip6-localnet: "), "{e}"),
+        }
+    }
+
     /// Name resolution is on the request path and outside every client
     /// timeout: a resolver that never answers must not hold the caller, and
     /// the unanswered lookup must DENY rather than let the fetch through.
@@ -2825,6 +2998,83 @@ mod tests {
         assert_eq!(again.expand_key("t"), "https://a.example/new");
     }
 
+    /// The merged cache and its source list are separate bounded caches, so
+    /// one can drop an entry the other still holds. A merge whose sources
+    /// are unknown is never served and is dropped by any invalidation.
+    #[tokio::test]
+    async fn a_merge_whose_source_list_was_evicted_is_rebuilt() {
+        let loader = loopback_loader();
+        let user = serde_json::json!({"m": "https://a.example/m"});
+        let key = user.to_string();
+        loader.resolve(&user).await.expect("first");
+        loader.merged_urls.invalidate(&key);
+        assert!(!loader.merged_hit_is_usable(&key, None));
+        let again = loader.resolve(&user).await.expect("rebuilt");
+        assert_eq!(again.expand_key("m"), "https://a.example/m");
+        assert!(loader.merged_hit_is_usable(&key, None));
+        // the same divergence, then an unrelated invalidation: the merge
+        // with unknown sources goes with it
+        loader.merged_urls.invalidate(&key);
+        loader
+            .put_local(
+                "http://127.0.0.1:9/other.jsonld".to_owned(),
+                serde_json::json!({"o": "https://a.example/o"}),
+            )
+            .await;
+        loader.merged.run_pending_tasks();
+        assert!(loader.merged.get(&key).is_none());
+    }
+
+    /// A relative @context reference inside a fetched document that cannot
+    /// be joined onto the document's URL is unavailable, named as such.
+    #[tokio::test]
+    async fn a_relative_reference_that_does_not_join_is_named() {
+        let (addr, _) =
+            serve_each(|_| ld_response(r#"{"@context":["//bad host/x.jsonld"]}"#, "no-store"))
+                .await;
+        let err = loopback_loader()
+            .resolve(&Value::String(format!("http://{addr}/base.jsonld")))
+            .await
+            .expect_err("an unjoinable reference fails");
+        assert!(
+            matches!(&err, NgsiError::LdContextNotAvailable(m)
+                if m.contains("cannot resolve @context URL //bad host/x.jsonld against")),
+            "{err:?}"
+        );
+    }
+
+    /// A body cut off before its declared length is a failed read, and an
+    /// `Expires` header is read for the lifetime.
+    #[tokio::test]
+    async fn a_truncated_body_is_a_failed_read() {
+        let (addr, _) = serve_each(|_| {
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nExpires: Thu, 01 Jan 2099 00:00:00 GMT\r\nContent-Length: 400\r\n\r\n{\"@context\":{}"
+                .to_vec()
+        })
+        .await;
+        let err = loopback_loader()
+            .resolve(&Value::String(format!("http://{addr}/cut.jsonld")))
+            .await
+            .expect_err("a truncated body fails");
+        assert!(
+            matches!(&err, NgsiError::LdContextNotAvailable(m) if m.contains("reading http://")),
+            "{err:?}"
+        );
+    }
+
+    /// A URL that does not parse is refused by name before any lookup.
+    #[tokio::test]
+    async fn an_unparsable_context_url_is_named() {
+        let err = loopback_loader()
+            .resolve(&Value::String("http://[::1/ctx.jsonld".into()))
+            .await
+            .expect_err("unparsable");
+        assert!(
+            matches!(&err, NgsiError::LdContextNotAvailable(m) if m.starts_with("bad URL http://[::1/ctx.jsonld")),
+            "{err:?}"
+        );
+    }
+
     /// A non-http(s) @context URL is refused by name before any lookup.
     #[tokio::test]
     async fn an_unsupported_scheme_is_named() {
@@ -2853,9 +3103,12 @@ mod tests {
     /// a loopback destination stays refused under allow_private false.
     #[tokio::test]
     async fn with_client_keeps_the_given_policy() {
-        let (addr, hits) =
-            serve_each(|_| ld_response(r#"{"@context":{"p":"https://a.example/p"}}"#, "no-store"))
-                .await;
+        // a bound listener nobody accepts on: the policy refuses before any
+        // connection is made
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
         let policy = EgressPolicy {
             allow_private: false,
             private_hosts: &[],
@@ -2864,8 +3117,10 @@ mod tests {
         let got = Loader::with_client(policy, client)
             .resolve(&Value::String(format!("http://{addr}/p.jsonld")))
             .await;
-        assert!(got.is_err(), "{got:?}");
-        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(
+            matches!(&got, Err(NgsiError::LdContextNotAvailable(m)) if m.contains("denied (private range)")),
+            "{got:?}"
+        );
     }
 
     /// The quiet resolutions (notification building, federation) resolve the
@@ -3200,9 +3455,8 @@ mod tests {
         // the widening stops at the public internet: 100.128.0.0 is the first
         // address above carrier-grade NAT and stays reachable.
         for host in ["93.184.216.34", "100.128.0.1", "[2606:2800:220::1]"] {
-            deny.check_host(host, 80)
-                .await
-                .unwrap_or_else(|e| panic!("{host} is public and must pass: {e}"));
+            let verdict = deny.check_host(host, 80).await;
+            assert_eq!(verdict, Ok(()), "{host} is public and must pass");
         }
     }
 

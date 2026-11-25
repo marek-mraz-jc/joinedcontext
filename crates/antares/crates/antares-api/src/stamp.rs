@@ -59,3 +59,59 @@ pub fn stamp_by(instance: &mut Map<String, Value>) {
         instance.insert(MODIFIED_BY_KEY.into(), by);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// 4.8: the Entity and every instance, sub-Attributes included, take the
+    /// server's timestamps; core members and reserved instance members are
+    /// not Attributes and stay as sent.
+    #[test]
+    fn stamps_reach_every_instance_and_skip_core_members() {
+        let mut doc = json!({
+            "id": "urn:a", "type": ["T"],
+            "speed": [{"type": "Property", "value": 1, "createdAt": "old",
+                "accuracy": [{"type": "Property", "value": 2}],
+                "datasetId": "urn:ds", "languageMap": ["not", "an attribute"]}],
+            "flat": "not instances"
+        });
+        stamp_new(&mut doc, "2026-01-01T00:00:00Z");
+        assert_eq!(doc["createdAt"], "2026-01-01T00:00:00Z");
+        assert_eq!(doc["id"], "urn:a");
+        let speed = &doc["speed"][0];
+        assert_eq!(speed["createdAt"], "2026-01-01T00:00:00Z");
+        assert_eq!(speed["accuracy"][0]["modifiedAt"], "2026-01-01T00:00:00Z");
+        assert_eq!(speed["languageMap"], json!(["not", "an attribute"]));
+        assert_eq!(doc["flat"], "not instances");
+    }
+
+    /// A document that is not an object has no member to stamp and is left
+    /// as it came.
+    #[test]
+    fn a_document_that_is_no_object_is_not_stamped() {
+        let mut doc = json!(["urn:a"]);
+        stamp_new(&mut doc, "2026-01-01T00:00:00Z");
+        assert_eq!(doc, json!(["urn:a"]));
+    }
+
+    /// DM-138: the request's provenance names who changed the instance, and
+    /// whatever `modifiedBy` the client sent goes either way.
+    #[test]
+    fn modified_by_comes_from_the_request_alone() {
+        let mut sent = Map::new();
+        sent.insert(MODIFIED_BY_KEY.into(), json!({"actor": "forged"}));
+        let mut outside = sent.clone();
+        stamp_by(&mut outside);
+        assert!(!outside.contains_key(MODIFIED_BY_KEY), "{outside:?}");
+        crate::provenance::PROVENANCE.sync_scope(
+            json!({"channel": "ui", "actor": "alice", "organization": "org-a"}),
+            || stamp_by(&mut sent),
+        );
+        assert_eq!(
+            sent[MODIFIED_BY_KEY],
+            json!({"actor": "alice", "organization": "org-a"})
+        );
+    }
+}
