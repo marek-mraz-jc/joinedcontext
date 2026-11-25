@@ -3,6 +3,7 @@
 # crate commits the new line with it. Lowering a floor is a hand edit with its reason in the commit.
 [crates]
 "agent-proxy" = { lines = 99.79, functions = 99.81 }
+"antares-api" = { lines = 99.24, functions = 99.15 }
 "antares-broker" = { lines = 96.00, functions = 98.00 }
 "antares-bus" = { lines = 99.69, functions = 100.00 }
 "antares-export" = { lines = 100.00, functions = 100.00 }
@@ -11,20 +12,20 @@
 "antares-geojson" = { lines = 100.00, functions = 100.00 }
 "antares-gtfsrt" = { lines = 100.00, functions = 100.00 }
 "antares-ical" = { lines = 99.79, functions = 100.00 }
-"antares-icsr" = { lines = 89.23, functions = 97.22 }
+"antares-icsr" = { lines = 92.61, functions = 98.66 }
 "antares-jsonstat" = { lines = 100.00, functions = 100.00 }
 "antares-linkml" = { lines = 99.80, functions = 100.00 }
-"antares-mcp" = { lines = 99.36, functions = 99.56 }
-"antares-notifier" = { lines = 99.05, functions = 99.14 }
-"antares-odata" = { lines = 99.58, functions = 99.12 }
+"antares-mcp" = { lines = 99.65, functions = 99.89 }
+"antares-notifier" = { lines = 99.50, functions = 99.16 }
+"antares-odata" = { lines = 99.65, functions = 99.12 }
 "antares-ogc" = { lines = 99.76, functions = 99.52 }
 "antares-ops" = { lines = 99.00, functions = 99.00 }
 "antares-sql" = { lines = 98.00, functions = 97.50 }
 "antares-sta" = { lines = 100.00, functions = 100.00 }
-"antares-store" = { lines = 99.00, functions = 96.50 }
+"antares-store" = { lines = 99.74, functions = 99.50 }
 "antares-views" = { lines = 99.88, functions = 99.30 }
 "antares-wasm" = { lines = 97.53, functions = 100.00 }
-"antares-ws" = { lines = 99.04, functions = 99.19 }
+"antares-ws" = { lines = 99.33, functions = 99.21 }
 "assistant" = { lines = 96.60, functions = 96.90 }
 "context-gateway" = { lines = 97.10, functions = 97.50 }
 "daiya-api" = { lines = 99.31, functions = 99.12 }
@@ -86,8 +87,8 @@
 "jc-time" = { lines = 100.00, functions = 100.00 }
 "jc-types" = { lines = 100.00, functions = 100.00 }
 "jcctl" = { lines = 97.14, functions = 91.18 }
-"joinedcontext-policy" = { lines = 99.00, functions = 99.40 }
-"joinedcontext-portal" = { lines = 96.50, functions = 95.20 }
+"joinedcontext-policy" = { lines = 99.87, functions = 100.00 }
+"joinedcontext-portal" = { lines = 97.61, functions = 95.90 }
 "kaisatsu-admin" = { lines = 98.52, functions = 99.41 }
 "kaisatsu-core" = { lines = 99.98, functions = 99.73 }
 "kaisatsu-crypto" = { lines = 99.70, functions = 100.00 }
@@ -99,11 +100,11 @@
 "kaisatsu-store-memory" = { lines = 100.00, functions = 100.00 }
 "kaisatsu-store-pg" = { lines = 99.01, functions = 99.24 }
 "linkml-model" = { lines = 99.95, functions = 100.00 }
-"ngsild-jsonld" = { lines = 99.05, functions = 99.33 }
+"ngsild-jsonld" = { lines = 99.74, functions = 99.87 }
 "ngsild-matcher" = { lines = 100.00, functions = 100.00 }
-"ngsild-model" = { lines = 99.87, functions = 100.00 }
-"ngsild-ql" = { lines = 99.69, functions = 99.33 }
-"ngsild-residual" = { lines = 99.92, functions = 100.00 }
+"ngsild-model" = { lines = 100.00, functions = 100.00 }
+"ngsild-ql" = { lines = 99.89, functions = 99.56 }
+"ngsild-residual" = { lines = 100.00, functions = 100.00 }
 "odata-axum" = { lines = 99.34, functions = 99.18 }
 "odata-batch" = { lines = 100.00, functions = 100.00 }
 "odata-csdl" = { lines = 100.00, functions = 100.00 }

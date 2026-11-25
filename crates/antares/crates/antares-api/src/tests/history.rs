@@ -4,8 +4,8 @@
 //! deadband, minimum distance and heartbeat.
 
 use crate::history::{
-    admits_change, held_attrs, own_retention, parse_duration, records_history, records_on_change,
-    retention_of, OwnRetention,
+    admits_change, held_attrs, may_hold, own_retention, parse_duration, records_history,
+    records_on_change, retention_of, OwnRetention,
 };
 use crate::state::{AppState, OnChange, RecordMode, Recording, TemporalRecord};
 use antares_model::TenantId;
@@ -218,6 +218,21 @@ fn on_change_writes_a_row_past_the_deadband_or_the_heartbeat() {
         held_attrs(&state(), &t, &doc).is_empty(),
         "no recording rule at all"
     );
+    assert!(
+        held_attrs(&st, &t, &json!({LEVEL: {}})).is_empty(),
+        "an Entity without a type holds nothing"
+    );
+    let asked = |types: Option<&[&str]>, attrs: Option<&[&str]>| {
+        let own = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let (types, attrs) = (types.map(own), attrs.map(own));
+        may_hold(&st, &t, types.as_deref(), attrs.as_deref())
+    };
+    assert!(asked(None, None), "some type of the Tenant holds");
+    assert!(asked(Some(&ty[..]), Some(&[LEVEL][..])));
+    assert!(!asked(Some(&ty[..]), Some(&["https://x/other"][..])));
+    assert!(!asked(Some(&["https://x/Pump"][..]), None));
+    // an instance that is not an object still records its first row
+    assert!(admits_change(&st, &t, &ty, "urn:n", LEVEL, None, &json!(5)));
 }
 
 #[test]

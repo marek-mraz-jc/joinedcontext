@@ -339,19 +339,18 @@ pub(super) async fn build_data(
             data.push(main);
         }
         Some((mode, level)) if mode == "flat" => {
-            let main_id = internal.get("id").and_then(Value::as_str).unwrap_or("");
             let mut linked = std::collections::BTreeMap::new();
             crate::repr::collect_flat(st, tenant, ctx, &shape.repr, &internal, *level, &mut linked)
                 .await;
             data.push(main);
-            for (id, (ldoc, lrepr)) in linked {
-                if id != main_id {
-                    data.push(crate::repr::compact_for(
-                        &lrepr,
-                        &crate::repr::apply(&ldoc, &lrepr),
-                        ctx,
-                    ));
-                }
+            // the walk is rooted at this Entity's id (seen before any link is
+            // followed), so the Linked Entities never include it again
+            for (ldoc, lrepr) in linked.into_values() {
+                data.push(crate::repr::compact_for(
+                    &lrepr,
+                    &crate::repr::apply(&ldoc, &lrepr),
+                    ctx,
+                ));
             }
         }
         _ => data.push(main),
@@ -376,5 +375,66 @@ mod tests {
         let t = tombstone(&rel, false, true, "2026-01-01T00:00:00Z");
         assert_eq!(t["objectList"], "urn:ngsi-ld:null", "{t}");
         assert_eq!(t["previousObjectList"], json!([{"object": "urn:a"}]), "{t}");
+    }
+
+    /// showChanges on an instance without its value member names no
+    /// previous value: nothing is invented for the tombstone (5.8.6).
+    #[test]
+    fn a_tombstone_of_an_instance_without_its_member_has_no_previous() {
+        let bare = json!({"type": "Property", "createdAt": "2026-01-01T00:00:00Z"});
+        let t = tombstone(&bare, true, true, "2026-02-01T00:00:00Z");
+        assert_eq!(t["value"], "urn:ngsi-ld:null", "{t}");
+        assert!(t.get("previousValue").is_none(), "{t}");
+        assert_eq!(t["createdAt"], "2026-01-01T00:00:00Z", "{t}");
+        assert!(t.get("modifiedAt").is_none(), "{t}");
+        assert_eq!(t["deletedAt"], "2026-02-01T00:00:00Z", "{t}");
+    }
+
+    /// An Entity deletion with sysAttrs copies the system members the
+    /// before image has and invents none it lacks; a flat join of a
+    /// self-referencing Entity lists the Entity once (5.8.6, clause 4.5.23, item 3).
+    #[tokio::test]
+    async fn a_deletion_copies_only_the_system_members_the_entity_had() {
+        let st = crate::wired_state("payload-tombstone").await;
+        let ctx = antares_jsonld::Loader::new().core();
+        let tenant = TenantId::default();
+        let sub = json!({"notification": {"sysAttrs": true}});
+        let before = json!({"id": "urn:ngsi-ld:T:1", "type": ["T"],
+            "createdAt": "2026-01-01T00:00:00Z"});
+        let now = "2026-02-01T00:00:00Z";
+        let data = build_data(
+            &st,
+            &tenant,
+            &sub,
+            &ctx,
+            Some(&before),
+            None,
+            &[],
+            true,
+            now,
+        )
+        .await;
+        assert_eq!(data.len(), 1, "{data:?}");
+        assert_eq!(data[0]["createdAt"], "2026-01-01T00:00:00Z", "{data:?}");
+        assert!(data[0].get("modifiedAt").is_none(), "{data:?}");
+        assert_eq!(data[0]["deletedAt"], now, "{data:?}");
+        let rel = "https://uri.etsi.org/ngsi-ld/default-context/self";
+        let after = json!({"id": "urn:ngsi-ld:T:1", "type": ["T"],
+            rel: [{"type": "Relationship", "object": "urn:ngsi-ld:T:1"}]});
+        let flat = json!({"notification": {"join": "flat", "joinLevel": 2}});
+        let data = build_data(
+            &st,
+            &tenant,
+            &flat,
+            &ctx,
+            None,
+            Some(&after),
+            &[],
+            false,
+            now,
+        )
+        .await;
+        assert_eq!(data.len(), 1, "{data:?}");
+        assert_eq!(data[0]["id"], "urn:ngsi-ld:T:1", "{data:?}");
     }
 }

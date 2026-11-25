@@ -190,10 +190,10 @@ fn entity_info_matches(spec: &CsrSpec, ei: &Value, ctx: &Context) -> bool {
             }
         }
         if let Some(p) = ei_pat {
-            if let Ok(re) = antares_ql::regex::compile(p) {
-                if ids.iter().any(|i| re.find(i).is_some()) {
-                    return true;
-                }
+            if antares_ql::regex::compile(p)
+                .is_ok_and(|re| ids.iter().any(|i| re.find(i).is_some()))
+            {
+                return true;
             }
         }
     }
@@ -245,11 +245,10 @@ pub fn matching_infos<'a>(spec: &CsrSpec, doc: &'a Value, ctx: &Context) -> Vec<
 /// registration document's own Context Source Properties — its members are
 /// wrapped as Property instances so the shared 4.9 evaluator applies.
 pub(crate) fn csf_matches(csf: &antares_ql::QNode, reg: &Value, ctx: &Context) -> bool {
-    let Some(obj) = reg.as_object() else {
-        return false;
-    };
+    // a stored Registration is an object (5.2.9); its members are walked
+    let obj = reg.as_object().into_iter().flatten();
     let mut pseudo = Map::new();
-    pseudo.insert("id".into(), obj.get("id").cloned().unwrap_or(Value::Null));
+    pseudo.insert("id".into(), reg.get("id").cloned().unwrap_or(Value::Null));
     pseudo.insert(
         "type".into(),
         serde_json::json!(["ContextSourceRegistration"]),
@@ -318,33 +317,35 @@ pub fn csr_matches_subscription(sub: &Value, reg: &Value, ctx: &Context) -> bool
                     params.insert(k.into(), s.into());
                 }
             }
-            if let Ok(Some(t)) = crate::temporalq::TemporalQ::from_params(&params, false) {
-                if t.timerel != "any" && !temporal_interval_matches(reg, &t) {
-                    return false;
-                }
+            // a stored temporalQ passed this parser at create (5.2.21)
+            let tq = crate::temporalq::TemporalQ::from_params(&params, false);
+            if tq.is_ok_and(|t| {
+                t.is_some_and(|t| t.timerel != "any" && !temporal_interval_matches(reg, &t))
+            }) {
+                return false;
             }
         }
     }
-    if let Some(g) = sub.get("geoQ").and_then(Value::as_object) {
-        if let Ok(Some(gq)) =
-            antares_ql::geo::GeoQuery::from_params(&antares_matcher::geo_params(g))
+    // a stored geoQ passed this parser and carries its georel (5.2.13)
+    let geo_q = sub.get("geoQ").and_then(Value::as_object).and_then(|g| {
+        antares_ql::geo::GeoQuery::from_params(&antares_matcher::geo_params(g))
+            .ok()
+            .flatten()
+    });
+    if let Some(gq) = geo_q {
+        // Table 5.2.6.5.2-1: matched against the registration GeoJSON
+        // member `geoproperty` names (location, observationSpace,
+        // operationSpace), stored by its compacted name
+        let member = if gq.geoproperty.is_empty() {
+            "location".to_owned()
+        } else {
+            ctx.compact_iri(&ctx.expand_key(&gq.geoproperty))
+        };
+        if !reg
+            .get(&member)
+            .is_some_and(|geom| gq.matches_geometry(geom))
         {
-            // Table 5.2.6.5.2-1: matched against the registration GeoJSON
-            // member `geoproperty` names (location, observationSpace,
-            // operationSpace), stored by its compacted name
-            let member = if gq.geoproperty.is_empty() {
-                "location".to_owned()
-            } else {
-                ctx.compact_iri(&ctx.expand_key(&gq.geoproperty))
-            };
-            match reg.get(&member) {
-                Some(geom) => {
-                    if !gq.matches_geometry(geom) {
-                        return false;
-                    }
-                }
-                None => return false,
-            }
+            return false;
         }
     }
     // 5.11.2.4: csf vs the registration's Context Source Properties, scopeQ
@@ -374,9 +375,7 @@ pub fn spec_for_subscription(sub: &Value) -> CsrSpec {
         // a selector naming no id restricts no id: then neither list does
         let mut unrestricted = false;
         for e in es {
-            if let Some(t) = e.get("type").and_then(Value::as_str) {
-                types.push(t.to_owned());
-            }
+            types.extend(e.get("type").and_then(Value::as_str).map(str::to_owned));
             let before = ids.len();
             match e.get("id") {
                 Some(Value::String(i)) => ids.push(i.clone()),
@@ -391,9 +390,7 @@ pub fn spec_for_subscription(sub: &Value) -> CsrSpec {
             }
             unrestricted |= ids.len() == before && pattern.is_none();
         }
-        if !types.is_empty() {
-            spec.types = Some(types);
-        }
+        spec.types = Some(types).filter(|t| !t.is_empty());
         // every selector's ids and idPatterns (F-ANT3-015), as one id list
         // and one alternation
         if !unrestricted {
@@ -485,6 +482,157 @@ mod tests {
         assert_eq!((open.ids, open.id_pattern), (None, None));
     }
 
+    /// 5.11.2.4: a CSR subscription that names only watchedAttributes
+    /// restricts no type and no id.
+    #[test]
+    fn a_subscription_spec_without_entities_restricts_only_attributes() {
+        let spec = spec_for_subscription(&json!({"watchedAttributes": ["speed"]}));
+        assert_eq!(spec.types, None);
+        assert_eq!(spec.ids, None);
+        assert_eq!(spec.id_pattern, None);
+        assert_eq!(spec.attrs, Some(vec!["speed".to_owned()]));
+    }
+
+    /// 5.10.2.4: the interval a temporal query is matched against is
+    /// observationInterval for observedAt and managementInterval for the
+    /// other time properties; `before` asks for a start before timeAt,
+    /// `between` for an overlap (an absent endAt is open), and the "any"
+    /// query of a request without timerel matches every interval.
+    #[test]
+    fn clause_5_10_2_4_interval_matching_per_timerel() {
+        let tq =
+            |timerel: &str, at: &str, end: Option<&str>, prop: &str| crate::temporalq::TemporalQ {
+                timerel: timerel.into(),
+                time_at: at.into(),
+                end_time_at: end.map(str::to_owned),
+                timeproperty: prop.into(),
+            };
+        let reg = json!({"managementInterval": {"startAt": "2024-01-01T00:00:00Z"}});
+        let mgmt = |t: &str, at: &str, end: Option<&str>| {
+            temporal_interval_matches(&reg, &tq(t, at, end, "modifiedAt"))
+        };
+        assert!(mgmt("before", "2024-06-01T00:00:00Z", None));
+        assert!(!mgmt("before", "2023-06-01T00:00:00Z", None));
+        assert!(
+            mgmt(
+                "between",
+                "2030-01-01T00:00:00Z",
+                Some("2031-01-01T00:00:00Z")
+            ),
+            "an open interval overlaps any later window"
+        );
+        assert!(!mgmt(
+            "between",
+            "2022-01-01T00:00:00Z",
+            Some("2023-01-01T00:00:00Z")
+        ));
+        assert!(mgmt("any", "", None));
+        assert!(
+            !temporal_interval_matches(
+                &reg,
+                &tq("before", "2024-06-01T00:00:00Z", None, "observedAt")
+            ),
+            "observedAt reads observationInterval, which this one lacks"
+        );
+    }
+
+    /// 5.12: a Registration without `information` matches nothing, and an
+    /// empty attribute list restricts nothing.
+    #[test]
+    fn clause_5_12_information_and_attribute_edges() {
+        let ctx = Loader::new().core();
+        let spec = CsrSpec::default();
+        assert!(matching_infos(&spec, &json!({"id": "urn:r"}), &ctx).is_empty());
+        let reg = json!({"information": [{"propertyNames": ["speed"]}]});
+        let empty = CsrSpec {
+            attrs: Some(Vec::new()),
+            ..CsrSpec::default()
+        };
+        assert_eq!(matching_infos(&empty, &reg, &ctx).len(), 1);
+        let other = CsrSpec {
+            attrs: Some(vec!["colour".to_owned()]),
+            ..CsrSpec::default()
+        };
+        assert!(matching_infos(&other, &reg, &ctx).is_empty());
+    }
+
+    /// 5.11.2.4: an expired Registration is no Context Source; one that
+    /// carries an interval serves only temporal subscriptions, and is
+    /// matched by the subscription's temporalQ against that interval.
+    #[test]
+    fn clause_5_11_2_4_expiry_and_temporal_q() {
+        let ctx = Loader::new().core();
+        let base = json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:t",
+            "type": "ContextSourceRegistration",
+            "information": [{"entities": [{"type": "Car"}]}],
+            "endpoint": "http://a.example.com"
+        });
+        let sub = json!({"entities": [{"type": "Car"}]});
+        assert!(csr_matches_subscription(&sub, &base, &ctx));
+        let mut expired = base.clone();
+        expired["expiresAt"] = json!("2020-01-01T00:00:00Z");
+        assert!(!csr_matches_subscription(&sub, &expired, &ctx));
+        let mut temporal = base.clone();
+        temporal["observationInterval"] = json!({"startAt": "2024-01-01T00:00:00Z"});
+        assert!(
+            !csr_matches_subscription(&sub, &temporal, &ctx),
+            "latest-information subscriptions only"
+        );
+        let with_tq = |timerel: &str, at: &str| {
+            json!({"entities": [{"type": "Car"}],
+                   "temporalQ": {"timerel": timerel, "timeAt": at, "timeproperty": "observedAt"}})
+        };
+        assert!(csr_matches_subscription(
+            &with_tq("after", "2025-01-01T00:00:00Z"),
+            &temporal,
+            &ctx
+        ));
+        assert!(!csr_matches_subscription(
+            &with_tq("before", "2023-01-01T00:00:00Z"),
+            &temporal,
+            &ctx
+        ));
+    }
+
+    /// 5.12: a Registration's idPattern selects the ids a query names; a
+    /// pattern that matches none of them does not.
+    #[test]
+    fn clause_5_12_registration_id_pattern_against_query_ids() {
+        let ctx = Loader::new().core();
+        let reg =
+            json!({"information": [{"entities": [{"type": "Car", "idPattern": "^urn:car:"}]}]});
+        let spec = |id: &str| CsrSpec {
+            ids: Some(vec![id.to_owned()]),
+            ..CsrSpec::default()
+        };
+        assert!(csr_matches(&spec("urn:car:1"), &reg, &ctx));
+        assert!(!csr_matches(&spec("urn:bus:1"), &reg, &ctx));
+    }
+
+    /// 5.10.1 output shaping over any stored shape: a value that is no
+    /// object is answered as it is, a RegistrationInfo without entities
+    /// keeps its attribute names (compacted), an entity type array is
+    /// compacted member by member and an entity without a type is kept.
+    #[test]
+    fn clause_5_10_presenting_partial_registrations() {
+        let ctx = Loader::new().core();
+        assert_eq!(present_registration(&json!(null), &ctx, false), json!(null));
+        let reg = json!({"information": [
+            {"propertyNames": ["https://uri.etsi.org/ngsi-ld/default-context/speed"]},
+            {"entities": [
+                {"type": ["https://uri.etsi.org/ngsi-ld/default-context/Car", "https://uri.etsi.org/ngsi-ld/default-context/Bus"]},
+                {"idPattern": ".*"}
+            ]}
+        ]});
+        let out = present_registration(&reg, &ctx, false);
+        assert_eq!(out["information"][0], json!({"propertyNames": ["speed"]}));
+        assert_eq!(
+            out["information"][1]["entities"],
+            json!([{"type": ["Car", "Bus"]}, {"idPattern": ".*"}])
+        );
+    }
+
     /// TS 104 175 Table 5.2.6.5.2-1: a CSR subscription's geoQ "is matched
     /// against the specified Context Source Registration GeoJSON attributes,
     /// e.g. location, observationSpace or operationSpace": `geoproperty`
@@ -505,7 +653,7 @@ mod tests {
         let ctx = Loader::new()
             .resolve(&json!({"s": iri, "o": other, "n": name}))
             .await
-            .unwrap_or_else(|e| panic!("{e}"));
+            .expect("the term map resolves");
         let reg = json!({
             "id": "urn:ngsi-ld:ContextSourceRegistration:s",
             "type": "ContextSourceRegistration",
@@ -518,10 +666,10 @@ mod tests {
             "__other": {"value": "alice"}
         });
         for q in ["s", "s[1]==\"alice\"", "s==\"alice\"", "o", "o==\"alice\""] {
-            let csf = antares_ql::parse_q(q).unwrap_or_else(|e| panic!("{q}: {e}"));
+            let csf = antares_ql::parse_q(q).expect(q);
             assert!(!csf_matches(&csf, &reg, &ctx), "{q}");
         }
-        let named = antares_ql::parse_q("n").unwrap_or_else(|e| panic!("{e}"));
+        let named = antares_ql::parse_q("n").expect("a plain term");
         assert!(csf_matches(&named, &reg, &ctx), "a property still matches");
     }
 

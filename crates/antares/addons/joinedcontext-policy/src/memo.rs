@@ -169,7 +169,9 @@ mod tests {
 
     fn subject(tenant: &str, group: &str) -> Result<Subject, String> {
         Ok(Subject {
-            tenant: antares_model::TenantId::new(tenant).map_err(|e| e.to_string())?,
+            tenant: antares_model::TenantId::new(tenant)
+                .ok()
+                .ok_or("not a tenant")?,
             headers: vec![
                 ("x-jc-subject".into(), format!("{group}@example.org")),
                 ("x-jc-groups".into(), group.into()),
@@ -231,7 +233,8 @@ mod tests {
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .collect();
         GeoQuery::from_params(&area)
-            .map_err(|e| e.to_string())?
+            .ok()
+            .flatten()
             .ok_or("no geoquery".to_owned())
     }
 
@@ -368,9 +371,9 @@ mod tests {
     #[test]
     fn a_read_through_another_view_or_header_is_decided_afresh() -> Result<(), String> {
         let mut doc = json!({ "policies": [grant("city"), grant("other")] });
-        if let Some(o) = doc.as_object_mut() {
+        doc.as_object_mut().into_iter().for_each(|o| {
             o.insert("views".into(), json!({"a": ["g-city"], "b": ["g-other"]}));
-        }
+        });
         let t = compile(&doc).map(Arc::new)?;
         let through = |view: &str| -> Result<Subject, String> {
             let mut s = subject("t6618-view", "city")?;
@@ -386,7 +389,11 @@ mod tests {
         let (now, runs) = (Timestamp::now(), Cell::new(0));
         let (a, b) = (through("a")?, through("b")?);
         filter(&ask(&t, &a, &op, now, &runs))?;
-        assert!(matches!(ask(&t, &b, &op, now, &runs), Decision::Deny(_)));
+        let refused = filter(&ask(&t, &b, &op, now, &runs)).err();
+        assert!(
+            refused.is_some_and(|e| e.starts_with("not a filter: Deny")),
+            "b's view does not grant the read"
+        );
         filter(&ask(&t, &a, &op, now, &runs))?;
         assert_eq!(runs.get(), 2);
         // the same subject and groups, one more header: decided afresh
@@ -407,12 +414,12 @@ mod tests {
         let mut policies = Vec::new();
         for (group, from, to) in [("a", -60, 90), ("b", -30, 40), ("c", 10, 300)] {
             let mut g = grant(group);
-            if let Some(o) = g.as_object_mut() {
+            g.as_object_mut().into_iter().for_each(|o| {
                 o.insert(
                     "validity".into(),
                     json!({"from": at(from).to_string(), "to": at(to).to_string()}),
                 );
-            }
+            });
             policies.push(g);
         }
         let t = table(&Value::Array(policies))?;
@@ -426,9 +433,9 @@ mod tests {
         let now = Timestamp::now();
         let end = now + SignedDuration::from_secs(30);
         let mut timed = grant("city");
-        if let Some(o) = timed.as_object_mut() {
+        timed.as_object_mut().into_iter().for_each(|o| {
             o.insert("validity".into(), json!({"to": end.to_string()}));
-        }
+        });
         let t = table(&json!([timed]))?;
         let s = subject("t6618-expiry", "city")?;
         let types = [CAR.to_owned()];

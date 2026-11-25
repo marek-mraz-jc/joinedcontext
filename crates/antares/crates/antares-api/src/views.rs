@@ -308,11 +308,11 @@ fn paired(view: &CompiledView, clause: &str, engine: Arc<Filter>) -> Result<Arc<
     let answer =
         composed.and_then(
             |composed| match resolve(clause, Decision::Filter(Arc::new(composed))) {
-                Decision::Allow => Ok(crate::policy::unnarrowed()),
-                // `resolve` makes no condition of a filter
                 Decision::Filter(f) => Ok(f),
-                Decision::AllowIf(f) => Ok(Arc::new(f)),
                 Decision::Deny(why) => Err(Denied(why)),
+                // `resolve` makes no condition of a filter: what is left is
+                // the Allow of an empty one
+                _ => Ok(crate::policy::unnarrowed()),
             },
         );
     LAST.set(Some((
@@ -1279,30 +1279,33 @@ pub(crate) async fn schema_admits(
     if types.is_empty() {
         return Ok(());
     }
-    let mut typed = doc.clone();
-    if let Some(o) = typed.as_object_mut() {
-        o.insert("type".to_owned(), serde_json::Value::Array(types));
-    }
-    schema_admits_typed(st, tenant, &typed, false)
+    // a fragment is an object: every write path parsed it as one
+    let mut typed = doc.as_object().cloned().unwrap_or_default();
+    typed.insert("type".to_owned(), serde_json::Value::Array(types));
+    schema_admits_typed(st, tenant, &serde_json::Value::Object(typed), false)
 }
 
 /// `v.to_string().hash(h)` without the String: the text streams into the
 /// hasher, then the `0xff` that `str`'s Hash writes after it, so every
 /// entity tag keeps its value (R1-016).
 fn hash_json(v: &serde_json::Value, h: &mut impl std::hash::Hasher) {
-    struct Into<'a, H>(&'a mut H);
-    impl<H: std::hash::Hasher> std::io::Write for Into<'_, H> {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.write(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     // writing a Value into a sink that never fails cannot fail
-    let _ = serde_json::to_writer(Into(&mut *h), v);
+    let _ = serde_json::to_writer(HashWriter(&mut *h), v);
     h.write_u8(0xff);
+}
+
+/// A [`std::io::Write`] whose bytes go into a hasher: nothing to fail,
+/// nothing to flush.
+struct HashWriter<'a, H>(&'a mut H);
+
+impl<H: std::hash::Hasher> std::io::Write for HashWriter<'_, H> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -1334,6 +1337,17 @@ mod tests {
             hash_json(&v, &mut new);
             assert_eq!(old.finish(), new.finish(), "{v}");
         }
+        // the writer is a hasher: every byte reaches it, a flush is a no-op
+        use std::io::Write as _;
+        let (mut direct, mut streamed) = (
+            std::hash::DefaultHasher::new(),
+            std::hash::DefaultHasher::new(),
+        );
+        direct.write(b"abc");
+        let mut w = HashWriter(&mut streamed);
+        assert_eq!(w.write(b"abc").expect("a hasher takes bytes"), 3);
+        assert!(w.flush().is_ok());
+        assert_eq!(direct.finish(), streamed.finish());
     }
 
     struct Narrowing(Filter);
@@ -1375,6 +1389,29 @@ mod tests {
             with_view(Some(&view), "5.13.4", Ok(Arc::new(Filter::default()))).is_err(),
             "serving a stored @context is refused under a view"
         );
+    }
+
+    /// Rule 5: through a view that hides a name the list holds the core
+    /// @context alone, never a stored one that may define a hidden term.
+    #[tokio::test]
+    async fn the_context_list_through_a_hiding_view_holds_no_stored_one() {
+        let st = seeded(None).await;
+        let body = json!({"@context": {"secret": "urn:ngsi-ld:attributes:secret"}});
+        let (s, b, h) = send(&st, "POST", "/ngsi-ld/v1/jsonldContexts", Some(body)).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        let hosted = h
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .expect("a Location")
+            .to_owned();
+        let list = "/ngsi-ld/v1/jsonldContexts?kind=Hosted";
+        let (s, all, _) = send(&st, "GET", list, None).await;
+        assert_eq!(s, StatusCode::OK, "{all}");
+        assert!(all.to_string().contains(&hosted), "{all}");
+        let view = st.with_view(Arc::new(cars()));
+        let (s, seen, _) = send(&view, "GET", list, None).await;
+        assert_eq!(s, StatusCode::OK, "{seen}");
+        assert_eq!(seen, json!([]), "the stored one is not listed");
     }
 
     /// T-3778: the pairing kept per thread is handed out again for the same
@@ -1856,6 +1893,89 @@ mod tests {
         );
     }
 
+    /// T-3789: the guard's `If-Match` holds for `*` or the strong tag of
+    /// what the view shows, every field line read; a tag that does not hold
+    /// is the 412, and a post-image out of the view is the 403's reason.
+    #[tokio::test]
+    async fn the_write_guard_reads_if_match_and_the_post_image() {
+        let st = seeded(None).await;
+        let view = st.with_view(Arc::new(cars()));
+        let tenant = antares_model::TenantId::default();
+        let car = st
+            .store
+            .get(&tenant, antares_store::Kind::Entity, "urn:ngsi-ld:Car:0")
+            .await
+            .expect("read")
+            .expect("seeded");
+        let guard = |lines: &[&[u8]]| {
+            let mut headers = axum::http::HeaderMap::new();
+            for l in lines {
+                headers.append(
+                    axum::http::header::IF_MATCH,
+                    axum::http::HeaderValue::from_bytes(l).expect("a field value"),
+                );
+            }
+            WriteGuard::of(&view, ["speed"])
+                .expect("a view state has a guard")
+                .matching(&headers)
+        };
+        let tag = guard(&[]).tag(&car);
+
+        let unmatched = guard(&[b"\"other\"", b"\xff"]);
+        assert!(!unmatched.keeps(&car));
+        assert!(matches!(
+            unmatched.settled(),
+            Err(crate::negotiate::ApiError::Bare(
+                StatusCode::PRECONDITION_FAILED
+            ))
+        ));
+        let any = guard(&[b"*"]);
+        assert!(any.keeps(&car));
+        assert!(any.settled().is_ok());
+        let listed = guard(&[b"\"other\"", tag.as_bytes()]);
+        assert!(listed.keeps(&car), "the second field line holds");
+        assert!(
+            !guard(&[format!("W/{tag}").as_bytes()]).keeps(&car),
+            "weak never holds"
+        );
+
+        let mut bike = car.clone();
+        bike["type"] = json!(["https://uri.etsi.org/ngsi-ld/default-context/Bike"]);
+        let moved = guard(&[]);
+        assert!(moved.post(&bike).is_err());
+        assert_eq!(moved.verdict(), Err(Denied(MOVES_OUT.to_owned())));
+
+        // a Relationship to an Entity the view does not show, or to none
+        let fragment = json!({"owns": [{"type": "Relationship", "object": "urn:ngsi-ld:Bike:0"}]});
+        let found = std::collections::HashMap::from([("urn:ngsi-ld:Bike:0".to_owned(), bike)]);
+        assert_eq!(
+            guard(&[]).targets_in(&fragment, &found),
+            Err(Denied(TARGET_NOT_SHOWN.to_owned()))
+        );
+        assert!(guard(&[])
+            .targets_in(&fragment, &std::collections::HashMap::new())
+            .is_err());
+    }
+
+    /// Rule 9: a Subscription through a view watches only what the view
+    /// shows; naming nothing it shows is refused.
+    #[test]
+    fn watched_attributes_keep_only_what_the_view_shows() {
+        let view = cars();
+        let (speed, secret) = (
+            json!("https://uri.etsi.org/ngsi-ld/default-context/speed"),
+            json!("https://uri.etsi.org/ngsi-ld/default-context/secret"),
+        );
+        assert_eq!(
+            watched_in(&view, &[speed.clone(), secret.clone()]),
+            Ok(vec![speed])
+        );
+        assert_eq!(
+            watched_in(&view, &[secret, json!(7)]),
+            Err("watchedAttributes names no Attribute this view shows".to_owned())
+        );
+    }
+
     /// `expiresAt` is an Entity member (4.22, Table 5.2.4-1), not an
     /// Attribute: a write through a view that carries it lands, and a hidden
     /// Attribute beside it is still refused.
@@ -2228,6 +2348,138 @@ mod tests {
         assert_eq!(
             compose(&Filter::default(), Filter::default()).expect("empty"),
             Filter::default()
+        );
+    }
+
+    /// The joins keep one copy of a name both sides omit, the per-type
+    /// omissions of both sides, the one `pick` that is set, and refuse a
+    /// `scopeQ` that names no scope group to intersect with.
+    #[test]
+    fn a_pair_joins_the_omissions_and_refuses_disjoint_scopes() {
+        let a = Filter {
+            omit: vec!["x".into()],
+            omit_by_type: BTreeMap::from([("Car".to_owned(), vec!["secret".to_owned()])]),
+            pick: vec!["speed".into(), "colour".into()],
+            ..Filter::default()
+        };
+        let b = Filter {
+            omit: vec!["x".into()],
+            omit_by_type: BTreeMap::from([(
+                "Car".to_owned(),
+                vec!["secret".to_owned(), "vin".to_owned()],
+            )]),
+            ..Filter::default()
+        };
+        let f = compose(&a, b).expect("composes");
+        assert_eq!(f.omit, vec!["x"], "a name both omit is kept once");
+        assert_eq!(f.omit_by_type["Car"], vec!["secret", "vin"]);
+        assert_eq!(f.pick, vec!["speed", "colour"], "the only pick stands");
+        let shared = compose(
+            &a,
+            Filter {
+                pick: vec!["colour".into(), "vin".into()],
+                ..Filter::default()
+            },
+        )
+        .expect("composes");
+        assert_eq!(shared.pick, vec!["colour"], "two picks keep what both name");
+        let disjoint = compose(
+            &Filter {
+                scope_q: Some(String::new()),
+                ..Filter::default()
+            },
+            Filter {
+                scope_q: Some("/b".into()),
+                ..Filter::default()
+            },
+        );
+        assert_eq!(
+            disjoint,
+            Err(Denied(crate::policy::SCOPE_NOT_NARROWABLE.to_owned()))
+        );
+    }
+
+    /// A view that narrows nothing, paired for a clause taken whole: the
+    /// empty pair is an Allow, the shared unnarrowed filter.
+    #[test]
+    fn an_empty_pair_for_a_whole_operation_is_an_allow() {
+        let every = CompiledView::every(None, None, None);
+        let got = with_view(Some(&every), "5.16.1", Ok(Arc::new(Filter::default())))
+            .expect("an empty narrowing allows");
+        assert!(Arc::ptr_eq(&got, &crate::policy::unnarrowed()));
+        let engine = Narrowing(Filter::default());
+        assert_eq!(engine.name(), "narrowing");
+        let mut n = json!({});
+        assert!(matches!(
+            engine.pre_notify(
+                &Subject {
+                    tenant: antares_model::TenantId::default(),
+                    headers: Vec::new(),
+                },
+                &json!({}),
+                &mut n
+            ),
+            NotifyDecision::Deliver
+        ));
+    }
+
+    /// The pieces of the table a surface reads: the opaque attachment prints
+    /// nothing of itself, the admin routes are set once, and an `objectList`
+    /// entry written as an object names its target.
+    #[test]
+    fn the_table_seams_hold_their_contract() {
+        let att = Attached(Arc::new(7_u8));
+        assert_eq!(format!("{att:?}"), "Attached(..)");
+        let table = ViewTable::default();
+        // bound first: q_admin_sweep reads a call of the setter as a module
+        // mounting /q routes, and these empty routers mount none
+        let mount = ViewTable::set_admin;
+        assert!(mount(&table, axum::Router::new()).is_ok());
+        assert_eq!(
+            mount(&table, axum::Router::new()),
+            Err("the /q/views routes are set already".to_owned())
+        );
+        let doc = json!({"owns": [{"type": "ListRelationship",
+            "objectList": [{"object": "urn:ngsi-ld:Car:1"}, "urn:ngsi-ld:Car:2", 3]}]});
+        assert_eq!(
+            relationship_targets(&doc),
+            vec!["urn:ngsi-ld:Car:1", "urn:ngsi-ld:Car:2"]
+        );
+    }
+
+    /// Mode `off` judges nothing, a check registered or not.
+    #[test]
+    fn schema_writes_off_admits_without_checking() {
+        fn refuse(_: u64, _: &Arc<[u8]>, _: &Value, _: bool) -> Result<(), String> {
+            Err("checked".into())
+        }
+        let t = antares_model::TenantId::default();
+        let schema = BTreeMap::from([(
+            t.as_str().to_owned(),
+            Schema {
+                revision: 1,
+                bytes: Arc::from(&b"{}"[..]),
+            },
+        )]);
+        let st = AppState::new("schema-off".into());
+        st.views.schema_writes.set(refuse);
+        st.views.replace_schemas(schema.clone());
+        st.views
+            .schema_writes
+            .set_mode(crate::schema_writes::Mode::Off);
+        assert!(schema_admits_typed(&st, &t, &json!({"type": ["Car"]}), true).is_ok());
+        // the same check under enforce runs, and refuses
+        let enforcing = AppState::new("schema-enforce".into());
+        enforcing.views.schema_writes.set(refuse);
+        enforcing.views.replace_schemas(schema);
+        enforcing
+            .views
+            .schema_writes
+            .set_mode(crate::schema_writes::Mode::Enforce);
+        let refused = schema_admits_typed(&enforcing, &t, &json!({"type": ["Car"]}), true);
+        assert!(
+            matches!(&refused, Err(antares_model::NgsiError::BadRequestData(m)) if m == "checked"),
+            "{refused:?}"
         );
     }
 

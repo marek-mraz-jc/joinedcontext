@@ -1575,10 +1575,9 @@ pub(crate) async fn sweep_expired_socket_subscriptions(st: &AppState, tenant: &T
             .pointer("/notification/endpoint/uri")
             .and_then(Value::as_str)
             .is_some_and(|uri| uri.starts_with(SOCKET_ENDPOINT));
-        if socket && crate::registry::reg_expired(&doc) {
-            if let Some(id) = doc.get("id").and_then(Value::as_str) {
-                dead.push(id.to_owned());
-            }
+        let reaped = socket && crate::registry::reg_expired(&doc);
+        if let Some(id) = doc.get("id").and_then(Value::as_str).filter(|_| reaped) {
+            dead.push(id.to_owned());
         }
         Ok(())
     })
@@ -1765,6 +1764,34 @@ mod tests {
                 assert_eq!(out["description"], json!("kept"));
             }
         }
+    }
+
+    /// 5.2.12: a Subscription without its type is refused on create; a
+    /// fragment needs none.
+    #[test]
+    fn clause_5_2_12_a_subscription_names_its_type() {
+        let ctx = Loader::new().core();
+        let doc = json!({"entities": [{"type": "Building"}],
+            "notification": {"endpoint": {"uri": "http://localhost:1111/notify"}}});
+        let e = normalize_subscription(doc.as_object().expect("object"), &ctx, false)
+            .expect_err("a type is required");
+        assert!(e.to_string().contains("type must be"), "{e}");
+        assert!(normalize_subscription(doc.as_object().expect("object"), &ctx, true).is_ok());
+    }
+
+    /// The members the engine decides on name each type and Attribute once,
+    /// however often the Subscription repeats it, and skip a selector
+    /// without a type.
+    #[test]
+    fn the_decided_members_name_each_type_once() {
+        let norm = json!({
+            "entities": [{"type": "A"}, {"type": "B"}, {"type": "A"}, {"idPattern": ".*"}],
+            "watchedAttributes": ["x", "x", 7]
+        });
+        let m = sub_members(norm.as_object().expect("object"));
+        assert_eq!(m.types, ["A", "B"]);
+        assert_eq!(m.attrs, ["x"]);
+        assert!(m.q.is_none() && m.geo.is_none());
     }
 
     /// 5.5.4: "urn:ngsi-ld:null" as a first-level member value is
@@ -2359,6 +2386,47 @@ mod tests {
         }
     }
 
+    /// The message a refused normalization carries.
+    fn refusal(doc: &Value) -> String {
+        let e = norm(doc).expect_err("refused");
+        assert!(matches!(e, NgsiError::BadRequestData(_)), "{doc}: {e:?}");
+        e.to_string()
+    }
+
+    /// Table 5.2.33-1 names id as "String or String[]": any other JSON
+    /// value is refused by name, and a selector member the table does not
+    /// name is kept as written (5.5.9 tolerant reader).
+    #[test]
+    fn clause_5_2_33_selector_id_shape_and_unknown_members() {
+        assert_eq!(
+            refusal(&sub(json!({"entities": [{"type": "Building", "id": 7}]}))),
+            "EntitySelector id must be a URI string or array (5.2.33)"
+        );
+        let n = norm(&sub(
+            json!({"entities": [{"type": "Building", "x-hint": [1]}]}),
+        ))
+        .expect("an unknown selector member is tolerated");
+        assert_eq!(n["entities"][0]["x-hint"], json!([1]));
+    }
+
+    /// Table 5.2.12-1: id is a URI string, type the literal "Subscription",
+    /// and a geoQ is a 5.2.13 GeoQuery, whose georel is mandatory.
+    #[test]
+    fn clause_5_2_12_id_type_and_geo_q_members_are_named_in_the_refusal() {
+        assert_eq!(
+            refusal(&sub(json!({"id": 7}))),
+            "subscription id must be a string URI"
+        );
+        assert_eq!(
+            refusal(&sub(json!({"type": "Registration"}))),
+            "type must be \"Subscription\" (5.2.12)"
+        );
+        assert_eq!(
+            refusal(&sub(json!({"geoQ": {}}))),
+            "geoQ requires georel (5.2.13)"
+        );
+    }
+
     // ---------- 5.2.14 / 5.2.15 notification parameters ----------
 
     /// TS 104 243 5.2, Table 5.2-2: an MQTT notification's
@@ -2644,6 +2712,518 @@ mod tests {
     }
 
     // ---------- 5.8.3 / 5.8.4 presentation ----------
+
+    /// 5.8.3 output shaping over a stored document of any shape: a value
+    /// that is no object is answered as it is, a selector without a type
+    /// and a notification without attributes or endpoint pass unchanged, a
+    /// receiverInfo pair without a value keeps its key, and only a Context
+    /// Source Registration Subscription turns "failed" (5.11.7).
+    #[test]
+    fn clause_5_8_3_presenting_partial_documents() {
+        let ctx = Loader::new().core();
+        assert_eq!(
+            present_subscription(&json!("raw"), &ctx, false, false),
+            json!("raw")
+        );
+        let doc = json!({
+            "entities": [{"idPattern": ".*"}],
+            "notification": {"format": "keyValues"},
+            "status": "failed"
+        });
+        let out = present_subscription(&doc, &ctx, false, false);
+        assert_eq!(out["entities"], json!([{"idPattern": ".*"}]));
+        assert_eq!(out["notification"], json!({"format": "keyValues"}));
+        assert_eq!(
+            out["status"], "active",
+            "an entity Subscription never fails"
+        );
+        assert_eq!(
+            present_subscription(&doc, &ctx, false, true)["status"],
+            "failed"
+        );
+        let doc = json!({"notification": {"endpoint": {
+            "uri": "http://h/n",
+            "receiverInfo": [{"key": "Authorization", "value": "Bearer s3cret"}, {"key": "X-Bare"}]
+        }}});
+        let out = present_subscription(&doc, &ctx, false, false);
+        assert_eq!(
+            out["notification"]["endpoint"]["receiverInfo"],
+            json!([{"key": "Authorization", "value": MASKED}, {"key": "X-Bare"}])
+        );
+        assert_eq!(out["notification"]["endpoint"]["uri"], "http://h/n");
+        // a geoQ without a geoproperty is presented as stored
+        let doc = json!({"geoQ": {"geometry": "Point", "coordinates": [1, 2]}});
+        let out = present_subscription(&doc, &ctx, false, false);
+        assert_eq!(
+            out["geoQ"],
+            json!({"geometry": "Point", "coordinates": [1, 2]})
+        );
+    }
+
+    /// 5.8.1.4: the endpoint is checked by the sink of its scheme. A
+    /// fragment with no endpoint, or an endpoint without a uri, leaves the
+    /// stored one and has nothing to check; notifierInfo pairs that are not
+    /// two strings are not handed to the sink, the rest are (7.2 MQTT-QoS).
+    #[tokio::test]
+    async fn clause_5_8_1_4_endpoint_check_reads_only_string_pairs() {
+        let st = AppState::new("sub-endpoint-check".into());
+        let norm_of = |n: Value| {
+            json!({ "notification": n })
+                .as_object()
+                .cloned()
+                .unwrap_or_default()
+        };
+        assert!(check_endpoint(&st, &norm_of(json!({"format": "keyValues"}))).is_ok());
+        assert!(check_endpoint(
+            &st,
+            &norm_of(json!({"endpoint": {"accept": "application/json"}}))
+        )
+        .is_ok());
+        let ep = |qos: &str| {
+            norm_of(
+                json!({"endpoint": {"uri": "mqtt://127.0.0.1:1883/t", "notifierInfo": [
+                    {"key": "MQTT-QoS", "value": qos}, {"key": 7, "value": "x"}, {"key": "MQTT-Version"}
+                ]}}),
+            )
+        };
+        assert!(
+            check_endpoint(&st, &ep("1")).is_ok(),
+            "malformed pairs are skipped"
+        );
+        assert!(
+            matches!(
+                check_endpoint(&st, &ep("3")),
+                Err(NgsiError::BadRequestData(_))
+            ),
+            "QoS 3 is outside Table 7.2-1"
+        );
+        let refused = check_endpoint(&st, &norm_of(json!({"endpoint": {"uri": "gopher://h/n"}})));
+        assert!(
+            matches!(&refused, Err(NgsiError::BadRequestData(m)) if m.contains("gopher")),
+            "{refused:?}"
+        );
+    }
+
+    /// 5.2.12: jsonldContext is a URL or an array of URLs; any other JSON
+    /// value is 400 before anything is fetched.
+    #[tokio::test]
+    async fn clause_5_2_12_jsonld_context_of_another_shape_is_refused() {
+        let st = AppState::new("sub-jsonld-shape".into());
+        let t = TenantId::default();
+        let norm_of = |v: Value| {
+            json!({ "jsonldContext": v })
+                .as_object()
+                .cloned()
+                .unwrap_or_default()
+        };
+        assert!(check_jsonld_context(&st, &t, &Map::new()).await.is_ok());
+        for v in [
+            json!(7),
+            json!(["https://h/c.jsonld", 7]),
+            json!("ftp://h/c"),
+        ] {
+            let r = check_jsonld_context(&st, &t, &norm_of(v.clone())).await;
+            assert!(
+                matches!(&r, Err(ApiError::Ngsi(NgsiError::BadRequestData(m)))
+                    if m.starts_with("jsonldContext is not a valid @context reference")),
+                "{v} must be refused, got {r:?}"
+            );
+        }
+    }
+
+    fn json_headers() -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("content-type", "application/json".parse().expect("header"));
+        h
+    }
+
+    fn ngsi(r: ApiResult<Response>) -> ApiError {
+        r.expect_err("refused")
+    }
+
+    const BODY: &str = r#"{"type":"Subscription","entities":[{"type":"Vehicle"}],
+        "notification":{"endpoint":{"uri":"http://127.0.0.1:9/n"}}}"#;
+
+    fn with_id(id: &str) -> Vec<u8> {
+        let mut v: Value = serde_json::from_str(BODY).expect("json");
+        v["id"] = json!(id);
+        v.to_string().into_bytes()
+    }
+
+    /// 5.8.1.4: a client id in the broker's internal Registration
+    /// Subscription namespace is refused, a second create of one id is
+    /// AlreadyExists, and a body whose @context is null is initialised with
+    /// the Core @context as jsonldContext.
+    #[tokio::test]
+    async fn clause_5_8_1_create_refusals_and_core_context_default() {
+        let st = crate::wired_state("sub-create-edges").await;
+        let p = HashMap::new();
+        let h = json_headers();
+        let reserved = format!("{}x", crate::registry::INTERNAL_CSR_PREFIX);
+        let e = ngsi(create(&st, Kind::Subscription, &p, &h, &with_id(&reserved)).await);
+        assert!(
+            matches!(&e, ApiError::Ngsi(NgsiError::BadRequestData(m)) if m.contains("reserved by the broker")),
+            "{e:?}"
+        );
+        let body = with_id("urn:ngsi-ld:Subscription:dup");
+        let r = create(&st, Kind::Subscription, &p, &h, &body)
+            .await
+            .expect("created");
+        assert_eq!(r.status(), StatusCode::CREATED);
+        assert!(matches!(
+            ngsi(create(&st, Kind::Subscription, &p, &h, &body).await),
+            ApiError::Ngsi(NgsiError::AlreadyExists(_))
+        ));
+        let mut ld = HeaderMap::new();
+        ld.insert(
+            "content-type",
+            "application/ld+json".parse().expect("header"),
+        );
+        let mut v: Value =
+            serde_json::from_slice(&with_id("urn:ngsi-ld:Subscription:nullctx")).expect("json");
+        v["@context"] = Value::Null;
+        let made = create(&st, Kind::Subscription, &p, &ld, v.to_string().as_bytes()).await;
+        assert!(made.is_ok(), "{made:?}");
+        let doc = st
+            .store
+            .get(
+                &TenantId::default(),
+                Kind::Subscription,
+                "urn:ngsi-ld:Subscription:nullctx",
+            )
+            .await
+            .expect("read")
+            .expect("stored");
+        assert_eq!(doc["jsonldContext"], antares_jsonld::CORE_CONTEXT);
+    }
+
+    /// 5.8.2 / 5.8.5 / 5.11.3: an id that is no URI is 400 on update and
+    /// delete, a fragment naming another id is refused, an unknown id is
+    /// 404, and a Context Source Registration Subscription updates (its
+    /// 5.11.3.4 initial notification runs in the background).
+    #[tokio::test]
+    async fn clause_5_8_2_update_and_delete_refusals() {
+        let st = crate::wired_state("sub-update-edges").await;
+        let p = HashMap::new();
+        let h = json_headers();
+        let frag = br#"{"isActive":false}"#;
+        for r in [
+            update(&st, Kind::Subscription, "not a uri", &p, &h, frag).await,
+            delete(&st, Kind::Subscription, "not a uri", &p, &h).await,
+        ] {
+            let e = ngsi(r);
+            assert!(
+                matches!(&e, ApiError::Ngsi(NgsiError::BadRequestData(m)) if m.starts_with("invalid subscription id")),
+                "{e:?}"
+            );
+        }
+        let id = "urn:ngsi-ld:Subscription:u1";
+        create(&st, Kind::Subscription, &p, &h, &with_id(id))
+            .await
+            .expect("created");
+        let other_id = br#"{"id":"urn:ngsi-ld:Subscription:u2"}"#;
+        let e = ngsi(update(&st, Kind::Subscription, id, &p, &h, other_id).await);
+        assert!(
+            matches!(&e, ApiError::Ngsi(NgsiError::BadRequestData(m)) if m == "fragment id mismatch"),
+            "{e:?}"
+        );
+        assert!(matches!(
+            ngsi(
+                delete(
+                    &st,
+                    Kind::Subscription,
+                    "urn:ngsi-ld:Subscription:none",
+                    &p,
+                    &h
+                )
+                .await
+            ),
+            ApiError::Ngsi(NgsiError::ResourceNotFound(_))
+        ));
+        let cs = "urn:ngsi-ld:CSourceSubscription:c1";
+        create(&st, Kind::CSourceSubscription, &p, &h, &with_id(cs))
+            .await
+            .expect("created");
+        let r = update(&st, Kind::CSourceSubscription, cs, &p, &h, frag)
+            .await
+            .expect("updated");
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        let doc = st
+            .store
+            .get(&TenantId::default(), Kind::CSourceSubscription, cs)
+            .await
+            .expect("read")
+            .expect("stored");
+        assert_eq!(doc["isActive"], false);
+        // a Context Source Registration Subscription deletes on its own
+        // clause (5.11.6), with no distributed copies to follow it
+        let r = delete(&st, Kind::CSourceSubscription, cs, &p, &h)
+            .await
+            .expect("deleted");
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    }
+
+    /// clause 5.11.3, item 4: an update of an active Context Source Registration
+    /// Subscription notifies the Registrations matching it at that moment,
+    /// from a task of its own that outlives the request.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_5_11_3_an_update_notifies_what_matches_now() {
+        crate::allow_private();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let app = axum::Router::new().route(
+            "/n",
+            axum::routing::post(move |body: String| {
+                let tx = tx.clone();
+                async move {
+                    let _ = tx.send(serde_json::from_str(&body).unwrap_or(Value::Null));
+                    StatusCode::OK
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let st = AppState::new("csub-update-initial".into());
+        let p = HashMap::new();
+        let h = json_headers();
+        let reg = json!({"id": "urn:ngsi-ld:ContextSourceRegistration:live",
+            "type": "ContextSourceRegistration",
+            "information": [{"entities": [{"type": "Vehicle"}]}],
+            "endpoint": "http://cs.example.org:1026"});
+        let req = axum::http::Request::post("/ngsi-ld/v1/csourceRegistrations")
+            .header("Content-Type", "application/json")
+            .header("Content-Length", reg.to_string().len())
+            .body(axum::body::Body::from(reg.to_string()))
+            .expect("request");
+        let made = tower::ServiceExt::oneshot(crate::router(st.clone()), req)
+            .await
+            .expect("response");
+        assert_eq!(made.status(), StatusCode::CREATED);
+        let cs = "urn:ngsi-ld:CSourceSubscription:live";
+        let body = json!({"id": cs, "type": "Subscription", "entities": [{"type": "Vehicle"}],
+            "notification": {"endpoint": {"uri": format!("http://{addr}/n")}}});
+        create(
+            &st,
+            Kind::CSourceSubscription,
+            &p,
+            &h,
+            body.to_string().as_bytes(),
+        )
+        .await
+        .expect("created");
+        // whatever the create itself notified has arrived and is set aside
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        while rx.try_recv().is_ok() {}
+        let r = update(
+            &st,
+            Kind::CSourceSubscription,
+            cs,
+            &p,
+            &h,
+            br#"{"description":"moved"}"#,
+        )
+        .await
+        .expect("updated");
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            .await
+            .expect("the update notifies")
+            .expect("a notification");
+        assert_eq!(got["subscriptionId"], cs, "{got}");
+        assert_eq!(got["triggerReason"], "newlyMatching", "{got}");
+        assert_eq!(
+            got["data"][0]["id"], "urn:ngsi-ld:ContextSourceRegistration:live",
+            "{got}"
+        );
+    }
+
+    /// A binding of `urn:antares:ws:` endpoints that takes `mine` as the
+    /// calling connection's for its first `left` asks, as the WebSocket
+    /// binding does while that connection's call runs, and refuses every
+    /// other endpoint.
+    struct Socket(std::sync::atomic::AtomicUsize);
+
+    impl antares_notifier::NotificationSink for Socket {
+        fn schemes(&self) -> &'static [&'static str] {
+            &["urn"]
+        }
+        fn parse_endpoint(&self, uri: &str, _: &[(&str, &str)]) -> Result<(), NgsiError> {
+            let left = self.0.load(std::sync::atomic::Ordering::SeqCst);
+            if uri == "urn:antares:ws:mine" && left > 0 {
+                self.0.store(left - 1, std::sync::atomic::Ordering::SeqCst);
+                return Ok(());
+            }
+            Err(NgsiError::BadRequestData("not this connection".into()))
+        }
+        fn deliver<'a>(
+            &'a self,
+            _uri: &'a str,
+            _out: &'a antares_notifier::Outbound,
+            _timeout: std::time::Duration,
+        ) -> antares_notifier::DeliveryFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// ADR-0026 rule 4 (T-4755): a fragment that moves a watch off the
+    /// calling socket is decided as a plain 5.8.2 update and written; a
+    /// watch whose socket is no longer the caller's when the write runs is
+    /// 404 and the stored Subscription is left as it was.
+    #[tokio::test]
+    async fn adr_0026_a_watch_holds_only_while_it_is_the_calling_socket() {
+        let p = HashMap::new();
+        let h = json_headers();
+        let t = TenantId::default();
+        let watch = |id: &str| {
+            json!({"id": id, "type": "Subscription", "entities": [{"type": "Vehicle"}],
+                "notification": {"endpoint": {"uri": "urn:antares:ws:mine"}}})
+        };
+        let st = AppState::new("sub-watch-moved".into()).with_sink(Box::new(Socket(
+            std::sync::atomic::AtomicUsize::new(usize::MAX),
+        )));
+        let id = "urn:ngsi-ld:Subscription:moved";
+        st.store
+            .create(&t, Kind::Subscription, id, watch(id))
+            .await
+            .expect("seed");
+        let moved = br#"{"notification":{"endpoint":{"uri":"http://127.0.0.1:9/n"}}}"#;
+        let r = update(&st, Kind::Subscription, id, &p, &h, moved)
+            .await
+            .expect("updated");
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        let doc = st
+            .store
+            .get(&t, Kind::Subscription, id)
+            .await
+            .expect("read")
+            .expect("stored");
+        assert_eq!(
+            doc["notification"]["endpoint"]["uri"],
+            "http://127.0.0.1:9/n"
+        );
+
+        // the socket answers for the decision and is gone by the write
+        let st = AppState::new("sub-watch-gone".into())
+            .with_sink(Box::new(Socket(std::sync::atomic::AtomicUsize::new(1))));
+        let id = "urn:ngsi-ld:Subscription:gone";
+        st.store
+            .create(&t, Kind::Subscription, id, watch(id))
+            .await
+            .expect("seed");
+        let e = ngsi(
+            update(
+                &st,
+                Kind::Subscription,
+                id,
+                &p,
+                &h,
+                br#"{"isActive":false}"#,
+            )
+            .await,
+        );
+        assert!(
+            matches!(&e, ApiError::Ngsi(NgsiError::ResourceNotFound(m)) if m.contains(id)),
+            "{e:?}"
+        );
+        let doc = st
+            .store
+            .get(&t, Kind::Subscription, id)
+            .await
+            .expect("read")
+            .expect("stored");
+        assert!(doc.get("isActive").is_none(), "{doc}");
+    }
+
+    /// ADR-0023 rule 9: through a view, a Subscription made at the root is
+    /// not there to delete: 404, and it stays.
+    #[tokio::test]
+    async fn rule_9_a_view_deletes_only_its_own_subscriptions() {
+        let st = AppState::new("sub-view-delete".into());
+        let t = TenantId::default();
+        let id = "urn:ngsi-ld:Subscription:root";
+        st.store
+            .create(
+                &t,
+                Kind::Subscription,
+                id,
+                serde_json::from_slice(&with_id(id)).expect("json"),
+            )
+            .await
+            .expect("seed");
+        let rule = crate::policy::Rule {
+            types: vec!["Vehicle".into()],
+            every_attribute: true,
+            ..Default::default()
+        };
+        let view =
+            crate::views::CompiledView::new(&["Vehicle".into()], None, None, None, vec![rule])
+                .expect("view");
+        let through = st.with_view(std::sync::Arc::new(view));
+        let e = ngsi(
+            delete(
+                &through,
+                Kind::Subscription,
+                id,
+                &HashMap::new(),
+                &json_headers(),
+            )
+            .await,
+        );
+        assert!(
+            matches!(&e, ApiError::Ngsi(NgsiError::ResourceNotFound(_))),
+            "{e:?}"
+        );
+        assert!(st
+            .store
+            .get(&t, Kind::Subscription, id)
+            .await
+            .expect("read")
+            .is_some());
+    }
+
+    /// ADR-0026 rule 7a: the sweep deletes a WebSocket Subscription whose
+    /// lease passed and leaves a client's own expired Subscription; a store
+    /// that cannot be walked reaps nothing.
+    #[tokio::test]
+    async fn adr0026_sweep_reaps_only_lapsed_socket_leases() {
+        let st = crate::wired_state("sub-socket-sweep").await;
+        let t = TenantId::default();
+        let doc = |id: &str, uri: &str| {
+            json!({"id": id, "type": "Subscription", "entities": [{"type": "V"}],
+                   "expiresAt": "2020-01-01T00:00:00Z",
+                   "notification": {"endpoint": {"uri": uri}}})
+        };
+        for (id, uri) in [
+            ("urn:ngsi-ld:Subscription:ws", "urn:antares:ws:conn-1"),
+            ("urn:ngsi-ld:Subscription:http", "http://127.0.0.1:9/n"),
+        ] {
+            assert!(st
+                .store
+                .create(&t, Kind::Subscription, id, doc(id, uri))
+                .await
+                .expect("create"));
+        }
+        assert_eq!(sweep_expired_socket_subscriptions(&st, &t).await, 1);
+        assert!(st
+            .store
+            .get(&t, Kind::Subscription, "urn:ngsi-ld:Subscription:ws")
+            .await
+            .expect("read")
+            .is_none());
+        assert!(st
+            .store
+            .get(&t, Kind::Subscription, "urn:ngsi-ld:Subscription:http")
+            .await
+            .expect("read")
+            .is_some());
+        #[cfg(feature = "postgres")]
+        assert_eq!(
+            sweep_expired_socket_subscriptions(&crate::state::refusing_state(), &t).await,
+            0
+        );
+    }
 
     /// 5.2.12 Table 5.2.12-2: status is "Provided by the system"; 5.8.2.4
     /// fixes its value space to active | paused | expired. The default

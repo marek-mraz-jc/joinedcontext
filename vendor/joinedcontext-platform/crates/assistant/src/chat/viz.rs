@@ -1014,6 +1014,117 @@ mod tests {
     }
 
     #[test]
+    fn a_multipolygon_is_kept_and_a_body_with_no_list_has_no_geometries() {
+        let one = json!({"type": "MultiPolygon", "coordinates": [[[[14.4, 50.0], [14.5, 50.0], [14.5, 50.1], [14.4, 50.0]]]]});
+        assert!(geometry(&one).is_some());
+        assert!(geometries(r#"{"count": 3}"#, 5).is_empty());
+    }
+
+    #[test]
+    fn a_map_names_its_time_and_units_and_carries_a_structured_cell_as_text() {
+        let mut table = air();
+        table.rows[0][1] = json!({"min": 1, "max": 2});
+        let spec = map_of(&table, 0, &[1], Some(4), None, "example.org").expect("a map");
+        assert_eq!(spec["time"], "observedAt");
+        assert_eq!(spec["popup"][0]["unit"], "µg/m³");
+        assert_eq!(
+            spec["data"]["features"][0]["properties"]["no2"],
+            r#"{"min":1,"max":2}"#
+        );
+    }
+
+    #[test]
+    fn a_column_of_urns_and_links_is_no_popup_value() {
+        let mut table = air();
+        table.columns = vec!["name".into(), "owner".into(), "site".into(), "no2".into()];
+        table.rows = vec![
+            vec![
+                json!("A"),
+                json!("urn:ngsi-ld:Owner:1"),
+                json!("https://a.example/"),
+                json!(1),
+            ],
+            vec![
+                json!("B"),
+                Value::Null,
+                json!("http://b.example/"),
+                json!(2),
+            ],
+            vec![
+                json!("C"),
+                json!("urn:ngsi-ld:Owner:2"),
+                Value::Null,
+                json!(3),
+            ],
+        ];
+        table.units = vec![None; 4];
+        let spec = default_map(&table, "example.org").expect("a map");
+        let popup: Vec<&str> = spec["popup"]
+            .as_array()
+            .expect("a popup")
+            .iter()
+            .filter_map(|field| field["field"].as_str())
+            .collect();
+        assert_eq!(popup, ["no2"]);
+    }
+
+    /// A count of more points than a chart holds, or of one, is no chart.
+    #[test]
+    fn an_aggregation_of_too_many_or_too_few_points_is_no_chart() {
+        let mut table = air();
+        table.columns = vec!["yearBuilt".into(), "count".into()];
+        table.units = vec![None, None];
+        table.aggregation = Some(super::super::view::Aggregation {
+            method: "count".into(),
+            per: "value",
+            of: "yearBuilt".into(),
+            shown: 501,
+            total: 501,
+            partial: false,
+            days: None,
+            years: None,
+        });
+        table.rows = (0..=super::super::view::POINTS)
+            .map(|n| vec![json!(format!("rok {n}")), json!(n)])
+            .collect();
+        assert_eq!(aggregated(&table), None, "past the points a chart holds");
+        let request = json!({"kind": "bar", "data": 1, "label": "yearBuilt", "value": "count", "title": "Roky"});
+        let refused = build(&request.to_string(), &[(1, table.clone())], "example.org")
+            .expect_err("no chart");
+        assert!(refused.contains("One value is no chart"), "{refused}");
+        table.rows.truncate(1);
+        assert_eq!(aggregated(&table), None, "one point");
+    }
+
+    #[test]
+    fn a_count_labelled_in_both_columns_keeps_both_label_sets() {
+        let mut table = air();
+        table.columns = vec!["operator".into(), "count".into()];
+        table.units = vec![None, None];
+        table.rows = vec![
+            vec![json!("Mesto"), json!(12)],
+            vec![json!("Kraj"), json!(5)],
+        ];
+        table.labels = vec![
+            Some([("sk".to_owned(), "Prevádzkovateľ".to_owned())].into()),
+            Some([("sk".to_owned(), "Počet".to_owned())].into()),
+        ];
+        table.aggregation = Some(super::super::view::Aggregation {
+            method: "count".into(),
+            per: "value",
+            of: "operator".into(),
+            shown: 2,
+            total: 2,
+            partial: false,
+            days: None,
+            years: None,
+        });
+        let event = aggregated(&table).expect("a chart");
+        assert_eq!(event["labels"]["count"]["sk"], "Počet");
+        assert_eq!(event["labels"]["operator"]["sk"], "Prevádzkovateľ");
+    }
+
+    #[test]
     fn a_map_says_how_many_of_all_it_shows_and_how_many_have_no_location() {
         let mut table = air();
         table.total = Some(3);
@@ -1068,9 +1179,7 @@ mod tests {
         assert_eq!(event["spec"]["encoding"]["x"]["field"], "value");
         assert_eq!(event["aggregation"]["per"], "decade");
         let mut years = table.clone();
-        if let Some(made) = years.aggregation.as_mut() {
-            made.per = "year";
-        }
+        years.aggregation.as_mut().expect("aggregated").per = "year";
         let upright = aggregated(&years).expect("a chart");
         assert_eq!(upright["spec"]["encoding"]["x"]["field"], "label");
         assert_eq!(

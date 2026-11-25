@@ -45,11 +45,10 @@ pub async fn gate(
         return Err(not_found());
     }
     let person = person.ok_or_else(|| Box::new(ApiError::Unauthorized.into_response()))?;
-    if !method.is_safe()
-        && headers.contains_key(&EDGE_TOKEN_HEADER)
-        && !super::functions::session_bound_token(state, headers).await
-    {
-        return Err(Box::new(ApiError::Forbidden.into_response()));
+    if !method.is_safe() && headers.contains_key(&EDGE_TOKEN_HEADER) {
+        super::functions::session_bound_token(state, headers, name)
+            .await
+            .map_err(|refused| Box::new(refused.into_response()))?;
     }
     if let Some(layer) = off_at(&state.mirror, &project, &spec, service) {
         return Err(Box::new(service_off(service, layer)));

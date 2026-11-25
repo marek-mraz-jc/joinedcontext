@@ -211,15 +211,18 @@ async fn a_published_function_runs_the_served_build_with_the_callers_token() {
     if !runs_functions() {
         return;
     }
-    let rig = rig("fn-served").await;
-    let cookie = format!("__Host-jc_csrf={CSRF}");
+    let (_realm, runtime) = realm_and_runtime().await;
+    let rig = organization_rig("fn-served", runtime).await;
+    let eva = common::REALM.person_token("bbsk-open", "eva", &[]);
+    let csrf = index_csrf(&rig, "bbsk-open", &eva).await;
+    let cookie = format!("__Host-jc_csrf={csrf}");
     let (status, body) = post(
         &rig,
-        "/apps/open-data/api/functions/near-me?lat=60.17",
+        "/apps/bbsk-open/api/functions/near-me?lat=60.17",
         &[
-            ("x-access-token", "the-persons-edge-token"),
+            ("x-access-token", &eva),
             ("cookie", &cookie),
-            ("x-csrf-token", CSRF),
+            ("x-csrf-token", &csrf),
         ],
         br#"{"source":"export default () => 1","radius":500}"#.to_vec(),
     )
@@ -231,7 +234,7 @@ async fn a_published_function_runs_the_served_build_with_the_callers_token() {
         .await
         .try_into()
         .expect("one invocation");
-    assert_eq!(call["token"], "the-persons-edge-token");
+    assert_eq!(call["token"], eva);
     assert_eq!(
         call["files"]["@app/functions.js"], BUNDLE,
         "the served build, not the body"
@@ -317,24 +320,26 @@ async fn refusals_never_reach_the_runtime() {
             Vec::new(),
             StatusCode::NOT_FOUND,
         ),
-        // The edge's token rides on a cookie, so it needs the double-submit token beside it.
+        // An edge token this realm cannot verify names nobody: 401 before any pair is read,
+        // whatever rides beside it (S1-52). The CSRF refusals of a verified person's token are
+        // an_app_hosts_call_needs_the_token_bound_to_its_person_and_app.
         (
             "/apps/open-data/api/functions/near-me",
             &edge[..],
             Vec::new(),
-            StatusCode::FORBIDDEN,
+            StatusCode::UNAUTHORIZED,
         ),
         (
             "/apps/open-data/api/functions/near-me",
             &edge_and_bearer[..],
             Vec::new(),
-            StatusCode::FORBIDDEN,
+            StatusCode::UNAUTHORIZED,
         ),
         (
             "/apps/open-data/api/functions/near-me",
             &foreign_csrf[..],
             Vec::new(),
-            StatusCode::FORBIDDEN,
+            StatusCode::UNAUTHORIZED,
         ),
         // Not JSON.
         (
@@ -534,6 +539,7 @@ async fn organization_rig(test: &str, runtime: MockServer) -> Rig {
     mirror.upsert(app("bbsk-events", "organization"));
     mirror.upsert(app("bbsk-open", "public"));
     common::bind(&mirror, "eva", "parks");
+    common::bind(&mirror, "otto", "parks");
     let state = AppState::new(config, Some(oidc)).with_mirror(std::sync::Arc::new(mirror));
     Rig {
         app: server::app(state.clone()),
@@ -563,17 +569,18 @@ async fn an_organization_apps_function_acts_as_the_viewer_and_answers_her_refusa
         .mount(&runtime)
         .await;
     let rig = organization_rig("fn-organization", runtime).await;
-    // The edge's token on an App's host is the App's own (audience app-bbsk-events): it names
-    // no Portal session, so the call carries the anonymous double-submit pair.
+    // The edge's token on an App's host is the App's own (audience app-bbsk-events); the call
+    // echoes the CSRF token the App's index handed her for it (S1-52).
     let eva = common::REALM.person_token("bbsk-events", "eva", &[]);
-    let cookie = format!("__Host-jc_csrf={CSRF}");
+    let csrf = index_csrf(&rig, "bbsk-events", &eva).await;
+    let cookie = format!("__Host-jc_csrf={csrf}");
     let (status, body) = post(
         &rig,
         "/apps/bbsk-events/api/functions/near-me",
         &[
             ("x-access-token", &eva),
             ("cookie", &cookie),
-            ("x-csrf-token", CSRF),
+            ("x-csrf-token", &csrf),
         ],
         Vec::new(),
     )
@@ -598,6 +605,53 @@ async fn an_organization_apps_function_acts_as_the_viewer_and_answers_her_refusa
         !call.to_string().contains("the-portals-own-token"),
         "the Portal's token is the runtime's credential alone"
     );
+}
+
+/// T-7837: each refusal of jc-functions reaches the caller as its own status through the real
+/// route: full 429 with Retry-After, too large 413, any other status or an answer that is no
+/// outcome 503.
+#[tokio::test]
+async fn each_runtime_refusal_reaches_the_caller_as_its_status() {
+    if !runs_functions() {
+        return;
+    }
+    for (at, (runtime_answer, want)) in [
+        (ResponseTemplate::new(429), StatusCode::TOO_MANY_REQUESTS),
+        (ResponseTemplate::new(413), StatusCode::PAYLOAD_TOO_LARGE),
+        (ResponseTemplate::new(500), StatusCode::SERVICE_UNAVAILABLE),
+        (
+            ResponseTemplate::new(200).set_body_string("not an outcome"),
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let runtime = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/invoke"))
+            .respond_with(runtime_answer)
+            .mount(&runtime)
+            .await;
+        let rig = organization_rig(&format!("fn-refused-{at}"), runtime).await;
+        let eva = common::REALM.person_token("bbsk-events", "eva", &[]);
+        // her own token, as the App's index hands it (S1-52, T-7856)
+        let csrf = index_csrf(&rig, "bbsk-events", &eva).await;
+        let cookie = format!("__Host-jc_csrf={csrf}");
+        let (status, body) = post(
+            &rig,
+            "/apps/bbsk-events/api/functions/near-me",
+            &[
+                ("x-access-token", &eva),
+                ("cookie", &cookie),
+                ("x-csrf-token", &csrf),
+            ],
+            Vec::new(),
+        )
+        .await;
+        assert_eq!(status, want, "{body}");
+        assert_eq!(invocations(&rig.runtime).await.len(), 1);
+    }
 }
 
 /// RTE-12: an edge token that names a Portal session binds the CSRF token to that person, so
@@ -653,4 +707,204 @@ async fn a_portal_sessions_call_needs_the_token_bound_to_her() {
         .try_into()
         .expect("one invocation");
     assert_eq!(call["token"], eva);
+}
+
+/// The CSRF token the App's index hands the person `edge_token` names, from its `Set-Cookie`.
+async fn index_csrf(rig: &Rig, app: &str, edge_token: &str) -> String {
+    let response = rig
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/apps/{app}/"))
+                .header("x-access-token", edge_token)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|cookie| cookie.strip_prefix("__Host-jc_csrf=")?.split(';').next())
+        .expect("the index hands a CSRF cookie")
+        .to_owned()
+}
+
+/// `(status, problem type)` of a POST to `uri` with `token` as the edge's and `csrf` echoed.
+async fn call_with(rig: &Rig, uri: &str, token: &str, csrf: Option<&str>) -> (StatusCode, String) {
+    call_as(rig, "POST", uri, token, csrf).await
+}
+
+async fn call_as(
+    rig: &Rig,
+    method: &str,
+    uri: &str,
+    token: &str,
+    csrf: Option<&str>,
+) -> (StatusCode, String) {
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json")
+        .header("x-access-token", token);
+    if let Some(csrf) = csrf {
+        request = request
+            .header("cookie", format!("__Host-jc_csrf={csrf}"))
+            .header("x-csrf-token", csrf);
+    }
+    let response = rig
+        .app
+        .clone()
+        .oneshot(request.body(Body::from("{}")).expect("request"))
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    let kind = body["type"].as_str().unwrap_or_default();
+    (
+        status,
+        kind.rsplit('/').next().unwrap_or_default().to_owned(),
+    )
+}
+
+/// RTE-12, S1-52: on an App's host the CSRF token is bound to the person and the App the edge's
+/// token names. Otto's call with the token minted for Eva is refused, as is Eva's with a plain
+/// pair any page on the host could set, or with her token of another App; her own passes.
+#[tokio::test]
+async fn an_app_hosts_call_needs_the_token_bound_to_its_person_and_app() {
+    if !runs_functions() {
+        return;
+    }
+    let runtime = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/invoke"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": 200, "body": { "events": 2 }, "logs": []
+        })))
+        .mount(&runtime)
+        .await;
+    let rig = organization_rig("fn-app-bound", runtime).await;
+    let uri = "/apps/bbsk-events/api/functions/near-me";
+    let eva = common::REALM.person_token("bbsk-events", "eva", &[]);
+    let otto = common::REALM.person_token("bbsk-events", "otto", &[]);
+    let evas = index_csrf(&rig, "bbsk-events", &eva).await;
+    let ottos = index_csrf(&rig, "bbsk-events", &otto).await;
+    assert_ne!(evas, ottos, "each person's token is their own");
+    let eva_open = common::REALM.person_token("bbsk-open", "eva", &[]);
+    let evas_open = index_csrf(&rig, "bbsk-open", &eva_open).await;
+    assert_ne!(evas, evas_open, "one person's token differs per App");
+
+    for (who, token, csrf) in [
+        ("otto with eva's", &otto, Some(evas.as_str())),
+        ("eva with the anonymous pair", &eva, Some(CSRF)),
+        (
+            "eva with her token of another App",
+            &eva,
+            Some(evas_open.as_str()),
+        ),
+        ("eva without a token", &eva, None),
+    ] {
+        let (status, kind) = call_with(&rig, uri, token, csrf).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{who}");
+        assert_eq!(kind, "forbidden", "{who}");
+    }
+    // A bearer beside the edge's token is no credential of this call and waives no check
+    // (T-4915).
+    let (status, _) = post(
+        &rig,
+        "/apps/bbsk-open/api/functions/near-me",
+        &[
+            ("x-access-token", &eva_open),
+            ("authorization", "Bearer planted-by-another-app"),
+        ],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "eva with a bearer and no token"
+    );
+    assert!(invocations(&rig.runtime).await.is_empty());
+
+    let (status, _) = call_with(&rig, uri, &eva, Some(&evas)).await;
+    assert_eq!(status, StatusCode::OK, "eva with her own token");
+    let (status, _) = call_with(&rig, uri, &otto, Some(&ottos)).await;
+    assert_eq!(status, StatusCode::OK, "otto with his own token");
+    let calls = invocations(&rig.runtime).await;
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0]["token"], eva);
+    assert_eq!(calls[1]["token"], otto);
+}
+
+/// An edge token that verifies neither as the App's nor as the Portal's names nobody: `401`,
+/// and no double-submit pair stands in for it.
+#[tokio::test]
+async fn an_expired_or_foreign_edge_token_is_401_whatever_pair_it_carries() {
+    let runtime = MockServer::start().await;
+    let rig = organization_rig("fn-expired", runtime).await;
+    let now = joinedcontext_portal::auth::session::now_unix();
+    let expired = common::REALM.person_token_with(
+        "app-bbsk-open",
+        "app-bbsk-open",
+        "eva",
+        &[],
+        json!({ "exp": now - 600, "iat": now - 900 }),
+    );
+    for token in [expired.as_str(), "not-a-token"] {
+        let (status, kind) = call_with(
+            &rig,
+            "/apps/bbsk-open/api/functions/near-me",
+            token,
+            Some(CSRF),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(kind, "unauthorized");
+    }
+    assert!(invocations(&rig.runtime).await.is_empty());
+}
+
+/// Every App-host service write goes through `services::gate`, which binds the CSRF token the
+/// same way: a cross-person pair is `403 forbidden` on each, and the person's own pair passes
+/// the check (the App turns no service on, so the gate's next step answers `service-off`).
+#[tokio::test]
+async fn every_service_write_refuses_another_persons_csrf_token() {
+    let runtime = MockServer::start().await;
+    let rig = organization_rig("svc-app-bound", runtime).await;
+    let eva = common::REALM.person_token("bbsk-events", "eva", &[]);
+    let otto = common::REALM.person_token("bbsk-events", "otto", &[]);
+    let evas = index_csrf(&rig, "bbsk-events", &eva).await;
+    for (method, uri) in [
+        ("POST", "/apps/bbsk-events/api/services/email/send"),
+        ("POST", "/apps/bbsk-events/api/services/ai/complete"),
+        ("PUT", "/apps/bbsk-events/api/services/files/report.csv"),
+        ("DELETE", "/apps/bbsk-events/api/services/files/report.csv"),
+        (
+            "POST",
+            "/apps/bbsk-events/api/services/files/report.csv:url",
+        ),
+    ] {
+        let (status, kind) = call_as(&rig, method, uri, &otto, Some(&evas)).await;
+        assert_eq!(
+            (status, kind.as_str()),
+            (StatusCode::FORBIDDEN, "forbidden"),
+            "{method} {uri}: otto with eva's token"
+        );
+        let (_, kind) = call_as(&rig, method, uri, &eva, Some(&evas)).await;
+        assert_eq!(
+            kind, "service-off",
+            "{method} {uri}: eva with her own token"
+        );
+    }
 }

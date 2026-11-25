@@ -88,15 +88,21 @@ pub fn default_backfill(value: &str) {
 /// the caller keeps `current`. Outside a request, or with backfill off,
 /// nothing is one.
 pub(crate) fn backfilled(doc: &Value, attr: &str, current: &Value, incoming: &Value) -> bool {
-    if !backfill_on() {
+    backfill_on() && stage_backfill(doc, attr, current, incoming)
+}
+
+/// [`backfilled`] with backfill on: `incoming` (an instance object) older
+/// than `current` is staged for the request's history and answers `true`.
+fn stage_backfill(doc: &Value, attr: &str, current: &Value, incoming: &Value) -> bool {
+    let Value::Object(fresh) = incoming else {
         return false;
-    }
-    let at = |i: &Value| {
+    };
+    let at = |i: &Map<String, Value>| {
         i.get("observedAt")
             .and_then(Value::as_str)
             .and_then(|s| crate::state::instant(&antares_store::filter::canonical_datetime(s)))
     };
-    let (Some(was), Some(now)) = (at(current), at(incoming)) else {
+    let (Some(was), Some(now)) = (current.as_object().and_then(at), at(fresh)) else {
         return false;
     };
     let Some(id) = doc.get("id").and_then(Value::as_str) else {
@@ -110,16 +116,15 @@ pub(crate) fn backfilled(doc: &Value, attr: &str, current: &Value, incoming: &Va
         let Ok(Some(tenant)) = TENANT.try_with(Clone::clone) else {
             return false;
         };
-        let mut instance = incoming.clone();
-        if let Some(o) = instance.as_object_mut() {
-            let iid = crate::notify::instance_id(id, attr, o);
-            o.entry("instanceId".to_owned())
-                .or_insert(Value::String(iid));
-            o.insert(
-                antares_store::PROVENANCE_KEY.to_owned(),
-                provenance("backfill"),
-            );
-        }
+        let mut o = fresh.clone();
+        let iid = crate::notify::instance_id(id, attr, &o);
+        o.entry("instanceId".to_owned())
+            .or_insert(Value::String(iid));
+        o.insert(
+            antares_store::PROVENANCE_KEY.to_owned(),
+            provenance("backfill"),
+        );
+        let instance = Value::Object(o);
         let mut shell = Map::new();
         for k in ["id", "type", "createdAt", "modifiedAt", "scope"] {
             if let Some(v) = doc.get(k) {
@@ -293,21 +298,19 @@ pub(crate) async fn keep_replaced(
     let Some(o) = old.as_object_mut() else {
         return;
     };
-    let mut p = o
-        .remove(antares_jsonld::compact::MODIFIED_BY_KEY)
-        .filter(Value::is_object)
-        .unwrap_or_else(|| Value::Object(Map::new()));
-    if let Some(po) = p.as_object_mut() {
-        po.insert("operation".into(), Value::String("create".into()));
-        po.insert(crate::provenance::AUDIT.into(), Value::Bool(true));
-        if let Some(at) = o.get("modifiedAt").or_else(|| o.get("createdAt")) {
-            po.insert("writtenAt".into(), at.clone());
-        }
+    let mut po = match o.remove(antares_jsonld::compact::MODIFIED_BY_KEY) {
+        Some(Value::Object(by)) => by,
+        _ => Map::new(),
+    };
+    po.insert("operation".into(), Value::String("create".into()));
+    po.insert(crate::provenance::AUDIT.into(), Value::Bool(true));
+    if let Some(at) = o.get("modifiedAt").or_else(|| o.get("createdAt")) {
+        po.insert("writtenAt".into(), at.clone());
     }
     let iid = crate::notify::instance_id(entity, attr, o);
     o.entry("instanceId".to_owned())
         .or_insert(Value::String(iid));
-    o.insert(antares_store::PROVENANCE_KEY.to_owned(), p);
+    o.insert(antares_store::PROVENANCE_KEY.to_owned(), Value::Object(po));
     let event = TemporalEvent {
         op: antares_store::TemporalOp::AttrModified,
         tenant: tenant.clone(),
@@ -326,11 +329,7 @@ pub(crate) fn buffer_change(change: crate::mirror::Change) -> Option<crate::mirr
     #[cfg(not(target_arch = "wasm32"))]
     {
         let mut slot = Some(change);
-        let _ = CHANGES.try_with(|b| {
-            if let Some(c) = slot.take() {
-                lock(b).push(c);
-            }
-        });
+        let _ = CHANGES.try_with(|b| lock(b).extend(slot.take()));
         slot
     }
     #[cfg(target_arch = "wasm32")]
@@ -342,21 +341,13 @@ pub(crate) fn buffer_change(change: crate::mirror::Change) -> Option<crate::mirr
 pub(crate) async fn push(st: &AppState, ev: TemporalEvent) {
     #[cfg(not(target_arch = "wasm32"))]
     let ev = {
+        // taken into the request's buffer when one is in flight
         let mut slot = Some(ev);
-        let buffered = BUFFER
-            .try_with(|b| {
-                if let Some(ev) = slot.take() {
-                    lock(b).push(ev);
-                }
-            })
-            .is_ok();
-        if buffered {
+        let _ = BUFFER.try_with(|b| lock(b).extend(slot.take()));
+        let Some(ev) = slot else {
             return;
-        }
-        match slot {
-            Some(ev) => ev,
-            None => return,
-        }
+        };
+        ev
     };
     drain(st, vec![ev]).await;
 }
@@ -702,20 +693,24 @@ pub(crate) fn admits_change(
         }
         Some(row) if !admits(&row.payload, row.at) => false,
         _ => {
-            if last.len() >= LAST_ROWS_MAX {
-                last.clear();
-            }
-            last.insert(
-                key,
-                LastRow {
-                    payload,
-                    at,
-                    late: None,
-                },
-            );
+            let row = LastRow {
+                payload,
+                at,
+                late: None,
+            };
+            remember(&mut last, key, row, LAST_ROWS_MAX);
             true
         }
     }
+}
+
+/// Keeps `row` as the newest of `key`, forgetting every row first when
+/// `last` already holds `max`.
+fn remember(last: &mut LastRows, key: (String, String, String, String), row: LastRow, max: usize) {
+    if last.len() >= max {
+        last.clear();
+    }
+    last.insert(key, row);
 }
 
 /// The instant `instance` was observed at, if it says.
@@ -1195,6 +1190,576 @@ mod tests {
         assert_eq!(ids, ["urn:b"]);
     }
 
+    /// A hosting process's default is taken once; with no environment
+    /// value it decides, and only `on` turns backfill on.
+    #[test]
+    fn the_hosted_default_is_set_once() {
+        default_backfill("off");
+        default_backfill("on");
+        assert_eq!(HOSTED_BACKFILL.get().map(String::as_str), Some("off"));
+        assert!(!backfill_from(
+            None,
+            HOSTED_BACKFILL.get().map(String::as_str)
+        ));
+    }
+
+    /// A change outside any request is handed back to the caller, and an
+    /// event outside any request is drained on the spot.
+    #[tokio::test]
+    async fn outside_a_request_changes_return_and_events_drain() {
+        assert!(buffer_change(("urn:x".to_owned(), None, Some(serde_json::json!({})))).is_some());
+        let mut st = AppState::new("antares-history-spot".into());
+        st.temporal_record = crate::state::TemporalRecord::All;
+        let tenant = TenantId::new("t").expect("tenant");
+        const ID: &str = "urn:ngsi-ld:T:spot";
+        st.store
+            .create(
+                &tenant,
+                antares_store::Kind::Entity,
+                ID,
+                serde_json::json!({"id": ID, "type": "T"}),
+            )
+            .await
+            .expect("create");
+        let mut event = ev(ID);
+        event.op = antares_store::TemporalOp::AttrCreated;
+        push(&st, event).await;
+        assert!(st.temporal.get(&tenant, ID).await.expect("read").is_some());
+    }
+
+    /// T-4665 with backfill on: only an instance object older than the one
+    /// held, of an Entity with an id, inside a request of a Tenant, is staged,
+    /// with a minted instanceId and the backfill's provenance. Off (this
+    /// process), nothing is a backfill.
+    #[tokio::test]
+    async fn only_an_older_instance_inside_a_request_is_a_backfill() {
+        const LEVEL: &str = "https://example.org/level";
+        let doc = serde_json::json!({"id": "urn:ngsi-ld:T:late", "type": "T", "scope": "/a"});
+        let at = |t: &str| serde_json::json!({"type": "Property", "value": 1, "observedAt": t});
+        let (new, old) = (at("2026-01-02T00:00:00Z"), at("2026-01-01T00:00:00Z"));
+        assert!(!backfilled(&doc, LEVEL, &new, &old), "backfill is off here");
+        assert!(!stage_backfill(&doc, LEVEL, &new, &serde_json::json!(5)));
+        let unobserved = serde_json::json!({"type": "Property", "value": 1});
+        assert!(!stage_backfill(&doc, LEVEL, &unobserved, &old));
+        assert!(!stage_backfill(&doc, LEVEL, &new, &unobserved));
+        assert!(!stage_backfill(
+            &serde_json::json!({"type": "T"}),
+            LEVEL,
+            &new,
+            &old
+        ));
+        assert!(!stage_backfill(&doc, LEVEL, &old, &new), "newer replaces");
+        assert!(
+            !stage_backfill(&doc, LEVEL, &new, &old),
+            "outside a request"
+        );
+        let staged = STAGED
+            .scope(std::cell::RefCell::new(Vec::new()), async {
+                let tenant = TenantId::new("t").expect("tenant");
+                TENANT
+                    .scope(None, async {
+                        assert!(!stage_backfill(&doc, LEVEL, &new, &old), "no Tenant");
+                    })
+                    .await;
+                TENANT
+                    .scope(Some(tenant), async {
+                        assert!(stage_backfill(&doc, LEVEL, &new, &old));
+                    })
+                    .await;
+                STAGED.with(|b| std::mem::take(&mut *b.borrow_mut()))
+            })
+            .await;
+        assert_eq!(staged.len(), 1);
+        let ev = &staged[0];
+        assert_eq!(ev.entity_id, "urn:ngsi-ld:T:late");
+        assert_eq!(ev.attr, LEVEL);
+        assert_eq!(
+            ev.shell,
+            serde_json::json!({"id": "urn:ngsi-ld:T:late", "type": "T", "scope": "/a"})
+        );
+        assert!(ev.instance["instanceId"]
+            .as_str()
+            .is_some_and(|i| i.starts_with("urn:ngsi-ld:Instance:")));
+        assert_eq!(
+            ev.instance[antares_store::PROVENANCE_KEY]["operation"],
+            "backfill"
+        );
+    }
+
+    /// A request provenance that is not an object is handed on as it is:
+    /// there is nowhere to stamp the operation into.
+    #[tokio::test]
+    async fn a_provenance_that_is_no_object_is_kept_as_it_is() {
+        let p = PROVENANCE
+            .scope(serde_json::json!("opaque"), async { provenance("create") })
+            .await;
+        assert_eq!(p, serde_json::json!("opaque"));
+        let own = provenance("create");
+        assert_eq!(own["channel"], "api");
+        assert_eq!(own["operation"], "create");
+        assert!(own["writtenAt"].is_string());
+    }
+
+    /// A full map of last rows is forgotten before the next row is kept.
+    #[test]
+    fn a_full_map_of_last_rows_starts_over() {
+        let key = |e: &str| ("t".to_owned(), e.to_owned(), "a".to_owned(), String::new());
+        let row = || LastRow {
+            payload: Kept::of(&serde_json::json!({"value": 1})),
+            at: jiff::Timestamp::UNIX_EPOCH,
+            late: None,
+        };
+        let mut last = LastRows::new();
+        remember(&mut last, key("urn:a"), row(), 2);
+        remember(&mut last, key("urn:b"), row(), 2);
+        assert_eq!(last.len(), 2);
+        remember(&mut last, key("urn:c"), row(), 2);
+        assert_eq!(last.len(), 1);
+        assert!(last.contains_key(&key("urn:c")));
+    }
+
+    fn audited_provenance() -> Value {
+        serde_json::json!({"channel": "api", crate::provenance::AUDIT: true})
+    }
+
+    /// DM-145: on an audited change the value it replaces goes to history
+    /// first, once; with no prior value, or a prior value that is not an
+    /// instance, nothing extra is kept.
+    #[tokio::test]
+    async fn an_audited_change_keeps_the_replaced_value_once() {
+        let mut st = AppState::new("antares-history-keep".into());
+        st.temporal_record = crate::state::TemporalRecord::All;
+        let tenant = TenantId::new("t").expect("tenant");
+        const ID: &str = "urn:ngsi-ld:T:keep";
+        const LEVEL: &str = "https://example.org/level";
+        st.store
+            .create(
+                &tenant,
+                antares_store::Kind::Entity,
+                ID,
+                serde_json::json!({"id": ID, "type": "T"}),
+            )
+            .await
+            .expect("create");
+        let shell = serde_json::json!({"id": ID, "type": "T"});
+        let was = serde_json::json!({"type": "Property", "value": 1,
+            "modifiedAt": "2026-01-01T00:00:00Z",
+            antares_jsonld::compact::MODIFIED_BY_KEY: {"sub": "writer-1"}});
+        let now = serde_json::json!({"type": "Property", "value": 2});
+        PROVENANCE
+            .scope(audited_provenance(), async {
+                assert!(audited());
+                keep_replaced(&st, &tenant, &shell, LEVEL, None, &now).await;
+                keep_replaced(
+                    &st,
+                    &tenant,
+                    &shell,
+                    LEVEL,
+                    Some(&serde_json::json!(5)),
+                    &now,
+                )
+                .await;
+                assert!(
+                    st.temporal.get(&tenant, ID).await.expect("read").is_none(),
+                    "nothing kept yet"
+                );
+                let before = serde_json::json!([was.clone()]);
+                keep_replaced(&st, &tenant, &shell, LEVEL, Some(&before), &now).await;
+                keep_replaced(&st, &tenant, &shell, LEVEL, Some(&was), &now).await;
+            })
+            .await;
+        let doc = st
+            .temporal
+            .get(&tenant, ID)
+            .await
+            .expect("read")
+            .expect("kept");
+        let rows = doc[LEVEL].as_array().expect("rows");
+        assert_eq!(rows.len(), 1, "kept once: {doc}");
+        // the old value as it was, with an instanceId minted for it; its
+        // provenance travels beside the row, not in the document
+        assert_eq!(rows[0]["value"], 1);
+        assert_eq!(rows[0]["modifiedAt"], "2026-01-01T00:00:00Z");
+        assert!(rows[0]["instanceId"]
+            .as_str()
+            .is_some_and(|i| i.starts_with("urn:ngsi-ld:Instance:")));
+        assert!(rows[0]
+            .get(antares_jsonld::compact::MODIFIED_BY_KEY)
+            .is_none());
+    }
+
+    /// Gate 4 and the recording rules read nothing of an audited write: it
+    /// is kept whatever they say.
+    #[tokio::test]
+    async fn an_audited_change_is_always_admitted() {
+        let st = AppState::new("antares-history-admit".into());
+        let tenant = TenantId::new("t").expect("tenant");
+        let inst = serde_json::json!({"type": "Property", "value": 1});
+        PROVENANCE
+            .scope(audited_provenance(), async {
+                assert!(admits_change(
+                    &st,
+                    &tenant,
+                    &["T"],
+                    "urn:a",
+                    "https://example.org/l",
+                    None,
+                    &inst
+                ));
+                assert!(records_history(
+                    &st,
+                    &tenant,
+                    &serde_json::json!({"id": "urn:a"})
+                ));
+            })
+            .await;
+        assert!(held_attrs(&st, &tenant, &serde_json::json!({"id": "urn:a"})).is_empty());
+    }
+
+    /// 4.5.7/4.5.8: the deletion tombstone takes the null shape of its
+    /// attribute type, a mirror over an empty instance list or a document
+    /// that is not an object writes nothing.
+    #[tokio::test]
+    async fn the_deletion_tombstone_takes_its_attribute_type_shape() {
+        let st = AppState::new("antares-history-tomb".into());
+        let tenant = TenantId::new("t").expect("tenant");
+        const ID: &str = "urn:ngsi-ld:T:tomb";
+        let doc = serde_json::json!({"id": ID,
+            "lp": [{"type": "LanguageProperty", "languageMap": {"en": "x"}}],
+            "vl": [{"type": "ListProperty", "valueList": [1]}],
+            "ol": [{"type": "ListRelationship", "objectList": ["urn:a"]}],
+            "empty": []});
+        assert!(st.temporal.create(&tenant, ID, doc).await.expect("seed"));
+        for attr in ["lp", "vl", "ol", "empty", "absent"] {
+            mirror_delete_attr(
+                &st,
+                &tenant,
+                ID,
+                attr,
+                Some("urn:d:1"),
+                "2026-01-01T00:00:00Z",
+            )
+            .await;
+        }
+        let doc = st
+            .temporal
+            .get(&tenant, ID)
+            .await
+            .expect("read")
+            .expect("doc");
+        assert_eq!(
+            doc["lp"][1]["languageMap"],
+            serde_json::json!({"@none": "urn:ngsi-ld:null"})
+        );
+        assert_eq!(doc["vl"][1]["valueList"], "urn:ngsi-ld:null");
+        assert_eq!(doc["ol"][1]["objectList"], "urn:ngsi-ld:null");
+        assert_eq!(doc["ol"][1]["datasetId"], "urn:d:1");
+        assert_eq!(doc["empty"], serde_json::json!([]));
+        assert!(doc.get("absent").is_none(), "no attribute, no tombstone");
+        const BAD: &str = "urn:ngsi-ld:T:bad";
+        assert!(st
+            .temporal
+            .create(&tenant, BAD, serde_json::json!("bad"))
+            .await
+            .expect("seed"));
+        mirror_delete_attr(&st, &tenant, BAD, "lp", None, "2026-01-01T00:00:00Z").await;
+        assert_eq!(
+            st.temporal.get(&tenant, BAD).await.expect("read"),
+            Some(serde_json::json!("bad"))
+        );
+    }
+
+    /// A temporal driver that refuses every call, counting them; `held`, when
+    /// set, is what a history read answers instead, and `off` makes it a
+    /// deployment that records no history.
+    #[derive(Default)]
+    struct Refusing {
+        held: Option<Value>,
+        off: bool,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Refusing {
+        fn refused(&self) -> antares_model::NgsiError {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            antares_model::NgsiError::InternalError("refused".into())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl antares_store::TemporalDriver for Refusing {
+        fn supported(&self) -> bool {
+            !self.off
+        }
+        async fn temporal_append(
+            &self,
+            _: &TenantId,
+            _: &str,
+            _: &Value,
+            _: &Value,
+        ) -> Result<(), antares_model::NgsiError> {
+            Err(self.refused())
+        }
+        async fn query_temporal(
+            &self,
+            _: &TenantId,
+            _: &antares_store::filter::TemporalFilter<'_>,
+        ) -> Result<antares_store::filter::TemporalOutcome, antares_model::NgsiError> {
+            Err(self.refused())
+        }
+        async fn get_temporal(
+            &self,
+            _: &TenantId,
+            _: &str,
+            _: &antares_store::filter::TemporalFilter<'_>,
+        ) -> Result<Option<Value>, antares_model::NgsiError> {
+            match &self.held {
+                Some(held) => Ok(Some(held.clone())),
+                None => Err(self.refused()),
+            }
+        }
+        async fn get(
+            &self,
+            _: &TenantId,
+            _: &str,
+        ) -> Result<Option<Value>, antares_model::NgsiError> {
+            Err(self.refused())
+        }
+        async fn create(
+            &self,
+            _: &TenantId,
+            _: &str,
+            _: Value,
+        ) -> Result<bool, antares_model::NgsiError> {
+            Err(self.refused())
+        }
+        async fn upsert(
+            &self,
+            _: &TenantId,
+            _: &str,
+            _: Value,
+        ) -> Result<bool, antares_model::NgsiError> {
+            Err(self.refused())
+        }
+        async fn delete(&self, _: &TenantId, _: &str) -> Result<bool, antares_model::NgsiError> {
+            Err(self.refused())
+        }
+        async fn list(&self, _: &TenantId) -> Result<Vec<Value>, antares_model::NgsiError> {
+            Err(self.refused())
+        }
+        async fn mutate_boxed<'a>(
+            &self,
+            _: &TenantId,
+            _: &str,
+            _: antares_store::MutateFn<'a>,
+        ) -> Result<Option<Result<(), ()>>, antares_model::NgsiError> {
+            Err(self.refused())
+        }
+    }
+
+    /// A temporal store that fails every attempt costs the mirror its
+    /// history, never the write: each failure is counted as a lost drain;
+    /// an audited change whose history cannot be read keeps nothing extra.
+    #[tokio::test]
+    async fn a_failing_temporal_store_is_counted_not_raised() {
+        let store = std::sync::Arc::new(antares_sql::store::any::AnyStore::Mem(
+            antares_sql::store::Store::default(),
+        ));
+        let driver = std::sync::Arc::new(Refusing::default());
+        let st = AppState::with_drivers(
+            "antares-history-fail".into(),
+            store,
+            driver.clone(),
+            "memory",
+        );
+        let tenant = TenantId::new("t").expect("tenant");
+        let before = drain_errors();
+        mirror_delete_entity(&st, &tenant, "urn:ngsi-ld:T:f").await;
+        mirror_delete_attr(
+            &st,
+            &tenant,
+            "urn:ngsi-ld:T:f",
+            "a",
+            None,
+            "2026-01-01T00:00:00Z",
+        )
+        .await;
+        assert!(drain_errors() >= before.saturating_add(2));
+        assert_eq!(
+            driver.calls.load(Ordering::Relaxed),
+            2 * DRIVER_ATTEMPTS as usize,
+            "each mirror tried every attempt"
+        );
+        let was = serde_json::json!([{"type": "Property", "value": 1}]);
+        PROVENANCE
+            .scope(audited_provenance(), async {
+                keep_replaced(
+                    &st,
+                    &tenant,
+                    &serde_json::json!({"id": "urn:ngsi-ld:T:f"}),
+                    "a",
+                    Some(&was),
+                    &serde_json::json!({"type": "Property", "value": 2}),
+                )
+                .await;
+            })
+            .await;
+        assert_eq!(
+            driver.calls.load(Ordering::Relaxed),
+            2 * DRIVER_ATTEMPTS as usize + 1,
+            "the unreadable history was read once, nothing was appended"
+        );
+        // every other history call the store refuses answers its error
+        let id = "urn:ngsi-ld:T:f";
+        let doc = serde_json::json!({"id": id});
+        assert!(st.temporal.get(&tenant, id).await.is_err());
+        assert!(st.temporal.create(&tenant, id, doc.clone()).await.is_err());
+        assert!(st.temporal.upsert(&tenant, id, doc).await.is_err());
+        assert!(st.temporal.list(&tenant).await.is_err());
+        let all = antares_store::filter::TemporalFilter::default();
+        assert!(st.temporal.query_temporal(&tenant, &all).await.is_err());
+    }
+
+    /// DM-145 against a history that answers a single instance, not a list:
+    /// a row of the changed datasetId already there keeps nothing extra; a
+    /// row of another datasetId does, and the append the store refuses is
+    /// retried and counted, never raised.
+    #[tokio::test]
+    async fn a_single_held_instance_decides_whether_the_replaced_value_is_kept() {
+        let store = std::sync::Arc::new(antares_sql::store::any::AnyStore::Mem(
+            antares_sql::store::Store::default(),
+        ));
+        let held =
+            serde_json::json!({"a": {"type": "Property", "value": 1, "datasetId": "urn:d:1"}});
+        let driver = std::sync::Arc::new(Refusing {
+            held: Some(held),
+            ..Default::default()
+        });
+        let st = AppState::with_drivers(
+            "antares-history-single".into(),
+            store,
+            driver.clone(),
+            "memory",
+        );
+        let tenant = TenantId::new("t").expect("tenant");
+        let shell = serde_json::json!({"id": "urn:ngsi-ld:T:s"});
+        // no writer, no stamp: the kept row's provenance is the bare create
+        let was = |ds: &str| serde_json::json!({"type": "Property", "value": 0, "datasetId": ds});
+        let now = |ds: &str| serde_json::json!({"type": "Property", "value": 2, "datasetId": ds});
+        let before = drain_errors();
+        PROVENANCE
+            .scope(audited_provenance(), async {
+                keep_replaced(
+                    &st,
+                    &tenant,
+                    &shell,
+                    "a",
+                    Some(&was("urn:d:1")),
+                    &now("urn:d:1"),
+                )
+                .await;
+                assert_eq!(driver.calls.load(Ordering::Relaxed), 0, "already held");
+                keep_replaced(
+                    &st,
+                    &tenant,
+                    &shell,
+                    "a",
+                    Some(&was("urn:d:2")),
+                    &now("urn:d:2"),
+                )
+                .await;
+            })
+            .await;
+        assert_eq!(
+            driver.calls.load(Ordering::Relaxed),
+            DRIVER_ATTEMPTS as usize,
+            "the replaced value went to the store, every attempt"
+        );
+        assert!(drain_errors() > before);
+    }
+
+    /// A deployment without history mirrors no deletion: the store is never
+    /// asked.
+    #[tokio::test]
+    async fn without_history_a_deleted_entity_is_not_mirrored() {
+        let store = std::sync::Arc::new(antares_sql::store::any::AnyStore::Mem(
+            antares_sql::store::Store::default(),
+        ));
+        let driver = std::sync::Arc::new(Refusing {
+            off: true,
+            ..Default::default()
+        });
+        let st = AppState::with_drivers(
+            "antares-history-off".into(),
+            store,
+            driver.clone(),
+            "memory",
+        );
+        assert!(!st.record_locally());
+        let tenant = TenantId::new("t").expect("tenant");
+        mirror_delete_entity(&st, &tenant, "urn:ngsi-ld:T:off").await;
+        assert_eq!(driver.calls.load(Ordering::Relaxed), 0);
+    }
+
+    /// A request that changed an Entity on a broker without a matcher hook
+    /// answers as usual; a hook that panics surfaces as the request's panic,
+    /// which the router's catch-panic layer answers.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_layer_hands_changes_to_the_hook_or_drops_them() {
+        use tower::ServiceExt;
+        let app = |st: AppState| {
+            axum::Router::new()
+                .route(
+                    "/w",
+                    axum::routing::post(|| async {
+                        let change = (
+                            "urn:ngsi-ld:T:c".to_owned(),
+                            None,
+                            Some(serde_json::json!({})),
+                        );
+                        buffer_change(change).is_none().to_string()
+                    }),
+                )
+                .layer(axum::middleware::from_fn_with_state(st, layer))
+        };
+        let req = || {
+            axum::http::Request::post("/w")
+                .body(axum::body::Body::empty())
+                .expect("request")
+        };
+        let st = AppState::new("antares-history-nohook".into());
+        assert!(st.change_flush.is_none());
+        let resp = app(st).oneshot(req()).await.expect("infallible");
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .expect("body")
+            .to_bytes();
+        assert_eq!(&body[..], b"true", "the change was buffered");
+        let mut st = AppState::new("antares-history-badhook".into());
+        st.change_flush = Some(std::sync::Arc::new(|_| panic!("the matcher hook broke")));
+        let call = tokio::spawn(app(st).oneshot(req()));
+        let err = call
+            .await
+            .expect_err("the hook's panic reaches the request");
+        assert!(err.is_panic());
+    }
+
+    /// A request dropped where no runtime is left to hand its writes on
+    /// still empties its buffers, quietly.
+    #[test]
+    fn a_pending_request_dropped_without_a_runtime_lets_go() {
+        let buffer: Shared<TemporalEvent> = Shared::default();
+        lock(&buffer).push(ev("urn:ngsi-ld:T:late"));
+        let pending = Pending {
+            st: AppState::new("antares-history-noruntime".into()),
+            buffer: buffer.clone(),
+            changes: Shared::default(),
+        };
+        drop(pending);
+        assert!(lock(&buffer).is_empty());
+    }
+
     /// The caller's task-locals reach the handler through the layer: a
     /// view's policy scope and an in-process call's depth are read there.
     #[tokio::test(flavor = "multi_thread")]
@@ -1204,13 +1769,7 @@ mod tests {
         let app = axum::Router::new()
             .route(
                 "/r",
-                axum::routing::get(|| async {
-                    if crate::state::in_process_depth() == 1 {
-                        axum::http::StatusCode::NO_CONTENT
-                    } else {
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
-                    }
-                }),
+                axum::routing::get(|| async { crate::state::in_process_depth().to_string() }),
             )
             .layer(axum::middleware::from_fn_with_state(st, layer));
         let req = axum::http::Request::get("/r")
@@ -1220,7 +1779,11 @@ mod tests {
             .scope(1, app.oneshot(req))
             .await
             .expect("infallible");
-        assert_eq!(resp.status(), axum::http::StatusCode::NO_CONTENT);
+        let body = http_body_util::BodyExt::collect(resp.into_body())
+            .await
+            .expect("body")
+            .to_bytes();
+        assert_eq!(&body[..], b"1", "the handler ran at the caller's depth");
     }
 
     /// S4-07: a client that hangs up after the store committed its write
@@ -1260,11 +1823,10 @@ mod tests {
                         buffer_change((ID.to_owned(), None, Some(serde_json::json!({})))).is_none()
                     );
                     // the write is committed; the client goes before the reply
-                    if let Some(tx) = committed_tx.lock().ok().and_then(|mut g| g.take()) {
-                        let _ = tx.send(());
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    axum::http::StatusCode::NO_CONTENT
+                    let tx = committed_tx.lock().ok().and_then(|mut g| g.take());
+                    let _ = tx.map(|tx| tx.send(()));
+                    // never answers: the client is gone first
+                    std::future::pending::<axum::http::StatusCode>().await
                 }),
             )
             .layer(axum::middleware::from_fn_with_state(st.clone(), layer));

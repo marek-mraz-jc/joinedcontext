@@ -178,6 +178,53 @@ async fn the_view_surfaces_share_the_view_root() {
     assert!(err.contains("/x/views"), "{err}");
 }
 
+/// A view surface that streams one route and answers another the usual way.
+struct ViewStream(&'static str);
+
+impl ApiSurface for ViewStream {
+    fn name(&self) -> &str {
+        self.0
+    }
+    fn prefix(&self) -> &str {
+        "/x/views"
+    }
+    fn router(&self, _st: AppState) -> Router<AppState> {
+        Router::new().route(
+            &format!("/{{view}}/{}-walled", self.0),
+            get(|| async { "walled" }),
+        )
+    }
+    fn streaming_router(&self, _st: AppState) -> Option<Router<AppState>> {
+        let answer = self.0;
+        Some(Router::new().route(
+            &format!("/{{view}}/{answer}"),
+            get(move || async move { answer }),
+        ))
+    }
+    fn version_info(&self) -> Value {
+        Value::Null
+    }
+}
+
+/// S4-08: the streaming routes of every view surface are merged beside the
+/// walled ones under the one view root, each behind the same door.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_view_surfaces_stream_beside_their_walled_routes() {
+    let st = AppState::new("surfaces".into())
+        .with_surface(Box::new(ViewStream("upload")))
+        .and_then(|st| st.with_surface(Box::new(ViewStream("feed"))))
+        .and_then(|st| st.with_surface(Box::new(ViewSub("views", "ngsi-ld"))))
+        .expect("view surfaces share /x/views");
+    for (path, answer) in [
+        ("/x/views/cars/upload", "upload"),
+        ("/x/views/cars/feed", "feed"),
+        ("/x/views/cars/ngsi-ld", "ngsi-ld"),
+        ("/x/views/cars/feed-walled", "walled"),
+    ] {
+        assert_eq!(get_path(&st, path).await, (StatusCode::OK, answer.into()));
+    }
+}
+
 /// `/q/health` names every mounted surface, so an operator can see what a
 /// binary serves beyond the NGSI-LD API.
 #[tokio::test(flavor = "multi_thread")]

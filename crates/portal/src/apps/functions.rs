@@ -55,8 +55,10 @@ pub(super) async fn call(
         return not_found();
     }
     let token = edge_token(&state, &headers);
-    if token.is_some() && !session_bound_token(&state, &headers).await {
-        return ApiError::Forbidden.into_response();
+    if token.is_some() {
+        if let Err(refused) = session_bound_token(&state, &headers, &name).await {
+            return refused.into_response();
+        }
     }
     let Some(root) = app_root(
         state.config.apps_dir.as_deref().map(FsPath::new),
@@ -141,15 +143,57 @@ pub(crate) fn entry(module: &str, export: &str) -> String {
     )
 }
 
-/// Whether an App door's write echoes the token of the session the request carries (RTE-12):
-/// the person the edge's token names, else the double-submit cookie of an anonymous visitor.
-pub(super) async fn session_bound_token(state: &AppState, headers: &HeaderMap) -> bool {
-    let session = crate::auth::csrf::session_of(state, headers).await;
-    let bound = session.as_ref().map(|session| crate::auth::csrf::Bound {
-        session,
-        config: &state.config,
-    });
-    crate::auth::csrf::double_submitted(headers, bound)
+/// The signed-in person an App door's CSRF token is bound to (RTE-12, S1-52), with the audience
+/// of the token that names them. The edge's token on an App's host is the App's own (`aud
+/// app-{name}`), which names no Portal session: it binds to its verified subject and that
+/// audience, so a token minted for one person or one App is refused for another. Else the
+/// Portal's session (its edge client's token, or its cookie); `None` for an anonymous visitor.
+/// An edge token that verifies neither way is `401`: it names nobody, so no pair may stand in.
+pub(super) async fn signed_in(
+    state: &AppState,
+    headers: &HeaderMap,
+    app: &str,
+) -> Result<Option<(crate::auth::session::Session, Option<String>)>, ApiError> {
+    let token = edge_token(state, headers);
+    if let Some(token) = &token {
+        if let Ok((session, _)) = crate::auth::realms::verify_app_token(state, app, token).await {
+            if state.is_revoked(&session) {
+                return Err(ApiError::Unauthorized);
+            }
+            return Ok(Some((
+                session,
+                Some(crate::reconciler::app_clients::client_id(app)),
+            )));
+        }
+    }
+    match crate::auth::csrf::session_of(state, headers).await {
+        Some(session) => Ok(Some((session, None))),
+        None if token.is_some() => Err(ApiError::Unauthorized),
+        None => Ok(None),
+    }
+}
+
+/// Whether an App door's write echoes the token of the person [`signed_in`] names, else the
+/// double-submit cookie of an anonymous visitor: `403` without it, `401` for an edge token
+/// that names nobody.
+pub(super) async fn session_bound_token(
+    state: &AppState,
+    headers: &HeaderMap,
+    app: &str,
+) -> Result<(), ApiError> {
+    let signed_in = signed_in(state, headers, app).await?;
+    let bound = signed_in
+        .as_ref()
+        .map(|(session, audience)| crate::auth::csrf::Bound {
+            session,
+            config: &state.config,
+            audience: audience.as_deref(),
+        });
+    if crate::auth::csrf::double_submitted(headers, bound) {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden)
+    }
 }
 
 /// The token the edge set for this request, and only when this Portal trusts the edge.

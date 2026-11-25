@@ -384,14 +384,24 @@ async fn scoped<'c>(
 /// The site row of `source` in `project`, `404` when it has not been crawled.
 async fn site(state: &ChatState, project: &str, source: &str) -> Result<i64, Refusal> {
     let mut tx = scoped(state, project).await?;
+    let id = site_in(&mut tx, project, source).await?;
+    let _ = tx.rollback().await;
+    Ok(id)
+}
+
+/// [`site`] read in the caller's scoped transaction, so a handler holds one connection.
+async fn site_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    project: &str,
+    source: &str,
+) -> Result<i64, Refusal> {
     let id: Option<i64> =
         sqlx::query_scalar("SELECT id FROM sites WHERE project = $1 AND source = $2")
             .bind(project)
             .bind(source)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(|err| Box::new(failed(err)))?;
-    tx.rollback().await.map_err(|err| Box::new(failed(err)))?;
     id.ok_or_else(|| {
         Box::new(problem(
             404,
@@ -489,12 +499,12 @@ async fn errors(
     if let Err(refused) = the_portal(&state, &headers).await {
         return *refused;
     }
-    let site = match site(&state, &project, &source).await {
-        Ok(site) => site,
-        Err(refused) => return *refused,
-    };
     let mut tx = match scoped(&state, &project).await {
         Ok(tx) => tx,
+        Err(refused) => return *refused,
+    };
+    let site = match site_in(&mut tx, &project, &source).await {
+        Ok(site) => site,
         Err(refused) => return *refused,
     };
     let rows: Result<Vec<(String, String, Option<String>)>, _> = sqlx::query_as(
@@ -580,12 +590,12 @@ async fn pages(
     if let Err(refused) = the_portal(&state, &headers).await {
         return *refused;
     }
-    let site = match site(&state, &project, &source).await {
-        Ok(site) => site,
-        Err(refused) => return *refused,
-    };
     let mut tx = match scoped(&state, &project).await {
         Ok(tx) => tx,
+        Err(refused) => return *refused,
+    };
+    let site = match site_in(&mut tx, &project, &source).await {
+        Ok(site) => site,
         Err(refused) => return *refused,
     };
     let q = level.q.as_deref().map(str::trim);
@@ -651,12 +661,12 @@ async fn documents(
     if let Err(refused) = the_portal(&state, &headers).await {
         return *refused;
     }
-    let site = match site(&state, &project, &source).await {
-        Ok(site) => site,
-        Err(refused) => return *refused,
-    };
     let mut tx = match scoped(&state, &project).await {
         Ok(tx) => tx,
+        Err(refused) => return *refused,
+    };
+    let site = match site_in(&mut tx, &project, &source).await {
+        Ok(site) => site,
         Err(refused) => return *refused,
     };
     let sql = format!(
@@ -733,13 +743,11 @@ async fn search(
         return *refused;
     }
     let scope = [(project, vec![source])];
-    let found = match state.embedder.query(q).await {
-        Ok(vector) => {
-            super::documents::ranked(&state, &scope, q, &vector, (None, &[]), limit, false).await
-        }
-        Err(err) => Err(err),
+    let found = async {
+        let vector = state.embedder.query(q).await?;
+        super::documents::ranked(&state, &scope, q, &vector, (None, &[]), limit, false).await
     };
-    match found {
+    match found.await {
         Ok(hits) => Json(json!({"hits": hits})).into_response(),
         Err(err) => failed(err),
     }
@@ -753,12 +761,12 @@ async fn links(
     if let Err(refused) = the_portal(&state, &headers).await {
         return *refused;
     }
-    let site = match site(&state, &project, &source).await {
-        Ok(site) => site,
-        Err(refused) => return *refused,
-    };
     let mut tx = match scoped(&state, &project).await {
         Ok(tx) => tx,
+        Err(refused) => return *refused,
+    };
+    let site = match site_in(&mut tx, &project, &source).await {
+        Ok(site) => site,
         Err(refused) => return *refused,
     };
     let found: Option<i64> =
@@ -806,17 +814,17 @@ async fn passages(
     if let Err(refused) = the_portal(&state, &headers).await {
         return *refused;
     }
-    let site = match site(&state, &project, &source).await {
+    let mut tx = match scoped(&state, &project).await {
+        Ok(tx) => tx,
+        Err(refused) => return *refused,
+    };
+    let site = match site_in(&mut tx, &project, &source).await {
         Ok(site) => site,
         Err(refused) => return *refused,
     };
     if owner.page.is_some() == owner.document.is_some() {
         return problem(400, "name one page or one document: ?page= or ?document=");
     }
-    let mut tx = match scoped(&state, &project).await {
-        Ok(tx) => tx,
-        Err(refused) => return *refused,
-    };
     let rows: Vec<(i32, String, Option<String>, String)> = match sqlx::query_as(
         "SELECT ordinal, text, lang, url FROM chunks WHERE site_id = $1 \
          AND page_id IS NOT DISTINCT FROM $2 AND document_id IS NOT DISTINCT FROM $3 ORDER BY ordinal LIMIT 200",

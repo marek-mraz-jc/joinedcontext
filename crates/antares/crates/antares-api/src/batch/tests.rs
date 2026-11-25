@@ -422,6 +422,196 @@ fn same_but_stamps_skips_only_the_merge_stamps() {
     more["q"] = json!([{"type": "Property", "value": 1}]);
     assert!(!super::write::same_but_stamps(&doc("1", "a"), &more));
     assert!(!super::write::same_but_stamps(&more, &doc("1", "a")));
+    // values that are no Entity compare as values
+    assert!(super::write::same_but_stamps(&json!(1), &json!(1)));
+    assert!(!super::write::same_but_stamps(
+        &json!([1]),
+        &json!({"a": 1})
+    ));
+}
+
+/// 6.3.4 / 6.3.5 / 5.6.7.4 at the body: an unsupported media type is 415,
+/// a body that is no JSON is InvalidRequest, an ld+json batch carrying a
+/// Link header is BadRequestData; per item, an ld+json entry without
+/// `@context` and an application/json entry with one fail alone, and an
+/// inline `@context` object counts toward no fetch ceiling.
+#[tokio::test]
+async fn batch_body_media_type_and_context_rules() {
+    let st = AppState::new("antares-batch-parse".into());
+    let tenant = antares_model::TenantId::default();
+    let hdrs = |pairs: &[(&'static str, &'static str)]| {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.append(*k, axum::http::HeaderValue::from_static(v));
+        }
+        h
+    };
+    let status = |r: ApiResult<Vec<BatchItem>>| {
+        r.expect_err("the whole batch is refused")
+            .into_response()
+            .status()
+    };
+    let one = br#"[{"id":"urn:ngsi-ld:T:1","type":"T"}]"#;
+    assert_eq!(
+        status(parse_batch(&st, &tenant, &hdrs(&[("content-type", "text/plain")]), one).await),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+    let json = hdrs(&[("content-type", "application/json")]);
+    let refused = parse_batch(&st, &tenant, &json, b"[{").await;
+    let body = body_json(refused.expect_err("no JSON").into_response()).await;
+    assert_eq!(
+        body["type"],
+        json!("https://uri.etsi.org/ngsi-ld/errors/InvalidRequest"),
+        "{body}"
+    );
+    let ld_link = hdrs(&[
+        ("content-type", "application/ld+json"),
+        (
+            "link",
+            "<https://example.org/ctx.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"",
+        ),
+    ]);
+    assert_eq!(
+        status(parse_batch(&st, &tenant, &ld_link, one).await),
+        StatusCode::BAD_REQUEST
+    );
+
+    let ld = hdrs(&[("content-type", "application/ld+json")]);
+    let items = parse_batch(
+        &st,
+        &tenant,
+        &ld,
+        br#"[{"id":"urn:ngsi-ld:T:1","type":"T"},
+             {"id":"urn:ngsi-ld:T:2","type":"T","@context":{"T":"https://example.org/T"}}]"#,
+    )
+    .await
+    .expect("per-item outcomes");
+    assert_eq!(items.len(), 2);
+    let missing = items[0]
+        .1
+        .as_ref()
+        .expect_err("an ld+json item needs @context");
+    assert!(
+        format!("{missing:?}").contains("without @context"),
+        "{missing:?}"
+    );
+    let inline = items[1].1.as_ref().expect("an inline @context resolves");
+    assert_eq!(inline.expand_key("T"), "https://example.org/T");
+
+    let items = parse_batch(
+        &st,
+        &tenant,
+        &json,
+        br#"[{"id":"urn:ngsi-ld:T:3","type":"T","@context":"https://example.org/c.jsonld"}]"#,
+    )
+    .await
+    .expect("per-item outcomes");
+    let carried = items[0]
+        .1
+        .as_ref()
+        .expect_err("a JSON item may not carry @context");
+    assert!(
+        format!("{carried:?}").contains("carries @context"),
+        "{carried:?}"
+    );
+}
+
+/// 5.2.17: a forwarded part's status names its error type; a 207 keeps
+/// the errors of the Entities this broker sent and drops any other, and
+/// any status that is no success puts every sent id in E.
+#[test]
+fn a_remote_batch_answer_merges_only_what_was_sent() {
+    use super::forward::{err_remote, merge_remote_batch};
+    for (status, kind) in [
+        (400, "BadRequestData"),
+        (404, "ResourceNotFound"),
+        (409, "AlreadyExists"),
+        (422, "OperationNotSupported"),
+        (503, "InternalError"),
+    ] {
+        let e = err_remote(None, status, "d");
+        assert_eq!(e["entityId"], "unknown");
+        assert_eq!(
+            e["error"]["type"],
+            json!(format!("https://uri.etsi.org/ngsi-ld/errors/{kind}"))
+        );
+    }
+    let sent = vec!["urn:a".to_owned(), "urn:b".to_owned()];
+    let (mut ok, mut err) = (Vec::new(), Vec::new());
+    merge_remote_batch(
+        207,
+        &json!({"success": ["urn:a", "urn:other"],
+                "errors": [{"entityId": "urn:b", "error": {"status": 409}},
+                           {"entityId": "urn:stranger", "error": {"status": 400}},
+                           {"error": {"status": 400}}]}),
+        &sent,
+        true,
+        &mut ok,
+        &mut err,
+    );
+    assert_eq!(ok, vec![("urn:a".to_owned(), true)]);
+    assert_eq!(err.len(), 1, "{err:?}");
+    assert_eq!(err[0]["entityId"], "urn:b");
+    assert_eq!(err[0]["error"]["status"], 409);
+
+    let (mut ok, mut err) = (Vec::new(), Vec::new());
+    merge_remote_batch(502, &Value::Null, &sent, false, &mut ok, &mut err);
+    assert!(ok.is_empty());
+    let ids: Vec<&Value> = err.iter().map(|e| &e["entityId"]).collect();
+    assert_eq!(ids, vec![&json!("urn:a"), &json!("urn:b")]);
+    assert_eq!(
+        err[0]["error"]["detail"],
+        "forwarded batch operation returned 502"
+    );
+
+    // a 207 naming neither list puts nothing in S or E: what the source
+    // did with each id is not known, and nothing is invented for it
+    let (mut ok, mut err) = (Vec::new(), Vec::new());
+    merge_remote_batch(
+        207,
+        &json!({"success": "urn:a", "errors": {}}),
+        &sent,
+        true,
+        &mut ok,
+        &mut err,
+    );
+    assert!(ok.is_empty() && err.is_empty(), "{ok:?} {err:?}");
+}
+
+/// 4.3.6.1: the matching input of a batch skips an entry that is no
+/// object or whose @context failed, and a `type` that is neither a string
+/// nor an array names no type.
+#[test]
+fn the_batch_spec_skips_what_cannot_be_matched() {
+    let ctx = antares_jsonld::Loader::new().core();
+    let items: Vec<BatchItem> = vec![
+        (json!("not an object"), Ok(ctx.clone())),
+        (
+            json!({"id": "urn:x"}),
+            Err(NgsiError::BadRequestData("bad @context".into()).into()),
+        ),
+        (
+            json!({"id": "urn:y", "type": 7, "speed": 1}),
+            Ok(ctx.clone()),
+        ),
+        (json!({"id": "urn:z", "type": ["A", 3]}), Ok(ctx.clone())),
+        (json!({"type": "B"}), Ok(ctx)),
+    ];
+    let (spec, fwd) = super::forward::batch_spec(&items);
+    assert_eq!(fwd.len(), 3, "only the three usable entries are forwarded");
+    assert_eq!(spec.ids, Some(vec!["urn:y".to_owned(), "urn:z".to_owned()]));
+    assert_eq!(
+        spec.types.as_ref().map(Vec::len),
+        Some(2),
+        "an entry without an id still names its type: {:?}",
+        spec.types
+    );
+    assert_eq!(
+        spec.attrs.as_ref().map(Vec::len),
+        Some(1),
+        "{:?}",
+        spec.attrs
+    );
 }
 
 /// 4.22 + 5.6.9.4 end to end. 5.6.9.4 (PDF p.175): "For each of the
@@ -757,4 +947,155 @@ async fn upsert_update_mode_through_a_view_replaces_the_named_instance() {
     assert_eq!(status, StatusCode::NO_CONTENT, "{}", body_json(resp).await);
     let doc = get_entity(&plain, &format!("{id}?options=sysAttrs")).await;
     assert_instances_replaced(&before, &doc);
+}
+
+/// ADR-0023 rule 7 for a replace-upsert through a view: an in-view Entity is
+/// replaced, its createdAt kept, once however often the batch names it; one
+/// holding an Attribute the view hides is refused (threat-model D6); one out
+/// of the view is never overwritten and answers as a taken id does.
+#[cfg(feature = "views")]
+#[tokio::test]
+async fn a_replace_upsert_through_a_view_keeps_to_the_view() {
+    use crate::policy::Rule;
+    use crate::views::CompiledView;
+    let st = AppState::new("antares-test".into());
+    let plain = crate::router(st.clone());
+    let b = |id: &str, p1: i64| {
+        json!({"id": format!("urn:ngsi-ld:Building:{id}"), "type": "Building",
+            "p1": {"type": "Property", "value": p1}})
+    };
+    let mut hidden = b("hidden", 1);
+    hidden["p2"] = json!({"type": "Property", "value": 1});
+    let seed = json!([b("in", 1), hidden, b("out", -1), b("in2", 1)]);
+    let resp = post(&plain, "/ngsi-ld/v1/entityOperations/create", seed).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let before = get_entity(&plain, "urn:ngsi-ld:Building:in?options=sysAttrs").await;
+    let view = CompiledView::new(
+        &["Building".into()],
+        Some(antares_ql::parse_q("p1>0").expect("q")),
+        None,
+        None,
+        vec![Rule {
+            types: vec!["Building".into()],
+            attributes: vec!["p1".into(), "near".into()],
+            ..Rule::default()
+        }],
+    )
+    .expect("a view");
+    let viewed = crate::router(st.with_view(std::sync::Arc::new(view)));
+    let near = |mut doc: Value, to: &str| {
+        doc["near"] =
+            json!({"type": "Relationship", "object": format!("urn:ngsi-ld:Building:{to}")});
+        doc
+    };
+    let batch = json!([
+        b("in", 2),
+        near(b("in", 3), "in2"),
+        b("hidden", 2),
+        b("out", 5),
+        near(b("far", 4), "out")
+    ]);
+    let resp = post(&viewed, "/ngsi-ld/v1/entityOperations/upsert", batch).await;
+    assert_eq!(resp.status(), StatusCode::MULTI_STATUS);
+    let out = body_json(resp).await;
+    assert_eq!(out["success"], json!(["urn:ngsi-ld:Building:in"]), "{out}");
+    let error = |id: &str| {
+        out["errors"]
+            .as_array()
+            .and_then(|e| e.iter().find(|e| e["entityId"] == id))
+            .map(|e| e["error"]["status"].clone())
+    };
+    assert_eq!(
+        error("urn:ngsi-ld:Building:hidden"),
+        Some(json!(403)),
+        "{out}"
+    );
+    assert_eq!(error("urn:ngsi-ld:Building:out"), Some(json!(409)), "{out}");
+    // a Relationship to an Entity the view does not show is refused
+    assert_eq!(error("urn:ngsi-ld:Building:far"), Some(json!(403)), "{out}");
+    assert_eq!(
+        get_status(&plain, "/ngsi-ld/v1/entities/urn:ngsi-ld:Building:far").await,
+        StatusCode::NOT_FOUND
+    );
+    let doc = get_entity(&plain, "urn:ngsi-ld:Building:in?options=sysAttrs").await;
+    assert_eq!(doc["p1"]["value"], 3, "{doc}");
+    assert_eq!(doc["near"]["object"], "urn:ngsi-ld:Building:in2", "{doc}");
+    assert_eq!(doc["createdAt"], before["createdAt"], "{doc}");
+    let out_doc = get_entity(&plain, "urn:ngsi-ld:Building:out").await;
+    assert_eq!(out_doc["p1"]["value"], -1, "{out_doc}");
+    let hidden_doc = get_entity(&plain, "urn:ngsi-ld:Building:hidden").await;
+    assert_eq!(hidden_doc["p2"]["value"], 1, "{hidden_doc}");
+    // nor does a batch delete through the view reach an Entity it hides
+    let resp = post(
+        &viewed,
+        "/ngsi-ld/v1/entityOperations/delete",
+        json!(["urn:ngsi-ld:Building:out"]),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::MULTI_STATUS);
+    let out = body_json(resp).await;
+    assert_eq!(out["errors"][0]["error"]["status"], 404, "{out}");
+    assert_eq!(
+        get_status(&plain, "/ngsi-ld/v1/entities/urn:ngsi-ld:Building:out").await,
+        StatusCode::OK
+    );
+}
+
+/// Under a policy engine the batch reads every member's stored Entity and,
+/// through a view, every Relationship target it names, once, before the
+/// first write (T-4085); a target it read and does not write decides the
+/// view's Relationship check from that read. A member without an id is
+/// shown by no stored Entity and reported by the local arm.
+#[cfg(feature = "views")]
+#[tokio::test]
+async fn a_policed_batch_through_a_view_reads_its_targets_once() {
+    use crate::policy::Rule;
+    use crate::views::CompiledView;
+    let st = AppState::new("antares-test".into())
+        .with_policy(std::sync::Arc::new(crate::policy::AllowAll));
+    let plain = crate::router(st.clone());
+    let seed = json!([{"id": "urn:ngsi-ld:Building:t", "type": "Building",
+        "p1": {"type": "Property", "value": 1}}]);
+    let resp = post(&plain, "/ngsi-ld/v1/entityOperations/create", seed).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = post(
+        &plain,
+        "/ngsi-ld/v1/entityOperations/create",
+        json!([{"type": "Building"}]),
+    )
+    .await;
+    let status = resp.status();
+    let out = body_json(resp).await;
+    assert_eq!(status, StatusCode::MULTI_STATUS, "{out}");
+    assert_eq!(
+        out["errors"][0]["error"]["detail"], "entity id is required",
+        "{out}"
+    );
+    // an entry that is no object is shown to the engine by nothing
+    let resp = post(&plain, "/ngsi-ld/v1/entityOperations/create", json!([7])).await;
+    let status = resp.status();
+    let out = body_json(resp).await;
+    assert_eq!(status, StatusCode::MULTI_STATUS, "{out}");
+    assert_eq!(out["success"], json!([]), "{out}");
+    let view = CompiledView::new(
+        &["Building".into()],
+        Some(antares_ql::parse_q("p1>0").expect("q")),
+        None,
+        None,
+        vec![Rule {
+            types: vec!["Building".into()],
+            attributes: vec!["p1".into(), "near".into()],
+            ..Rule::default()
+        }],
+    )
+    .expect("a view");
+    let viewed = crate::router(st.with_view(std::sync::Arc::new(view)));
+    let batch = json!([{"id": "urn:ngsi-ld:Building:n", "type": "Building",
+        "p1": {"type": "Property", "value": 2},
+        "near": {"type": "Relationship", "object": "urn:ngsi-ld:Building:t"}}]);
+    let resp = post(&viewed, "/ngsi-ld/v1/entityOperations/upsert", batch).await;
+    let status = resp.status();
+    assert_eq!(status, StatusCode::CREATED, "{}", body_json(resp).await);
+    let doc = get_entity(&plain, "urn:ngsi-ld:Building:n").await;
+    assert_eq!(doc["near"]["object"], "urn:ngsi-ld:Building:t", "{doc}");
 }

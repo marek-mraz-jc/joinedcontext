@@ -256,18 +256,16 @@ fn aggregate_attr(
     timeprop: &str,
 ) -> Result<Option<Map<String, Value>>, NgsiError> {
     let (mut times, class) = timed_rows(instances, timeprop);
-    // Set alongside the first instance, and `times` is non-empty then.
-    let Some(class) = class.filter(|_| !times.is_empty()) else {
+    times.sort_by_key(|(t, _)| *t);
+    // `class` is set alongside the first timed instance, which may carry no
+    // data member and so leave `times` empty.
+    let (Some(class), Some(&(earliest, _)), Some(&(last_at, _))) =
+        (class, times.first(), times.last())
+    else {
         return Ok(None);
     };
     check_methods(k, class, held, r, ctx)?;
-    times.sort_by_key(|(t, _)| *t);
-    let Some(whole) = whole_range(&times, tq) else {
-        return Ok(None);
-    };
-    let Some(&(earliest, _)) = times.first() else {
-        return Ok(None);
-    };
+    let whole = whole_range(earliest, last_at, tq);
     let anchor = tq.and_then(|tq| moment(&tq.time_at)).unwrap_or(earliest);
     // the row carried in from before the window holds from its start
     if held {
@@ -350,12 +348,12 @@ fn check_methods(
 /// "P0D") is valid and is interpreted as a duration spanning the whole
 /// time range specified by the temporal query." The query names one
 /// edge of that range; 4.11 leaves the other open for `before` and
-/// `after`, so the data closes the open one. `times` is sorted.
-fn whole_range(times: &Rows<'_>, tq: Option<&TemporalQ>) -> Option<Bucket> {
+/// `after`, so the data closes the open one; `first` and `last_at` are the earliest
+/// and the latest instance.
+fn whole_range(first: Moment, last_at: Moment, tq: Option<&TemporalQ>) -> Bucket {
     let at = moment;
-    let (&(first, _), &(last_at, _)) = (times.first()?, times.last()?);
     let last = last_at.plus_secs(1).unwrap_or(last_at);
-    Some(match tq {
+    match tq {
         Some(q) if q.timerel == "before" => (first, at(&q.time_at).unwrap_or(last)),
         Some(q) if q.timerel == "between" => (
             at(&q.time_at).unwrap_or(first),
@@ -363,7 +361,7 @@ fn whole_range(times: &Rows<'_>, tq: Option<&TemporalQ>) -> Option<Bucket> {
         ),
         Some(q) if q.timerel == "after" => (at(&q.time_at).unwrap_or(first), last),
         _ => (first, last),
-    })
+    }
 }
 
 /// The `sc`-second period from `anchor` holding `t`. Checked throughout:
@@ -644,6 +642,157 @@ pub(super) fn aggregate_bucket(method: &str, class: AggrClass, vals: &[&Value]) 
         }
         "sumsq" => finite(nums.iter().map(|v| v * v).sum::<f64>()),
         _ => Value::Null,
+    }
+}
+
+#[cfg(test)]
+mod edges {
+    use super::*;
+    use serde_json::json;
+
+    fn windowed(instances: Vec<Value>, held: bool) -> Windowed {
+        let mut attrs = std::collections::BTreeMap::new();
+        attrs.insert("speed".to_owned(), instances);
+        Windowed {
+            attrs,
+            max_per_attr: 10,
+            ts_min: None,
+            ts_max: None,
+            truncated: false,
+            cut_served: None,
+            more: false,
+            held: if held {
+                std::iter::once("speed".to_owned()).collect()
+            } else {
+                Default::default()
+            },
+        }
+    }
+
+    fn run(
+        w: &Windowed,
+        tq: Option<&TemporalQ>,
+        methods: &[&str],
+        period: AggrPeriod,
+    ) -> Map<String, Value> {
+        let r = TRepr {
+            aggregated: true,
+            aggr_methods: methods.iter().map(|m| (*m).to_owned()).collect(),
+            aggr_period: period,
+            ..Default::default()
+        };
+        render_aggregated(w, tq, &r, &Context::default(), "observedAt").expect("aggregated")
+    }
+
+    /// A valueType names the datatype only of a string value; a number with
+    /// a stray valueType is a number (4.5.2.2).
+    #[test]
+    fn a_value_type_beside_a_non_string_value_names_no_datatype() {
+        let inst = json!({"type": "Property", "value": 5, "valueType": "DateTime"});
+        assert_eq!(value_datatype(&inst), None);
+        assert_eq!(classify_instance(&inst), AggrClass::Number);
+        let s = json!({"type": "Property", "value": "2020-01-01", "valueType": "Date"});
+        assert_eq!(value_datatype(&s), Some("Date"));
+    }
+
+    /// Table 4.5.19.1: every instance shape lands in its class, and an
+    /// unknown method is eligible for nothing.
+    #[test]
+    fn instance_shapes_classify_and_unknown_methods_are_ineligible() {
+        assert_eq!(
+            classify_instance(&json!({"valueList": [1, 2]})),
+            AggrClass::List
+        );
+        assert_eq!(
+            classify_instance(&json!({"objectList": ["urn:a"]})),
+            AggrClass::List
+        );
+        assert_eq!(
+            classify_instance(&json!({"value": [1, 2, 3]})),
+            AggrClass::List
+        );
+        assert_eq!(
+            classify_instance(&json!({"value": null})),
+            AggrClass::Opaque
+        );
+        assert_eq!(
+            classify_instance(&json!({"type": "Property"})),
+            AggrClass::Opaque
+        );
+        assert!(!aggr_eligible(AggrClass::Number, "median"));
+        assert!(raw_of(&json!({"type": "Property", "observedAt": "x"})).is_none());
+        assert_eq!(numeric_of(AggrClass::Number, &json!(true)), Some(1.0));
+        assert_eq!(numeric_of(AggrClass::Number, &json!(false)), Some(0.0));
+    }
+
+    /// An attribute with no instance carrying the time property, or whose
+    /// timed instances carry no data member, has no aggregated member; the
+    /// others still answer.
+    #[test]
+    fn an_attribute_without_timed_data_is_left_out() {
+        let mut w = windowed(vec![json!({"type": "Property", "value": 1})], false);
+        w.attrs.insert(
+            "bare".to_owned(),
+            vec![json!({"type": "Property", "observedAt": "2020-01-01T00:00:00Z"})],
+        );
+        w.attrs.insert(
+            "ok".to_owned(),
+            vec![json!({"type": "Property", "value": true, "observedAt": "2020-01-01T00:00:00Z"})],
+        );
+        let out = run(&w, None, &["avg"], AggrPeriod::Whole);
+        assert!(out.get("speed").is_none(), "no instance has observedAt");
+        assert!(
+            out.get("bare").is_none(),
+            "the timed instance holds no value"
+        );
+        assert_eq!(
+            out["ok"]["avg"][0][0],
+            json!(1.0),
+            "a boolean averages as 1"
+        );
+    }
+
+    /// ADR-N-054 2.5: an onChange attribute holds its value through a period
+    /// no row fell in, so `max` of that period is the value carried in.
+    #[test]
+    fn a_held_value_answers_the_periods_no_row_fell_in() {
+        let w = windowed(
+            vec![
+                json!({"type": "Property", "value": 4, "observedAt": "2020-01-01T00:00:00Z"}),
+                json!({"type": "Property", "value": 9, "observedAt": "2020-01-01T03:00:00Z"}),
+            ],
+            true,
+        );
+        let tq = TemporalQ {
+            timerel: "between".to_owned(),
+            time_at: "2020-01-01T00:00:00Z".to_owned(),
+            end_time_at: Some("2020-01-01T04:00:00Z".to_owned()),
+            timeproperty: "observedAt".to_owned(),
+        };
+        let out = run(&w, Some(&tq), &["max"], AggrPeriod::Seconds(3600));
+        let vals: Vec<Value> = out["speed"]["max"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|r| r[0].clone())
+            .collect();
+        assert_eq!(vals, vec![json!(4.0), json!(4.0), json!(4.0), json!(9.0)]);
+    }
+
+    /// A month period no date can close past the anchor opens the last
+    /// bucket; an instant before an unrepresentable start falls back to the
+    /// anchor's open bucket instead of panicking.
+    #[test]
+    fn a_month_period_past_the_calendar_opens_its_last_bucket() {
+        let m = |s: &str| moment(s).expect("instant");
+        let anchor = m("9999-06-01T00:00:00Z");
+        let (start, end) = months_bucket(anchor, 12, 0, m("9999-07-01T00:00:00Z"));
+        assert_eq!(start, anchor);
+        assert_eq!(end, Moment::OPEN, "a year past 9999 has no date");
+        // before the anchor, by a period no calendar holds
+        let anchor = m("2020-06-01T00:00:00Z");
+        let (start, end) = months_bucket(anchor, u32::MAX, 0, m("2020-01-01T00:00:00Z"));
+        assert_eq!((start, end), (anchor, Moment::OPEN));
     }
 }
 

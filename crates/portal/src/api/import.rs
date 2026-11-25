@@ -515,6 +515,10 @@ impl<'de> Deserialize<'de> for Unique {
     }
 }
 
+// Unique is read through deserialize_any only: serde_json and serde_norway answer null there
+// with visit_unit and an empty YAML document with visit_none, hand every string to visit_str,
+// and never call visit_some or visit_newtype_struct from it, so the visitor has none of those
+// (visit_string's default forwards to visit_str) (T-7837).
 struct UniqueVisitor;
 
 impl<'de> serde::de::Visitor<'de> for UniqueVisitor {
@@ -530,17 +534,6 @@ impl<'de> serde::de::Visitor<'de> for UniqueVisitor {
 
     fn visit_none<E>(self) -> Result<Self::Value, E> {
         Ok(Unique(Value::Null))
-    }
-
-    fn visit_some<D: serde::Deserializer<'de>>(self, inner: D) -> Result<Self::Value, D::Error> {
-        Self::Value::deserialize(inner)
-    }
-
-    fn visit_newtype_struct<D: serde::Deserializer<'de>>(
-        self,
-        inner: D,
-    ) -> Result<Self::Value, D::Error> {
-        Self::Value::deserialize(inner)
     }
 
     fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
@@ -561,10 +554,6 @@ impl<'de> serde::de::Visitor<'de> for UniqueVisitor {
 
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
         Ok(Unique(Value::String(value.to_owned())))
-    }
-
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-        Ok(Unique(Value::String(value)))
     }
 
     fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
@@ -2502,6 +2491,112 @@ mod verification_tests {
 mod upload_gate_tests {
     use super::*;
     use std::io::Write;
+    /// Every scalar either parser hands the visitor keeps its value: null, a negative and a
+    /// float number, an escaped string; a YAML tag is refused naming what a document is (T-7837).
+    #[test]
+    fn each_scalar_of_json_and_yaml_parses_to_its_value() {
+        let json = |text: &str| {
+            Unique::deserialize(&mut serde_json::Deserializer::from_str(text)).map(|u| u.0)
+        };
+        assert_eq!(json("null").ok(), Some(Value::Null));
+        assert_eq!(
+            json(r#"{"a":-3,"b":1.5,"c":"téxt","d":true,"e":[null]}"#).ok(),
+            Some(
+                serde_json::json!({ "a": -3, "b": 1.5, "c": "t\u{e9}xt", "d": true, "e": [null] })
+            )
+        );
+        let yaml = |text: &str| {
+            serde_norway::Deserializer::from_str(text)
+                .map(|doc| {
+                    Unique::deserialize(doc)
+                        .map(|u| u.0)
+                        .map_err(|e| e.to_string())
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            yaml("~\n---\na: -7\nb: 2.25\n"),
+            vec![
+                Ok(Value::Null),
+                Ok(serde_json::json!({ "a": -7, "b": 2.25 }))
+            ]
+        );
+        let tagged = yaml("!custom value\n");
+        assert!(
+            matches!(tagged.as_slice(), [Err(e)] if e.contains("a manifest document")),
+            "{tagged:?}"
+        );
+        let twice = yaml("a: 1\na: 2\n");
+        assert!(
+            matches!(twice.as_slice(), [Err(e)] if e.contains("set twice")),
+            "{twice:?}"
+        );
+    }
+
+    /// A null document is skipped; a YAML file that holds no manifest travels as it is, byte for
+    /// byte; a manifest-shaped document of no served shape is refused naming its file (T-7837).
+    #[test]
+    fn parse_text_skips_nulls_keeps_foreign_yaml_and_refuses_a_broken_manifest() {
+        let only_nulls = parse_text("~\n---\n~\n", Some("a.yaml")).expect("parses");
+        assert_eq!(
+            only_nulls.len(),
+            1,
+            "a non-empty file is kept as a native file"
+        );
+        assert!(only_nulls[0].envelope.is_none());
+        assert_eq!(only_nulls[0].content, "~\n---\n~\n");
+        let empty = parse_text("", Some("a.yaml")).expect("parses");
+        assert!(empty.is_empty());
+        let foreign = parse_text("input:\n  stdin: {}\n---\noutput: {}\n", Some("bento.yaml"))
+            .expect("parses");
+        assert_eq!(foreign.len(), 2);
+        assert!(foreign.iter().all(|item| item.envelope.is_none()));
+        let refused = parse_text("kind: Endpoint\nmetadata: 7\n", Some("bad.yaml"))
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(refused.contains("bad.yaml: not a manifest"), "{refused}");
+        let unnamed = parse_text(r#"{"kind":"Endpoint","metadata":7}"#, None)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(unnamed.contains("the upload: not a manifest"), "{unnamed}");
+        let broken = parse_text("{ not json", None)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(broken.contains("the JSON did not parse"), "{broken}");
+    }
+
+    /// Each gate a manifest can fail is named with the manifest's name, all at once (MF-24).
+    #[test]
+    fn refusals_name_each_gate_a_manifest_fails() {
+        let raw = serde_json::json!({
+            "apiVersion": "joinedcontext.com/v0",
+            "kind": "Endpoint",
+            "metadata": {
+                "name": "Bad_Name",
+                "annotations": { crate::apps::converge::BUILT_ANNOTATIONS[0]: "x" }
+            },
+            "spec": {}
+        });
+        let envelope: ResourceEnvelope = serde_json::from_value(raw.clone()).expect("an envelope");
+        let said = refusals(&envelope, &raw).join("\n");
+        assert!(
+            said.contains("apiVersion 'joinedcontext.com/v0' is not supported"),
+            "{said}"
+        );
+        assert!(said.contains("Bad_Name: "), "{said}");
+        assert!(said.contains("build lane"), "{said}");
+        let fine = serde_json::json!({
+            "apiVersion": resource::API_VERSION,
+            "kind": "Endpoint",
+            "metadata": { "name": "fine" },
+            "spec": {}
+        });
+        let envelope: ResourceEnvelope = serde_json::from_value(fine.clone()).expect("an envelope");
+        assert!(refusals(&envelope, &fine).is_empty());
+    }
 
     /// PF-10 (T-7815): a domain is dot-separated labels of letters, digits and inner hyphens.
     #[test]

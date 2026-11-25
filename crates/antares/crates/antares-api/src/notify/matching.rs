@@ -90,7 +90,9 @@ pub(super) fn diff(before: Option<&Value>, after: Option<&Value>) -> Vec<(String
         let bv = b.get(&k);
         let av = a.get(&k);
         match (bv, av) {
-            (None, Some(_)) => out.push((k, ChangeClass::Created)),
+            // every key comes from one side or both, so (None, None) is not
+            // a change any document makes
+            (None, _) => out.push((k, ChangeClass::Created)),
             (Some(_), None) => out.push((k, ChangeClass::Deleted)),
             (Some(x), Some(y)) => {
                 // instance-level deletion (by datasetId) counts as
@@ -115,7 +117,6 @@ pub(super) fn diff(before: Option<&Value>, after: Option<&Value>) -> Vec<(String
                     out.push((k, ChangeClass::Updated));
                 }
             }
-            _ => {}
         }
     }
     out

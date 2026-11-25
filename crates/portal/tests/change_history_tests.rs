@@ -286,6 +286,99 @@ struct Download {
     text: String,
 }
 
+/// A closed workspace names no resource in its branch: its headline is the first file of the
+/// project that still names one, the Project first; a deleted file is named by its path, a kept
+/// one by the head's manifest, and a merge request none of whose files names anything is not
+/// listed.
+#[tokio::test]
+async fn a_closed_workspace_is_headed_by_the_first_file_that_names_a_resource() {
+    let forge = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .and(query_param("$skip", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                closed(7, "workspace/w7", false, ""),
+                closed(6, "workspace/w6", false, ""),
+                closed(5, "workspace/w5", false, ""),
+            ]
+        })))
+        .mount(&forge)
+        .await;
+    for number in [5, 6, 7] {
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/PullRequests({number})/Reviews")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .mount(&forge)
+            .await;
+    }
+    let space = format!("projects/{PROJECT}/spaces/air/space.yaml");
+    files(
+        &forge,
+        5,
+        json!([
+            { "Filename": space, "Status": "deleted" },
+            { "Filename": format!("projects/{PROJECT}/project.yaml"), "Status": "deleted" }
+        ]),
+    )
+    .await;
+    files(
+        &forge,
+        6,
+        json!([{ "Filename": space, "Status": "modified" }]),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{space}'")))
+        .and(query_param("@r", "'head-6'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "b",
+            "Content": common::encode(&format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: air\n  namespace: {PROJECT}\nspec: {{}}\n"
+            ))
+        })))
+        .mount(&forge)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
+        .with_priority(9)
+        .mount(&forge)
+        .await;
+    files(
+        &forge,
+        7,
+        json!([{ "Filename": format!("projects/{PROJECT}/notes.yaml"), "Status": "added" }]),
+    )
+    .await;
+    let state = state_on(&forge);
+    state.mirror.upsert(envelope(
+        "Role",
+        "wide-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["ContextSpace", "Project"], "verbs": ["read"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "wide",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "anna@hel.fi" }], "role": "wide-reader", "scope": { "organization": "bb" } }),
+    ));
+
+    let (status, list) = history(&state, "anna", "").await;
+    assert_eq!(status, 200, "{list}");
+    assert_eq!(ids(&list), vec!["chg-00000006", "chg-00000005"], "{list}");
+    let kept = &list["items"][0]["summary"];
+    assert_eq!(kept["key"], json!("change.summary.update"), "{list}");
+    assert_eq!(kept["params"]["kind"], json!("ContextSpace"));
+    assert_eq!(kept["params"]["name"], json!("air"));
+    let deleted = &list["items"][1]["summary"];
+    assert_eq!(deleted["key"], json!("change.summary.delete"), "{list}");
+    assert_eq!(deleted["params"]["kind"], json!("Project"));
+    assert_eq!(deleted["params"]["name"], json!(PROJECT));
+}
+
 async fn export(state: &AppState, who: &str, query: &str) -> Download {
     use http_body_util::BodyExt;
     use tower::ServiceExt;

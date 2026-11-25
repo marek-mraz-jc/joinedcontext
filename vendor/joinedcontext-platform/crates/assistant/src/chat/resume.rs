@@ -204,6 +204,22 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_whose_log_lock_was_poisoned_still_takes_its_events_and_its_end() {
+        let turns = Turns::default();
+        let now = Instant::now();
+        let (_, turn) = turns.start("bb", "v1", now).expect("held");
+        let held = Arc::clone(&turn);
+        let _ = std::thread::spawn(move || {
+            let _guard = held.log.lock().expect("the lock is free");
+            panic!("poisons the log on purpose");
+        })
+        .join();
+        turn.push(&delta("a"));
+        turn.finish(now);
+        assert!(turn.log.lock().is_err());
+    }
+
+    #[test]
     fn a_turn_is_its_visitor_s_alone_and_goes_after_its_window() {
         let turns = Turns::default();
         let now = Instant::now();

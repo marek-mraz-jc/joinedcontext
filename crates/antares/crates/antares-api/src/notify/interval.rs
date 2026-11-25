@@ -5,7 +5,7 @@ use super::*;
 
 /// The pages of one sweep waiting to be delivered at once (F-R2ANT1-010).
 #[cfg(not(target_arch = "wasm32"))]
-const PAGES_IN_FLIGHT: usize = 4;
+pub(super) const PAGES_IN_FLIGHT: usize = 4;
 
 /// When an interval subscription is next due, in epoch millis: one
 /// `timeInterval` after the last Notification it sent (Table 5.2.14.2-1

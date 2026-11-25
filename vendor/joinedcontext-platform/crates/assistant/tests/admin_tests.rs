@@ -150,6 +150,42 @@ async fn world(test: &str) -> World {
                 ckan_url: None,
                 catalogue: Vec::new(),
             },
+            // Internal files of no one language, and a declared source under a name that is no
+            // project (the store refuses it as one).
+            Source {
+                project: "hronov".into(),
+                name: "intern".into(),
+                spec: KnowledgeSourceSpec {
+                    source: SourceType::Upload,
+                    categories: Vec::new(),
+                    start_urls: Vec::new(),
+                    upload: Some(UploadLimits {
+                        max_bytes: 64 * 1024,
+                        max_files: 2,
+                    }),
+                    visibility: Visibility::Internal,
+                    languages: Vec::new(),
+                    ..source_spec()
+                },
+                ckan_url: None,
+                catalogue: Vec::new(),
+            },
+            Source {
+                project: "Not_A_Project".into(),
+                name: "subory".into(),
+                spec: KnowledgeSourceSpec {
+                    source: SourceType::Upload,
+                    categories: Vec::new(),
+                    start_urls: Vec::new(),
+                    upload: Some(UploadLimits {
+                        max_bytes: 64 * 1024,
+                        max_files: 2,
+                    }),
+                    ..source_spec()
+                },
+                ckan_url: None,
+                catalogue: Vec::new(),
+            },
         ],
         ..Snapshot::default()
     };
@@ -521,6 +557,410 @@ async fn every_administration_path_says_the_store_could_not_be_read_when_it_is_d
         let detail = problem["detail"].as_str().unwrap_or_default();
         assert!(!detail.contains("pool"), "{verb} {uri}: {detail}");
     }
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// Renames `table` away in the test database until [`table_back`]: a handler's scope and site
+/// lookup still answer, and the query that reads `table` fails as an outage mid-handler would.
+async fn table_away(w: &World, table: &str) -> PgPool {
+    let url = std::env::var("JC_ASSISTANT_TEST_DATABASE_URL").expect("the test server");
+    let options: sqlx::postgres::PgConnectOptions = url.parse().expect("the URL parses");
+    let owner = PgPool::connect_with(options.database(&w.name))
+        .await
+        .expect("the owner connects");
+    // The table names are this file's own words, never input.
+    let statement = format!("ALTER TABLE {table} RENAME TO {table}_gone");
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(&owner)
+        .await
+        .expect("the table is renamed away");
+    owner
+}
+
+/// Makes every insert into `table` fail until [`writes_back`], while reads of it still answer.
+async fn writes_refused(w: &World, table: &str) -> PgPool {
+    let url = std::env::var("JC_ASSISTANT_TEST_DATABASE_URL").expect("the test server");
+    let options: sqlx::postgres::PgConnectOptions = url.parse().expect("the URL parses");
+    let owner = PgPool::connect_with(options.database(&w.name))
+        .await
+        .expect("the owner connects");
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION refuse_write() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$",
+    )
+    .execute(&owner)
+    .await
+    .expect("the refusing function");
+    let statement = format!(
+        "CREATE TRIGGER refuse_write BEFORE INSERT ON {table} FOR EACH ROW EXECUTE FUNCTION refuse_write()"
+    );
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(&owner)
+        .await
+        .expect("the refusing trigger");
+    owner
+}
+
+async fn writes_back(owner: PgPool, table: &str) {
+    let statement = format!("DROP TRIGGER refuse_write ON {table}");
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(&owner)
+        .await
+        .expect("the trigger is dropped");
+    owner.close().await;
+}
+
+async fn table_back(owner: PgPool, table: &str) {
+    let statement = format!("ALTER TABLE {table}_gone RENAME TO {table}");
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(&owner)
+        .await
+        .expect("the table is back");
+    owner.close().await;
+}
+
+/// A query that fails after the scope and the site lookup answered is a 503 in words on every
+/// administration path, never the database's own error; a token the identity provider cannot
+/// check is a 503 that says to retry, and a project name that is none a 404.
+#[tokio::test]
+async fn a_store_failing_mid_handler_is_a_503_on_every_path() {
+    let w = world("adminmid").await;
+    let (status, added) = send_file(
+        &w.app,
+        "subory",
+        "zber.md",
+        b"# Zber\n\nOdpad vyvazame v utorok.".to_vec(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{added}");
+    let file = added["id"].as_i64().expect("the file's id");
+    let pages = format!("{BASE}/sources/web/pages?parent={}", w.root);
+    let links = format!("{BASE}/sources/web/pages/{}/links", w.root);
+    let passages = format!("{BASE}/sources/web/passages?page={}", w.child);
+    let inclusion = json!({"pages": [w.root], "included": false});
+    let calls: Vec<(&str, &str, String, Option<Value>)> = vec![
+        ("sites", "GET", format!("{BASE}/sources"), None),
+        ("sites", "GET", format!("{BASE}/sources/web/errors"), None),
+        ("chunks", "GET", format!("{BASE}/sources/web/errors"), None),
+        ("chunks", "GET", pages.clone(), None),
+        (
+            "chunks",
+            "GET",
+            format!("{BASE}/sources/web/documents"),
+            None,
+        ),
+        (
+            "chunks",
+            "GET",
+            format!("{BASE}/sources/web/search?q=odpad"),
+            None,
+        ),
+        ("pages", "GET", links.clone(), None),
+        ("links", "GET", links, None),
+        ("chunks", "GET", passages, None),
+        (
+            "pages",
+            "POST",
+            format!("{BASE}/sources/web/inclusion"),
+            Some(inclusion),
+        ),
+        (
+            "crawl_jobs",
+            "POST",
+            format!("{BASE}/sources/web/recrawl"),
+            None,
+        ),
+        (
+            "usage",
+            "GET",
+            format!("{BASE}/deployments/obcania/usage"),
+            None,
+        ),
+        (
+            "feedback",
+            "GET",
+            format!("{BASE}/deployments/obcania/usage"),
+            None,
+        ),
+        (
+            "documents",
+            "GET",
+            format!("{BASE}/sources/subory/files"),
+            None,
+        ),
+        (
+            "documents",
+            "DELETE",
+            format!("{BASE}/sources/subory/files/{file}"),
+            None,
+        ),
+    ];
+    for (table, verb, uri, body) in calls {
+        let owner = table_away(&w, table).await;
+        let (status, problem) = call(&w.app, verb, &uri, Some(PORTAL_TOKEN), body).await;
+        table_back(owner, table).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{verb} {uri} without {table}: {problem}"
+        );
+        assert_eq!(
+            problem["detail"], "The assistant's store could not be read; try again shortly.",
+            "{verb} {uri}"
+        );
+    }
+    // An upload whose site cannot be written, then one whose file cannot be stored.
+    for table in ["sites", "documents"] {
+        let owner = table_away(&w, table).await;
+        let (status, problem) = send_file(
+            &w.app,
+            "subory",
+            "odvoz.md",
+            b"# Odvoz\n\nV piatok.".to_vec(),
+        )
+        .await;
+        table_back(owner, table).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "upload without {table}: {problem}"
+        );
+    }
+    // A queue that reads but takes no job.
+    let owner = writes_refused(&w, "crawl_jobs").await;
+    let (status, problem) = call(
+        &w.app,
+        "POST",
+        &format!("{BASE}/sources/web/recrawl"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    writes_back(owner, "crawl_jobs").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    // A source that was never crawled, and files asked of a source that takes none.
+    for (verb, uri, expected) in [
+        (
+            "GET",
+            format!("{BASE}/sources/nikde/documents"),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            format!("{BASE}/sources/nikde/pages/{}/links", w.root),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            format!("{BASE}/sources/nikde/passages?page={}", w.root),
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "GET",
+            format!("{BASE}/sources/web/files"),
+            StatusCode::CONFLICT,
+        ),
+        (
+            "DELETE",
+            format!("{BASE}/sources/web/files/{file}"),
+            StatusCode::CONFLICT,
+        ),
+    ] {
+        let (status, problem) = call(&w.app, verb, &uri, Some(PORTAL_TOKEN), None).await;
+        assert_eq!(status, expected, "{verb} {uri}: {problem}");
+    }
+    // An internal source of no one language takes a file; a declared source under a name that
+    // is no project is refused as no project.
+    let (status, internal) = send_file(
+        &w.app,
+        "intern",
+        "pravidla.md",
+        b"# Pravidla\n\nInterne.".to_vec(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{internal}");
+    let request = Request::builder()
+        .method("POST")
+        .uri("/internal/v1/projects/Not_A_Project/knowledge/sources/subory/files?name=a.md")
+        .header("authorization", format!("Bearer {PORTAL_TOKEN}"))
+        .body(Body::from("# A\n\nText."))
+        .expect("a request");
+    let response = w.app.clone().oneshot(request).await.expect("an answer");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    // A crawled source with no passages lists no languages.
+    let mut tx = assistant::project_scope(&w.pool, "hronov")
+        .await
+        .expect("scope");
+    sqlx::query("INSERT INTO sites (organization, project, source, visibility) VALUES ('hronov.example', 'hronov', 'prazdny', 'public')")
+        .execute(&mut *tx)
+        .await
+        .expect("an empty site");
+    tx.commit().await.expect("commit");
+    let (status, sources) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/sources"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sources}");
+    let empty = sources["items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|i| i["source"] == "prazdny"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(empty["languages"], json!({}), "{sources}");
+    // The store is whole again: the file is still listed.
+    let (status, listed) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/sources/subory/files"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(
+        listed["items"].as_array().map(Vec::len),
+        Some(1),
+        "{listed}"
+    );
+
+    // A day with verdicts and no requests is listed with zero requests; a page left out by the
+    // source's patterns says so.
+    let mut tx = assistant::project_scope(&w.pool, "hronov")
+        .await
+        .expect("scope");
+    sqlx::query("INSERT INTO feedback (project, deployment, conversation, turn, verdict, note, created_at) VALUES ('hronov', 'obcania', gen_random_uuid(), 1, 'up', NULL, now() - interval '2 days')")
+        .execute(&mut *tx).await.expect("an older verdict");
+    sqlx::query("UPDATE pages SET included = false WHERE id = $1")
+        .bind(w.grandchild)
+        .execute(&mut *tx)
+        .await
+        .expect("a page out of the patterns");
+    tx.commit().await.expect("commit");
+    let (status, usage) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/deployments/obcania/usage"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{usage}");
+    let items = usage["items"].as_array().cloned().unwrap_or_default();
+    assert_eq!(items.len(), 2, "{usage}");
+    assert_eq!(
+        (&items[0]["requests"], &items[0]["thumbsUp"]),
+        (&json!(0), &json!(1)),
+        "{usage}"
+    );
+    let (status, level) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/sources/web/pages?parent={}", w.child),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{level}");
+    assert_eq!(level["items"][0]["excludedBy"], "pattern", "{level}");
+    assert_eq!(level["items"][0]["included"], false, "{level}");
+
+    // A token the identity provider cannot check: 503, retry, never 401.
+    Mock::given(method("POST"))
+        .and(path("/token/introspect"))
+        .and(body_string_contains("token=realm-cannot-say"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&w._realm)
+        .await;
+    let (status, problem) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/sources"),
+        Some("realm-cannot-say"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("try again")),
+        "{problem}"
+    );
+
+    // A project name that is none: 404 from the scope, before any query.
+    let bad = "/internal/v1/projects/Not_A_Project/knowledge";
+    for uri in [
+        format!("{bad}/sources"),
+        format!("{bad}/sources/web/errors"),
+    ] {
+        let (status, problem) = call(&w.app, "GET", &uri, Some(PORTAL_TOKEN), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {problem}");
+    }
+    // An erasure's body: not the shape, no term, and a project name that is none.
+    for (uri, body, expected) in [
+        (
+            format!("{BASE}/erasures"),
+            json!({"terms": 1}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            format!("{BASE}/erasures"),
+            json!({"terms": []}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            format!("{bad}/erasures"),
+            json!({"terms": ["urn:ngsi-ld:BikeTrip:t-0"]}),
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let (status, problem) = call(&w.app, "POST", &uri, Some(PORTAL_TOKEN), Some(body)).await;
+        assert_eq!(status, expected, "{uri}: {problem}");
+        assert!(problem["detail"].is_string(), "{uri}: {problem}");
+    }
+    // A listing above a cost names none of the free turns.
+    let (status, listed) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/conversations?minCostUsd=0.5"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["items"], json!([]), "{listed}");
+    // An export of more turns than one file holds asks for a narrower range.
+    let mut tx = assistant::project_scope(&w.pool, "hronov")
+        .await
+        .expect("scope");
+    sqlx::query("INSERT INTO turns (project, deployment, conversation, turn, expires_at, question, route, total_ms) \
+         SELECT 'hronov', 'obcania', gen_random_uuid(), 1, now() + interval '1 day', 'q', 'search', 1 \
+         FROM generate_series(0, $1)")
+        .bind(assistant::chat::usage::MAX_EXPORT)
+        .execute(&mut *tx)
+        .await
+        .expect("one turn more than an export holds");
+    tx.commit().await.expect("commit");
+    let (status, problem) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/conversations/export"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("narrow the range")),
+        "{problem}"
+    );
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 

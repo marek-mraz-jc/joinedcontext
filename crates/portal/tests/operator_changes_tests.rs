@@ -37,6 +37,8 @@ const BASE: &str = "jcdev.example";
 #[derive(Default)]
 struct Dns {
     records: Mutex<HashMap<String, Vec<String>>>,
+    /// Names whose lookup does not answer, as a resolver that times out.
+    silent: Mutex<Vec<String>>,
 }
 
 impl Dns {
@@ -51,7 +53,13 @@ impl Dns {
 impl TxtRecords for Dns {
     fn txt<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Vec<String>, Unanswered>> {
         let found = self.records.lock().expect("dns").get(name).cloned();
-        Box::pin(async move { Ok(found.unwrap_or_default()) })
+        let silent = self.silent.lock().expect("dns").iter().any(|n| n == name);
+        Box::pin(async move {
+            if silent {
+                return Err(Unanswered);
+            }
+            Ok(found.unwrap_or_default())
+        })
     }
 }
 
@@ -395,6 +403,89 @@ async fn a_lapsed_txt_record_refuses_the_approval() {
     dns.set(&record, &["jc-verify=c0ffee"]);
     let (status, applied) = decide(&state, operator(&state, "ops-b"), &change, "approve").await;
     assert_eq!(status, StatusCode::OK, "{applied}");
+}
+
+/// T-7837: an id that was never minted is refused at the proposal naming organizationId; a TXT
+/// lookup that does not answer refuses the approval with when to try again, and the host waits.
+#[tokio::test]
+async fn an_unminted_id_and_an_unanswered_txt_lookup_are_each_named() {
+    let (state, dns) = world().await;
+    let r = run("u");
+    let domain = format!("{r}.sk");
+    organization(&state, &r, &domain).await;
+    let host = format!("smartcity.{domain}");
+    let (status, refused) = propose(
+        &state,
+        operator(&state, "ops-a"),
+        json!({ "kind": "HostAdd", "host": host, "organization": r, "organizationId": format!("sk_never{r}"), "role": "working" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(
+        refused
+            .to_string()
+            .contains("is not the id of Organization"),
+        "{refused}"
+    );
+
+    let id = format!("sk_{r}");
+    sqlx::query(
+        "INSERT INTO organization_ids (id, domain, challenge, requested_by, minted_by, minted_at) \
+         VALUES ($1, $2, 'beef', 'op', 'op', now())",
+    )
+    .bind(&id)
+    .bind(&domain)
+    .execute(state.db.as_ref().expect("db"))
+    .await
+    .expect("mint");
+    let record = format!("_joinedcontext.{domain}");
+    dns.set(&record, &["jc-verify=beef"]);
+    let (status, made) = propose(
+        &state,
+        operator(&state, "ops-a"),
+        json!({ "kind": "HostAdd", "host": host, "organization": r, "organizationId": id, "role": "working" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let change = made["id"].as_str().expect("an id").to_owned();
+    dns.silent.lock().expect("dns").push(record);
+    let (status, refused) = decide(&state, operator(&state, "ops-b"), &change, "approve").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(
+        refused.to_string().contains("did not answer in time"),
+        "{refused}"
+    );
+    assert_eq!(state_of(&state, &host).await, None);
+}
+
+/// T-7837: a move plan of a name that is no project name is 422 naming `project`; an unknown
+/// change id is 404 at approval.
+#[tokio::test]
+async fn a_move_plan_of_no_project_name_and_an_unknown_change_are_refused() {
+    let (state, _) = world().await;
+    let answer = send(
+        &state,
+        operator(&state, "ops-a"),
+        "GET",
+        "/api/v1/operator/project-moves/plan?project=Not_A_Name&organization=x",
+        None,
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        answer.text
+    );
+    assert!(answer.text.contains("project"), "{}", answer.text);
+    let (status, refused) = decide(
+        &state,
+        operator(&state, "ops-b"),
+        "00000000-0000-4000-8000-000000000000",
+        "approve",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
 }
 
 #[tokio::test]

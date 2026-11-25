@@ -460,7 +460,8 @@ pub fn context_row_view(
     if tenant.is_some() && used.is_none() {
         return None;
     }
-    if let Some(o) = row.as_object_mut() {
+    // only an object names a `kind`, so a Cached row is one
+    row.as_object_mut().into_iter().for_each(|o| {
         o.remove(CONTEXT_USAGE);
         for k in CONTEXT_COUNTERS {
             o.remove(k);
@@ -475,7 +476,7 @@ pub fn context_row_view(
                 u.get("lastUsage").cloned().unwrap_or(Value::Null),
             );
         }
-    }
+    });
     Some(row)
 }
 
@@ -1318,13 +1319,7 @@ pub async fn drain_events<D: TemporalDriver + ?Sized>(
                     push_scope(d, tenant, id, &ev.instance).await?;
                 }
             } else {
-                if let Some(arr) = additions
-                    .entry(ev.attr.clone())
-                    .or_insert_with(|| Value::Array(Vec::new()))
-                    .as_array_mut()
-                {
-                    arr.push(ev.instance.clone());
-                }
+                push_instance(&mut additions, ev);
             }
             j += 1;
         }
@@ -1335,6 +1330,17 @@ pub async fn drain_events<D: TemporalDriver + ?Sized>(
         i = j;
     }
     Ok(())
+}
+
+/// Adds `ev`'s instance to the additions of its Attribute; only arrays are
+/// ever put there.
+fn push_instance(additions: &mut serde_json::Map<String, Value>, ev: &TemporalEvent) {
+    additions
+        .entry(ev.attr.clone())
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .into_iter()
+        .for_each(|arr| arr.push(ev.instance.clone()));
 }
 
 /// Appends a scope instance to the held temporal doc; `None` when there is
@@ -1369,31 +1375,27 @@ pub fn fold_appends(evs: &[TemporalEvent]) -> Option<Vec<(&TenantId, &str, &Valu
     if evs.iter().any(|ev| ev.op == TemporalOp::ScopeChanged) {
         return None;
     }
-    let mut out: Vec<(&TenantId, &str, &Value, Value)> = Vec::new();
+    let mut out: Vec<(&TenantId, &str, &Value, serde_json::Map<String, Value>)> = Vec::new();
     for ev in evs {
         let same = out
             .last()
             .is_some_and(|(t, id, _, _)| **t == ev.tenant && *id == ev.entity_id);
         if !same {
-            out.push((
-                &ev.tenant,
-                &ev.entity_id,
-                &ev.shell,
-                Value::Object(serde_json::Map::new()),
-            ));
+            out.push((&ev.tenant, &ev.entity_id, &ev.shell, serde_json::Map::new()));
         }
-        if let Some((_, _, shell, Value::Object(additions))) = out.last_mut() {
-            *shell = &ev.shell;
-            if let Some(arr) = additions
-                .entry(ev.attr.clone())
-                .or_insert_with(|| Value::Array(Vec::new()))
-                .as_array_mut()
-            {
-                arr.push(ev.instance.clone());
-            }
-        }
+        // `out` holds this event's run, pushed above when it starts one
+        out.last_mut()
+            .into_iter()
+            .for_each(|(_, _, shell, additions)| {
+                *shell = &ev.shell;
+                push_instance(additions, ev);
+            });
     }
-    Some(out)
+    Some(
+        out.into_iter()
+            .map(|(t, id, shell, additions)| (t, id, shell, Value::Object(additions)))
+            .collect(),
+    )
 }
 
 /// The member an attribute instance carries its write's provenance in from

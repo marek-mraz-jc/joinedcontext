@@ -166,6 +166,59 @@ async fn an_unreadable_map_is_not_missing_for_an_update() {
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
+/// A map deleted between the handler's read and its write: the update's
+/// write finds no row and answers 404 rather than resurrecting the map, and
+/// a delete whose own read finds it gone answers 404 too (5.14.2.4, 5.14.3.4).
+#[tokio::test]
+async fn a_map_deleted_under_an_update_or_delete_is_not_found() {
+    let mut st = state_with_a_seeded_map().await;
+    let inner = st.store.clone();
+    st.store = Arc::new(Double::deleting_get(inner.clone()));
+    let payload = json!({"expiresAt": "2099-01-01T00:00:00.000Z"}).to_string();
+    let resp = antares_api::router(st.clone())
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/ngsi-ld/v1/entityMaps/{MAP_ID}"))
+                .header("Content-Type", "application/json")
+                .header("Content-Length", payload.len())
+                .body(Body::from(payload))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "the update found no row"
+    );
+    assert!(
+        inner
+            .get(&TenantId::default(), Kind::EntityMap, MAP_ID)
+            .await
+            .expect("store read")
+            .is_none(),
+        "the update did not resurrect the deleted map"
+    );
+
+    let st = state_with_a_seeded_map().await;
+    let mut racing = st.clone();
+    racing.store = Arc::new(Double::deleting_get(st.store.clone()));
+    let (status, body, _) = send(
+        &racing,
+        "DELETE",
+        &format!("/ngsi-ld/v1/entityMaps/{MAP_ID}"),
+    )
+    .await;
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(
+        body["type"],
+        json!("https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound"),
+        "{body}"
+    );
+}
+
 /// The bound: a per-tenant ceiling on stored maps that is only enforced if
 /// the broker can count what it already holds. When that count is refused,
 /// the map must not be created anyway — an answer of 201 there is a client

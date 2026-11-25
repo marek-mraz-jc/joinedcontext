@@ -1141,6 +1141,13 @@ mod tests {
             b.answers(),
         ];
         assert_eq!(shares.iter().sum::<u64>(), 172 << 20);
+        // applying the default split sets the caches to what they hold
+        // already, so no other test sees a change
+        b.apply();
+        assert_eq!(
+            antares_ql::regex::cache_bytes(),
+            antares_ql::regex::DEFAULT_REGEX_CACHE_BYTES
+        );
         let st = &mut crate::AppState::new("antares-budget-split".into());
         MemoryBudget { total: 100 << 20 }.set_on(st);
         assert_eq!(st.answer_pool.cap(), 32 << 20);
@@ -1481,10 +1488,8 @@ mod tests {
         use tower::ServiceExt;
         let st = crate::AppState::new("http://localhost:0".into());
         let app = axum::Router::new()
-            .route(
-                "/x",
-                axum::routing::post(|| async { StatusCode::NO_CONTENT }),
-            )
+            // no handler: what the wall refuses never reaches the route
+            .route("/x", axum::routing::MethodRouter::new())
             .layer(axum::middleware::from_fn_with_state(st, bounds_layer));
         let deep = "[".repeat(MAX_JSON_DEPTH + 5) + &"]".repeat(MAX_JSON_DEPTH + 5);
         // The third case is the one a header map can hold and `to_str`
@@ -1529,10 +1534,8 @@ mod tests {
         use tower::ServiceExt;
         let st = crate::AppState::new("http://localhost:0".into());
         let app = axum::Router::new()
-            .route(
-                "/x",
-                axum::routing::post(|| async { StatusCode::NO_CONTENT }),
-            )
+            // no handler: what the wall refuses never reaches the route
+            .route("/x", axum::routing::MethodRouter::new())
             .layer(axum::middleware::from_fn_with_state(
                 st.clone(),
                 bounds_layer,
@@ -1590,10 +1593,7 @@ mod tests {
             // `pub use` re-exports name their cap in another crate; the
             // declarations here are the ones this file owns.
             for kw in ["pub const ", "pub static "] {
-                let Some(rest) = line.strip_prefix(kw) else {
-                    continue;
-                };
-                let Some((name, ty)) = rest.split_once(':') else {
+                let Some((name, ty)) = line.strip_prefix(kw).and_then(|r| r.split_once(':')) else {
                     continue;
                 };
                 let name = name.trim();
@@ -1606,19 +1606,19 @@ mod tests {
                 let mut camel = String::new();
                 for (i, word) in name.split('_').enumerate() {
                     let lower = word.to_lowercase();
+                    let mut c = lower.chars();
+                    let head = c.next().into_iter();
                     if i == 0 {
-                        camel.push_str(&lower);
+                        camel.extend(head);
                     } else {
-                        let mut c = lower.chars();
-                        if let Some(f) = c.next() {
-                            camel.extend(f.to_uppercase());
-                            camel.push_str(c.as_str());
-                        }
+                        camel.extend(head.flat_map(char::to_uppercase));
                     }
+                    camel.push_str(c.as_str());
                 }
-                if !published.contains_key(&camel) {
-                    missing.push(format!("{name} (expected {camel:?})"));
-                }
+                missing.extend(
+                    (!published.contains_key(&camel))
+                        .then_some(format!("{name} (expected {camel:?})")),
+                );
             }
         }
         assert!(

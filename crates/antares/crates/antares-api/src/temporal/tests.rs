@@ -40,6 +40,39 @@ mod clause_4_11 {
         assert_eq!(default_slot[0]["value"], 11, "newer modifiedAt wins");
     }
 
+    /// The merge leaves documents that are no objects alone, takes a single
+    /// instance as a one-element list, keeps an older conflicting instance
+    /// over a stale remote one, and appends instances without the
+    /// timeproperty beside the ones that have it.
+    #[tokio::test]
+    async fn merge_edges_keep_what_they_cannot_slot() {
+        let mut odd = json!("x");
+        merge_temporal_docs(&mut odd, &json!({"id": "urn:e"}), false, "observedAt");
+        assert_eq!(odd, json!("x"));
+        let mut base = json!({"id": "urn:e", "type": "T", "speed": [
+            {"type": "Property", "value": 1},
+            {"type": "Property", "value": 10, "observedAt": "2026-05-01T00:00:00Z",
+             "modifiedAt": "2026-06-01T00:00:00Z"}]});
+        let add = json!({"id": "urn:e", "name": {"type": "Property", "value": "n"},
+            "speed": [
+                {"type": "Property", "value": 9, "observedAt": "2026-05-01T00:00:00Z",
+                 "modifiedAt": "2026-05-01T00:00:00Z"},
+                {"type": "Property", "value": 2}]});
+        merge_temporal_docs(&mut base, &add, false, "observedAt");
+        assert_eq!(base["name"], json!([{"type": "Property", "value": "n"}]));
+        let values: Vec<&Value> = base["speed"]
+            .as_array()
+            .expect("speed")
+            .iter()
+            .map(|i| &i["value"])
+            .collect();
+        assert_eq!(
+            values,
+            [&json!(1), &json!(10), &json!(2)],
+            "the newer local 10 stays"
+        );
+    }
+
     /// 4.3.6.2: "An auxiliary Context Source Registration never overrides
     /// data held directly within a Context Broker. […] Context data from
     /// auxiliary context sources is only included if it is supplementary to
@@ -1224,6 +1257,143 @@ mod clause_4_21 {
     }
 }
 
+/// 5.7.3 / 5.7.4 / 5.14.5 at the request: the refusals before any read,
+/// an absent Entity under `local`, a projection that keeps nothing, and a
+/// temporal EntityMap over split Entities.
+#[cfg(test)]
+mod temporal_requests {
+    use crate::state::AppState;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+
+    async fn call(
+        st: &AppState,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let mut req = Request::builder().method(method).uri(uri);
+        let body = match body {
+            Some(b) => {
+                let s = b.to_string();
+                req = req
+                    .header("Content-Type", "application/json")
+                    .header("Content-Length", s.len());
+                Body::from(s)
+            }
+            None => Body::empty(),
+        };
+        let resp = crate::router(st.clone())
+            .oneshot(req.body(body).expect("request"))
+            .await
+            .expect("response");
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    async fn vehicle(st: &AppState, id: &str) {
+        let (status, body) = call(
+            st,
+            "POST",
+            "/ngsi-ld/v1/entities",
+            Some(json!({"id": id, "type": "Vehicle",
+                        "speed": {"type": "Property", "value": 10}})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+
+    /// 5.7.4.4: an idPattern that does not compile, and a Query body of
+    /// another type, are BadRequestData.
+    #[tokio::test]
+    async fn malformed_temporal_queries_are_refused() {
+        let st = AppState::new("antares-temporal-req".into());
+        let (status, body) = call(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/temporal/entities?type=Vehicle&idPattern=%28&timerel=before&timeAt=2999-01-01T00:00:00Z",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("idPattern")),
+            "{body}"
+        );
+        let (status, body) = call(
+            &st,
+            "POST",
+            "/ngsi-ld/v1/temporal/entityOperations/query",
+            Some(json!({"type": "Subscription", "entities": [{"type": "Vehicle"}]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["detail"], "body type must be Query", "{body}");
+    }
+
+    /// 5.7.3.4: an Entity with no history here is 404 when the request
+    /// keeps to this broker, and so is a projection that keeps nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn absent_or_projected_away_evolutions_are_not_found() {
+        let st = crate::wired_state("antares-temporal-req-2").await;
+        let (status, body) = call(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:Vehicle:none?local=true",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        vehicle(&st, "urn:ngsi-ld:Vehicle:p1").await;
+        let (status, body) = call(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/temporal/entities/urn:ngsi-ld:Vehicle:p1?omit=id,type,speed",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert!(
+            body["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("projection matches nothing")),
+            "{body}"
+        );
+    }
+
+    /// 5.14.5.4 with splitEntities: the map is built from the query's
+    /// selection members alone and still holds the Entity.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_split_temporal_map_keeps_the_selection() {
+        let st = crate::wired_state("antares-temporal-req-3").await;
+        vehicle(&st, "urn:ngsi-ld:Vehicle:s1").await;
+        let (status, map) = call(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/temporal/entityMaps?type=Vehicle&attrs=speed&splitEntities=true&timerel=before&timeAt=2999-01-01T00:00:00Z&timeproperty=createdAt",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{map}");
+        assert!(
+            map["entityMap"]
+                .as_object()
+                .is_some_and(|o| o.contains_key("urn:ngsi-ld:Vehicle:s1")),
+            "{map}"
+        );
+    }
+}
+
 #[cfg(test)]
 mod t3932_time_of_day {
     use super::seconds_of_day;
@@ -1425,6 +1595,204 @@ mod f_ant2_014_scope_window {
             "speed": [{"type": "Property", "value": 1, "observedAt": "2026-01-01T00:00:00.500Z"}]});
         assert!(scope_window_retain(&mut doc, "/a", None, "observedAt"));
         assert_eq!(doc["speed"].as_array().map(Vec::len), Some(1));
+    }
+}
+
+#[cfg(test)]
+mod t5616_rules_in_the_store {
+    use crate::policy::{Filter, Rule, TimeBound, Window};
+    use crate::temporal::filter::{
+        page_attrs, retain_q_instances, rules_per_instance, rules_window, scope_window_retain,
+        window_conditions_match,
+    };
+    use crate::temporalq::TemporalQ;
+    use serde_json::{json, Value};
+    use std::collections::{BTreeMap, HashMap};
+
+    fn every(ty: &str) -> Rule {
+        Rule {
+            types: vec![ty.to_owned()],
+            every_attribute: true,
+            ..Rule::default()
+        }
+    }
+
+    fn rules(rules: Vec<Rule>) -> Filter {
+        Filter {
+            rules,
+            ..Filter::default()
+        }
+    }
+
+    fn tq(pairs: &[(&str, &str)]) -> Option<TemporalQ> {
+        let params: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        TemporalQ::from_params(&params, false).expect("a valid temporal query")
+    }
+
+    /// T-5616: a rule over every Attribute of the type asked pages in the
+    /// store over any Attribute, or over the request's own `attrs`; a read
+    /// naming no type, or a type no rule names, does not page.
+    #[test]
+    fn every_attribute_rules_page_over_what_the_request_asks() {
+        let f = rules(vec![every("Car")]);
+        let car = ["Car".to_owned()];
+        assert_eq!(page_attrs(&f, Some(&car), None, None, false), Some(None));
+        let speed = ["speed".to_owned()];
+        assert_eq!(
+            page_attrs(&f, Some(&car), None, Some(&speed), false),
+            Some(Some(vec!["speed".to_owned()]))
+        );
+        assert_eq!(
+            page_attrs(&f, None, None, None, false),
+            None,
+            "no type asked"
+        );
+        let bus = ["Bus".to_owned()];
+        assert_eq!(
+            page_attrs(&f, Some(&bus), None, None, false),
+            None,
+            "no rule of Bus"
+        );
+        assert_eq!(
+            page_attrs(&rules(Vec::new()), Some(&car), None, None, false),
+            None
+        );
+    }
+
+    /// Gap G6: no rule decides, no window; rules of one type with different
+    /// windows stand for no single range.
+    #[test]
+    fn a_window_range_needs_one_shared_window() {
+        let none = HashMap::new();
+        assert!(matches!(
+            rules_window(&rules(Vec::new()), None, &none, None),
+            Ok(None)
+        ));
+        let at = |s: &str| s.parse().ok().map(TimeBound::At);
+        let windowed = |from: &str| Rule {
+            temporal: vec![Window {
+                from: at(from),
+                to: None,
+            }],
+            ..every("Car")
+        };
+        let two = rules(vec![
+            windowed("2026-01-01T00:00:00Z"),
+            windowed("2026-02-01T00:00:00Z"),
+        ]);
+        let car = ["Car".to_owned()];
+        assert!(rules_window(&two, Some(&car), &none, None).is_err());
+    }
+
+    /// ADR-0023 rule 11 per instance: a document that is no object is
+    /// returned as it is, and an Attribute the type hides is dropped.
+    #[test]
+    fn per_instance_rules_drop_hidden_attributes() {
+        assert_eq!(
+            rules_per_instance(&json!("x"), &Filter::default()),
+            Some(json!("x"))
+        );
+        let f = Filter {
+            rules: vec![every("Car")],
+            omit_by_type: BTreeMap::from([("Car".to_owned(), vec!["secret".to_owned()])]),
+            ..Filter::default()
+        };
+        let doc = json!({"id": "urn:ngsi-ld:Car:1", "type": "Car",
+            "speed": [{"type": "Property", "value": 1}],
+            "secret": [{"type": "Property", "value": 2}]});
+        let out = rules_per_instance(&doc, &f).expect("a rule selects the Car");
+        assert!(out.get("secret").is_none(), "{out}");
+        assert_eq!(out["speed"], doc["speed"]);
+    }
+
+    /// 5.7.4.4 S4: `before` closes the window at timeAt, a bare timeproperty
+    /// opens it both ways; a member that is no instance list is left alone,
+    /// and a document that is no object is valid in no scope.
+    #[test]
+    fn scope_windows_by_timerel() {
+        let doc = || {
+            json!({"id": "urn:e", "type": "T", "note": "kept",
+                "scope": [{"type": "Property", "value": "/a", "observedAt": "2026-01-01T00:00:00Z"}],
+                "speed": [{"type": "Property", "value": 1, "observedAt": "2026-01-02T00:00:00Z"}]})
+        };
+        let before = tq(&[("timerel", "before"), ("timeAt", "2025-12-01T00:00:00Z")]);
+        assert!(
+            !scope_window_retain(&mut doc(), "/a", before.as_ref(), "observedAt"),
+            "the scope starts after the window closes"
+        );
+        let later = tq(&[("timerel", "before"), ("timeAt", "2026-03-01T00:00:00Z")]);
+        let mut d = doc();
+        assert!(scope_window_retain(
+            &mut d,
+            "/a",
+            later.as_ref(),
+            "observedAt"
+        ));
+        assert_eq!(d["note"], "kept");
+        let any = tq(&[("timeproperty", "observedAt")]);
+        assert_eq!(any.as_ref().map(|t| t.timerel.as_str()), Some("any"));
+        let mut d = doc();
+        assert!(scope_window_retain(
+            &mut d,
+            "/a",
+            any.as_ref(),
+            "observedAt"
+        ));
+        assert_eq!(d["speed"].as_array().map(Vec::len), Some(1));
+        assert!(!scope_window_retain(
+            &mut json!(["/a"]),
+            "/a",
+            None,
+            "observedAt"
+        ));
+    }
+
+    /// 5.7.4.4 S2/S9 on members that are no instance list, an Attribute `q`
+    /// reads that the Entity lacks, and a document that is no object.
+    #[test]
+    fn window_filters_pass_over_what_is_no_instance_list() {
+        let ctx = antares_jsonld::Loader::new().core();
+        let window = tq(&[("timerel", "after"), ("timeAt", "2026-01-01T00:00:00Z")]);
+        let speed = format!("{}speed", "https://uri.etsi.org/ngsi-ld/default-context/");
+        let other = format!("{}other", "https://uri.etsi.org/ngsi-ld/default-context/");
+        let mut doc = json!({"id": "urn:e", "type": "T", "note": "x",
+            speed.clone(): [
+                {"type": "Property", "value": 5, "observedAt": "2026-01-02T00:00:00Z"},
+                {"type": "Property", "value": 50, "observedAt": "2025-12-01T00:00:00Z"},
+                {"type": "Property", "value": 1, "observedAt": "2026-01-03T00:00:00Z"}]});
+        let ast = antares_ql::parse_q("speed>3;other<1|speed>3").expect("q");
+        assert!(window_conditions_match(
+            &doc,
+            window.as_ref(),
+            Some(&ast),
+            &[],
+            &ctx
+        ));
+        let high = antares_ql::parse_q("speed>10").expect("q");
+        assert!(
+            !window_conditions_match(&doc, window.as_ref(), Some(&high), &[], &ctx),
+            "the out-of-window 50 does not satisfy the query"
+        );
+        retain_q_instances(&mut doc, window.as_ref(), &ast, &ctx);
+        let kept: Vec<&Value> = doc[&speed]
+            .as_array()
+            .expect("speed instances")
+            .iter()
+            .map(|i| &i["value"])
+            .collect();
+        assert_eq!(
+            kept,
+            [&json!(5), &json!(50)],
+            "1 fails the query, 50 is judged alone"
+        );
+        assert!(doc.get(&other).is_none());
+        assert_eq!(doc["note"], "x");
+        let mut odd = json!(7);
+        retain_q_instances(&mut odd, window.as_ref(), &ast, &ctx);
+        assert_eq!(odd, json!(7));
     }
 }
 

@@ -1317,7 +1317,7 @@ mod tests {
     /// A project of an Organization of the registry, so its requests are keyed (T-7202).
     async fn keyed(pool: &PgPool, project: &str) {
         let mirror = crate::store::Mirror::new();
-        let organization = format!("{project}-org");
+        let organization = format!("arorg{}", jc_types::ProjectId::mint().path_segment());
         crate::project_ids::placed(pool, &mirror, project, &organization).await;
         crate::project_ids::key(pool, &organization, project)
             .await

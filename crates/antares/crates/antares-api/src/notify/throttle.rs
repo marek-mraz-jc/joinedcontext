@@ -97,12 +97,9 @@ pub(super) async fn process_queued(
                     .unwrap_or_default()
                     .to_owned(),
             );
-            match index.get(&key) {
-                Some(&i) => {
-                    if let Some(group) = groups.get_mut(i) {
-                        group.data.extend(m.data);
-                    }
-                }
+            // `index` holds positions in `groups` only
+            match index.get(&key).and_then(|&i| groups.get_mut(i)) {
+                Some(group) => group.data.extend(m.data),
                 None => {
                     index.insert(key, groups.len());
                     groups.push(m);
@@ -404,6 +401,18 @@ pub(super) static LANES: std::sync::LazyLock<Lanes> = std::sync::LazyLock::new(L
 /// and named (T-4086): the drain never waits for a subscriber.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn to_lane(st: &AppState, group: Matched, batch: &Arc<BatchDone>) {
+    let budget = *crate::bounds::DELIVERY_LANE_BYTES;
+    to_lane_within(st, group, batch, (&LANE_LEDGER, budget));
+}
+
+/// [`to_lane`] against `ledger` and its budget.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn to_lane_within(
+    st: &AppState,
+    group: Matched,
+    batch: &Arc<BatchDone>,
+    (ledger, budget): (&'static Ledger, usize),
+) {
     use tokio::sync::mpsc::error::TrySendError;
     let key = (
         st.broker(),
@@ -419,7 +428,7 @@ pub(super) fn to_lane(st: &AppState, group: Matched, batch: &Arc<BatchDone>) {
         .data
         .iter()
         .fold(0usize, |n, entity| n.saturating_add(heap_estimate(entity)));
-    let Some(held) = LANE_LEDGER.take(bytes, *crate::bounds::DELIVERY_LANE_BYTES) else {
+    let Some(held) = ledger.take(bytes, budget) else {
         // every lane together holds its budget: this subscription loses the
         // group, counted and named like a full lane's, and the process keeps
         // its memory (T-4549)
@@ -435,7 +444,9 @@ pub(super) fn to_lane(st: &AppState, group: Matched, batch: &Arc<BatchDone>) {
     };
     // A poisoned map is a panic in some past hand-off; what it holds is
     // senders, rebuilt on the next group either way.
-    let mut lanes = LANES.lock().unwrap_or_else(|p| p.into_inner());
+    let mut lanes = LANES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let job = match lanes.get(&key) {
         Some(lane) => match lane.try_send(job) {
             Ok(()) => return,
@@ -450,10 +461,8 @@ pub(super) fn to_lane(st: &AppState, group: Matched, batch: &Arc<BatchDone>) {
         None => job,
     };
     let (lane, rx) = tokio::sync::mpsc::channel(DELIVERY_LANE);
-    if lane.try_send(job).is_err() {
-        // a fresh channel always has room; nothing to serve otherwise
-        return;
-    }
+    // a fresh channel always has room for its first group
+    let _ = lane.try_send(job);
     lanes.insert(key.clone(), lane);
     drop(lanes);
     tokio::spawn(run_lane(key, rx));
@@ -471,7 +480,9 @@ pub(super) async fn run_lane(key: LaneKey, mut rx: tokio::sync::mpsc::Receiver<L
                 // Looked at again under the map's lock, which every sender
                 // holds while it sends: a group cannot arrive between this
                 // look and the removal.
-                let mut lanes = LANES.lock().unwrap_or_else(|p| p.into_inner());
+                let mut lanes = LANES
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match rx.try_recv() {
                     Ok(job) => job,
                     Err(_) => {
@@ -617,7 +628,9 @@ pub(super) static TENANT_SLOTS: std::sync::LazyLock<TenantSlots> =
 pub(super) fn tenant_slots(tenant: &TenantId) -> Arc<tokio::sync::Semaphore> {
     // A poisoned map is a panic in some past delivery, not a reason to stop
     // delivering: what it holds is rebuildable and bounded either way.
-    let mut map = TENANT_SLOTS.lock().unwrap_or_else(|p| p.into_inner());
+    let mut map = TENANT_SLOTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(s) = map.get(tenant.as_str()) {
         return Arc::clone(s);
     }

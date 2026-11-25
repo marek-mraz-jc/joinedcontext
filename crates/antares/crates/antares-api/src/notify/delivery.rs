@@ -137,10 +137,8 @@ pub(super) async fn deliver_as(
     // still names one was hand-edited — it is dropped, never delivered
     // through some other binding.
     if st.sinks.sink_for_uri(uri).is_none() {
-        tracing::warn!(
-            "subscription {sub_id} endpoint {} has no registered binding",
-            redact_userinfo(uri)
-        );
+        let shown = redact_userinfo(uri);
+        tracing::warn!("subscription {sub_id} endpoint {shown} has no registered binding");
         return;
     }
     // endpoint.cooldown — drop (never queue) while the window is open.
@@ -161,10 +159,8 @@ pub(super) async fn deliver_as(
     // in process; every other network binding is policed below.
     let policed = network_policed(st, uri);
     if policed && st.egress.is_open(tenant.as_str(), uri) {
-        tracing::debug!(
-            "notification to {} short-circuited (breaker open)",
-            redact_userinfo(uri)
-        );
+        let shown = redact_userinfo(uri);
+        tracing::debug!("notification to {shown} short-circuited (breaker open)");
         return;
     }
     let accept = ep
@@ -299,18 +295,19 @@ pub(super) async fn deliver_as(
     // amend the data entities per the 4.3.6.8 fallbacks.
     if let Some(ver) = sub_str(sub, "ngsildConformance").and_then(crate::conformance::parse_version)
     {
-        if let Some(d) = body.get_mut("data") {
+        // `body` is the object built above, `data` one of its members
+        let data = body.get_mut("data").into_iter();
+        data.for_each(|d| {
             crate::conformance::amend_payload(d, ver);
-        }
+        });
     }
     if accept == "application/ld+json" {
         // JSON-LD notifications carry the @context inside each data entity
         // (046_14: data[0] must contain @context; no Link header) — same rule
         // over MQTT: with ld+json the @context travels in the body (7.2).
-        if let Some(arr) = body.get_mut("data").and_then(Value::as_array_mut) {
-            for e in arr.iter_mut() {
-                *e = inject_context(e.clone(), ctx);
-            }
+        let data = body.get_mut("data").and_then(Value::as_array_mut);
+        for e in data.into_iter().flatten() {
+            *e = inject_context(e.clone(), ctx);
         }
     }
     if accept == "application/geo+json" {
@@ -335,9 +332,10 @@ pub(super) async fn deliver_as(
         if let (false, Some(fc)) = (prefer_body_json, fc.as_object_mut()) {
             fc.insert("@context".into(), crate::negotiate::served_context(ctx));
         }
-        if let Some(body) = body.as_object_mut() {
-            body.insert("data".into(), fc);
-        }
+        // `body` is the object built above
+        let _ = body
+            .as_object_mut()
+            .map(|body| body.insert("data".into(), fc));
     }
     let receiver_info = kv_pairs(ep.get("receiverInfo"));
 
@@ -418,10 +416,8 @@ pub(super) async fn deliver_as(
         && match st.egress.check_destination(uri).await {
             Ok(()) => false,
             Err(e) => {
-                tracing::warn!(
-                    "notification endpoint {} refused by egress policy: {e}",
-                    redact_userinfo(uri)
-                );
+                let shown = redact_userinfo(uri);
+                tracing::warn!("notification endpoint {shown} refused by egress policy: {e}");
                 true
             }
         };

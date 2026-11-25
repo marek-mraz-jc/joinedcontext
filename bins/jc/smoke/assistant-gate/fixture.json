@@ -1,5 +1,5 @@
 {
-  "about": "T-7788: the pre-production assistant gate's ten questions, asked in one conversation of the public AssistantDeployment helsinki/gate (deployment.yaml) on jc-dev. Schema of the answer evals (assistant tests/fixtures/answer_evals/questions.json: id, lang, ask, facts, evidence, refuse) plus `lane` and, for a data question, `read`: the anonymous MCP query_entities the runner makes on the Endpoint right before it asks, from which it writes the expected `facts` and the `evidence` (every value of the rows read). `hosts` lists where a cited page may live (`{domain}` is the run's --domain). `widget` names the question the browser journey asks again (it answers with a table). `knownBad` holds answers a fit model judge must fail, asked in the same judge call; `prices` turns uncosted tokens into USD (an estimate: it reproduces 0.0248 USD for 13,665 in and 1,191 out on jc-prod turn 34).",
+  "about": "T-7788: the pre-production assistant gate's ten questions, asked in one conversation of the public AssistantDeployment helsinki/gate (deployment.yaml) on jc-dev. Schema of the answer evals (assistant tests/fixtures/answer_evals/questions.json: id, lang, ask, facts, evidence, refuse) plus `lane` and, for a data question, `read`: the anonymous MCP query_entities the runner makes on the Endpoint right before it asks, from which it writes the expected `facts` and the `evidence` (every value of the rows read). `hosts` lists where a cited page may live (`{domain}` is the run's --domain). `reply` describes the reply a question without facts expects (small talk: a greeting, judged as such, never as a decline). `widget` names the question the browser journey asks again (it answers with a table). `knownBad` holds answers a fit model judge must fail, asked in the same judge call; `prices` turns uncosted tokens into USD (an estimate: it reproduces 0.0248 USD for 13,665 in and 1,191 out on jc-prod turn 34).",
   "deployment": {"project": "helsinki", "publicId": "gate"},
   "limits": {"answerMs": 15000, "doneMs": 30000, "p50Ms": 10000, "costUsd": 0.10, "judgedMin": 9},
   "widget": "gate-03",
@@ -46,10 +46,10 @@
     },
     {
       "id": "gate-07", "lane": "page", "lang": "en",
-      "ask": "Where does the Mayor's Independence Day celebration for Helsinki's fourth graders take place?",
+      "ask": "Where did the Mayor's Independence Day celebration for Helsinki's fourth graders take place in December 2024?",
       "hosts": ["hel.fi"],
       "facts": [["Messukeskus"]],
-      "evidence": "Mayor’s Independence Day celebration for Helsinki’s fourth graders will take place on Tuesday 3 December at Messukeskus. 6,500 fourth graders; since 1997; two celebrations"
+      "evidence": "Mayor’s Independence Day celebration for Helsinki’s fourth graders will take place on Tuesday 3 December 2024 at Messukeskus. 6,500 fourth graders; since 1997; two celebrations. In December 2025 it was held at Finlandia Hall."
     },
     {
       "id": "gate-08", "lane": "uncovered", "lang": "sk", "refuse": true,
@@ -64,7 +64,8 @@
     {
       "id": "gate-10", "lane": "small-talk", "lang": "sk", "refuse": true,
       "ask": "Ahoj, ako sa máš?",
-      "hosts": ["hel.fi"], "facts": [], "evidence": ""
+      "hosts": ["hel.fi"], "facts": [], "evidence": "",
+      "reply": "a short friendly greeting or an offer to help, with no facts and no citations"
     }
   ],
   "knownBad": [

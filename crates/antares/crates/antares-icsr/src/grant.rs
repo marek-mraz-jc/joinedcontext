@@ -277,11 +277,8 @@ async fn delete_one(ops: &Ops, target: &str, source: &str) -> Result<Response, S
     {
         return Ok(not_found());
     }
-    tracing::info!(
-        target_tenant = target,
-        source_tenant = source,
-        "export grant removed"
-    );
+    let (target_tenant, source_tenant) = (target, source);
+    tracing::info!(target_tenant, source_tenant, "export grant removed");
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -339,6 +336,42 @@ mod tests {
             "v".repeat(64)
         );
         assert!(ExportGrant::parse(long.as_bytes()).is_err());
+    }
+
+    /// `caller` is public over any grant, a hand-built one included: an entry
+    /// no header can carry is left out of the map, the rest is kept.
+    #[test]
+    fn a_caller_map_leaves_out_what_no_header_can_carry() {
+        let grant = ExportGrant {
+            target: "b".into(),
+            source: "a".into(),
+            view: None,
+            access: Access::Read,
+            cross_organization: false,
+            subject: Some(
+                [
+                    ("x-subject".to_owned(), "alice".to_owned()),
+                    ("x-bad".to_owned(), "line\nbreak".to_owned()),
+                    ("bad name".to_owned(), "v".to_owned()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        };
+        let kept = grant.caller().map(|map| {
+            map.iter()
+                .map(|(k, v)| (k.as_str().to_owned(), v.to_str().ok().map(str::to_owned)))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            kept,
+            Some(vec![("x-subject".to_owned(), Some("alice".to_owned()))])
+        );
+        let none = ExportGrant {
+            subject: None,
+            ..grant
+        };
+        assert!(none.caller().is_none());
     }
 
     /// T-7306: a grant joins Tenants of one Organization unless the owner marks

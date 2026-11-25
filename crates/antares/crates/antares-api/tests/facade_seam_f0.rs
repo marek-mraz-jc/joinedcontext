@@ -46,6 +46,7 @@ impl ApiSurface for Facade {
         Router::new()
             .route("/things", get(things))
             .route("/echo", get(echo))
+            .route("/own", get(own))
             .route("/toolong", get(toolong))
             .route("/nest", get(nest))
             .route("/seen", get(seen))
@@ -68,6 +69,16 @@ async fn things(State(st): State<AppState>, headers: HeaderMap) -> Response {
 /// which is how the propagation rule is asserted rather than assumed.
 async fn echo(State(st): State<AppState>, headers: HeaderMap) -> Response {
     let req = Request::get("/x/f0/seen")
+        .body(Body::empty())
+        .expect("inner request");
+    st.call(&headers, req).await
+}
+
+/// `echo`, with the façade naming a subject of its own: the caller's
+/// subject is carried only where the inner request names none.
+async fn own(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    let req = Request::get("/x/f0/seen")
+        .header(SUBJECT, "the-facade")
         .body(Body::empty())
         .expect("inner request");
     st.call(&headers, req).await
@@ -144,8 +155,12 @@ impl PolicyEngine for Recorder {
 
 fn state() -> (AppState, Asked) {
     // Read once per process, so it has to be set before the first request
-    // builds the subject (a `LazyLock` in the policy module).
-    std::env::set_var("ANTARES_POLICY_SUBJECT_HEADERS", SUBJECT);
+    // builds the subject (a `LazyLock` in the policy module). A name no
+    // header can carry is listed beside it and carries nothing.
+    std::env::set_var(
+        "ANTARES_POLICY_SUBJECT_HEADERS",
+        format!("{SUBJECT}, not a header name"),
+    );
     let asked: Asked = Arc::new(Mutex::new(Vec::new()));
     let st = AppState::new("f0".into())
         .with_surface(Box::new(Facade))
@@ -265,6 +280,18 @@ async fn the_handle_carries_the_headers_that_decide_what_is_served() {
     );
     assert_eq!(body["link"], json!([link]), "{body}");
     assert_eq!(body[SUBJECT], json!(["someone"]), "{body}");
+
+    // The façade's own subject header is the inner request's: the caller's
+    // is neither added to it nor put in its place.
+    let (code, body) = send(
+        &st,
+        "GET",
+        "/x/f0/own",
+        &[("NGSILD-Tenant", "facadea"), (SUBJECT, "someone")],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body[SUBJECT], json!(["the-facade"]), "{body}");
 
     // A header the rule does not name is the façade's own business and is
     // NOT carried: an inner request is not the outer one.

@@ -997,7 +997,7 @@ async fn an_app_is_served_on_the_apps_origin() {
 
 /// AP-84: a signed-in person's first index on the apps origin brings the double-submit CSRF
 /// cookie a function call needs there; the Portal's own is host-only on the Portal host. An
-/// anonymous visitor gets none, and one who already holds it keeps the one they have.
+/// anonymous visitor gets none, and one who already holds her own keeps it.
 #[tokio::test]
 async fn a_signed_in_index_brings_the_apps_origins_csrf_cookie() {
     let dir = app_root("csrf-cookie", &[("index.html", INDEX)]);
@@ -1033,7 +1033,7 @@ async fn a_signed_in_index_brings_the_apps_origins_csrf_cookie() {
         }
     };
 
-    let csrf_cookie = |signed_in: bool, cookie: Option<&'static str>| {
+    let csrf_cookie = |signed_in: bool, cookie: Option<&str>| {
         let lines = set_cookies(signed_in, cookie);
         async move {
             lines
@@ -1067,11 +1067,18 @@ async fn a_signed_in_index_brings_the_apps_origins_csrf_cookie() {
         None,
         "nothing for an anonymous visitor"
     );
+    // S1-52: her token is bound to her and this App, so the one she holds is kept, and one
+    // that is not hers (set by another page on the host, or before she signed in) is replaced.
+    let held = issued.split(';').next().expect("a cookie pair").to_owned();
     assert_eq!(
-        csrf_cookie(true, Some("__Host-jc_csrf=already-held")).await,
+        csrf_cookie(true, Some(&held)).await,
         None,
-        "a held token is kept"
+        "her token is kept"
     );
+    let replaced = csrf_cookie(true, Some("__Host-jc_csrf=already-held"))
+        .await
+        .expect("a token not hers is replaced");
+    assert!(replaced.starts_with(&held), "{replaced}");
 }
 
 /// A Portal behind the edge, trusting the process's realm, serving the apps under `root`.

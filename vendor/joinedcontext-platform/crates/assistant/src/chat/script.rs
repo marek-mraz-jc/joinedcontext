@@ -120,6 +120,21 @@ mod tests {
         .await
     }
 
+    /// A sandbox that does not answer in time is named as slow, not as unreachable.
+    #[tokio::test(start_paused = true)]
+    async fn a_sandbox_that_does_not_answer_in_time_is_named_slow() {
+        use wiremock::matchers::method;
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("POST"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(600)),
+            )
+            .mount(&server)
+            .await;
+        let why = ran(&server).await.expect_err("no answer");
+        assert_eq!(why, "the sandbox did not answer within 12 s");
+    }
+
     #[tokio::test]
     async fn a_text_body_comes_back_as_it_is() {
         let server = sandbox(200, json!({ "body": "three rows" })).await;

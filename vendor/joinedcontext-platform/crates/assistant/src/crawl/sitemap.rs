@@ -105,9 +105,8 @@ pub fn parse_sitemap_xml(xml: &str) -> ParsedSitemap {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => at.open(e.local_name().as_ref()),
             Ok(Event::Text(ref e)) if at.reading => {
-                if let Ok(text) = e.xml10_content() {
-                    at.text.push_str(&text);
-                }
+                // The input is a `&str`, so its text always decodes: an error would add nothing.
+                at.text.extend(e.xml10_content());
             }
             // quick-xml reports `&amp;` and the other references as events of their own;
             // a sitemap URL with a query string is full of them.
@@ -263,6 +262,34 @@ pub(super) fn add_filtered_urls(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A listed address on the site's host that the crawl may not read, or on another host, is
+    /// not kept: a password, plain http when only https is read.
+    #[test]
+    fn an_address_the_crawl_may_not_read_is_not_kept() {
+        let mut kept = Vec::new();
+        let policy = CrawlPolicy {
+            allow_plain_http: false,
+            ..CrawlPolicy::default()
+        };
+        add_filtered_urls(
+            &mut kept,
+            &[
+                "http://www.city.test/plain".to_owned(),
+                "https://user:secret@www.city.test/password".to_owned(),
+                "https://other.test/elsewhere".to_owned(),
+                "not a url".to_owned(),
+                "https://www.city.test/ok".to_owned(),
+            ],
+            "www.city.test",
+            &policy,
+            10,
+        );
+        assert_eq!(
+            kept.iter().map(Url::as_str).collect::<Vec<_>>(),
+            ["https://www.city.test/ok"]
+        );
+    }
 
     /// T-4749: each `<url>`'s `<lastmod>` is kept by its `<loc>`; a URL without one has none.
     #[test]

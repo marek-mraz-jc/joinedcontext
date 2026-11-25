@@ -530,6 +530,43 @@ mod tests {
     }
 
     #[test]
+    fn a_signed_in_tool_step_logs_names_only_and_only_for_an_object() {
+        let step = |input: &str| Step {
+            kind: "tool",
+            input: Some(input.to_owned()),
+            ..Step::default()
+        };
+        assert_eq!(
+            logged_input(&step(r#"{"type":"A","limit":5}"#), false).as_deref(),
+            Some("[type,limit]")
+        );
+        assert_eq!(
+            logged_input(&step("[1, 2]"), false),
+            None,
+            "a list has no names"
+        );
+        assert_eq!(logged_input(&step("not json"), false), None);
+    }
+
+    #[test]
+    fn a_visualization_with_no_spec_is_a_chart_of_no_rows_and_a_poisoned_trace_still_takes_steps() {
+        let trace = std::sync::Arc::new(Trace::default());
+        trace.visual(&Event::Visualization(json!({})));
+        let steps = trace.steps.lock().expect("the lock");
+        assert_eq!((steps[0].kind, steps[0].name.as_str()), ("visual", "chart"));
+        assert_eq!(steps[0].rows, Some(0));
+        drop(steps);
+        let held = std::sync::Arc::clone(&trace);
+        let _ = std::thread::spawn(move || {
+            let _guard = held.steps.lock().expect("the lock is free");
+            panic!("poisons the steps on purpose");
+        })
+        .join();
+        trace.push(Step::default());
+        assert!(trace.steps.lock().is_err(), "the lock stays poisoned");
+    }
+
+    #[test]
     fn model_tool_and_note_steps_are_kept_in_order_with_their_prices() {
         let trace = Trace::default();
         trace.note(
@@ -768,9 +805,10 @@ mod tests {
         struct Lines(Arc<Mutex<Vec<u8>>>);
         impl std::io::Write for Lines {
             fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                if let Ok(mut all) = self.0.lock() {
-                    all.extend_from_slice(bytes);
-                }
+                self.0
+                    .lock()
+                    .expect("the log lock")
+                    .extend_from_slice(bytes);
                 Ok(bytes.len())
             }
             fn flush(&mut self) -> std::io::Result<()> {

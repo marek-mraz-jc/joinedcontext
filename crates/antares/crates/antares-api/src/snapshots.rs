@@ -53,27 +53,24 @@ fn opaque(what: &str, e: &dyn std::fmt::Debug) -> NgsiError {
 }
 
 /// 5.2.41: expiresAt from the suggested snapshotLifetime, bounded by the
-/// system limit (5.16.1.4 "applying the configured limit").
-fn expires_at(meta: &Map<String, Value>) -> Result<String, NgsiError> {
-    let secs = match meta.get("snapshotLifetime").and_then(Value::as_str) {
-        Some(d) => crate::entity_map::iso8601_secs(d)
-            .ok_or_else(|| {
-                bad(format!(
-                    "snapshotLifetime is not an ISO 8601 duration: {d:?}"
-                ))
-            })?
-            // A zero or negative suggestion would answer 201 with a Location
-            // that is already expired, so the broker floor applies as well as
-            // the ceiling — the same reasoning the EntityMap lifetime carries.
-            .clamp(1, MAX_LIFETIME_SECS),
-        None => DEFAULT_LIFETIME_SECS,
-    };
+/// system limit (5.16.1.4 "applying the configured limit"). Every caller
+/// passed the members through `validate`, which refuses a lifetime that is
+/// no ISO 8601 duration, so a present lifetime always parses here.
+fn expires_at(meta: &Map<String, Value>) -> String {
+    let secs = meta
+        .get("snapshotLifetime")
+        .and_then(Value::as_str)
+        .and_then(crate::entity_map::iso8601_secs)
+        // A zero or negative suggestion would answer 201 with a Location
+        // that is already expired, so the broker floor applies as well as
+        // the ceiling — the same reasoning the EntityMap lifetime carries.
+        .map_or(DEFAULT_LIFETIME_SECS, |s| s.clamp(1, MAX_LIFETIME_SECS));
     // `secs` is clamped to MAX_LIFETIME_SECS above, far inside jiff's range.
     let now = jiff::Timestamp::now();
-    Ok(crate::state::stamp(
+    crate::state::stamp(
         now.checked_add(jiff::SignedDuration::from_secs(secs))
             .unwrap_or(now),
-    ))
+    )
 }
 
 fn expired(meta: &Value) -> bool {
@@ -245,9 +242,10 @@ async fn hold(st: &AppState, tenant: &TenantId, id: &str, owner: &str) -> Hold {
             if !leased_to(d, owner) {
                 return Err(Hold::Lost);
             }
-            if let Some(o) = d.as_object_mut() {
-                o.insert(LEASE_MEMBER.into(), lease(owner));
-            }
+            // a Snapshot is an object (`is_snapshot` read its type)
+            d.as_object_mut()
+                .ok_or(Hold::Gone)?
+                .insert(LEASE_MEMBER.into(), lease(owner));
             Ok(())
         })
     })
@@ -274,9 +272,10 @@ async fn resume_orphans(st: &AppState, tenant: &TenantId, ids: Vec<String>) {
                 if !is_snapshot(d) || expired(d) || !fill_orphaned(d) {
                     return Err(());
                 }
-                if let Some(o) = d.as_object_mut() {
-                    o.insert(LEASE_MEMBER.into(), lease(&owner));
-                }
+                // a Snapshot is an object (`is_snapshot` read its type)
+                d.as_object_mut()
+                    .ok_or(())?
+                    .insert(LEASE_MEMBER.into(), lease(&owner));
                 Ok(d.clone())
             })
             .await;
@@ -362,15 +361,15 @@ async fn snap_put(
     let id = meta.get("id").and_then(Value::as_str)?;
     st.store
         .mutate(tenant, Kind::Snapshot, id, |d| {
-            if let Some(o) = d.as_object_mut() {
-                for k in members {
-                    match meta.get(*k) {
-                        Some(v) => o.insert((*k).to_owned(), v.clone()),
-                        None => o.remove(*k),
-                    };
-                }
+            // a Snapshot is an object: every writer of one is this module
+            let o = d.as_object_mut().ok_or(())?;
+            for k in members {
+                match meta.get(*k) {
+                    Some(v) => o.insert((*k).to_owned(), v.clone()),
+                    None => o.remove(*k),
+                };
             }
-            Ok::<_, std::convert::Infallible>(d.clone())
+            Ok::<_, ()>(d.clone())
         })
         .await
         .ok()
@@ -393,10 +392,9 @@ pub(crate) async fn sweep_expired_snapshots(st: &AppState, tenant: &TenantId) ->
     let mut dead: Vec<(String, Value)> = Vec::new();
     let mut orphans: Vec<String> = Vec::new();
     if crate::csource::walk_docs(st, tenant, Kind::Snapshot, |doc| {
-        if !is_snapshot(&doc) {
-            return Ok(());
-        }
-        if let Some(id) = doc.get("id").and_then(Value::as_str).map(str::to_owned) {
+        // the reverse-index markers share the kind and carry an id too
+        let id = doc.get("id").and_then(Value::as_str).map(str::to_owned);
+        if let Some(id) = id.filter(|_| is_snapshot(&doc)) {
             if expired(&doc) {
                 dead.push((id, doc));
             } else if fill_orphaned(&doc) {
@@ -469,15 +467,13 @@ async fn purge_synth(st: &AppState, synth: &TenantId) {
 /// broker that stops mid-teardown leaves it pointing at data still there
 /// rather than data nothing names.
 fn purge_data_bg(st: &AppState, meta: &Value) {
-    let Some(synth) = synth_tenant(meta) else {
+    let (Some(synth), Some(idx)) = (synth_tenant(meta), snap_index_tenant()) else {
         return;
     };
     let st = st.clone();
     crate::spawn(async move {
         purge_synth(&st, &synth).await;
-        if let Some(idx) = snap_index_tenant() {
-            let _ = st.store.delete(&idx, Kind::Snapshot, synth.as_str()).await;
-        }
+        let _ = st.store.delete(&idx, Kind::Snapshot, synth.as_str()).await;
     });
 }
 
@@ -669,7 +665,7 @@ fn new_meta(
     o.insert("snapshotStatus".into(), Value::String("preparing".into()));
     // 5.2.41 Table 5.2.41-2: lastUsedAt "is initialized at creation time"
     o.insert("lastUsedAt".into(), Value::String(now_iso()));
-    o.insert("expiresAt".into(), Value::String(expires_at(&o)?));
+    o.insert("expiresAt".into(), Value::String(expires_at(&o)));
     o.entry("snapshotPriority".to_owned())
         .or_insert(Value::Number(5.into()));
     o.insert(
@@ -699,10 +695,10 @@ async fn snap_touch(st: &AppState, tenant: &TenantId, id: &str) {
     let _ = st
         .store
         .mutate(tenant, Kind::Snapshot, id, |meta| {
-            if let Some(o) = meta.as_object_mut() {
-                o.insert("lastUsedAt".into(), Value::String(now_iso()));
-            }
-            Ok::<_, std::convert::Infallible>(())
+            // a Snapshot is an object: every writer of one is this module
+            let o = meta.as_object_mut().ok_or(())?;
+            o.insert("lastUsedAt".into(), Value::String(now_iso()));
+            Ok::<_, ()>(())
         })
         .await;
 }
@@ -749,20 +745,24 @@ pub(crate) async fn asking_tenant(st: &AppState, tenant: &TenantId) -> TenantId 
 /// notified with expiresAt set before notifiedAt — the 5.3.4 deletion
 /// encoding.
 async fn evict_over_cap(st: &AppState, tenant: &TenantId, keep: &str) {
-    let victims: Vec<Value> = {
-        let mut metas: Vec<Value> = st
+    let victims: Vec<(String, Map<String, Value>)> = {
+        // a Snapshot is an object with an id: every writer of one is this
+        // module, and the markers beside them carry no type
+        let mut metas: Vec<(String, Map<String, Value>)> = st
             .store
             .list(tenant, Kind::Snapshot)
             .await
             .unwrap_or_default()
             .into_iter()
             .filter(is_snapshot)
+            .filter_map(|mut v| v.as_object_mut().map(std::mem::take))
+            .filter_map(|o| Some((o.get("id")?.as_str()?.to_owned(), o)))
             .collect();
         if metas.len() <= st.snapshot_cap {
             return;
         }
         let over = metas.len().saturating_sub(st.snapshot_cap);
-        metas.sort_by_key(|v| {
+        metas.sort_by_key(|(_, v)| {
             (
                 v.get("snapshotPriority")
                     .and_then(Value::as_i64)
@@ -775,18 +775,15 @@ async fn evict_over_cap(st: &AppState, tenant: &TenantId, keep: &str) {
         });
         metas
             .into_iter()
-            .filter(|v| v.get("id").and_then(Value::as_str) != Some(keep))
+            .filter(|(id, _)| id != keep)
             .take(over)
             .collect()
     };
-    for mut meta in victims {
-        if let Some(id) = meta.get("id").and_then(Value::as_str).map(str::to_owned) {
-            snap_remove(st, tenant, &id, &meta).await;
-        }
-        if let Some(o) = meta.as_object_mut() {
-            // deletion signal: expiresAt strictly before the notification
-            o.insert("expiresAt".into(), Value::String(now_iso()));
-        }
+    for (id, mut o) in victims {
+        // deletion signal: expiresAt strictly before the notification
+        o.insert("expiresAt".into(), Value::String(now_iso()));
+        let meta = Value::Object(o);
+        snap_remove(st, tenant, &id, &meta).await;
         let st2 = st.clone();
         crate::spawn(async move {
             send_notification(&st2, &meta).await;
@@ -828,9 +825,8 @@ pub async fn create_snapshot(
 /// 5.16.1.4 background fill: execute every (temporal) query, store the
 /// results under the synthetic tenant, derive the status, notify.
 async fn fill_snapshot(st: &AppState, tenant: &TenantId, id: &str, owner: &str) {
-    let Ok(permit) = FILLS.acquire().await else {
-        return;
-    };
+    // FILLS is never closed, so the acquire always hands out a permit
+    let permit = FILLS.acquire().await.ok();
     // the lease is renewed before every query below and by the keeper in
     // between; a fill that waited for its permit past it finds another owner
     // and stops
@@ -1011,12 +1007,15 @@ async fn run_query(
         // as a tenant that never existed. Counting a copy that never happened
         // costs the snapshot both, and 5.2.41 would publish the query as a
         // success besides.
-        for doc in batch.docs {
-            if let Some(id) = doc.get("id").and_then(Value::as_str) {
-                st.store
-                    .create(synth, Kind::Entity, id, doc.clone())
-                    .await?;
-            }
+        // a matched Entity always carries its id
+        for (id, doc) in batch
+            .docs
+            .iter()
+            .filter_map(|d| Some((d.get("id")?.as_str()?, d)))
+        {
+            st.store
+                .create(synth, Kind::Entity, id, doc.clone())
+                .await?;
         }
         n = n.saturating_add(got);
         match crate::entities::next_scan_offset(offset, rows, 0, batch.paged, st.max_limit) {
@@ -1067,10 +1066,9 @@ async fn run_temporal_query(
             .map_or("observedAt", |t| t.timeproperty.as_str()),
         ..Default::default()
     };
+    // a Tenant name is `[A-Za-z0-9_-]`, always a header value
     let mut headers = HeaderMap::new();
-    if let Ok(v) = tenant.as_str().parse() {
-        headers.insert("NGSILD-Tenant", v);
-    }
+    headers.extend(tenant_header(tenant.as_str()));
     // 5.16.1.4: "If the size of the respective results require pagination,
     // all pages are to be retrieved completely."
     let mut n = 0usize;
@@ -1105,19 +1103,20 @@ async fn run_temporal_query(
             other => opaque("temporal query execution", &other),
         })?;
         let bytes = st.read_answer(resp.into_body(), "snapshots").await?;
-        let arr: Vec<Value> = serde_json::from_slice::<Value>(&bytes)
+        let got = serde_json::from_slice::<Value>(&bytes)
             .ok()
-            .and_then(|v| v.as_array().cloned())
+            .and_then(|v| v.as_array().map(Vec::len))
             .unwrap_or_default();
-        let got = arr.len();
         if n.saturating_add(got) > budget {
             return Err(too_many(n.saturating_add(got), budget));
         }
-        for d in arr {
-            let Some(eid) = d.get("id").and_then(Value::as_str) else {
-                continue;
-            };
-            // `None` is an Entity with no Temporal Evolution to copy; an Err
+        // `merged` is the page the answer was built from, one document per
+        // Evolution of it, each carrying its Entity's id
+        for (eid, sent) in merged
+            .iter()
+            .filter_map(|m| Some((m.get("id")?.as_str()?, m)))
+        {
+            // `None` is an Evolution this broker does not hold; an Err
             // is the store refusing the read, which is not the same thing and
             // is not this snapshot's to swallow.
             //
@@ -1134,21 +1133,14 @@ async fn run_temporal_query(
                 .await?
                 .map(|doc| selected(doc, attrs.as_deref(), tq.as_ref()));
             // Nothing local means the Evolution came from a registered
-            // Context Source (5.7.4.4). The query's merged answer is every
+            // Context Source (clause 5.7.4, item 4), or went since the query read it. The
+            // query's merged answer is every
             // instance of it this broker was given, so it is what the
             // snapshot keeps — a local copy is the source's whole history,
             // a remote one is as much of it as the fan-out returned.
-            let doc = match held {
-                Some(doc) => Some(doc),
-                None => merged
-                    .iter()
-                    .find(|m| m.get("id").and_then(Value::as_str) == Some(eid))
-                    .cloned(),
-            };
-            if let Some(doc) = doc {
-                st.temporal.upsert(synth, eid, doc).await?;
-                n = n.saturating_add(1);
-            }
+            let doc = held.unwrap_or_else(|| sent.clone());
+            st.temporal.upsert(synth, eid, doc).await?;
+            n = n.saturating_add(1);
         }
         if got < st.max_limit {
             break;
@@ -1166,7 +1158,8 @@ fn selected(
     attrs: Option<&[String]>,
     tq: Option<&crate::temporalq::TemporalQ>,
 ) -> Value {
-    if let Some(o) = doc.as_object_mut() {
+    // an Evolution is an object; its members are what is cut
+    doc.as_object_mut().into_iter().for_each(|o| {
         o.retain(|k, v| {
             if antares_model::is_meta(k) {
                 return true;
@@ -1179,7 +1172,7 @@ fn selected(
             }
             true
         });
-    }
+    });
     doc
 }
 
@@ -1326,10 +1319,12 @@ pub async fn purge_snapshots(
             .into_iter()
             .filter(|meta| is_snapshot(meta) && crate::registry::csf_matches(&ast, meta, &ctx))
             .collect();
-        for meta in victims {
-            if let Some(id) = meta.get("id").and_then(Value::as_str) {
-                snap_remove(&st, &tenant, id, &meta).await;
-            }
+        // a Snapshot always carries its id
+        for (id, meta) in victims
+            .iter()
+            .filter_map(|m| Some((m.get("id")?.as_str()?, m)))
+        {
+            snap_remove(&st, &tenant, id, meta).await;
         }
         Ok::<_, ApiError>(no_content(&tenant))
     };
@@ -1402,34 +1397,32 @@ pub async fn update_snapshot(
         let moved = frag
             .get("endpoint")
             .is_some_and(|e| Some(e) != meta.get("endpoint"));
-        if let Some(o) = meta.as_object_mut() {
-            // 5.16.4.4 / 5.5.8 merge of the updatable members
-            for k in [
-                "snapshotLifetime",
-                "snapshotPriority",
-                "endpoint",
-                "receiverInfo",
-            ] {
-                match frag.get(k) {
-                    None => {}
-                    Some(Value::Null) => {
-                        o.remove(k);
-                    }
-                    Some(v) => {
-                        let mut v = v.clone();
-                        if k == "receiverInfo" {
-                            crate::pairs::unmask_pairs(k, &mut v, o.get(k), moved)?;
-                        }
-                        o.insert(k.into(), v);
-                    }
+        // a Snapshot is an object (`snap_get` read its type)
+        let o = meta
+            .as_object_mut()
+            .ok_or(NgsiError::InternalError("snapshot unreadable".into()))?;
+        // clause 5.16.4, item 4 / 5.5.8 merge of the updatable members
+        for k in [
+            "snapshotLifetime",
+            "snapshotPriority",
+            "endpoint",
+            "receiverInfo",
+        ] {
+            // `validate` refused a null for each of these, so a member
+            // sent is a value to merge, never a removal
+            if let Some(v) = frag.get(k) {
+                let mut v = v.clone();
+                if k == "receiverInfo" {
+                    crate::pairs::unmask_pairs(k, &mut v, o.get(k), moved)?;
                 }
+                o.insert(k.into(), v);
             }
-            if frag.contains_key("snapshotLifetime") {
-                // "it is possible to indirectly update expiresAt" (5.2.41)
-                o.insert("expiresAt".into(), Value::String(expires_at(o)?));
-            }
-            o.insert("modifiedAt".into(), Value::String(now_iso()));
         }
+        if frag.contains_key("snapshotLifetime") {
+            // "it is possible to indirectly update expiresAt" (5.2.41)
+            o.insert("expiresAt".into(), Value::String(expires_at(o)));
+        }
+        o.insert("modifiedAt".into(), Value::String(now_iso()));
         let meta = snap_put(&st, &tenant, &meta, UPDATE_MEMBERS)
             .await
             .ok_or_else(|| NgsiError::ResourceNotFound(format!("snapshot {id} not found")))?;
@@ -1551,9 +1544,8 @@ async fn clone_fill(st: &AppState, tenant: &TenantId, src_id: &str, new_id: &str
         waited = waited.saturating_add(pause);
         pause = pause.saturating_mul(2).min(CLONE_POLL_MAX_MS);
     };
-    let Ok(permit) = FILLS.acquire().await else {
-        return;
-    };
+    // FILLS is never closed, so the acquire always hands out a permit
+    let permit = FILLS.acquire().await.ok();
     if hold(st, tenant, new_id, owner).await != Hold::Held {
         return;
     }
@@ -1629,10 +1621,12 @@ async fn copy_snapshot_data(
             return Err(too_many(n, cap));
         }
         let full = page.len() >= st.max_limit;
-        for doc in page {
-            if let Some(id) = doc.get("id").and_then(Value::as_str) {
-                st.store.create(to, Kind::Entity, id, doc.clone()).await?;
-            }
+        // a stored Entity always carries its id
+        for (id, doc) in page
+            .iter()
+            .filter_map(|d| Some((d.get("id")?.as_str()?, d)))
+        {
+            st.store.create(to, Kind::Entity, id, doc.clone()).await?;
         }
         if !full {
             break;
@@ -1642,10 +1636,12 @@ async fn copy_snapshot_data(
     if docs.len() > cap {
         return Err(too_many(docs.len(), cap));
     }
-    for doc in docs {
-        if let Some(id) = doc.get("id").and_then(Value::as_str) {
-            st.temporal.upsert(to, id, doc.clone()).await?;
-        }
+    // a stored Evolution always carries its Entity's id
+    for (id, doc) in docs
+        .iter()
+        .filter_map(|d| Some((d.get("id")?.as_str()?, d)))
+    {
+        st.temporal.upsert(to, id, doc.clone()).await?;
     }
     Ok(())
 }
@@ -1673,9 +1669,13 @@ pub async fn snapshot_layer(
     // request, it shall also be present in HTTP response" — every exit,
     // the unscoped and the error ones included, leaves through here
     let mut resp = scoped(&st, &sid, req, next).await;
-    if let Ok(v) = sid.parse() {
-        resp.headers_mut().insert("NGSILD-Snapshot", v);
-    }
+    // `sid` was read out of a header value, so it is one again
+    resp.headers_mut().remove("NGSILD-Snapshot");
+    resp.headers_mut().extend(
+        sid.parse()
+            .ok()
+            .map(|v| (axum::http::HeaderName::from_static("ngsild-snapshot"), v)),
+    );
     resp
 }
 
@@ -1711,20 +1711,14 @@ async fn scoped(
             .into_response();
     };
     snap_touch(st, &tenant, sid).await;
-    if let Ok(v) = synth.as_str().parse() {
-        req.headers_mut().insert("NGSILD-Tenant", v);
-    }
+    // `extend` appends: the caller's Tenant goes first
+    req.headers_mut().remove("NGSILD-Tenant");
+    req.headers_mut().extend(tenant_header(synth.as_str()));
     let mut resp = next.run(req).await;
     // restore the caller's tenant view (the synthetic one is internal)
-    match tenant.as_str() {
-        "default" => {
-            resp.headers_mut().remove("NGSILD-Tenant");
-        }
-        t => {
-            if let Ok(v) = t.parse() {
-                resp.headers_mut().insert("NGSILD-Tenant", v);
-            }
-        }
+    resp.headers_mut().remove("NGSILD-Tenant");
+    if tenant.as_str() != "default" {
+        resp.headers_mut().extend(tenant_header(tenant.as_str()));
     }
     resp
 }
@@ -1733,6 +1727,14 @@ async fn scoped(
 /// unbounded result set doubles the stored data set in one request. The
 /// implementation threshold — "up to each implementation" — is a hundred
 /// full pages per snapshot; beyond it the query reports TooManyResults.
+/// The NGSILD-Tenant header naming `tenant`. A Tenant name is
+/// `[A-Za-z0-9_-]{1,128}` (`TenantId`), so it always is a header value and
+/// the pair is always there.
+fn tenant_header(tenant: &str) -> Option<(axum::http::HeaderName, axum::http::HeaderValue)> {
+    let v = axum::http::HeaderValue::from_str(tenant).ok()?;
+    Some((axum::http::HeaderName::from_static("ngsild-tenant"), v))
+}
+
 fn fill_cap(st: &AppState) -> usize {
     st.max_limit.saturating_mul(100)
 }
@@ -1961,15 +1963,10 @@ mod clause_5_16 {
             "snapshotQueries": [{"type": "Query", "entities": [{"type": "Vehicle"}]}]});
         let (status, headers, body) = post_json(st, "/ngsi-ld/v1/snapshots", &doc).await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
-        let loc = header(&headers, "Location").expect("Location").to_owned();
-        for _ in 0..200 {
-            let (_, _, b) = send(st, "GET", &loc, None, &[]).await;
-            if b["snapshotStatus"] != "preparing" {
-                return b["id"].as_str().expect("snapshot id").to_owned();
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-        panic!("snapshot never left preparing");
+        let loc = header(&headers, "Location").expect("Location");
+        let id = loc.rsplit('/').next().expect("snapshot id").to_owned();
+        settled(st, &id).await;
+        id
     }
 
     async fn stored(st: &AppState, id: &str) -> Value {
@@ -2038,14 +2035,7 @@ mod clause_5_16 {
             .await
             .expect("partial copy");
         assert_eq!(sweep_expired_snapshots(&st, &t).await, 0, "nothing expired");
-        let mut after = stored(&st, id).await;
-        for _ in 0..200 {
-            if after["snapshotStatus"] != "preparing" {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            after = stored(&st, id).await;
-        }
+        let after = settled(&st, id).await;
         assert_eq!(after["snapshotStatus"], "success", "{after}");
         assert!(
             after.get(LEASE_MEMBER).is_none(),
@@ -2330,16 +2320,8 @@ mod clause_5_16 {
                     "timeproperty": "createdAt"}}]});
         let (status, headers, body) = post_json(&st, "/ngsi-ld/v1/snapshots", &doc).await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
-        let loc = header(&headers, "Location").expect("Location").to_owned();
-        let mut ready = Value::Null;
-        for _ in 0..200 {
-            let (_, _, b) = send(&st, "GET", &loc, None, &[]).await;
-            if b["snapshotStatus"] != "preparing" {
-                ready = b;
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
+        let loc = header(&headers, "Location").expect("Location");
+        let ready = settled(&st, loc.rsplit('/').next().expect("snapshot id")).await;
         assert_eq!(ready["snapshotStatus"], "failure", "{ready}");
         let detail = ready["snapshotTemporalQueriesDetails"][0]["problemDetails"].clone();
         assert!(
@@ -2499,6 +2481,576 @@ mod clause_5_16 {
         panic!("a snapshot-scoped subscription outlived its snapshot");
     }
 
+    /// 5.2.41: each malformed member is a BadRequestData naming it.
+    #[test]
+    fn clause_5_2_41_each_malformed_member_is_named() {
+        // every refusal here is BadRequestData, whose Display is its detail
+        let refused = |body: Value| {
+            let e = validate(&body, Mode::Create).expect_err("refused");
+            assert!(matches!(e, NgsiError::BadRequestData(_)), "{e:?}");
+            e.to_string()
+        };
+        let q = json!({"type": "Query"});
+        assert_eq!(refused(json!(5)), "snapshot must be a JSON object");
+        assert_eq!(
+            refused(json!({"type": "Snapshot", "snapshotQueries": []})),
+            "snapshotQueries must be a non-empty array of Query (5.2.41)"
+        );
+        assert_eq!(
+            refused(json!({"type": "Snapshot", "snapshotQueries": [5]})),
+            "snapshotQueries entries must be Query objects (5.2.23)"
+        );
+        assert_eq!(
+            refused(json!({"type": "Snapshot", "snapshotQueries": [{"type": "Other"}]})),
+            "snapshotQueries entries must have type Query (5.2.23)"
+        );
+        assert_eq!(
+            refused(json!({"type": "Snapshot", "snapshotQueries": [q], "endpoint": 5})),
+            "endpoint must be a URI string (5.2.41)"
+        );
+        let mut o = Map::new();
+        o.insert("snapshotLifetime".into(), json!("PT1H"));
+        let exp = crate::state::instant(&expires_at(&o)).expect("rfc3339");
+        let left = exp.duration_since(jiff::Timestamp::now()).as_secs();
+        assert!((3_500..=3_600).contains(&left), "{left}");
+    }
+
+    /// 5.16.1.4: a client id that is no URI is refused before anything is
+    /// stored.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_5_16_1_4_an_id_that_is_no_uri_is_refused() {
+        let st = state().await;
+        let doc = json!({"type": "Snapshot", "id": "not a uri",
+            "snapshotQueries": [{"type": "Query", "entities": [{"type": "Vehicle"}]}]});
+        let (status, _, body) = post_json(&st, "/ngsi-ld/v1/snapshots", &doc).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            body["detail"],
+            "snapshot id is not a valid URI: \"not a uri\""
+        );
+        assert!(st
+            .store
+            .list(&TenantId::default(), Kind::Snapshot)
+            .await
+            .expect("store")
+            .is_empty());
+    }
+
+    /// 5.16.4.4 with 5.2.15: a masked receiverInfo value keeps the stored
+    /// credential on the same endpoint and is refused once the endpoint
+    /// moves; clone and update of an unknown Snapshot are 404.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_5_16_4_4_a_masked_credential_does_not_move() {
+        let st = state().await;
+        let sid = snapshot_over_vehicles(&st).await;
+        let path = format!("/ngsi-ld/v1/snapshots/{sid}");
+        let patch = |doc: Value| {
+            let st = st.clone();
+            let path = path.clone();
+            async move {
+                send(
+                    &st,
+                    "PATCH",
+                    &path,
+                    Some(("application/json", doc.to_string())),
+                    &[],
+                )
+                .await
+            }
+        };
+        let (status, _, body) = patch(json!({"endpoint": "http://127.0.0.1:9/a",
+            "receiverInfo": [{"key": "X-Key", "value": "s3cret"}]}))
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["receiverInfo"][0]["value"], crate::pairs::MASKED);
+        let (status, _, body) =
+            patch(json!({"receiverInfo": [{"key": "X-Key", "value": crate::pairs::MASKED}]})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            stored(&st, &sid).await["receiverInfo"][0]["value"],
+            "s3cret"
+        );
+        let (status, _, body) = patch(json!({"endpoint": "http://127.0.0.1:9/b",
+            "receiverInfo": [{"key": "X-Key", "value": crate::pairs::MASKED}]}))
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(stored(&st, &sid).await["endpoint"], "http://127.0.0.1:9/a");
+        let gone = "/ngsi-ld/v1/snapshots/urn:ngsi-ld:Snapshot:none";
+        let (status, _, _) = send(
+            &st,
+            "PATCH",
+            gone,
+            Some((
+                "application/json",
+                json!({"snapshotPriority": 2}).to_string(),
+            )),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _, body) = send(
+            &st,
+            "POST",
+            &format!("{gone}/clone"),
+            Some(("application/json", String::new())),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(
+            body["detail"],
+            "snapshot urn:ngsi-ld:Snapshot:none not found"
+        );
+    }
+
+    /// 5.16.6: the SnapshotNotification carries each receiverInfo pair as a
+    /// header.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_5_16_6_receiver_info_rides_as_headers() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(Option<String>, Value)>(1);
+        let app = axum::Router::new().route(
+            "/n",
+            axum::routing::post(move |h: HeaderMap, b: axum::Json<Value>| {
+                let tx = tx.clone();
+                async move {
+                    let key = h
+                        .get("x-key")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_owned);
+                    let _ = tx.send((key, b.0)).await;
+                    StatusCode::NO_CONTENT
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+            listener, app,
+        )));
+        let st = state().await;
+        let meta = json!({"id": "urn:ngsi-ld:Snapshot:n", "snapshotStatus": "success",
+            "endpoint": format!("http://{addr}/n"),
+            "receiverInfo": [{"key": "X-Key", "value": "s3cret"}, {"key": "X-None"}]});
+        send_notification(&st, &meta).await;
+        let (key, body) = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("notified in time")
+            .expect("one notification");
+        assert_eq!(key.as_deref(), Some("s3cret"));
+        assert_eq!(body["snapshotId"], "urn:ngsi-ld:Snapshot:n");
+        assert_eq!(body["type"], "SnapshotNotification");
+    }
+
+    /// S4-22 seams called directly: a fill of a Snapshot that is gone or
+    /// that names no copy does nothing; a claim that is not an orphan is
+    /// skipped; a resumed clone copies its source again; an insert without
+    /// a copy writes no index entry; a removal without one spawns nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn s4_22_fill_seams_stop_on_what_they_cannot_fill() {
+        let st = state().await;
+        let t = TenantId::default();
+        fill_snapshot(&st, &t, "urn:ngsi-ld:Snapshot:none", "o").await;
+        assert!(st
+            .store
+            .list(&t, Kind::Snapshot)
+            .await
+            .expect("list")
+            .is_empty());
+
+        let bare = "urn:ngsi-ld:Snapshot:bare";
+        let meta = json!({"id": bare, "type": "Snapshot", "snapshotStatus": "preparing",
+            "expiresAt": "2999-01-01T00:00:00Z", LEASE_MEMBER: lease("o")});
+        snap_insert(&st, &t, bare, &meta).await.expect("insert");
+        assert!(matches!(
+            snap_insert(&st, &t, bare, &meta).await,
+            Err(NgsiError::AlreadyExists(m)) if m == format!("snapshot {bare} already exists")
+        ));
+        fill_snapshot(&st, &t, bare, "o").await;
+        assert_eq!(
+            stored(&st, bare).await["snapshotStatus"],
+            "preparing",
+            "no copy, no fill"
+        );
+        snap_remove(&st, &t, bare, &meta).await;
+        assert!(snap_get(&st, &t, bare).await.is_none());
+
+        // a live lease: not an orphan, the claim is skipped
+        let held = "urn:ngsi-ld:Snapshot:held";
+        seeded_snapshot(&st, held, "preparing").await;
+        lease_to(&st, held, "alive").await;
+        resume_orphans(&st, &t, vec![held.to_owned()]).await;
+        assert!(leased_to(&stored(&st, held).await, "alive"));
+
+        // an orphaned clone of a finished source is copied again
+        let src = "urn:ngsi-ld:Snapshot:src";
+        let from = seeded_snapshot(&st, src, "success").await;
+        vehicle_in(&st, &from, 1).await;
+        let clone = "urn:ngsi-ld:Snapshot:orphan";
+        seeded_snapshot(&st, clone, "preparing").await;
+        st.store
+            .mutate(&t, Kind::Snapshot, clone, |d| {
+                d[CLONE_OF_MEMBER] = json!(src);
+                d[LEASE_MEMBER] = json!({"owner": "dead", "until": "2000-01-01T00:00:00Z"});
+                Ok::<_, std::convert::Infallible>(())
+            })
+            .await
+            .expect("orphan");
+        resume_orphans(&st, &t, vec![clone.to_owned()]).await;
+        let after = settled(&st, clone).await;
+        assert_eq!(after["snapshotStatus"], "success", "{after}");
+        let to = synth_tenant(&after).expect("__tenant");
+        assert!(st
+            .store
+            .get(&to, Kind::Entity, "urn:ngsi-ld:Vehicle:c1")
+            .await
+            .expect("store")
+            .is_some());
+    }
+
+    /// 5.16.2.4 seams: a clone whose source is gone, whose own lease is
+    /// another's, or which names no copy of its own ends without copying.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_5_16_2_4_a_clone_stops_on_what_it_cannot_copy() {
+        let st = state().await;
+        let t = TenantId::default();
+        let clone = "urn:ngsi-ld:Snapshot:c";
+        seeded_snapshot(&st, clone, "preparing").await;
+        lease_to(&st, clone, "me").await;
+        clone_fill(&st, &t, "urn:ngsi-ld:Snapshot:gone", clone, "me").await;
+        assert_eq!(stored(&st, clone).await["snapshotStatus"], "failure");
+
+        let src = "urn:ngsi-ld:Snapshot:busy";
+        seeded_snapshot(&st, src, "preparing").await;
+        let other = "urn:ngsi-ld:Snapshot:c2";
+        seeded_snapshot(&st, other, "preparing").await;
+        lease_to(&st, other, "someone-else").await;
+        clone_fill(&st, &t, src, other, "me").await;
+        assert_eq!(stored(&st, other).await["snapshotStatus"], "preparing");
+
+        let done = "urn:ngsi-ld:Snapshot:done";
+        seeded_snapshot(&st, done, "success").await;
+        clone_fill(&st, &t, done, other, "me").await;
+        assert_eq!(stored(&st, other).await["snapshotStatus"], "preparing");
+
+        let bare = "urn:ngsi-ld:Snapshot:c3";
+        st.store
+            .create(
+                &t,
+                Kind::Snapshot,
+                bare,
+                json!({"id": bare, "type": "Snapshot", "snapshotStatus": "preparing",
+                       "expiresAt": "2999-01-01T00:00:00Z", LEASE_MEMBER: lease("me")}),
+            )
+            .await
+            .expect("seed");
+        clone_fill(&st, &t, done, bare, "me").await;
+        assert_eq!(stored(&st, bare).await["snapshotStatus"], "failure");
+    }
+
+    /// 5.16.1.4: a query that is no object fails, and one whose results
+    /// pass the budget is TooManyResults — counted by the documents when an
+    /// idPattern keeps the store from counting.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_5_5_6_a_query_past_its_budget_copies_nothing() {
+        let st = state().await;
+        let t = TenantId::default();
+        let (status, _, body) = post_json(
+            &st,
+            "/ngsi-ld/v1/entities",
+            &json!({"id": "urn:ngsi-ld:Vehicle:budget", "type": "Vehicle"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let synth = TenantId::new_internal("snap-budget").expect("synth");
+        let ctx = st.loader.core();
+        assert!(matches!(
+            run_query(&st, &t, &synth, &json!(5), &ctx, 10).await,
+            Err(NgsiError::BadRequestData(m)) if m == "Query must be an object"
+        ));
+        let q = json!({"type": "Query",
+            "entities": [{"type": "Vehicle", "idPattern": "urn:ngsi-ld:Vehicle:.*"}]});
+        let plain = json!({"type": "Query", "entities": [{"type": "Vehicle"}]});
+        let r = run_query(&st, &t, &synth, &plain, &ctx, 10).await;
+        assert!(matches!(r, Ok(1)), "{r:?}");
+        let r = run_query(&st, &t, &synth, &q, &ctx, 0).await;
+        assert!(matches!(r, Err(NgsiError::TooManyResults(_))), "{r:?}");
+        assert!(matches!(
+            run_temporal_query(&st, &t, &synth, "urn:ngsi-ld:Snapshot:x", &json!(5), 10).await,
+            Err(NgsiError::BadRequestData(m)) if m == "Query must be an object"
+        ));
+        assert_eq!(
+            st.store
+                .list(&synth, Kind::Entity)
+                .await
+                .expect("list")
+                .len(),
+            1,
+            "only the query within its budget copied"
+        );
+    }
+
+    /// S4-22 against a store that refuses every call: the sweep reaps
+    /// nothing, a lease renewal that fails lets the fill go on, and the
+    /// fill then reads no Snapshot and stops.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn s4_22_a_failing_store_never_reads_as_a_deletion() {
+        let st = crate::state::refusing_state();
+        let t = TenantId::default();
+        assert_eq!(sweep_expired_snapshots(&st, &t).await, 0);
+        assert_eq!(
+            hold(&st, &t, "urn:ngsi-ld:Snapshot:x", "o").await,
+            Hold::Held
+        );
+        fill_snapshot(&st, &t, "urn:ngsi-ld:Snapshot:x", "o").await;
+        finish(&st, &t, "urn:ngsi-ld:Snapshot:x", "o", "failure", None).await;
+        let synth = TenantId::new_internal("snap-refused").expect("synth");
+        let ctx = st.loader.core();
+        let any = json!({"type": "Query", "entities": [{"type": "*"}]});
+        assert!(matches!(
+            run_query(&st, &t, &synth, &any, &ctx, 10).await,
+            Err(NgsiError::InternalError(m)) if m == "query execution failed"
+        ));
+        let tq = json!({"type": "Query", "entities": [{"type": "Vehicle"}],
+            "temporalQ": {"timerel": "after", "timeAt": "2000-01-01T00:00:00Z"}});
+        assert!(matches!(
+            run_temporal_query(&st, &t, &synth, "urn:ngsi-ld:Snapshot:x", &tq, 10).await,
+            Err(NgsiError::InternalError(m)) if m == "temporal query execution failed"
+        ));
+    }
+
+    /// S4-22 and 6.3.22 seams on what is not theirs: an expired Snapshot is
+    /// gone to a lease renewal; an orphan that names no copy is claimed and
+    /// purges nothing; the reverse-index markers are no Snapshot to a
+    /// listing, a sweep or an erasure; a synthetic tenant nobody indexed has
+    /// no owner.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn s4_22_seams_skip_what_is_not_a_live_snapshot() {
+        let st = state().await;
+        let t = TenantId::default();
+        let old = "urn:ngsi-ld:Snapshot:old";
+        st.store
+            .create(
+                &t,
+                Kind::Snapshot,
+                old,
+                json!({"id": old, "type": "Snapshot", "snapshotStatus": "preparing",
+                       "expiresAt": "2000-01-01T00:00:00Z", LEASE_MEMBER: lease("o")}),
+            )
+            .await
+            .expect("seed");
+        assert_eq!(hold(&st, &t, old, "o").await, Hold::Gone);
+
+        let bare = "urn:ngsi-ld:Snapshot:bare-orphan";
+        st.store
+            .create(
+                &t,
+                Kind::Snapshot,
+                bare,
+                json!({"id": bare, "type": "Snapshot", "snapshotStatus": "preparing",
+                       "expiresAt": "2999-01-01T00:00:00Z",
+                       LEASE_MEMBER: {"owner": "dead", "until": "2000-01-01T00:00:00Z"}}),
+            )
+            .await
+            .expect("seed");
+        resume_orphans(&st, &t, vec![bare.to_owned()]).await;
+        let claimed = stored(&st, bare).await;
+        assert!(!leased_to(&claimed, "dead"), "claimed anew: {claimed}");
+        assert!(!fill_orphaned(&claimed), "{claimed}");
+
+        let sid = snapshot_over_vehicles(&st).await;
+        let idx = snap_index_tenant().expect("index tenant");
+        assert_eq!(
+            st.store
+                .list(&idx, Kind::Snapshot)
+                .await
+                .expect("list")
+                .len(),
+            1
+        );
+        assert!(copies_of(&st, &idx).await.expect("walk").is_empty());
+        assert_eq!(sweep_expired_snapshots(&st, &idx).await, 0);
+        assert_eq!(
+            st.store
+                .list(&idx, Kind::Snapshot)
+                .await
+                .expect("list")
+                .len(),
+            1,
+            "the marker of {sid} stays"
+        );
+        assert_eq!(snapshot_of_synth(&st, "snap-nobody-indexed").await, None);
+        assert_eq!(snapshot_of_synth(&st, "mobility").await, None);
+    }
+
+    /// clause 5.16.1, item 4 cut of an Evolution: an Attribute whose instances are no
+    /// array, and every Attribute without a window, pass the cut untouched.
+    #[test]
+    fn clause_5_16_1_4_the_cut_keeps_what_has_no_instances_to_drop() {
+        let vp: HashMap<String, String> = [
+            ("timerel".to_owned(), "after".to_owned()),
+            ("timeAt".to_owned(), "2026-01-02T00:00:00Z".to_owned()),
+        ]
+        .into();
+        let tq = crate::temporalq::TemporalQ::from_params(&vp, true)
+            .expect("temporalQ parses")
+            .expect("temporalQ");
+        let doc = json!({"id": "urn:ngsi-ld:V:1", "type": "V", "a": {"value": 1},
+            "b": [{"value": 2, "observedAt": "2026-01-01T00:00:00Z"},
+                  {"value": 3, "observedAt": "2026-01-03T00:00:00Z"}]});
+        let cut = selected(doc.clone(), None, Some(&tq));
+        assert_eq!(cut["a"], json!({"value": 1}));
+        assert_eq!(cut["b"].as_array().map(Vec::len), Some(1), "{cut}");
+        assert_eq!(selected(doc.clone(), None, None), doc);
+    }
+
+    /// clause 5.16.1, item 4 query seams: a `type` of "*" is answered locally, a geoQ the
+    /// store cannot read is that query's BadRequestData, a temporal query of
+    /// a Snapshot already gone copies nothing, one past its budget is
+    /// TooManyResults and one whose q does not parse is BadRequestData.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_5_16_1_4_query_seams_report_what_each_query_did() {
+        let st = state().await;
+        let t = TenantId::default();
+        let (status, _, b) = post_json(
+            &st,
+            "/ngsi-ld/v1/temporal/entities",
+            &json!({"id": "urn:ngsi-ld:Vehicle:seam", "type": "Vehicle",
+                "speed": [{"type": "Property", "value": 1,
+                           "observedAt": "2026-01-01T00:00:00Z"}]}),
+        )
+        .await;
+        assert!(status.is_success(), "{status} {b}");
+        let (status, _, b) = post_json(
+            &st,
+            "/ngsi-ld/v1/entities",
+            &json!({"id": "urn:ngsi-ld:Vehicle:now", "type": "Vehicle"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{b}");
+        let synth = TenantId::new_internal("snap-seams").expect("synth");
+        let ctx = st.loader.core();
+        let any = json!({"type": "Query", "entities": [{"type": "*"}]});
+        let r = run_query(&st, &t, &synth, &any, &ctx, 10).await;
+        assert!(matches!(r, Ok(1)), "{r:?}");
+        let geo = json!({"type": "Query", "entities": [{"type": "*"}],
+            "geoQ": {"georel": "nowhere", "geometry": "Point", "coordinates": "[1,2]"}});
+        let r = run_query(&st, &t, &synth, &geo, &ctx, 10).await;
+        assert!(matches!(r, Err(NgsiError::BadRequestData(_))), "{r:?}");
+
+        let tq = json!({"type": "Query", "entities": [{"type": "Vehicle"}],
+            "temporalQ": {"timerel": "after", "timeAt": "2000-01-01T00:00:00Z"}});
+        let r = run_temporal_query(&st, &t, &synth, "urn:ngsi-ld:Snapshot:gone", &tq, 10).await;
+        assert!(matches!(r, Ok(0)), "{r:?}");
+        let sid = "urn:ngsi-ld:Snapshot:seams";
+        seeded_snapshot(&st, sid, "preparing").await;
+        let r = run_temporal_query(&st, &t, &synth, sid, &tq, 0).await;
+        assert!(matches!(r, Err(NgsiError::TooManyResults(_))), "{r:?}");
+        let mut bad_q = tq.clone();
+        bad_q["q"] = json!("speed>>>");
+        let r = run_temporal_query(&st, &t, &synth, sid, &bad_q, 10).await;
+        assert!(matches!(r, Err(NgsiError::BadRequestData(_))), "{r:?}");
+        assert!(st.temporal.list(&synth).await.expect("list").is_empty());
+    }
+
+    /// 6.3.22 scoping: a Tenant header that is not one is refused before the
+    /// Snapshot is looked up, and a Snapshot naming no copy is an
+    /// InternalError, never a request served from live data.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_6_3_22_scoping_refuses_what_it_cannot_scope() {
+        let st = state().await;
+        let (status, headers, body) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=Vehicle",
+            None,
+            &[
+                ("NGSILD-Snapshot", "urn:ngsi-ld:Snapshot:any"),
+                ("NGSILD-Tenant", "not a tenant"),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(
+            header(&headers, "NGSILD-Snapshot"),
+            Some("urn:ngsi-ld:Snapshot:any")
+        );
+        let bare = "urn:ngsi-ld:Snapshot:copyless";
+        st.store
+            .create(
+                &TenantId::default(),
+                Kind::Snapshot,
+                bare,
+                json!({"id": bare, "type": "Snapshot", "snapshotStatus": "success",
+                       "expiresAt": "2999-01-01T00:00:00Z"}),
+            )
+            .await
+            .expect("seed");
+        let (status, _, body) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=Vehicle",
+            None,
+            &[("NGSILD-Snapshot", bare)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert_eq!(body["detail"], "snapshot without tenant", "{body}");
+    }
+
+    /// 5.16.6: a Snapshot whose endpoint the egress policy refuses is not
+    /// notified at all.
+    #[tokio::test]
+    async fn clause_5_16_6_a_refused_endpoint_is_not_notified() {
+        let st = AppState::new("antares-snapshots".into());
+        let uri = "mqtt://broker.example/snapshots";
+        assert!(st.egress.check_url(uri).await.is_err());
+        let meta = json!({"id": "urn:ngsi-ld:Snapshot:n", "type": "Snapshot",
+            "snapshotStatus": "success", "endpoint": uri});
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            send_notification(&st, &meta),
+        )
+        .await
+        .expect("returns at once, nothing is sent");
+    }
+
+    /// The keeper renews the lease while the fill runs and stops once the
+    /// lease is another fill's or once it is dropped.
+    #[tokio::test(start_paused = true)]
+    async fn the_keeper_renews_until_the_lease_is_lost() {
+        let st = AppState::new("antares-snapshots".into());
+        let t = TenantId::default();
+        let id = "urn:ngsi-ld:Snapshot:kept";
+        st.store
+            .create(
+                &t,
+                Kind::Snapshot,
+                id,
+                json!({"id": id, "type": "Snapshot", "snapshotStatus": "preparing",
+                       "expiresAt": "2999-01-01T00:00:00Z",
+                       LEASE_MEMBER: {"owner": "me", "until": "2000-01-01T00:00:00Z"}}),
+            )
+            .await
+            .expect("seed");
+        let keeper = Keeper::start(&st, &t, id, "me");
+        let tick = std::time::Duration::from_millis(u64::from(KEEP_MS) + 10);
+        tokio::time::sleep(tick).await;
+        let doc = stored(&st, id).await;
+        assert!(!fill_orphaned(&doc), "renewed: {doc}");
+        lease_to(&st, id, "another").await;
+        tokio::time::sleep(tick).await;
+        assert!(leased_to(&stored(&st, id).await, "another"));
+        drop(keeper);
+        let second = Keeper::start(&st, &t, id, "another");
+        drop(second);
+        tokio::time::sleep(tick).await;
+        let doc = stored(&st, id).await;
+        assert!(leased_to(&doc, "another"), "{doc}");
+    }
+
     /// 5.2.41 Table 5.2.41-1: the snapshot id "cannot be later modified in
     /// update operations" — whatever JSON type the client sends it as.
     #[test]
@@ -2519,7 +3071,7 @@ mod clause_5_16 {
     async fn clause_5_16_1_4_lifetime_is_clamped_and_expiry_removes_the_snapshot() {
         let mut o = Map::new();
         o.insert("snapshotLifetime".into(), json!("P10Y"));
-        let exp = crate::state::instant(&expires_at(&o).expect("expiresAt")).expect("rfc3339");
+        let exp = crate::state::instant(&expires_at(&o)).expect("rfc3339");
         let limit = jiff::Timestamp::now() + jiff::SignedDuration::from_secs(MAX_LIFETIME_SECS);
         assert!(exp <= limit, "the configured limit was not applied: {exp}");
         assert!(
@@ -2548,9 +3100,7 @@ mod clause_5_16 {
         let _ = st
             .store
             .mutate(&TenantId::default(), Kind::Snapshot, &sid, |d| {
-                if let Some(o) = d.as_object_mut() {
-                    o.insert("expiresAt".into(), json!("2000-01-01T00:00:00.000Z"));
-                }
+                d["expiresAt"] = json!("2000-01-01T00:00:00.000Z");
                 Ok::<_, std::convert::Infallible>(())
             })
             .await;
@@ -2638,15 +3188,20 @@ mod clause_5_16 {
         loc.rsplit('/').next().expect("clone id").to_owned()
     }
 
+    /// The Snapshot once its fill wrote an outcome, read every 20 ms.
     async fn settled(st: &AppState, id: &str) -> Value {
-        for _ in 0..200 {
-            let meta = stored(st, id).await;
-            if meta["snapshotStatus"] != "preparing" {
-                return meta;
+        let poll = async {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                let meta = stored(st, id).await;
+                if meta["snapshotStatus"] != "preparing" {
+                    return meta;
+                }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-        panic!("snapshot {id} never left preparing");
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(8), poll)
+            .await
+            .expect("the snapshot left preparing")
     }
 
     /// 5.16.2.4 (F-ANT5-005): the clone holds the source's whole Temporal

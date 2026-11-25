@@ -78,10 +78,10 @@ fn is_sequence_item(content: &str) -> bool {
 }
 
 fn parse_block(lines: &[Line<'_>], pos: &mut usize, base_indent: usize) -> CrResult<Value> {
-    if *pos >= lines.len() {
-        return Ok(Value::Null);
-    }
-    if is_sequence_item(lines[*pos].content) {
+    if lines
+        .get(*pos)
+        .is_some_and(|line| is_sequence_item(line.content))
+    {
         parse_sequence(lines, pos, base_indent)
     } else {
         parse_mapping(lines, pos, base_indent)
@@ -295,19 +295,17 @@ fn parse_scalar(s: &str) -> CrResult<Value> {
             ))
         });
     }
-    if let Some(first) = t.chars().next() {
-        let what = match first {
-            '&' => Some("anchors"),
-            '*' => Some("aliases"),
-            '!' => Some("tags"),
-            '|' | '>' => Some("block scalars"),
-            _ => None,
-        };
-        if let Some(what) = what {
-            return Err(CrError::BadRequest(format!(
-                "YAML {what} are not supported in provisioning files"
-            )));
-        }
+    let unsupported = match t.chars().next() {
+        Some('&') => Some("anchors"),
+        Some('*') => Some("aliases"),
+        Some('!') => Some("tags"),
+        Some('|' | '>') => Some("block scalars"),
+        _ => None,
+    };
+    if let Some(what) = unsupported {
+        return Err(CrError::BadRequest(format!(
+            "YAML {what} are not supported in provisioning files"
+        )));
     }
     Ok(match t {
         "true" | "True" | "TRUE" => Value::Bool(true),

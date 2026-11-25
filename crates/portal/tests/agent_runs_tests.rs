@@ -2100,6 +2100,32 @@ async fn a_function_of_the_run_answers_through_jc_functions() {
         "{stream}"
     );
 
+    // Each other refusal of the runtime, and an outcome that names no status: a body too large
+    // is the caller's 400, a runtime that answers something else or no outcome is a 503, and an
+    // outcome without a status is the function's 500 with no logs.
+    for (answer, expected) in [
+        (ResponseTemplate::new(413), StatusCode::BAD_REQUEST),
+        (ResponseTemplate::new(502), StatusCode::SERVICE_UNAVAILABLE),
+        (
+            ResponseTemplate::new(200).set_body_string("no outcome"),
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            ResponseTemplate::new(200).set_body_json(json!({ "body": { "late": true } })),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/invoke"))
+            .respond_with(answer)
+            .with_priority(1)
+            .up_to_n_times(1)
+            .mount(&runtime)
+            .await;
+        let (status, answer) = call(&app, &cookie, Method::POST, &summary, body.clone()).await;
+        assert_eq!(status, expected, "{answer}");
+    }
+
     files.insert(
         "functions/broken.ts".to_owned(),
         "export default (".to_owned(),
@@ -3910,6 +3936,67 @@ async fn a_static_run_links_its_github_copy_beside_the_forge() {
         .unwrap_or_default()
         .starts_with("https://forge.example/"));
     assert!(!read.to_string().contains("ghp_never_shown"), "{read}");
+}
+
+/// AP-46, AP-71 (T-7837): a workspace run (a ui-rust App beside the manifests) with a preview publishes as one Change of its App
+/// manifest, its source beside it; the run remembers the Change and waits for its approval.
+#[tokio::test]
+async fn a_previewing_workspace_run_publishes_as_a_change_and_awaits_approval() {
+    let server = common::forge().await;
+    let config = config();
+    let client = joinedcontext_portal::forge::ShakoClient::new(
+        server.uri().parse().expect("a url"),
+        "test-owner",
+        "test-repo",
+        "forge-token",
+    )
+    .expect("a client");
+    let state = AppState::new(config.clone(), None)
+        .with_mirror(mirror(Some(builder_profile_spec())))
+        .with_shako(Arc::new(client));
+    state.mirror.upsert(envelope(
+        "ContextSpace",
+        "helsinki",
+        PROJECT,
+        json!({ "isSandbox": true }),
+    ));
+    let mut run = a_static_run(AgentRunStatus::Previewing);
+    run.path_prefix = "apps/city-bikes".into();
+    run.app_class = "ui-rust".into();
+    run.data_needs = json!([{
+        "contextSpaceRef": { "kind": "ContextSpace", "name": "helsinki" },
+        "types": ["BikeHireDockingStation"],
+        "attrs": ["name", "location"],
+        "operations": ["queryEntity", "retrieveEntity"]
+    }]);
+    run.preview_url = Some("https://preview.example/city-bikes/".into());
+    state.agents.create_run(&run).await.expect("a run");
+    let app = server::app(state.clone());
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let (status, change) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{PROJECT}/agent-runs/{}/publish", run.id),
+        None,
+    )
+    .await;
+    let asked: Vec<String> = server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| format!("{} {}", r.method, r.url.path()))
+        .collect();
+    assert_eq!(status, StatusCode::ACCEPTED, "{change} {asked:#?}");
+    let stored = state
+        .agents
+        .get_run(&run.id)
+        .await
+        .expect("store")
+        .expect("run");
+    assert_eq!(stored.status, "awaiting_approval");
+    std::mem::forget(server);
 }
 
 /// AP-77: a static run with nothing committed to its branch is not published, and the refusal

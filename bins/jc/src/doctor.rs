@@ -683,6 +683,8 @@ struct Net {
     portal_database_url: Option<String>,
     /// The certificate transparency search ([`CT_BASE`]).
     ct_base: String,
+    /// The port the zones' name servers answer on: 53 (a test serves a zone on another).
+    dns_port: u16,
 }
 
 /// crt.sh, the certificate transparency search the weekly count reads.
@@ -716,6 +718,7 @@ impl Net {
             kubeconfig,
             portal_database_url,
             ct_base: CT_BASE.to_owned(),
+            dns_port: 53,
         })
     }
 
@@ -764,9 +767,14 @@ impl Net {
                 servers.join(", ")
             ));
         }
-        let config = ResolverConfig::from_name_servers(
-            ips.into_iter().map(NameServerConfig::udp_and_tcp).collect(),
-        );
+        let servers = ips.into_iter().map(|ip| {
+            let mut server = NameServerConfig::udp_and_tcp(ip);
+            for connection in &mut server.connections {
+                connection.port = self.dns_port;
+            }
+            server
+        });
+        let config = ResolverConfig::from_name_servers(servers.collect());
         let mut builder =
             hickory_resolver::TokioResolver::builder_with_config(config, Default::default());
         builder.options_mut().timeout = TIMEOUT;
@@ -1020,6 +1028,7 @@ fn parse_certificates(json: &[u8]) -> Result<Vec<CertificateState>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hickory_resolver::proto::rr::{Name, RData, Record, RecordType};
     use std::collections::HashMap;
 
     const EDGE: &str = "203.0.113.7";
@@ -1584,6 +1593,184 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
             });
         });
         addr
+    }
+
+    /// A name server on a loopback UDP port answering from `zone`: a (name, type) question gets
+    /// each row's record, owned by the row's third field or else by the name; a question in
+    /// `fail` answers SERVFAIL, anything else an empty NOERROR.
+    fn dns(
+        zone: Vec<(&'static str, RecordType, &'static str, RData)>,
+        fail: &'static [(&'static str, RecordType)],
+    ) -> u16 {
+        use hickory_resolver::proto::op::{Message, OpCode, ResponseCode};
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = socket.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok((n, from)) = socket.recv_from(&mut buf) {
+                let query = Message::from_vec(&buf[..n]).unwrap();
+                let mut answer = Message::response(query.metadata.id, OpCode::Query);
+                answer.metadata.recursion_desired = query.metadata.recursion_desired;
+                answer.metadata.recursion_available = true;
+                for q in &query.queries {
+                    let name = q.name().to_ascii().to_ascii_lowercase();
+                    if fail.contains(&(name.as_str(), q.query_type())) {
+                        answer.metadata.response_code = ResponseCode::ServFail;
+                    }
+                    for (asked, kind, owner, data) in &zone {
+                        if *asked == name && *kind == q.query_type() {
+                            let owner =
+                                Name::from_ascii(if owner.is_empty() { asked } else { owner })
+                                    .unwrap();
+                            answer.add_answer(Record::from_rdata(owner, 60, data.clone()));
+                        }
+                    }
+                    answer.add_query(q.clone());
+                }
+                socket.send_to(&answer.to_vec().unwrap(), from).unwrap();
+            }
+        });
+        port
+    }
+
+    /// A [`Net`] whose system resolver and zone name servers are the server on `port`.
+    fn net_at(port: u16) -> Net {
+        use hickory_resolver::config::{NameServerConfig, ResolverConfig};
+        let mut server = NameServerConfig::udp(IpAddr::from([127, 0, 0, 1]));
+        server.connections[0].port = port;
+        let mut builder = hickory_resolver::TokioResolver::builder_with_config(
+            ResolverConfig::from_name_servers(vec![server]),
+            Default::default(),
+        );
+        builder.options_mut().cache_size = 0;
+        builder.options_mut().attempts = 1;
+        let mut net = Net::new(None, None).unwrap();
+        net.system = builder.build().unwrap();
+        net.dns_port = port;
+        net
+    }
+
+    #[test]
+    fn the_dns_adapter_follows_zones_cnames_and_caa_and_names_each_failure() {
+        use hickory_resolver::proto::rr::rdata::{A, AAAA, CAA, CNAME, NS};
+        let name = |n: &str| Name::from_ascii(n).unwrap();
+        let ns = |n: &str| RData::NS(NS(name(n)));
+        let cname = |n: &str| RData::CNAME(CNAME(name(n)));
+        let port = dns(
+            vec![
+                ("zone.test.", RecordType::NS, "", ns("ns.zone.test.")),
+                // An alias answers every question with its CNAME first: no NS, no CNAME of the
+                // asked type first, no A or CAA of its own; the adapter skips those records.
+                ("odd.zone.test.", RecordType::NS, "", cname("zone.test.")),
+                (
+                    "odd.zone.test.",
+                    RecordType::NS,
+                    "zone.test.",
+                    ns("ns.zone.test."),
+                ),
+                ("odd.zone.test.", RecordType::A, "", cname("a.zone.test.")),
+                (
+                    "odd.zone.test.",
+                    RecordType::A,
+                    "a.zone.test.",
+                    RData::A(A([192, 0, 2, 1].into())),
+                ),
+                ("odd.zone.test.", RecordType::CAA, "", cname("zone.test.")),
+                (
+                    "odd.zone.test.",
+                    RecordType::CAA,
+                    "zone.test.",
+                    RData::CAA(CAA::new_issue(
+                        false,
+                        Some(name("letsencrypt.org.")),
+                        vec![],
+                    )),
+                ),
+                (
+                    "twisty.zone.test.",
+                    RecordType::CNAME,
+                    "a.zone.test.",
+                    RData::A(A([192, 0, 2, 1].into())),
+                ),
+                (
+                    "twisty.zone.test.",
+                    RecordType::CNAME,
+                    "",
+                    cname("a.zone.test."),
+                ),
+                (
+                    "ns.zone.test.",
+                    RecordType::A,
+                    "",
+                    RData::A(A([127, 0, 0, 1].into())),
+                ),
+                (
+                    "a.zone.test.",
+                    RecordType::A,
+                    "",
+                    RData::A(A([192, 0, 2, 1].into())),
+                ),
+                (
+                    "a.zone.test.",
+                    RecordType::AAAA,
+                    "",
+                    RData::AAAA(AAAA("2001:db8::1".parse().unwrap())),
+                ),
+                (
+                    "alias.zone.test.",
+                    RecordType::CNAME,
+                    "",
+                    cname("a.zone.test."),
+                ),
+                (
+                    "loop.zone.test.",
+                    RecordType::CNAME,
+                    "",
+                    cname("loop.zone.test."),
+                ),
+                ("noaddr.test.", RecordType::NS, "", ns("ns.noaddr.test.")),
+                (
+                    "zone.test.",
+                    RecordType::CAA,
+                    "",
+                    RData::CAA(CAA::new_issue(
+                        false,
+                        Some(name("letsencrypt.org.")),
+                        vec![],
+                    )),
+                ),
+            ],
+            &[
+                ("fail.zone.test.", RecordType::CNAME),
+                ("afail.zone.test.", RecordType::A),
+                ("broken.test.", RecordType::NS),
+                ("caafail.test.", RecordType::CAA),
+            ],
+        );
+        let net = net_at(port);
+        let v4: IpAddr = [192, 0, 2, 1].into();
+        let v6: IpAddr = "2001:db8::1".parse().unwrap();
+        assert_eq!(net.addresses("a.zone.test"), Ok(vec![v4, v6]));
+        assert_eq!(net.addresses("alias.zone.test."), Ok(vec![v4, v6]));
+        assert_eq!(net.addresses("odd.zone.test"), Ok(vec![v4]));
+        assert_eq!(net.addresses("twisty.zone.test"), Ok(vec![v4, v6]));
+        let err = |r: Result<Vec<IpAddr>, String>| r.expect_err("refused");
+        assert!(err(net.addresses("loop.zone.test")).contains("CNAME chain longer than 8"));
+        assert!(err(net.addresses("fail.zone.test")).starts_with("CNAME of fail.zone.test"));
+        assert!(err(net.addresses("afail.zone.test")).starts_with("A of afail.zone.test"));
+        assert!(err(net.addresses("x.broken.test")).starts_with("NS of broken.test"));
+        assert!(err(net.addresses("nowhere.test")).contains("no zone with name servers above"));
+        assert!(err(net.addresses("noaddr.test")).contains("ns.noaddr.test"));
+
+        let caa = net.caa("zone.test").unwrap();
+        assert_eq!(caa.len(), 1, "{caa:?}");
+        assert!(
+            caa[0].starts_with("issue ") && caa[0].contains("letsencrypt.org"),
+            "{caa:?}"
+        );
+        assert_eq!(net.caa("a.zone.test"), Ok(vec![]));
+        assert_eq!(net.caa("odd.zone.test"), Ok(caa.clone()));
+        assert!(net.caa("caafail.test").is_err());
     }
 
     /// A port nothing listens on, held for the test's life.

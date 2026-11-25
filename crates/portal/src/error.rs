@@ -739,11 +739,8 @@ mod tests {
 
     #[test]
     fn a_body_that_is_not_an_object_is_kept_under_error() {
-        let wrapped = with_problem_members(
-            serde_json::json!("boom"),
-            StatusCode::BAD_GATEWAY,
-            "no-such-slug",
-        );
+        let status = StatusCode::BAD_GATEWAY;
+        let wrapped = with_problem_members(serde_json::json!("boom"), status, "no-such-slug");
         assert_eq!(wrapped["error"], "boom");
         assert_eq!(wrapped["status"], 502);
         assert_eq!(wrapped["title"], "Error");

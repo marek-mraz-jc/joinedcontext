@@ -486,6 +486,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_host_without_a_domain_above_it_has_no_siblings() {
+        let base = |url: &str| Url::parse(url).ok();
+        assert_eq!(
+            allowed_hosts(base("https://city.sk/").as_ref()),
+            ["city.sk"]
+        );
+        assert_eq!(
+            allowed_hosts(base("https://api.city.sk/").as_ref()).len(),
+            4,
+            "its own host and the three siblings it lacks"
+        );
+        assert!(allowed_hosts(None).is_empty());
+    }
+
+    #[test]
     fn letters_no_other_language_uses_name_hungarian_and_german() {
         assert_eq!(language("Hol van a legközelebbi kút?", None, "sk"), "hu");
         assert_eq!(language("Wo ist die Straße?", None, "sk"), "de");

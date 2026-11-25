@@ -74,7 +74,10 @@ impl<Q: Send + 'static, A: Send + 'static> Coalescer<Q, A> {
         let waiting = {
             // A poisoned map is a panic in some past runner; its guard
             // already removed that runner's entry.
-            let mut queues = self.queues.lock().unwrap_or_else(|p| p.into_inner());
+            let mut queues = self
+                .queues
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             match queues.get_mut(&key) {
                 Some(waiting) => {
                     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -124,7 +127,10 @@ impl<Q: Send + 'static, A: Send + 'static> Coalescer<Q, A> {
         };
         loop {
             let batch = {
-                let mut queues = self.queues.lock().unwrap_or_else(|p| p.into_inner());
+                let mut queues = self
+                    .queues
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match queues.get_mut(&key) {
                     Some(waiting) if !waiting.is_empty() => std::mem::take(waiting),
                     _ => {
@@ -163,7 +169,10 @@ impl<Q, A> Drop for Retire<'_, Q, A> {
         if !self.armed {
             return;
         }
-        let mut queues = self.queues.lock().unwrap_or_else(|p| p.into_inner());
+        let mut queues = self
+            .queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let waiting = queues.get(self.key).is_some_and(|w| !w.is_empty());
         match self.respawn.take() {
             Some(respawn) if waiting && !std::thread::panicking() => {
@@ -244,7 +253,9 @@ pub(super) fn may_defer(st: &AppState, tenant: &TenantId, sub: &Value, id: &str)
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn defer_booking(st: &AppState, tenant: &TenantId, sub_id: &str, now: &str) {
     let key = key(st, tenant);
-    let mut windows = WINDOWS.lock().unwrap_or_else(|p| p.into_inner());
+    let mut windows = WINDOWS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let opens = !windows.contains_key(&key);
     let (times, last) = windows
         .entry(key)
@@ -284,7 +295,7 @@ pub(crate) async fn settle_bookings(st: &AppState, tenant: &TenantId) {
         let _turn = turn(&key).lock().await;
         let window = WINDOWS
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&key);
         let attempts: Vec<(String, String, i64)> = window
             .into_iter()
@@ -377,10 +388,9 @@ pub(super) async fn book(
             .await
         {
             Ok(found) => {
+                // every index of `round` is below `attempts.len()`, the length of `out`
                 for (i, d) in round.into_iter().zip(found) {
-                    if let Some(slot) = out.get_mut(i) {
-                        *slot = d;
-                    }
+                    let _ = out.get_mut(i).map(|slot| std::mem::replace(slot, d));
                 }
             }
             Err(e) => tracing::warn!("bookkeeping writeback failed: {e}"),
@@ -526,6 +536,26 @@ mod tests {
         )
         .await
         .expect("another tenant's settle ran while the first turn was held");
+    }
+
+    /// A store that refuses the bookkeeping books no attempt, and one that
+    /// refuses a read answers no map at all, never a partial one that would
+    /// read as deletions.
+    #[cfg(all(feature = "postgres", not(target_arch = "wasm32")))]
+    #[tokio::test]
+    async fn a_refusing_store_books_nothing_and_reads_no_map() {
+        let st = crate::state::refusing_state();
+        let tenant = antares_model::TenantId::new("default").expect("tenant");
+        let attempts = vec![(
+            "urn:ngsi-ld:Subscription:a".to_owned(),
+            "2026-01-01T00:00:00Z".to_owned(),
+            1,
+        )];
+        let booked = super::book(&st, &tenant, &attempts).await;
+        assert_eq!(booked.len(), 1);
+        assert!(booked[0].is_none());
+        let ids = ["urn:ngsi-ld:T:1".to_owned()];
+        assert!(super::read(&st, &tenant, ids.iter()).await.is_none());
     }
 
     /// 1000 asks of 256 ids each, overlapping, read as their union in

@@ -57,6 +57,7 @@ pub fn sign_jwt<T: Serialize>(
         Algorithm::RS256 => EncodingKey::from_rsa_pem(pkcs8_pem(&pkcs8_der).as_bytes())
             .map_err(crate::crypto_err("stored RSA key is not PKCS#8"))?,
         Algorithm::EdDSA => EncodingKey::from_ed_der(&pkcs8_der),
+        // parse_alg admits only the three above: an uncoverable deny kept as defence in depth
         _ => return Err(KaisatsuError::Crypto("forbidden algorithm".into())),
     };
     let mut header = Header::new(alg);

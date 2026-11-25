@@ -255,9 +255,10 @@ mod tests {
         let mut p = json!({"id": id, "assignee": {"kind": "role", "id": "public"},
                            "operations": ["5.7.1", "5.7.2"],
                            "information": [{"entities": [{"type": ty}], "propertyNames": ["pm10"]}]});
-        if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
-            o.extend(e.clone());
-        }
+        let extra = extra.as_object().cloned().unwrap_or_default();
+        p.as_object_mut()
+            .into_iter()
+            .for_each(|o| o.extend(extra.clone()));
         p
     }
 
@@ -345,6 +346,13 @@ mod tests {
             at(&all, "/Air/operations"),
             json!(["queryBatch", "queryEntity"])
         );
+        // a grant of no operation the entity tree knows adds no type
+        let none = ast(&json!([
+            grant("a", "Air", &json!({})),
+            grant("s", "Sub", &json!({"operations": ["5.13.3"]}))
+        ]))?;
+        assert!(none.get("Sub").is_none(), "{none}");
+        assert!(none.get("Air").is_some(), "{none}");
         Ok(())
     }
 

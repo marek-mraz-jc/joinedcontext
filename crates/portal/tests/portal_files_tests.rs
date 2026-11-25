@@ -109,12 +109,25 @@ impl FileDesk for Fake {
     }
     fn replace<'a>(
         &'a self,
-        _portal: &'a PortalSpec,
+        portal: &'a PortalSpec,
         _by: &'a str,
-        _id: &'a str,
-        _bytes: Vec<u8>,
+        id: &'a str,
+        bytes: Vec<u8>,
     ) -> FileFuture<'a, PortalFile> {
-        Box::pin(async { Err(FileRefusal::Desk(DeskError::NotFound)) })
+        let answer = self
+            .files
+            .lock()
+            .unwrap()
+            .entry(key(portal))
+            .or_default()
+            .iter_mut()
+            .find(|f| f.id == id)
+            .map(|f| {
+                f.size = bytes.len() as u64;
+                f.clone()
+            })
+            .ok_or(FileRefusal::Desk(DeskError::NotFound));
+        Box::pin(async move { answer })
     }
     fn delete<'a>(
         &'a self,
@@ -293,6 +306,61 @@ async fn an_admin_uploads_lists_renames_and_deletes_a_file_of_its_own_portal() {
     )
     .await;
     assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.body);
+}
+
+/// T-7837: a file in no use is replaced in place; an unknown id is 404, a rename body that is
+/// not `{"name": ...}` 400, and a body over 10 MiB 413.
+#[tokio::test]
+async fn a_free_file_is_replaced_and_a_bad_id_body_or_size_is_refused() {
+    let state = world("files-r");
+    let up = upload(&state, "bbadmin", "bbsk-files-r", "data.csv").await;
+    assert_eq!(up.status, StatusCode::CREATED, "{}", up.body);
+    let id = up.body["id"].as_str().expect("an id").to_owned();
+    let at = format!("{}/{id}", files("bbsk-files-r"));
+    let replaced = common::send_body(
+        &state,
+        person("bbadmin"),
+        "PUT",
+        &at,
+        "application/octet-stream",
+        Body::from("a,b\n3,4\n5,6\n"),
+    )
+    .await;
+    assert_eq!(replaced.status, StatusCode::OK, "{}", replaced.text);
+    assert!(replaced.text.contains(&id), "{}", replaced.text);
+
+    let unknown = common::send_body(
+        &state,
+        person("bbadmin"),
+        "PUT",
+        &format!("{}/f-nothing", files("bbsk-files-r")),
+        "application/octet-stream",
+        Body::from("x"),
+    )
+    .await;
+    assert_eq!(unknown.status, StatusCode::NOT_FOUND, "{}", unknown.text);
+
+    let renamed = common::send_body(
+        &state,
+        person("bbadmin"),
+        "PATCH",
+        &at,
+        "application/json",
+        Body::from("hero.png"),
+    )
+    .await;
+    assert_eq!(renamed.status, StatusCode::BAD_REQUEST, "{}", renamed.text);
+
+    let big = common::send_body(
+        &state,
+        person("bbadmin"),
+        "PUT",
+        &at,
+        "application/octet-stream",
+        Body::from(vec![b'a'; (10 << 20) + 2]),
+    )
+    .await;
+    assert_eq!(big.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", big.text);
 }
 
 #[tokio::test]

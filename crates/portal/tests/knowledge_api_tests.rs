@@ -433,6 +433,87 @@ async fn reads_and_an_inclusion_are_forwarded_and_bounded() {
     );
 }
 
+/// T-7837: the documents, a page's links, a document's passages, a recrawl and a deployment's
+/// usage are each forwarded and their answers come back as the assistant gave them.
+#[tokio::test]
+async fn each_read_and_a_recrawl_come_back_as_the_assistant_answered() {
+    let r = rig().await;
+    for (verb, upstream, status, body) in [
+        (
+            "GET",
+            "/sources/web/documents",
+            200,
+            json!({ "items": [{ "id": 4, "name": "plan.pdf" }] }),
+        ),
+        (
+            "GET",
+            "/sources/web/pages/12/links",
+            200,
+            json!({ "items": [{ "url": "https://www.hel.fi/b" }] }),
+        ),
+        (
+            "GET",
+            "/sources/web/passages",
+            200,
+            json!({ "items": [{ "ordinal": 0, "text": "Uimahalli" }] }),
+        ),
+        (
+            "POST",
+            "/sources/web/recrawl",
+            202,
+            json!({ "job": 77, "state": "queued" }),
+        ),
+        (
+            "GET",
+            "/deployments/public/usage",
+            200,
+            json!({ "questions": 9 }),
+        ),
+    ] {
+        Mock::given(method(verb))
+            .and(path(format!("{ASSISTANT_PATH}{upstream}")))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .mount(&r.assistant)
+            .await;
+    }
+    for (verb, uri, want, says) in [
+        (
+            "GET",
+            "/api/v1/projects/helsinki/knowledge/sources/web/documents",
+            200,
+            "plan.pdf",
+        ),
+        (
+            "GET",
+            "/api/v1/projects/helsinki/knowledge/sources/web/pages/12/links",
+            200,
+            "www.hel.fi/b",
+        ),
+        (
+            "GET",
+            "/api/v1/projects/helsinki/knowledge/sources/web/passages?document=4",
+            200,
+            "Uimahalli",
+        ),
+        (
+            "POST",
+            "/api/v1/projects/helsinki/knowledge/sources/web/recrawl",
+            202,
+            "queued",
+        ),
+        (
+            "GET",
+            "/api/v1/projects/helsinki/knowledge/deployments/public/usage",
+            200,
+            "\"questions\":9",
+        ),
+    ] {
+        let answer = common::send(&r.state, admin(), verb, uri, None).await;
+        assert_eq!(answer.status, want, "{uri}: {}", answer.text);
+        assert!(answer.text.contains(says), "{uri}: {}", answer.text);
+    }
+}
+
 /// UI-99 (T-4659): a page search and a trial search reach the assistant with their words
 /// encoded, and its hits and its refusal of a bad `q` come back as they are.
 #[tokio::test]

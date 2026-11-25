@@ -815,9 +815,8 @@ pub fn id_pattern_required(pattern: &str) -> Option<(String, bool)> {
         let HirKind::Literal(l) = h.kind() else {
             continue;
         };
-        let Ok(text) = std::str::from_utf8(&l.0) else {
-            continue;
-        };
+        // the parser runs in UTF-8 mode, so a literal is valid UTF-8
+        let text = String::from_utf8_lossy(&l.0);
         // an inner literal beats the prefix, which in `urn:ngsi-ld:{Type}:`
         // ids repeats the type the read already narrows on
         let rank = |len: usize, anchored: bool| (!anchored, len);
@@ -825,7 +824,7 @@ pub fn id_pattern_required(pattern: &str) -> Option<(String, bool)> {
             .as_ref()
             .is_none_or(|(b, a)| rank(b.len(), *a) < rank(text.len(), i == 0))
         {
-            best = Some((text.to_owned(), i == 0));
+            best = Some((text.into_owned(), i == 0));
         }
     }
     best

@@ -104,11 +104,11 @@ impl TemporalQ {
             "any" => true, // bare timeproperty: presence is the filter
             "before" => t < dt_key(&self.time_at),
             "after" => t >= dt_key(&self.time_at),
-            "between" => {
+            // `between`, the one timerel from_params admits besides these
+            _ => {
                 t >= dt_key(&self.time_at)
                     && self.end_time_at.as_deref().is_some_and(|e| t < dt_key(e))
             }
-            _ => false,
         }
     }
 }
@@ -126,6 +126,29 @@ mod tests {
             p.insert("endTimeAt".to_owned(), e.to_owned());
         }
         TemporalQ::from_params(&p, true).unwrap().unwrap()
+    }
+
+    /// 4.11: an endTimeAt that is no DateTime is refused whatever timerel
+    /// says, never read as absent.
+    #[test]
+    fn a_malformed_end_time_at_is_refused() {
+        for timerel in ["between", "before"] {
+            let p: HashMap<String, String> = [
+                ("timerel", timerel),
+                ("timeAt", "2026-01-01T00:00:00Z"),
+                ("endTimeAt", "tomorrow"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .collect();
+            let e = TemporalQ::from_params(&p, true)
+                .err()
+                .expect("a malformed endTimeAt is refused");
+            assert!(
+                matches!(&e, NgsiError::BadRequestData(m) if m.contains("endTimeAt")),
+                "{timerel}: {e:?}"
+            );
+        }
     }
 
     fn inst(observed_at: &str) -> Value {

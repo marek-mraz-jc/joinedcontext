@@ -1369,13 +1369,14 @@ pub async fn query_registrations(
         let payload: Vec<Value> = page
             .iter()
             .map(|d| {
+                // a stored registration is an object, so its presentation is one
                 let mut r = present_registration(d, &ctx, sys);
-                if let Some(o) = r.as_object_mut() {
+                r.as_object_mut().into_iter().for_each(|o| {
                     o.retain(|k, _| {
                         pick.as_ref().is_none_or(|p| p.contains(&k.as_str()))
                             && omit.as_ref().is_none_or(|p| !p.contains(&k.as_str()))
                     });
-                }
+                });
                 r
             })
             .collect();
