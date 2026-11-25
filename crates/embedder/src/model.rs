@@ -270,7 +270,7 @@ impl Embedder {
         // ONNX Runtime opens the descriptor's own path: the inode that was hashed, read from
         // the file rather than from a copy of it in memory.
         let builder = loaded("model", Session::builder())?;
-        let builder = loaded("model", builder.with_intra_threads(threads.max(1)))?;
+        let mut builder = loaded("model", builder.with_intra_threads(threads.max(1)))?;
         let session = loaded(
             "model",
             builder.commit_from_file(format!("/proc/self/fd/{}", onnx.as_raw_fd())),

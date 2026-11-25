@@ -587,7 +587,10 @@ mod tests {
             ("text/yaml", "YAML"),
             ("application/yaml", "YAML"),
             ("text/markdown", "MARKDOWN"),
-            ("http://www.iana.org/assignments/media-types/text/csv", "CSV"),
+            (
+                "http://www.iana.org/assignments/media-types/text/csv",
+                "CSV",
+            ),
         ] {
             assert_eq!(file_type_of(media), Some(code), "{media}");
         }
