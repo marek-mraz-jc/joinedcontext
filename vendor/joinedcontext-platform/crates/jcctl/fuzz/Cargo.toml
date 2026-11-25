@@ -21,6 +21,7 @@ serde_norway = "0.9"
 url = "2"
 age = { version = "0.12", default-features = false }
 jcctl = { path = ".." }
+jc-core = { path = "../../jc-core" }
 
 [[bin]]
 name = "addresses"
@@ -64,5 +65,25 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "policy_set"
+path = "fuzz_targets/policy_set.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]
+
+# The platform workspace's patches (its Cargo.toml), which a crate outside it does not inherit:
+# without them jc-core resolves the ngsild tag instead of the copy jc links.
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../../../../crates/antares/crates/antares-ql" }
+ngsild-jsonld = { path = "../../../../../crates/antares/crates/antares-jsonld" }
+ngsild-matcher = { path = "../../../../../crates/antares/crates/antares-matcher" }
+ngsild-model = { path = "../../../../../crates/antares/crates/antares-model" }
+
+[patch.crates-io]
+ml-kem = { path = "../../../../ml-kem" }
+rstar = { path = "../../../../../crates/antares/vendor/rstar" }
+geo-types = { path = "../../../../../crates/antares/vendor/geo-types" }

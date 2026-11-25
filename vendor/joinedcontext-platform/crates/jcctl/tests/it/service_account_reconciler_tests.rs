@@ -232,3 +232,25 @@ fn a_grant_window_becomes_the_policy_validity() {
             .is_none()
     );
 }
+
+/// A window with one end carries that end alone; a binding without types covers the whole
+/// space; a ServiceAccount whose spec does not parse compiles to nothing.
+#[test]
+fn a_half_open_window_and_an_untyped_binding_compile_as_declared() {
+    for (window, from, to) in [
+        ("{ notBefore: \"2026-10-01T00:00:00Z\" }", true, false),
+        ("{ notAfter: \"2026-11-01T00:00:00Z\" }", false, true),
+    ] {
+        let timed = SERVICE_ACCOUNT.replace(
+            "      types: [ParkingSpot]\n      operations: [createEntity, updateAttrs]\n",
+            &format!("      operations: [createEntity, updateAttrs]\n      validity: {window}\n"),
+        );
+        let policies = owner_policies(&manifest(&timed), "banskabystrica.sk");
+        let validity = &policies[0].spec["validity"];
+        assert_eq!(validity.get("from").is_some(), from, "{window}");
+        assert_eq!(validity.get("to").is_some(), to, "{window}");
+        assert!(policies[0].spec.get("information").is_none(), "{window}");
+    }
+    let broken = SERVICE_ACCOUNT.replace("  roles:\n", "  roles: not-a-list\n  ignored:\n");
+    assert!(owner_policies(&manifest(&broken), "banskabystrica.sk").is_empty());
+}

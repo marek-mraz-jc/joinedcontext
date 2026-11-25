@@ -46,6 +46,7 @@ fn a_converged_platform_has_no_drift() {
     assert_eq!(report.checked, 4);
     assert_eq!(report.to_json()["summary"]["drifted"], 0);
     assert_eq!(report.render(), "4 resources checked, no drift\n");
+    assert!(!converged().is_empty() && InMemory::new().is_empty());
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -85,6 +86,13 @@ fn an_out_of_band_edit_is_drift_with_both_resolutions() {
         json!(["revert", "adopt"])
     );
     assert_eq!(report.to_json()["drifted"][0]["unavailable"], json!(null));
+    let text = report.render();
+    assert!(
+        text.starts_with("modified   Endpoint/") && text.contains("(revert, adopt)\n"),
+        "{text}"
+    );
+    assert!(text.contains("           spec.audience\n"), "{text}");
+    assert!(text.ends_with("1 of 4 resources drifted\n"), "{text}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -110,6 +118,9 @@ fn a_resource_deleted_off_the_platform_can_only_be_reverted() {
     assert!(drifted.revert.is_some(), "Git still declares it");
     assert!(drifted.adopt.is_none(), "there is no live state to adopt");
     assert!(Kind::Missing.unavailable().unwrap().contains("CC-19"));
+    let text = report.render();
+    assert!(text.contains("missing    "), "{text}");
+    assert!(text.contains("(revert; "), "{text}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -137,6 +148,9 @@ spec:
         .expect("the hand-made endpoint drifted");
     assert_eq!(drifted.kind, Kind::Unexpected);
     assert!(drifted.adopt.is_some(), "the live state is committable");
+    let text = report.render();
+    assert!(text.contains("unexpected "), "{text}");
+    assert!(text.contains("(adopt; "), "{text}");
     assert!(drifted.revert.is_none(), "Git declares nothing to re-apply");
     assert!(Kind::Unexpected.unavailable().unwrap().contains("CC-19"));
 

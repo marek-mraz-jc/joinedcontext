@@ -187,9 +187,7 @@ pub fn literal_credentials(spec: &Value) -> Vec<String> {
 pub fn write(out_dir: &Path, report: &Report) -> std::io::Result<usize> {
     for resource in &report.resources {
         let path = out_dir.join(&resource.path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        std::fs::create_dir_all(path.parent().unwrap_or(out_dir))?;
         let yaml = serde_norway::to_string(&resource.manifest)
             .map_err(|err| std::io::Error::other(err.to_string()))?;
         std::fs::write(path, yaml)?;
@@ -348,9 +346,7 @@ pub fn write_bundle(
     let mut written = 0usize;
     for resource in &bundle.resources {
         let path = out_dir.join(&resource.path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        std::fs::create_dir_all(path.parent().unwrap_or(out_dir))?;
         let yaml = serde_norway::to_string(&resource.manifest)
             .map_err(|err| std::io::Error::other(err.to_string()))?;
         std::fs::write(path, yaml)?;
@@ -358,9 +354,7 @@ pub fn write_bundle(
     }
     for (relative, body) in &bundle.natives {
         let path = out_dir.join(relative);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        std::fs::create_dir_all(path.parent().unwrap_or(out_dir))?;
         std::fs::write(path, body)?;
         written += 1;
     }

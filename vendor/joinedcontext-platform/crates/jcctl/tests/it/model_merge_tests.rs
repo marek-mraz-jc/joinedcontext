@@ -453,6 +453,75 @@ fn merge_writes_one_model_removes_the_others_and_the_result_validates() {
     assert!(again.written.is_empty() && again.removed.is_empty());
 }
 
+/// `jcctl model merge` prints the report as JSON and, when it wrote a model, the next two steps
+/// on stderr; a second run writes nothing and says nothing more; a clash exits 1.
+#[test]
+fn the_merge_command_prints_the_report_and_the_next_steps() {
+    let dir = repo(
+        "cli",
+        &[
+            ("air", "AirQualityObserved", AIR),
+            ("kpi", "KeyPerformanceIndicator, Territory", KPI),
+        ],
+        None,
+    );
+    let run = || {
+        std::process::Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .args(["model", "merge", "--repo-dir"])
+            .arg(&dir)
+            .args(["--project", "helsinki", "--space", "city", "--name", "city"])
+            .output()
+            .expect("jcctl runs")
+    };
+    let first = run();
+    assert_eq!(first.status.code(), Some(0), "{first:?}");
+    let report: serde_json::Value = serde_json::from_slice(&first.stdout).expect("JSON");
+    assert_eq!(report["model"], "city");
+    assert!(String::from_utf8_lossy(&first.stderr).contains("spec.dataModelRef"));
+    let second = run();
+    assert_eq!(second.status.code(), Some(0), "{second:?}");
+    assert!(second.stderr.is_empty(), "{second:?}");
+
+    let other = AIR.replace("range: float", "range: integer");
+    let clash = repo(
+        "cli-clash",
+        &[
+            ("air", "AirQualityObserved", AIR),
+            ("other", "AirQualityObserved", &other),
+        ],
+        None,
+    );
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["model", "merge", "--repo-dir"])
+        .arg(&clash)
+        .args(["--project", "helsinki", "--space", "city"])
+        .output()
+        .expect("jcctl runs");
+    assert_eq!(refused.status.code(), Some(1));
+    for partial in [
+        &["model", "merge", "--repo-dir", "x"][..],
+        &[
+            "model",
+            "merge",
+            "--repo-dir",
+            "x",
+            "--project",
+            "p",
+            "--space",
+        ],
+        &["model", "merge", "--bogus", "x"],
+    ] {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .args(partial)
+            .output()
+            .expect("jcctl runs");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).starts_with("usage:"),
+            "{partial:?}"
+        );
+    }
+}
+
 #[test]
 fn merge_refuses_a_clash_and_touches_nothing() {
     let other = AIR.replace("range: float", "range: integer");
