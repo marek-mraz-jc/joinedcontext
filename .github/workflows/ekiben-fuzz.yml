@@ -52,7 +52,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with: { name: "ekiben-text-fuzz-${{ matrix.target }}", path: crates/ekiben/crates/ekiben-text/fuzz/artifacts }
   # The parsers of ekiben-io-file, ekiben-io-http, ekiben-io-remote and ekiben-core (with ekiben-io-nats) that read bytes from outside (T-7579, T-7581, T-7685):
-  # io-file scanners, cron, sftp/s3/amqp configs and S3 listings (T-7581, T-7800), io-sql DSNs, configs and value wire forms, MQTT wire, multipart bodies, route patterns and paths, ftp/imap config fields, raw mails, ekiben-core interpolation, wire, redaction, stream and NATS configs.
+  # io-file scanners, cron, sftp/s3/amqp configs and S3 listings (T-7581, T-7800), io-sql DSNs, configs and value wire forms, MQTT wire, redis replies, multipart bodies, route patterns and paths, ftp/imap config fields, raw mails, ekiben-core interpolation, wire, redaction, stream and NATS configs.
   io:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -70,6 +70,7 @@ jobs:
           - { crate: ekiben-io-sql, target: values }
           - { crate: ekiben-io-http, target: mqtt_wire }
           - { crate: ekiben-io-http, target: multipart }
+          - { crate: ekiben-io-http, target: redis_reply }
           - { crate: ekiben-io-http, target: path }
           - { crate: ekiben-io-remote, target: mail }
           - { crate: ekiben-io-remote, target: names }

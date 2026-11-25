@@ -108,6 +108,14 @@ pub struct Document {
     pub csp: String,
 }
 
+/// The template's entry, the Portal's whatever an App's files hold: it is compiled into the
+/// binary, so it is always there.
+pub fn entry() -> String {
+    Template::get(MAIN)
+        .map(|main| String::from_utf8_lossy(&main.data).into_owned())
+        .unwrap_or_default()
+}
+
 /// The document for `files` (the run's `src/**` and `functions/**`), with `config` as the SDK
 /// configuration and `basemap` as the one address it may connect to: a route prefix ending in `/`.
 pub fn document(
@@ -117,12 +125,7 @@ pub fn document(
     basemap: Option<&str>,
 ) -> Result<Document, Refusal> {
     let mut files = files.clone();
-    if let Some(main) = Template::get(MAIN) {
-        files.insert(
-            MAIN.to_owned(),
-            String::from_utf8_lossy(&main.data).into_owned(),
-        );
-    }
+    files.insert(MAIN.to_owned(), entry());
     let project = transpile::transpile(&files);
     if !project.problems.is_empty() {
         return Err(Refusal::Problems(project.problems));

@@ -5005,6 +5005,589 @@ mod filtered_list_edges {
     }
 }
 
+/// The run store on PostgreSQL (T-7711, AG-43, STO-07): every method's database arm, each in the
+/// key of the run's project, the refusals a person reads (an unplaced project, an unknown run, a
+/// transition the lifecycle lacks, a race lost) and a store that has not seen a run finding it by
+/// its project. They skip without `JC_PORTAL_TEST_DATABASE_URL`, like the edges above.
+mod durable_store {
+    use std::sync::Arc;
+
+    use joinedcontext_portal::agents::endpoints::RunEndpoint;
+    use joinedcontext_portal::agents::run::{AgentRun, AgentRunStatus};
+    use joinedcontext_portal::agents::store::{
+        AgentStore, RunFilter, StatusChangeError, StoreError,
+    };
+    use serde_json::json;
+    use sqlx::PgPool;
+
+    async fn pool() -> Option<PgPool> {
+        let url = super::database_url()?;
+        Some(
+            joinedcontext_portal::db::connect(&url)
+                .await
+                .expect("connect and migrate"),
+        )
+    }
+
+    fn fresh(tag: &str) -> String {
+        format!("t7711-{tag}-{}", crate::common::unique::unique())
+    }
+
+    fn run(project: &str, id: &str, app: &str, created_at: &str, expires_at: &str) -> AgentRun {
+        serde_json::from_value(json!({
+            "id": id, "project": project, "appName": app,
+            "endpointName": "air", "endpointSlug": "air", "profile": "builder",
+            "kind": "application", "unattended": false, "appClass": "dashboard",
+            "visibility": "internal", "prompt": "p", "promptDigest": "d",
+            "dataNeeds": [], "allowsWrite": false, "branch": "b", "pathPrefix": "apps/x",
+            "status": "queued", "ticketHash": "h", "steps": 0, "tokensUsed": 0,
+            "createdBy": "demo.steward@hel.fi", "createdAt": created_at,
+            "expiresAt": expires_at,
+        }))
+        .expect("a run")
+    }
+
+    /// A store on `pool` whose mirror places `projects` in an Organization of the registry.
+    async fn store(
+        pool: &PgPool,
+        projects: &[&str],
+    ) -> (AgentStore, Arc<joinedcontext_portal::store::Mirror>) {
+        let mirror = crate::common::keyed_mirror(pool, projects).await;
+        (AgentStore::new(Some(pool.clone()), mirror.clone()), mirror)
+    }
+
+    #[tokio::test]
+    async fn a_run_is_kept_read_back_and_listed_in_its_projects_key() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let project = fresh("keep");
+        let (store, mirror) = store(&pool, &[&project]).await;
+        assert!(store.is_durable());
+        assert!(format!("{store:?}").contains("durable: true"));
+        let a = format!("{project}-a");
+        let b = format!("{project}-b");
+        store
+            .create_run(&run(
+                &project,
+                &a,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .expect("created");
+        store
+            .create_run(&run(
+                &project,
+                &b,
+                "trees",
+                "2026-11-24T11:00:00Z",
+                "2000-01-01T00:00:00Z",
+            ))
+            .await
+            .expect("created");
+        // c: created in a's second, expired before b.
+        let c = format!("{project}-c");
+        store
+            .create_run(&run(
+                &project,
+                &c,
+                "air",
+                "2026-11-24T10:00:00Z",
+                "1999-01-01T00:00:00Z",
+            ))
+            .await
+            .expect("created");
+        let read = store.get_run(&a).await.expect("read").expect("held");
+        assert_eq!(
+            (read.project.as_str(), read.app_name.as_str()),
+            (project.as_str(), "bikes")
+        );
+        let listed: Vec<String> = store
+            .list_runs(&project, 10)
+            .await
+            .expect("listed")
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(
+            listed,
+            [b.clone(), a.clone(), c.clone()],
+            "newest first, then by id"
+        );
+        let trees = RunFilter {
+            app: Some("trees".into()),
+            ..RunFilter::default()
+        };
+        let only: Vec<String> = store
+            .list_runs_filtered(&project, &trees, 10)
+            .await
+            .expect("listed")
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(only, std::slice::from_ref(&b));
+        let live = store
+            .live_run_for_app(&project, "bikes")
+            .await
+            .expect("read")
+            .expect("a live run");
+        assert_eq!(live.id, a);
+        assert!(store
+            .live_run_for_app(&project, "no-such-app")
+            .await
+            .expect("read")
+            .is_none());
+        // b expired in 2000 and is still queued; a lives until 2099.
+        let expired: Vec<String> = store
+            .list_expired("2026-11-24T12:00:00Z")
+            .await
+            .expect("listed")
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        let (ec, eb) = (
+            expired.iter().position(|id| *id == c).expect("c expired"),
+            expired.iter().position(|id| *id == b).expect("b expired"),
+        );
+        assert!(
+            ec < eb && !expired.contains(&a),
+            "soonest first: {expired:?}"
+        );
+        let queued: Vec<String> = store
+            .list_in_status(AgentRunStatus::Queued)
+            .await
+            .expect("listed")
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        let (ia, ib) = (
+            queued.iter().position(|id| *id == a).expect("a queued"),
+            queued.iter().position(|id| *id == b).expect("b queued"),
+        );
+        let ic = queued.iter().position(|id| *id == c).expect("c queued");
+        assert!(ia < ic && ic < ib, "oldest first, then by id: {queued:?}");
+        // A store that never saw the run finds it project by project, and an id no project
+        // holds is no run.
+        let other = AgentStore::new(Some(pool.clone()), mirror);
+        assert_eq!(other.get_run(&b).await.expect("read").expect("found").id, b);
+        assert!(other
+            .get_run(&fresh("nobody"))
+            .await
+            .expect("read")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn an_unplaced_project_keeps_no_run_and_lists_none() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let project = fresh("unplaced");
+        let (store, _) = store(&pool, &[]).await;
+        let id = format!("{project}-a");
+        let refused = store
+            .create_run(&run(
+                &project,
+                &id,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .expect_err("no key, no run");
+        assert!(
+            matches!(refused, StoreError::Unplaced(ref p) if *p == project),
+            "{refused}"
+        );
+        assert!(
+            refused.to_string().contains("Organizations page"),
+            "{refused}"
+        );
+        let alone = store
+            .create_run_alone(&run(
+                &project,
+                &id,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
+            .await;
+        assert!(matches!(alone, Err(StoreError::Unplaced(_))), "{alone:?}");
+        assert!(store
+            .list_runs(&project, 10)
+            .await
+            .expect("listed")
+            .is_empty());
+        assert!(store
+            .live_run_for_app(&project, "bikes")
+            .await
+            .expect("read")
+            .is_none());
+        // Writes by an id no keyed project holds change nothing and fail nothing; an event for
+        // it is refused, as the foreign key refused it before.
+        store
+            .set_expiry(&id, "2099-01-01T00:00:00Z")
+            .await
+            .expect("nothing to move");
+        store
+            .invalidate_ticket(&id)
+            .await
+            .expect("nothing to forget");
+        store
+            .record_usage(&id, 5, 1)
+            .await
+            .expect("nothing to count");
+        store
+            .set_preview_url(&id, "https://x.example")
+            .await
+            .expect("no run");
+        store.record_first_version(&id).await.expect("no run");
+        store.set_files(&id, json!({})).await.expect("no run");
+        store.set_title(&id, "t").await.expect("no run");
+        store.set_endpoints(&id, &[]).await.expect("no run");
+        store.set_merge_request(&id, 3).await.expect("no run");
+        assert!(matches!(
+            store.append_event(&id, "log", json!({})).await,
+            Err(StoreError::Db(sqlx::Error::RowNotFound))
+        ));
+        assert!(store.events_since(&id, 0).await.expect("read").is_empty());
+        let by_run = store
+            .events_of(std::slice::from_ref(&id), &["log"])
+            .await
+            .expect("read");
+        assert!(by_run.is_empty(), "{by_run:?}");
+        assert!(matches!(
+            store.set_status(&id, AgentRunStatus::Cancelled, None).await,
+            Err(StatusChangeError::Unknown)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_second_live_run_of_one_app_is_not_stored() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let project = fresh("alone");
+        let (store, _) = store(&pool, &[&project]).await;
+        let first = run(
+            &project,
+            &format!("{project}-1"),
+            "bikes",
+            "2026-11-24T10:00:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+        let second = run(
+            &project,
+            &format!("{project}-2"),
+            "bikes",
+            "2026-11-24T10:01:00Z",
+            "2099-01-01T00:00:00Z",
+        );
+        assert!(store.create_run_alone(&first).await.expect("stored"));
+        assert!(!store.create_run_alone(&second).await.expect("answered"));
+        assert!(store.get_run(&second.id).await.expect("read").is_none());
+        // Once the first ends, the app takes a new run.
+        store
+            .set_status(&first.id, AgentRunStatus::Cancelled, None)
+            .await
+            .expect("cancelled");
+        assert!(store.create_run_alone(&second).await.expect("stored"));
+    }
+
+    #[tokio::test]
+    async fn every_field_a_run_gathers_is_written_and_read_back() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let project = fresh("fields");
+        let (store, mirror) = store(&pool, &[&project]).await;
+        let id = format!("{project}-a");
+        store
+            .create_run(&run(
+                &project,
+                &id,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .expect("created");
+        // A store that has not seen the run writes through the project scan too.
+        let store = AgentStore::new(Some(pool.clone()), mirror);
+        store
+            .set_expiry(&id, "2098-01-01T00:00:00Z")
+            .await
+            .expect("lease");
+        store.invalidate_ticket(&id).await.expect("forgotten");
+        store.record_usage(&id, 120, 2).await.expect("counted");
+        store.record_usage(&id, 30, 1).await.expect("counted");
+        store
+            .set_preview_url(&id, "https://preview.example/a")
+            .await
+            .expect("url");
+        store
+            .record_first_version(&id)
+            .await
+            .expect("first version");
+        store
+            .set_files(&id, json!({ "src/App.tsx": "x" }))
+            .await
+            .expect("files");
+        store.set_title(&id, "City bikes").await.expect("title");
+        let endpoints = [
+            RunEndpoint {
+                name: "bikes".into(),
+                slug: "s1".into(),
+                space: "transport".into(),
+            },
+            RunEndpoint {
+                name: "trees".into(),
+                slug: "s2".into(),
+                space: "green".into(),
+            },
+        ];
+        store
+            .set_endpoints(&id, &endpoints)
+            .await
+            .expect("endpoints");
+        store
+            .set_merge_request(&id, 42)
+            .await
+            .expect("merge request");
+        let read = store.get_run(&id).await.expect("read").expect("held");
+        assert!(
+            read.expires_at.starts_with("2098-01-01"),
+            "{}",
+            read.expires_at
+        );
+        assert_ne!(read.ticket_hash, "h", "the ticket hash is gone");
+        assert_eq!((read.tokens_used, read.steps), (150, 3));
+        assert_eq!(
+            read.preview_url.as_deref(),
+            Some("https://preview.example/a")
+        );
+        assert!(read.first_version_ms.is_some());
+        assert_eq!(read.files, json!({ "src/App.tsx": "x" }));
+        assert_eq!(read.title.as_deref(), Some("City bikes"));
+        assert_eq!(
+            (read.endpoint_name.as_str(), read.endpoint_slug.as_str()),
+            ("bikes", "s1")
+        );
+        assert_eq!(read.endpoints[1]["name"], "trees");
+        assert_eq!(read.merge_request, Some(42));
+        // No endpoint left: the first one's name and slug are empty.
+        store.set_endpoints(&id, &[]).await.expect("none");
+        let read = store.get_run(&id).await.expect("read").expect("held");
+        assert_eq!(
+            (read.endpoint_name.as_str(), read.endpoints.clone()),
+            ("", json!([]))
+        );
+    }
+
+    #[tokio::test]
+    async fn events_are_numbered_replayed_and_gathered_by_kind() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let project = fresh("events");
+        let (store, _) = store(&pool, &[&project]).await;
+        let (a, b) = (format!("{project}-a"), format!("{project}-b"));
+        for id in [&a, &b] {
+            store
+                .create_run(&run(
+                    &project,
+                    id,
+                    id,
+                    "2026-11-24T10:00:00Z",
+                    "2099-01-01T00:00:00Z",
+                ))
+                .await
+                .expect("created");
+        }
+        let first = store
+            .append_event(&a, "log", json!({ "n": 1 }))
+            .await
+            .expect("appended");
+        let second = store
+            .append_event(&a, "status", json!({ "n": 2 }))
+            .await
+            .expect("appended");
+        store
+            .append_event(&b, "log", json!({ "n": 3 }))
+            .await
+            .expect("appended");
+        assert!(second.seq > first.seq, "{} then {}", first.seq, second.seq);
+        let missed = store.events_since(&a, first.seq).await.expect("read");
+        assert_eq!(missed.len(), 1);
+        assert_eq!(missed[0].payload, json!({ "n": 2 }));
+        assert!(store
+            .events_of(&[], &["log"])
+            .await
+            .expect("none")
+            .is_empty());
+        let logs = store
+            .events_of(&[a.clone(), b.clone(), fresh("ghost")], &["log"])
+            .await
+            .expect("read");
+        assert_eq!(logs.len(), 2, "the unknown run is skipped: {logs:?}");
+        assert_eq!(logs[&a].len(), 1);
+        assert_eq!(logs[&b][0].payload, json!({ "n": 3 }));
+    }
+
+    #[tokio::test]
+    async fn a_status_moves_along_the_lifecycle_and_a_wrong_move_is_refused() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let project = fresh("status");
+        let (store, _) = store(&pool, &[&project]).await;
+        let id = format!("{project}-a");
+        store
+            .create_run(&run(
+                &project,
+                &id,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .expect("created");
+        let started = store
+            .set_status(&id, AgentRunStatus::Starting, None)
+            .await
+            .expect("started");
+        assert_eq!(started.status, "starting");
+        assert!(started.started_at.is_some());
+        let refused = store
+            .set_status(&id, AgentRunStatus::Published, None)
+            .await
+            .expect_err("starting does not publish");
+        assert!(
+            matches!(
+                refused,
+                StatusChangeError::Refused {
+                    from: AgentRunStatus::Starting,
+                    to: AgentRunStatus::Published
+                }
+            ),
+            "{refused}"
+        );
+        assert_eq!(
+            refused.to_string(),
+            "a run in 'starting' does not move to 'published'"
+        );
+        let failed = store
+            .set_status(&id, AgentRunStatus::Failed, Some("the build broke"))
+            .await
+            .expect("failed");
+        assert_eq!(failed.error.as_deref(), Some("the build broke"));
+        assert!(failed.finished_at.is_some());
+        assert!(matches!(
+            store.set_status(&id, AgentRunStatus::Cancelled, None).await,
+            Err(StatusChangeError::Refused {
+                from: AgentRunStatus::Failed,
+                ..
+            })
+        ));
+    }
+
+    /// The update finds the run no longer in the status it was read in (a trigger skips the row,
+    /// as a concurrent transition would): refused from the status the run holds. A database that
+    /// refuses the update is a store error, in a person's words.
+    #[tokio::test]
+    async fn a_lost_race_and_a_refusing_database_are_named() {
+        let Some(pool) = pool().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let project = fresh("race");
+        let (store, _) = store(&pool, &[&project]).await;
+        let id = format!("{project}-a");
+        store
+            .create_run(&run(
+                &project,
+                &id,
+                "bikes",
+                "2026-11-24T10:00:00Z",
+                "2099-01-01T00:00:00Z",
+            ))
+            .await
+            .expect("created");
+        let name = format!("t7711_skip_{}", id.replace('-', "_"));
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE OR REPLACE FUNCTION {name}() RETURNS trigger AS $$ BEGIN \
+             IF NEW.id = '{id}' THEN RETURN NULL; END IF; RETURN NEW; END $$ LANGUAGE plpgsql"
+        )))
+        .execute(&pool)
+        .await
+        .expect("the function");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE TRIGGER {name} BEFORE UPDATE ON agent_runs FOR EACH ROW EXECUTE FUNCTION {name}()"
+        )))
+        .execute(&pool)
+        .await
+        .expect("the trigger");
+        let lost = store.set_status(&id, AgentRunStatus::Starting, None).await;
+        super::drop_refusal(&pool, &name).await;
+        assert!(
+            matches!(
+                lost,
+                Err(StatusChangeError::Refused {
+                    from: AgentRunStatus::Queued,
+                    to: AgentRunStatus::Starting
+                })
+            ),
+            "{lost:?}"
+        );
+        let refuse = format!("t7711_refuse_{}", id.replace('-', "_"));
+        super::refuse_update(&pool, &refuse, &id, "TRUE").await;
+        let broken = store.set_status(&id, AgentRunStatus::Starting, None).await;
+        super::drop_refusal(&pool, &refuse).await;
+        let Err(StatusChangeError::Store(cause)) = broken else {
+            panic!("a store error, got {broken:?}");
+        };
+        assert!(cause.to_string().contains("Start the run again"), "{cause}");
+        assert!(
+            !cause.to_string().contains("refused by the test"),
+            "{cause}"
+        );
+        // The update passes and the commit is refused (a deferred trigger): a store error, and
+        // the run keeps the status it had.
+        let deferred = format!("t7711_commit_{}", id.replace('-', "_"));
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE OR REPLACE FUNCTION {deferred}() RETURNS trigger AS $$ BEGIN \
+             IF NEW.id = '{id}' THEN RAISE EXCEPTION 'refused at commit'; END IF; \
+             RETURN NULL; END $$ LANGUAGE plpgsql"
+        )))
+        .execute(&pool)
+        .await
+        .expect("the function");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE CONSTRAINT TRIGGER {deferred} AFTER UPDATE ON agent_runs \
+             DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION {deferred}()"
+        )))
+        .execute(&pool)
+        .await
+        .expect("the trigger");
+        let at_commit = store.set_status(&id, AgentRunStatus::Starting, None).await;
+        super::drop_refusal(&pool, &deferred).await;
+        assert!(
+            matches!(at_commit, Err(StatusChangeError::Store(StoreError::Db(_)))),
+            "{at_commit:?}"
+        );
+        let kept = store.get_run(&id).await.expect("read").expect("held");
+        assert_eq!(kept.status, "queued");
+    }
+}
+
 /// CC-87, AG-86: in layout 2 the proxy is told the run's one repository, the project's own, and
 /// the run's folder as that repository spells it; before the project is registered it is the
 /// configuration repository's folder and no repository is named.

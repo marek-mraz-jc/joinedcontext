@@ -361,13 +361,14 @@ mod tests {
     }
 
     async fn written_is_empty_soon(hub: &LiveHub) -> bool {
+        let empty = || hub.written.lock().map(|w| w.is_empty()).unwrap_or(false);
         for _ in 0..200 {
-            if hub.written.lock().map(|w| w.is_empty()).unwrap_or(false) {
-                return true;
+            if empty() {
+                break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        false
+        empty()
     }
 
     /// A subscription that could not be written leaves no renew time, so the next window
@@ -441,6 +442,40 @@ mod tests {
         assert!(!hub.deliver(&hub.key("p", "a", "Station")), "pruned");
         assert!(!hub.deliver(&hub.key("p", "b", "Station")), "pruned");
         assert!(hub.deliver(&hub.key("p", "c", "Station")));
+    }
+
+    /// A write that fails while the renew map is poisoned is still forgotten, so the next
+    /// window writes the subscription again.
+    #[tokio::test]
+    async fn a_failed_write_is_forgotten_through_a_poisoned_renew_map() {
+        let hub = Arc::new(LiveHub::new("https://portal.example", None));
+        poison(&hub.written);
+        let _a = hub.watch("p", "bikes", "p-bikes", "Station");
+        let empty = || {
+            hub.written
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        };
+        assert!(!empty(), "the first watch marks the pair written");
+        for _ in 0..200 {
+            if empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(empty(), "the failed write took its renew time back");
+    }
+
+    /// A notification for a pair whose channel is already gone is accepted and reaches no one:
+    /// the subscription expires on its own.
+    #[tokio::test]
+    async fn a_change_with_no_channel_left_is_accepted_and_dropped() {
+        let hub = Arc::new(LiveHub::new("https://portal.example", None));
+        let rx = hub.watch("p", "bikes", "p-bikes", "Station");
+        hub.channels.lock().expect("an unpoisoned hub").clear();
+        assert!(hub.deliver(&hub.key("p", "bikes", "Station")));
+        assert_eq!(rx.len(), 0, "nothing reached the old window");
     }
 
     /// F-POR4-021: a pair no window listens to any more is forgotten at the next watch.

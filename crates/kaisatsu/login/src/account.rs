@@ -255,7 +255,8 @@ where
     let uri = parts
         .extensions
         .get::<OriginalUri>()
-        .map_or_else(|| parts.uri.clone(), |o| o.0.clone());
+        .map_or(&parts.uri, |o| &o.0)
+        .clone();
     let mount_ext = parts.extensions.get::<Mount>();
     let origin = match allowed_origin(&state, &realm_name, headers).await {
         Ok(o) => o,

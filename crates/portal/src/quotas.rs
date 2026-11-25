@@ -454,16 +454,20 @@ mod tests {
         );
 
         for lifecycle in ["draft", "retired"] {
-            check(
+            let fits = check(
                 &mirror,
                 "helsinki",
                 "App",
                 "another",
                 &json!({ "lifecycle": lifecycle }),
                 &bounds(),
-            )
-            .unwrap_or_else(|err| panic!("a {lifecycle} App counts nothing: {err}"));
+            );
+            assert!(fits.is_ok(), "a {lifecycle} App counts nothing: {fits:?}");
         }
+        assert!(
+            !counts(&mirror, "helsinki", "storage", "ContextSpace", &json!({})),
+            "a dimension the quotas do not count counts nothing"
+        );
         check(
             &mirror,
             "helsinki",
@@ -773,21 +777,19 @@ mod tests {
         };
         assert!(poll("15m", None).is_ok(), "on the floor passes");
         assert!(poll("1h", None).is_ok());
-        let Err(ApiError::Unprocessable { errors, .. }) = poll("5m", None) else {
-            panic!("the project's stricter floor of 900 s holds over the organization's 300 s");
-        };
+        let under = poll("5m", None);
         assert!(
-            errors[0]
-                .starts_with("spec.period: runs every 300 s, below the minimum period of 900 s")
-                && errors[0].contains("spec.quotas.minPipelinePeriodSeconds of project ovzdusie"),
-            "{errors:?}"
+            matches!(&under, Err(ApiError::Unprocessable { errors, .. })
+                if errors[0]
+                    .starts_with("spec.period: runs every 300 s, below the minimum period of 900 s")
+                    && errors[0].contains("spec.quotas.minPipelinePeriodSeconds of project ovzdusie")),
+            "the project's stricter floor of 900 s holds over the organization's 300 s: {under:?}"
         );
-        let Err(ApiError::Unprocessable { errors, .. }) = poll("", Some("*/5 * * * *")) else {
-            panic!("a schedule every five minutes is under the floor too");
-        };
+        let under = poll("", Some("*/5 * * * *"));
         assert!(
-            errors[0].starts_with("spec.schedule: runs every 300 s"),
-            "{errors:?}"
+            matches!(&under, Err(ApiError::Unprocessable { errors, .. })
+                if errors[0].starts_with("spec.schedule: runs every 300 s")),
+            "a schedule every five minutes is under the floor too: {under:?}"
         );
         assert!(poll("", Some("*/15 * * * *")).is_ok());
         assert!(

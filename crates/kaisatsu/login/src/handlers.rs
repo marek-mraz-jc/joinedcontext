@@ -184,12 +184,17 @@ async fn app_name(
         .get_client_by_client_id(&realm.id, client_id)
         .await?
         .unwrap_or_default();
-    Ok(client
+    Ok(client_label(client, bundle))
+}
+
+/// A client as a page names it: its name translated, else its id.
+fn client_label(client: ClientRepresentation, bundle: &Bundle) -> String {
+    client
         .name
         .as_deref()
         .filter(|n| !n.trim().is_empty())
         .map(|n| bundle.translate_client_name(n))
-        .unwrap_or(client.client_id))
+        .unwrap_or(client.client_id)
 }
 
 /// The page's language: the session's (the app's `ui_locales`, then the picker's), the
@@ -3056,10 +3061,11 @@ async fn finish_action_token_response(
         Some(id) => state.store.get_client_by_client_id(&realm.id, id).await?,
         None => None,
     };
-    let app = match client_id {
-        Some(id) => app_name(state, realm, id, &bundle).await?,
-        None => String::new(),
-    };
+    // One read names the app and gives the way back; a stored client always has an id.
+    let app = client
+        .clone()
+        .map(|c| client_label(c, &bundle))
+        .unwrap_or_default();
     let shell = page::Shell {
         bundle: &bundle,
         realm,
@@ -3083,11 +3089,7 @@ async fn finish_action_token_response(
             id: "backToApplication".into(),
             class: "pf-m-primary",
             url: base,
-            label: if app.is_empty() {
-                bundle.get("backToApplication").to_owned()
-            } else {
-                bundle.format("jcBackTo", &[&app])
-            },
+            label: bundle.format("jcBackTo", &[&app]),
         });
     }
     Ok(render_with_security_headers(&tpl, None, None))

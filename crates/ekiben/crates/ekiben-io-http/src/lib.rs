@@ -16,12 +16,15 @@ pub mod processor;
 #[cfg(feature = "websocket")]
 pub mod redis_cache;
 pub mod socket;
+#[cfg(test)]
+mod test_io;
 #[cfg(feature = "websocket")]
 pub mod websocket;
 
 use ekiben_core::Registry;
 
-/// The parsers that read bytes from outside (MQTT wire, multipart bodies, media types, paths), for
+/// The parsers that read bytes from outside (MQTT wire, redis replies, multipart bodies, media
+/// types, paths), for
 /// fuzz/ (cargo fuzz): each must answer or refuse, never panic or allocate past its input.
 #[cfg(feature = "fuzzing")]
 pub mod fuzzing {
@@ -29,6 +32,12 @@ pub mod fuzzing {
     #[cfg(feature = "websocket")]
     pub fn mqtt_wire(mut buf: Vec<u8>) -> usize {
         crate::mqtt::fuzz_wire(&mut buf)
+    }
+
+    /// Reads redis replies off `buf` as the redis cache reads a server's answers; how many were whole.
+    #[cfg(feature = "websocket")]
+    pub fn redis_replies(buf: &[u8]) -> usize {
+        crate::redis_cache::fuzz_replies(buf)
     }
 
     /// Reads a Content-Type and, when it names a boundary, the multipart body under it.

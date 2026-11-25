@@ -632,8 +632,8 @@ impl Checker {
             match self.entities(&space).await {
                 Ok(entities) => plans.extend(plan(&space, &entities)),
                 Err(reason) => {
-                    tracing::warn!(project = %space.project, slug = %space.slug, %reason,
-                    "the link check could not read a space")
+                    let (project, slug) = (&space.project, &space.slug);
+                    tracing::warn!(%project, %slug, %reason, "the link check could not read a space")
                 }
             }
         }
@@ -650,8 +650,8 @@ impl Checker {
                 self.store.put(&plan.project, &plan.pipeline, &links).await
             };
             if let Err(error) = result.await {
-                tracing::warn!(project = %plan.project, pipeline = %plan.pipeline, %error,
-                    "the link check was not kept");
+                let (project, pipeline) = (&plan.project, &plan.pipeline);
+                tracing::warn!(%project, %pipeline, %error, "the link check was not kept");
             }
         }
     }
@@ -870,6 +870,148 @@ mod tests {
         assert!(robots_allow("", "/anything"));
     }
 
+    /// RFC 9309 edges: agents listed one after another share one group, a rule before any
+    /// agent and an empty rule belong to nobody, other lines are ignored, and a wildcard in the
+    /// middle of a pattern matches any run of characters.
+    #[test]
+    fn robots_groups_share_agents_and_wildcards_match_in_the_middle() {
+        let shared = "Sitemap: https://a.example/sitemap.xml\nDisallow: /early\nUser-agent: other\nUser-agent: joinedcontext-platform\nDisallow:\nDisallow: /a*b\n";
+        assert!(
+            robots_allow(shared, "/early"),
+            "a rule before any agent binds nobody"
+        );
+        assert!(
+            !robots_allow(shared, "/a1b2"),
+            "the second agent of the group is ours"
+        );
+        assert!(!robots_allow(shared, "/axxb"));
+        assert!(robots_allow(shared, "/a1c"), "no b after the a: no match");
+        assert!(
+            robots_allow(shared, "/x"),
+            "an empty Disallow forbids nothing"
+        );
+        assert!(matches_rule("/a*b*c", "/a1b2c3"));
+        assert!(!matches_rule("/a*b*c$", "/a1b2c3"));
+        assert!(matches_rule("/a*b*c$", "/a1b2c"));
+        assert!(!matches_rule("/a*b*c", "/a1b2"));
+    }
+
+    /// A skipped link counts as skipped and is not checked.
+    #[test]
+    fn a_skipped_link_is_counted_and_not_checked() {
+        let now = TimestampTz::now();
+        let links = fold(
+            None,
+            &[("https://a.example/private/1".into(), Outcome::Skipped)],
+            2,
+            now,
+        );
+        assert_eq!((links.checked, links.skipped, links.dead_count), (0, 3, 0));
+    }
+
+    /// The spaces a check reads: pipelines sorted by name, each counted once per space whatever
+    /// its outputs, a source list or a DataSource that names its URL at the top; a pipeline with
+    /// no known source host, an output to an Endpoint nobody holds or a space with no public
+    /// Endpoint is left out; of two public Endpoints the first by name serves the reads.
+    #[test]
+    fn the_spaces_list_reads_every_shape_of_pipeline_and_endpoint() {
+        let mirror = Mirror::new();
+        mirror.upsert(manifest(
+            "DataSource",
+            "plain",
+            serde_json::json!({ "type": "http", "url": "https://b.example/feed" }),
+        ));
+        mirror.upsert(manifest(
+            "DataSource",
+            "a",
+            serde_json::json!({ "type": "http", "http": { "url": "https://a.example/feed" } }),
+        ));
+        let source = |name: &str| serde_json::json!({ "dataSourceRef": { "kind": "DataSource", "name": name } });
+        mirror.upsert(manifest("Pipeline", "zeta", serde_json::json!({
+            "sources": [source("plain"), source("a")],
+            "outputs": [
+                { "targetEndpoint": "urn:ngsi-ld:Endpoint:bbsk.sk:events:in", "type": "Event" },
+                { "targetEndpoint": "urn:ngsi-ld:Endpoint:bbsk.sk:events:in-2", "type": "Place" },
+                { "targetEndpoint": "urn:ngsi-ld:Endpoint:bbsk.sk:events:nobody", "type": "Event" },
+                { "targetEndpoint": "urn:ngsi-ld:Endpoint:bbsk.sk:hidden:closed", "type": "Event" }
+            ],
+        })));
+        mirror.upsert(manifest(
+            "Pipeline",
+            "alpha",
+            serde_json::json!({
+                "source": source("a"),
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:bbsk.sk:events:in",
+                "output": { "type": "Event" },
+            }),
+        ));
+        mirror.upsert(manifest(
+            "Pipeline",
+            "unsourced",
+            serde_json::json!({
+                "source": source("missing"),
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:bbsk.sk:events:in",
+            }),
+        ));
+        for (name, space) in [("in", "events"), ("in-2", "events"), ("closed", "hidden")] {
+            mirror.upsert(manifest(
+                "Endpoint",
+                name,
+                serde_json::json!({ "contextSpaceRef": space }),
+            ));
+        }
+        for (name, slug) in [("pub-b", "s-b"), ("pub-a", "s-a")] {
+            mirror.upsert(manifest(
+                "Endpoint",
+                name,
+                serde_json::json!({
+                    "audience": "public", "contextSpaceRef": "events", "slug": slug,
+                }),
+            ));
+        }
+        let found = spaces(&mirror);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].slug, "s-a", "the first public Endpoint by name");
+        assert_eq!(
+            found[0]
+                .pipelines
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha", "zeta"]
+        );
+        assert_eq!(
+            found[0].pipelines[1].1,
+            BTreeSet::from(["a.example".to_owned(), "b.example".to_owned()])
+        );
+        assert_eq!(
+            found[0].types,
+            BTreeSet::from(["Event".to_owned(), "Place".to_owned()])
+        );
+    }
+
+    /// A link an entity gives twice is asked once; an organizer given as text has no link.
+    #[test]
+    fn a_link_given_twice_is_planned_once_and_a_text_organizer_has_none() {
+        let space = Space {
+            project: "bbsk".into(),
+            slug: "s".into(),
+            types: BTreeSet::new(),
+            pipelines: vec![("p".into(), BTreeSet::from(["a.sk".to_owned()]))],
+            inventoried: BTreeSet::from(["a.sk".to_owned()]),
+        };
+        let entities = vec![
+            serde_json::json!({"id": "1", "url": "https://a.sk/e/1", "organizer": {"url": "https://a.sk/e/1"}}),
+            serde_json::json!({"id": "2", "url": "https://a.sk/e/2", "organizer": "Kino Lumière"}),
+        ];
+        let plans = plan(&space, &entities);
+        assert_eq!(
+            plans[0].links.iter().map(Url::as_str).collect::<Vec<_>>(),
+            ["https://a.sk/e/1", "https://a.sk/e/2"]
+        );
+        assert_eq!(plans[0].elsewhere, 0);
+    }
+
     #[test]
     fn only_public_dns_names_are_asked() {
         assert!(link("https://www.banskabystrica.sk/podujatia/#x")
@@ -1013,9 +1155,10 @@ mod tests {
             let asked = Arc::clone(&asked);
             async move {
                 let path = uri.path().to_owned();
-                if let Ok(mut asked) = asked.lock() {
-                    asked.push((format!("{method} {path}"), std::time::Instant::now()));
-                }
+                asked
+                    .lock()
+                    .expect("the asks")
+                    .push((format!("{method} {path}"), std::time::Instant::now()));
                 match path.as_str() {
                     "/robots.txt" => {
                         (StatusCode::OK, "User-agent: *\nDisallow: /private/\n").into_response()
@@ -1156,6 +1299,134 @@ mod tests {
         queue.pause = StdDuration::from_millis(1);
         let url = Url::parse(&format!("http://{at}/podujatia/1")).expect("url");
         assert_eq!(queue.ask(&url).await, Outcome::Skipped);
+    }
+
+    /// A host that allows every path (its robots.txt is a 404) and drops the connection on any
+    /// other ask: the link failed with no answer, not a timeout.
+    #[tokio::test]
+    async fn a_host_that_drops_the_connection_is_no_answer() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let at = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            // One connection for robots.txt, one for the ask it drops.
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.expect("a connection");
+                let mut head = vec![0; 4096];
+                let n = socket.read(&mut head).await.unwrap_or(0);
+                if head[..n].starts_with(b"GET /robots.txt") {
+                    let _ = socket
+                        .write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                        .await;
+                }
+            }
+        });
+        let http = reqwest::Client::builder()
+            .timeout(StdDuration::from_secs(5))
+            .build()
+            .expect("client");
+        let inventoried = BTreeSet::new();
+        let mut queue = HostQueue::new(&http, "127.0.0.1".into(), &inventoried);
+        queue.pause = StdDuration::from_millis(1);
+        let url = Url::parse(&format!("http://{at}/e/1?lang=sk")).expect("url");
+        assert_eq!(
+            queue.ask(&url).await,
+            Outcome::Failed {
+                status: None,
+                error: Some("no answer".into())
+            }
+        );
+    }
+
+    /// A store without a database keeps working after a panic poisoned its memory.
+    #[tokio::test]
+    async fn a_poisoned_memory_store_still_reads_and_writes() {
+        let store = LinkStore::new(None, Default::default());
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = store.memory.write();
+            panic!("a run panicked holding the store");
+        }));
+        assert!(store.memory.is_poisoned());
+        let now = TimestampTz::now();
+        let links = fold(
+            None,
+            &[("https://a.example/e".into(), Outcome::Answered)],
+            0,
+            now,
+        );
+        store.put("bbsk", "p", &links).await.expect("kept");
+        assert_eq!(store.get("bbsk", "p").await.expect("read"), Some(links));
+        assert_eq!(
+            store.newest().await.expect("newest").map(|t| t.as_second()),
+            Some(now.as_second())
+        );
+    }
+
+    /// STO-07: a check is kept in its project's key and read back; the newest run is the
+    /// newest over every keyed project; a project with no key keeps nothing and reads nothing.
+    #[tokio::test]
+    async fn a_check_is_kept_in_the_database_under_its_project_key() {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let db = crate::db::connect(&url).await.expect("connect and migrate");
+        let run = jc_types::ProjectId::mint().path_segment();
+        let project = format!("links-{run}");
+        let mirror = Arc::new(Mirror::new());
+        crate::project_ids::placed(&db, &mirror, &project, &format!("linksorg-{run}")).await;
+        let store = LinkStore::new(Some(db), mirror);
+        assert_eq!(store.get(&project, "p").await.expect("read"), None);
+        let now = TimestampTz::now();
+        let first = fold(
+            None,
+            &[(
+                "https://a.example/gone".into(),
+                Outcome::Failed {
+                    status: Some(404),
+                    error: None,
+                },
+            )],
+            1,
+            now,
+        );
+        store.put(&project, "p", &first).await.expect("kept");
+        let second = fold(
+            Some(&first),
+            &[(
+                "https://a.example/gone".into(),
+                Outcome::Failed {
+                    status: Some(404),
+                    error: None,
+                },
+            )],
+            1,
+            now,
+        );
+        store.put(&project, "p", &second).await.expect("replaced");
+        let read = store.get(&project, "p").await.expect("read").expect("kept");
+        assert_eq!(
+            (read.checked, read.dead_count),
+            (second.checked, second.dead_count)
+        );
+        assert!(
+            store
+                .newest()
+                .await
+                .expect("newest")
+                .is_some_and(|t| t.as_second() >= now.as_second() - 60),
+            "the newest run is the one just kept"
+        );
+        store
+            .put("links-unplaced", "p", &first)
+            .await
+            .expect("nothing kept");
+        assert_eq!(store.get("links-unplaced", "p").await.expect("read"), None);
     }
 
     fn manifest(kind: &str, name: &str, spec: Value) -> crate::resource::ResourceEnvelope {
@@ -1394,6 +1665,66 @@ mod tests {
         );
     }
 
+    /// A run asks each inventoried link on its host and keeps the outcome: one answered (its
+    /// query read against robots.txt), one robots.txt closes, one missing. A space whose
+    /// pipeline writes no type is read without a type filter.
+    #[tokio::test]
+    async fn a_run_asks_each_inventoried_link_and_keeps_its_outcome() {
+        use axum::response::IntoResponse;
+        let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let at = site(Arc::clone(&asked)).await;
+        let mirror = one_space();
+        mirror.upsert(manifest(
+            "Pipeline",
+            "podujatia-a",
+            serde_json::json!({
+                "source": { "dataSourceRef": { "kind": "DataSource", "name": "podujatia-a" } },
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:bbsk.sk:podujatia:zapis",
+            }),
+        ));
+        let port = at.port();
+        let (gateway, _) = gateway(move |_| {
+            axum::Json(serde_json::json!([
+                { "id": "urn:ngsi-ld:Event:1", "source": "https://a.example/podujatia/",
+                  "url": format!("http://a.example:{port}/ok?lang=sk"),
+                  "organizer": { "url": format!("http://a.example:{port}/private/1") } },
+                { "id": "urn:ngsi-ld:Event:2", "source": "https://a.example/podujatia/",
+                  "url": format!("http://a.example:{port}/missing") },
+            ]))
+            .into_response()
+        })
+        .await;
+        let store = Arc::new(LinkStore::new(None, Default::default()));
+        let mut checker = Checker::new(mirror, Arc::clone(&store), gateway);
+        checker.links = reqwest::Client::builder()
+            .resolve("a.example", at)
+            .timeout(StdDuration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("client");
+        assert!(spaces(&checker.mirror)[0].types.is_empty());
+        checker.run(TimestampTz::now()).await;
+        let links = store
+            .get("bbsk", "podujatia-a")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(
+            (links.checked, links.answered, links.skipped),
+            (2, 1, 1),
+            "{links:?}"
+        );
+        let asked: Vec<String> = asked
+            .lock()
+            .expect("asked")
+            .iter()
+            .map(|(line, _)| line.clone())
+            .collect();
+        assert!(asked.contains(&"GET /robots.txt".to_owned()), "{asked:?}");
+        assert!(asked.contains(&"HEAD /ok".to_owned()), "{asked:?}");
+        assert!(!asked.iter().any(|l| l.contains("/private/")), "{asked:?}");
+    }
+
     #[tokio::test]
     async fn a_run_reads_the_space_through_its_public_endpoint_and_asks_no_host_outside_the_inventory(
     ) {
@@ -1411,9 +1742,7 @@ mod tests {
         let gateway = axum::Router::new().fallback(move |uri: axum::http::Uri| {
             let seen = Arc::clone(&seen);
             async move {
-                if let Ok(mut seen) = seen.lock() {
-                    seen.push(uri.to_string());
-                }
+                seen.lock().expect("the asks").push(uri.to_string());
                 axum::Json(serde_json::json!([
                     { "id": "urn:ngsi-ld:Event:1", "source": "https://a.example/podujatia/",
                       "url": "https://elsewhere.example/e/1",

@@ -1,0 +1,4 @@
+/private/x
+User-agent: *
+Disallow: /private
+Allow: /private/x$

@@ -150,7 +150,7 @@ fn credential_header(headers: &Value) -> Option<&str> {
 }
 
 /// Whether `value` is exactly one runner variable reference, `${NAME}` with `NAME` a shell name.
-pub(crate) fn is_variable_reference(value: &str) -> bool {
+pub fn is_variable_reference(value: &str) -> bool {
     value
         .strip_prefix("${")
         .and_then(|rest| rest.strip_suffix('}'))

@@ -1235,20 +1235,20 @@ mod tests {
         );
         let mut orphan = pipeline(json!([]));
         orphan["spec"]["outputs"] = json!([]);
-        if let Ok(none) = writable(
+        let none = writable(
             &world(),
             "helsinki",
             &orphan,
             "Bus",
             &["speed".into()],
             now(),
-        ) {
-            assert!(!none[0].writable);
-            assert!(none[0]
-                .reason
-                .as_deref()
-                .is_some_and(|r| r.contains("no Endpoint")));
-        }
+        );
+        assert!(
+            none.is_err()
+                || matches!(&none, Ok(n) if !n[0].writable
+                    && n[0].reason.as_deref().unwrap_or_default().contains("no Endpoint")),
+            "{none:?}"
+        );
     }
 
     #[test]
@@ -1522,7 +1522,20 @@ mod tests {
             .iter()
             .any(|f| f.path == "records[0].speed" && f.message.starts_with("speed: ")));
 
-        let mut outside = pipeline(json!([]));
+        // Every instance kept under a space that keeps the type's history: nothing to refuse.
+        planned["spec"]["history"] = json!([{ "type": "Bus", "attributes": [
+            { "names": ["speed"], "keep": "every" }
+        ]}]);
+        let mut timed = bus(json!(40));
+        timed["speed"]["observedAt"] = json!("2026-10-20T11:58:00Z");
+        let kept = check(&state, &planned, &[timed]);
+        assert!(
+            kept.records[0].findings.is_empty(),
+            "{:?}",
+            kept.records[0].findings
+        );
+
+        let mut outside = planned.clone();
         outside["spec"]["outputs"][0]["targetEndpoint"] =
             json!("urn:ngsi-ld:Endpoint:hel.fi:vehicles:not-held");
         let checked = check(&state, &outside, &[bus(json!(40))]);
@@ -1532,6 +1545,113 @@ mod tests {
             (Source::Endpoint, "targetEndpoint")
         );
         assert!(finding.reason.contains("not-held"), "{}", finding.reason);
+    }
+
+    /// The lifetime edges: an entry with no entity end, an attribute the record does not carry,
+    /// several instances each with its own end, a value that is no instance, and a record that
+    /// is no object.
+    #[test]
+    fn the_lifetime_reads_every_instance_and_skips_what_the_record_lacks() {
+        let planned = pipeline(json!([{ "type": "Bus",
+            "attributes": [{ "names": ["speed", "heading"], "rolling": "PT5M" }] }]));
+        let spec: PipelineSpec =
+            serde_json::from_value(planned["spec"].clone()).expect("a pipeline spec");
+        let mut record = bus(json!(41));
+        record["speed"] = json!([
+            { "type": "Property", "value": 41, "expiresAt": "2026-10-20T12:05:00Z" },
+            { "type": "Property", "value": 40, "expiresAt": "2026-10-20T11:00:00Z" }
+        ]);
+        record["note"] = json!(5);
+        let mut findings = Vec::new();
+        judge_lifetime(&spec, "Bus", &record, now(), &mut findings);
+        let fields: Vec<(&str, &str)> = findings
+            .iter()
+            .map(|f| (f.field.as_str(), f.reason.as_str()))
+            .collect();
+        assert_eq!(
+            fields,
+            [(
+                "speed.expiresAt",
+                "lies in the past: the broker would hide it as soon as it is written"
+            )],
+            "heading is absent, note has no instance, the entity has no end of its own"
+        );
+        let mut none = Vec::new();
+        judge_lifetime(
+            &spec,
+            "Bus",
+            &json!(["not", "an", "entity"]),
+            now(),
+            &mut none,
+        );
+        assert!(none.is_empty(), "{none:?}");
+        assert_eq!(instances(&json!("text")).count(), 0);
+        assert_eq!(instances(&json!([{}, {}])).count(), 2);
+    }
+
+    /// The member each gateway refusal is about, as a form shows it.
+    #[test]
+    fn each_gateway_refusal_names_its_member() {
+        for (refusal, field) in [
+            (Refusal::MalformedId("x".into()), "id"),
+            (Refusal::IdOutsideGrant("x".into()), "id"),
+            (Refusal::TypeOutsideGrant("Car".into()), "type"),
+            (Refusal::AttributeOutsideGrant("speed".into()), "speed"),
+            (Refusal::SmuggledPolicyAttribute("policy".into()), "policy"),
+            (Refusal::ScopeOutsideGrant("/x".into()), "scope"),
+            (Refusal::ScopeMissing, "scope"),
+            (Refusal::LocationOutsideGrant, "location"),
+        ] {
+            assert_eq!(refused_field(&refusal), field, "{refusal:?}");
+        }
+    }
+
+    /// A view that holds no rule for the record's type, or splits the record's Attributes over
+    /// two rules, cannot take the write; the words say which.
+    #[test]
+    fn a_view_without_a_rule_for_the_type_or_one_rule_for_the_record_refuses() {
+        let row = crate::reconciler::views::rows_of(WRITE)[0];
+        let split = json!({ "operations": [row], "rules": [
+            { "types": ["Bus"], "attributes": ["speed"] },
+            { "types": ["Bus"], "attributes": ["observedOn"] }
+        ]});
+        let found = judge_view(&split, WRITE, "helsinki-all", "Bus", &bus(json!(41)));
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].field.is_empty() && found[0].reason.contains("sit in different rules"),
+            "{found:?}"
+        );
+        let found = judge_view(&split, WRITE, "helsinki-all", "Tram", &bus(json!(41)));
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].field == "type" && found[0].reason.contains("holds no rule for the type"),
+            "{found:?}"
+        );
+        assert_eq!(
+            grant(Value::Null),
+            grant(json!({})),
+            "no extra keeps the grant"
+        );
+    }
+
+    /// A space whose model the Portal does not hold is not judged by a model, and a Portal with
+    /// a view writer reads the write view the gateway would.
+    #[test]
+    fn no_model_judges_nothing_and_a_view_writer_is_asked_for_the_write_view() {
+        let state = world();
+        let mut far = target(json!([]), Ok(view()));
+        far.space = Some("no-model".into());
+        let mut findings = Vec::new();
+        judge_model(&state, "helsinki", &far, &bus(json!("fast")), &mut findings);
+        assert!(findings.is_empty(), "{findings:?}");
+
+        let mut viewing = world();
+        viewing.views = Some(Arc::new(crate::reconciler::views::ViewSync::new(
+            "http://127.0.0.1:1",
+            "/nonexistent/token",
+        )));
+        let checked = check(&viewing, &pipeline(json!([])), &[bus(json!(41))]);
+        assert_eq!(checked.records.len(), 1);
     }
 
     /// A test's mapping can make more records than one check takes: the first [`MAX_RECORDS`]
@@ -1584,10 +1704,10 @@ mod tests {
             check_records(&state, "helsinki", &broken, &[], now()).map(|_| ()),
             writable(&state, "helsinki", &broken, "Bus", &names, now()).map(|_| ()),
         ] {
-            let Err(ApiError::BadRequest(message)) = refused else {
-                panic!("a 400, got {refused:?}")
-            };
-            assert!(message.starts_with("pipeline.spec: "), "{message}");
+            assert!(
+                matches!(&refused, Err(ApiError::BadRequest(message)) if message.starts_with("pipeline.spec: ")),
+                "a 400, got {refused:?}"
+            );
         }
     }
 

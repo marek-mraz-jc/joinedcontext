@@ -303,6 +303,36 @@ mod tests {
     use super::*;
     use kaisatsu_store_memory::MemoryStore;
 
+    /// The invariants send_via and build_message rely on: building the TLS parameters never
+    /// fails for any host text (rustls checks the name only when it connects), and a message
+    /// with one parsed sender and one parsed recipient always builds.
+    #[test]
+    fn tls_parameters_and_a_two_party_message_always_build() {
+        use lettre::transport::smtp::client::TlsParameters;
+        for host in [
+            "mail.example",
+            "",
+            "a b",
+            "10.0.0.1",
+            "\u{fc}n\u{ef}.example",
+            "x".repeat(300).as_str(),
+        ] {
+            assert!(TlsParameters::new(host.to_owned()).is_ok(), "{host}");
+        }
+        for (from, to) in [
+            ("noreply@example.test", "person@example.test"),
+            ("Name <a@b.test>", "\"Q, R\" <c@d.test>"),
+        ] {
+            let built = lettre::Message::builder()
+                .from(from.parse().unwrap())
+                .to(to.parse().unwrap())
+                .subject("")
+                .header(lettre::message::header::ContentType::TEXT_PLAIN)
+                .body(String::new());
+            assert!(built.is_ok(), "{from} {to}");
+        }
+    }
+
     #[test]
     fn from_secret_mount_reads_password_file_and_requires_tls() {
         let dir = std::env::temp_dir().join(format!("wk-smtp-{}", uuid::Uuid::now_v7()));

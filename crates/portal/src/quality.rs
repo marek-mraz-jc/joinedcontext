@@ -935,6 +935,186 @@ mod tests {
         );
     }
 
+    /// A run already going refuses a second claim even when no start was recorded yet.
+    #[test]
+    fn a_running_scan_refuses_a_second_claim() {
+        let store = Store::new(None, Arc::new(Mirror::new()));
+        store.running.store(true, Ordering::Release);
+        assert!(!store.claim(at("2026-11-24T09:00:00Z")));
+        assert!(store.last_start.read().unwrap().is_none(), "no start kept");
+        store.finish();
+        assert!(store.claim(at("2026-11-24T09:00:00Z")));
+    }
+
+    /// The scan stops at PER_SPACE entities and says so, reading page after page while each
+    /// page is full; the freshness rows name each pipeline writing into the space, and a store
+    /// that cannot be reached keeps the report in memory and logs the failed save.
+    #[tokio::test]
+    async fn a_large_space_is_read_page_by_page_and_cut_at_its_limit() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let scanner = scanner_on(&server).await;
+        let page: Vec<Value> = (0..PAGE as u32).map(|n| bus(n, json!(n))).collect();
+        Mock::given(method("GET"))
+            .and(path("/cs/air/ngsi-ld/v1/entities"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(page))
+            .mount(&server)
+            .await;
+        let m = &scanner.mirror;
+        m.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Endpoint".into(),
+            metadata: crate::resource::ObjectMeta {
+                name: "air-in".into(),
+                namespace: Some("helsinki".into()),
+                ..Default::default()
+            },
+            spec: json!({ "contextSpaceRef": "air" }),
+            status: None,
+        });
+        let pipeline = |name: &str, spec: Value| crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Pipeline".into(),
+            metadata: crate::resource::ObjectMeta {
+                name: name.into(),
+                namespace: Some("helsinki".into()),
+                ..Default::default()
+            },
+            spec,
+            status: None,
+        };
+        let writing = |endpoint: &str| {
+            json!({
+                "class": "scheduled", "schedule": "0 * * * *", "enabled": false,
+                "source": { "dataSourceRef": "feed" },
+                "targetEndpoint": format!("urn:ngsi-ld:Endpoint:hel.fi:air:{endpoint}"),
+                "output": { "type": "Bus", "mode": "upsert", "id": {
+                    "mint": "template", "template": "urn:ngsi-ld:Bus:{n}"
+                } }
+            })
+        };
+        m.upsert(pipeline("buses", writing("air-in")));
+        m.upsert(pipeline("elsewhere", writing("no-such-endpoint")));
+        m.upsert(pipeline("broken", json!({ "class": 7 })));
+        assert_eq!(
+            pipelines_into(m, "helsinki", "air"),
+            [(
+                "buses".to_owned(),
+                "Bus".to_owned(),
+                target_seconds(None, Some("0 * * * *")),
+                true
+            )]
+        );
+        assert!(pipelines_into(m, "helsinki", "water").is_empty());
+        let quality = scanner
+            .space("t", "helsinki", "air")
+            .await
+            .expect("a report");
+        assert!(quality.truncated, "cut at PER_SPACE");
+        assert_eq!(quality.checked as usize, PER_SPACE);
+        assert_eq!(quality.freshness.len(), 1, "{:?}", quality.freshness);
+        assert_eq!(
+            (
+                quality.freshness[0].pipeline.as_str(),
+                quality.freshness[0].paused
+            ),
+            ("buses", true)
+        );
+        let asked = server.received_requests().await.unwrap_or_default();
+        assert_eq!(
+            asked
+                .iter()
+                .filter(|r| r.url.path().ends_with("/entities"))
+                .count(),
+            PER_SPACE / PAGE + 1,
+            "every page was full, so one more was asked and cut"
+        );
+
+        // A store whose database does not answer: the report stays in memory, the run goes on.
+        let lazy = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_secs(1))
+            .connect_lazy("postgres://portal@127.0.0.1:1/never-reached")
+            .expect("a lazy pool");
+        m.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Project".into(),
+            metadata: crate::resource::ObjectMeta {
+                name: "helsinki".into(),
+                namespace: Some(crate::permissions::ORG_NAMESPACE.into()),
+                ..Default::default()
+            },
+            spec: json!({ "organizationRef": "hel" }),
+            status: None,
+        });
+        let down = Scanner {
+            watch: scanner.watch.clone(),
+            schemas: scanner.schemas.clone(),
+            mirror: scanner.mirror.clone(),
+            org_domain: "hel.fi".into(),
+            store: Arc::new(Store::new(Some(lazy), scanner.mirror.clone())),
+        };
+        let air = [("helsinki".to_owned(), "air".to_owned())];
+        down.run(&air, &air).await;
+        assert!(down
+            .store
+            .get("helsinki", "air")
+            .is_some_and(|q| q.truncated));
+        assert!(down.store.save("helsinki", "air", &[]).await.is_err());
+        assert!(down.store.forget_others(&air).await.is_err());
+    }
+
+    /// The first instance of several is the attribute's number; an entity with no type adds to
+    /// no type's tally.
+    #[test]
+    fn several_instances_read_as_the_first_and_an_untyped_entity_has_no_tally() {
+        assert_eq!(
+            number_of(&json!([{ "type": "Property", "value": 3 }, { "value": 9 }])),
+            Some(3.0)
+        );
+        assert_eq!(number_of(&json!([])), None);
+        let mut tally = Tally::default();
+        tally.add(&json!({ "id": "urn:ngsi-ld:Bus:1" }), None, &[]);
+        tally.add(&json!(["not", "an", "entity"]), None, &[]);
+        let quality = tally.into_quality(at("2026-11-24T09:00:00Z"), Vec::new());
+        assert_eq!(quality.checked, 2);
+        assert!(quality.types.is_empty(), "{:?}", quality.types);
+    }
+
+    /// Without a database there is nothing to read back, and no load starts.
+    #[tokio::test]
+    async fn without_a_database_nothing_is_read_back() {
+        let store = Store::new(None, Arc::new(Mirror::new()));
+        assert_eq!(store.load().await.expect("nothing to read"), 0);
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        spawn_load(state.clone());
+        assert!(state.quality.get("helsinki", "air").is_none());
+        // A database that does not answer: the load is logged as not read and the store stays
+        // empty, so every space is due at the next start.
+        let lazy = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_secs(1))
+            .connect_lazy("postgres://portal@127.0.0.1:1/never-reached")
+            .expect("a lazy pool");
+        let down =
+            crate::state::AppState::new(crate::config::Config::for_tests(), None).with_db(lazy);
+        down.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Project".into(),
+            metadata: crate::resource::ObjectMeta {
+                name: "helsinki".into(),
+                namespace: Some(crate::permissions::ORG_NAMESPACE.into()),
+                ..Default::default()
+            },
+            spec: json!({ "organizationRef": "hel" }),
+            status: None,
+        });
+        assert!(down.quality.load().await.is_err());
+        spawn_load(down.clone());
+        // Past the pool's 1 s acquire timeout, so the background load has failed by now.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(down.quality.get("helsinki", "air").is_none());
+    }
+
     /// A thread that panicked holding the store's maps leaves them usable.
     #[test]
     fn a_poisoned_store_still_reads_and_writes() {
@@ -957,6 +1137,12 @@ mod tests {
         assert_eq!(store.new_rules("p", "s"), ["In status"]);
         assert_eq!(store.new_rules("p", "other"), Vec::<String>::new());
         let now = at("2026-11-24T09:00:00Z");
+        assert!(
+            store
+                .due(&[("p".into(), "new".into())], now)
+                .contains(&("p".to_owned(), "new".to_owned())),
+            "a poisoned store still tells which spaces are due"
+        );
         assert!(store.claim(now));
         store.keep_only(&[]);
         assert!(store.get("p", "s").is_none());
@@ -1334,9 +1520,43 @@ mod tests {
             .forget_others(&[(t5066.into(), "air".into())])
             .await
             .expect("forget");
+        // A project with no tenancy key keeps its report in memory only.
+        before.put("t5066-unplaced", "air", report(&[]));
+        before
+            .save("t5066-unplaced", "air", &[])
+            .await
+            .expect("nothing to save");
+        // A kept row that no longer reads as a report is skipped on load.
+        let key = crate::project_ids::key_of(&db, &mirror, t5066)
+            .await
+            .expect("registry")
+            .expect("a key");
+        let mut tx = crate::db::tenant_tx(&db, key).await.expect("keyed");
+        sqlx::query(
+            "INSERT INTO space_quality (project, space, report, new_rules) VALUES ($1, 'old', $2, '{}')",
+        )
+        .bind(t5066)
+        .bind(json!({ "not": "a report" }))
+        .execute(&mut *tx)
+        .await
+        .expect("an old row");
+        tx.commit().await.expect("commit");
 
-        let after = Store::new(Some(db), mirror);
-        assert_eq!(after.load().await.expect("load"), 1);
+        let after = Store::new(Some(db.clone()), mirror.clone());
+        std::thread::scope(|s| {
+            let _ = s
+                .spawn(|| {
+                    let _a = after.by_space.write().unwrap();
+                    let _b = after.new_rules.write().unwrap();
+                    panic!("poison the maps a load writes");
+                })
+                .join();
+        });
+        assert_eq!(
+            after.load().await.expect("load"),
+            1,
+            "the old row is skipped"
+        );
         assert_eq!(after.get(t5066, "air"), Some(kept.clone()));
         assert_eq!(after.get(t5066, "gone"), None);
         assert_eq!(after.new_rules(t5066, "air"), vec!["In status"]);
@@ -1349,5 +1569,21 @@ mod tests {
                 .is_empty(),
             "not due yet"
         );
+        // spawn_load reads them back for a state with a database and no syncer.
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None)
+            .with_db(db.clone());
+        for env in mirror.matching(|e| matches!(e.kind.as_str(), "Project" | "Organization")) {
+            state.mirror.upsert(env);
+        }
+        spawn_load(state.clone());
+        let mut loaded = false;
+        for _ in 0..200 {
+            if state.quality.get(t5066, "air").is_some() {
+                loaded = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(loaded, "spawn_load read the kept report back");
     }
 }
