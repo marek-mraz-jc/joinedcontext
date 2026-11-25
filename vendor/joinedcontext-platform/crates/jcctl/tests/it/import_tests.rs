@@ -58,6 +58,41 @@ fn options(namespace: &str) -> Options {
     }
 }
 
+/// A write that meets a file where a folder goes, or a folder where a file goes, fails naming
+/// the path instead of writing half the bundle silently.
+#[test]
+fn a_write_blocked_by_the_tree_names_the_path() {
+    let source = bundle("import-blocked-src");
+    let dest = destination("import-blocked-dest");
+    let report = collect(&source, &dest, &options("ovzdusie")).expect("import collects");
+    let first = report.imported[0].path.clone();
+    let parent = dest.join(&first).parent().expect("a parent").to_path_buf();
+    std::fs::remove_dir_all(&parent).ok();
+    std::fs::create_dir_all(parent.parent().expect("a grandparent")).expect("the grandparent");
+    std::fs::write(&parent, "a file where the folder goes").expect("block the folder");
+    let error = write(&dest, &report).expect_err("the folder is a file");
+    assert!(
+        error.to_string().contains(
+            &parent
+                .file_name()
+                .expect("a name")
+                .to_string_lossy()
+                .into_owned()
+        ),
+        "{error}"
+    );
+
+    std::fs::remove_file(&parent).expect("unblock");
+    std::fs::create_dir_all(dest.join(&first)).expect("a folder where the file goes");
+    let error = write(&dest, &report).expect_err("the file is a folder");
+    assert!(
+        error
+            .to_string()
+            .contains(&first.to_string_lossy().into_owned()),
+        "{error}"
+    );
+}
+
 #[test]
 fn a_bundle_lands_under_the_target_project_at_the_paths_its_kinds_prescribe() {
     let source = bundle("import-namespace-src");

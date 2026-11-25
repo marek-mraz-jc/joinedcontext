@@ -62,6 +62,59 @@ fn index(dir: &Path) -> Bundle {
         .expect("parses")
 }
 
+/// MF-45: an export writes only into an empty directory and takes a project repository, not
+/// a registry entry; an index listing nothing is refused by the index's own check.
+#[test]
+fn an_export_or_import_that_cannot_be_a_git_bundle_is_refused() {
+    let project = project_repository("bundle-refusals-project");
+    let full = temp_dir("bundle-refusals-full");
+    write(&full, "left-over.txt", "an earlier run");
+    let refused = export(
+        &project,
+        "ovzdusie",
+        &BTreeMap::new(),
+        None,
+        &full,
+        "tester",
+    )
+    .expect_err("a directory that is not empty");
+    assert!(refused.to_string().contains("not empty"), "{refused}");
+
+    let entry = project_repository("bundle-refusals-entry");
+    write(
+        &entry,
+        "project.yaml",
+        &(PROJECT.to_owned() + "  repository: { name: ovzdusie }\n  ref: main\n"),
+    );
+    let refused = export(
+        &entry,
+        "ovzdusie",
+        &BTreeMap::new(),
+        None,
+        &temp_dir("bundle-refusals-e"),
+        "tester",
+    )
+    .expect_err("a registry entry");
+    assert!(refused.to_string().contains("registry entry"), "{refused}");
+
+    let out = temp_dir("bundle-refusals-out");
+    export(&project, "ovzdusie", &BTreeMap::new(), None, &out, "tester").expect("exports");
+    let mut listed: serde_json::Value =
+        serde_norway::from_str(&std::fs::read_to_string(out.join(INDEX)).expect("the index"))
+            .expect("yaml");
+    listed["spec"]["repositories"] = serde_json::json!([]);
+    std::fs::write(
+        out.join(INDEX),
+        serde_norway::to_string(&listed).expect("yaml"),
+    )
+    .expect("write");
+    let refused = import(&out, &temp_dir("bundle-refusals-in")).expect_err("no repository");
+    assert!(
+        refused.to_string().contains("MF-45"),
+        "{refused}"
+    );
+}
+
 /// MF-45, MF-46: a project and its application travel as bundles with their whole history and
 /// tags, the entry without this deployment's values, and each head checked on the way in.
 #[test]
