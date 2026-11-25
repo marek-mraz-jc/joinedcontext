@@ -4270,7 +4270,7 @@ fn writing_verdict(
 /// Errors and nothing sent is a stream that runs and never lands: a source that refuses the
 /// runner's token, a mapping that throws on every message. Errors beside writes are the ordinary
 /// weather of a stream — a page that failed and was retried — and say nothing on their own.
-fn failing(metrics: &str, stream: &str) -> Option<String> {
+pub fn failing(metrics: &str, stream: &str) -> Option<String> {
     let counters = crate::api::pipelines::scrape(metrics, stream, String::new());
     let errors = counters.errors?;
     if errors == 0 || counters.sent.unwrap_or(0) > 0 {
