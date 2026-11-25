@@ -194,6 +194,171 @@ async fn a_cut_or_foreign_stream_imports_nothing() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// ADR-0030 rule 4: the reader names the line it refuses and why — a
+/// header of another format, a record after the trailer, a trailer that
+/// counts otherwise, a record without a document id, an Entity twice, a
+/// kind it does not know — and imports nothing; a blank line is no record.
+#[tokio::test]
+async fn a_malformed_stream_names_the_line_it_refuses() {
+    let st = state().await;
+    let header = json!({"antaresExport": 1, "tenant": "air"}).to_string();
+    let room =
+        json!({"kind": "entity", "doc": {"id": "urn:ngsi-ld:Room:1", "type": "Room"}}).to_string();
+    let trailer = |n: u64| json!({"end": true, "records": n}).to_string();
+    let cases: [(Vec<String>, &str); 6] = [
+        (
+            vec![header.clone(), trailer(0), room.clone()],
+            "line 3: a record after the trailer",
+        ),
+        (
+            vec![json!({"antaresExport": 2, "tenant": "air"}).to_string()],
+            "line 1: the first line is not an export header of format 1",
+        ),
+        (
+            vec![header.clone(), room.clone(), trailer(2)],
+            "line 3: the trailer counts a different number of records",
+        ),
+        (
+            vec![
+                header.clone(),
+                json!({"kind": "entity", "doc": {}}).to_string(),
+            ],
+            "line 2: a record without a document id",
+        ),
+        (
+            vec![header.clone(), room.clone(), room.clone()],
+            "line 3: entity urn:ngsi-ld:Room:1 appears twice",
+        ),
+        (
+            vec![
+                header.clone(),
+                json!({"kind": "snapshot", "doc": {"id": "urn:x"}}).to_string(),
+            ],
+            "line 2: a record of an unknown kind",
+        ),
+    ];
+    for (lines, why) in cases {
+        let (status, body) = import(&st, "air", lines.join("\n") + "\n").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{why}: {body}");
+        assert!(body.contains(why), "{why}: {body}");
+        let (status, _) = call(&st, "GET", "/q/tenants/air/digest", "", None, false).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{why}: nothing stays");
+    }
+    let spaced = ["", &header, "  ", &room, &trailer(1)].join("\n") + "\n";
+    let (status, body) = import(&st, "air", spaced).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(
+        read(&st, "/q/tenants/air/digest", None).await["entities"],
+        1
+    );
+}
+
+/// ADR-0030: one line is at most 16 MiB; a longer one is refused as it
+/// streams in, before the reader holds more.
+#[tokio::test]
+async fn a_line_longer_than_sixteen_mib_is_refused() {
+    let st = state().await;
+    let mut chunks: Vec<Result<axum::body::Bytes, std::io::Error>> = vec![Ok(
+        axum::body::Bytes::from(json!({"antaresExport": 1, "tenant": "long"}).to_string() + "\n"),
+    )];
+    let piece = axum::body::Bytes::from(vec![b'x'; 1 << 20]);
+    chunks.extend((0..17).map(|_| Ok(piece.clone())));
+    let res = antares_api::router(st.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/q/tenants/long/import")
+                .body(Body::from_stream(futures_util::stream::iter(chunks)))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("line 2: longer than 16 MiB"), "{body}");
+}
+
+/// A Tenant name the broker keeps for itself is no Tenant to move (6.3.14),
+/// and a store that refuses answers each route with its error — never a
+/// digest of nothing, an empty export or an import that claims success.
+#[tokio::test]
+async fn reserved_names_and_a_refusing_store_move_nothing() {
+    let st = state().await;
+    for (method, route) in [("GET", "digest"), ("GET", "export"), ("POST", "import")] {
+        let (status, body) = call(
+            &st,
+            method,
+            &format!("/q/tenants/snap-x/{route}"),
+            "",
+            None,
+            false,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{route}");
+        assert!(
+            String::from_utf8_lossy(&body).contains("invalid tenant"),
+            "{route}"
+        );
+    }
+    let pool = antares_sql::sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(300))
+        .connect_lazy("postgres://antares@127.0.0.1:1/antares")
+        .expect("a lazy pool parses");
+    let refusing = AppState::with_store(
+        "http://localhost:0".into(),
+        std::sync::Arc::new(antares_sql::store::any::AnyStore::Pg(
+            antares_sql::store::any::PgBackend::new(pool),
+        )),
+        "postgres",
+    );
+    for (method, route) in [("GET", "digest"), ("GET", "export"), ("POST", "import")] {
+        let (status, body) = call(
+            &refusing,
+            method,
+            &format!("/q/tenants/air/{route}"),
+            "",
+            None,
+            false,
+        )
+        .await;
+        assert!(
+            status.is_server_error(),
+            "{route}: {status} {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+}
+
+/// The export streams one page per poll: a Tenant larger than a page (500)
+/// exports every Entity once, and the trailer counts them all.
+#[tokio::test]
+async fn an_export_longer_than_a_page_carries_every_entity_once() {
+    let st = state().await;
+    let tenant = antares_model::TenantId::new("paged").expect("tenant");
+    for n in 0..501 {
+        let id = format!("urn:ngsi-ld:Room:p{n:04}");
+        let doc = json!({"id": id, "type": "Room", "modifiedAt": "2026-01-01T00:00:00Z"});
+        assert!(st
+            .store
+            .create(&tenant, antares_store::Kind::Entity, &id, doc)
+            .await
+            .expect("create"));
+    }
+    let stream = export(&st, "paged").await;
+    let lines: Vec<&str> = stream.lines().collect();
+    assert_eq!(lines.len(), 503, "header, 501 entities, trailer");
+    let trailer: Value = serde_json::from_str(lines[502]).expect("trailer");
+    assert_eq!(trailer, json!({"end": true, "records": 501}));
+    let ids: std::collections::HashSet<&str> = lines[1..502]
+        .iter()
+        .filter_map(|l| l.split("\"id\":\"").nth(1)?.split('"').next())
+        .collect();
+    assert_eq!(ids.len(), 501);
+}
+
 #[tokio::test]
 async fn an_export_refuses_what_it_does_not_carry_and_names_it() {
     let st = state().await;

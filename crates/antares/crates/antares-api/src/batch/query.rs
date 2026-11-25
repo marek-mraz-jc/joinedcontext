@@ -105,13 +105,12 @@ async fn batch_query_inner(
             level: *level,
             held: crate::entities::contained_by(&page_params),
         };
-        match mode.as_str() {
-            "inline" => {
-                let remote = crate::federation::active(&page_params).then_some(headers);
-                scope.inline(&mut payload, remote).await;
-            }
-            "flat" => payload.extend(scope.flat(&page).await),
-            _ => {}
+        // parse_join answers "inline" or "flat"
+        if mode == "inline" {
+            let remote = crate::federation::active(&page_params).then_some(headers);
+            scope.inline(&mut payload, remote).await;
+        } else {
+            payload.extend(scope.flat(&page).await);
         }
     }
     let out = if accept == Accept::GeoJson {
@@ -271,5 +270,108 @@ impl JoinScope<'_> {
             .filter(|(id, _)| !page_ids.contains(&id.as_str()))
             .map(|(_, (ldoc, lrepr))| crate::repr::compact_for(&lrepr, &apply(&ldoc, &lrepr), ctx))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod query_body {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+
+    async fn post(
+        st: &crate::AppState,
+        uri: &str,
+        accept: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
+        let text = body.to_string();
+        let res = crate::router(st.clone())
+            .oneshot(
+                Request::post(uri)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", accept)
+                    .header("Content-Length", text.len())
+                    .body(Body::from(text))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    async fn seeded() -> crate::AppState {
+        let st = crate::AppState::new("batch-query-body".into());
+        let entities = json!([
+            {"id": "urn:ngsi-ld:Car:1", "type": "Car",
+             "owner": {"type": "Relationship", "object": "urn:ngsi-ld:Person:1"},
+             "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1, 2]}}},
+            {"id": "urn:ngsi-ld:Car:2", "type": "Car", "speed": {"type": "Property", "value": 5}},
+            {"id": "urn:ngsi-ld:Person:1", "type": "Person", "name": {"type": "Property", "value": "Ana"}}
+        ]);
+        let (status, body) = post(
+            &st,
+            "/ngsi-ld/v1/entityOperations/create",
+            "application/json",
+            entities,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        st
+    }
+
+    /// 5.7.2 over the Query body: `local=true` keeps the query to this
+    /// broker, a `pick` that leaves an Entity nothing drops it, an inline
+    /// join (4.5.23) puts the linked Entity inside its holder, and a GeoJSON
+    /// Accept answers a FeatureCollection (6.3.15).
+    #[tokio::test]
+    async fn clause_5_7_2_query_body_members_shape_the_answer() {
+        let st = seeded().await;
+        let uri = "/ngsi-ld/v1/entityOperations/query?local=true";
+        let (status, body) = post(
+            &st,
+            uri,
+            "application/json",
+            json!({"type": "Query", "entities": [{"type": "Car"}], "pick": ["speed"]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body,
+            json!([{"speed": {"type": "Property", "value": 5}}]),
+            "Car:1 has no speed"
+        );
+        let (status, body) = post(
+            &st,
+            uri,
+            "application/json",
+            json!({"type": "Query", "entities": [{"type": "Car", "id": "urn:ngsi-ld:Car:1"}],
+                   "join": "inline", "joinLevel": 1}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body[0]["owner"]["entity"]["name"]["value"], "Ana", "{body}");
+        let (status, body) = post(
+            &st,
+            uri,
+            "application/geo+json",
+            json!({"type": "Query", "entities": [{"type": "Car", "id": "urn:ngsi-ld:Car:1"}]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["type"], "FeatureCollection", "{body}");
+        assert_eq!(
+            body["features"][0]["geometry"]["coordinates"],
+            json!([1, 2]),
+            "{body}"
+        );
     }
 }

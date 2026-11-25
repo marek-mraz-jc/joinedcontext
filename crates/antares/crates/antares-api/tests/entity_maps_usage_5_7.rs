@@ -204,6 +204,23 @@ async fn clause_5_7_1_4_live_map_gates_registrations() {
     assert_eq!(status, StatusCode::OK, "{merged}");
     assert!(merged.get("remoteAttr").is_some(), "{merged}");
 
+    // 5.7.1.4: a map made with registrations in scope lists the local
+    // holding and every matching registration supporting the retrieve
+    let (status, headers, body) = get(
+        &st,
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:r3?entityMap=true",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let fed = map_header(&headers).expect("map location");
+    let (status, _, map) = get(&st, &fed).await;
+    assert_eq!(status, StatusCode::OK, "{map}");
+    assert_eq!(
+        map["entityMap"]["urn:ngsi-ld:Vehicle:r3"],
+        json!(["@none", "urn:ngsi-ld:ContextSourceRegistration:usage-fed"]),
+        "{map}"
+    );
+
     // a LOCAL-scope map: the r3 entry lists only "@none"
     let (status, headers, body) = get(
         &st,

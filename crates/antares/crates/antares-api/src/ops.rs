@@ -126,14 +126,15 @@ pub(super) async fn metrics_endpoint(
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Response {
     match &state.metrics_render {
-        Some(render) => Response::builder()
-            .status(axum::http::StatusCode::OK)
-            .header(
+        Some(render) => (
+            axum::http::StatusCode::OK,
+            [(
                 axum::http::header::CONTENT_TYPE,
                 "text/plain; version=0.0.4",
-            )
-            .body(axum::body::Body::from(render()))
-            .unwrap_or_else(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+            )],
+            render(),
+        )
+            .into_response(),
         None => axum::http::StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -828,9 +829,7 @@ pub(super) async fn tenant_purge(
     async fn ids(st: &AppState, tenant: &TenantId, kind: Kind) -> Result<Vec<String>, NgsiError> {
         let mut out = Vec::new();
         crate::csource::walk_docs(st, tenant, kind, |doc| {
-            if let Some(id) = doc.get("id").and_then(|v| v.as_str()) {
-                out.push(id.to_owned());
-            }
+            out.extend(doc.get("id").and_then(|v| v.as_str()).map(str::to_owned));
             Ok(())
         })
         .await?;
@@ -878,10 +877,11 @@ pub(super) async fn tenant_purge(
             Ok(())
         })
         .await?;
-        for meta in &snaps {
-            if let Some(id) = meta.get("id").and_then(|v| v.as_str()) {
-                crate::snapshots::snap_remove(&st, &tenant, id, meta).await;
-            }
+        for (id, meta) in snaps
+            .iter()
+            .filter_map(|m| Some((m.get("id")?.as_str()?, m)))
+        {
+            crate::snapshots::snap_remove(&st, &tenant, id, meta).await;
         }
         // 5.13.1: a Hosted @context belongs to the Tenant that stored it.
         // Its rows go first, while the store still lists them: this pass
@@ -1008,4 +1008,221 @@ pub(super) async fn source_identity(
         ))
     };
     go.await.unwrap_or_else(|e| e.into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    async fn call(
+        app: Router,
+        method: &str,
+        uri: &str,
+        tenant: Option<&str>,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let text = body.map(|b| b.to_string()).unwrap_or_default();
+        let mut req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("Content-Length", text.len());
+        if !text.is_empty() {
+            req = req.header("Content-Type", "application/json");
+        }
+        if let Some(t) = tenant {
+            req = req.header("NGSILD-Tenant", t);
+        }
+        let res = app
+            .oneshot(req.body(Body::from(text)).expect("request"))
+            .await
+            .expect("response");
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// T-5095: the metrics listener serves `/q/metrics` alone, rendered by
+    /// the installed recorder as Prometheus text; every other path is 404.
+    #[tokio::test]
+    async fn the_metrics_listener_serves_the_exposition_and_nothing_else() {
+        let mut st = AppState::new("ops-metrics".into());
+        st.metrics_render = Some(Arc::new(|| "antares_up 1\n".to_owned()));
+        let app = Admin::metrics_router(st);
+        let res = app
+            .clone()
+            .oneshot(
+                Request::get("/q/metrics")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            res.headers()[axum::http::header::CONTENT_TYPE],
+            "text/plain; version=0.0.4"
+        );
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert_eq!(&body[..], b"antares_up 1\n");
+        let (status, _) = call(app, "GET", "/q/health", None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// A letter is a store row, not a document this process wrote: one
+    /// without a payload lists without `payloadBytes`, one without a URI or
+    /// with a pair that has no value is left as it is, and a row that is no
+    /// object passes through untouched.
+    #[test]
+    fn letters_of_any_stored_shape_list_without_a_credential() {
+        assert_eq!(listed_letter(json!({"id": "l1"})), json!({"id": "l1"}));
+        let listed = listed_letter(json!({"payload": {"a": 1},
+            "receiverInfo": [["Authorization", "Bearer s3cret"], ["X-Bare"]]}));
+        assert_eq!(
+            listed,
+            json!({"payloadBytes": 7, "receiverInfo": [["Authorization", "[redacted]"], ["X-Bare"]]})
+        );
+        let mut raw = json!("not a letter");
+        redact_letter(&mut raw);
+        assert_eq!(raw, json!("not a letter"));
+    }
+
+    /// `/q/health` describes what is mounted and running: a surface whose
+    /// own description is no object is reported under `info`, an embedder's
+    /// memory statistics are passed on as given, and a store with a single
+    /// committer (the redb file store) reports its commit queue.
+    #[tokio::test]
+    async fn health_reports_surfaces_memory_and_the_commit_queue() {
+        struct Plain;
+        impl crate::ApiSurface for Plain {
+            fn name(&self) -> &str {
+                "plain"
+            }
+            fn prefix(&self) -> &str {
+                "/x/plain"
+            }
+            fn router(&self, _: AppState) -> Router<AppState> {
+                Router::new()
+            }
+            fn version_info(&self) -> Value {
+                json!("v2")
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("antares-ops-{}", uuid::Uuid::new_v4()));
+        let store = antares_sql::store::mem::Store::open_file(&dir).expect("redb store");
+        let mut st = AppState::with_store(
+            "ops-health".into(),
+            Arc::new(antares_sql::store::any::AnyStore::Mem(store)),
+            "file",
+        );
+        st.surfaces = Arc::new(vec![Box::new(Admin), Box::new(Plain)]);
+        st.mem_stats = Some(Arc::new(|| json!("unmeasured")));
+        let (status, body) = call(crate::router(st), "GET", "/q/health", None, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["surfaces"]["plain"],
+            json!({"info": "v2", "prefix": "/x/plain"})
+        );
+        assert_eq!(body["memory"], "unmeasured");
+        assert_eq!(body["commitQueueDepth"], 0, "{body}");
+        assert!(body["commitQueuePeak"].is_u64(), "{body}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A store that refuses answers every admin read and write with its
+    /// error, never an empty inventory, a missing tenant or a deleted letter;
+    /// a reserved tenant name is refused before the store is asked.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn the_admin_surface_answers_a_refusing_stores_error() {
+        let app = crate::router(crate::state::refusing_state());
+        for (method, uri) in [
+            ("GET", "/q/tenants"),
+            ("GET", "/q/tenants/air"),
+            ("DELETE", "/q/tenants/air"),
+            ("GET", "/q/dead-letters"),
+            ("GET", "/q/dead-letters/l1"),
+            ("POST", "/q/dead-letters/l1/replay"),
+            ("DELETE", "/q/dead-letters/l1"),
+        ] {
+            let (status, body) = call(app.clone(), method, uri, None, None).await;
+            assert!(status.is_server_error(), "{method} {uri}: {status} {body}");
+        }
+        for (method, uri) in [
+            ("GET", "/q/dead-letters/l1?tenant=snap-x"),
+            ("DELETE", "/q/dead-letters/l1?tenant=snap-x"),
+        ] {
+            let (status, body) = call(app.clone(), method, uri, None, None).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {uri}: {body}");
+            assert!(
+                body["detail"]
+                    .as_str()
+                    .is_some_and(|d| d.contains("invalid tenant")),
+                "{body}"
+            );
+        }
+    }
+
+    /// 5.15.1: the identity is served in a representation the client
+    /// accepts; one it cannot accept is 406, answered as an error response.
+    #[tokio::test]
+    async fn source_identity_refuses_an_unacceptable_representation() {
+        let res = crate::router(AppState::new("ops-identity".into()))
+            .oneshot(
+                Request::get("/ngsi-ld/v1/info/sourceIdentity")
+                    .header("Accept", "text/csv")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(res.status(), StatusCode::NOT_ACCEPTABLE);
+    }
+
+    /// A purge announces every deleted Subscription, Context Source
+    /// Registration Subscription and Registration to the in-process mirrors,
+    /// so none of them is matched after the tenant is gone.
+    #[tokio::test]
+    async fn a_purge_drops_every_mirrored_document_of_the_tenant() {
+        let st = crate::wired_state("ops-purge").await;
+        let app = crate::router(st.clone());
+        let t = Some("purgeme");
+        let csub = json!({"id": "urn:ngsi-ld:CSourceSubscription:p1", "type": "Subscription",
+            "entities": [{"type": "V"}], "notification": {"endpoint": {"uri": "http://127.0.0.1:9/n"}}});
+        let reg = json!({"id": "urn:ngsi-ld:ContextSourceRegistration:p1",
+            "type": "ContextSourceRegistration", "information": [{"entities": [{"type": "V"}]}],
+            "endpoint": "http://127.0.0.1:9"});
+        for (uri, body) in [
+            ("/ngsi-ld/v1/csourceSubscriptions", csub),
+            ("/ngsi-ld/v1/csourceRegistrations", reg),
+        ] {
+            let (status, b) = call(app.clone(), "POST", uri, t, Some(body)).await;
+            assert_eq!(status, StatusCode::CREATED, "{uri}: {b}");
+        }
+        let tenant = TenantId::new("purgeme").expect("tenant");
+        let mirrored = |st: &AppState| {
+            st.reg_mirror
+                .as_ref()
+                .expect("wired")
+                .docs(tenant.as_str())
+                .len()
+        };
+        assert_eq!(mirrored(&st), 1);
+        let (status, b) = call(app.clone(), "DELETE", "/q/tenants/purgeme", None, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{b}");
+        assert_eq!(mirrored(&st), 0, "the registration mirror forgot it");
+        let (status, _) = call(app, "GET", "/q/tenants/purgeme", None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
 }
