@@ -578,6 +578,68 @@ async fn every_token_check_refuses_a_token_that_breaks_only_it() {
     assert_eq!(st, StatusCode::OK);
 }
 
+/// A DPoP-bound console token in a realm that requires a server nonce: a proof without one
+/// gets the RFC 9449 nonce challenge, not the plain Bearer one.
+#[tokio::test]
+async fn a_bound_token_without_the_server_nonce_gets_the_dpop_challenge() {
+    use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
+    use sha2::{Digest, Sha256};
+    let (app, store, kek) = app_and_kek().await;
+    let me = sign_in(&app, &store, MEMBER, MEMBER_PW).await;
+    let kid = jsonwebtoken::decode_header(&me.token).unwrap().kid.unwrap();
+    let key = store
+        .list_signing_keys("dev")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|k| k.kid == kid)
+        .unwrap();
+    let holder = KeyManager::generate_es256("holder", &kek, 100, "ACTIVE").unwrap();
+    let der = kek
+        .decrypt(
+            format!("holder:{}", holder.kid).as_bytes(),
+            &holder.encrypted_private_key,
+        )
+        .unwrap();
+    let jwk: Value = serde_json::from_str(&holder.public_jwk_json).unwrap();
+    let mut claims = decode_jwt_payload(&me.token);
+    claims["cnf"] = json!({ "jkt": kaisatsu_oidc::dpop::compute_jwk_thumbprint(&jwk).unwrap() });
+    let token = sign_jwt(&key, &kek, Some("JWT"), &claims).unwrap();
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm
+        .attributes
+        .insert("dpop.require.nonce".into(), "true".into());
+    store.upsert_realm(realm).await.unwrap();
+    let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+    header.typ = Some("dpop+jwt".into());
+    header.jwk = Some(serde_json::from_value(jwk).unwrap());
+    let proof = jsonwebtoken::encode(
+        &header,
+        &json!({
+            "jti": "acct-n-1",
+            "htm": "GET",
+            "htu": format!("{ISSUER_ORIGIN}{ACCOUNT}/"),
+            "iat": TimestampTz::now().as_second(),
+            "ath": URL_SAFE_NO_PAD.encode(Sha256::digest(token.as_bytes())),
+        }),
+        &jsonwebtoken::EncodingKey::from_ec_der(&der),
+    )
+    .unwrap();
+    let auth = format!("DPoP {token}");
+    let (st, h, body) = call(
+        &app,
+        Method::GET,
+        &format!("{ACCOUNT}/"),
+        &[("authorization", &auth), ("dpop", &proof)],
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "{body}");
+    let www = h[header::WWW_AUTHENTICATE].to_str().unwrap();
+    assert!(www.starts_with(r#"DPoP error="use_dpop_nonce""#), "{www}");
+    assert!(h.contains_key("dpop-nonce"));
+}
+
 /// An access token of the confidential `edge` client (no `account` audience).
 async fn edge_access_token(app: &Router) -> (StatusCode, HeaderMap, String, String) {
     let (st, h, body) = post_form(

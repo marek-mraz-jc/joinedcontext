@@ -257,3 +257,33 @@ pub async fn complete_passkey_authentication(
 
     Ok((user, verified.user_verified))
 }
+
+#[cfg(test)]
+mod tests {
+    use kaisatsu_crypto::webauthn::CosePublicKey;
+
+    /// The invariant register's `let ... else` relies on: every COSE key kind serialises.
+    #[test]
+    fn every_cose_key_kind_serialises() {
+        for key in [
+            CosePublicKey::Ec2 {
+                alg: -7,
+                crv: 1,
+                x: "x".into(),
+                y: "y".into(),
+            },
+            CosePublicKey::Okp {
+                alg: -8,
+                crv: 6,
+                x: String::new(),
+            },
+            CosePublicKey::Rsa {
+                alg: i64::MIN,
+                n: "\u{0}\"".into(),
+                e: "AQAB".into(),
+            },
+        ] {
+            assert!(serde_json::to_string(&key).is_ok(), "{key:?}");
+        }
+    }
+}
