@@ -469,7 +469,8 @@ async fn retrieve_entity_inner(
                 )
                 .await
             }
-            "flat" => {
+            // parse_join admits "inline" and "flat" only
+            _ => {
                 let mut linked = std::collections::BTreeMap::new();
                 let complete = collect_flat_beyond(
                     st,
@@ -492,7 +493,6 @@ async fn retrieve_entity_inner(
                 }
                 complete
             }
-            _ => true,
         };
         if !complete {
             warnings.push(crate::federation::warning(
@@ -766,13 +766,11 @@ async fn query_entities_outer(
     let mut resp = query_entities_inner(st, &params, headers, &filter).await?;
     // "The location of the EntityMap used in the query operation is
     // returned in the response" (6.4.3.2-2)
-    if let Ok(v) = format!("/ngsi-ld/v1/entityMaps/{map_id}").parse() {
-        resp.headers_mut().insert("NGSILD-EntityMap", v);
-    }
+    // `map_id` is part of a header value already, so it is one again
+    resp.headers_mut().extend(entity_map_header(&map_id));
     if count {
-        if let Ok(v) = total.to_string().parse() {
-            resp.headers_mut().insert("NGSILD-Results-Count", v);
-        }
+        resp.headers_mut()
+            .insert("NGSILD-Results-Count", axum::http::HeaderValue::from(total));
     }
     // 6.3.10 links from the original query — the inner call saw offset 0
     // over exactly one page, so it emitted none
@@ -795,12 +793,24 @@ async fn query_entities_outer(
             Accept::Json => ";type=\"application/json\"",
             Accept::GeoJson => ";type=\"application/geo+json\"",
         };
-        if let Ok(v) = format!("</ngsi-ld/v1/entities?{}>; rel=\"{rel}\"{ty}", qp.join("&")).parse()
-        {
-            resp.headers_mut().append(axum::http::header::LINK, v);
-        }
+        // known parameter names and percent-encoded values: always a header value
+        let link = format!("</ngsi-ld/v1/entities?{}>; rel=\"{rel}\"{ty}", qp.join("&"));
+        resp.headers_mut().extend(
+            axum::http::HeaderValue::try_from(link)
+                .ok()
+                .map(|v| (axum::http::header::LINK, v)),
+        );
     }
     Ok(resp)
+}
+
+/// The `NGSILD-EntityMap` header naming the map `id` (6.4.3.2-2), when the
+/// id makes a header value: a broker-minted id or one read from a header
+/// always does.
+fn entity_map_header(id: &str) -> Option<(axum::http::HeaderName, axum::http::HeaderValue)> {
+    axum::http::HeaderValue::try_from(format!("/ngsi-ld/v1/entityMaps/{id}"))
+        .ok()
+        .map(|v| (axum::http::HeaderName::from_static("ngsild-entitymap"), v))
 }
 
 async fn query_entities_inner(
@@ -1087,7 +1097,8 @@ async fn query_entities_inner(
                             .await;
                         }
                     }
-                    "flat" => {
+                    // parse_join admits "inline" and "flat" only
+                    _ => {
                         let mut linked = std::collections::BTreeMap::new();
                         for doc in &page {
                             complete &= collect_flat_beyond(
@@ -1111,7 +1122,6 @@ async fn query_entities_inner(
                             }
                         }
                     }
-                    _ => {}
                 }
                 if !complete {
                     warnings.push(crate::federation::warning(
@@ -1137,9 +1147,7 @@ async fn query_entities_inner(
         let map = build_query_map(st, &tenant, headers, &ctx, params, filter).await?;
         *resp.status_mut() = StatusCode::CREATED;
         if let Some(id) = map.get("id").and_then(Value::as_str) {
-            if let Ok(v) = format!("/ngsi-ld/v1/entityMaps/{id}").parse() {
-                resp.headers_mut().insert("NGSILD-EntityMap", v);
-            }
+            resp.headers_mut().extend(entity_map_header(id));
         }
     }
     filter.mark(&st.host_alias, resp.headers_mut());
@@ -2439,10 +2447,10 @@ async fn purge_locally(
                         target.keys().filter(|k| !is_meta(k)).cloned().collect();
                     let before = target.len();
                     for a in attrs {
-                        let purge = match (keep, drop) {
-                            (Some(keep), _) => !keep.contains(&a),
-                            (_, Some(drop)) => drop.contains(&a),
-                            _ => true,
+                        // a prune names keep or drop
+                        let purge = match keep {
+                            Some(keep) => !keep.contains(&a),
+                            None => drop.as_ref().is_none_or(|d| d.contains(&a)),
                         };
                         if purge {
                             target.remove(&a);
@@ -4171,18 +4179,12 @@ mod clause_4_5_23_bounds {
             &format!("/ngsi-ld/v1/entities/{root}?join=flat&joinLevel=3"),
         )
         .await;
-        let arr = match body {
-            Value::Array(a) => a,
-            other => vec![other],
-        };
-        let (mut roots, mut leaves) = (0usize, 0usize);
-        for e in &arr {
-            match e["id"].as_str() {
-                Some(id) if id == root => roots += 1,
-                Some(id) if id == leaf => leaves += 1,
-                _ => {}
-            }
-        }
+        let arr = body
+            .as_array()
+            .cloned()
+            .expect("a flat join answers an array");
+        let count = |want: &str| arr.iter().filter(|e| e["id"] == want).count();
+        let (roots, leaves) = (count(root), count(leaf));
         assert_eq!(
             roots, 1,
             "the root must appear exactly once in the flattened array: {arr:?}"
@@ -5076,10 +5078,10 @@ mod clause_5_6_17_and_6_4_3_2 {
             &format!("/ngsi-ld/v1/entities/{root}?join=flat&joinLevel=2&containedBy={held}"),
         )
         .await;
-        let arr = match body {
-            Value::Array(a) => a,
-            other => vec![other],
-        };
+        let arr = body
+            .as_array()
+            .cloned()
+            .expect("a flat join answers an array");
         let ids: Vec<&str> = arr.iter().filter_map(|e| e["id"].as_str()).collect();
         assert!(
             !ids.contains(&held),
@@ -5202,13 +5204,11 @@ mod clause_4_8_system_attributes {
         let st = AppState::new("antares-sysattrs-writes".into());
         let forged = "1970-01-01T00:00:00Z";
         let id = "urn:ngsi-ld:Vehicle:writes";
-        let stamped = |v: Value| {
-            let mut o = v;
-            if let Some(m) = o.as_object_mut() {
-                m.insert("createdAt".into(), json!(forged));
-                m.insert("modifiedAt".into(), json!(forged));
-            }
-            o
+        // every stamped value is an object
+        let stamped = |mut v: Value| {
+            v["createdAt"] = json!(forged);
+            v["modifiedAt"] = json!(forged);
+            v
         };
         let send = |req: Request<Body>| {
             let st = st.clone();
@@ -5289,6 +5289,530 @@ mod clause_4_8_system_attributes {
                 "{method} {path} let the client stamp the document: {served}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod handler_edges {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    const ALIAS: &str = "ent-edges";
+    const T: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+
+    async fn send(
+        st: &AppState,
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> (StatusCode, HeaderMap, Value) {
+        let mut b = Request::builder().method(method).uri(uri);
+        for (k, v) in headers {
+            b = b.header(*k, *v);
+        }
+        let body = match body {
+            Some(v) => {
+                let s = v.to_string();
+                b = b
+                    .header("Content-Type", "application/json")
+                    .header("Content-Length", s.len());
+                Body::from(s)
+            }
+            None => Body::empty(),
+        };
+        let resp = crate::router(st.clone())
+            .oneshot(b.body(body).expect("request"))
+            .await
+            .expect("response");
+        let (parts, body) = resp.into_parts();
+        let bytes = body.collect().await.expect("body").to_bytes();
+        (
+            parts.status,
+            parts.headers,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    async fn create(st: &AppState, body: Value) {
+        let (s, _, b) = send(st, "POST", "/ngsi-ld/v1/entities", &[], Some(body)).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+    }
+
+    /// 6.3.17/6.3.18: create, merge and replace whose Via already names
+    /// this broker are answered 508 Loop Detected and write nothing.
+    #[tokio::test]
+    async fn a_looped_write_is_answered_508_and_writes_nothing() {
+        let st = AppState::new(ALIAS.into());
+        let via = [("Via", "1.1 ent-edges")];
+        let id = "urn:ngsi-ld:V:loop";
+        let body = json!({"id": id, "type": "V", "speed": {"type": "Property", "value": 1}});
+        let (s, _, _) = send(
+            &st,
+            "POST",
+            "/ngsi-ld/v1/entities",
+            &via,
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(s.as_u16(), 508);
+        create(&st, body.clone()).await;
+        let uri = format!("/ngsi-ld/v1/entities/{id}");
+        let (s, _, _) = send(
+            &st,
+            "PATCH",
+            &uri,
+            &via,
+            Some(json!({"speed": {"type": "Property", "value": 2}})),
+        )
+        .await;
+        assert_eq!(s.as_u16(), 508);
+        let (s, _, _) = send(&st, "PUT", &uri, &via, Some(json!({"id": id, "type": "V"}))).await;
+        assert_eq!(s.as_u16(), 508);
+        let (_, _, now) = send(&st, "GET", &uri, &[], None).await;
+        assert_eq!(now["speed"]["value"], 1, "{now}");
+    }
+
+    /// 5.6.17/5.6.18/5.6.21: a fragment naming another id, a replace body
+    /// naming another id, a replace whose ?type the target does not have,
+    /// and a purge with both keep and drop are refused with their reason.
+    #[tokio::test]
+    async fn mismatched_write_targets_are_refused() {
+        let st = AppState::new(ALIAS.into());
+        let id = "urn:ngsi-ld:V:mm";
+        create(
+            &st,
+            json!({"id": id, "type": "V", "speed": {"type": "Property", "value": 1}}),
+        )
+        .await;
+        let uri = format!("/ngsi-ld/v1/entities/{id}");
+        let (s, _, b) = send(
+            &st,
+            "PATCH",
+            &uri,
+            &[],
+            Some(json!({"id": "urn:ngsi-ld:V:other", "speed": {"type": "Property", "value": 2}})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert!(b.to_string().contains("fragment id mismatch"), "{b}");
+        let (s, _, b) = send(
+            &st,
+            "PUT",
+            &uri,
+            &[],
+            Some(json!({"id": "urn:ngsi-ld:V:other", "type": "V"})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert!(b.to_string().contains("entity id mismatch"), "{b}");
+        let (s, _, _) = send(
+            &st,
+            "PUT",
+            &format!("{uri}?type=Ship"),
+            &[],
+            Some(json!({"id": id, "type": "V"})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        let (s, _, b) = send(
+            &st,
+            "DELETE",
+            "/ngsi-ld/v1/entities?type=V&keep=speed&drop=speed",
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert!(
+            b.to_string()
+                .contains("keep and drop are mutually exclusive"),
+            "{b}"
+        );
+        let (s, _, b) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=V&idPattern=urn**",
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert!(b.to_string().contains("invalid idPattern"), "{b}");
+        // the entity is untouched
+        let (_, _, now) = send(&st, "GET", &uri, &[], None).await;
+        assert_eq!(now["speed"]["value"], 1);
+        // TS 104 176 7.3.3.2: format=normalized is the plain merge
+        let (s, _, _) = send(
+            &st,
+            "PATCH",
+            &format!("{uri}?format=normalized"),
+            &[],
+            Some(json!({"speed": {"type": "Property", "value": 3}})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NO_CONTENT);
+        let (_, _, now) = send(&st, "GET", &uri, &[], None).await;
+        assert_eq!(now["speed"]["value"], 3);
+    }
+
+    /// 4.8: a stored Entity that carries no createdAt (written before the
+    /// stamp existed) is replaced without one being made up.
+    #[tokio::test]
+    async fn a_replace_of_an_unstamped_entity_stamps_no_old_created_at() {
+        let st = AppState::new(ALIAS.into());
+        let tenant = TenantId::default();
+        let id = "urn:ngsi-ld:V:old";
+        st.store
+            .create(
+                &tenant,
+                Kind::Entity,
+                id,
+                json!({"id": id, "type": [format!("{T}V")]}),
+            )
+            .await
+            .expect("seed");
+        let (s, _, b) = send(
+            &st,
+            "PUT",
+            &format!("/ngsi-ld/v1/entities/{id}"),
+            &[],
+            Some(json!({"id": id, "type": "V", "speed": {"type": "Property", "value": 4}})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "{b}");
+        let doc = st
+            .store
+            .get(&tenant, Kind::Entity, id)
+            .await
+            .expect("read")
+            .expect("doc");
+        assert_eq!(doc[format!("{T}speed")][0]["value"], 4);
+    }
+
+    /// 10.4.4: the bare value of every attribute kind is its own member.
+    #[tokio::test]
+    async fn the_attribute_value_of_every_kind_is_its_own_member() {
+        let st = AppState::new(ALIAS.into());
+        let id = "urn:ngsi-ld:V:kinds";
+        create(
+            &st,
+            json!({"id": id, "type": "V",
+            "owner": {"type": "Relationship", "object": "urn:ngsi-ld:P:1"},
+            "name": {"type": "LanguageProperty", "languageMap": {"en": "car"}},
+            "spec": {"type": "JsonProperty", "json": {"doors": 4}},
+            "kind": {"type": "VocabProperty", "vocab": "car"},
+            "trips": {"type": "ListProperty", "valueList": [1, 2]},
+            "fleet": {"type": "ListRelationship", "objectList": [{"object": "urn:ngsi-ld:F:1"}]}}),
+        )
+        .await;
+        let value = |attr: &str| format!("/ngsi-ld/v1/entities/{id}/attrs/{attr}/value");
+        for (attr, want) in [
+            ("owner", json!("urn:ngsi-ld:P:1")),
+            ("name", json!({"en": "car"})),
+            ("spec", json!({"doors": 4})),
+            ("kind", json!("car")),
+            ("trips", json!([1, 2])),
+        ] {
+            let (s, _, b) = send(&st, "GET", &value(attr), &[], None).await;
+            assert_eq!(s, StatusCode::OK, "{attr}: {b}");
+            assert_eq!(b, want, "{attr}");
+        }
+        let (s, _, b) = send(&st, "GET", &value("fleet"), &[], None).await;
+        assert_eq!(s, StatusCode::OK);
+        assert!(b.to_string().contains("urn:ngsi-ld:F:1"), "{b}");
+        // simplified: the attribute is its bare value already
+        let (s, _, b) = send(
+            &st,
+            "GET",
+            &format!("{}?options=keyValues", value("owner")),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(b, json!("urn:ngsi-ld:P:1"));
+        let (s, _, b) = send(
+            &st,
+            "GET",
+            &format!("/ngsi-ld/v1/entities/{id}/attrs/kind?options=keyValues"),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(b, json!({"vocab": "car"}));
+    }
+
+    /// 5.14.4.4: an EntityMap query refuses an invalid id and an invalid
+    /// csf, and under splitEntities only id, idPattern and type narrow the
+    /// local candidates.
+    #[tokio::test]
+    async fn the_query_map_validates_ids_and_csf_and_splits_on_id_and_type() {
+        let st = AppState::new(ALIAS.into());
+        let tenant = TenantId::default();
+        for (id, speed) in [("urn:ngsi-ld:V:s1", 1), ("urn:ngsi-ld:V:s2", 50)] {
+            create(
+                &st,
+                json!({"id": id, "type": "V", "speed": {"type": "Property", "value": speed}}),
+            )
+            .await;
+        }
+        let ctx = st.loader.core();
+        let p = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        let f = crate::policy::Filter::default();
+        let h = HeaderMap::new();
+        let e = build_query_map(
+            &st,
+            &tenant,
+            &h,
+            &ctx,
+            &p(&[("type", "V"), ("id", "not an id")]),
+            &f,
+        )
+        .await
+        .err()
+        .expect("an invalid id is refused");
+        assert!(matches!(e, ApiError::Ngsi(NgsiError::BadRequestData(_))));
+        let e = build_query_map(
+            &st,
+            &tenant,
+            &h,
+            &ctx,
+            &p(&[("type", "V"), ("csf", "a==")]),
+            &f,
+        )
+        .await
+        .err()
+        .expect("an invalid csf is refused");
+        assert!(matches!(e, ApiError::Ngsi(NgsiError::BadRequestData(_))));
+        let split = build_query_map(
+            &st,
+            &tenant,
+            &h,
+            &ctx,
+            &p(&[("type", "V"), ("q", "speed>10"), ("splitEntities", "true")]),
+            &f,
+        )
+        .await
+        .expect("split map");
+        let ids: Vec<&String> = split["entityMap"]
+            .as_object()
+            .expect("map")
+            .keys()
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["urn:ngsi-ld:V:s1", "urn:ngsi-ld:V:s2"],
+            "q cannot be judged on a fragment"
+        );
+    }
+
+    /// 5.5.9.3/6.4.3.2: paging through a live EntityMap — a reference
+    /// without a narrowing filter is refused, a count-only page counts every
+    /// candidate, a page past the end is empty, and the pagination Links
+    /// carry the response media type.
+    #[tokio::test]
+    async fn paging_through_an_entity_map() {
+        let st = AppState::new(ALIAS.into());
+        for i in 0..3 {
+            create(
+                &st,
+                json!({"id": format!("urn:ngsi-ld:V:m{i}"), "type": "V"}),
+            )
+            .await;
+        }
+        let (s, h, b) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=V&entityMap=true&local=true",
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        let map = h
+            .get("NGSILD-EntityMap")
+            .and_then(|v| v.to_str().ok())
+            .expect("map location")
+            .to_owned();
+        let with_map = [("NGSILD-EntityMap", map.as_str())];
+        let (s, _, b) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?idPattern=urn.*",
+            &with_map,
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert!(
+            b.to_string().contains("query needs at least one of type"),
+            "{b}"
+        );
+        let (s, h, b) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=V&local=true&limit=0&count=true",
+            &with_map,
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        assert_eq!(
+            h.get("NGSILD-Results-Count").and_then(|v| v.to_str().ok()),
+            Some("3")
+        );
+        assert_eq!(
+            h.get("NGSILD-EntityMap").and_then(|v| v.to_str().ok()),
+            Some(map.as_str())
+        );
+        let (s, _, b) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=V&local=true&offset=10",
+            &with_map,
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(b, json!([]));
+        for (accept, ty) in [
+            ("application/ld+json", "application/ld+json"),
+            ("application/geo+json", "application/geo+json"),
+        ] {
+            let (s, h, b) = send(
+                &st,
+                "GET",
+                "/ngsi-ld/v1/entities?type=V&local=true&limit=1&offset=1",
+                &[with_map[0], ("Accept", accept)],
+                None,
+            )
+            .await;
+            assert_eq!(s, StatusCode::OK, "{b}");
+            let links: Vec<&str> = h
+                .get_all(axum::http::header::LINK)
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .filter(|l| l.contains("rel=\"next\"") || l.contains("rel=\"prev\""))
+                .collect();
+            assert_eq!(links.len(), 2, "{links:?}");
+            assert!(
+                links
+                    .iter()
+                    .all(|l| l.ends_with(&format!(";type=\"{ty}\""))),
+                "{links:?}"
+            );
+        }
+    }
+
+    async fn seed_reg(st: &AppState, id: &str, ops: Value, info: Value) {
+        let doc = json!({
+            "id": id,
+            "type": "ContextSourceRegistration",
+            "mode": "inclusive",
+            "operations": ops,
+            "endpoint": "http://peer.invalid:9090",
+            "information": [info],
+        });
+        st.store
+            .create(&TenantId::default(), Kind::Registration, id, doc)
+            .await
+            .expect("seed registration");
+    }
+
+    /// 4.3.6.2/5.6.x.4: with inclusive registrations that do not take the
+    /// operation, or whose scope holds none of the payload, nothing is
+    /// forwarded and the local half is the answer: a write to an Entity
+    /// held here succeeds, one to an Entity not held here (or not of the
+    /// ?type asked) is 404.
+    #[tokio::test]
+    async fn inclusive_registrations_leave_the_local_answer() {
+        let st = AppState::new(ALIAS.into());
+        let id = "urn:ngsi-ld:V:fed";
+        let gone = "urn:ngsi-ld:V:fedgone";
+        for rid in [id, gone] {
+            seed_reg(
+                &st,
+                &format!("urn:ngsi-ld:ContextSourceRegistration:ro-{rid}"),
+                json!(["retrieveEntity"]),
+                json!({"entities": [{"id": rid, "type": "V"}]}),
+            )
+            .await;
+            seed_reg(
+                &st,
+                &format!("urn:ngsi-ld:ContextSourceRegistration:fuel-{rid}"),
+                json!(["createEntity", "mergeEntity", "replaceEntity"]),
+                json!({"entities": [{"id": rid, "type": "V"}], "propertyNames": ["fuel"]}),
+            )
+            .await;
+        }
+        let body = json!({"id": id, "type": "V", "speed": {"type": "Property", "value": 1}});
+        let (s, _, b) = send(&st, "POST", "/ngsi-ld/v1/entities", &[], Some(body)).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        let uri = format!("/ngsi-ld/v1/entities/{id}");
+        let frag = json!({"speed": {"type": "Property", "value": 2}});
+        let (s, _, b) = send(&st, "PATCH", &uri, &[], Some(frag.clone())).await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "{b}");
+        let (s, _, _) = send(
+            &st,
+            "PATCH",
+            &format!("{uri}?type=Ship"),
+            &[],
+            Some(frag.clone()),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        let (s, _, _) = send(
+            &st,
+            "PATCH",
+            &format!("/ngsi-ld/v1/entities/{gone}"),
+            &[],
+            Some(frag),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        let (s, _, b) = send(
+            &st,
+            "PUT",
+            &uri,
+            &[],
+            Some(json!({"id": "urn:ngsi-ld:V:x", "type": "V"})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert!(b.to_string().contains("entity id mismatch"), "{b}");
+        let (s, _, _) = send(
+            &st,
+            "PUT",
+            &format!("/ngsi-ld/v1/entities/{gone}"),
+            &[],
+            Some(json!({"id": gone, "type": "V"})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        let (s, _, b) = send(
+            &st,
+            "PUT",
+            &uri,
+            &[],
+            Some(json!({"id": id, "type": "V", "speed": {"type": "Property", "value": 7}})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "{b}");
+        let (_, _, now) = send(&st, "GET", &format!("{uri}?local=true"), &[], None).await;
+        assert_eq!(now["speed"]["value"], 7, "{now}");
+        let (s, _, b) = send(&st, "DELETE", &uri, &[], None).await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "{b}");
     }
 }
 
