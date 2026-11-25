@@ -4701,6 +4701,30 @@ mod tests {
         );
     }
 
+    /// One measured area read with an Endpoint base and a chart renderer is a table linking its
+    /// shape's GeoJSON, with the renderer's map.
+    #[tokio::test]
+    async fn one_measured_area_links_its_shape_and_draws_a_map() {
+        let parts = Parts::new();
+        let endpoint = connector("http://127.0.0.1:9", "parky", &[], None);
+        let connectors = [endpoint.clone()];
+        let base = url::Url::parse("https://data.example/").expect("a base");
+        let viz = url::Url::parse("https://embed.example.org").expect("a renderer");
+        let mut ask = parts.ask(&connectors);
+        ask.endpoint_base = Some(&base);
+        ask.viz = Some(&viz);
+        let park = json!([{"id": "urn:ngsi-ld:Park:a", "type": "Park", "name": "Park A",
+            "location": {"type": "GeoProperty", "value": {"type": "Polygon", "coordinates":
+                [[[19.14, 48.73], [19.15, 48.73], [19.15, 48.74], [19.14, 48.74], [19.14, 48.73]]]}}}])
+        .to_string();
+        let table = table_with(&ask, &endpoint, "Park", &park, &[], Some(None), Some(None))
+            .await
+            .expect("a table");
+        assert_eq!(table.rows.len(), 1);
+        assert!(table.geojson.is_some(), "{:?}", table.columns);
+        assert!(table.map.is_some(), "{:?}", table.columns);
+    }
+
     #[test]
     fn each_limit_is_logged_by_its_cap() {
         let names = [
