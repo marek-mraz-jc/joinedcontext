@@ -99,6 +99,12 @@ mod tests {
         hook.set_mode(Mode::Off);
         assert_eq!(hook.mode(), Mode::Enforce);
         hook.set(refuse);
-        assert!(hook.check.get().is_some());
+        let check = hook.check.get().expect("the registered check");
+        let bytes: Arc<[u8]> = Arc::from(&b"schema"[..]);
+        assert_eq!(
+            check(1, &bytes, &Value::Null, true),
+            Err("no".to_owned()),
+            "the registered check is the one asked"
+        );
     }
 }

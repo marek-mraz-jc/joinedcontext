@@ -1429,6 +1429,204 @@ mod f_ant2_014_scope_window {
 }
 
 #[cfg(test)]
+mod t5616_rules_in_the_store {
+    use crate::policy::{Filter, Rule, TimeBound, Window};
+    use crate::temporal::filter::{
+        page_attrs, retain_q_instances, rules_per_instance, rules_window, scope_window_retain,
+        window_conditions_match,
+    };
+    use crate::temporalq::TemporalQ;
+    use serde_json::{json, Value};
+    use std::collections::{BTreeMap, HashMap};
+
+    fn every(ty: &str) -> Rule {
+        Rule {
+            types: vec![ty.to_owned()],
+            every_attribute: true,
+            ..Rule::default()
+        }
+    }
+
+    fn rules(rules: Vec<Rule>) -> Filter {
+        Filter {
+            rules,
+            ..Filter::default()
+        }
+    }
+
+    fn tq(pairs: &[(&str, &str)]) -> Option<TemporalQ> {
+        let params: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        TemporalQ::from_params(&params, false).expect("a valid temporal query")
+    }
+
+    /// T-5616: a rule over every Attribute of the type asked pages in the
+    /// store over any Attribute, or over the request's own `attrs`; a read
+    /// naming no type, or a type no rule names, does not page.
+    #[test]
+    fn every_attribute_rules_page_over_what_the_request_asks() {
+        let f = rules(vec![every("Car")]);
+        let car = ["Car".to_owned()];
+        assert_eq!(page_attrs(&f, Some(&car), None, None, false), Some(None));
+        let speed = ["speed".to_owned()];
+        assert_eq!(
+            page_attrs(&f, Some(&car), None, Some(&speed), false),
+            Some(Some(vec!["speed".to_owned()]))
+        );
+        assert_eq!(
+            page_attrs(&f, None, None, None, false),
+            None,
+            "no type asked"
+        );
+        let bus = ["Bus".to_owned()];
+        assert_eq!(
+            page_attrs(&f, Some(&bus), None, None, false),
+            None,
+            "no rule of Bus"
+        );
+        assert_eq!(
+            page_attrs(&rules(Vec::new()), Some(&car), None, None, false),
+            None
+        );
+    }
+
+    /// Gap G6: no rule decides, no window; rules of one type with different
+    /// windows stand for no single range.
+    #[test]
+    fn a_window_range_needs_one_shared_window() {
+        let none = HashMap::new();
+        assert!(matches!(
+            rules_window(&rules(Vec::new()), None, &none, None),
+            Ok(None)
+        ));
+        let at = |s: &str| s.parse().ok().map(TimeBound::At);
+        let windowed = |from: &str| Rule {
+            temporal: vec![Window {
+                from: at(from),
+                to: None,
+            }],
+            ..every("Car")
+        };
+        let two = rules(vec![
+            windowed("2026-01-01T00:00:00Z"),
+            windowed("2026-02-01T00:00:00Z"),
+        ]);
+        let car = ["Car".to_owned()];
+        assert!(rules_window(&two, Some(&car), &none, None).is_err());
+    }
+
+    /// ADR-0023 rule 11 per instance: a document that is no object is
+    /// returned as it is, and an Attribute the type hides is dropped.
+    #[test]
+    fn per_instance_rules_drop_hidden_attributes() {
+        assert_eq!(
+            rules_per_instance(&json!("x"), &Filter::default()),
+            Some(json!("x"))
+        );
+        let f = Filter {
+            rules: vec![every("Car")],
+            omit_by_type: BTreeMap::from([("Car".to_owned(), vec!["secret".to_owned()])]),
+            ..Filter::default()
+        };
+        let doc = json!({"id": "urn:ngsi-ld:Car:1", "type": "Car",
+            "speed": [{"type": "Property", "value": 1}],
+            "secret": [{"type": "Property", "value": 2}]});
+        let out = rules_per_instance(&doc, &f).expect("a rule selects the Car");
+        assert!(out.get("secret").is_none(), "{out}");
+        assert_eq!(out["speed"], doc["speed"]);
+    }
+
+    /// 5.7.4.4 S4: `before` closes the window at timeAt, a bare timeproperty
+    /// opens it both ways; a member that is no instance list is left alone,
+    /// and a document that is no object is valid in no scope.
+    #[test]
+    fn scope_windows_by_timerel() {
+        let doc = || {
+            json!({"id": "urn:e", "type": "T", "note": "kept",
+                "scope": [{"type": "Property", "value": "/a", "observedAt": "2026-01-01T00:00:00Z"}],
+                "speed": [{"type": "Property", "value": 1, "observedAt": "2026-01-02T00:00:00Z"}]})
+        };
+        let before = tq(&[("timerel", "before"), ("timeAt", "2025-12-01T00:00:00Z")]);
+        assert!(
+            !scope_window_retain(&mut doc(), "/a", before.as_ref(), "observedAt"),
+            "the scope starts after the window closes"
+        );
+        let later = tq(&[("timerel", "before"), ("timeAt", "2026-03-01T00:00:00Z")]);
+        let mut d = doc();
+        assert!(scope_window_retain(
+            &mut d,
+            "/a",
+            later.as_ref(),
+            "observedAt"
+        ));
+        assert_eq!(d["note"], "kept");
+        let any = tq(&[("timeproperty", "observedAt")]);
+        assert_eq!(any.as_ref().map(|t| t.timerel.as_str()), Some("any"));
+        let mut d = doc();
+        assert!(scope_window_retain(
+            &mut d,
+            "/a",
+            any.as_ref(),
+            "observedAt"
+        ));
+        assert_eq!(d["speed"].as_array().map(Vec::len), Some(1));
+        assert!(!scope_window_retain(
+            &mut json!(["/a"]),
+            "/a",
+            None,
+            "observedAt"
+        ));
+    }
+
+    /// 5.7.4.4 S2/S9 on members that are no instance list, an Attribute `q`
+    /// reads that the Entity lacks, and a document that is no object.
+    #[test]
+    fn window_filters_pass_over_what_is_no_instance_list() {
+        let ctx = antares_jsonld::Loader::new().core();
+        let window = tq(&[("timerel", "after"), ("timeAt", "2026-01-01T00:00:00Z")]);
+        let speed = format!("{}speed", "https://uri.etsi.org/ngsi-ld/default-context/");
+        let other = format!("{}other", "https://uri.etsi.org/ngsi-ld/default-context/");
+        let mut doc = json!({"id": "urn:e", "type": "T", "note": "x",
+            speed.clone(): [
+                {"type": "Property", "value": 5, "observedAt": "2026-01-02T00:00:00Z"},
+                {"type": "Property", "value": 50, "observedAt": "2025-12-01T00:00:00Z"},
+                {"type": "Property", "value": 1, "observedAt": "2026-01-03T00:00:00Z"}]});
+        let ast = antares_ql::parse_q("speed>3;other<1|speed>3").expect("q");
+        assert!(window_conditions_match(
+            &doc,
+            window.as_ref(),
+            Some(&ast),
+            &[],
+            &ctx
+        ));
+        let high = antares_ql::parse_q("speed>10").expect("q");
+        assert!(
+            !window_conditions_match(&doc, window.as_ref(), Some(&high), &[], &ctx),
+            "the out-of-window 50 does not satisfy the query"
+        );
+        retain_q_instances(&mut doc, window.as_ref(), &ast, &ctx);
+        let kept: Vec<&Value> = doc[&speed]
+            .as_array()
+            .expect("speed instances")
+            .iter()
+            .map(|i| &i["value"])
+            .collect();
+        assert_eq!(
+            kept,
+            [&json!(5), &json!(50)],
+            "1 fails the query, 50 is judged alone"
+        );
+        assert!(doc.get(&other).is_none());
+        assert_eq!(doc["note"], "x");
+        let mut odd = json!(7);
+        retain_q_instances(&mut odd, window.as_ref(), &ast, &ctx);
+        assert_eq!(odd, json!(7));
+    }
+}
+
+#[cfg(test)]
 mod t6612 {
     use crate::policy::{Filter, Rule, TimeBound, Window, RENDERS};
     use serde_json::{json, Value};

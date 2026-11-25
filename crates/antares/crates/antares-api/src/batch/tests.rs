@@ -424,6 +424,179 @@ fn same_but_stamps_skips_only_the_merge_stamps() {
     assert!(!super::write::same_but_stamps(&more, &doc("1", "a")));
 }
 
+/// 6.3.4 / 6.3.5 / 5.6.7.4 at the body: an unsupported media type is 415,
+/// a body that is no JSON is InvalidRequest, an ld+json batch carrying a
+/// Link header is BadRequestData; per item, an ld+json entry without
+/// `@context` and an application/json entry with one fail alone, and an
+/// inline `@context` object counts toward no fetch ceiling.
+#[tokio::test]
+async fn batch_body_media_type_and_context_rules() {
+    let st = AppState::new("antares-batch-parse".into());
+    let tenant = antares_model::TenantId::default();
+    let hdrs = |pairs: &[(&'static str, &'static str)]| {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.append(*k, axum::http::HeaderValue::from_static(v));
+        }
+        h
+    };
+    let status = |r: ApiResult<Vec<BatchItem>>| {
+        r.err()
+            .expect("the whole batch is refused")
+            .into_response()
+            .status()
+    };
+    let one = br#"[{"id":"urn:ngsi-ld:T:1","type":"T"}]"#;
+    assert_eq!(
+        status(parse_batch(&st, &tenant, &hdrs(&[("content-type", "text/plain")]), one).await),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE
+    );
+    let json = hdrs(&[("content-type", "application/json")]);
+    let refused = parse_batch(&st, &tenant, &json, b"[{").await;
+    let body = body_json(refused.err().expect("no JSON").into_response()).await;
+    assert_eq!(
+        body["type"],
+        json!("https://uri.etsi.org/ngsi-ld/errors/InvalidRequest"),
+        "{body}"
+    );
+    let ld_link = hdrs(&[
+        ("content-type", "application/ld+json"),
+        (
+            "link",
+            "<https://example.org/ctx.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"",
+        ),
+    ]);
+    assert_eq!(
+        status(parse_batch(&st, &tenant, &ld_link, one).await),
+        StatusCode::BAD_REQUEST
+    );
+
+    let ld = hdrs(&[("content-type", "application/ld+json")]);
+    let items = parse_batch(
+        &st,
+        &tenant,
+        &ld,
+        br#"[{"id":"urn:ngsi-ld:T:1","type":"T"},
+             {"id":"urn:ngsi-ld:T:2","type":"T","@context":{"T":"https://example.org/T"}}]"#,
+    )
+    .await
+    .expect("per-item outcomes");
+    assert_eq!(items.len(), 2);
+    let missing = items[0]
+        .1
+        .as_ref()
+        .err()
+        .expect("an ld+json item needs @context");
+    assert!(
+        format!("{missing:?}").contains("without @context"),
+        "{missing:?}"
+    );
+    let inline = items[1].1.as_ref().expect("an inline @context resolves");
+    assert_eq!(inline.expand_key("T"), "https://example.org/T");
+
+    let items = parse_batch(
+        &st,
+        &tenant,
+        &json,
+        br#"[{"id":"urn:ngsi-ld:T:3","type":"T","@context":"https://example.org/c.jsonld"}]"#,
+    )
+    .await
+    .expect("per-item outcomes");
+    let carried = items[0]
+        .1
+        .as_ref()
+        .err()
+        .expect("a JSON item may not carry @context");
+    assert!(
+        format!("{carried:?}").contains("carries @context"),
+        "{carried:?}"
+    );
+}
+
+/// 5.2.17: a forwarded part's status names its error type; a 207 keeps
+/// the errors of the Entities this broker sent and drops any other, and
+/// any status that is no success puts every sent id in E.
+#[test]
+fn a_remote_batch_answer_merges_only_what_was_sent() {
+    use super::forward::{err_remote, merge_remote_batch};
+    for (status, kind) in [
+        (400, "BadRequestData"),
+        (404, "ResourceNotFound"),
+        (409, "AlreadyExists"),
+        (422, "OperationNotSupported"),
+        (503, "InternalError"),
+    ] {
+        let e = err_remote(None, status, "d");
+        assert_eq!(e["entityId"], "unknown");
+        assert_eq!(
+            e["error"]["type"],
+            json!(format!("https://uri.etsi.org/ngsi-ld/errors/{kind}"))
+        );
+    }
+    let sent = vec!["urn:a".to_owned(), "urn:b".to_owned()];
+    let (mut ok, mut err) = (Vec::new(), Vec::new());
+    merge_remote_batch(
+        207,
+        &json!({"success": ["urn:a", "urn:other"],
+                "errors": [{"entityId": "urn:b", "error": {"status": 409}},
+                           {"entityId": "urn:stranger", "error": {"status": 400}},
+                           {"error": {"status": 400}}]}),
+        &sent,
+        true,
+        &mut ok,
+        &mut err,
+    );
+    assert_eq!(ok, vec![("urn:a".to_owned(), true)]);
+    assert_eq!(err.len(), 1, "{err:?}");
+    assert_eq!(err[0]["entityId"], "urn:b");
+    assert_eq!(err[0]["error"]["status"], 409);
+
+    let (mut ok, mut err) = (Vec::new(), Vec::new());
+    merge_remote_batch(502, &Value::Null, &sent, false, &mut ok, &mut err);
+    assert!(ok.is_empty());
+    let ids: Vec<&Value> = err.iter().map(|e| &e["entityId"]).collect();
+    assert_eq!(ids, vec![&json!("urn:a"), &json!("urn:b")]);
+    assert_eq!(
+        err[0]["error"]["detail"],
+        "forwarded batch operation returned 502"
+    );
+}
+
+/// 4.3.6.1: the matching input of a batch skips an entry that is no
+/// object or whose @context failed, and a `type` that is neither a string
+/// nor an array names no type.
+#[test]
+fn the_batch_spec_skips_what_cannot_be_matched() {
+    let ctx = antares_jsonld::Loader::new().core();
+    let items: Vec<BatchItem> = vec![
+        (json!("not an object"), Ok(ctx.clone())),
+        (
+            json!({"id": "urn:x"}),
+            Err(NgsiError::BadRequestData("bad @context".into()).into()),
+        ),
+        (
+            json!({"id": "urn:y", "type": 7, "speed": 1}),
+            Ok(ctx.clone()),
+        ),
+        (json!({"id": "urn:z", "type": ["A", 3]}), Ok(ctx)),
+    ];
+    let (spec, fwd) = super::forward::batch_spec(&items);
+    assert_eq!(fwd.len(), 2, "only the two usable entries are forwarded");
+    assert_eq!(spec.ids, Some(vec!["urn:y".to_owned(), "urn:z".to_owned()]));
+    assert_eq!(
+        spec.types.as_ref().map(Vec::len),
+        Some(1),
+        "{:?}",
+        spec.types
+    );
+    assert_eq!(
+        spec.attrs.as_ref().map(Vec::len),
+        Some(1),
+        "{:?}",
+        spec.attrs
+    );
+}
+
 /// 4.22 + 5.6.9.4 end to end. 5.6.9.4 (PDF p.175): "For each of the
 /// NGSI-LD Entities included in the input Array execute the behaviour
 /// defined by clause 5.6.3, but limited to a local operation… If the

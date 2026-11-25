@@ -1992,6 +1992,302 @@ mod clause_5_2_14_2_bookkeeping {
     }
 }
 
+/// The guards of one delivery (5.2.12, 5.2.15, 6.3.8, ADR-0020, ADR-0023
+/// rule 9, 5.8.6): each one that holds sends nothing and books nothing.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod deliver_as_guards {
+    use super::*;
+    use crate::policy::{NotifyDecision, PolicyEngine};
+    use serde_json::json;
+
+    const SUB_ID: &str = "urn:ngsi-ld:Subscription:guard";
+
+    /// An endpoint that keeps every notification body it is sent.
+    async fn recording() -> (String, Arc<std::sync::Mutex<Vec<Value>>>) {
+        let seen: Arc<std::sync::Mutex<Vec<Value>>> = Arc::default();
+        let kept = seen.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let app = axum::Router::new().route(
+            "/notify",
+            axum::routing::post(move |body: axum::body::Bytes| {
+                let kept = kept.clone();
+                async move {
+                    let v: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                    kept.lock().expect("lock").push(v);
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        (format!("http://{addr}/notify"), seen)
+    }
+
+    fn sub(uri: &str, extra: Value) -> Value {
+        let mut s = json!({
+            "id": SUB_ID,
+            "type": "Subscription",
+            "entities": [{"type": "Vehicle"}],
+            "notification": {"endpoint": {"uri": uri}},
+        });
+        if let (Some(o), Some(more)) = (s.as_object_mut(), extra.as_object()) {
+            o.extend(more.clone());
+        }
+        s
+    }
+
+    async fn install(st: &AppState, sub: &Value) {
+        st.store
+            .upsert(
+                &TenantId::default(),
+                Kind::Subscription,
+                SUB_ID,
+                sub.clone(),
+            )
+            .await
+            .expect("subscription row");
+    }
+
+    async fn send(st: &AppState, sub: &Value) {
+        let ctx = antares_jsonld::Loader::new().core();
+        deliver_as(
+            st,
+            &TenantId::default(),
+            Kind::Subscription,
+            sub,
+            "Notification",
+            vec![json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle",
+                        "scope": "/a",
+                        "speed": {"type": "Property", "value": 1}})],
+            &ctx,
+            None,
+        )
+        .await;
+    }
+
+    async fn times_sent(st: &AppState) -> Option<Value> {
+        st.store
+            .get(&TenantId::default(), Kind::Subscription, SUB_ID)
+            .await
+            .expect("store read")
+            .and_then(|d| d.pointer("/notification/timesSent").cloned())
+    }
+
+    /// An engine that rewrites the notification and answers one decision.
+    struct Fixed(fn(&mut Value) -> NotifyDecision);
+
+    impl PolicyEngine for Fixed {
+        fn name(&self) -> &str {
+            "fixed"
+        }
+        fn decide<'a>(
+            &'a self,
+            _s: &'a crate::policy::Subject,
+            _op: &'a crate::policy::Operation<'a>,
+        ) -> crate::policy::DecisionFuture<'a> {
+            Box::pin(std::future::ready(crate::policy::Decision::Allow))
+        }
+        fn pre_notify(
+            &self,
+            _s: &crate::policy::Subject,
+            _sub: &Value,
+            n: &mut Value,
+        ) -> NotifyDecision {
+            (self.0)(n)
+        }
+    }
+
+    fn filter(f: crate::policy::Filter) -> NotifyDecision {
+        NotifyDecision::Filter(Box::new(f))
+    }
+
+    /// 5.2.12, 5.2.15, 6.3.8: a paused subscription, one without an
+    /// endpoint or an endpoint uri, an internal distributed-subscription
+    /// endpoint with no handler wired, a scheme no binding serves, and a
+    /// failed one inside its cooldown send nothing and move no counter.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_guard_that_holds_sends_and_books_nothing() {
+        crate::allow_private();
+        let (uri, seen) = recording().await;
+        let st = AppState::new("antares-guards".into());
+        let recent = now_iso();
+        let cases = [
+            sub(&uri, json!({"isActive": false})),
+            json!({"id": SUB_ID, "type": "Subscription", "notification": {}}),
+            json!({"id": SUB_ID, "type": "Subscription",
+                   "notification": {"endpoint": {"accept": "application/json"}}}),
+            sub("urn:antares:distsub:default\nurn:own", json!({})),
+            sub("x-unknown://h/notify", json!({})),
+            json!({"id": SUB_ID, "type": "Subscription", "entities": [{"type": "Vehicle"}],
+                   "notification": {"status": "failed", "lastFailure": recent,
+                                    "endpoint": {"uri": uri, "cooldown": 60_000}}}),
+        ];
+        for case in cases {
+            install(&st, &case).await;
+            send(&st, &case).await;
+            assert!(seen.lock().expect("lock").is_empty(), "{case}");
+            assert_eq!(times_sent(&st).await, None, "{case}");
+        }
+        // positive control: the same endpoint, no guard
+        let open = sub(&uri, json!({}));
+        install(&st, &open).await;
+        send(&st, &open).await;
+        assert_eq!(seen.lock().expect("lock").len(), 1);
+        assert_eq!(times_sent(&st).await, Some(json!(1)));
+    }
+
+    /// 5.2.15: no `lastFailure`, or one that is no DateTime, opens no
+    /// cooldown window.
+    #[test]
+    fn a_cooldown_needs_a_readable_last_failure() {
+        let now = jiff::Timestamp::now();
+        let failed = |n: Value| json!({"notification": n});
+        assert!(!in_cooldown(
+            &failed(json!({"status": "failed", "endpoint": {"cooldown": 1000}})),
+            now
+        ));
+        assert!(!in_cooldown(
+            &failed(json!({"status": "failed", "lastFailure": "yesterday",
+                           "endpoint": {"cooldown": 1000}})),
+            now
+        ));
+    }
+
+    /// ADR-0020: a narrowing the notification path cannot apply drops the
+    /// notification (a query, a projection over a subscription whose linked
+    /// `q` already read the target, rules no notified Entity meets); a
+    /// projection is applied to what the engine left; positive control,
+    /// Deliver sends.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_narrowing_the_notification_cannot_apply_drops_it() {
+        crate::allow_private();
+        let (uri, seen) = recording().await;
+        let plain = sub(&uri, json!({}));
+        let linked = sub(&uri, json!({"q": "owner{salary}>50000"}));
+        let dropped: [(fn(&mut Value) -> NotifyDecision, &Value); 4] = [
+            (
+                |_| {
+                    filter(crate::policy::Filter {
+                        q: Some(Box::new(antares_ql::parse_q("speed>1").expect("q"))),
+                        ..Default::default()
+                    })
+                },
+                &plain,
+            ),
+            (|_| NotifyDecision::Drop, &plain),
+            (
+                |_| {
+                    filter(crate::policy::Filter {
+                        pick: vec!["speed".into()],
+                        ..Default::default()
+                    })
+                },
+                &linked,
+            ),
+            (
+                |_| {
+                    filter(crate::policy::Filter {
+                        rules: vec![crate::policy::Rule {
+                            types: vec!["Bus".into()],
+                            attributes: vec!["speed".into()],
+                            ..crate::policy::Rule::default()
+                        }],
+                        ..Default::default()
+                    })
+                },
+                &plain,
+            ),
+        ];
+        for (decide, s) in dropped {
+            let st = AppState::new("antares-narrow".into()).with_policy(Arc::new(Fixed(decide)));
+            install(&st, s).await;
+            send(&st, s).await;
+            assert!(seen.lock().expect("lock").is_empty(), "{s}");
+            assert_eq!(
+                times_sent(&st).await,
+                None,
+                "a dropped notification was never sent"
+            );
+        }
+
+        // an engine that emptied `data` itself leaves nothing to project, and
+        // the notification goes as the engine left it
+        let st = AppState::new("antares-narrow-2".into()).with_policy(Arc::new(Fixed(|n| {
+            n["data"] = json!("withheld");
+            filter(crate::policy::Filter {
+                pick: vec!["speed".into()],
+                rules: vec![crate::policy::Rule {
+                    types: vec!["Vehicle".into()],
+                    attributes: vec!["speed".into()],
+                    ..crate::policy::Rule::default()
+                }],
+                ..Default::default()
+            })
+        })));
+        install(&st, &plain).await;
+        send(&st, &plain).await;
+        let got = seen.lock().expect("lock").clone();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0]["data"], "withheld");
+    }
+
+    /// 5.8.6: a subscription pinned to ngsildConformance 1.3 gets its data
+    /// in the 1.3 shape, without `scope` (Table 4.3.6.8-1).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pinned_conformance_version_shapes_the_data() {
+        crate::allow_private();
+        let (uri, seen) = recording().await;
+        let st = AppState::new("antares-conformance-pin".into());
+        let pinned = sub(&uri, json!({"ngsildConformance": "1.3"}));
+        install(&st, &pinned).await;
+        send(&st, &pinned).await;
+        let got = seen.lock().expect("lock").clone();
+        assert_eq!(got.len(), 1);
+        assert!(got[0]["data"][0].get("scope").is_none(), "{}", got[0]);
+        assert_eq!(got[0]["data"][0]["speed"]["value"], 1);
+    }
+
+    /// ADR-0023 rule 9: a subscription made through a view that is gone
+    /// sends nothing.
+    #[cfg(feature = "views")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_subscription_whose_view_is_gone_sends_nothing() {
+        crate::allow_private();
+        let (uri, seen) = recording().await;
+        let st = AppState::new("antares-view-gone".into());
+        let through = sub(&uri, json!({crate::views::VIEW_MEMBER: "gone-view"}));
+        install(&st, &through).await;
+        send(&st, &through).await;
+        assert!(seen.lock().expect("lock").is_empty());
+        assert_eq!(times_sent(&st).await, None);
+    }
+
+    /// 5.8.6: a store that refuses the bookkeeping write sends nothing (no
+    /// row to book against may be a deleted subscription), and a refused
+    /// failure write answers no document.
+    #[cfg(feature = "postgres")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refused_bookkeeping_write_sends_nothing() {
+        crate::allow_private();
+        let (uri, seen) = recording().await;
+        let st = crate::state::refusing_state();
+        send(&st, &sub(&uri, json!({}))).await;
+        assert!(seen.lock().expect("lock").is_empty());
+        let doc = record_failure(
+            &st,
+            &TenantId::default(),
+            Kind::Subscription,
+            SUB_ID,
+            None,
+            &now_iso(),
+        )
+        .await;
+        assert!(doc.is_none());
+    }
+}
+
 /// Delivery policy: retries are transport under one notification (5.8.6
 /// books the notification once), a success by retry sets lastSuccess and
 /// status ok, an exhausted policy leaves exactly one dead letter, and the

@@ -137,10 +137,8 @@ pub(super) async fn deliver_as(
     // still names one was hand-edited — it is dropped, never delivered
     // through some other binding.
     if st.sinks.sink_for_uri(uri).is_none() {
-        tracing::warn!(
-            "subscription {sub_id} endpoint {} has no registered binding",
-            redact_userinfo(uri)
-        );
+        let shown = redact_userinfo(uri);
+        tracing::warn!("subscription {sub_id} endpoint {shown} has no registered binding");
         return;
     }
     // endpoint.cooldown — drop (never queue) while the window is open.
@@ -161,10 +159,8 @@ pub(super) async fn deliver_as(
     // in process; every other network binding is policed below.
     let policed = network_policed(st, uri);
     if policed && st.egress.is_open(tenant.as_str(), uri) {
-        tracing::debug!(
-            "notification to {} short-circuited (breaker open)",
-            redact_userinfo(uri)
-        );
+        let shown = redact_userinfo(uri);
+        tracing::debug!("notification to {shown} short-circuited (breaker open)");
         return;
     }
     let accept = ep
@@ -418,10 +414,8 @@ pub(super) async fn deliver_as(
         && match st.egress.check_destination(uri).await {
             Ok(()) => false,
             Err(e) => {
-                tracing::warn!(
-                    "notification endpoint {} refused by egress policy: {e}",
-                    redact_userinfo(uri)
-                );
+                let shown = redact_userinfo(uri);
+                tracing::warn!("notification endpoint {shown} refused by egress policy: {e}");
                 true
             }
         };
