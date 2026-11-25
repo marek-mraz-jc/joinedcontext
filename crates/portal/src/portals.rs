@@ -961,4 +961,34 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn a_host_pair_without_an_equals_sign_is_named() {
+        assert_eq!(
+            parse("mobility.ba.sk", None, "").expect_err("no organization"),
+            "'mobility.ba.sk' is not organization=host"
+        );
+    }
+
+    #[test]
+    fn an_organization_the_mirror_lacks_names_no_publisher() {
+        assert!(!names_publisher(&Mirror::new(), "ghost"));
+        assert!(names_publisher(&mirror(), "ba"));
+    }
+
+    #[test]
+    fn a_portal_outside_the_organization_namespace_is_refused_naming_the_field() {
+        let mut elsewhere = portal("mobility", "ba", "/mobility", None);
+        elsewhere.metadata.namespace = Some("some-project".to_owned());
+        let refused =
+            check(&mirror(), None, &elsewhere).expect_err("a Portal belongs to an Organization");
+        assert!(field(refused).contains("ODP-08"));
+    }
+
+    #[test]
+    fn a_portal_spec_that_does_not_parse_is_left_to_the_kinds_own_parse() {
+        let odd = envelope("Portal", "odd", json!({ "organizationRef": 5 }));
+        assert!(check(&mirror(), None, &odd).is_ok());
+        assert!(check(&mirror(), None, &envelope("Endpoint", "x", json!({}))).is_ok());
+    }
 }

@@ -297,4 +297,47 @@ mod tests {
         let plain = json!({ "class": "resident", "outputs": [to("ep-vehicles")] });
         assert!(check(&state, "helsinki", "Pipeline", &plain).is_ok());
     }
+
+    #[test]
+    fn a_pipeline_spec_that_does_not_parse_passes_the_door_untouched() {
+        let state = world();
+        assert!(check(&state, "helsinki", "Pipeline", &json!({ "class": 5 })).is_ok());
+        assert!(check(&state, "helsinki", "Pipeline", &json!("text")).is_ok());
+    }
+
+    #[test]
+    fn an_output_naming_another_type_does_not_write_this_entrys_type() {
+        let state = world();
+        let lifetime = json!([{ "type": "Bus", "entity": { "rolling": "PT10M" } }]);
+        let typed = |name: &str| json!({ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:ep-vehicles", "type": name });
+        assert!(refusals(&state, &spec(json!([typed("Bus")]), lifetime.clone())).is_empty());
+        // A Stop output is no output of Bus: the entry is judged against no space at all.
+        assert!(refusals(&state, &spec(json!([typed("Stop")]), lifetime)).is_empty());
+    }
+
+    #[test]
+    fn a_class_with_no_date_time_slot_says_so_when_from_names_one() {
+        let state = world();
+        let schema = json!({ "definitions": { "Stop": { "type": "object", "properties": {
+            "name": { "type": "string", "x-ngsi-ld-kind": "Property" }
+        }}}});
+        let model = crate::pipeline_validation::ModelSchema::compile(
+            "stops-model",
+            "1.0.0",
+            &schema,
+            &["Stop".to_owned()],
+            false,
+        );
+        state.model_schemas.replace(HashMap::from([(
+            ("helsinki".to_owned(), "stops".to_owned()),
+            Arc::new(model),
+        )]));
+        let lifetime = json!([{ "type": "Stop", "entity": { "from": "name", "plus": "PT10M" } }]);
+        let found = refusals(&state, &spec(json!([to("ep-stops")]), lifetime));
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].ends_with("`Stop` has no date-time slot; use `observedAt` or `rolling`"),
+            "{found:?}"
+        );
+    }
 }

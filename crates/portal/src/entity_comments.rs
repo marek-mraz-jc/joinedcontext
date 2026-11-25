@@ -691,3 +691,127 @@ impl CommentStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn poisoned() -> CommentStore {
+        let store = CommentStore::new(None, std::sync::Arc::new(crate::store::Mirror::new()));
+        if let Inner::Memory(lock) = &store.inner {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = lock.write();
+                panic!("poison the lock on purpose");
+            }));
+            assert!(outcome.is_err());
+            assert!(lock.is_poisoned());
+        }
+        store
+    }
+
+    const WHO: Author<'static> = Author {
+        id: "ann",
+        name: "Ann",
+        subject: "sub-ann",
+    };
+
+    #[tokio::test]
+    async fn a_poisoned_memory_store_still_adds_lists_and_removes() {
+        let store = poisoned();
+        let mentions = vec!["bob".to_owned()];
+        let added = store
+            .add(
+                WHO,
+                NewComment {
+                    project: "p",
+                    space: "s",
+                    urn: "urn:ngsi-ld:T:1",
+                    text: "hi",
+                    mentions: &mentions,
+                },
+            )
+            .await
+            .expect("added")
+            .expect("under the limit");
+        let listed = store
+            .list("p", "s", "urn:ngsi-ld:T:1")
+            .await
+            .expect("listed");
+        assert_eq!(listed, vec![added.clone()]);
+        assert!(!store
+            .remove("p", "s", "sub-other", added.id)
+            .await
+            .expect("removed"));
+        assert!(store
+            .remove("p", "s", "sub-ann", added.id)
+            .await
+            .expect("removed"));
+        assert!(store
+            .list("p", "s", "urn:ngsi-ld:T:1")
+            .await
+            .expect("listed")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_memory_store_still_notifies_delivers_reads_and_marks() {
+        let store = poisoned();
+        let notice = Notice {
+            kind: "change.opened",
+            project: "p",
+            about: "cr-1",
+            author: "ann",
+            author_name: "Ann",
+            connector: "c",
+            link: "/x",
+            key: "k1",
+        };
+        let audience = approvers_of("p");
+        assert!(store.notify(&audience, notice).await.expect("notified"));
+        let again = Notice {
+            kind: "change.opened",
+            project: "p",
+            about: "cr-1",
+            author: "ann",
+            author_name: "Ann",
+            connector: "c",
+            link: "/x",
+            key: "k1",
+        };
+        assert!(!store.notify(&audience, again).await.expect("dropped"));
+        store
+            .deliver("bob", &["ann".to_owned()], std::slice::from_ref(&audience))
+            .await
+            .expect("none of Ann's own events");
+        store
+            .deliver("bob", &[], &[audience])
+            .await
+            .expect("delivered");
+        let (listed, unread) = store
+            .notifications(&["bob".to_owned()])
+            .await
+            .expect("listed");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(unread, 1);
+        assert!(store
+            .mark_read(&["bob".to_owned()], listed[0].id)
+            .await
+            .expect("marked"));
+        assert!(!store
+            .mark_read(&["bob".to_owned()], 9_999)
+            .await
+            .expect("unknown id"));
+    }
+
+    #[tokio::test]
+    async fn delivering_to_no_audience_does_nothing() {
+        let store = CommentStore::new(None, std::sync::Arc::new(crate::store::Mirror::new()));
+        store.deliver("bob", &[], &[]).await.expect("nothing to do");
+        let (listed, unread) = store
+            .notifications(&["bob".to_owned()])
+            .await
+            .expect("listed");
+        assert!(listed.is_empty());
+        assert_eq!(unread, 0);
+    }
+}

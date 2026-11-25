@@ -155,6 +155,21 @@ async fn reads_a_qos1_message_and_acknowledges_it_once_acked() {
 }
 
 #[tokio::test]
+async fn a_ws_url_too_long_for_an_http_request_line_is_a_config_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (reg, ctx, _stop) = context(true);
+    let long = format!("ws://{addr}/{}", "a".repeat(70_000));
+    let mut input = build(json!({"topics": ["t"], "urls": [long]}), &ctx, &reg);
+    let err = input.connect(&ctx).await.expect_err("too long");
+    assert!(
+        err.to_string().contains("mqtt: a url is not a valid URI"),
+        "{err}"
+    );
+    drop(listener);
+}
+
+#[tokio::test]
 async fn a_lost_connection_is_dialled_again() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

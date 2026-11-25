@@ -299,12 +299,11 @@ pub fn round_local(dt: &Zoned, span_nanos: i64) -> Result<Zoned, String> {
     let up = span_nanos - down;
     let shift = if up <= down { up } else { -down };
     // `stamp` fits an i64 of nanoseconds (years 1677 to 2262), far inside jiff's range.
-    let Ok(ts) = dt
+    let ts = dt
         .timestamp()
         .checked_add(SignedDuration::from_nanos(shift))
-    else {
-        return Err("timestamp exceeds num_nanoseconds limit".to_string());
-    };
+        .ok()
+        .ok_or("timestamp exceeds num_nanoseconds limit")?;
     Ok(ts.to_zoned(dt.time_zone().clone()))
 }
 
@@ -827,15 +826,14 @@ pub fn parse_strptime(input: &str, format: &str) -> Result<Zoned, String> {
     // In Go, `time.Date(2026, 2, 31, 0, 0, 0, 0, UTC)` adds `(day - 1)` days to the 1st of the month.
     // the fields are range-checked above (a year has at most 4 digits): the casts are exact
     // A day of at most 31 rolls no further than 9999-12-31, so this error is never seen.
-    let Ok(dt) = civil::Date::new(year as i16, month as i8, 1)
+    let dt = civil::Date::new(year as i16, month as i8, 1)
         .and_then(|first| first.checked_add(SignedDuration::from_hours(i64::from(day - 1) * 24)))
         .and_then(|date| {
             civil::Time::new(hour as i8, minute as i8, second as i8, nanosecond as i32)
                 .map(|time| date.to_datetime(time))
         })
-    else {
-        return Err(format!("invalid date {year}-{month}-{day}"));
-    };
+        .ok()
+        .ok_or("invalid date")?;
     fixed_civil(dt, offset_secs)
         .map_err(|_| format!("failed to parse {input:?} with {format:?}: cannot parse \"%z\""))
 }
@@ -1656,6 +1654,9 @@ mod tests {
         assert_eq!(d(" 1ns1us1µs1μs1ms1s "), Ok(1_001_003_001));
         assert_eq!(d("").err().as_deref(), Some("invalid duration: empty"));
         assert_eq!(d("h").err().as_deref(), Some("invalid duration: h"));
+        // Go stops reading a fraction once it would pass 2^63 and ignores the remaining digits.
+        assert_eq!(d("0.123456789012345678901s"), Ok(123_456_789));
+        assert_eq!(d("1.000000000000000000000000001s"), Ok(1_000_000_000));
         assert_eq!(
             d("1.2.3s").err().as_deref(),
             Some("missing unit in duration: 1.2.3s")

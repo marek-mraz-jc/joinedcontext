@@ -1,0 +1,27 @@
+# Fuzzing daiya's outside inputs under libFuzzer (T-7849): the `__expr__` math expressions a
+# dashboard or an alert rule carries. Each input must end in an answer or a refusal, never a
+# panic, a hang or a parse past the depth cap.
+# From the jc root: `cargo +nightly fuzz run --fuzz-dir crates/daiya/fuzz --target
+# x86_64-unknown-linux-gnu <target> <scratch corpus> crates/daiya/fuzz/seeds/<target> --
+# -max_total_time=300`. Not a workspace member.
+[package]
+name = "daiya-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+daiya-expr = { path = "../expr" }
+
+[[bin]]
+name = "math_expr"
+path = "fuzz_targets/math_expr.rs"
+test = false
+doc = false
+bench = false

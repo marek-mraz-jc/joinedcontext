@@ -1586,4 +1586,34 @@ mod tests {
         }
         assert!(loaded, "spawn_load read the kept report back");
     }
+
+    /// With a syncer that has not synced yet, the load waits for the first revision and reads
+    /// nothing meanwhile.
+    #[tokio::test(start_paused = true)]
+    async fn the_load_waits_for_the_mirrors_first_sync() {
+        let lazy = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
+            .connect_lazy("postgres://portal@127.0.0.1:1/never-reached")
+            .expect("a lazy pool");
+        let shako = Arc::new(
+            crate::forge::ShakoClient::new(
+                "http://localhost:3000".parse().expect("a url"),
+                "test-owner",
+                "test-repo",
+                "token",
+            )
+            .expect("a client"),
+        );
+        let syncer = Arc::new(crate::reconciler::Syncer::new(
+            shako,
+            Arc::new(Mirror::new()),
+        ));
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None)
+            .with_db(lazy)
+            .with_syncer(Arc::clone(&syncer));
+        assert!(syncer.status().revision.is_none());
+        spawn_load(state.clone());
+        tokio::time::sleep(Duration::from_secs(12)).await;
+        assert!(state.quality.get("helsinki", "air").is_none());
+    }
 }

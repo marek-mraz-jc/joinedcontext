@@ -534,4 +534,31 @@ mod tests {
         assert_eq!(lines[5], "2026-09,,platform-storage,,,18.00,EUR");
         assert_eq!(cell("a,\"b\""), "\"a,\"\"b\"\"\"");
     }
+
+    #[test]
+    fn a_table_with_no_node_is_refused_naming_the_field() {
+        let mut table = prices();
+        table.nodes.clear();
+        assert!(table
+            .refusal()
+            .expect("refused")
+            .starts_with("nodes lists no node"));
+    }
+
+    #[test]
+    fn the_last_month_the_calendar_holds_has_no_successor() {
+        let now = TimestampTz::from_date(jc_time::parse_date("9999-12-30").expect("a date"))
+            .expect("inside the range");
+        let refused = month("9999-12", now).expect_err("there is no month after it");
+        assert_eq!(refused, "month '9999-12' is out of range");
+    }
+
+    #[test]
+    fn nothing_provisioned_and_nothing_measured_costs_the_volumes_nothing() {
+        let mut table = prices();
+        table.volumes.clear();
+        let split = split(&table, BTreeMap::new());
+        assert!(split.projects.is_empty());
+        assert_eq!(split.ai, 0.0);
+    }
 }

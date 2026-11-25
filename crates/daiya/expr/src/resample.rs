@@ -158,6 +158,12 @@ mod tests {
         }
     }
 
+    #[test]
+    #[should_panic(expected = "expected a series")]
+    fn points_of_refuses_a_value_without_points() {
+        points_of(&ExprValue::NoData);
+    }
+
     fn points_of(v: &ExprValue) -> Vec<(i64, Option<f64>)> {
         match v {
             ExprValue::Series { points, .. } => points.clone(),
@@ -262,13 +268,11 @@ mod tests {
                 (9 * S, Some(0.0)),
             ]
         );
-        match &out[0] {
-            ExprValue::Series { name, labels, .. } => {
-                assert_eq!(name, "B");
-                assert_eq!(labels.get("host").map(String::as_str), Some("a"));
-            }
-            other => panic!("{other:?}"),
-        }
+        assert!(
+            matches!(&out[0], ExprValue::Series { name, labels, .. }
+                if name == "B" && labels.get("host").map(String::as_str) == Some("a")),
+            "{out:?}"
+        );
     }
 
     #[test]

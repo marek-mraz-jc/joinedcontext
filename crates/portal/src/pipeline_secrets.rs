@@ -694,4 +694,166 @@ mod tests {
         assert_ne!(one.fingerprint(), two.fingerprint());
         assert!(!one.fingerprint().contains("before"));
     }
+
+    struct OnlyReplaces;
+    impl RunnerSecrets for OnlyReplaces {
+        fn replace(&self, _values: BTreeMap<String, BTreeMap<String, String>>) {}
+    }
+
+    #[test]
+    fn a_host_runner_that_keeps_no_credentials_answers_none() {
+        let runner = OnlyReplaces;
+        runner.replace(BTreeMap::new());
+        assert!(runner.credential("helsinki", "feed").is_none());
+        assert!(runner.credential("", "").is_none());
+    }
+
+    #[test]
+    fn a_poisoned_runner_slot_still_hands_and_reads_the_sink() {
+        let poisoner = std::thread::spawn(|| {
+            let _held = HOST_RUNNER.write().expect("the slot");
+            std::panic::resume_unwind(Box::new("poisoning the runner slot on purpose"));
+        });
+        assert!(poisoner.join().is_err());
+        assert!(HOST_RUNNER.is_poisoned());
+        hand_runner_secrets_to(std::sync::Arc::new(OnlyReplaces));
+        assert!(host_runner().is_some());
+        HOST_RUNNER.clear_poison();
+    }
+
+    #[test]
+    fn the_values_are_the_ones_the_secret_carries() {
+        let mut runner = RunnerEnvironment::default();
+        assert!(runner.is_empty());
+        assert!(runner.values().is_empty());
+        runner.add("helsinki", "bikes", Ok(resolved(&[("TOKEN", "one")])));
+        assert!(!runner.is_empty());
+        assert_eq!(
+            runner.values().get("TOKEN").map(String::as_str),
+            Some("one")
+        );
+        assert_eq!(runner.by_project()["helsinki"]["TOKEN"], "one");
+    }
+
+    #[test]
+    fn a_secrets_file_that_does_not_decrypt_names_the_first_reference() {
+        use age::secrecy::ExposeSecret as _;
+        let identity = age::x25519::Identity::generate();
+        let tree = std::env::temp_dir().join(format!(
+            "t7823-bad-secrets-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let folder = tree.join("projects/helsinki/secrets");
+        std::fs::create_dir_all(&folder).expect("folder");
+        std::fs::write(folder.join("feed.enc.yaml"), "not: [a sops file").expect("file");
+        let key = tree.join("age.key");
+        std::fs::write(&key, identity.to_string().expose_secret()).expect("key");
+        let resolver = Resolver::new(Backend::Sops { age_key_file: key });
+        let reference = SecretRef {
+            name: "feed".to_owned(),
+            key: Some("password".to_owned()),
+            env_var: Some("FEED_PASSWORD".to_owned()),
+        };
+        let error = resolver
+            .environment(&folder, std::slice::from_ref(&reference))
+            .expect_err("a file that is no sops document");
+        assert!(
+            matches!(&error, SecretError::Unresolved { name, .. } if name == "feed"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(&tree).ok();
+    }
+
+    #[test]
+    fn an_unreadable_age_identity_names_the_first_reference() {
+        let resolver = Resolver::new(Backend::Sops {
+            age_key_file: PathBuf::from("/nonexistent/age.key"),
+        });
+        let reference = SecretRef {
+            name: "feed".to_owned(),
+            key: None,
+            env_var: Some("FEED_PASSWORD".to_owned()),
+        };
+        let error = resolver
+            .environment(Path::new("/nonexistent"), &[reference])
+            .expect_err("no identity");
+        assert!(
+            matches!(&error, SecretError::Unresolved { reason, .. } if reason.contains("age identity")),
+            "{error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_reference_without_an_env_var_is_resolved_under_a_held_name() {
+        let resolver = Resolver::new(Backend::Sops {
+            age_key_file: PathBuf::from("/nonexistent/age.key"),
+        });
+        let reference = SecretRef {
+            name: "feed".to_owned(),
+            key: None,
+            env_var: None,
+        };
+        let error = resolver
+            .one(Path::new("/nonexistent"), "helsinki", &reference)
+            .await
+            .expect_err("no backend file");
+        assert!(matches!(error, SecretError::Unresolved { .. }), "{error}");
+        let refused = resolver
+            .one(Path::new("/nonexistent"), "Not A Project", &reference)
+            .await
+            .expect_err("not a project");
+        assert!(matches!(refused, SecretError::Refused { name, .. } if name == "feed"));
+    }
+
+    #[test]
+    fn an_openbao_backend_that_cannot_log_in_is_unresolved() {
+        let resolver = Resolver::new(Backend::OpenBao {
+            address: "http://127.0.0.1:1".to_owned(),
+            role: "portal".to_owned(),
+            jwt_path: PathBuf::from("/nonexistent/token"),
+        });
+        let reference = SecretRef {
+            name: "feed".to_owned(),
+            key: Some("password".to_owned()),
+            env_var: Some("FEED_PASSWORD".to_owned()),
+        };
+        let error = resolver
+            .environment(Path::new("/nonexistent"), &[reference])
+            .expect_err("no token file");
+        assert!(
+            matches!(&error, SecretError::Unresolved { name, .. } if name == "feed"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_secrets_folder_of_an_invalid_project_names_the_first_reference_or_none() {
+        let reference = SecretRef {
+            name: "feed".to_owned(),
+            key: None,
+            env_var: Some("X".to_owned()),
+        };
+        let with = secrets_folder(Path::new("/r"), "../x", std::slice::from_ref(&reference))
+            .expect_err("refused");
+        assert!(matches!(with, SecretError::Refused { name, .. } if name == "feed"));
+        let without = secrets_folder(Path::new("/r"), "", &[]).expect_err("refused");
+        assert!(matches!(without, SecretError::Refused { name, .. } if name.is_empty()));
+        assert_eq!(
+            secrets_folder(Path::new("/r"), "helsinki", &[]).expect("ok"),
+            PathBuf::from("/r/projects/helsinki/secrets")
+        );
+    }
+
+    #[test]
+    fn refusing_the_resolved_pipelines_leaves_nothing_accepted() {
+        let mut runner = RunnerEnvironment::default();
+        runner.add("helsinki", "bikes", Ok(resolved(&[("TOKEN", "one")])));
+        runner.refuse_resolved("the Secret was not written");
+        assert_eq!(runner.refused().len(), 1);
+        assert_eq!(
+            runner.refused()[&("helsinki".to_owned(), "bikes".to_owned())],
+            "the Secret was not written"
+        );
+    }
 }

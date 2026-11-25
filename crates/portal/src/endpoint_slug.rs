@@ -212,4 +212,16 @@ mod tests {
             .await
             .expect_err("typed");
     }
+
+    #[test]
+    fn a_spec_that_is_no_object_is_left_to_the_manifest_parse() {
+        for spec in [json!("text"), json!([1]), json!(null)] {
+            let mut m = json!({ "kind": "Endpoint", "spec": spec });
+            let before = m.clone();
+            assert!(settle(Some("live".into()), None, true, &mut m).is_ok());
+            assert_eq!(m, before);
+        }
+        let mut no_spec = json!({ "kind": "Endpoint" });
+        assert!(settle(None, None, false, &mut no_spec).is_ok());
+    }
 }

@@ -425,13 +425,11 @@ mod tests {
 
     fn fire(conds: &[ClassicCondition], vars: &HashMap<String, Vec<ExprValue>>) -> Option<f64> {
         let out = eval_classic_conditions("C", conds, vars).unwrap();
-        match &out[0] {
-            ExprValue::Number { name, value, .. } => {
-                assert_eq!(name, "C");
-                *value
-            }
-            other => panic!("{other:?}"),
-        }
+        assert!(
+            matches!(&out[0], ExprValue::Number { name, .. } if name == "C"),
+            "{out:?}"
+        );
+        out[0].to_frame("C").fields[0].f64_at(0)
     }
 
     #[test]

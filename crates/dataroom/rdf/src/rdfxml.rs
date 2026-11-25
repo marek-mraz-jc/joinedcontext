@@ -589,18 +589,18 @@ mod tests {
              </rdf:Description></rdf:RDF>"
         );
         let graph = parse_rdfxml(&doc, &RdfLimits::default()).unwrap();
-        let [triple] = graph.triples.iter().collect::<Vec<_>>()[..] else {
-            panic!("one triple expected: {:?}", graph.triples);
-        };
+        assert_eq!(graph.triples.len(), 1, "{:?}", graph.triples);
+        let triple = graph.triples.iter().next().expect("one triple");
         assert_eq!(
             triple.subject,
             SubjectNode::Named("https://e.org/ds?a=1&b=2".into())
         );
-        let Term::Literal(literal) = &triple.object else {
-            panic!("a literal expected: {:?}", triple.object);
-        };
-        assert_eq!(literal.value, "Ovzdušie & <voda> 💧");
-        assert_eq!(literal.language.as_deref(), Some("sk"));
+        assert!(
+            matches!(&triple.object, Term::Literal(l)
+                if l.value == "Ovzdušie & <voda> 💧" && l.language.as_deref() == Some("sk")),
+            "{:?}",
+            triple.object
+        );
     }
 
     #[test]
@@ -736,10 +736,7 @@ mod tests {
             );
         }
         let xml = serialize_rdfxml(&g);
-        let back = match parse_rdfxml(&xml, &RdfLimits::default()) {
-            Ok(v) => v,
-            Err(e) => panic!("{e}\n{xml}"),
-        };
+        let back = parse_rdfxml(&xml, &RdfLimits::default()).expect(&xml);
         let mut got: Vec<&str> = back.triples.iter().map(|t| t.predicate.as_str()).collect();
         let mut want: Vec<&str> = predicates.iter().map(String::as_str).collect();
         got.sort();

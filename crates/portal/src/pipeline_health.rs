@@ -390,4 +390,14 @@ mod tests {
             "fetch (HTTPS://a.sk/x and http://b.sk/y ok?"
         );
     }
+
+    #[test]
+    fn a_url_without_a_query_or_fragment_stays_whole() {
+        assert_eq!(
+            without_queries("see https://x.org/a and http://y.org/b?key=1#f ok"),
+            "see https://x.org/a and http://y.org/b ok"
+        );
+        assert_eq!(without_queries(""), "");
+        assert_eq!(without_queries("no links here"), "no links here");
+    }
 }

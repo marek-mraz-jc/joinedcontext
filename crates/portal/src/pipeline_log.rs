@@ -1504,9 +1504,12 @@ mod tests {
             sink["fallback"][0]["http_client"]["url"],
             "http://portal/outcomes"
         );
-        assert!(sink["fallback"][0]["http_client"]
-            .get("max_in_flight")
-            .is_none_or(|n| n.as_u64() > Some(1)));
+        assert!(
+            sink["fallback"][0]["http_client"]
+                .get("max_in_flight")
+                .is_none(),
+            "the sink keeps no in-flight window of its own"
+        );
         assert!(sink["fallback"][1].get("drop").is_some(), "{sink}");
         assert_eq!(sink["fallback"].as_array().map(Vec::len), Some(2));
     }
@@ -1968,5 +1971,264 @@ mod tests {
             let hour = run_name(bad);
             assert!(hour.ends_with(":00Z") && hour.len() == 17, "{hour}");
         }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // T-7823 coverage: the words of an outcome, a poisoned lock, a project with no key.
+
+    fn poisoned<T: Default + Send + Sync>() -> RwLock<T> {
+        let lock = RwLock::new(T::default());
+        let _ = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _held = lock.write();
+                    std::hint::black_box(Err::<(), &str>("poisoned"))
+                        .expect("poisoning the lock on purpose");
+                })
+                .join()
+        });
+        lock
+    }
+
+    fn poisoned_mutex<T: Default + Send>() -> Mutex<T> {
+        let lock = Mutex::new(T::default());
+        let _ = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _held = lock.lock();
+                    std::hint::black_box(Err::<(), &str>("poisoned"))
+                        .expect("poisoning the lock on purpose");
+                })
+                .join()
+        });
+        lock
+    }
+
+    fn unique() -> String {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64);
+        format!(
+            "{nanos:016x}{:06x}{:04x}",
+            std::process::id() & 0xff_ffff,
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) & 0xffff
+        )
+    }
+
+    #[test]
+    fn an_outcome_reads_back_from_its_word_and_an_unknown_word_is_a_failure() {
+        for outcome in [Outcome::Sent, Outcome::Rejected, Outcome::Failed] {
+            assert_eq!(Outcome::parse(outcome.as_str()), outcome);
+        }
+        assert_eq!(Outcome::parse("from-the-future"), Outcome::Failed);
+        assert_eq!(Outcome::parse(""), Outcome::Failed);
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_lock_still_serves_every_memory_door() {
+        let store = LogStore {
+            inner: Inner::Memory(poisoned()),
+            trims: Mutex::new(Trims::default()),
+            unplaced: Mutex::new(HashSet::new()),
+        };
+        let refused = "access revoked by anna on 2026-10-21; the gateway answered: 403";
+        let key = ("p".to_owned(), "x".to_owned());
+        store
+            .append(
+                "p",
+                "x",
+                "r1",
+                &[
+                    line("urn:a", Outcome::Sent, ""),
+                    line("urn:b", Outcome::Failed, refused),
+                ],
+            )
+            .await
+            .expect("append");
+        let written = [("urn:a".to_owned(), "h1".to_owned())];
+        let changes = store
+            .record_changes("p", "x", "r1", &written)
+            .await
+            .expect("changes");
+        assert_eq!(changes.created, 1);
+        store
+            .ran_stream("p", "x", "r1", "stream-1")
+            .await
+            .expect("keep");
+        assert!(store.ran().await.expect("ran").contains_key(&key));
+        assert_eq!(
+            store.ran_streams().await.expect("streams")[&key],
+            "stream-1"
+        );
+        assert_eq!(store.runs("p", "x", 5).await.expect("runs").len(), 1);
+        assert_eq!(
+            store
+                .latest_runs("p", &["x".to_owned()])
+                .await
+                .expect("latest")
+                .len(),
+            1
+        );
+        assert_eq!(
+            store.refused_streaks(1).await.expect("streaks")[&key],
+            refused
+        );
+        assert_eq!(
+            store.outside_failures().await.expect("outside"),
+            BTreeMap::new()
+        );
+        let (message, _) = store
+            .last_problem("p", "x")
+            .await
+            .expect("problem")
+            .expect("one");
+        assert_eq!(message, refused);
+        assert_eq!(
+            store
+                .lines("p", "x", "r1", 5, None)
+                .await
+                .expect("lines")
+                .len(),
+            2
+        );
+        store
+            .forget_gone(&BTreeMap::from([("p".to_owned(), HashSet::new())]))
+            .await
+            .expect("forget");
+        assert!(store.runs("p", "x", 5).await.expect("runs").is_empty());
+    }
+
+    #[test]
+    fn a_poisoned_unplaced_list_still_says_when_a_project_loses_its_key() {
+        let store = LogStore {
+            inner: Inner::Memory(RwLock::new(HashMap::new())),
+            trims: Mutex::new(Trims::default()),
+            unplaced: poisoned_mutex(),
+        };
+        assert!(store.newly_unplaced("helsinki", false));
+        assert!(!store.newly_unplaced("helsinki", false));
+        assert!(!store.newly_unplaced("helsinki", true));
+    }
+
+    #[tokio::test]
+    async fn a_change_or_a_hash_for_a_run_no_line_made_keeps_no_run() {
+        let store = LogStore::new(None, Default::default());
+        let written = [("urn:a".to_owned(), "h1".to_owned())];
+        let changes = store
+            .record_changes("p", "x", "never-logged", &written)
+            .await
+            .expect("changes");
+        assert_eq!(
+            (changes.created, changes.updated, changes.unchanged),
+            (1, 0, 0)
+        );
+        let again = store
+            .record_changes("p", "x", "never-logged", &written)
+            .await
+            .expect("changes");
+        assert_eq!((again.created, again.updated, again.unchanged), (0, 0, 1));
+        assert!(
+            store.ran().await.expect("ran").is_empty(),
+            "no run, no time"
+        );
+        store
+            .ran_stream("p", "x", "never-logged", "h")
+            .await
+            .expect("keep");
+        assert!(store.ran_streams().await.expect("streams").is_empty());
+        assert!(store.runs("p", "x", 5).await.expect("runs").is_empty());
+    }
+
+    #[test]
+    fn a_stream_without_a_list_of_processors_is_left_as_it_is() {
+        let url = "http://portal-internal:8081/outcomes";
+        let mut odd_pipeline = serde_json::json!({
+            "input": { "generate": { "interval": "60s" } },
+            "pipeline": "not an object",
+        });
+        let before = odd_pipeline.clone();
+        with_passes(&mut odd_pipeline, url);
+        assert_eq!(odd_pipeline, before);
+        let mut odd_processors = serde_json::json!({
+            "input": { "generate": { "interval": "60s" } },
+            "pipeline": { "processors": "not a list" },
+        });
+        let before = odd_processors.clone();
+        with_passes(&mut odd_processors, url);
+        assert_eq!(odd_processors, before);
+        let mut none = serde_json::json!({ "output": { "drop": {} } });
+        let before = none.clone();
+        with_problems(&mut none, "check", url);
+        assert_eq!(none, before);
+        let mut unlabelled = serde_json::json!({
+            "pipeline": { "processors": [{ "label": "other", "mapping": "root = this" }, {}] },
+        });
+        let before = unlabelled.clone();
+        with_problems(&mut unlabelled, "check", url);
+        assert_eq!(
+            unlabelled, before,
+            "only the labelled processor is replaced"
+        );
+    }
+
+    /// A database with no row for the project's key has nothing to trim: no statement runs.
+    #[tokio::test]
+    async fn a_project_with_no_key_has_nothing_to_trim() {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = crate::db::connect(&url).await.expect("migrate");
+        let mirror = crate::store::Mirror::new();
+        trim(&pool, &mirror, &format!("p{}", unique()), "x")
+            .await
+            .expect("nothing to trim");
+    }
+
+    /// The trim clock is read under a lock that a panic elsewhere poisoned: a write still goes
+    /// through and its log is kept.
+    #[tokio::test]
+    async fn a_poisoned_trim_clock_still_lets_a_database_write_through() {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = crate::db::connect(&url).await.expect("migrate");
+        let (project, organization) = (format!("p{}", unique()), format!("o{}", unique()));
+        sqlx::query(
+            "INSERT INTO organizations (name, host, state, created_by) \
+             VALUES ($1, $1 || '.example', 'active', 'test')",
+        )
+        .bind(&organization)
+        .execute(&pool)
+        .await
+        .expect("an Organization of the registry");
+        let mirror = std::sync::Arc::new(crate::store::Mirror::new());
+        mirror.upsert(
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1",
+                "kind": "Project",
+                "metadata": { "name": project, "namespace": crate::permissions::ORG_NAMESPACE },
+                "spec": { "organizationRef": organization },
+            }))
+            .expect("a project"),
+        );
+        let store = LogStore {
+            inner: Inner::Postgres(pool, mirror),
+            trims: poisoned_mutex(),
+            unplaced: Mutex::new(HashSet::new()),
+        };
+        store
+            .append(&project, "x", "r1", &[line("urn:a", Outcome::Sent, "")])
+            .await
+            .expect("append");
+        assert_eq!(store.runs(&project, "x", 5).await.expect("runs")[0].sent, 1);
     }
 }

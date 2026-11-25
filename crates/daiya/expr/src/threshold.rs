@@ -219,6 +219,12 @@ mod tests {
         }
     }
 
+    #[test]
+    #[should_panic(expected = "expected a number")]
+    fn value_of_refuses_a_value_without_a_number() {
+        value_of(&ExprValue::NoData);
+    }
+
     fn value_of(v: &ExprValue) -> Option<f64> {
         match v {
             ExprValue::Number { value, .. } | ExprValue::Scalar(value) => *value,

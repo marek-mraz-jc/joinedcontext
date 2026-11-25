@@ -722,3 +722,50 @@ async fn odata_set_allowed(
     let dec = allowed(&table, &scope, op, key_val.as_ref()).await?;
     Ok(Json(dec.to_json()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Function parameters in OData literal syntax: strings with doubled quotes, booleans, null,
+    /// integers; anything else is refused by what is wrong.
+    #[test]
+    fn function_parameters_parse_every_literal_and_refuse_the_rest() {
+        let parsed =
+            parse_function_params("a='it''s', b=true,c=false , d=null,e=-3").expect("parsed");
+        assert_eq!(
+            parsed,
+            json!({"a": "it's", "b": true, "c": false, "d": null, "e": -3})
+        );
+        assert_eq!(parse_function_params("").expect("empty"), json!({}));
+        for (raw, why) in [
+            ("a=1.5", "bad literal 1.5"),
+            ("a=maybe", "bad literal maybe"),
+            ("=1", "empty parameter name"),
+            ("a", "malformed function parameters"),
+            ("a='open", "unterminated string parameter"),
+        ] {
+            let err = parse_function_params(raw).expect_err(raw).to_string();
+            assert!(err.contains(why), "{raw}: {err}");
+        }
+    }
+
+    #[test]
+    fn keys_and_xml_text() {
+        assert_eq!(
+            split_key("users('o''neil')"),
+            ("users".into(), Some("o'neil".into()))
+        );
+        assert_eq!(split_key("users(42)"), ("users".into(), Some("42".into())));
+        assert_eq!(
+            split_key("users(open"),
+            ("users".into(), Some("open".into()))
+        );
+        assert_eq!(split_key("users"), ("users".into(), None));
+        assert_eq!(
+            xml_escape(r#"<a href="x">&</a>"#),
+            "&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;"
+        );
+    }
+}

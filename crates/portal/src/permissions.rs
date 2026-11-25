@@ -1933,19 +1933,19 @@ pub fn administrator_people(mirror: &Mirror) -> BTreeSet<String> {
     let bindings = table("RoleBinding");
     let groups = table("Group");
     let mut people = BTreeSet::new();
-    for name in administrators(
+    let named = administrators(
         &roles,
         &bindings,
         &groups,
         installation_scope(mirror).as_ref(),
         TimestampTz::now(),
-    ) {
-        let Some(binding) = bindings
-            .get(&name)
+    );
+    // `administrators` names only bindings that parse.
+    for binding in named.iter().filter_map(|name| {
+        bindings
+            .get(name)
             .and_then(|spec| serde_json::from_value::<RoleBindingSpec>(spec.clone()).ok())
-        else {
-            continue;
-        };
+    }) {
         for subject in binding.subjects {
             if let Some(user) = subject.user {
                 people.insert(user.to_ascii_lowercase());
@@ -2699,10 +2699,9 @@ mod tests {
     }
 
     fn denied(result: Result<(), ApiError>) -> String {
-        match result {
-            Err(ApiError::Denied(message)) => message,
-            other => panic!("expected a 403, got {other:?}"),
-        }
+        let (status, body) = result.expect_err("a refusal").into_document();
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+        body["detail"].as_str().expect("a detail").to_owned()
     }
 
     /// PF-50, PF-51: a refusal names the first constraint a grant's target breaks, in the words
@@ -3253,9 +3252,12 @@ mod tests {
             serde_json::json!({ "kind": "RoleBinding",
                 "spec": { "subjects": [{ "user": "ana@hel.fi" }, { "group": group }] } })
         };
-        let refusal = |manifest: &Value| match subjects_name_a_group(&mirror, manifest) {
-            Err(ApiError::BadRequest(message)) => message,
-            other => panic!("expected a 422, got {other:?}"),
+        let refusal = |manifest: &Value| {
+            let (status, body) = subjects_name_a_group(&mirror, manifest)
+                .expect_err("a refusal")
+                .into_document();
+            assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+            body["detail"].as_str().expect("a detail").to_owned()
         };
         assert!(refusal(&binding("team")).ends_with("Declared: none"));
         mirror.upsert(org(
@@ -4231,5 +4233,463 @@ mod tests {
             "the permission check deadlocked with a mirror write"
         );
         writer.join().expect("writer");
+    }
+
+    fn state() -> AppState {
+        AppState::new(crate::config::Config::for_tests(), None)
+    }
+
+    fn bootstrap(state: &AppState) -> Identity {
+        Identity {
+            groups: vec![state.config.bootstrap_admins.clone()],
+            ..caller("root@hel.fi")
+        }
+    }
+
+    fn refusal(result: Result<(), ApiError>) -> (axum::http::StatusCode, String) {
+        let (status, body) = result.expect_err("a refusal").into_document();
+        (
+            status,
+            body["detail"].as_str().unwrap_or_default().to_owned(),
+        )
+    }
+
+    /// T-6766: an Organization's own setting asks a binding at the Organization, under the
+    /// binding's own constraints, and reads nobody else's.
+    #[test]
+    fn a_binding_at_the_organization_holds_a_right_under_its_constraints_alone() {
+        let state = state();
+        state.mirror.upsert(org(
+            "Role",
+            "settings",
+            serde_json::json!({ "rules": [{ "kinds": ["Portal"], "verbs": ["propose"],
+                "constraints": [{ "field": "spec.organizationRef", "equals": "hel" }] }] }),
+        ));
+        state.mirror.upsert(org(
+            "RoleBinding",
+            "ana-settings",
+            serde_json::json!({ "subjects": [{ "user": "ana@hel.fi" }], "role": "settings",
+                                "scope": { "organization": "hel" } }),
+        ));
+        let ana = caller("ana@hel.fi");
+        let ask = |who: &Identity, organization: &str, kind: &str, target: Option<&Value>| {
+            holds_at_organization(&state, who, organization, kind, Verb::Propose, target)
+        };
+        let own = serde_json::json!({ "spec": { "organizationRef": "hel" } });
+        let foreign = serde_json::json!({ "spec": { "organizationRef": "ba" } });
+        assert!(ask(&ana, "hel", "Portal", Some(&own)));
+        assert!(
+            !ask(&ana, "hel", "Portal", Some(&foreign)),
+            "the constraint is broken"
+        );
+        assert!(
+            !ask(&ana, "hel", "Portal", None),
+            "no target satisfies no constraint"
+        );
+        assert!(
+            !ask(&ana, "ba", "Portal", Some(&own)),
+            "another Organization's"
+        );
+        assert!(!ask(&ana, "hel", "Endpoint", Some(&own)), "another kind");
+        assert!(
+            !ask(&caller("bo@hel.fi"), "hel", "Portal", Some(&own)),
+            "somebody unbound"
+        );
+        assert!(
+            ask(&bootstrap(&state), "ba", "Endpoint", None),
+            "the bootstrap group holds all"
+        );
+    }
+
+    #[test]
+    fn a_space_reaches_only_itself_and_a_project_never_an_organization() {
+        let mirror = Mirror::new();
+        let space = |name: &str| Reach::Space(name.to_owned());
+        assert!(space("air").covers(&space("air"), &mirror));
+        assert!(!space("air").covers(&space("water"), &mirror));
+        assert!(!space("air").covers(&Reach::Project("p".into()), &mirror));
+        assert!(!Reach::Project("p".into()).covers(&Reach::Organization("o".into()), &mirror));
+        assert!(Reach::Project("p".into()).covers(&Reach::Project("p".into()), &mirror));
+        assert!(!Reach::Project("p".into()).covers(&Reach::Project("q".into()), &mirror));
+    }
+
+    #[test]
+    fn with_several_organizations_a_project_that_is_nowhere_has_no_member() {
+        let mirror = Mirror::new();
+        mirror.upsert(org("Organization", "hel", serde_json::json!({})));
+        mirror.upsert(org("Organization", "ba", serde_json::json!({})));
+        assert!(several_organizations(&mirror));
+        assert!(!member_of_organization_of(
+            &mirror,
+            &caller("ana@hel.fi"),
+            "nowhere",
+            TimestampTz::now()
+        ));
+    }
+
+    #[test]
+    fn an_organization_that_is_not_there_or_a_grant_of_no_verb_narrows_to_nothing() {
+        let mirror = Mirror::new();
+        let any = grant(
+            "admin",
+            serde_json::json!({ "kinds": ["Organization", "Portal"], "verbs": ["propose"] }),
+            None,
+            None,
+        );
+        assert!(narrowed_to_own_settings(&mirror, "hel", any.clone()).is_empty());
+        mirror.upsert(org(
+            "Organization",
+            "hel",
+            serde_json::json!({ "domain": "hel.fi" }),
+        ));
+        let narrowed = narrowed_to_own_settings(&mirror, "hel", any);
+        assert_eq!(narrowed.len(), 2);
+        assert!(narrowed
+            .iter()
+            .all(|g| g.organization.as_deref() == Some("hel")));
+        let delete_only = grant(
+            "admin",
+            serde_json::json!({ "kinds": ["Organization"], "verbs": ["delete"] }),
+            None,
+            None,
+        );
+        assert!(
+            narrowed_to_own_settings(&mirror, "hel", delete_only).is_empty(),
+            "an Organization's administrator may not delete its manifest"
+        );
+        let other_kinds = grant(
+            "admin",
+            serde_json::json!({ "kinds": ["Endpoint"], "verbs": ["propose"] }),
+            None,
+            None,
+        );
+        assert!(narrowed_to_own_settings(&mirror, "hel", other_kinds).is_empty());
+    }
+
+    #[test]
+    fn a_binding_that_does_not_parse_or_has_no_scope_or_no_role_grants_nothing() {
+        let mirror = Mirror::new();
+        mirror.upsert(org(
+            "Role",
+            "reader",
+            serde_json::json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+        ));
+        let who = serde_json::json!([{ "user": "ana@hel.fi" }]);
+        mirror.upsert(org(
+            "RoleBinding",
+            "unreadable",
+            serde_json::json!({ "subjects": who, "role": 5, "scope": { "project": "p" } }),
+        ));
+        mirror.upsert(org(
+            "RoleBinding",
+            "no-scope",
+            serde_json::json!({ "subjects": who, "role": "reader", "scope": {} }),
+        ));
+        mirror.upsert(org(
+            "RoleBinding",
+            "no-role",
+            serde_json::json!({ "subjects": who, "role": "missing", "scope": { "project": "p" } }),
+        ));
+        mirror.upsert(org(
+            "RoleBinding",
+            "expired",
+            serde_json::json!({ "subjects": who, "role": "reader", "scope": { "project": "p" },
+                                "validity": { "notAfter": "2020-01-01T00:00:00Z" } }),
+        ));
+        let ana = caller("ana@hel.fi");
+        assert!(in_force(&mirror, &ana, TimestampTz::now()).is_empty());
+        mirror.upsert(org(
+            "RoleBinding",
+            "good",
+            serde_json::json!({ "subjects": who, "role": "reader", "scope": { "project": "p" } }),
+        ));
+        assert_eq!(in_force(&mirror, &ana, TimestampTz::now()).len(), 1);
+    }
+
+    #[test]
+    fn an_account_role_with_no_scope_or_no_role_grants_nothing() {
+        let mirror = Mirror::new();
+        mirror.upsert(org(
+            "Role",
+            "reader",
+            serde_json::json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+        ));
+        mirror.upsert(service_account(
+            "solo",
+            "ci",
+            serde_json::json!([
+                { "role": "reader", "scope": {} },
+                { "role": "missing", "scope": { "project": "solo" } },
+                { "role": "reader", "scope": { "project": "solo" } }
+            ]),
+        ));
+        let held = account_grants(
+            &mirror,
+            &roles(&mirror, ORG_NAMESPACE),
+            &workload("solo-ci"),
+            TimestampTz::now(),
+        );
+        assert_eq!(
+            held.len(),
+            1,
+            "only the grant with a scope and a role counts"
+        );
+    }
+
+    #[test]
+    fn project_members_skip_bindings_that_name_nobody_they_can_count() {
+        let mirror = Mirror::new();
+        let org_role =
+            |name: &str, rules: Value| org("Role", name, serde_json::json!({ "rules": rules }));
+        mirror.upsert(org_role(
+            "reader",
+            serde_json::json!([{ "kinds": ["Endpoint"], "verbs": ["read"] }]),
+        ));
+        mirror.upsert(org_role("empty", serde_json::json!([])));
+        let binding = |name: &str, who: &str, role: &str, scope: Value| {
+            org(
+                "RoleBinding",
+                name,
+                serde_json::json!({ "subjects": [{ "user": who }], "role": role, "scope": scope }),
+            )
+        };
+        mirror.upsert(binding(
+            "counts",
+            "Ana@Hel.fi",
+            "reader",
+            serde_json::json!({ "project": "p" }),
+        ));
+        mirror.upsert(binding(
+            "no-role",
+            "bo@hel.fi",
+            "missing",
+            serde_json::json!({ "project": "p" }),
+        ));
+        mirror.upsert(binding(
+            "no-rights",
+            "cy@hel.fi",
+            "empty",
+            serde_json::json!({ "project": "p" }),
+        ));
+        mirror.upsert(binding(
+            "elsewhere",
+            "di@hel.fi",
+            "reader",
+            serde_json::json!({ "project": "q" }),
+        ));
+        mirror.upsert(binding(
+            "no-scope",
+            "ed@hel.fi",
+            "reader",
+            serde_json::json!({}),
+        ));
+        let mut expired = binding(
+            "expired",
+            "fy@hel.fi",
+            "reader",
+            serde_json::json!({ "project": "p" }),
+        );
+        expired.spec["validity"] = serde_json::json!({ "notAfter": "2020-01-01T00:00:00Z" });
+        mirror.upsert(expired);
+        mirror.upsert(org(
+            "RoleBinding",
+            "unreadable",
+            serde_json::json!({ "subjects": "x" }),
+        ));
+        let members = project_members(&mirror, "p", TimestampTz::now());
+        assert_eq!(
+            members.readers.into_iter().collect::<Vec<_>>(),
+            ["ana@hel.fi"]
+        );
+        assert!(members.writers.is_empty() && members.approvers.is_empty());
+        let nobody = project_members(&mirror, "nowhere", TimestampTz::now());
+        assert!(nobody.readers.is_empty());
+    }
+
+    #[test]
+    fn a_scope_already_in_force_is_not_judged_again_and_a_manifest_without_a_name_is_judged() {
+        let mirror = Mirror::new();
+        mirror.upsert(org("Organization", "hel", serde_json::json!({})));
+        let scope = serde_json::json!({ "organization": "ghost" });
+        mirror.upsert(org(
+            "RoleBinding",
+            "dormant",
+            serde_json::json!({ "subjects": [{ "user": "ana@hel.fi" }], "role": "r", "scope": scope }),
+        ));
+        let manifest = |name: Option<&str>| {
+            let mut meta = serde_json::json!({ "namespace": ORG_NAMESPACE });
+            if let Some(name) = name {
+                meta["name"] = serde_json::json!(name);
+            }
+            serde_json::json!({ "kind": "RoleBinding", "metadata": meta,
+                "spec": { "subjects": [{ "user": "ana@hel.fi" }], "role": "r", "scope": scope } })
+        };
+        assert!(scopes_name_a_target(&mirror, &manifest(Some("dormant")), None).is_ok());
+        let (status, said) = refusal(scopes_name_a_target(&mirror, &manifest(None), None));
+        assert_eq!(status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(said.contains("'ghost'"), "{said}");
+    }
+
+    #[test]
+    fn a_role_binding_or_account_that_cannot_be_read_or_has_no_scope_is_a_bad_request() {
+        let state = state();
+        let root = bootstrap(&state);
+        let judged = |manifest: Value| {
+            refusal(within_own_rights(
+                &state, &root, &manifest, None, "proposer",
+            ))
+        };
+        let (status, said) = judged(serde_json::json!({
+            "kind": "Role", "metadata": { "name": "r", "namespace": ORG_NAMESPACE },
+            "spec": { "rules": "not a list" } }));
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        assert!(said.starts_with("spec: "), "{said}");
+        let (_, said) = judged(serde_json::json!({
+            "kind": "RoleBinding", "metadata": { "name": "b", "namespace": ORG_NAMESPACE },
+            "spec": { "subjects": [{ "user": "ana@hel.fi" }], "role": "r", "scope": {} } }));
+        assert!(
+            said.contains("names no organization, project or context space"),
+            "{said}"
+        );
+        let (_, said) = judged(serde_json::json!({
+            "kind": "ServiceAccount", "metadata": { "name": "a", "namespace": "p" },
+            "spec": { "owner": { "user": "ana@hel.fi" }, "purpose": "ci", "credentials": [],
+                      "roles": [{ "role": "r", "scope": {} }] } }));
+        assert!(
+            said.contains("names no organization, project or context space"),
+            "{said}"
+        );
+        let (_, said) = judged(serde_json::json!({
+            "kind": "ServiceAccount", "metadata": { "name": "a", "namespace": "p" },
+            "spec": { "roles": 3 } }));
+        assert!(said.starts_with("spec: "), "{said}");
+    }
+
+    #[test]
+    fn adding_a_group_member_is_judged_by_every_binding_that_names_the_group() {
+        let state = state();
+        let root = bootstrap(&state);
+        let mirror = &state.mirror;
+        mirror.upsert(org(
+            "Role",
+            "viewer",
+            serde_json::json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+        ));
+        mirror.upsert(org("Group", "g", serde_json::json!({ "members": [] })));
+        mirror.upsert(org("Group", "other", serde_json::json!({ "members": [] })));
+        let by = |name: &str, group: &str, scope: Value| {
+            org(
+                "RoleBinding",
+                name,
+                serde_json::json!({ "subjects": [{ "group": group }], "role": "viewer", "scope": scope }),
+            )
+        };
+        mirror.upsert(org(
+            "RoleBinding",
+            "unreadable",
+            serde_json::json!({ "subjects": 1 }),
+        ));
+        mirror.upsert(by(
+            "other-group",
+            "other",
+            serde_json::json!({ "project": "p" }),
+        ));
+        mirror.upsert(by("no-scope", "g", serde_json::json!({})));
+        mirror.upsert(by("scoped", "g", serde_json::json!({ "project": "p" })));
+        let adding = serde_json::json!({
+            "kind": "Group", "metadata": { "name": "g", "namespace": ORG_NAMESPACE },
+            "spec": { "members": [{ "user": "new@hel.fi" }] } });
+        assert!(within_own_rights(&state, &root, &adding, None, "proposer").is_ok());
+        // Somebody who holds none of what the binding grants is refused, naming it.
+        let nobody = caller("nobody@hel.fi");
+        let (status, said) = refusal(within_own_rights(
+            &state, &nobody, &adding, None, "proposer",
+        ));
+        assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+        assert!(!said.is_empty(), "the refusal says why");
+        // Dropping members grants nothing new.
+        let dropping = serde_json::json!({
+            "kind": "Group", "metadata": { "name": "g", "namespace": ORG_NAMESPACE },
+            "spec": { "members": [] } });
+        assert!(within_own_rights(&state, &root, &dropping, None, "proposer").is_ok());
+    }
+
+    #[test]
+    fn a_manifest_without_a_kind_or_name_replaces_no_setting() {
+        let state = state();
+        let who = caller("ana@hel.fi");
+        assert!(
+            replaces_only_own_settings(&state, &who, &serde_json::json!({}), "proposer").is_ok()
+        );
+        assert!(replaces_only_own_settings(
+            &state,
+            &who,
+            &serde_json::json!({ "kind": "Organization" }),
+            "proposer"
+        )
+        .is_ok());
+        assert!(replaces_only_own_settings(
+            &state,
+            &who,
+            &serde_json::json!({ "kind": "Endpoint", "metadata": { "name": "e" } }),
+            "approver"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn a_field_reads_as_text_only_when_it_is_text_a_number_or_a_flag() {
+        let target = serde_json::json!({ "a": { "s": "x", "n": 3, "b": true, "z": null, "l": [1], "o": {} } });
+        assert_eq!(field_text(Some(&target), "a.s").as_deref(), Some("x"));
+        assert_eq!(field_text(Some(&target), "a.n").as_deref(), Some("3"));
+        assert_eq!(field_text(Some(&target), "a.b").as_deref(), Some("true"));
+        for structured in ["a.z", "a.l", "a.o", "a.missing", "missing.deeper"] {
+            assert_eq!(field_text(Some(&target), structured), None, "{structured}");
+        }
+        assert_eq!(field_text(None, "a.s"), None);
+    }
+
+    #[test]
+    fn with_several_organizations_only_the_installations_binding_makes_an_administrator() {
+        let mirror = Mirror::new();
+        mirror.upsert(org(
+            "Organization",
+            "hel",
+            serde_json::json!({ "installation": true }),
+        ));
+        mirror.upsert(org("Organization", "ba", serde_json::json!({})));
+        mirror.upsert(org(
+            "Role",
+            "org-admin",
+            serde_json::json!({ "rules": [{ "kinds": ["RoleBinding"],
+                                            "verbs": ["read", "propose", "approve", "delete"] }] }),
+        ));
+        let binding = |name: &str, who: &str, organization: &str, validity: Option<Value>| {
+            let mut spec = serde_json::json!({ "subjects": [{ "user": who }], "role": "org-admin",
+                                               "scope": { "organization": organization } });
+            if let Some(validity) = validity {
+                spec["validity"] = validity;
+            }
+            org("RoleBinding", name, spec)
+        };
+        mirror.upsert(binding(
+            "own",
+            "ana@hel.fi",
+            "hel",
+            Some(serde_json::json!({ "notAfter": "2999-01-01T00:00:00Z" })),
+        ));
+        mirror.upsert(binding(
+            "lapsed",
+            "bo@hel.fi",
+            "hel",
+            Some(serde_json::json!({ "notAfter": "2020-01-01T00:00:00Z" })),
+        ));
+        mirror.upsert(binding("foreign", "cy@ba.sk", "ba", None));
+        assert_eq!(
+            administrator_people(&mirror)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            ["ana@hel.fi"]
+        );
     }
 }

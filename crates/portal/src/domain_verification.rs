@@ -689,4 +689,332 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn a_state_is_written_and_read_back_as_its_word() {
+        for (state, word) in [
+            (State::Pending, "pending"),
+            (State::Verified, "verified"),
+            (State::Failed, "failed"),
+        ] {
+            assert_eq!(state.as_str(), word);
+            assert_eq!(State::parse(word), state);
+        }
+        assert_eq!(State::parse(""), State::Pending);
+        assert_eq!(State::parse("VERIFIED"), State::Pending);
+        assert_eq!(State::parse("revoked"), State::Pending);
+    }
+
+    #[test]
+    fn a_method_is_written_and_read_back_as_its_word() {
+        for (method, word) in [(Method::DnsTxt, "dns-txt"), (Method::DidWeb, "did-web")] {
+            assert_eq!(method.as_str(), word);
+            assert_eq!(Method::parse(word), Some(method));
+        }
+        assert_eq!(Method::parse(""), None);
+        assert_eq!(Method::parse("DNS-TXT"), None);
+        assert_eq!(Method::parse("email"), None);
+    }
+
+    #[test]
+    fn a_service_endpoint_that_is_no_url_names_no_host() {
+        for document in [
+            json!({ "service": [{ "serviceEndpoint": 42 }] }),
+            json!({ "service": [{ "serviceEndpoint": [null, true, 1.5] }] }),
+            json!({ "service": [{ "serviceEndpoint": "not a url portal.hel.fi" }] }),
+            json!({ "service": [{ "serviceEndpoint": "mailto:a@b.c" }] }),
+            json!({ "service": [{}] }),
+            json!({ "service": "https://portal.hel.fi" }),
+            json!({ "service": [] }),
+            json!([]),
+        ] {
+            assert!(!did_names_host(&document, HOST), "{document}");
+        }
+    }
+
+    #[test]
+    fn a_txt_record_is_compared_whole_after_trimming() {
+        let records = |texts: &[&str]| texts.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>();
+        assert!(txt_proves(&records(&["\tjc-verify=abc\n"]), "abc"));
+        assert!(!txt_proves(&records(&["JC-VERIFY=abc"]), "abc"));
+        assert!(!txt_proves(&records(&["jc-verify=abc extra"]), "abc"));
+        assert!(!txt_proves(&[], "abc"));
+        assert!(!txt_proves(&records(&["jc-verify="]), "abc"));
+    }
+
+    #[tokio::test]
+    async fn a_name_that_two_lookups_disagree_on_fails_with_both_reasons() {
+        let stub = Stub {
+            txt: Ok(Vec::new()),
+            did: Err(Unanswered),
+        };
+        let failed = check(&stub, "hel.fi", "abc", HOST, now()).await;
+        assert_eq!(
+            failed.reason.as_deref(),
+            Some(
+                "no TXT record at _joinedcontext.hel.fi carries this instance's challenge, and \
+                 https://hel.fi/.well-known/did.json could not be read"
+            )
+        );
+        let stub = Stub {
+            txt: Err(Unanswered),
+            did: Ok(Value::Null),
+        };
+        let failed = check(&stub, "hel.fi", "abc", HOST, now()).await;
+        assert_eq!(
+            failed.reason.as_deref(),
+            Some(
+                "the TXT lookup of _joinedcontext.hel.fi did not answer, and \
+                 https://hel.fi/.well-known/did.json names no service on portal.hel.fi"
+            )
+        );
+    }
+
+    // --- the network lookups, against a resolver of our own on loopback -----------------------
+
+    fn name_wire(name: &str) -> Vec<u8> {
+        let mut wire = Vec::new();
+        for label in name.split('.') {
+            wire.push(label.len() as u8);
+            wire.extend_from_slice(label.as_bytes());
+        }
+        wire.push(0);
+        wire
+    }
+
+    fn record_wire(owner: &[u8], kind: u16, data: &[u8]) -> Vec<u8> {
+        let mut wire = owner.to_vec();
+        wire.extend_from_slice(&kind.to_be_bytes());
+        wire.extend_from_slice(&[0, 1, 0, 0, 0, 60]);
+        wire.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        wire.extend_from_slice(data);
+        wire
+    }
+
+    fn txt_data(parts: &[&str]) -> Vec<u8> {
+        let mut data = Vec::new();
+        for part in parts {
+            data.push(part.len() as u8);
+            data.extend_from_slice(part.as_bytes());
+        }
+        data
+    }
+
+    /// The answer section and response code for `name` and the query type (16 TXT, 1 A).
+    fn zone(name: &str, kind: u16) -> (u8, Vec<Vec<u8>>) {
+        const HERE: [u8; 2] = [0xC0, 0x0C];
+        match (name, kind) {
+            ("_joinedcontext.proves.test", 16) => (
+                0,
+                vec![
+                    record_wire(&HERE, 16, &txt_data(&["v=spf1"])),
+                    record_wire(&HERE, 16, &txt_data(&["jc-verify=", "abc"])),
+                ],
+            ),
+            ("_joinedcontext.alias.test", 16) => (
+                0,
+                vec![
+                    record_wire(&HERE, 5, &name_wire("target.test")),
+                    record_wire(&name_wire("target.test"), 16, &txt_data(&["chained"])),
+                ],
+            ),
+            ("host.test", 1) => (0, vec![record_wire(&HERE, 1, &[192, 0, 2, 7])]),
+            (name, _) if name.starts_with("nx.") || name.contains(".nx.") => (3, Vec::new()),
+            (name, _) if name.starts_with("broken.") || name.contains(".broken.") => {
+                (2, Vec::new())
+            }
+            _ => (0, Vec::new()),
+        }
+    }
+
+    fn reply(query: &[u8]) -> Option<Vec<u8>> {
+        let mut at = 12;
+        let mut labels = Vec::new();
+        loop {
+            let len = usize::from(*query.get(at)?);
+            at += 1;
+            if len == 0 {
+                break;
+            }
+            labels.push(String::from_utf8_lossy(query.get(at..at + len)?).to_ascii_lowercase());
+            at += len;
+        }
+        let kind = u16::from_be_bytes([*query.get(at)?, *query.get(at + 1)?]);
+        let (rcode, answers) = zone(&labels.join("."), kind);
+        let mut out = query.get(..2)?.to_vec();
+        out.extend_from_slice(&[0x81, 0x80 | rcode, 0, 1]);
+        out.extend_from_slice(&(answers.len() as u16).to_be_bytes());
+        out.extend_from_slice(&[0, 0, 0, 0]);
+        out.extend_from_slice(query.get(12..at + 4)?);
+        answers.into_iter().for_each(|answer| out.extend(answer));
+        Some(out)
+    }
+
+    async fn net() -> NetLookup {
+        use hickory_resolver::config::{NameServerConfig, ResolverConfig};
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = socket.local_addr().expect("address").port();
+        tokio::spawn(async move {
+            let mut buffer = [0_u8; 1500];
+            while let Ok((read, from)) = socket.recv_from(&mut buffer).await {
+                if let Some(answer) = reply(&buffer[..read]) {
+                    let _ = socket.send_to(&answer, from).await;
+                }
+            }
+        });
+        let mut server = NameServerConfig::udp(std::net::IpAddr::from([127, 0, 0, 1]));
+        server.connections[0].port = port;
+        let mut builder = hickory_resolver::TokioResolver::builder_with_config(
+            ResolverConfig::from_name_servers(vec![server]),
+            hickory_resolver::net::runtime::TokioRuntimeProvider::default(),
+        );
+        builder.options_mut().timeout = Duration::from_secs(2);
+        builder.options_mut().attempts = 1;
+        NetLookup {
+            resolver: builder.build().expect("a resolver"),
+            http: NetLookup::new().expect("the real lookups").http,
+        }
+    }
+
+    #[tokio::test]
+    async fn the_real_lookups_start_from_the_system_configuration() {
+        assert!(NetLookup::new().is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_txt_strings_of_one_record_are_joined() {
+        let found = Lookup::txt(&net().await, "_joinedcontext.proves.test")
+            .await
+            .expect("an answer");
+        assert_eq!(found, ["v=spf1", "jc-verify=abc"]);
+        assert!(txt_proves(&found, "abc"));
+    }
+
+    #[tokio::test]
+    async fn a_cname_in_the_answer_is_not_a_txt_record() {
+        let found = Lookup::txt(&net().await, "_joinedcontext.alias.test")
+            .await
+            .expect("an answer");
+        assert_eq!(found, ["chained"]);
+    }
+
+    #[tokio::test]
+    async fn a_name_with_no_txt_record_or_no_domain_answers_nothing() {
+        let lookup = net().await;
+        for name in ["_joinedcontext.empty.test", "_joinedcontext.nx.test"] {
+            assert_eq!(Lookup::txt(&lookup, name).await, Ok(Vec::new()), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_resolver_that_fails_is_an_unanswered_txt_lookup() {
+        let lookup = net().await;
+        assert_eq!(
+            Lookup::txt(&lookup, "_joinedcontext.broken.test").await,
+            Err(Unanswered)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_object_form_of_the_txt_lookup_answers_the_same() {
+        let lookup = net().await;
+        let found = TxtRecords::txt(&lookup, "_joinedcontext.proves.test").await;
+        assert_eq!(
+            found,
+            Ok(vec!["v=spf1".to_owned(), "jc-verify=abc".to_owned()])
+        );
+        assert_eq!(
+            TxtRecords::txt(&lookup, "_joinedcontext.broken.test").await,
+            Err(Unanswered)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_host_resolves_to_its_addresses_and_a_missing_one_to_none() {
+        use crate::reconciler::org_hosts::Addresses;
+        let lookup = net().await;
+        let found = Addresses::addresses(&lookup, "host.test").await;
+        assert_eq!(
+            found,
+            Ok(std::collections::BTreeSet::from([std::net::IpAddr::from(
+                [192, 0, 2, 7]
+            )]))
+        );
+        for name in ["nothing.test", "nx.test"] {
+            assert_eq!(
+                Addresses::addresses(&lookup, name).await,
+                Ok(std::collections::BTreeSet::new()),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            Addresses::addresses(&lookup, "broken.test").await,
+            Err(Unanswered)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_did_document_of_an_internal_address_is_never_asked_for() {
+        let lookup = net().await;
+        for domain in ["127.0.0.1", "10.0.0.1", "localhost"] {
+            assert_eq!(
+                Lookup::did_document(&lookup, domain).await,
+                Err(Unanswered),
+                "{domain}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_did_document_of_a_domain_that_does_not_exist_is_unanswered() {
+        let lookup = net().await;
+        assert_eq!(
+            Lookup::did_document(&lookup, "did.nowhere.invalid").await,
+            Err(Unanswered)
+        );
+    }
+
+    // --- the stored half ------------------------------------------------------------------
+
+    fn dead_pool() -> sqlx::PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool")
+    }
+
+    #[tokio::test]
+    async fn without_a_database_every_organization_is_pending() {
+        let asked = vec![
+            ("alfa".to_owned(), "alfa.example".to_owned()),
+            ("bravo".to_owned(), "bravo.example".to_owned()),
+        ];
+        let states = gate_states(None, &asked).await.expect("states");
+        assert_eq!(states.len(), 2);
+        assert!(states.iter().all(|gate| gate.state == State::Pending));
+        assert_eq!(states[1].organization, "bravo");
+        assert_eq!(states[1].domain, "bravo.example");
+        assert!(gate_states(None, &[]).await.expect("none").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_dead_database_is_an_error_for_the_gate_and_for_a_check() {
+        let pool = dead_pool();
+        let asked = vec![("alfa".to_owned(), "alfa.example".to_owned())];
+        assert!(gate_states(Some(&pool), &asked).await.is_err());
+        let verifier = Verifier::new(
+            pool,
+            Stub {
+                txt: Ok(Vec::new()),
+                did: Ok(Value::Null),
+            },
+            HOST,
+        );
+        assert!(verifier
+            .verify("alfa", "alfa.example", now())
+            .await
+            .is_err());
+    }
 }

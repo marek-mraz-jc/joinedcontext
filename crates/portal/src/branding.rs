@@ -940,4 +940,31 @@ languages:
         let branding_strict: Branding = serde_norway::from_str(yaml_strict).unwrap();
         assert_eq!(branding_strict.validation, Validation::Strict);
     }
+
+    #[test]
+    fn an_organization_with_locales_replaces_the_switchers_languages() {
+        let spec: jc_core::kinds::OrganizationSpec = serde_json::from_value(serde_json::json!({
+            "domain": "hel.fi", "locales": ["en", "sk"], "defaultLocale": "sk"
+        }))
+        .expect("an Organization spec");
+        let branding = Branding::default().with_organization(&spec);
+        assert_eq!(branding.languages.default, "sk");
+        assert_eq!(branding.languages.offered, vec!["en", "sk"]);
+        assert_eq!(branding.org_domain, "hel.fi");
+    }
+
+    #[test]
+    fn text_on_a_primary_that_is_no_colour_is_white() {
+        assert_eq!(with_primary("not-a-colour").primary_foreground(), "#ffffff");
+        assert_eq!(with_primary("").primary_foreground(), "#ffffff");
+    }
+
+    #[test]
+    fn a_colour_of_neither_three_nor_six_digits_is_no_colour() {
+        assert_eq!(rgb_of("#12345"), None);
+        assert_eq!(rgb_of("#"), None);
+        assert_eq!(rgb_of("123456"), None);
+        assert_eq!(rgb_of("#abc"), Some([0xaa, 0xbb, 0xcc]));
+        assert_eq!(rgb_of("#zzzzzz"), None);
+    }
 }
