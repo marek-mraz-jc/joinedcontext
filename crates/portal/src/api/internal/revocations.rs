@@ -9,19 +9,6 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
-use serde::Serialize;
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Item {
-    subject: String,
-    revoked_at: i64,
-}
-
-#[derive(Serialize)]
-struct List {
-    items: Vec<Item>,
-}
 
 /// Every mark a token could still be valid against, for the gateway alone: its own workload
 /// token opens the route (PF-46, AG-52), and the subjects are user ids nobody else needs.
@@ -31,16 +18,13 @@ pub async fn revoked_subjects(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     crate::auth::internal::authenticate_gateway(&state, &headers).await?;
-    let items = state
+    // A JSON value always serialises, so the list needs no error arm.
+    let items: Vec<serde_json::Value> = state
         .revocations(crate::auth::session::now_unix())
         .into_iter()
-        .map(|(subject, revoked_at)| Item {
-            subject,
-            revoked_at,
-        })
+        .map(|(subject, revoked_at)| serde_json::json!({ "subject": subject, "revokedAt": revoked_at }))
         .collect();
-    let body = serde_json::to_vec(&List { items })
-        .map_err(|e| ApiError::Internal(format!("the revocations did not serialise: {e}")))?;
+    let body = serde_json::json!({ "items": items }).to_string().into_bytes();
     Ok(super::polled_json(&headers, body))
 }
 

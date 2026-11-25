@@ -1266,6 +1266,7 @@ mod tests {
         let guard = tracing::subscriber::set_default(subscriber);
         let out = run.await;
         drop(guard);
+        std::io::Write::flush(&mut sink.clone()).expect("a sink in memory flushes");
         let text = String::from_utf8_lossy(&sink.0.lock().unwrap()).into_owned();
         (out, text)
     }
@@ -1535,6 +1536,75 @@ mod tests {
         ));
     }
 
+    /// A variable's values: a custom one from its own list, a query one from its datasource
+    /// (sorted, each value once), nothing from a datasource the person may not read or that is
+    /// not named, and a 404 for a variable the dashboard does not have (T-7813).
+    #[tokio::test]
+    async fn a_variable_offers_what_its_datasource_answers_and_the_person_may_read() {
+        let server = service("grafana").await;
+        Mock::given(method("GET"))
+            .and(path("/api/dashboards/uid/vars"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "dashboard": {
+                "uid": "vars", "title": "Vars",
+                "templating": { "list": [
+                    { "name": "closed", "type": "query", "datasource": { "uid": "closed-ds" },
+                      "query": "label_values(x)" },
+                    { "name": "unnamed", "type": "query", "datasource": 7, "query": "q" },
+                    { "name": "pairs", "type": "custom", "query": "North : n, South : s" }
+                ]},
+                "panels": []
+            }})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/datasources/uid/prom/resources/variable"))
+            .and(query_param("query", "label_values(k6_http_reqs_total, testid)"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "data": ["run-b", "run-a", "run-b"] })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let state = world(Some(&server));
+        let values = |user: CurrentUser, uid: &str, name: &str| {
+            variable_values(
+                user,
+                State(state.clone()),
+                Path((PROJECT.into(), uid.to_owned(), name.to_owned())),
+            )
+        };
+        let texts = |answer: &VariableValues| -> Vec<String> {
+            answer.options.iter().map(|o| o.value.clone()).collect()
+        };
+        let Json(custom) = values(admin(), "live", "station").await.expect("a custom list");
+        assert_eq!(texts(&custom), ["Kallio", "Mannerheimintie"]);
+        let Json(queried) = values(admin(), "live", "run").await.expect("a query list");
+        assert_eq!(texts(&queried), ["run-a", "run-b"]);
+        assert_eq!(queried.options[0].text, "run-a");
+        let Json(pairs) = values(admin(), "vars", "pairs").await.expect("pairs");
+        assert_eq!(
+            pairs
+                .options
+                .iter()
+                .map(|o| (o.text.as_str(), o.value.as_str()))
+                .collect::<Vec<_>>(),
+            [("North", "n"), ("South", "s")]
+        );
+        // A viewer reads only public Endpoints: the closed datasource offers them nothing.
+        let Json(closed) = values(person(&[]), "vars", "closed").await.expect("an empty list");
+        assert!(closed.options.is_empty());
+        let Json(unnamed) = values(admin(), "vars", "unnamed").await.expect("an empty list");
+        assert!(unnamed.options.is_empty());
+        assert!(matches!(
+            values(admin(), "live", "nope").await,
+            Err(ApiError::NotFound(_))
+        ));
+        assert!(matches!(
+            values(outsider(), "live", "station").await,
+            Err(ApiError::NotFound(_))
+        ));
+    }
+
     #[tokio::test]
     async fn a_panel_runs_its_saved_queries_with_the_variables_asked() {
         let server = service("grafana").await;
@@ -1688,7 +1758,8 @@ mod tests {
                 Err(ApiError::Unprocessable { errors, .. }) => {
                     errors[0].split(':').next().unwrap().to_owned()
                 }
-                other => panic!("{pairs:?} passed: {other:?}"),
+                // A question that passes names no field, so the assertion below shows it.
+                _ => String::new(),
             };
         assert_eq!(refused_field(&[("from", "yesterday")]), "from");
         assert_eq!(refused_field(&[("to", "now-6x")]), "to");

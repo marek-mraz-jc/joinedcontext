@@ -649,6 +649,86 @@ async fn post(
     )
 }
 
+/// The paths beside a collection: `$count` answers the rows as text, a key one row or a 404
+/// that never says whether the row exists, and every path the service does not serve is an
+/// OData error with a status a client can act on (T-7813).
+#[tokio::test]
+async fn count_key_and_unserved_paths_answer_as_odata() {
+    let state = odata_world();
+    let editor = Some(EDITOR);
+    let (status, count) = get(&state, editor, &odata("endpoints/$count")).await;
+    assert_eq!((status, count), (StatusCode::OK, json!(3)));
+    let (status, count) = get(
+        &state,
+        editor,
+        &odata("endpoints/$count?$filter=startswith(name,'air')"),
+    )
+    .await;
+    assert_eq!((status, count), (StatusCode::OK, json!(2)));
+    let (status, row) = get(&state, editor, &odata("endpoints('air-counters')")).await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    assert_eq!(row["name"], json!("air-counters"));
+    assert!(
+        row["@odata.context"]
+            .as_str()
+            .is_some_and(|c| c.ends_with("$metadata#endpoints/$entity")),
+        "{row}"
+    );
+    let (status, body) = get(&state, editor, &odata("endpoints('no-such-endpoint')")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = get(&state, editor, &odata("endpoints(1.5)")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = get(&state, editor, &odata("nothing-here")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = get(&state, editor, &odata("endpoints('air-counters')/name")).await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+    let (status, body) = get(&state, editor, &odata("endpoints?$apply=groupby((space))")).await;
+    assert!(
+        matches!(status, StatusCode::NOT_IMPLEMENTED | StatusCode::BAD_REQUEST),
+        "{status} {body}"
+    );
+    let (status, body) = get(&state, editor, &odata("endpoints?$filter=nope eq 1")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    // Nobody signed in, a member of another project and a project name that is none.
+    let (status, _) = get(&state, None, &odata("endpoints/$count")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = get(&state, Some(OUTSIDER), &odata("endpoints/$count")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// An action is a writing operation by name: a read-only one, an unknown one, a body that is not
+/// JSON and a project name that is none are refused before anything runs (T-7813).
+#[tokio::test]
+async fn an_action_refuses_what_is_not_one_before_it_runs() {
+    let state = odata_world();
+    let (status, body) = post(&state, Some(EDITOR), &odata("jc_resource_list"), json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = post(&state, Some(EDITOR), &odata("jc_no_such_action"), json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = post(
+        &state,
+        Some(EDITOR),
+        "/api/v1/projects/Not_A_Project/odata/jc_resource_propose",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let response = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(odata("jc_resource_propose"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, cookie(&state.config, EDITOR))
+                .echo_csrf()
+                .body(Body::from("{not json"))
+                .expect("a request"),
+        )
+        .await
+        .expect("a response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
 /// T-6655 parity: every mapped list operation answers OData with the rows and the status its REST
 /// route answers, for a viewer, an editor, a member of another project and nobody signed in. The
 /// REST list names a row by `metadata.name` (or `name`), the entity set by its key `name`.

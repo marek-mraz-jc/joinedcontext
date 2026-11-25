@@ -67,6 +67,16 @@ async fn listener_for(
     proxy_client: Option<&str>,
     runner_client: Option<&str>,
 ) -> (axum::Router, EncodingKey, String) {
+    let (state, signer, issuer) = listener_state(gateway_client, proxy_client, runner_client).await;
+    (server::internal_app(state), signer, issuer)
+}
+
+/// The state behind [`listener_for`], for a case that adds to the mirror first.
+async fn listener_state(
+    gateway_client: Option<&str>,
+    proxy_client: Option<&str>,
+    runner_client: Option<&str>,
+) -> (AppState, EncodingKey, String) {
     let realm: &'static MockServer = Box::leak(Box::new(MockServer::start().await));
     let issuer = format!("{}{REALM_PATH}", realm.uri().trim_end_matches('/'));
     let (signer, jwks) = keypair("key-internal-test");
@@ -111,7 +121,7 @@ async fn listener_for(
         .refresh()
         .await
         .expect("jwks");
-    (server::internal_app(state), signer, issuer)
+    (state, signer, issuer)
 }
 
 async fn previews(app: &axum::Router, bearer: Option<&str>) -> StatusCode {
@@ -181,6 +191,37 @@ async fn the_revocation_list_answers_the_gateways_token_alone() {
     assert_eq!(
         call(&app, "GET", uri, "", Some(&gateway)).await,
         StatusCode::OK
+    );
+}
+
+/// The list carries each revoked subject with the time of its mark, as the gateway reads it
+/// (T-7813).
+#[tokio::test]
+async fn the_revocation_list_names_each_subject_and_its_mark() {
+    let (state, signer, issuer) = listener_state(Some(GATEWAY_CLIENT), None, None).await;
+    let now = joinedcontext_portal::auth::session::now_unix();
+    state.revoke_subject("f:1:eva", now).await;
+    let app = server::internal_app(state);
+    let gateway = token(&signer, &issuer, INTERNAL_AUDIENCE, GATEWAY_CLIENT);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/internal/revocations")
+                .header(header::AUTHORIZATION, format!("Bearer {gateway}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = http_body_util::BodyExt::collect(response.into_body())
+        .await
+        .expect("a body")
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).expect("JSON");
+    assert_eq!(
+        body,
+        json!({ "items": [{ "subject": "f:1:eva", "revokedAt": now }] })
     );
 }
 
@@ -478,6 +519,68 @@ async fn the_domain_states_answer_the_gateway_alone_and_say_pending_when_uncheck
     assert_eq!(status, StatusCode::NOT_MODIFIED);
     let (status, _, _) = domain_states(&app, None, Some(&etag)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// The pipeline sinks past their token: a body that is not their document is 400, a pipeline
+/// the mirror does not hold 404, a batch over its bound 413, an events post for a pipeline that
+/// watches no events 409; a well-formed tap is kept for the page (T-7813).
+#[tokio::test]
+async fn a_pipeline_sink_checks_its_document_and_its_pipeline_after_the_token() {
+    let (state, signer, issuer) = listener_state(Some(GATEWAY_CLIENT), None, None).await;
+    state.mirror.upsert(
+        serde_json::from_value(json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Pipeline",
+            "metadata": { "name": "odpad", "namespace": "praha" },
+            "spec": { "contextSpaceRef": { "kind": "ContextSpace", "name": "odpad" } }
+        }))
+        .expect("a Pipeline envelope"),
+    );
+    let samples = state.pipeline_samples.clone();
+    let app = server::internal_app(state);
+    let own = token(&signer, &issuer, INTERNAL_AUDIENCE, "praha-pipelines");
+    let own = Some(own.as_str());
+    let at = |route: &str| format!("/internal/pipelines/praha/odpad/{route}");
+    let gone = |route: &str| format!("/internal/pipelines/praha/nothing/{route}");
+    for route in ["rejected", "samples", "source-deletes", "source-events"] {
+        assert_eq!(
+            call(&app, "POST", &at(route), "{not json", own).await,
+            StatusCode::BAD_REQUEST,
+            "{route}"
+        );
+    }
+    let tap = r#"{"node":"input","record":{"id":"urn:ngsi-ld:Thing:1"}}"#;
+    assert_eq!(
+        call(&app, "POST", &at("samples"), tap, own).await,
+        StatusCode::NO_CONTENT
+    );
+    assert!(
+        !samples
+            .read("praha", "odpad", jc_time::TimestampTz::now())
+            .is_empty(),
+        "the tap is kept for the page"
+    );
+    let report = r#"{"run":"r1","deleted":["urn:ngsi-ld:Thing:1"],"gone":[],"failed":[]}"#;
+    let marks = r#"{"run":"r1","ids":["urn:ngsi-ld:Thing:1"]}"#;
+    let own_elsewhere = token(&signer, &issuer, INTERNAL_AUDIENCE, "praha-pl-nothing");
+    for (route, body) in [("source-deletes", report), ("source-events", marks), ("samples", tap)] {
+        assert_eq!(
+            call(&app, "POST", &gone(route), body, Some(&own_elsewhere)).await,
+            StatusCode::NOT_FOUND,
+            "{route}"
+        );
+    }
+    // A pipeline with no events rule takes no events post.
+    assert_eq!(
+        call(&app, "POST", &at("source-events"), marks, own).await,
+        StatusCode::CONFLICT
+    );
+    let ids: Vec<String> = (0..1001).map(|n| format!("urn:ngsi-ld:Thing:{n}")).collect();
+    let over: &'static str = Box::leak(json!({ "ids": ids }).to_string().into_boxed_str());
+    assert_eq!(
+        call(&app, "POST", &at("source-events"), over, own).await,
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
 }
 
 /// T-3193 (PL-19, PL-47): a pipeline's outcome and rejection sinks post for their own project.

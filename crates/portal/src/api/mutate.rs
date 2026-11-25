@@ -3640,6 +3640,43 @@ mod tests {
     use super::*;
     use crate::auth::session::{Identity, Session};
 
+    /// The files beside a manifest: each one a text under the manifest's own folder, no second
+    /// manifest, no path twice, within the count and byte bounds; each refusal names what to fix
+    /// (F-POR2-004, T-7813).
+    #[test]
+    fn files_beside_a_manifest_stay_in_its_folder_and_bounds() {
+        let at = "projects/helsinki/models/air/air.yaml";
+        let refused = |files: Value| match sidecars(Some(files), at, "air") {
+            Err(ApiError::BadRequest(why)) => why,
+            other => format!("not refused: {other:?}"),
+        };
+        assert_eq!(sidecars(None, at, "air").expect("no files"), Vec::new());
+        assert_eq!(
+            sidecars(Some(json!({ "./air.linkml.yaml": "id: air", "notes/readme.md": "# Air" })), at, "air")
+                .expect("two files"),
+            vec![
+                ("projects/helsinki/models/air/air.linkml.yaml".to_owned(), "id: air".to_owned()),
+                ("projects/helsinki/models/air/notes/readme.md".to_owned(), "# Air".to_owned()),
+            ]
+        );
+        assert!(refused(json!(["a.md"])).contains("an object of path"));
+        let many: serde_json::Map<String, Value> =
+            (0..=MAX_SIDECARS).map(|n| (format!("f{n}.md"), json!("x"))).collect();
+        assert!(refused(Value::Object(many)).contains("at most"));
+        assert!(refused(json!({ "a.md": 1 })).contains("is not text"));
+        for path in ["", "/etc/passwd", "../up.md", "a/./b.md", "a//b.md", "a\\b.md", "nul\u{0}.md"] {
+            assert!(
+                refused(Value::Object([(path.to_owned(), json!("x"))].into_iter().collect()))
+                    .contains("not a path under"),
+                "{path:?}"
+            );
+        }
+        assert!(refused(json!({ "other.yaml": "kind: Policy" })).contains("a YAML file"));
+        assert!(refused(json!({ "a.md": "x", "./a.md": "y" })).contains("sent twice"));
+        let big = "x".repeat(MAX_SIDECAR_BYTES / 2 + 1);
+        assert!(refused(json!({ "a.md": big, "b.md": big })).contains("more than"));
+    }
+
     /// T-6471: a Policy `jc_space_complete` filed under the space it names is found there, the
     /// path `resolve_repo_path` gives wins when it holds the file, and no file leaves the path.
     #[tokio::test]

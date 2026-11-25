@@ -113,6 +113,17 @@ jobs:
           sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
           sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal
           { echo CARGO_PROFILE_DEV_DEBUG=0; echo CARGO_PROFILE_TEST_DEBUG=0; } >> "$GITHUB_ENV"
+      # sdk/dist, embedded by the Portal: without it every function call, code preview and
+      # published App function answers "built without the SDK" and their tests stop at that
+      # branch, so agent_runs.rs and apps/functions.rs read low (T-7813).
+      - if: matrix.ws == 'portal'
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
+      - if: matrix.ws == 'portal'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 24 }
+      - if: matrix.ws == 'portal'
+        run: cd sdk && pnpm install --frozen-lockfile && pnpm build
       # The platform's lockfile repeats the root one's versions (ci.yml platform-test). Its test
       # targets, but jc-core's (the `then` pass) and context-gateway's in_flight_tests, which reads
       # the platform repository's Dockerfile, not vendored.
