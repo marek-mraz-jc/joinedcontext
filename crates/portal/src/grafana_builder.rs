@@ -1056,9 +1056,6 @@ fn compiled_text(panel: &BoardPanel) -> Value {
 }
 
 fn compiled_panel(panel: &BoardPanel, source: &Source) -> Value {
-    if panel.kind == PanelKind::Text {
-        return compiled_text(panel);
-    }
     let reference = json!({ "type": PLUGIN, "uid": source.datasource });
     let mut target = json!({
         "refId": "A",
@@ -1187,7 +1184,8 @@ fn compiled_panel(panel: &BoardPanel, source: &Source) -> Value {
             "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
             "tooltip": { "mode": "single", "sort": "none" },
         }),
-        PanelKind::Text => unreachable!("a text panel is compiled by compiled_text"),
+        // A text panel reads nothing: the query built above is dropped with the rest.
+        PanelKind::Text => return compiled_text(panel),
     };
     let mut out = json!({
         "id": panel.id,
@@ -2220,6 +2218,79 @@ mod tests {
                 Box::new(|b| b.panels[7].unit = "percent".into()),
             ),
             ("panels[7].text", Box::new(|b| b.panels[7].text = None)),
+            ("title", Box::new(|b| b.title = "Air\nquality".into())),
+            (
+                "description",
+                Box::new(|b| b.description = "https://feed.example.com/v1?auth=0123456789".into()),
+            ),
+            (
+                "variables",
+                Box::new(|b| b.variables = vec![b.variables[0].clone(); MAX_VARIABLES + 1]),
+            ),
+            (
+                "variables[1].name",
+                Box::new(|b| b.variables.push(b.variables[0].clone())),
+            ),
+            (
+                "variables[0].type",
+                Box::new(|b| b.variables[0].entity_type = "Air Quality".into()),
+            ),
+            ("panels[1].id", Box::new(|b| b.panels[1].id = 1001)),
+            (
+                "panels[1].description",
+                Box::new(|b| b.panels[1].description = "line\u{0}".into()),
+            ),
+            (
+                "panels[0].thresholds.base",
+                Box::new(|b| b.panels[0].thresholds.as_mut().unwrap().base = "pink".into()),
+            ),
+            (
+                "panels[0].thresholds",
+                Box::new(|b| {
+                    b.panels[0].thresholds.as_mut().unwrap().steps = (0..=MAX_THRESHOLDS)
+                        .map(|i| ThresholdStep {
+                            value: i as f64,
+                            color: "red".into(),
+                        })
+                        .collect()
+                }),
+            ),
+            (
+                "panels[0].thresholds.steps[1].value",
+                Box::new(|b| {
+                    let steps = &mut b.panels[0].thresholds.as_mut().unwrap().steps;
+                    steps.push(steps[0].clone());
+                }),
+            ),
+            (
+                "panels[3].filters",
+                Box::new(|b| {
+                    b.panels[3].filters = vec![b.panels[3].filters[0].clone(); MAX_FILTERS + 1]
+                }),
+            ),
+            (
+                "panels[3].filters[0].attribute",
+                Box::new(|b| b.panels[3].filters[0].attribute = "a b".into()),
+            ),
+            (
+                "panels[3].filters[0]",
+                Box::new(|b| b.panels[3].filters[0].variable = Some("station".into())),
+            ),
+            (
+                "panels[3].filters[0]",
+                Box::new(|b| b.panels[3].filters[0].value = None),
+            ),
+            (
+                "panels[0].filters[1].op",
+                Box::new(|b| b.panels[0].filters[1].op = Op::Ne),
+            ),
+            (
+                "panels[7].text.content",
+                Box::new(|b| {
+                    b.panels[7].text.as_mut().unwrap().content =
+                        "https://feed.example.com/v1?auth=0123456789".into()
+                }),
+            ),
         ];
         for (field, change) in cases {
             let mut board = board();
@@ -2227,6 +2298,102 @@ mod tests {
             let refusal = check_shape(&board).expect_err(field);
             assert_eq!(refusal.field, field, "{refusal:?}");
         }
+    }
+
+    /// T-7816: the corners of compiling: a variable without a label is titled by its name and
+    /// without All starts at its first value, a description is kept on text and data panels, a
+    /// table that reads `name` reads it once, and a table's thresholds colour no value.
+    #[test]
+    fn a_boards_corners_compile_as_grafana_reads_them() {
+        let mut board = board();
+        board.variables[0].label = " ".into();
+        board.variables[0].include_all = false;
+        board.panels[7].description = " About the readings ".into();
+        board.panels[2].description = "Every station".into();
+        board.panels[2].attribute = "name".into();
+        board.panels[2].thresholds = board.panels[0].thresholds.clone();
+        let values = vec![vec!["Kallio".to_owned(), "Mannerheimintie".to_owned()]];
+        let file = compile("jcd-0123456789abcdef", &board, &sources(&board), &values);
+        let variable = &file["templating"]["list"][0];
+        assert_eq!(variable["label"], "station");
+        assert_eq!(variable["current"]["value"], json!(["Kallio"]));
+        assert_eq!(file["panels"][7]["description"], "About the readings");
+        let table = &file["panels"][2];
+        assert_eq!(table["description"], "Every station");
+        assert_eq!(table["targets"][0]["attributes"], json!(["name"]));
+        assert!(
+            table["fieldConfig"]["defaults"].get("color").is_none(),
+            "{table}"
+        );
+        assert!(
+            file["panels"][7].get("targets").is_none(),
+            "a text panel reads nothing"
+        );
+    }
+
+    /// T-7816: a filter's value against its attribute's kind, and each kind's words.
+    #[test]
+    fn a_filter_value_is_checked_against_its_attributes_kind() {
+        let filter = |op: Op, value: Option<&str>, variable: Option<&str>| Filter {
+            attribute: "a".into(),
+            op,
+            value: value.map(str::to_owned),
+            variable: variable.map(str::to_owned),
+        };
+        let field = |f: Filter, kind: ValueKind| check_filter("f", &f, kind).err().map(|r| r.field);
+        assert_eq!(ValueKind::of(Some("boolean")), ValueKind::Boolean);
+        assert_eq!(ValueKind::of(Some("integer")), ValueKind::Number);
+        assert_eq!(ValueKind::of(None), ValueKind::Text);
+        let cases = [
+            (filter(Op::Eq, None, Some("v")), ValueKind::Text, None),
+            (
+                filter(Op::Eq, None, Some("v")),
+                ValueKind::Number,
+                Some("f.attribute"),
+            ),
+            (filter(Op::Gt, Some("25"), None), ValueKind::Number, None),
+            (
+                filter(Op::Gt, Some("inf"), None),
+                ValueKind::Number,
+                Some("f.value"),
+            ),
+            (
+                filter(Op::Gt, Some("many"), None),
+                ValueKind::Number,
+                Some("f.value"),
+            ),
+            (filter(Op::Eq, Some("true"), None), ValueKind::Boolean, None),
+            (
+                filter(Op::Ne, Some("false"), None),
+                ValueKind::Boolean,
+                None,
+            ),
+            (
+                filter(Op::Eq, Some("yes"), None),
+                ValueKind::Boolean,
+                Some("f.value"),
+            ),
+            (
+                filter(Op::Lt, Some("true"), None),
+                ValueKind::Boolean,
+                Some("f.op"),
+            ),
+            (filter(Op::Ne, Some("x"), None), ValueKind::Text, None),
+            (
+                filter(Op::Lt, Some("x"), None),
+                ValueKind::Text,
+                Some("f.op"),
+            ),
+        ];
+        for (f, kind, want) in cases {
+            let shown = format!("{f:?} {kind:?}");
+            assert_eq!(field(f, kind).as_deref(), want, "{shown}");
+        }
+        assert_eq!(PanelKind::Timeseries.words(), "a time series");
+        assert_eq!(PanelKind::Gauge.words(), "a gauge");
+        assert_eq!(Aggregation::Min.calc(), "min");
+        assert_eq!(Interval::Day.as_str(), "P1D");
+        assert_eq!(Op::Lt.word(), "<");
     }
 
     #[test]
@@ -2237,6 +2404,23 @@ mod tests {
         let mut sent = serde_json::to_value(board()).expect("a board");
         sent["panels"][0]["customQuery"] = json!("pm25>0");
         assert!(serde_json::from_value::<Board>(sent).is_err());
+    }
+
+    /// T-7816: a pie chart shape the builder never writes is refused by name, and a path
+    /// outside `projects/` is no dashboard file.
+    #[test]
+    fn a_pie_shape_or_a_path_the_builder_does_not_write_is_refused() {
+        let board = board();
+        let mut file = compile("jcd-0123456789abcdef", &board, &sources(&board), &[vec![]]);
+        assert_eq!(file["panels"][5]["type"], "piechart");
+        file["panels"][5]["options"]["pieType"] = json!("rose");
+        let refused = decompile(&file, &|_| Some("open".into())).expect_err("a rose");
+        assert!(refused.contains("pieType"), "{refused}");
+        assert_eq!(
+            parse_path("dashboards/zilina/jcd-0123456789abcdef.json"),
+            None
+        );
+        assert_eq!(parse_path(""), None);
     }
 
     #[test]
@@ -2276,6 +2460,104 @@ mod tests {
                 "{field}"
             );
         }
+    }
+
+    /// T-7816: each way a stored file can differ from what the builder writes is refused by
+    /// `read_file` or `decompile`, with a reason naming the panel; a member left out reads as
+    /// its default.
+    #[test]
+    fn a_tampered_file_is_refused_with_its_reason() {
+        let board = board();
+        let uid = "jcd-0123456789abcdef";
+        let file = compile(uid, &board, &sources(&board), &[vec![]]);
+        let tampered = |pointer: &str, value: Value| {
+            let mut other = file.clone();
+            let (parent, key) = pointer.rsplit_once('/').expect("a path");
+            other.pointer_mut(parent).expect("a member")[key] = value;
+            other
+        };
+        let ds = file["panels"][1]["datasource"].clone();
+        let target = file["panels"][1]["targets"][0].clone();
+        let read_refusals = [
+            (tampered("/panels/7/datasource", ds.clone()), "reads data"),
+            (
+                tampered("/panels/1/datasource", json!(null)),
+                "reads no NGSI-LD Endpoint",
+            ),
+            (
+                tampered("/panels/1/targets", json!([target.clone(), target])),
+                "queries",
+            ),
+            (
+                tampered("/panels/1/targets/0/datasource/uid", json!("other")),
+                "another datasource",
+            ),
+            (
+                tampered("/panels/0/targets/0/customQuery", json!("pm25>5|x")),
+                "filters by text",
+            ),
+            (
+                tampered("/templating/list/0/zzz", json!(1)),
+                "a variable has a member",
+            ),
+            (
+                tampered(
+                    "/panels",
+                    json!(vec![file["panels"][1].clone(); MAX_PANELS + 1]),
+                ),
+                "panels",
+            ),
+        ];
+        for (other, why) in read_refusals {
+            let got = read_file(uid, &other.to_string()).expect_err(why);
+            assert!(got.contains(why), "{why}: {got}");
+        }
+        let over = read_file(uid, &" ".repeat(MAX_FILE + 1)).expect_err("too big");
+        assert!(over.contains("KiB"), "{over}");
+
+        let open = |_: &str| Some("open".to_owned());
+        let decompile_refusals = [
+            (tampered("/panels/7/targets", json!([])), "reads data"),
+            (
+                tampered("/panels/7/options/content", json!(7)),
+                "says nothing",
+            ),
+            (
+                tampered("/panels/4/options/displayMode", json!("neon")),
+                "displayMode",
+            ),
+            (tampered("/panels/1/type", json!("geomap")), "does not draw"),
+            (tampered("/panels/1/targets", json!([])), "0 queries"),
+            (
+                tampered("/panels/6/options/xField", json!("pm25")),
+                "names its bars",
+            ),
+            (
+                tampered("/panels/1/targets/0/attributes", json!(["a", "b"])),
+                "2 attributes",
+            ),
+            (
+                tampered("/panels/1/targets/0/aggrMethod", json!("median")),
+                "aggregates by",
+            ),
+            (
+                tampered("/panels/0/targets/0/aggrPeriodDuration", json!("P1W")),
+                "aggregates over",
+            ),
+        ];
+        for (other, why) in decompile_refusals {
+            let got = decompile(&other, &open).expect_err(why);
+            assert!(got.contains(why), "{why}: {got}");
+        }
+        let mut plain = file.clone();
+        for key in ["displayMode", "orientation"] {
+            plain["panels"][4]["options"]
+                .as_object_mut()
+                .expect("options")
+                .remove(key);
+        }
+        let back = decompile(&plain, &open).expect("defaults");
+        assert_eq!(back.panels[4].bargauge, Some(BarGaugeOptions::default()));
     }
 
     #[test]

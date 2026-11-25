@@ -383,6 +383,10 @@ pub struct Config {
     /// (`JC_SHAKO_*`) the environment leaves unset, read by `AppState::from_config` after
     /// `from_vars`. Empty for the standalone Portal; an environment value always wins.
     pub host_vars: std::collections::BTreeMap<String, String>,
+    /// The ServiceAccount mount the in-cluster API clients read their token from, the kubelet's
+    /// path; the environment never sets it, a test points it at a mount of its own.
+    #[doc(hidden)]
+    pub service_account_dir: std::path::PathBuf,
     /// Whether the Portal's own router serves the `/metrics` scrape (OPS-16; the edge refuses the
     /// path in the cluster). A hosting process with its own guarded scrape (`jc`'s admin
     /// listener) turns it off; no environment key turns it on again.
@@ -889,10 +893,7 @@ fn cookie_keys(
             })
         }
         None => {
-            tracing::warn!(
-                "JC_PORTAL_COOKIE_KEY is unset: using an ephemeral key, nobody signs in to a \
-                 Portal without a realm"
-            );
+            tracing::warn!("JC_PORTAL_COOKIE_KEY is unset: using an ephemeral key, nobody signs in to a Portal without a realm");
             Key::generate()
         }
     };
@@ -924,10 +925,7 @@ fn cookie_keys(
 fn decisions_need_second_factor(lookup: &impl Fn(&str) -> Option<String>) -> bool {
     let on = lookup("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR").as_deref() != Some("false");
     if !on {
-        tracing::warn!(
-            "JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR is false: approve, reject, revoke and people \
-             administration accept a password-only session (AUT-2 off, dev only)"
-        );
+        tracing::warn!("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR is false: approve, reject, revoke and people administration accept a password-only session (AUT-2 off, dev only)");
     }
     on
 }
@@ -1138,12 +1136,11 @@ fn ckan_api_route(
         .host_str()
         .is_some_and(|host| host.ends_with(".svc") || host.ends_with(".svc.cluster.local"));
     // jc's own catalogue on its loopback listener (C1): the token never leaves the machine.
-    let loopback = match api.host() {
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        Some(url::Host::Domain(host)) => host == "localhost",
-        None => false,
-    } || ckan_api_reach(lookup)?.is_some();
+    let loopback = api.host().is_some_and(|host| match host {
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+        url::Host::Domain(host) => host == "localhost",
+    }) || ckan_api_reach(lookup)?.is_some();
     if api.scheme() != "https" && !in_cluster && !loopback && !rehearsal {
         return Err(ConfigError::Invalid {
             var: "JC_PORTAL_CKAN_API_URL",
@@ -1179,10 +1176,7 @@ fn ckan_api_reach(
 fn ckan_allows_http(lookup: &impl Fn(&str) -> Option<String>) -> bool {
     let on = lookup("JC_PORTAL_CKAN_ALLOW_HTTP").as_deref() == Some("true");
     if on {
-        tracing::warn!(
-            "JC_PORTAL_CKAN_ALLOW_HTTP is true: the catalogue URLs may be plain http and the \
-             CKAN token crosses the network in the clear (EP-67 off, local rehearsal only)"
-        );
+        tracing::warn!("JC_PORTAL_CKAN_ALLOW_HTTP is true: the catalogue URLs may be plain http and the CKAN token crosses the network in the clear (EP-67 off, local rehearsal only)");
     }
     on
 }
@@ -2125,9 +2119,7 @@ impl Config {
         let mut url = base.clone();
         if let Some(domain) = url.host_str().and_then(|h| h.strip_prefix("portal.")) {
             let api = format!("api.{domain}");
-            if url.set_host(Some(&api)).is_err() {
-                return base;
-            }
+            return url.set_host(Some(&api)).map_or(base, |()| url);
         }
         url
     }
@@ -2578,6 +2570,7 @@ impl Config {
             apps_db,
             pipeline_secrets,
             host_vars: std::collections::BTreeMap::new(),
+            service_account_dir: crate::apps::kube::SERVICE_ACCOUNT_DIR.into(),
             public_metrics: true,
         })
     }
@@ -2585,11 +2578,11 @@ impl Config {
     pub fn for_tests() -> Self {
         Self {
             host_vars: std::collections::BTreeMap::new(),
+            service_account_dir: crate::apps::kube::SERVICE_ACCOUNT_DIR.into(),
             public_metrics: true,
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             internal_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
-            public_base_url: Url::parse("http://localhost:8080")
-                .unwrap_or_else(|_| unreachable!("valid test url")),
+            public_base_url: Url::parse("http://localhost:8080").expect("valid test url"),
             organization_hosts: Vec::new(),
             organization_realms: Vec::new(),
             portal_settings: crate::portals::PortalSettings::default(),
@@ -2765,6 +2758,400 @@ mod tests {
         }
     }
 
+    /// A lookup that answers the given pairs and nothing else.
+    fn vars(pairs: Vec<(&'static str, String)>) -> impl Fn(&str) -> Option<String> {
+        move |name: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.clone())
+        }
+    }
+
+    /// A file under the system temp directory holding `text`, unique to this test and `name`.
+    fn temp_file(name: &str, text: &str) -> String {
+        let path = std::env::temp_dir().join(format!("t7816-{}-{name}", std::process::id()));
+        std::fs::write(&path, text).expect("temp file");
+        path.display().to_string()
+    }
+
+    const REALM: [(&str, &str); 4] = [
+        ("JC_OIDC_ISSUER", "https://idm.example.sk/realms/bb"),
+        ("JC_OIDC_CLIENT_ID", "portal"),
+        ("JC_OIDC_CLIENT_SECRET", "test-secret"),
+        (
+            "JC_PORTAL_COOKIE_KEY",
+            "cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001",
+        ),
+    ];
+
+    fn with_realm(extra: &[(&'static str, &str)]) -> Vec<(&'static str, String)> {
+        REALM
+            .iter()
+            .chain(extra)
+            .map(|(k, v)| (*k, (*v).to_owned()))
+            .collect()
+    }
+
+    fn owned(pairs: &[(&'static str, &str)]) -> Vec<(&'static str, String)> {
+        pairs.iter().map(|(k, v)| (*k, (*v).to_owned())).collect()
+    }
+
+    /// T-7816: every malformed variable stops the start and the error names that variable, not
+    /// a neighbour; the secret a variable carries never reaches the reason.
+    #[test]
+    fn each_malformed_variable_is_refused_by_its_own_name() {
+        let missing = "/nonexistent/t7816/file";
+        let bad_yaml = temp_file("bad-prices", "currency: [");
+        let bad_prices = temp_file(
+            "refused-prices",
+            "currency: eur\nperUsd: 0.5\nnodes: [{name: cpx42, monthly: 90}]\n",
+        );
+        let cases: Vec<(Vec<(&'static str, String)>, &str)> = vec![
+            (
+                with_realm(&[("JC_OIDC_ISSUER", "not a url")])
+                    .into_iter()
+                    .skip(1)
+                    .collect(),
+                "JC_OIDC_ISSUER",
+            ),
+            (
+                with_realm(&[("JC_KEYCLOAK_ADMIN_URL", "http://[")]),
+                "JC_KEYCLOAK_ADMIN_URL",
+            ),
+            (
+                with_realm(&[
+                    ("JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID", "portal-reconciler"),
+                    ("JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SERVICE_ACCOUNT", "portal"),
+                ]),
+                "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SERVICE_ACCOUNT",
+            ),
+            (
+                owned(&[("JC_PORTAL_INGEST_URL", "http://[")]),
+                "JC_PORTAL_INGEST_URL",
+            ),
+            (
+                owned(&[("JC_PORTAL_INGEST_URL", "ftp://h/ingest")]),
+                "JC_PORTAL_INGEST_URL",
+            ),
+            (
+                owned(&[("JC_PORTAL_INGEST_URL", "https://h/ingest?x=1")]),
+                "JC_PORTAL_INGEST_URL",
+            ),
+            (
+                owned(&[("JC_AGENT_PROXY_BASE", "http://[")]),
+                "JC_AGENT_PROXY_BASE",
+            ),
+            (
+                owned(&[
+                    ("JC_AGENT_PROXY_BASE", "http://proxy"),
+                    ("JC_AGENT_RUN_TTL", "soon"),
+                ]),
+                "JC_AGENT_RUN_TTL",
+            ),
+            (
+                owned(&[
+                    ("JC_AGENT_PROXY_BASE", "http://proxy"),
+                    ("JC_AGENT_RUN_TTL", "0"),
+                ]),
+                "JC_AGENT_RUN_TTL",
+            ),
+            (
+                owned(&[("JC_BASEMAP_URL", "https://t/{z}/{x}")]),
+                "JC_BASEMAP_URL",
+            ),
+            (
+                owned(&[("JC_BASEMAP_URL", "https://[/{z}/{x}/{y}")]),
+                "JC_BASEMAP_URL",
+            ),
+            (
+                owned(&[
+                    ("JC_BASEMAP_URL", "https://t/{z}/{x}/{y}.png"),
+                    ("JC_BASEMAP_ATTRIBUTION", "OSM"),
+                    ("JC_BASEMAP_MAX_ZOOM", "far"),
+                ]),
+                "JC_BASEMAP_MAX_ZOOM",
+            ),
+            (
+                owned(&[
+                    ("JC_BASEMAP_URL", "https://t/{z}/{x}/{y}.png"),
+                    ("JC_BASEMAP_ATTRIBUTION", "OSM"),
+                    ("JC_BASEMAP_KEY_FILE", missing),
+                ]),
+                "JC_BASEMAP_KEY_FILE",
+            ),
+            (
+                owned(&[
+                    ("JC_BASEMAP_URL", "https://t/{z}/{x}/{y}.png"),
+                    ("JC_BASEMAP_ATTRIBUTION", "OSM"),
+                    ("JC_BASEMAP_CACHE_MAX_BYTES", "-1"),
+                ]),
+                "JC_BASEMAP_CACHE_MAX_BYTES",
+            ),
+            (
+                owned(&[
+                    ("JC_BASEMAP_URL", "https://t/{z}/{x}/{y}.png"),
+                    ("JC_BASEMAP_ATTRIBUTION", "OSM"),
+                    ("JC_BASEMAP_CACHE_TTL_SECS", "a week"),
+                ]),
+                "JC_BASEMAP_CACHE_TTL_SECS",
+            ),
+            (
+                owned(&[("JC_PORTAL_ORGANIZATION_BOUNDS", "[not, a, map]")]),
+                "JC_PORTAL_ORGANIZATION_BOUNDS",
+            ),
+            (
+                owned(&[("JC_PORTAL_COST_PRICES_FILE", missing)]),
+                "JC_PORTAL_COST_PRICES_FILE",
+            ),
+            (
+                owned(&[("JC_PORTAL_COST_PRICES_FILE", &bad_yaml)]),
+                "JC_PORTAL_COST_PRICES_FILE",
+            ),
+            (
+                owned(&[("JC_PORTAL_COST_PRICES_FILE", &bad_prices)]),
+                "JC_PORTAL_COST_PRICES_FILE",
+            ),
+            (
+                owned(&[
+                    ("JC_PORTAL_INSTALLATION_ORGANIZATION", "smartcity"),
+                    ("JC_PORTAL_ORGANIZATION_HOSTS", "no equals sign"),
+                ]),
+                "JC_PORTAL_ORGANIZATION_HOSTS",
+            ),
+            (
+                owned(&[("JC_INTERNAL_BIND", "nowhere")]),
+                "JC_INTERNAL_BIND",
+            ),
+            (
+                owned(&[("JC_PORTAL_ORGANIZATION_HOSTS", "no equals sign")]),
+                "JC_PORTAL_ORGANIZATION_HOSTS",
+            ),
+            (
+                owned(&[("JC_PORTAL_PORTAL_HOSTS", "no equals sign")]),
+                "JC_PORTAL_PORTAL_HOSTS",
+            ),
+            (
+                owned(&[("JC_PORTAL_PROFILES", "no equals sign")]),
+                "JC_PORTAL_PROFILES",
+            ),
+            (
+                owned(&[("JC_PORTAL_BRANCHES_PER_PROJECT", "many")]),
+                "JC_PORTAL_BRANCHES_PER_PROJECT",
+            ),
+            (
+                owned(&[("JC_PORTAL_ORGANIZATION_ADDRESSES", "no equals sign")]),
+                "JC_PORTAL_ORGANIZATION_ADDRESSES",
+            ),
+            (
+                owned(&[("JC_PORTAL_ORGANIZATION_CATALOGUES", "no equals sign")]),
+                "JC_PORTAL_ORGANIZATION_CATALOGUES",
+            ),
+            (
+                with_realm(&[("JC_PORTAL_ORGANIZATION_REALMS", "no equals sign")]),
+                "JC_PORTAL_ORGANIZATION_REALMS",
+            ),
+            (
+                owned(&[("JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE", missing)]),
+                "JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE",
+            ),
+            (
+                owned(&[("JC_PORTAL_MAIL_FROM", "not an address")]),
+                "JC_PORTAL_MAIL_FROM",
+            ),
+            (
+                owned(&[("JC_PORTAL_SMTP_URL", "smtp://mail.test:25")]),
+                "JC_PORTAL_MAIL_FROM",
+            ),
+            (
+                owned(&[("JC_PORTAL_BACKUP_TENANTS", "no such module ###")]),
+                "JC_PORTAL_BACKUP_TENANTS",
+            ),
+            (
+                with_realm(&[("JC_OIDC_CLIENT_ASSERTION_FILE", missing)]),
+                "JC_OIDC_CLIENT_ASSERTION_FILE",
+            ),
+            (
+                with_realm(&[
+                    ("JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID", "portal-reconciler"),
+                    ("JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SECRET", "test-secret"),
+                    ("JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ASSERTION_FILE", missing),
+                ]),
+                "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ASSERTION_FILE",
+            ),
+            (
+                owned(&[
+                    ("JC_PORTAL_APPS_NAMESPACE", "joinedcontext"),
+                    ("JC_PORTAL_ORG_DOMAIN", "bb.example"),
+                    ("JC_PORTAL_SERVICE_ACCOUNT", "Not_A_Name"),
+                ]),
+                "JC_PORTAL_SERVICE_ACCOUNT",
+            ),
+            (
+                owned(&[
+                    ("JC_PORTAL_CKAN_URL", "https://opendata.example.org"),
+                    ("JC_PORTAL_CKAN_API_URL", "http://localhost:5000"),
+                    ("JC_PORTAL_CKAN_API_REACH", "nowhere"),
+                ]),
+                "JC_PORTAL_CKAN_API_REACH",
+            ),
+        ];
+        for (pairs, named) in cases {
+            let shown = format!("{pairs:?}");
+            let result = Config::from_vars(vars(pairs));
+            let got = format!("{:?}", result.as_ref().map(|_| ()));
+            assert!(
+                matches!(&result, Err(ConfigError::Invalid { var, .. }) if *var == named),
+                "{shown}: {got}"
+            );
+            let reason = result.err().map(|e| e.to_string()).unwrap_or_default();
+            assert!(!reason.contains("test-secret"), "{reason}");
+        }
+        for file in [bad_yaml, bad_prices] {
+            std::fs::remove_file(file).expect("removed");
+        }
+    }
+
+    /// T-7816: the well-formed values of the same variables start the Portal and are read as
+    /// written, trimmed where the documentation says so.
+    #[test]
+    fn the_well_formed_optional_values_are_read() {
+        let runner_token = temp_file("runner-token", " from-file \n");
+        let tile_key = temp_file("tile-key", " tiles-fixture \n");
+        let prices = temp_file(
+            "prices",
+            "currency: EUR\nperUsd: 0.5\nnodes: [{name: cpx42, monthly: 90}]\n",
+        );
+        let empty_prices = temp_file("empty-prices", "{}");
+        let config = Config::from_vars(vars(owned(&[
+            (
+                "JC_PORTAL_INGEST_URL",
+                "https://portal.example.org/ingest/default/",
+            ),
+            ("JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE", &runner_token),
+            ("JC_PORTAL_COST_PRICES_FILE", &prices),
+            ("JC_PORTAL_INVITATION_CLIENT_ID", " invitations "),
+            ("JC_PORTAL_INSTALLATION_DOMAIN", "BB.example"),
+            ("JC_PORTAL_LOGIN_HOST", "Login.BB.example"),
+            ("JC_PORTAL_OPENBAO_ADDR", "http://openbao:8200"),
+            ("JC_PORTAL_OPENBAO_ROLE", "portal"),
+            ("JC_AGENT_PROXY_BASE", "http://proxy"),
+            ("JC_AGENT_RUN_TTL", "600"),
+            ("JC_PORTAL_NAMESPACE", "portal"),
+            ("JC_BASEMAP_URL", "https://t/{z}/{x}/{y}.png"),
+            ("JC_BASEMAP_ATTRIBUTION", "OSM"),
+            ("JC_BASEMAP_CACHE_DIR", "/var/cache/tiles"),
+            ("JC_BASEMAP_KEY_FILE", &tile_key),
+            ("JC_PORTAL_CKAN_ALLOW_HTTP", "true"),
+            ("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR", "false"),
+            (
+                "JC_PORTAL_APPS_DB_URL",
+                "postgres://apps:db-password@db/apps",
+            ),
+            (
+                "JC_PORTAL_PIPELINE_TEST_CAPTURE_URL",
+                "http://capture.test/hook/",
+            ),
+            ("JC_PORTAL_KNOWLEDGE_URL", "http://assistant.test/"),
+            ("JC_PORTAL_BOOTSTRAP_ADMINS", " city-admins "),
+            ("JC_PORTAL_JOURNEY_USERS", " journey-1, ,journey-2 "),
+            ("JC_PORTAL_GATEWAY_CLIENT_ID", "gateway"),
+            ("JC_PORTAL_AGENT_PROXY_CLIENT_ID", "agent-proxy"),
+            ("JC_PORTAL_PIPELINE_RUNNER_CLIENT_ID", "pipeline-runner"),
+            ("JC_PORTAL_CKAN_URL", "https://opendata.example.org"),
+            ("JC_PORTAL_CKAN_API_URL", "http://localhost:5000"),
+            ("JC_PORTAL_CKAN_API_REACH", "[::1]:5000"),
+        ])))
+        .expect("parses");
+        assert_eq!(
+            config.pipeline_test_capture_url.as_deref(),
+            Some("http://capture.test/hook")
+        );
+        assert_eq!(
+            config.knowledge_url.as_deref(),
+            Some("http://assistant.test")
+        );
+        assert_eq!(config.bootstrap_admins, "city-admins");
+        assert_eq!(config.journey_users, ["journey-1", "journey-2"]);
+        assert_eq!(config.gateway_client_id.as_deref(), Some("gateway"));
+        assert_eq!(config.agent_proxy_client_id.as_deref(), Some("agent-proxy"));
+        assert_eq!(
+            config.pipeline_runner_client_id.as_deref(),
+            Some("pipeline-runner")
+        );
+        assert!(config.ckan_api_route.is_some());
+        assert_eq!(config.ckan_api_reach.map(|addr| addr.port()), Some(5000));
+        assert_eq!(
+            config.ingest_url.as_deref(),
+            Some("https://portal.example.org/ingest/default")
+        );
+        assert_eq!(config.pipeline_runner_token.as_deref(), Some("from-file"));
+        assert!(config.cost_prices.is_some());
+        assert_eq!(config.invitation_client_id.as_deref(), Some("invitations"));
+        assert_eq!(
+            config.installation_hosts,
+            Some(("bb.example".to_owned(), "login.bb.example".to_owned()))
+        );
+        assert!(matches!(
+            config.pipeline_secrets,
+            Some(crate::pipeline_secrets::Backend::OpenBao { ref role, .. }) if role == "portal"
+        ));
+        let agents = config.agent_settings.as_ref().expect("agents");
+        assert_eq!(agents.portal_namespace, "portal");
+        let basemap = config.basemap.as_ref().expect("basemap");
+        assert_eq!(
+            basemap.cache_dir,
+            std::path::PathBuf::from("/var/cache/tiles")
+        );
+        assert!(!config.decisions_need_second_factor);
+        // The Debug forms name the settings and leave the credentials out.
+        let apps_db = format!("{:?}", config.apps_db.as_ref().expect("apps db"));
+        assert!(
+            apps_db.contains("shards") && !apps_db.contains("db-password"),
+            "{apps_db}"
+        );
+        assert!(format!("{agents:?}").contains("namespace"));
+        let shown = format!("{basemap:?}");
+        assert!(shown.contains("OSM"), "{shown}");
+        assert_eq!(basemap.key.as_deref(), Some("tiles-fixture"));
+        assert!(!shown.contains("tiles-fixture"), "{shown}");
+
+        let token = Config::from_vars(vars(owned(&[
+            ("JC_PORTAL_PIPELINE_RUNNER_TOKEN", " inline "),
+            ("JC_PORTAL_PIPELINE_RUNNER_TOKEN_FILE", missing_ok()),
+            ("JC_PORTAL_COST_PRICES_FILE", &empty_prices),
+        ])))
+        .expect("parses");
+        assert_eq!(token.pipeline_runner_token.as_deref(), Some("inline"));
+        assert!(token.cost_prices.is_none(), "an empty table prices nothing");
+        for file in [runner_token, tile_key, prices, empty_prices] {
+            std::fs::remove_file(file).expect("removed");
+        }
+    }
+
+    /// The inline token wins, so the file beside it is never read.
+    fn missing_ok() -> &'static str {
+        "/nonexistent/t7816/runner-token"
+    }
+
+    /// The process environment is read through the same parser as any lookup.
+    #[test]
+    fn from_env_reads_the_process_environment() {
+        let env = Config::from_env().map(|c| c.bind);
+        let vars = Config::from_vars(|k| std::env::var(k).ok()).map(|c| c.bind);
+        assert_eq!(env.ok(), vars.ok());
+    }
+
+    /// The API host sits beside a `portal.` host; any other host is its own API host.
+    #[test]
+    fn the_api_host_replaces_the_portal_prefix() {
+        let mut config = Config::from_vars(|_| None).expect("defaults");
+        config.public_base_url = "https://portal.bb.example/".parse().expect("url");
+        assert_eq!(config.api_base_url().as_str(), "https://api.bb.example/");
+        config.public_base_url = "https://data.bb.example/".parse().expect("url");
+        assert_eq!(config.api_base_url().as_str(), "https://data.bb.example/");
+    }
+
     /// A host value fills a forge variable the environment leaves unset; `from_vars` starts with
     /// none, so the standalone Portal reads its environment alone.
     #[test]
@@ -2798,6 +3185,19 @@ mod tests {
             }
             }
         };
+        assert_eq!(
+            vars("smartcity")("JC_PORTAL_OTHER"),
+            None,
+            "two variables only"
+        );
+        let unparsed = installation_organization(|name: &str| {
+            let hosts = name == "JC_PORTAL_ORGANIZATION_HOSTS";
+            Some(if hosts { "no equals sign" } else { "smartcity" }.to_owned())
+        });
+        assert!(
+            matches!(&unparsed, Err(ConfigError::Invalid { var, .. }) if *var == "JC_PORTAL_ORGANIZATION_HOSTS"),
+            "{unparsed:?}"
+        );
         assert_eq!(installation_organization(|_| None).unwrap(), None);
         assert_eq!(installation_organization(vars(" ")).unwrap(), None);
         let seed = installation_organization(vars("smartcity"))
@@ -2911,12 +3311,11 @@ mod tests {
                 "JC_PORTAL_CKAN_URL",
             ),
         ] {
-            match route(public, api) {
-                Err(ConfigError::Invalid { var, .. }) => {
-                    assert_eq!(var, named, "{public:?} {api:?}")
-                }
-                other => panic!("{public:?} {api:?}: {other:?}"),
-            }
+            let got = route(public, api);
+            assert!(
+                matches!(&got, Err(ConfigError::Invalid { var, .. }) if *var == named),
+                "{public:?} {api:?}: {got:?}"
+            );
         }
     }
 
@@ -3028,10 +3427,11 @@ mod tests {
         );
         assert_eq!(http_url(&one("OTHER", "x"), var).unwrap(), None);
         for bad in ["ftp://k", "not a url", ""] {
-            match http_url(&one(var, bad), var) {
-                Err(ConfigError::Invalid { var: named, .. }) => assert_eq!(named, var, "{bad}"),
-                other => panic!("{bad}: {other:?}"),
-            }
+            let got = http_url(&one(var, bad), var);
+            assert!(
+                matches!(&got, Err(ConfigError::Invalid { var: named, .. }) if *named == var),
+                "{bad}: {got:?}"
+            );
         }
     }
 
@@ -3072,12 +3472,11 @@ mod tests {
         assert!(!with(Some("optional")).expect("optional"));
         assert!(with(Some("required")).expect("required"));
         for refused in ["Required", "yes", "true"] {
-            match with(Some(refused)) {
-                Err(ConfigError::Invalid { var, .. }) => {
-                    assert_eq!(var, "JC_PORTAL_SECOND_FACTOR_FLOOR")
-                }
-                other => panic!("{refused}: {other:?}"),
-            }
+            let got = with(Some(refused));
+            assert!(
+                matches!(&got, Err(ConfigError::Invalid { var, .. }) if *var == "JC_PORTAL_SECOND_FACTOR_FLOOR"),
+                "{refused}: {got:?}"
+            );
         }
     }
 
@@ -3112,12 +3511,11 @@ mod tests {
         let bad_runner = |name: &str| {
             (name == "JC_PORTAL_PIPELINE_RUNNER_URL").then(|| "ftp://runner.{project}".to_owned())
         };
-        match Config::from_vars(bad_runner) {
-            Err(ConfigError::Invalid { var, .. }) => {
-                assert_eq!(var, "JC_PORTAL_PIPELINE_RUNNER_URL")
-            }
-            other => panic!("{:?}", other.map(|_| ())),
-        }
+        let got = Config::from_vars(bad_runner).map(|_| ());
+        assert!(
+            matches!(&got, Err(ConfigError::Invalid { var, .. }) if *var == "JC_PORTAL_PIPELINE_RUNNER_URL"),
+            "{got:?}"
+        );
     }
 
     #[test]
@@ -3137,9 +3535,6 @@ mod tests {
         assert!(oidc_config(&one("JC_OIDC_ISSUER", "https://kc/realms/x")).is_err());
         let full = |name: &str| match name {
             "JC_OIDC_ISSUER" => Some("https://kc/realms/x".to_owned()),
-            "JC_PORTAL_COOKIE_KEY" => {
-                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001".into())
-            }
             "JC_OIDC_CLIENT_ID" => Some("portal".to_owned()),
             "JC_OIDC_CLIENT_SECRET" => Some("s".to_owned()),
             "JC_KEYCLOAK_ADMIN_URL" => Some("http://kc:8080/admin".to_owned()),
@@ -3174,6 +3569,7 @@ mod tests {
             _ => None,
         };
         assert_eq!(cookie_keys(&rotating, true).unwrap().1.len(), 2);
+        assert_eq!(rotating("JC_PORTAL_OTHER"), None, "two variables only");
         assert!(cookie_keys(&one("JC_PORTAL_COOKIE_KEY", "short"), false).is_err());
         assert!(cookie_keys(&one("JC_PORTAL_COOKIE_KEY_PREVIOUS", "short"), false).is_err());
     }
@@ -3344,10 +3740,13 @@ mod tests {
     #[test]
     fn the_inline_limits_from_jc_toml_are_checked_and_never_sit_beside_the_file() {
         let with = |inline: &'static str, file: Option<&'static str>| {
-            organization_bounds(&move |name: &str| match name {
-                "JC_PORTAL_ORGANIZATION_BOUNDS" => Some(inline.to_owned()),
-                "JC_PORTAL_ORGANIZATION_BOUNDS_FILE" => file.map(str::to_owned),
-                _ => None,
+            // organization_bounds reads the inline variable and the file variable, nothing else.
+            organization_bounds(&move |name: &str| {
+                if name == "JC_PORTAL_ORGANIZATION_BOUNDS" {
+                    Some(inline.to_owned())
+                } else {
+                    file.map(str::to_owned)
+                }
             })
         };
         let raised = with(r#"{"spec.projects.quota.apps":{"max":250}}"#, None).expect("inline");
@@ -3454,9 +3853,7 @@ mod tests {
         assert_eq!(with(true, " ").unwrap().app_tests.unwrap().rust_image, None);
         assert_eq!(with(false, &rust).unwrap().app_tests, None);
         for bad in ["ghcr.io/x/builder:rust", "ghcr.io/x/builder@sha256:ABC"] {
-            let Err(err) = with(true, bad) else {
-                panic!("{bad} was accepted");
-            };
+            let err = with(true, bad).map(|_| ()).expect_err(bad);
             assert!(
                 err.to_string().contains("JC_PORTAL_APP_TESTS_RUST_IMAGE"),
                 "{err}"
@@ -3717,11 +4114,9 @@ mod tests {
 
     #[test]
     fn invalid_bind_produces_error() {
-        let err = Config::from_vars(|k| match k {
-            "JC_PORTAL_BIND" => Some("invalid-bind".to_string()),
-            _ => None,
-        })
-        .expect_err("should fail with invalid bind");
+        let err =
+            Config::from_vars(|k| (k == "JC_PORTAL_BIND").then(|| "invalid-bind".to_string()))
+                .expect_err("should fail with invalid bind");
 
         match err {
             ConfigError::Invalid { var, .. } => assert_eq!(var, "JC_PORTAL_BIND"),
@@ -3764,12 +4159,8 @@ mod tests {
 
     #[test]
     fn partial_oidc_configuration_is_rejected() {
-        let err = Config::from_vars(|k| match k {
-            "JC_OIDC_ISSUER" => Some("https://idm.example.sk/realms/bb".to_string()),
-            "JC_PORTAL_COOKIE_KEY" => {
-                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001".into())
-            }
-            _ => None,
+        let err = Config::from_vars(|k| {
+            (k == "JC_OIDC_ISSUER").then(|| "https://idm.example.sk/realms/bb".to_string())
         })
         .expect_err("partial oidc config must fail closed");
         match err {
@@ -3831,7 +4222,6 @@ mod tests {
             }
             "JC_OIDC_CLIENT_ID" => Some("portal".to_string()),
             "JC_OIDC_CLIENT_SECRET" => Some("s3cr3t".to_string()),
-            "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID" => Some("portal-reconciler".to_string()),
             "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SECRET" => Some("old".to_string()),
             "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SERVICE_ACCOUNT" => {
                 Some("portal-reconciler".to_string())
@@ -3848,12 +4238,9 @@ mod tests {
         ));
 
         // A ServiceAccount without a realm has no audience to mint for.
-        let err = Config::from_vars(|k| match k {
-            "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID" => Some("portal-reconciler".to_string()),
-            "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SERVICE_ACCOUNT" => {
-                Some("portal-reconciler".to_string())
-            }
-            _ => None,
+        let err = Config::from_vars(|k| {
+            (k == "JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_SERVICE_ACCOUNT")
+                .then(|| "portal-reconciler".to_string())
         })
         .expect_err("no issuer");
         assert!(
@@ -3926,9 +4313,6 @@ mod tests {
     fn unreadable_oidc_ca_file_stops_start_up() {
         let err = Config::from_vars(|k| match k {
             "JC_OIDC_ISSUER" => Some("https://idm.example.sk/realms/bb".to_string()),
-            "JC_PORTAL_COOKIE_KEY" => {
-                Some("cookie-key-of-the-portal-tests-it-seals-no-session-anybody-uses-0001".into())
-            }
             "JC_OIDC_CLIENT_ID" => Some("portal".to_string()),
             "JC_OIDC_CLIENT_SECRET" => Some("s3cr3t".to_string()),
             "JC_OIDC_CA_FILE" => Some("/nonexistent/jc-portal/ca.crt".to_string()),
@@ -4012,6 +4396,7 @@ mod tests {
             "JC_PORTAL_GRAFANA_PASSWORD" => Some("a-password".to_owned()),
             _ => None,
         };
+        assert_eq!(all("JC_PORTAL_OTHER"), None, "four variables only");
         let config = grafana_config(&all).expect("valid").expect("configured");
         assert_eq!(config.url, "http://grafana:3000/grafana");
         assert!(!format!("{config:?}").contains("a-password"));
@@ -4246,20 +4631,22 @@ mod tests {
             ("JC_PORTAL_APPS_PULL_SECRET_NAME", "App_Registry"),
             ("JC_PORTAL_APISIX_NAMESPACE", "dev/x"),
         ] {
-            match Config::from_vars(with(vec![
+            let got = Config::from_vars(with(vec![
                 (var, value),
                 ("JC_SHAKO_OWNER", "joinedcontext"),
-            ])) {
-                Err(ConfigError::Invalid { var: refused, .. }) => {
-                    assert_eq!(refused, var, "{value}")
-                }
-                Ok(_) => panic!("{var}={value} was accepted"),
-            }
+            ]))
+            .map(|_| ());
+            assert!(
+                matches!(&got, Err(ConfigError::Invalid { var: refused, .. }) if *refused == var),
+                "{var}={value}: {got:?}"
+            );
         }
-        match Config::from_vars(with(vec![("JC_PORTAL_APPS_REGISTRY", "forge.example.org")])) {
-            Err(ConfigError::Invalid { reason, .. }) => assert!(reason.contains("JC_SHAKO_OWNER")),
-            Ok(_) => panic!("a registry without the forge's organization was accepted"),
-        }
+        let got = Config::from_vars(with(vec![("JC_PORTAL_APPS_REGISTRY", "forge.example.org")]))
+            .map(|_| ());
+        assert!(
+            matches!(&got, Err(ConfigError::Invalid { reason, .. }) if reason.contains("JC_SHAKO_OWNER")),
+            "a registry without the forge's organization: {got:?}"
+        );
     }
 
     /// T-2874: dashboards are hidden unless the literal `true` shows them.
@@ -4482,10 +4869,8 @@ mod tests {
         ));
 
         // http url is rejected from environment
-        let err = Config::from_vars(|k| match k {
-            "JC_BASEMAP_URL" => Some("http://tiles.example.com/{z}/{x}/{y}.png".to_string()),
-            "JC_BASEMAP_ATTRIBUTION" => Some("OSM".to_string()),
-            _ => None,
+        let err = Config::from_vars(|k| {
+            (k == "JC_BASEMAP_URL").then(|| "http://tiles.example.com/{z}/{x}/{y}.png".to_string())
         })
         .expect_err("http rejected");
         assert!(matches!(
