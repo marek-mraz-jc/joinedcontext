@@ -635,14 +635,16 @@ async fn each_runtime_refusal_reaches_the_caller_as_its_status() {
             .await;
         let rig = organization_rig(&format!("fn-refused-{at}"), runtime).await;
         let eva = common::REALM.person_token("bbsk-events", "eva", &[]);
-        let cookie = format!("__Host-jc_csrf={CSRF}");
+        // her own token, as the App's index hands it (S1-52, T-7856)
+        let csrf = index_csrf(&rig, "bbsk-events", &eva).await;
+        let cookie = format!("__Host-jc_csrf={csrf}");
         let (status, body) = post(
             &rig,
             "/apps/bbsk-events/api/functions/near-me",
             &[
                 ("x-access-token", &eva),
                 ("cookie", &cookie),
-                ("x-csrf-token", CSRF),
+                ("x-csrf-token", &csrf),
             ],
             Vec::new(),
         )
