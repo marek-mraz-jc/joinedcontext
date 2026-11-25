@@ -225,7 +225,8 @@ fn refusal(err: InvokeError) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::entry;
+    use super::*;
+    use crate::api::agent_runs::RefusedStatus;
 
     /// AP-84: the entry names the function as a JSON string, so no name reaches the module as
     /// code, and a function the bundle lacks answers 404 from inside the runtime.
@@ -247,5 +248,123 @@ mod tests {
         );
         assert!(module.contains("? answeringRefusals(found)"), "{module}");
         assert!(module.starts_with("import * as all from \"@app/functions/upcoming.ts\";"));
+    }
+
+    async fn read(response: Response) -> (StatusCode, HeaderMap, serde_json::Value) {
+        let (parts, body) = response.into_parts();
+        let bytes = axum::body::to_bytes(body, 64 * 1024).await.expect("a body");
+        let body = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| serde_json::Value::String(String::from_utf8_lossy(&bytes).into()));
+        (parts.status, parts.headers, body)
+    }
+
+    /// The function's own status and body come back as they are; its logs never reach the caller.
+    #[tokio::test]
+    async fn the_functions_answer_is_its_own_status_and_body_without_its_logs() {
+        let outcome = serde_json::json!({
+            "status": 201, "body": { "made": 1 }, "logs": ["secret detail"], "error": null
+        });
+        let (status, _, body) = read(answer("shop", "make", outcome)).await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body, serde_json::json!({ "made": 1 }));
+    }
+
+    /// A status the runtime cannot have meant (none, above 999, beyond u16) is a 500, and a
+    /// missing body is `null`.
+    #[tokio::test]
+    async fn a_status_out_of_range_is_a_500_and_no_body_is_null() {
+        for outcome in [
+            serde_json::json!({}),
+            serde_json::json!({ "status": 1000 }),
+            serde_json::json!({ "status": 70000 }),
+            serde_json::json!({ "status": "200" }),
+            serde_json::json!({ "status": 99 }),
+        ] {
+            let (status, _, body) = read(answer("shop", "make", outcome.clone())).await;
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{outcome}");
+            assert_eq!(body, serde_json::Value::Null, "{outcome}");
+        }
+        let (status, _, body) =
+            read(answer("shop", "make", serde_json::json!({ "status": 204 }))).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::NO_CONTENT, serde_json::Value::Null)
+        );
+    }
+
+    /// A function that threw answers 500 with where it failed, as a problem of type
+    /// internal-error, whatever status it had set.
+    #[tokio::test]
+    async fn a_function_that_threw_answers_a_500_problem_naming_the_error() {
+        let outcome = serde_json::json!({
+            "status": 200, "body": { "ok": true }, "error": "TypeError: x is undefined at near-me.js:3"
+        });
+        let (status, headers, body) = read(answer("shop", "near-me", outcome)).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(headers[header::CONTENT_TYPE], "application/problem+json");
+        assert_eq!(body["error"], "TypeError: x is undefined at near-me.js:3");
+        assert!(
+            body["type"]
+                .as_str()
+                .is_some_and(|t| t.ends_with("/internal-error")),
+            "{body}"
+        );
+    }
+
+    /// Each way the runtime refuses a call answers its own status: busy 429 with Retry-After,
+    /// too large 413, unreachable or any other refusal 503 with the reason, and a bundle that
+    /// cannot be prepared 503 without the build's errors.
+    #[tokio::test]
+    async fn each_runtime_refusal_answers_its_own_status() {
+        let refused = |status| InvokeError::Refused {
+            reason: "jc-functions said no".into(),
+            duration_ms: 3,
+            status,
+        };
+        let (status, headers, _) = read(refusal(refused(RefusedStatus::Full))).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(headers[header::RETRY_AFTER], "1");
+        let (status, _, body) = read(refusal(refused(RefusedStatus::TooLarge))).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body, "the body is larger than a function takes");
+        for other in [RefusedStatus::NoAnswer, RefusedStatus::Other] {
+            let (status, _, body) = read(refusal(refused(other))).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(body["detail"], "jc-functions said no");
+        }
+        let (status, _, body) = read(refusal(InvokeError::Unavailable(
+            "no runtime address".into(),
+        )))
+        .await;
+        assert_eq!(
+            (status, body["detail"].clone()),
+            (StatusCode::SERVICE_UNAVAILABLE, "no runtime address".into())
+        );
+        for unprepared in [
+            InvokeError::NoFunction,
+            InvokeError::DoesNotBuild(vec!["functions.js:1 unexpected token".into()]),
+        ] {
+            let (status, _, body) = read(refusal(unprepared)).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(body["detail"], "the function could not be prepared");
+            assert!(!body.to_string().contains("unexpected token"), "{body}");
+        }
+    }
+
+    /// The edge's token counts only on a Portal that trusts its edge, and an empty one is none.
+    #[test]
+    fn the_edge_token_counts_only_when_the_edge_is_trusted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(&EDGE_TOKEN_HEADER, HeaderValue::from_static("eva-token"));
+        let mut config = crate::config::Config::for_tests();
+        config.trust_edge_token = false;
+        let untrusted = AppState::new(config.clone(), None);
+        assert_eq!(edge_token(&untrusted, &headers), None);
+        config.trust_edge_token = true;
+        let trusted = AppState::new(config, None);
+        assert_eq!(edge_token(&trusted, &headers).as_deref(), Some("eva-token"));
+        headers.insert(&EDGE_TOKEN_HEADER, HeaderValue::from_static(""));
+        assert_eq!(edge_token(&trusted, &headers), None);
+        assert_eq!(edge_token(&trusted, &HeaderMap::new()), None);
     }
 }

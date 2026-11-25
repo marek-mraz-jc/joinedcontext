@@ -210,15 +210,11 @@ async fn handle_post_receive_pack(
 
     // A task of its own: a client that leaves does not release the repository lock under a
     // running write, nor skip the size, the events and the mirrors of refs that moved.
-    let task = tokio::spawn({
+    let task = crate::service::spawned({
         let state = state.clone();
         async move { receive_push(&state, ctx, &owner, &repo_seg, spool).await }
     });
-    match task
-        .await
-        .map_err(|e| ShakoError::Internal(e.to_string()))
-        .and_then(|r| r)
-    {
+    match task.await.and_then(|r| r) {
         Ok(out) => receive_pack_result(out),
         Err(e) => gitea_error_response(&state, &e),
     }

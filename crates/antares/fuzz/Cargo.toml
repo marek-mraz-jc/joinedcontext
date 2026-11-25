@@ -137,6 +137,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "csource_registration"
+path = "fuzz_targets/csource_registration.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "accept_header"
 path = "fuzz_targets/accept_header.rs"
 test = false
