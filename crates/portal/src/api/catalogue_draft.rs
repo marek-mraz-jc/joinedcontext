@@ -560,7 +560,7 @@ mod tests {
             "city",
             json!({ "organizationDefault": "city" }),
         );
-        let known = known(&state, "city", &json!({ "contextSpaceRef": "air" })).await;
+        let known = super::known(&state, "city", &json!({ "contextSpaceRef": "air" })).await;
         assert_eq!(known.language, "sk");
         assert_eq!(known.classes, ["AirQualityObserved"]);
         assert_eq!(known.linkml, None, "no forge gives no source");
