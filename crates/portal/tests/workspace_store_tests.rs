@@ -294,7 +294,10 @@ async fn a_workspace_moves_through_every_state_and_an_unknown_one_is_not_found()
         }
         let moved = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
         store.set_base_revision(&name, moved).await.unwrap();
-        assert_eq!(fresh.get(&name).await.unwrap().unwrap().base_revision, moved);
+        assert_eq!(
+            fresh.get(&name).await.unwrap().unwrap().base_revision,
+            moved
+        );
 
         let later = TimestampTz::now() + jiff::SignedDuration::from_hours(2);
         let gone = fresh.expired(later).await.unwrap();
@@ -343,7 +346,9 @@ async fn a_workspace_of_an_unkeyed_project_is_unplaced() {
 fn each_workspace_refusal_is_the_api_problem_of_its_kind() {
     use joinedcontext_portal::error::ApiError;
     let api = |err: WorkspaceError| ApiError::from(err);
-    assert!(matches!(api(WorkspaceError::Invalid("bad".into())), ApiError::BadRequest(m) if m == "bad"));
+    assert!(
+        matches!(api(WorkspaceError::Invalid("bad".into())), ApiError::BadRequest(m) if m == "bad")
+    );
     assert!(matches!(
         api(WorkspaceError::Conflict("kpi".into())),
         ApiError::Conflict(m) if m == "a workspace named 'kpi' already exists"

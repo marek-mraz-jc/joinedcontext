@@ -567,7 +567,11 @@ async fn a_failed_export_leaves_everything_in_place() {
 
 /// A store that answers `failing` (method, and whether the request is a copy) with 500 and the
 /// rest as [`store_with_one_file`] does with 200.
-async fn store_failing(shard: u32, id: &str, failing: (&'static str, bool)) -> wiremock::MockServer {
+async fn store_failing(
+    shard: u32,
+    id: &str,
+    failing: (&'static str, bool),
+) -> wiremock::MockServer {
     use wiremock::{Mock, ResponseTemplate};
     let store = store_with_one_file(shard, id, 200).await;
     let (verb, copy) = failing;
@@ -587,8 +591,18 @@ async fn store_failing(shard: u32, id: &str, failing: (&'static str, bool)) -> w
 #[tokio::test]
 async fn a_retire_whose_files_fail_names_the_step_and_drops_only_after_the_export() {
     for (test, failing, why, left) in [
-        ("nolist", ("GET", false), "the App's files could not be listed", 1),
-        ("nocopy", ("PUT", true), "the App's files could not be exported", 1),
+        (
+            "nolist",
+            ("GET", false),
+            "the App's files could not be listed",
+            1,
+        ),
+        (
+            "nocopy",
+            ("PUT", true),
+            "the App's files could not be exported",
+            1,
+        ),
         (
             "nodelete",
             ("DELETE", false),
