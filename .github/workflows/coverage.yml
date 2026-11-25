@@ -113,6 +113,17 @@ jobs:
           sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
           sudo mkswap /swap-portal >/dev/null && sudo swapon /swap-portal
           { echo CARGO_PROFILE_DEV_DEBUG=0; echo CARGO_PROFILE_TEST_DEBUG=0; } >> "$GITHUB_ENV"
+      # The preview, the kit and the sample gallery embed sdk/dist (rust-embed): an unbuilt SDK
+      # leaves the preview document and those embeds unrun (run 45522482025: preview.rs 66 %,
+      # kit.rs 63 %, T-7818). Built as ci.yml's ui job builds it.
+      - if: matrix.ws == 'portal'
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { package_json_file: crates/portal/ui/package.json }
+      - if: matrix.ws == 'portal'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 24 }
+      - if: matrix.ws == 'portal'
+        run: cd sdk && pnpm install --frozen-lockfile && pnpm build
       # The platform's lockfile repeats the root one's versions (ci.yml platform-test). Its test
       # targets, but jc-core's (the `then` pass) and context-gateway's in_flight_tests, which reads
       # the platform repository's Dockerfile, not vendored.

@@ -314,6 +314,52 @@ mod tests {
         assert_eq!(one_of(&json!({ "answer": ["read"] }), &ACCESS), None);
     }
 
+    /// An answer that is no option offered, a step of no path and a description that is not
+    /// words leave the turn to the model or ask again; described before the access and the
+    /// audience are answered is an error; words while nothing asks for a description are none
+    /// (T-7818).
+    #[tokio::test]
+    async fn answers_out_of_turn_are_left_to_the_model_or_asked_again() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let driver = Driver::for_tests(state, "helsinki");
+        for (step, answer) in [
+            (ACCESS_STEP, json!({ "answer": "everything" })),
+            (AUDIENCE_STEP, json!({ "answer": "the world" })),
+            (DESCRIBE_STEP, json!({ "answer": 5 })),
+            ("another-path-step", json!({ "answer": "x" })),
+        ] {
+            let taken = driver
+                .build_answer(step, &answer, &[])
+                .await
+                .expect("no failure");
+            assert!(taken.is_none(), "{step}");
+        }
+        let asked = driver
+            .build_answer(DESCRIBE_STEP, &json!({ "answer": "   " }), &[])
+            .await
+            .expect("no failure");
+        assert!(
+            matches!(asked, Some(Taken::Done(ref said)) if said == "say what the app should do"),
+            "asked again"
+        );
+        let early = driver
+            .build_answer(DESCRIBE_STEP, &json!({ "answer": "a map of bikes" }), &[])
+            .await
+            .err()
+            .expect("nothing chosen yet");
+        assert!(early.contains("before the app is described"), "{early}");
+        let fresh = Driver::for_tests(
+            AppState::new(crate::config::Config::for_tests(), None),
+            "helsinki",
+        );
+        *fresh.path.lock().expect("lock") = Some(crate::agents::paths::Path::BuildApp);
+        assert!(fresh
+            .build_words("a map")
+            .await
+            .expect("no failure")
+            .is_none());
+    }
+
     /// JC1-14: words typed where the project had no Endpoint to pick name none, so the path
     /// asks nothing further and the model takes the words.
     #[tokio::test]
