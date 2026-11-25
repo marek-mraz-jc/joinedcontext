@@ -2166,10 +2166,7 @@ pub(crate) mod tests {
                 DcatProfile::eu(),
                 &Default::default(),
             );
-            let g = match parse(text.as_bytes(), format, RdfLimits::default()) {
-                Ok(v) => v,
-                Err(e) => panic!("{format:?} output must parse: {e}\n{text}"),
-            };
+            let g = parse(text.as_bytes(), format, RdfLimits::default()).expect(&text);
             assert_eq!(
                 g.len(),
                 expected,
@@ -2196,10 +2193,7 @@ pub(crate) mod tests {
                 profile,
                 &Default::default(),
             );
-            let g = match parse(text.as_bytes(), RdfFormat::JsonLd, RdfLimits::default()) {
-                Ok(v) => v,
-                Err(e) => panic!("{profile:?} JSON-LD must parse: {e}\n{text}"),
-            };
+            let g = parse(text.as_bytes(), RdfFormat::JsonLd, RdfLimits::default()).expect(&text);
             let access = format!("{}accessURL", ns::DCAT);
             assert_eq!(
                 g.triples.iter().filter(|t| t.predicate == access).count(),
@@ -2304,7 +2298,7 @@ pub(crate) mod tests {
             ] {
                 let text =
                     serialize_dataset(&src, &cat, None, format, profile, &Default::default());
-                let back = match parse_datasets_from_rdf(
+                let back = parse_datasets_from_rdf(
                     &text,
                     format,
                     org,
@@ -2312,10 +2306,8 @@ pub(crate) mod tests {
                     "city",
                     "cs",
                     &RdfLimits::default(),
-                ) {
-                    Ok(v) => v,
-                    Err(e) => panic!("{profile:?} {format:?}: {e}\n{text}"),
-                };
+                )
+                .expect(&text);
                 let ctx = format!("{profile:?} {format:?}");
                 assert_eq!(back.len(), 1, "{ctx}\n{text}");
                 let ds = &back[0];
@@ -2814,10 +2806,7 @@ pub(crate) mod tests {
                     Some(&hydra),
                     &Default::default(),
                 );
-                let g = match parse(text.as_bytes(), format, RdfLimits::default()) {
-                    Ok(v) => v,
-                    Err(e) => panic!("{profile:?} {format:?}: {e}\n{text}"),
-                };
+                let g = parse(text.as_bytes(), format, RdfLimits::default()).expect(&text);
                 let page = SubjectNode::Named(hydra.current_page_uri.clone());
                 let next = g.first_object(&page, &format!("{}next", ns::HYDRA));
                 assert_eq!(

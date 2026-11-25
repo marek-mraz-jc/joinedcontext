@@ -351,11 +351,10 @@ fn embedded<E: rust_embed::RustEmbed>(path: &str) -> std::result::Result<&'stati
 fn installed_profiles() -> std::result::Result<Vec<Profile>, String> {
     let paths: Vec<_> = Directories::iter().collect();
     let mut specifications = Vec::new();
+    // A specification folder also holds what no manifest can name, e.g. an image.
     for path in Specifications::iter() {
-        // A specification folder also holds what no manifest can name, e.g. an image.
-        if let Ok(text) = embedded::<Specifications>(&path) {
-            specifications.push((format!("../../specs/{path}"), text));
-        }
+        let text = embedded::<Specifications>(&path).ok();
+        specifications.extend(text.map(|text| (format!("../../specs/{path}"), text)));
     }
     let mut found = Vec::new();
     for path in &paths {
@@ -465,10 +464,11 @@ fn load(sources: &[Embedded<'_>]) -> std::result::Result<Vec<Profile>, String> {
             ));
         };
         let mut profile = read.remove(at);
+        // `ready` holds every base done, in the order the manifest names them.
         for base in profile.bases.clone() {
-            if let Some(base) = done.iter().find(|d| d.id == base) {
-                profile.inherit(base);
-            }
+            done.iter()
+                .filter(|d| d.id == base)
+                .for_each(|d| profile.inherit(d));
         }
         if profile.serialisations.is_empty() {
             return Err(format!("profile {}: no serialisation", profile.id));
@@ -589,6 +589,23 @@ impl DcatProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fixture files for [`embedded`]: one text, one not UTF-8.
+    #[derive(rust_embed::RustEmbed)]
+    #[folder = "tests/fixtures/embedded"]
+    struct Fixtures;
+
+    /// An embedded file is read as text; one that is not UTF-8 or not embedded is refused by name.
+    #[test]
+    fn embedded_files_must_be_text() {
+        assert_eq!(embedded::<Fixtures>("text.txt"), Ok("text"));
+        let bad = embedded::<Fixtures>("not-utf8.bin").expect_err("not UTF-8");
+        assert!(bad.starts_with("not-utf8.bin: invalid utf-8"), "{bad}");
+        assert_eq!(
+            embedded::<Fixtures>("absent"),
+            Err("absent: not embedded".to_owned())
+        );
+    }
 
     const EU: &str = r#"{"id":"dcat-ap-3.0.1","version":"1","uri":"urn:x:eu","source":"s",
         "title":{"en":"EU"},"serialisations":["turtle"],"shapes":["a.ttl"],
