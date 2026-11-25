@@ -114,17 +114,12 @@ pub(crate) fn parse_input<T: serde::de::DeserializeOwned>(val: Value) -> Result<
 
 pub(crate) fn serde_error_path_and_message(err: &serde_json::Error) -> (String, String) {
     let msg = err.to_string();
-    if let Some(rest) = msg.strip_prefix("unknown field `") {
-        if let Some((field, _)) = rest.split_once('`') {
-            return (format!("/{field}"), msg);
-        }
-    }
-    if let Some(rest) = msg.strip_prefix("missing field `") {
-        if let Some((field, _)) = rest.split_once('`') {
-            return (format!("/{field}"), msg);
-        }
-    }
-    ("/".to_string(), msg)
+    let field = ["unknown field `", "missing field `"]
+        .iter()
+        .find_map(|prefix| msg.strip_prefix(prefix))
+        .and_then(|rest| rest.split_once('`'));
+    let path = field.map_or_else(|| "/".to_string(), |(field, _)| format!("/{field}"));
+    (path, msg)
 }
 
 /// The verdict a check leaves on a draft, written out for the clients that read it (AG-62).
@@ -158,4 +153,28 @@ pub(crate) fn empty_input_schema() -> Value {
         "properties": {},
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        name: String,
+    }
+
+    #[test]
+    fn a_refusal_names_the_unknown_or_missing_field_else_the_whole_input() {
+        let read = |val: Value| match parse_input::<Input>(val) {
+            Ok(input) => input.name,
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(read(json!({ "name": "ok" })), "ok");
+        assert!(read(json!({ "name": "a", "nmae": "b" }))
+            .starts_with("invalid input at /nmae: unknown field"));
+        assert!(read(json!({})).starts_with("invalid input at /name: missing field"));
+        assert!(read(json!({ "name": 5 })).starts_with("invalid input at /: invalid type"));
+    }
 }

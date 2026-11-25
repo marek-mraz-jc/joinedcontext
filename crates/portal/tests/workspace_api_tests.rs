@@ -621,6 +621,43 @@ async fn the_listing_an_agent_reads_offers_the_work_and_neither_way_out() {
     }
 }
 
+/// The registry's update, bring-back and discard run the same functions as the REST doors for a
+/// person in a session (T-7817).
+#[tokio::test]
+async fn a_person_updates_brings_back_and_discards_through_the_registry() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    changed(&server, &space("en", 10), "s-base").await;
+    let person = Caller::new(steward(), Via::Session);
+    let name = json!({ "name": "air-v2" });
+    let update = ops::find("jc_workspace_update_from_main").unwrap();
+    let report = ops::call(
+        update,
+        &person,
+        &state,
+        PROJECT,
+        json!({ "name": "air-v2", "resolutions": [] }),
+    )
+    .await
+    .expect("updated");
+    assert_eq!(report["merged"], json!([]), "{report}");
+    let propose = ops::find("jc_workspace_propose").unwrap();
+    let change = ops::call(propose, &person, &state, PROJECT, name.clone())
+        .await
+        .expect("proposed");
+    assert_eq!(change["status"]["lane"], "yellow", "{change}");
+    assert_eq!(
+        calls(&server, "POST", "/Shako.OpenPullRequest").await.len(),
+        1
+    );
+    let discard = ops::find("jc_workspace_discard").unwrap();
+    let gone = ops::call(discard, &person, &state, PROJECT, name)
+        .await
+        .expect("discarded");
+    assert_eq!(gone, json!({ "discarded": "air-v2" }));
+    assert!(state.workspaces.get("air-v2").await.unwrap().is_none());
+}
+
 #[tokio::test]
 async fn discarding_removes_the_branch_and_the_record() {
     let (server, state) = world().await;
