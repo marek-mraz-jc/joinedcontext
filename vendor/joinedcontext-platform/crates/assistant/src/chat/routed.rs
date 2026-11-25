@@ -4666,6 +4666,48 @@ async fn stream_answer(q: Question<'_, '_>, mut spent: Spent, answering: Answeri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::test_world::{connector, Parts};
+
+    /// With the store down, a dataset page beside a read is looked up again later (no page yet),
+    /// a page the rows name is not trusted unchecked, and the Endpoint's own manifest dataset
+    /// or the page already looked up stand without the store.
+    #[tokio::test]
+    async fn a_page_lookup_on_a_store_that_is_down_finds_none_and_says_so() {
+        let parts = Parts::new();
+        let mut endpoint = connector("http://127.0.0.1:9", "most", &[], None);
+        let connectors = [endpoint.clone()];
+        let sources = [("hronov".to_owned(), vec!["web".to_owned()])];
+        let mut ask = parts.ask(&connectors);
+        ask.sources = &sources;
+        ask.public_only = false;
+        assert_eq!(page_step(&ask, &endpoint, "Bridge").await, None);
+        let rows = json!([{"id": "urn:ngsi-ld:Bridge:a", "isPartOf": {"value": "https://data.example/dataset/mosty"}}])
+            .to_string();
+        assert_eq!(dataset_or(&ask, &endpoint, "Bridge", &rows, None).await, None);
+        let own = Some(Some("https://data.example/dataset/vlastne".to_owned()));
+        assert_eq!(
+            dataset_or(&ask, &endpoint, "Bridge", "[]", own.clone()).await,
+            own.clone().flatten()
+        );
+        endpoint.dataset = Some("https://data.example/dataset/manifest".into());
+        assert_eq!(
+            dataset_or(&ask, &endpoint, "Bridge", "[]", own).await.as_deref(),
+            Some("https://data.example/dataset/manifest")
+        );
+    }
+
+    #[test]
+    fn each_limit_is_logged_by_its_cap() {
+        let names = [
+            Limit::Day,
+            Limit::Month {
+                resets: "1. 12. 2026".into(),
+            },
+            Limit::Unknown,
+        ]
+        .map(|limit| limit.name());
+        assert_eq!(names, ["day", "month", "unknown"]);
+    }
 
     /// T-7789: a round answers from the searches that came back by its deadline, in their order,
     /// and drops the slow one; before the deadline, or with none back yet, it waits.
@@ -4767,9 +4809,11 @@ mod tests {
         cache.keep_page("d#true|narrowing", PageKept::Missed(9, Instant::now()));
         drop(Miss::new(&cache, "d#true|narrowing", 9));
         let kept = cache.pages.lock().unwrap().get("d#true|narrowing").cloned();
-        let Some(PageKept::Missed(10, until)) = kept else {
-            panic!("{kept:?}")
-        };
+        let until = match kept {
+            Some(PageKept::Missed(10, until)) => Some(until),
+            _ => None,
+        }
+        .expect("a tenth miss");
         assert!(until <= Instant::now() + BACKOFF_MAX);
         assert!(until > Instant::now() + BACKOFF_MAX - Duration::from_secs(5));
     }
@@ -4807,18 +4851,13 @@ mod tests {
     }
 
     /// T-7765: a database that does not answer never holds the question. The pool's server
-    /// accepts and stays silent, as a count over a cold chunks table did for up to 20 s; the
+    /// listens and stays silent, as a count over a cold chunks table did for up to 20 s; the
     /// languages come back at once, empty, and a second question starts no second read.
     #[tokio::test]
     async fn the_sources_languages_never_wait_on_a_slow_database() {
         let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = silent.local_addr().unwrap().port();
-        let held = tokio::spawn(async move {
-            let mut open = Vec::new();
-            while let Ok((socket, _)) = silent.accept().await {
-                open.push(socket);
-            }
-        });
+        // Never accepted: a connection waits in the backlog and hears nothing.
         let pool = sqlx::postgres::PgPoolOptions::new()
             .acquire_timeout(Duration::from_secs(5))
             .connect_lazy(&format!("postgres://jc@127.0.0.1:{port}/jc"))
@@ -4852,7 +4891,7 @@ mod tests {
         assert_eq!(cache.reading_languages.lock().unwrap().len(), 1);
         // The private channel's languages are kept apart from the public one's.
         assert!(source_languages(&cache, &pool, "bbsk/chat", &sources, false).is_empty());
-        held.abort();
+        drop(silent);
     }
 
     /// The most tokens (by [`tokens_of`]) of a data answer's first call, messages and tool
@@ -4889,10 +4928,11 @@ mod tests {
                 detail,
             } => {
                 assert_eq!((status, title), (429, "Daily Limit Reached"));
-                detail
+                Some(detail)
             }
-            other => panic!("{other:?}"),
-        };
+            _ => None,
+        }
+        .expect("a limit error");
         let day = "Asistent dnes dosiahol denný limit. Skúste to znova";
         let summer = datetime!(2026-10-18 18:30 UTC);
         assert_eq!(
@@ -5881,12 +5921,14 @@ mod tests {
         assert!(missing.is_empty());
 
         // The list grew old and the Endpoint is slow again: the old list stands in.
-        if let Ok(mut held) = cache.types.lock() {
-            let old = Instant::now()
-                .checked_sub(TYPES_LIFE * 2)
-                .expect("an old instant");
-            held.insert("slow".into(), (old, vec!["Event".to_owned()]));
-        }
+        let old = Instant::now()
+            .checked_sub(TYPES_LIFE * 2)
+            .expect("an old instant");
+        cache
+            .types
+            .lock()
+            .expect("the types")
+            .insert("slow".into(), (old, vec!["Event".to_owned()]));
         let (third, missing) = live_of(&cache, &http, "bb/public", &connectors, None).await;
         assert_eq!(
             named(&third),
@@ -5977,13 +6019,16 @@ mod tests {
         let old = Instant::now()
             .checked_sub(TOOLS_LIFE * 2)
             .expect("an old instant");
-        for held in [cache.types.lock().ok(), None].into_iter().flatten() {
-            let mut held = held;
-            held.insert("bbsk".into(), (old, vec!["CycleRoute".to_owned()]));
-        }
-        if let Ok(mut tools) = cache.tools.lock() {
-            tools.insert("bbsk".into(), (old, vec![json!({"name": "list_types"})]));
-        }
+        cache
+            .types
+            .lock()
+            .expect("the types")
+            .insert("bbsk".into(), (old, vec!["CycleRoute".to_owned()]));
+        cache
+            .tools
+            .lock()
+            .expect("the tools")
+            .insert("bbsk".into(), (old, vec![json!({"name": "list_types"})]));
         let surface = super::super::mcp::Surface {
             gateway: gateway.uri(),
             slug: "bbsk".into(),

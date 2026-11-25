@@ -26,7 +26,10 @@ impl Parts {
         let http = reqwest::Client::new();
         let closed = "http://127.0.0.1:9";
         Self {
-            pool: sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:9/none")
+            // A store that is down: every query fails within a fifth of a second.
+            pool: sqlx::postgres::PgPoolOptions::new()
+                .acquire_timeout(Duration::from_millis(200))
+                .connect_lazy("postgres://nobody@127.0.0.1:9/none")
                 .expect("a lazy pool"),
             embedder: crate::embed::Embedder::remote(jc_embedder::client::RemoteConfig {
                 url: closed.into(),
