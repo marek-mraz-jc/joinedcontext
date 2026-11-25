@@ -1047,6 +1047,7 @@ mod tests {
             row("data2.city.test", "city", "served"),
             row("wait.city.test", "city", "dns-ok"),
             row("theirs.other.test", "other", "served"),
+            row("mobility.city.test", "city", "served"),
         ]);
         let orgs = with_sites(city(), &sites);
         assert_eq!(orgs[0].listed, ["mobility.city.test", "data2.city.test"]);
@@ -1108,7 +1109,7 @@ mod tests {
         let orgs = city();
         let mirror = Mirror::new();
         assert!(declarations_in(&mirror, &orgs).is_empty(), "nothing synced");
-        let put = |spec: serde_json::Value| {
+        let put_titled = |spec: serde_json::Value, title: serde_json::Value| {
             mirror.upsert(
                 serde_json::from_value(serde_json::json!({
                     "apiVersion": "joinedcontext.com/v1alpha1",
@@ -1116,12 +1117,15 @@ mod tests {
                     "metadata": {
                         "name": "city",
                         "namespace": joinedcontext_portal::permissions::ORG_NAMESPACE,
-                        "title": {"sk": "Mesto", "en": "City"},
+                        "title": title,
                     },
                     "spec": spec,
                 }))
                 .unwrap(),
             );
+        };
+        let put = |spec: serde_json::Value| {
+            put_titled(spec, serde_json::json!({"sk": "Mesto", "en": "City"}));
         };
         put(serde_json::json!({"locales": "not a list"}));
         assert!(declarations_in(&mirror, &orgs).is_empty(), "not parsed");
@@ -1158,6 +1162,10 @@ mod tests {
             Some(None),
             "a placeholder is no publisher"
         );
+        // A title given as one text names the publisher in the default locale.
+        put_titled(base, serde_json::json!("Mesto"));
+        let one = &declarations_in(&mirror, &orgs)["city"];
+        assert_eq!(one.publisher_name.as_ref().unwrap()["sk"], "Mesto");
     }
 
     #[test]
@@ -1263,6 +1271,32 @@ mod tests {
             "an Organization jc does not serve"
         );
     }
+
+    /// The harvest sources of a portal whose Organization jc does not serve, and of a converted
+    /// file with no `[dataroom]` directory or no such file, are refused with the source named.
+    #[test]
+    fn a_source_jc_cannot_harvest_is_refused_with_its_name() {
+        let mut orgs = city();
+        let mut stranger = portal("mobility", None);
+        stranger.organization_ref = "town".into();
+        let err = harvest_sources_of(&stranger, &orgs).unwrap_err();
+        assert_eq!(err, "no [[organizations]] town");
+        let mut converted = portal("mobility", None);
+        converted.sources = serde_json::from_value(serde_json::json!([
+            { "name": "parks", "type": "dcat-ap", "url": "https://data.kosice.sk/parks.ttl",
+              "convertedFile": "parks.json" },
+        ]))
+        .unwrap();
+        let err = harvest_sources_of(&converted, &orgs).unwrap_err();
+        assert_eq!(
+            err,
+            "source parks: convertedFile, but jc.toml has no [dataroom]"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        orgs[0].config_dir = Some(dir.path().to_path_buf());
+        let err = harvest_sources_of(&converted, &orgs).unwrap_err();
+        assert!(err.starts_with("source parks: "), "{err}");
+    }
 }
 
 /// The writer half of the reconciler and the Portal's desks on a memory dataroom (T-7820):
@@ -1305,7 +1339,7 @@ mod desk_tests {
             "url": "http://127.0.0.1:9/catalog.ttl", "allowedHosts": ["127.0.0.1"] }])
     }
 
-    fn writer(store: Arc<MemoryStore>, files: &std::path::Path) -> CatalogueWriter {
+    fn writer(store: Arc<dyn dataroom_core::Store>, files: &std::path::Path) -> CatalogueWriter {
         let orgs = city();
         let authorizer = Arc::new(LiveAuthorizer::new(Vec::new()));
         let state = dataroom_api::DataroomState::new(
@@ -1385,6 +1419,66 @@ mod desk_tests {
         assert!(done.is_empty());
         let gone = CatalogueId::of_portal(orgs[0].org_id, "transit");
         assert!(w.datasets(orgs[0].org_id, gone).await.is_err());
+    }
+
+    /// A dataroom that refuses each write in turn: the round keeps the portal it last wrote, so
+    /// the next round tries again, and a declaration that cannot be read is left for the next.
+    #[tokio::test]
+    async fn a_store_that_refuses_keeps_the_last_written_portal_for_the_next_round() {
+        use crate::modules::faulty_dataroom::FaultyDataroom;
+        let dir = tempfile::tempdir().unwrap();
+        let faults = Arc::new(FaultyDataroom::new(Arc::new(MemoryStore::new())));
+        let w = writer(faults.clone(), dir.path());
+        let orgs = city();
+        let mut done = BTreeMap::new();
+        let mobility = portal(
+            "mobility",
+            serde_json::json!([
+                { "name": "a", "type": "dcat-ap", "url": "https://data.kosice.sk/a.ttl" },
+                { "name": "b", "type": "dcat-ap", "url": "https://data.kosice.sk/b.ttl" },
+            ]),
+        );
+        apply(&w, &orgs, &mut done, served(&[("m", mobility.clone())])).await;
+        assert_eq!(done.get("m"), Some(&mobility));
+        // Declarations: one for `city` (its own and its further catalogue), none for `town`.
+        let mut town = city();
+        town[0].name = "town".into();
+        let both: Vec<OrganizationPortals> = orgs.iter().cloned().chain(town).collect();
+        let declaration = CatalogueDeclaration {
+            publisher_uri: Some(Some("https://city.test/id/city".into())),
+            ..CatalogueDeclaration::default()
+        };
+        let declared = BTreeMap::from([("city".to_owned(), declaration)]);
+        declare(&w, &both, &done, &declared).await;
+        let further = CatalogueId::of_portal(orgs[0].org_id, "mobility");
+        let held = dataroom_core::Store::get_catalogue(faults.as_ref(), orgs[0].org_id, further)
+            .await
+            .unwrap()
+            .expect("the further catalogue");
+        assert_eq!(
+            held.publisher_uri.as_deref(),
+            Some("https://city.test/id/city")
+        );
+        // A source that cannot be deleted keeps the manifest that held it.
+        faults.fail("delete_harvest_source");
+        let fewer = portal(
+            "mobility",
+            serde_json::json!([
+                { "name": "a", "type": "dcat-ap", "url": "https://data.kosice.sk/a.ttl" },
+            ]),
+        );
+        apply(&w, &orgs, &mut done, served(&[("m", fewer)])).await;
+        assert_eq!(done.get("m"), Some(&mobility));
+        // A catalogue that cannot be deleted keeps a moved portal and one that left.
+        faults.fail("delete_catalogue");
+        let moved = portal("transit", serde_json::json!([]));
+        apply(&w, &orgs, &mut done, served(&[("m", moved)])).await;
+        assert_eq!(done.get("m"), Some(&mobility));
+        apply(&w, &orgs, &mut done, BTreeMap::new()).await;
+        assert_eq!(done.get("m"), Some(&mobility));
+        // A catalogue that cannot be read is not declared; the next round tries again.
+        faults.fail("get_catalogue");
+        declare(&w, &both, &done, &declared).await;
     }
 
     #[tokio::test]

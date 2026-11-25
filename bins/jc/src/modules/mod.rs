@@ -58,6 +58,10 @@ pub mod dataroom;
 mod ekiben;
 #[cfg(feature = "ekiben")]
 mod ekiben_pg;
+/// Its dataroom counterpart, kept under `tests/` too.
+#[cfg(all(test, feature = "dataroom"))]
+#[path = "../../tests/common/faulty_dataroom.rs"]
+pub(crate) mod faulty_dataroom;
 /// The fault-injecting kaisatsu store of the unit tests (T-7637), kept under `tests/`.
 #[cfg(all(test, feature = "kaisatsu"))]
 #[path = "../../tests/common/faulty_store.rs"]
