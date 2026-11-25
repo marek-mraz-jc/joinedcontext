@@ -223,16 +223,20 @@ impl BatchRun<'_> {
         }
         let mut verdicts = refused.into_iter().zip(shown);
         let (out, conds) = (&mut self.out, &mut self.conds);
-        items.retain(|_| match verdicts.next() {
-            Some((Err(why), (id, _, _))) => {
-                out.errors.push(denied_entry(id.as_deref(), &why));
-                false
-            }
-            Some((Ok(granted), (id, _, _))) => {
-                conds.add(id.as_deref(), &granted);
-                true
-            }
-            None => true,
+        // one verdict per member, in order
+        items.retain(|_| {
+            verdicts
+                .next()
+                .is_none_or(|(verdict, (id, _, _))| match verdict {
+                    Err(why) => {
+                        out.errors.push(denied_entry(id.as_deref(), &why));
+                        false
+                    }
+                    Ok(granted) => {
+                        conds.add(id.as_deref(), &granted);
+                        true
+                    }
+                })
         });
         Ok(())
     }
@@ -377,21 +381,11 @@ impl BatchRun<'_> {
     async fn round(&mut self, round: Vec<Member>) -> Result<(), NgsiError> {
         let ts = now_iso();
         match self.opts.mode {
-            // Creates are collected apart and never reach a round; a request
-            // handler answers, it does not panic.
-            BatchMode::Create => {
-                for (id, _) in round {
-                    self.out.errors.push(err_entry(
-                        Some(&id),
-                        &NgsiError::InternalError(
-                            "batch create is handled before the rounds".into(),
-                        ),
-                    ));
-                }
-                Ok(())
-            }
             BatchMode::Upsert => self.upsert(round, &ts).await,
-            BatchMode::Update | BatchMode::Merge => self.update(round, &ts).await,
+            // Creates are collected apart and never reach a round.
+            BatchMode::Create | BatchMode::Update | BatchMode::Merge => {
+                self.update(round, &ts).await
+            }
         }
     }
 
