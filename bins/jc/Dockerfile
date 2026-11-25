@@ -300,15 +300,16 @@ FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f0
 COPY --from=base /var/lib/dpkg/status.d /base-status
 RUN set -eu; apt-get update; \
     apt-get install -y --no-install-recommends git; \
-    apt-get install -y --no-install-recommends --only-upgrade zlib1g; \
+    apt-get install -y --no-install-recommends --only-upgrade zlib1g libzstd1; \
     dpkg --compare-versions "$(dpkg-query -W -f='${Version}' zlib1g)" ge 1:1.3.dfsg+really1.3.1-1+deb13u1; \
+    dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libzstd1)" ge 1.5.7+dfsg-1+deb13u1; \
     arch=$(dpkg --print-architecture); \
     libs=$(for f in /usr/bin/git /usr/lib/git-core/git-remote-http; do ldd "$f" | awk '/=>/ {print $3}'; done | sort -u); \
-    pkgs=$( (echo git; echo zlib1g; for l in $libs; do dpkg -S "$(readlink -f "$l")" | cut -d: -f1; done) | sort -u); \
+    pkgs=$( (echo git; echo zlib1g; echo libzstd1; for l in $libs; do dpkg -S "$(readlink -f "$l")" | cut -d: -f1; done) | sort -u); \
     mkdir -p /overlay/var/lib/dpkg/status.d; : > /files; \
     for p in $pkgs; do \
-      # a package the base ships already stays the base's, zlib1g (the fix) excepted
-      if [ "$p" != zlib1g ] && [ -e "/base-status/$p" ]; then continue; fi; \
+      # a package the base ships already stays the base's, zlib1g and libzstd1 (the fixes) excepted
+      if [ "$p" != zlib1g ] && [ "$p" != libzstd1 ] && [ -e "/base-status/$p" ]; then continue; fi; \
       dpkg -L "$p" | grep -vE '^/usr/share/(doc|man|locale|lintian|bash-completion)/' \
         | while read -r f; do if [ -f "$f" ] || [ -L "$f" ]; then echo "$f"; fi; done >> /files; \
       dpkg-query -s "$p" | grep -v '^Status:' > "/overlay/var/lib/dpkg/status.d/$p"; \
