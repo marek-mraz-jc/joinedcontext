@@ -74,9 +74,12 @@ fn respond(path: &str, body: Vec<u8>) -> Response {
             HeaderValue::from_static("*"),
         );
     }
-    if let Ok(value) = HeaderValue::from_str(mime.as_ref()) {
-        headers.insert(header::CONTENT_TYPE, value);
-    }
+    // A guessed type is always a valid header value.
+    headers.extend(
+        HeaderValue::from_str(mime.as_ref())
+            .ok()
+            .map(|value| (header::CONTENT_TYPE, value)),
+    );
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(DEMO_CSP),
@@ -174,9 +177,10 @@ mod tests {
             StatusCode::NOT_FOUND
         );
         // A shipped template answers the demo page when the SDK's demos are built into this binary.
-        let Some(template) = samples::templates().first().map(|t| t.name.clone()) else {
-            return;
-        };
+        let template = samples::templates()
+            .first()
+            .map(|t| t.name.clone())
+            .expect("the Portal ships its templates");
         let page = demo(Path(template)).await;
         if Demos::get("index.html").is_some() {
             assert_eq!(page.status(), StatusCode::OK);
@@ -188,6 +192,31 @@ mod tests {
                 .starts_with("text/html"));
         } else {
             assert_eq!(page.status(), StatusCode::NOT_FOUND, "no demos built");
+        }
+    }
+
+    /// A built demo's asset comes back with its JavaScript type and any origin, since the
+    /// sandboxed page asks for it from an origin of none.
+    #[tokio::test]
+    async fn a_built_asset_is_served_with_its_type_to_any_origin() {
+        // Without the SDK's demos built into this binary there is no asset to serve.
+        let built = Demos::iter().filter_map(|path| {
+            path.strip_prefix("assets/")
+                .filter(|name| name.ends_with(".js"))
+                .map(str::to_owned)
+        });
+        for name in built.take(1) {
+            let response = asset(Path(name)).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+            assert!(response.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap_or_default()
+                .contains("javascript"));
+            assert_eq!(
+                response.headers()[header::CONTENT_SECURITY_POLICY],
+                DEMO_CSP
+            );
         }
     }
 }

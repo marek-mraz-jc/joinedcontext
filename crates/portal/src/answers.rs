@@ -108,7 +108,11 @@ mod tests {
 
     const ANSWERS: &str = "/internal/v1/projects/helsinki/knowledge/deployments/ask/answers";
 
-    fn envelope(kind: &str, name: &str, spec: serde_json::Value) -> crate::resource::ResourceEnvelope {
+    fn envelope(
+        kind: &str,
+        name: &str,
+        spec: serde_json::Value,
+    ) -> crate::resource::ResourceEnvelope {
         crate::resource::ResourceEnvelope {
             api_version: crate::resource::API_VERSION.to_owned(),
             kind: kind.to_owned(),
@@ -157,14 +161,15 @@ mod tests {
 
     /// Waits up to 5 s for the assistant to have seen `want` purges.
     async fn until(assistant: &MockServer, want: usize) -> usize {
+        let mut seen = deletes(assistant).await;
         for _ in 0..250 {
-            let seen = deletes(assistant).await;
             if seen >= want {
-                return seen;
+                break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            seen = deletes(assistant).await;
         }
-        deletes(assistant).await
+        seen
     }
 
     /// The fingerprint moves with a Policy or an Endpoint added or edited, and never with any
@@ -215,7 +220,11 @@ mod tests {
             .mount(&assistant)
             .await;
         assert_eq!(forget_all(&state).await, Some(4));
-        assert_eq!(forget_all(&state).await, Some(0), "no count reads as none forgotten");
+        assert_eq!(
+            forget_all(&state).await,
+            Some(0),
+            "no count reads as none forgotten"
+        );
         assert_eq!(forget_all(&state).await, Some(0), "a 404 keeps no answers");
         assert_eq!(forget_all(&state).await, None, "a 500 is tried again");
     }
@@ -237,15 +246,58 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "forgotten": 2 })))
             .mount(&assistant)
             .await;
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = Log(log.clone());
+        let _guard = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::INFO)
+                .with_writer(move || writer.clone())
+                .finish(),
+        );
         spawn_periodic(state.clone(), std::time::Duration::from_millis(10));
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        assert_eq!(deletes(&assistant).await, 0, "nothing changed, nothing purged");
+        assert_eq!(
+            deletes(&assistant).await,
+            0,
+            "nothing changed, nothing purged"
+        );
         state
             .mirror
             .upsert(envelope("Policy", "read", json!({ "rules": [] })));
-        assert_eq!(until(&assistant, 2).await, 2, "the refused purge is tried again");
+        assert_eq!(
+            until(&assistant, 2).await,
+            2,
+            "the refused purge is tried again"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        assert_eq!(deletes(&assistant).await, 2, "a landed purge is not repeated");
+        assert_eq!(
+            deletes(&assistant).await,
+            2,
+            "a landed purge is not repeated"
+        );
+        std::io::Write::flush(&mut Log(log.clone())).expect("an in-memory log flushes");
+        let text = String::from_utf8(log.lock().expect("log").clone()).expect("utf-8");
+        assert!(text.contains("again in 30 s"), "{text}");
+        assert!(
+            text.contains("forgotten=2") && text.contains("kept answers forgotten"),
+            "{text}"
+        );
+    }
+
+    /// The log the purge loop writes, kept for the test to read.
+    #[derive(Clone)]
+    struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Log {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     /// A follower replica never purges: the leader does it once for every replica.

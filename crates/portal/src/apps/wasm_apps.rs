@@ -283,6 +283,49 @@ mod tests {
         assert!(component_of(b"not a gzip").is_err());
     }
 
+    /// The component's place holding a directory or a link, a component over 64 MiB, and a
+    /// bundle cut short inside the component are each refused with the reason.
+    #[test]
+    fn a_component_that_is_no_file_too_big_or_cut_short_is_refused() {
+        for kind in [tar::EntryType::Directory, tar::EntryType::Symlink] {
+            let mut tar = tar::Builder::new(Vec::new());
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(kind);
+            header.set_size(0);
+            header.set_mode(0o755);
+            if kind == tar::EntryType::Symlink {
+                header.set_link_name("/etc/passwd").expect("a link");
+            }
+            header.set_cksum();
+            tar.append_data(&mut header, COMPONENT_PATH, std::io::empty())
+                .expect("entry");
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            std::io::Write::write_all(&mut gz, &tar.into_inner().expect("tar")).expect("gz");
+            let err = component_of(&gz.finish().expect("gz")).expect_err("no file");
+            assert!(err.contains("is no regular file"), "{kind:?}: {err}");
+        }
+
+        let mut big = COMPONENT.to_vec();
+        big.resize(usize::try_from(MAX_COMPONENT_BYTES).expect("fits") + 1, 0);
+        let err = component_of(&bundle(&[(COMPONENT_PATH, &big)])).expect_err("too big");
+        assert!(err.contains("is larger than 67108864 bytes"), "{err}");
+
+        let whole = bundle(&[(COMPONENT_PATH, &big[..4096])]);
+        let raw = {
+            let mut raw = Vec::new();
+            std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&whole[..]), &mut raw)
+                .expect("gunzip");
+            raw
+        };
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut gz, &raw[..512 + 1000]).expect("gz");
+        let err = component_of(&gz.finish().expect("gz")).expect_err("cut short");
+        assert!(
+            err.starts_with(COMPONENT_PATH) || err.contains("no tar.gz"),
+            "{err}"
+        );
+    }
+
     #[test]
     fn migrations_are_the_sql_files_directly_in_their_folder_in_name_order() {
         let tree: Vec<String> = [

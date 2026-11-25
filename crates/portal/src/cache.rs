@@ -80,9 +80,7 @@ impl<K: Eq + Hash + Clone, V: Clone> ByteLru<K, V> {
             .then(|| self.order.pop_first())
             .flatten()
         {
-            if let Some(gone) = self.entries.remove(&oldest) {
-                self.bytes -= gone.bytes;
-            }
+            self.bytes -= self.entries.remove(&oldest).map_or(0, |gone| gone.bytes);
         }
     }
 

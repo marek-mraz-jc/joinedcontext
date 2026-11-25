@@ -125,9 +125,9 @@ pub async fn middleware(request: Request, next: Next) -> Response {
         span.in_scope(|| tracing::warn!(status = response.status().as_u16(), "request failed"));
     }
     // `plain` or hex: always a valid header value.
-    if let Ok(value) = HeaderValue::from_str(&id) {
-        response.headers_mut().insert(HEADER, value);
-    }
+    response
+        .headers_mut()
+        .extend(HeaderValue::from_str(&id).ok().map(|value| (HEADER, value)));
     response
 }
 

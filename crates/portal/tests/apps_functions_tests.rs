@@ -372,6 +372,105 @@ async fn a_bundle_that_fails_its_integrity_digest_never_runs() {
     assert!(invocations(&rig.runtime).await.is_empty());
 }
 
+/// A published App with no `functions.js`, a bundle that is no UTF-8 although it matches its
+/// digest, and a Portal that serves no App directory all answer the same 404 as a missing
+/// function, and the runtime is never asked.
+#[tokio::test]
+async fn an_app_without_a_readable_bundle_answers_404() {
+    let rig = rig("fn-unreadable").await;
+    let root = rig.state.config.apps_dir.clone().expect("an apps dir");
+    let bare = std::path::Path::new(&root).join("open-data-bare");
+    std::fs::create_dir_all(&bare).expect("app dir");
+    std::fs::write(bare.join("index.html"), "<!doctype html>").expect("index");
+    let binary = std::path::Path::new(&root).join("open-data-binary");
+    std::fs::create_dir_all(&binary).expect("app dir");
+    let bytes = [0xff_u8, 0xfe, 0x00, 0x80];
+    std::fs::write(binary.join("functions.js"), bytes).expect("bundle");
+    std::fs::write(
+        binary.join("integrity.json"),
+        json!({ "functions.js": sri_sha384(&bytes) }).to_string(),
+    )
+    .expect("integrity");
+    rig.state.mirror.upsert(app("open-data-bare", "public"));
+    rig.state.mirror.upsert(app("open-data-binary", "public"));
+    for name in ["open-data-bare", "open-data-binary"] {
+        let (status, body) = post(
+            &rig,
+            &format!("/apps/{name}/api/functions/near-me"),
+            &[],
+            Vec::new(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{name}: {body}");
+        assert_eq!(
+            body["detail"],
+            format!("app '{name}' has no function 'near-me'")
+        );
+    }
+
+    let mut config = (*rig.state.config).clone();
+    config.apps_dir = None;
+    let mut state = rig.state.clone();
+    state.config = std::sync::Arc::new(config);
+    let no_dir = Rig {
+        app: server::app(state.clone()),
+        state,
+        runtime: MockServer::start().await,
+        _realm: None,
+        _root: Scratch::new("fn-unreadable-none"),
+    };
+    let (status, _) = post(
+        &no_dir,
+        "/apps/open-data/api/functions/near-me",
+        &[],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(invocations(&rig.runtime).await.is_empty());
+}
+
+/// With an apps origin configured, a call that does not come in on the App's own host is sent
+/// there with its path and query, and a name that is no DNS label has no origin at all.
+#[tokio::test]
+async fn a_call_off_the_apps_own_origin_is_sent_there() {
+    let rig = rig("fn-origin").await;
+    let mut config = (*rig.state.config).clone();
+    config.apps_url = Some("https://apps.example.org".parse().expect("a url"));
+    let mut state = rig.state.clone();
+    state.config = std::sync::Arc::new(config);
+    let app = server::app(state);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/apps/open-data/api/functions/near-me?lat=60.17")
+                .header("host", "portal.example.org")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert!(response.status().is_redirection(), "{}", response.status());
+    assert_eq!(
+        response.headers()["location"],
+        "https://open-data.apps.example.org/api/functions/near-me?lat=60.17"
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/apps/Not_A_Label/api/functions/near-me")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert!(invocations(&rig.runtime).await.is_empty());
+}
+
 /// A directory of this test process, removed when it goes out of scope.
 struct Scratch(std::path::PathBuf);
 
@@ -407,6 +506,7 @@ async fn organization_rig(test: &str, runtime: MockServer) -> Rig {
         .await;
     let root = Scratch::new(test);
     bundle_dir(root.path(), "bbsk-events", BUNDLE);
+    bundle_dir(root.path(), "bbsk-open", BUNDLE);
     let runtime_uri = runtime.uri();
     let mut config = Config::from_vars(|key| {
         match key {
@@ -432,6 +532,7 @@ async fn organization_rig(test: &str, runtime: MockServer) -> Rig {
     .expect("discovery");
     let mirror = Mirror::new();
     mirror.upsert(app("bbsk-events", "organization"));
+    mirror.upsert(app("bbsk-open", "public"));
     common::bind(&mirror, "eva", "parks");
     let state = AppState::new(config, Some(oidc)).with_mirror(std::sync::Arc::new(mirror));
     Rig {
@@ -462,16 +563,17 @@ async fn an_organization_apps_function_acts_as_the_viewer_and_answers_her_refusa
         .mount(&runtime)
         .await;
     let rig = organization_rig("fn-organization", runtime).await;
+    // The edge's token on an App's host is the App's own (audience app-bbsk-events): it names
+    // no Portal session, so the call carries the anonymous double-submit pair.
     let eva = common::REALM.person_token("bbsk-events", "eva", &[]);
-    let token = common::csrf_echo::edge_csrf(&rig.state, &eva).await;
-    let cookie = format!("__Host-jc_csrf={token}");
+    let cookie = format!("__Host-jc_csrf={CSRF}");
     let (status, body) = post(
         &rig,
         "/apps/bbsk-events/api/functions/near-me",
         &[
             ("x-access-token", &eva),
             ("cookie", &cookie),
-            ("x-csrf-token", &token),
+            ("x-csrf-token", CSRF),
         ],
         Vec::new(),
     )
@@ -496,4 +598,59 @@ async fn an_organization_apps_function_acts_as_the_viewer_and_answers_her_refusa
         !call.to_string().contains("the-portals-own-token"),
         "the Portal's token is the runtime's credential alone"
     );
+}
+
+/// RTE-12: an edge token that names a Portal session binds the CSRF token to that person, so
+/// the call passes with the token the Portal handed her and is refused with a plain
+/// double-submit pair any page on the host could have set.
+#[tokio::test]
+async fn a_portal_sessions_call_needs_the_token_bound_to_her() {
+    if !runs_functions() {
+        return;
+    }
+    let runtime = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/invoke"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": 200, "body": { "events": 2 }, "logs": []
+        })))
+        .mount(&runtime)
+        .await;
+    let rig = organization_rig("fn-bound", runtime).await;
+    let eva = common::REALM.person_token_of("joinedcontext-portal", "edge", "eva", &[]);
+    let bound = common::csrf_echo::edge_csrf(&rig.state, &eva).await;
+    let cookie = format!("__Host-jc_csrf={CSRF}");
+    let (status, _) = post(
+        &rig,
+        "/apps/bbsk-open/api/functions/near-me",
+        &[
+            ("x-access-token", &eva),
+            ("cookie", &cookie),
+            ("x-csrf-token", CSRF),
+        ],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(invocations(&rig.runtime).await.is_empty());
+
+    let cookie = format!("__Host-jc_csrf={bound}");
+    let (status, body) = post(
+        &rig,
+        "/apps/bbsk-open/api/functions/near-me",
+        &[
+            ("x-access-token", &eva),
+            ("cookie", &cookie),
+            ("x-csrf-token", &bound),
+        ],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "events": 2 }));
+    let [call] = invocations(&rig.runtime)
+        .await
+        .try_into()
+        .expect("one invocation");
+    assert_eq!(call["token"], eva);
 }
