@@ -1385,4 +1385,36 @@ async fn odata_endpoints_carry_the_shared_and_gone_rows_the_page_lists_and_no_ot
         assert_eq!(status, want, "{method} {key} as {who:?}: {text}");
         assert!(text.contains(says), "{method} {key} as {who:?}: {text}");
     }
+
+    // A proposer's change the row edits runs the REST door's check first and proposes only on
+    // a green verdict (PF-57, T-7835); only endpointList answers `$allowed`.
+    let request = Request::builder()
+        .method("PATCH")
+        .uri(entity("helsinki-bikes"))
+        .header(header::COOKIE, cookie(&state.config, "pat.proposer@hel.fi"))
+        .echo_csrf()
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "mcp": false }).to_string()))
+        .expect("a request");
+    let response = server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("a response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a body")
+        .to_bytes();
+    let text = String::from_utf8_lossy(&bytes);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{text}");
+    assert!(text.contains("refused by its check"), "{text}");
+    let (status, other) = get(
+        &state,
+        vera,
+        &format!("/api/v1/projects/{PROJECT}/odata/endpoints/$allowed?op=read"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{other}");
 }

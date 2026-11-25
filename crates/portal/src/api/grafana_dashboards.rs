@@ -1780,6 +1780,18 @@ mod tests {
             "var-run"
         );
         assert_eq!(refused_field(&[("var-run", "a\nb")]), "var-run");
+        // T-7835: a constant is no variable a person picks; All only where the variable offers it.
+        assert_eq!(refused_field(&[("var-zone", "$__all")]), "var-zone");
+        let mut constant = board();
+        if let Some(list) = constant["templating"]["list"].as_array_mut() {
+            list.push(json!({ "name": "env", "type": "constant", "query": "prod",
+                              "current": { "value": "prod" } }));
+        }
+        assert!(matches!(
+            checked_query(&constant, &asked(&[("var-env", "test")]).0),
+            Err(ApiError::Unprocessable { errors, .. }) if errors[0].starts_with("var-env")
+        ));
+        assert_eq!(current_of(&constant["templating"]["list"][4]), ["prod"]);
         let all = checked_query(
             &dashboard,
             &asked(&[("var-station", "$__all"), ("var-run", "r.1")]).0,
@@ -1788,6 +1800,24 @@ mod tests {
         // All and each value go to daiya as asked; daiya formats them from the saved variable.
         assert!(all.contains(&("var-station".into(), "$__all".into())));
         assert!(all.contains(&("var-run".into(), "r.1".into())));
+    }
+
+    /// T-7835: one panel reads one members-only Endpoint with the person's token; two at once
+    /// is the panel's error line, sent before any exchange.
+    #[tokio::test]
+    async fn a_panel_reading_two_members_only_endpoints_is_refused_before_any_exchange() {
+        let state = AppState::new(Config::for_tests(), None);
+        let refused = person_for(
+            &state,
+            &HeaderMap::new(),
+            &["closedslug".to_owned(), "otherslug".to_owned()],
+        )
+        .await;
+        assert!(
+            matches!(&refused, Err(line) if line.contains("2 members-only Endpoints")),
+            "{refused:?}"
+        );
+        assert_eq!(person_for(&state, &HeaderMap::new(), &[]).await, Ok(None));
     }
 
     #[test]
