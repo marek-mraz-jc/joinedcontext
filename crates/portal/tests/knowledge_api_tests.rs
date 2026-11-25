@@ -614,6 +614,31 @@ const EVENTS: &str = "event: conversation\ndata: {\"id\":\"6f1c0e9e-3b1a-4d7e-9b
 
 /// API/05 §1.7, AG-115: the question goes to the assistant with the Portal's token, the
 /// person's name and the person's own token, and the events come back as they were sent.
+/// An assistant the Portal cannot authenticate to, or one that does not answer, is a 503 that
+/// says which and never a page of nothing; the assistant is not asked without a token (T-7813).
+#[tokio::test]
+async fn an_assistant_without_a_token_or_an_answer_is_a_503_that_says_which() {
+    let r = rig().await;
+    let pages = "/api/v1/projects/helsinki/knowledge/sources/web/pages";
+    let mut tokenless = r.state.clone();
+    tokenless.oidc = None;
+    let before = asked(&r.assistant).await;
+    let refused = common::send(&tokenless, admin(), "GET", pages, None).await;
+    assert_eq!(refused.status, 503, "{}", refused.text);
+    assert!(refused.text.contains("Keycloak client"), "{}", refused.text);
+    assert_eq!(asked(&r.assistant).await, before, "nothing is sent without a token");
+
+    let mut away = r.state.clone();
+    let mut config = (*away.config).clone();
+    // Nothing listens on port 9 (discard).
+    config.knowledge_url = Some("http://127.0.0.1:9".into());
+    away.config = std::sync::Arc::new(config);
+    let refused = common::send(&away, admin(), "GET", pages, None).await;
+    assert_eq!(refused.status, 503, "{}", refused.text);
+    assert!(refused.text.contains("did not answer"), "{}", refused.text);
+    assert!(!refused.text.contains("127.0.0.1"), "{}", refused.text);
+}
+
 #[tokio::test]
 async fn a_question_reaches_the_assistant_as_the_person_and_its_events_come_back() {
     let r = rig_on_signing_realm().await;

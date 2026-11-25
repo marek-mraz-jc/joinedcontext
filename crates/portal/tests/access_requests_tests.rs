@@ -661,6 +661,60 @@ async fn a_request_is_refused_before_it_is_stored() {
     assert!(!inbox.text.contains("not-there"), "{}", inbox.text);
 }
 
+/// A grant whose Policy name would pass 63 characters is refused when it is asked for, and an
+/// approval of a request whose Endpoint left the project is a conflict that says to decline it
+/// (T-7813).
+#[tokio::test]
+async fn a_long_grant_name_and_a_gone_endpoint_are_refused_with_what_to_do() {
+    let _held = DATABASE.lock().await;
+    let Some(pool) = pool().await else { return };
+    let long = unique(&"p".repeat(20));
+    let long_world = state(pool.clone(), &long, true).await;
+    let refused = send(
+        &long_world,
+        "jana",
+        "POST",
+        &format!("/api/v1/projects/{KPIS}/pipelines/{long}/access-requests"),
+        Some(ask()),
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert!(refused.text.contains("longer than 63"), "{}", refused.text);
+
+    let pipeline = unique("gone");
+    let state = state(pool, &pipeline, true).await;
+    let filed = send(
+        &state,
+        "jana",
+        "POST",
+        &format!("/api/v1/projects/{KPIS}/pipelines/{pipeline}/access-requests"),
+        Some(ask()),
+    )
+    .await;
+    assert_eq!(filed.status, StatusCode::CREATED, "{}", filed.text);
+    let id = serde_json::from_str::<Value>(&filed.text).expect("json")["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    state
+        .mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: HELSINKI.into(),
+            kind: "Endpoint".into(),
+            name: "air-quality".into(),
+        });
+    let approved = send(
+        &state,
+        "olli",
+        "POST",
+        &format!("/api/v1/projects/{HELSINKI}/access-requests/{id}/approve"),
+        None,
+    )
+    .await;
+    assert_eq!(approved.status, StatusCode::CONFLICT, "{}", approved.text);
+    assert!(approved.text.contains("decline the request"), "{}", approved.text);
+}
+
 async fn state_shared(pool: sqlx::PgPool, pipeline: &str) -> AppState {
     state(pool, pipeline, false).await
 }

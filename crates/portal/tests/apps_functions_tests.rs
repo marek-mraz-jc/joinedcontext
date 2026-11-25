@@ -463,7 +463,9 @@ async fn an_organization_apps_function_acts_as_the_viewer_and_answers_her_refusa
         .await;
     let rig = organization_rig("fn-organization", runtime).await;
     let eva = common::REALM.person_token("bbsk-events", "eva", &[]);
-    let token = common::csrf_echo::edge_csrf(&rig.state, &eva).await;
+    // An App's token names no Portal session, so the page's write double-submits its cookie, as
+    // every App door's anonymous visitor does (RTE-12).
+    let token = CSRF;
     let cookie = format!("__Host-jc_csrf={token}");
     let (status, body) = post(
         &rig,
@@ -471,7 +473,7 @@ async fn an_organization_apps_function_acts_as_the_viewer_and_answers_her_refusa
         &[
             ("x-access-token", &eva),
             ("cookie", &cookie),
-            ("x-csrf-token", &token),
+            ("x-csrf-token", token),
         ],
         Vec::new(),
     )

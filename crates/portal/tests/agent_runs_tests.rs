@@ -1386,6 +1386,60 @@ async fn a_message_scoped_to_a_pointed_element_carries_it_and_a_bad_scope_is_ref
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
 
+/// The members of a message that belong to a conversation are refused on an application run,
+/// each naming what it is for; a conversation takes a new endpoint list and an empty one
+/// (T-7813).
+#[tokio::test]
+async fn conversation_members_are_refused_on_an_application_run() {
+    let config = config();
+    let (app, _) = both(mirror(Some(builder_profile_spec())), &config);
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let id = create_run(&app, &cookie).await["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let messages = format!("/api/v1/projects/{PROJECT}/agent-runs/{id}/messages");
+    for (body, named) in [
+        (json!({ "text": "x", "pageContext": { "route": "/projects/helsinki" } }), "pageContext"),
+        (json!({ "text": "x", "access": { "preset": "read" } }), "access"),
+        (json!({ "text": "x", "endpointNames": [] }), "endpointNames"),
+        (json!({ "text": "x", "scope": "pages/Card.tsx" }), "scope"),
+    ] {
+        let (status, answer) = call(&app, &cookie, Method::POST, &messages, Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{named}: {answer}");
+        assert!(answer.to_string().contains(named), "{named}: {answer}");
+    }
+
+    let (_, created) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{PROJECT}/assistant/conversations"),
+        Some(json!({ "message": "Find datasets about bikes" })),
+    )
+    .await;
+    let conversation = created["id"].as_str().expect("id");
+    let messages = format!("/api/v1/projects/{PROJECT}/agent-runs/{conversation}/messages");
+    let (status, answer) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &messages,
+        Some(json!({ "text": "only bikes", "endpointNames": ["helsinki-bikes"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+    let (status, answer) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &messages,
+        Some(json!({ "text": "no data now", "endpointNames": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+}
+
 #[tokio::test]
 async fn a_person_steers_a_live_run_and_the_workspace_reads_it() {
     let config = config();

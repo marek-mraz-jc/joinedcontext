@@ -657,7 +657,7 @@ async fn count_key_and_unserved_paths_answer_as_odata() {
     let state = odata_world();
     let editor = Some(EDITOR);
     let (status, count) = get(&state, editor, &odata("endpoints/$count")).await;
-    assert_eq!((status, count), (StatusCode::OK, json!(3)));
+    assert_eq!((status, count), (StatusCode::OK, json!(4)));
     let (status, count) = get(
         &state,
         editor,

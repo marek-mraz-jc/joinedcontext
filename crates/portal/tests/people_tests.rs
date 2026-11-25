@@ -1304,14 +1304,14 @@ async fn a_list_takes_its_own_parameters_and_an_edit_keeps_the_address_unique() 
         person("pia"),
         "PATCH",
         &format!("{PEOPLE}/jana-id"),
-        Some(json!({ "lastName": "Koski", "locale": "fi" })),
+        Some(json!({ "lastName": "Koski", "locale": "sk" })),
     )
     .await;
     assert_eq!(edited.status, StatusCode::OK, "{}", edited.text);
     let sent = received(&kc, "PUT", "/users/jana-id").await;
     let rep: Value = serde_json::from_slice(&sent[0].body).expect("a representation");
     assert_eq!(rep["lastName"], json!("Koski"));
-    assert_eq!(rep["attributes"]["locale"], json!(["fi"]));
+    assert_eq!(rep["attributes"]["locale"], json!(["sk"]));
 
     let (kc, shako) = (realm(true).await, forge().await);
     Mock::given(method("PUT"))

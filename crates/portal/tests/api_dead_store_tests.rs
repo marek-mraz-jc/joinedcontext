@@ -106,16 +106,40 @@ fn world() -> AppState {
         json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
                 "target": { "endpointRef": { "kind": "Endpoint", "name": "air-counters" } } }),
     ));
+    state.mirror.upsert(envelope(
+        "Pipeline",
+        "air-replay",
+        PROJECT,
+        json!({ "class": "resident",
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:air-counters" }),
+    ));
     state
 }
 
 async fn get(state: &AppState, uri: &str) -> (StatusCode, String) {
+    send(state, "GET", uri).await
+}
+
+async fn send(state: &AppState, verb: &str, uri: &str) -> (StatusCode, String) {
+    send_json(state, verb, uri, None).await
+}
+
+async fn send_json(
+    state: &AppState,
+    verb: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, String) {
+    use csrf_echo::EchoCsrf;
     let response = server::app(state.clone())
         .oneshot(
             Request::builder()
+                .method(verb)
                 .uri(uri)
                 .header(header::COOKIE, cookie(&state.config))
-                .body(Body::empty())
+                .echo_csrf()
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(body.map_or_else(Body::empty, |json| Body::from(json.to_string())))
                 .expect("a request"),
         )
         .await
@@ -136,6 +160,7 @@ async fn get(state: &AppState, uri: &str) -> (StatusCode, String) {
 async fn every_store_read_is_a_503_that_names_no_database() {
     let state = world();
     let pipeline = format!("/api/v1/projects/{PROJECT}/pipelines/air-intake");
+    let mut wrong = Vec::new();
     for uri in [
         format!("{pipeline}/rejected"),
         format!("{pipeline}/rejected/groups"),
@@ -150,11 +175,33 @@ async fn every_store_read_is_a_503_that_names_no_database() {
         format!("/api/v1/projects/{PROJECT}/endpoints/air-counters/access-requests"),
     ] {
         let (status, body) = get(&state, &uri).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {body}");
-        assert!(body.contains("try again"), "{uri}: {body}");
-        assert!(
-            !body.contains("127.0.0.1") && !body.contains("nobody") && !body.contains("pool"),
-            "{uri}: {body}"
-        );
+        let leaks = body.contains("127.0.0.1") || body.contains("nobody") || body.contains("pool");
+        if status != StatusCode::SERVICE_UNAVAILABLE || !body.contains("try again") || leaks {
+            wrong.push(format!("{uri}: {status} {body}"));
+        }
     }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A replay needs a target to write and a model to check against: a pipeline whose output names
+/// no Endpoint of the project, and one whose space names no model, are conflicts that say what
+/// to change; an empty or oversized id list is the caller's 400 (T-7813).
+#[tokio::test]
+async fn a_replay_names_why_it_cannot_run() {
+    let state = world();
+    let retry = |name: &str| format!("/api/v1/projects/{PROJECT}/pipelines/{name}/rejected/retry");
+    let one = Some(json!({ "ids": [412] }));
+    let (status, body) = send_json(&state, "POST", &retry("air-intake"), one.clone()).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("writes through no Endpoint"), "{body}");
+    let (status, body) = send_json(&state, "POST", &retry("air-replay"), one).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("dataModelRef"), "{body}");
+    let none = Some(json!({ "ids": [] }));
+    let (status, body) = send_json(&state, "POST", &retry("air-replay"), none).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let many: Vec<i64> = (0..101).collect();
+    let (status, body) =
+        send_json(&state, "POST", &retry("air-replay"), Some(json!({ "ids": many }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
