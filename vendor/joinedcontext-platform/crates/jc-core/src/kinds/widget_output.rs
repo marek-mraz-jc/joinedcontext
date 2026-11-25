@@ -350,10 +350,9 @@ fn colours(model: &Model, slot: &super::ical_mapping::Slot) -> bool {
         && (slot.range == "boolean" || model.enum_values(&slot.range).is_some())
 }
 
-/// Every gap of an Endpoint's widget outputs, one sentence each naming the output and the member:
-/// the count and names, each output's shape, then, with a `linkml` model, each role against it.
-/// `Err` when the model does not parse.
-pub fn widget_gaps(outputs: &[WidgetOutput], linkml: Option<&str>) -> Result<Vec<String>, String> {
+/// The model-free gaps of an Endpoint's widget outputs: the count, duplicate names and each
+/// output's shape; [`widget_gaps`] without a model.
+pub fn widget_shape_gaps(outputs: &[WidgetOutput]) -> Vec<String> {
     let mut gaps = Vec::new();
     if outputs.len() > MAX_OUTPUTS {
         gaps.push(format!(
@@ -371,6 +370,14 @@ pub fn widget_gaps(outputs: &[WidgetOutput], linkml: Option<&str>) -> Result<Vec
         }
         gaps.extend(output.shape_gaps());
     }
+    gaps
+}
+
+/// Every gap of an Endpoint's widget outputs, one sentence each naming the output and the member:
+/// the count and names, each output's shape, then, with a `linkml` model, each role against it.
+/// `Err` when the model does not parse.
+pub fn widget_gaps(outputs: &[WidgetOutput], linkml: Option<&str>) -> Result<Vec<String>, String> {
+    let mut gaps = widget_shape_gaps(outputs);
     if !gaps.is_empty() {
         return Ok(gaps);
     }

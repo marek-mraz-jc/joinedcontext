@@ -1415,10 +1415,11 @@ impl ScopeDefinitionSpec {
                 });
             }
         } else {
-            let expected_parent = match self.scope_string.rfind('/') {
-                Some(idx) => &self.scope_string[..idx],
-                None => "",
-            };
+            // scopeString starts with `/` (checked above), so it always has a parent prefix.
+            let expected_parent = self
+                .scope_string
+                .rsplit_once('/')
+                .map_or("", |(parent, _)| parent);
             match &self.is_child_of {
                 None => {
                     return Err(Error::Name {

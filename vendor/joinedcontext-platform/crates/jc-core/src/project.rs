@@ -614,6 +614,12 @@ pub fn layout_of(file: Option<&str>, role: RepositoryRole) -> Result<u32> {
 /// organization-level kind has no place in a project repository.
 pub fn mount(manifest: &mut Value, slug: &str) -> Result<()> {
     names::validate_dns1123_label(slug)?;
+    let Some(manifest) = manifest.as_object_mut() else {
+        return Err(invalid(
+            "kind",
+            "a manifest is a mapping that names its kind",
+        ));
+    };
     let kind = manifest
         .get("kind")
         .and_then(Value::as_str)
@@ -637,8 +643,6 @@ pub fn mount(manifest: &mut Value, slug: &str) -> Result<()> {
         }
     };
     let metadata = manifest
-        .as_object_mut()
-        .ok_or_else(|| invalid("metadata", "a manifest is a mapping"))?
         .entry("metadata")
         .or_insert_with(|| Value::Object(Default::default()));
     let metadata = metadata
@@ -664,6 +668,23 @@ pub fn mount(manifest: &mut Value, slug: &str) -> Result<()> {
 #[cfg(test)]
 mod edge_tests {
     use super::*;
+
+    #[test]
+    fn mount_refuses_a_manifest_that_is_no_mapping() {
+        for mut manifest in [
+            Value::Null,
+            serde_json::json!([]),
+            serde_json::json!("Project"),
+        ] {
+            let err = mount(&mut manifest, "smart-city").expect_err("not a manifest");
+            assert!(
+                matches!(&err, Error::Invalid { field, .. } if field == "kind"),
+                "{err:?}"
+            );
+        }
+        let mut no_kind = serde_json::json!({"metadata": {}});
+        assert!(mount(&mut no_kind, "smart-city").is_err());
+    }
 
     #[test]
     fn validate_url_refuses_spaces_and_empty_authority() {
@@ -835,7 +856,7 @@ mod edge_tests {
         // a manifest that is no mapping has no kind either, and is refused for that first
         let mut non_obj = serde_json::json!("not-a-map");
         let err = mount(&mut non_obj, "my-slug").unwrap_err();
-        assert!(err.to_string().contains("is not a manifest kind"), "{err}");
+        assert!(err.to_string().contains("a manifest is a mapping"), "{err}");
 
         let mut bad_meta = serde_json::json!({ "kind": "Endpoint", "metadata": "not-map" });
         let err = mount(&mut bad_meta, "my-slug").unwrap_err();

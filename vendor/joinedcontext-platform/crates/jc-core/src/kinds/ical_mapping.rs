@@ -250,15 +250,18 @@ impl IcalOutput {
         if !gaps.is_empty() {
             return Ok(gaps);
         }
+        let schema: Option<Value> = linkml
+            .map(serde_norway::from_str)
+            .transpose()
+            .map_err(|err| err.to_string())?;
         let mut gaps = Vec::new();
         for source in &self.sources {
             gaps.extend(self.named(source.model_gaps(linkml)?));
         }
-        if let Some(text) = linkml {
-            let schema: Value = serde_norway::from_str(text).map_err(|err| err.to_string())?;
+        if let Some(schema) = &schema {
             let filter = self.effective_filter();
             gaps.extend(self.named(query_model_gaps(
-                &Model { schema: &schema },
+                &Model { schema },
                 filter.as_ref(),
                 self.query.is_some(),
                 &self.types(),
@@ -1697,6 +1700,19 @@ mod tests {
             assert!(preset.shape_gaps().is_empty(), "{:?}", preset.shape_gaps());
             assert_eq!(preset.effective_filter(), old.effective_filter(), "{q:?}");
         }
+    }
+
+    /// A model that does not parse is the output's refusal, before any source is judged.
+    #[test]
+    fn an_output_against_a_model_that_does_not_parse_is_an_error() {
+        let output = IcalOutput {
+            name: "kultura".into(),
+            ..IcalOutput::legacy(IcalMapping::default())
+        };
+        let err = output
+            .model_gaps(Some("classes: [unclosed"))
+            .expect_err("no model");
+        assert!(!err.is_empty());
     }
 
     /// T-6762 (API/02 §4a): a preset's query names attributes the space's model has; the

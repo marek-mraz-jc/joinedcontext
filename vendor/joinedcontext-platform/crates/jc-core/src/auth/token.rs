@@ -704,6 +704,27 @@ mod tests {
             .is_ok());
     }
 
+    #[test]
+    fn a_memo_without_room_keeps_the_new_entry_alone() {
+        let memo = Mutex::new(HashMap::new());
+        assert_eq!(keep(&memo, 0, [1; 32], 1u8), 1);
+        assert_eq!(memo.into_inner().expect("the memo").len(), 1);
+    }
+
+    /// A key the JWKS names with an id and an algorithm, but whose material does not decode, is
+    /// skipped; the realm's usable keys are still taken.
+    #[test]
+    fn a_key_whose_material_does_not_decode_is_skipped() {
+        let jwks: jsonwebtoken::jwk::JwkSet = serde_json::from_value(serde_json::json!({
+            "keys": [
+                {"kty": "RSA", "kid": "broken", "alg": "RS256", "n": "!!", "e": "AQAB"},
+                {"kty": "oct", "kid": "shared", "alg": "HS256", "k": "c2VjcmV0"}
+            ]
+        }))
+        .expect("a JWKS");
+        assert_eq!(super::Verifier::new("realm").replace_keys(&jwks), 0);
+    }
+
     /// P-3-03: a full memo trades one entry for the new one instead of forgetting every caller.
     #[test]
     fn a_full_memo_pushes_out_one_entry_and_keeps_the_rest() {
@@ -810,15 +831,15 @@ mod tests {
         let at_bound = admit(claims("slug".into(), NOW - LEEWAY), Some(&slug()), NOW);
         assert_eq!(at_bound.map(|c| c.sub), Ok("f:1:a".to_owned()));
         let past = admit(claims("slug".into(), NOW - LEEWAY - 1), Some(&slug()), NOW);
-        assert_eq!(past.map(|c| c.sub), Err(Rejected::Expired));
+        assert_eq!(past.err(), Some(Rejected::Expired));
     }
 
     #[test]
     fn the_audience_is_one_of_those_asked_for_and_a_missing_one_is_none() {
         let other = admit(claims("other".into(), NOW), Some(&slug()), NOW);
-        assert_eq!(other.map(|c| c.sub), Err(Rejected::WrongAudience));
+        assert_eq!(other.err(), Some(Rejected::WrongAudience));
         let missing = admit(claims(serde_json::Value::Null, NOW), Some(&slug()), NOW);
-        assert_eq!(missing.map(|c| c.sub), Err(Rejected::WrongAudience));
+        assert_eq!(missing.err(), Some(Rejected::WrongAudience));
         let many = admit(
             claims(serde_json::json!(["x", "slug"]), NOW),
             Some(&slug()),

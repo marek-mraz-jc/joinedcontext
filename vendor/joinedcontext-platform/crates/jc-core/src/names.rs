@@ -276,14 +276,11 @@ impl TenantName {
 
     /// The tenant of space `space` of the project `key`; `Err` when `space` is no label.
     pub fn of_space(key: jc_types::ProjectKey, space: &str) -> Result<Self> {
-        let label = jc_types::Label::parse(space).map_err(|err| Error::Name {
+        // NotALabel is the one error Label::parse returns.
+        let label = jc_types::Label::parse(space).map_err(|_| Error::Name {
             field: "space",
             value: space.to_owned(),
-            reason: if matches!(err, jc_types::KeyError::NotALabel) {
-                "must be lower-case letters, digits and hyphens, start with a letter, at most 63 characters"
-            } else {
-                "is not a space name"
-            },
+            reason: "must be lower-case letters, digits and hyphens, start with a letter, at most 63 characters",
         })?;
         Ok(Self::keyed(&jc_types::internal_name(key, &label)))
     }
@@ -475,6 +472,15 @@ pub(crate) fn rename(err: Error, field: &'static str) -> Error {
             value,
             reason,
         },
+        other => other,
+    }
+}
+
+/// A validator's name error turned into the caller's error by its reason; any other error passes
+/// through unchanged.
+pub(crate) fn map_reason(err: Error, to: impl FnOnce(&'static str) -> Error) -> Error {
+    match err {
+        Error::Name { reason, .. } => to(reason),
         other => other,
     }
 }
@@ -827,10 +833,10 @@ mod tests {
             if valid(&doc).is_err() {
                 continue;
             }
-            for field in ["name", "namespace"] {
-                if doc["metadata"].get(field).is_none() {
-                    continue;
-                }
+            for field in ["name", "namespace"]
+                .into_iter()
+                .filter(|field| doc["metadata"].get(field).is_some())
+            {
                 for id in ["sk_bbsk", "com_marek-mraz"] {
                     let mut renamed = doc.clone();
                     renamed["metadata"][field] = id.into();
@@ -902,6 +908,23 @@ mod edge_tests {
     fn tenant_name_display_formats_as_string() {
         let tenant = TenantName::parse("sk_bbsk__mobility").expect("valid tenant");
         assert_eq!(format!("{tenant}"), "sk_bbsk__mobility");
+    }
+
+    #[test]
+    fn map_reason_turns_a_name_error_and_passes_any_other_through() {
+        let name = validate_dns1123_label("Not_A_Label").expect_err("refused");
+        let mapped = map_reason(name, |reason| Error::Invalid {
+            field: "spec.x".to_owned(),
+            reason: reason.to_owned(),
+        });
+        assert!(
+            matches!(&mapped, Error::Invalid { field, reason } if field == "spec.x" && !reason.is_empty()),
+            "{mapped:?}"
+        );
+        let other = Error::ApiVersion("joinedcontext.com/v9".to_owned());
+        let never = |_: &'static str| Error::ApiVersion("never".to_owned());
+        assert_eq!(map_reason(other.clone(), never), other);
+        assert_eq!(never("x"), Error::ApiVersion("never".to_owned()));
     }
 
     #[test]

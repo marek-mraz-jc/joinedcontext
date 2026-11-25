@@ -468,10 +468,9 @@ impl FeedOutput {
     }
 }
 
-/// Every gap of an Endpoint's feed outputs as a list: the count, duplicate names and each output's
-/// shape (EP-151), then, with a `linkml` model, each role against it. `Err` when the model does not
-/// parse.
-pub fn feed_gaps(outputs: &[FeedOutput], linkml: Option<&str>) -> Result<Vec<String>, String> {
+/// The model-free gaps of an Endpoint's feed outputs: the count, duplicate names and each
+/// output's shape; [`feed_gaps`] without a model.
+pub fn feed_shape_gaps(outputs: &[FeedOutput]) -> Vec<String> {
     let mut gaps = Vec::new();
     if outputs.len() > MAX_FEED_OUTPUTS {
         gaps.push(format!(
@@ -489,6 +488,14 @@ pub fn feed_gaps(outputs: &[FeedOutput], linkml: Option<&str>) -> Result<Vec<Str
         }
         gaps.extend(output.shape_gaps());
     }
+    gaps
+}
+
+/// Every gap of an Endpoint's feed outputs as a list: the count, duplicate names and each output's
+/// shape (EP-151), then, with a `linkml` model, each role against it. `Err` when the model does not
+/// parse.
+pub fn feed_gaps(outputs: &[FeedOutput], linkml: Option<&str>) -> Result<Vec<String>, String> {
+    let mut gaps = feed_shape_gaps(outputs);
     if !gaps.is_empty() {
         return Ok(gaps);
     }

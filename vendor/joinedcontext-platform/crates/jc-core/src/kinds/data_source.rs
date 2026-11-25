@@ -1418,28 +1418,22 @@ impl DataSourceSpec {
         .flatten()
         .collect();
 
-        match &self.source_type {
-            DataSourceType::Mqtt
-            | DataSourceType::Http
-            | DataSourceType::WebSocket
-            | DataSourceType::GtfsRt
-            | DataSourceType::Webhook => {
-                let expected = match self.source_type {
-                    DataSourceType::Mqtt => "mqtt",
-                    DataSourceType::Http => "http",
-                    DataSourceType::WebSocket => "webSocket",
-                    DataSourceType::GtfsRt => "gtfsRt",
-                    DataSourceType::Webhook => "webhook",
-                    DataSourceType::Runner(_) => unreachable!(),
-                };
-                if present != [expected] {
-                    return Err(Error::Name {
-                        field: "spec",
-                        value: present.join(", "),
-                        reason: "exactly the connection block named by `type` is present (MF-35)",
-                    });
-                }
+        let block = |expected: &str| {
+            if present != [expected] {
+                return Err(Error::Name {
+                    field: "spec",
+                    value: present.join(", "),
+                    reason: "exactly the connection block named by `type` is present (MF-35)",
+                });
             }
+            Ok(())
+        };
+        match &self.source_type {
+            DataSourceType::Mqtt => block("mqtt")?,
+            DataSourceType::Http => block("http")?,
+            DataSourceType::WebSocket => block("webSocket")?,
+            DataSourceType::GtfsRt => block("gtfsRt")?,
+            DataSourceType::Webhook => block("webhook")?,
             DataSourceType::Runner(name) => {
                 if !known_input(name) {
                     let mut accepted = vec!["mqtt", "http", "websocket", "gtfs-rt", "webhook"];
