@@ -1069,6 +1069,7 @@ pub async fn callback(
     let bound = csrf::Bound {
         session: &session,
         config: &state.config,
+        audience: None,
     };
     let (cookies, _token) = csrf::issue(cookies, Some(bound));
     Ok((jar, cookies, Redirect::to(&flow.redirect_to)).into_response())
@@ -1187,6 +1188,7 @@ pub async fn me(
     let bound = csrf::Bound {
         session: &user.0,
         config: &state.config,
+        audience: None,
     };
     (
         csrf_for_session(front, jar, bound),
