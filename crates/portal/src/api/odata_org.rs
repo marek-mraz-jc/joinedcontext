@@ -2535,6 +2535,7 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
     let bound = user.as_ref().ok().map(|user| crate::auth::csrf::Bound {
         session: &user.0,
         config: &state.config,
+        audience: None,
     });
     if !crate::auth::csrf::is_allowed(&parts.method, &parts.headers, bound) {
         return as_odata_error(crate::error::ApiError::Forbidden.into_response()).await;

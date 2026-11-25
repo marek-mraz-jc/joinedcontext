@@ -37,14 +37,20 @@ async fn serve_index(
     uri: Uri,
     name: Path<String>,
 ) -> Response {
-    let session = match super::roles::presented(&state, &headers) {
-        Some(_) => crate::auth::csrf::session_of(&state, &headers).await,
+    let signed_in = match super::roles::presented(&state, &headers) {
+        Some(_) => super::functions::signed_in(&state, &headers, &name.0)
+            .await
+            .ok()
+            .flatten(),
         None => None,
     };
-    let bound = session.as_ref().map(|session| crate::auth::csrf::Bound {
-        session,
-        config: &state.config,
-    });
+    let bound = signed_in
+        .as_ref()
+        .map(|(session, audience)| crate::auth::csrf::Bound {
+            session,
+            config: &state.config,
+            audience: audience.as_deref(),
+        });
     let token = (super::roles::presented(&state, &headers).is_some()
         && crate::auth::csrf::needs_token(
             &axum_extra::extract::cookie::CookieJar::from_headers(&headers),

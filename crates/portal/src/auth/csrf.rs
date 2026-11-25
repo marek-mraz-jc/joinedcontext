@@ -76,8 +76,14 @@ impl Token {
     /// The token of `session` under `key`, prefixed like [`Token::mint`] on an Organization's
     /// host: `{organization}.{mac}` or `{mac}`, the mac base64url (no `.`).
     pub fn bound(key: &Key, session: &Session) -> Self {
+        Self::bound_for(key, session, None)
+    }
+
+    /// [`Token::bound`] for the audience of the token that names `session`: `None` for the
+    /// Portal's own, the App's client (`app-{name}`) for an App host's edge token (S1-52).
+    fn bound_for(key: &Key, session: &Session, audience: Option<&str>) -> Self {
         let organization = crate::organization_host::organization();
-        let mac = session_mac(key, organization.as_deref(), session);
+        let mac = session_mac(key, organization.as_deref(), session, audience);
         Self(match organization {
             Some(organization) => format!("{organization}.{mac}"),
             None => mac,
@@ -91,8 +97,15 @@ impl Token {
 }
 
 /// HMAC-SHA256 under the cookie key's signing half over the Organization, the person and the
-/// instant the session began (`Session::started_at`, the same across refreshes), base64url.
-fn session_mac(key: &Key, organization: Option<&str>, session: &Session) -> String {
+/// instant the session began (`Session::started_at`, the same across refreshes), and an App
+/// token's audience after them, base64url. A Portal session's mac has no audience part, so its
+/// tokens stay what they were.
+fn session_mac(
+    key: &Key,
+    organization: Option<&str>,
+    session: &Session,
+    audience: Option<&str>,
+) -> String {
     use base64::Engine as _;
     // HMAC takes a key of any length, so `new_from_slice` never fails and the default (an empty
     // mac) is never produced.
@@ -103,7 +116,10 @@ fn session_mac(key: &Key, organization: Option<&str>, session: &Session) -> Stri
                 organization.unwrap_or(""),
                 session.identity.subject.as_str(),
                 &session.started_at().to_string(),
-            ] {
+            ]
+            .into_iter()
+            .chain(audience)
+            {
                 mac.update(part.as_bytes());
                 mac.update(&[0]);
             }
@@ -117,6 +133,8 @@ fn session_mac(key: &Key, organization: Option<&str>, session: &Session) -> Stri
 pub struct Bound<'a> {
     pub session: &'a Session,
     pub config: &'a crate::config::Config,
+    /// The App client the session's token was issued for, `None` for the Portal's (S1-52).
+    pub audience: Option<&'a str>,
 }
 
 impl Bound<'_> {
@@ -127,7 +145,7 @@ impl Bound<'_> {
         std::iter::once(&self.config.cookie_key)
             .chain(&self.config.cookie_keys_previous)
             .any(|key| {
-                let mac = session_mac(key, organization.as_deref(), self.session);
+                let mac = session_mac(key, organization.as_deref(), self.session, self.audience);
                 let expected = match organization.as_deref() {
                     Some(organization) => format!("{organization}.{mac}"),
                     None => mac,
@@ -138,7 +156,7 @@ impl Bound<'_> {
 
     /// The token to hand this session: its own under the active key.
     pub fn token(&self) -> Token {
-        Token::bound(&self.config.cookie_key, self.session)
+        Token::bound_for(&self.config.cookie_key, self.session, self.audience)
     }
 }
 
@@ -258,6 +276,7 @@ pub async fn require_csrf(
     let bound = session.as_ref().map(|session| Bound {
         session,
         config: &state.config,
+        audience: None,
     });
     if is_allowed(request.method(), request.headers(), bound) {
         Ok(next.run(request).await)
@@ -432,6 +451,7 @@ mod tests {
         let bound = Bound {
             session: &b,
             config: &config,
+            audience: None,
         };
         assert!(bound.accepts(retired.as_str()));
         assert!(!bound.accepts(Token::bound(&config.cookie_key, &a).as_str()));
@@ -454,6 +474,7 @@ mod tests {
             let bound = Bound {
                 session: &alice_a,
                 config: &config_a,
+                audience: None,
             };
             let token = bound.token();
             let taken = bound.accepts(token.as_str());
@@ -465,6 +486,7 @@ mod tests {
         let bound = Bound {
             session: &alice,
             config: &config,
+            audience: None,
         };
         assert!(!bound.accepts(on_a.as_str()), "refused off its host");
         assert!(!bound.accepts(""));
@@ -483,6 +505,7 @@ mod tests {
             Some(Bound {
                 session: &bob,
                 config: &config,
+                audience: None,
             }),
         );
         assert!(needs_token(&bobs, Some(bound)));
@@ -547,6 +570,7 @@ mod tests {
         let bound = Bound {
             session: &alice,
             config: &config,
+            audience: None,
         };
         let own = bound.token();
         assert!(!double_submitted(
