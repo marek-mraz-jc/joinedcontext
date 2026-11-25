@@ -1,6 +1,9 @@
-//! The doors that write through a pipeline's replay, over a database that does not answer
-//! (T-7813): a replay refuses what it cannot run before it reaches the store or the runner, each
-//! refusal naming what to change.
+//! The pipeline and access-request doors over a database that does not answer (T-7813).
+//!
+//! Every read here goes to a store the Portal keeps in Postgres, keyed by the project's
+//! Organization: with the pool unreachable each answers `503` with a sentence a person can act on
+//! ("try again"), and never the driver's text, which names the database host and user. A replay
+//! refuses what it cannot run before it reaches the store or the runner.
 
 #[path = "common/csrf_echo.rs"]
 mod csrf_echo;
@@ -86,6 +89,14 @@ fn world() -> AppState {
         .connect_lazy(DEAD)
         .expect("a lazy pool");
     let state = AppState::new(Config::for_tests(), None).with_db(pool);
+    // A Project with its Organization, so each store asks the database for the project's key
+    // instead of answering an unregistered project's empty list.
+    state.mirror.upsert(envelope(
+        "Project",
+        PROJECT,
+        "org",
+        json!({ "organizationRef": { "kind": "Organization", "name": "hel" } }),
+    ));
     state
         .mirror
         .upsert(envelope("ContextSpace", "air", PROJECT, json!({})));
@@ -111,6 +122,10 @@ fn world() -> AppState {
                 "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:air-counters" }),
     ));
     state
+}
+
+async fn get(state: &AppState, uri: &str) -> (StatusCode, String) {
+    send_json(state, "GET", uri, None).await
 }
 
 async fn send_json(
@@ -169,4 +184,32 @@ async fn a_replay_names_why_it_cannot_run() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+/// Each read of a pipeline's records, runs and log, and each list of access requests, answers
+/// 503 with "try again" and keeps the driver's words to the log.
+#[tokio::test]
+async fn every_store_read_is_a_503_that_names_no_database() {
+    let state = world();
+    let pipeline = format!("/api/v1/projects/{PROJECT}/pipelines/air-intake");
+    let mut wrong = Vec::new();
+    for uri in [
+        format!("{pipeline}/rejected"),
+        format!("{pipeline}/rejected/groups"),
+        format!("{pipeline}/rejected/export"),
+        format!("{pipeline}/runs"),
+        format!("{pipeline}/runs/run-1/log"),
+        format!("/api/v1/projects/{PROJECT}/pipeline-runs"),
+        format!("/api/v1/projects/{PROJECT}/pipeline-health"),
+        format!("{pipeline}/access-requests"),
+        format!("/api/v1/projects/{PROJECT}/access-requests"),
+        format!("/api/v1/projects/{PROJECT}/endpoints/air-counters/access-requests"),
+    ] {
+        let (status, body) = get(&state, &uri).await;
+        let leaks = body.contains("127.0.0.1") || body.contains("nobody") || body.contains("pool");
+        if status != StatusCode::SERVICE_UNAVAILABLE || !body.contains("try again") || leaks {
+            wrong.push(format!("{uri}: {status} {body}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
