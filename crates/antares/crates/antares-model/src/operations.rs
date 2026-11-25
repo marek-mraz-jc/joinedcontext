@@ -194,9 +194,7 @@ mod tests {
                 !OPERATION_NAMES.contains(g),
                 "{g} is both a group and an operation"
             );
-            let Some(members) = group_members(g) else {
-                panic!("{g} has no members")
-            };
+            let members = group_members(g).expect("a group has members");
             assert!(!members.is_empty());
             for m in members {
                 assert!(OPERATION_NAMES.contains(m), "{g} expands to unknown {m}");

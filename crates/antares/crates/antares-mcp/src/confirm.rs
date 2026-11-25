@@ -293,14 +293,13 @@ mod tests {
 
     /// T-7507: the same key opens after a restart, another key never does.
     #[test]
-    fn a_restart_opens_what_the_same_key_sealed() {
-        let codec = |byte| codec_of(Some(Ok(vec![byte; 32])));
-        let (Some(before), Some(after), Some(other)) = (codec(7), codec(7), codec(8)) else {
-            unreachable!("32 bytes are a key");
-        };
+    fn a_restart_opens_what_the_same_key_sealed() -> Result<(), &'static str> {
+        let codec = |byte| codec_of(Some(Ok(vec![byte; 32]))).ok_or("32 bytes are a key");
+        let (before, after, other) = (codec(7)?, codec(7)?, codec(8)?);
         let state = sealed(&before, "id", b"call");
         assert_eq!(opened_with(&after, &state, b"call").as_deref(), Some("id"));
         assert_eq!(opened_with(&other, &state, b"call"), None);
+        Ok(())
     }
 
     #[test]

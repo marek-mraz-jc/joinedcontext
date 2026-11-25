@@ -598,12 +598,9 @@ impl Session {
 /// Serve `conn` on `socket` until it ends, then detach it.
 pub(crate) async fn serve(hub: Arc<Hub>, conn: Arc<Conn>, socket: WebSocket) {
     let generation = conn.attach();
-    tracing::info!(
-        connection = %conn.id,
-        tenant = %conn.tenant,
-        view = conn.view.as_deref().unwrap_or(""),
-        "websocket opened"
-    );
+    let (connection, tenant) = (&conn.id, &conn.tenant);
+    let view = conn.view.as_deref().unwrap_or("");
+    tracing::info!(%connection, %tenant, view, "websocket opened");
     let now = Instant::now();
     let rate = Rate::new(&hub.limits, now);
     let mut session = Session {
@@ -629,13 +626,9 @@ pub(crate) async fn serve(hub: Arc<Hub>, conn: Arc<Conn>, socket: WebSocket) {
         End::TakenOver => "resumed elsewhere",
         End::Closed(why) => why,
     };
-    tracing::info!(
-        connection = %conn.id,
-        tenant = %conn.tenant,
-        view = conn.view.as_deref().unwrap_or(""),
-        reason,
-        "websocket closed"
-    );
+    let (connection, tenant) = (&conn.id, &conn.tenant);
+    let view = conn.view.as_deref().unwrap_or("");
+    tracing::info!(%connection, %tenant, view, reason, "websocket closed");
     if end != End::TakenOver && conn.detach(generation) {
         linger(hub, conn, generation);
     }

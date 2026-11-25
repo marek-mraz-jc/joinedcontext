@@ -456,19 +456,21 @@ fn object_schema(fields: &[Field], description: &str, key: Option<&str>) -> Valu
         if f.nullable && !is_key {
             schema = match schema.get("type").and_then(Value::as_str) {
                 Some(ty) => {
+                    // a schema with a "type" is an object
                     let mut s = schema.clone();
-                    if let Some(o) = s.as_object_mut() {
+                    s.as_object_mut().into_iter().for_each(|o| {
                         o.insert("type".into(), json!([ty, "null"]));
-                    }
+                    });
                     s
                 }
                 None => json!({"anyOf": [schema, {"type": "null"}]}),
             };
         }
         if !f.description.is_empty() {
-            if let Some(o) = schema.as_object_mut() {
+            // every schema above is an object
+            schema.as_object_mut().into_iter().for_each(|o| {
                 o.insert("description".into(), json!(f.description));
-            }
+            });
         }
         if is_key {
             required.push(json!(f.name));

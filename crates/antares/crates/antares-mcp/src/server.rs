@@ -1441,6 +1441,26 @@ impl ServerHandler for Server {
 mod tests {
     use super::*;
 
+    /// The averaged call narrows to the numeric Attributes of a single
+    /// entity's history as of an array of them, and a call that names its
+    /// own attrs stays as it is.
+    #[test]
+    fn numeric_attrs_reads_one_entity_and_leaves_named_attrs_alone() {
+        let one = serde_json::json!({"id": "urn:ngsi-ld:T:1", "type": "T",
+            "speed": [{"type": "Property", "value": 3}, {"type": "Property", "value": true}],
+            "name": {"type": "Property", "value": "x"}});
+        let mut averaged = schema::Args::new();
+        assert_eq!(numeric_attrs(&mut averaged, &one), vec!["name".to_owned()]);
+        assert!(
+            matches!(averaged.get("attrs"), Some(Checked::Many(m)) if m == &vec!["speed".to_owned()]),
+            "{averaged:?}"
+        );
+        let mut named = schema::Args::new();
+        named.insert("attrs", Checked::One("speed".into()));
+        assert_eq!(numeric_attrs(&mut named, &one), Vec::<String>::new());
+        assert!(matches!(named.get("attrs"), Some(Checked::One(v)) if v == "speed"));
+    }
+
     #[test]
     fn a_summary_without_its_permits_is_answered_busy() {
         let busy = CallToolResult::from(budget::Busy);

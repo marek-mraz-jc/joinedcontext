@@ -277,11 +277,8 @@ async fn delete_one(ops: &Ops, target: &str, source: &str) -> Result<Response, S
     {
         return Ok(not_found());
     }
-    tracing::info!(
-        target_tenant = target,
-        source_tenant = source,
-        "export grant removed"
-    );
+    let (target_tenant, source_tenant) = (target, source);
+    tracing::info!(target_tenant, source_tenant, "export grant removed");
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

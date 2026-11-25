@@ -1109,6 +1109,16 @@ mod tests {
         }
     }
 
+    /// An annotation value is a language map only when it is a JSON object of
+    /// strings; anything else stays the text it is.
+    #[test]
+    fn an_annotation_value_is_a_map_only_when_every_value_is_text() {
+        assert!(super::text_map(r#"{"en": "Name", "de": "Name"}"#).is_some());
+        assert!(super::text_map(r#"{"en": "Name", "de": 1}"#).is_none());
+        assert!(super::text_map(r#"["en"]"#).is_none());
+        assert!(super::text_map("plain text").is_none());
+    }
+
     /// A class range is an inlined object when the slot says `inlined` or its kind is no
     /// Relationship; a Relationship to a class is a link.
     #[test]

@@ -389,6 +389,7 @@ mod clause_4_19 {
             ("(/A;/B)", "/BB/#"),
             ("(/A;/B),/BB", "(/BB;/BB/Traffic),/A"),
             ("/#", "/A,/B"),
+            ("/#", "(/A;/BB)"),
             ("/#", "/#"),
             ("/A", "/A"),
         ] {
@@ -468,6 +469,11 @@ mod clause_4_19 {
     fn an_inexpressible_intersection_is_none() {
         assert_eq!(intersect_scope_q("", "/A"), None);
         assert_eq!(intersect_scope_q("/A", "  "), None);
+        // `/#` adds nothing to a conjunction, which keeps its brackets
+        assert_eq!(
+            intersect_scope_q("(/A;/B)", "/#").as_deref(),
+            Some("(/A;/B)")
+        );
         let wide = (0..200)
             .map(|n| format!("/S{n}"))
             .collect::<Vec<_>>()

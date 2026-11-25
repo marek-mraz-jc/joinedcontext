@@ -126,9 +126,10 @@ pub async fn write<T: Table + ?Sized>(
             let read = scope.cond();
             let mut after = Vec::with_capacity(matched.len());
             for mut row in matched {
-                if let Some(o) = row.as_object_mut() {
-                    o.extend(patch.iter().map(|(k, v)| (k.clone(), v.clone())));
-                }
+                // a source's rows are objects
+                row.as_object_mut()
+                    .into_iter()
+                    .for_each(|o| o.extend(patch.iter().map(|(k, v)| (k.clone(), v.clone()))));
                 if !matches(&row, &read) || !may_change(scope, &row) {
                     return Err(TableError::Forbidden(format!(
                         "the change would move {} outside what you may change; nothing was changed",
@@ -298,10 +299,12 @@ pub(crate) fn moved(key: &Value) -> TableError {
 pub(crate) fn applied(rows: &mut Vec<Value>, at: &[usize], change: &Change) {
     match change {
         Change::Update(patch) => {
+            // `at` names rows that exist, and a source's rows are objects
             for i in at {
-                if let Some(Value::Object(o)) = rows.get_mut(*i) {
-                    o.extend(patch.iter().map(|(k, v)| (k.clone(), v.clone())));
-                }
+                rows.get_mut(*i)
+                    .and_then(Value::as_object_mut)
+                    .into_iter()
+                    .for_each(|o| o.extend(patch.iter().map(|(k, v)| (k.clone(), v.clone()))));
             }
         }
         Change::Delete => {
