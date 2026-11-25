@@ -23,6 +23,7 @@ bin = [
   { name = "selector", path = "fuzz_targets/selector.rs", test = false, doc = false, bench = false },
   { name = "filter", path = "fuzz_targets/filter.rs", test = false, doc = false, bench = false },
   { name = "prometheus", path = "fuzz_targets/prometheus.rs", test = false, doc = false, bench = false },
+  { name = "stream_failing", path = "fuzz_targets/stream_failing.rs", test = false, doc = false, bench = false },
   { name = "schedule", path = "fuzz_targets/schedule.rs", test = false, doc = false, bench = false },
   { name = "mask", path = "fuzz_targets/mask.rs", test = false, doc = false, bench = false },
   { name = "list_query", path = "fuzz_targets/list_query.rs", test = false, doc = false, bench = false },
