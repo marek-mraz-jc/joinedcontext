@@ -375,17 +375,13 @@ pub fn ctx_link_url(headers: &HeaderMap, source: &Value) -> String {
         // 5.5.7/6.3.5 fidelity: an inline @context has no dereferenceable
         // URL — serialize it so forward() can embed it in the body as
         // application/ld+json instead of dropping the term mappings.
-        Value::Array(a) if a.iter().any(|e| !e.is_string()) => {
-            serde_json::to_string(source).unwrap_or_else(|_| antares_jsonld::CORE_CONTEXT.into())
-        }
+        Value::Array(a) if a.iter().any(|e| !e.is_string()) => source.to_string(),
         Value::Array(a) => a
             .iter()
             .find_map(|e| e.as_str())
             .unwrap_or(antares_jsonld::CORE_CONTEXT)
             .to_owned(),
-        Value::Object(_) => {
-            serde_json::to_string(source).unwrap_or_else(|_| antares_jsonld::CORE_CONTEXT.into())
-        }
+        Value::Object(_) => source.to_string(),
         _ => antares_jsonld::CORE_CONTEXT.to_owned(),
     }
 }
@@ -898,10 +894,8 @@ async fn note_forward(st: &AppState, tenant: &TenantId, reg: &FedReg, ok: bool) 
         .record_forward(tenant, &reg.reg_id, &crate::state::now_iso(), ok)
         .await
     {
-        tracing::warn!(
-            "forward bookkeeping for registration {} failed: {e}",
-            reg.reg_id
-        );
+        let id = &reg.reg_id;
+        tracing::warn!("forward bookkeeping for registration {id} failed: {e}");
     }
 }
 
@@ -1424,9 +1418,9 @@ async fn build_forward<'a>(
         // F-R2ANT1-005: another Antares believes the mesh identity and the gateway's `jc-*`
         // grants (provenance.rs `from_gateway`); a registrant never states them for a forward.
         if lower.starts_with("l5d-") || lower.starts_with("jc-") || lower.starts_with("x-jc-") {
+            let id = &reg.reg_id;
             tracing::warn!(
-                "registration {} asks for the gateway trust header {k:?}; not forwarded",
-                reg.reg_id
+                "registration {id} asks for the gateway trust header {k:?}; not forwarded"
             );
             continue;
         }
@@ -1443,10 +1437,8 @@ async fn build_forward<'a>(
             // caller's token or session to whoever registered the source.
             // A value the registration states itself is its own and goes.
             if REQUEST_CREDENTIALS.contains(&lower.as_str()) {
-                tracing::warn!(
-                    "registration {} asks for the request's credential header {k:?}; not forwarded",
-                    reg.reg_id
-                );
+                let id = &reg.reg_id;
+                tracing::warn!("registration {id} asks for the request's credential header {k:?}; not forwarded");
                 continue;
             }
             match headers.get(k.as_str()).and_then(|h| h.to_str().ok()) {
@@ -1531,17 +1523,13 @@ async fn send_http(st: &AppState, built: BuiltForward<'_>) -> ForwardAnswer {
         // 5.2.9 allows any URI as the registered endpoint, and a URI's
         // authority may carry credentials reqwest sends as basic auth, so a
         // peer URL loses its userinfo on the way into the log.
-        tracing::warn!(
-            "federation forward to {} refused: {e}",
-            antares_notifier::redact_userinfo(&url)
-        );
+        let peer = antares_notifier::redact_userinfo(&url);
+        tracing::warn!("federation forward to {peer} refused: {e}");
         return (502, Value::Null, Vec::new());
     }
     if st.egress.is_open(tenant.as_str(), &url) {
-        tracing::debug!(
-            "federation forward to {} short-circuited (breaker open)",
-            antares_notifier::redact_userinfo(&url)
-        );
+        let peer = antares_notifier::redact_userinfo(&url);
+        tracing::debug!("federation forward to {peer} short-circuited (breaker open)");
         return (503, Value::Null, Vec::new());
     }
     // 5.2.34 cooldown: the source is not contacted.
@@ -1603,11 +1591,8 @@ async fn send_http(st: &AppState, built: BuiltForward<'_>) -> ForwardAnswer {
                     .take(crate::bounds::MAX_PEER_WARNINGS)
                     .collect();
                 if all.iter().count() > peer_warnings.len() {
-                    tracing::warn!(
-                        "registration {} sent more than {} NGSILD-Warning values; the rest were dropped",
-                        reg.reg_id,
-                        crate::bounds::MAX_PEER_WARNINGS
-                    );
+                    let (id, cap) = (&reg.reg_id, crate::bounds::MAX_PEER_WARNINGS);
+                    tracing::warn!("registration {id} sent more than {cap} NGSILD-Warning values; the rest were dropped");
                 }
                 let body = read_body_capped(resp).await;
                 (status, body, peer_warnings)
@@ -3375,6 +3360,587 @@ pub fn strip_proxied(
         any_attr = true;
     }
     (out, any_attr)
+}
+
+/// The forward's own parts, each against the input that takes its other
+/// arm: the advertised @context per source shape, the instance cap, the
+/// EntityMap gate, the headers a registration may not set, and the egress,
+/// breaker, cooldown and deadline refusals of one HTTP forward.
+#[cfg(test)]
+mod forward_parts {
+    use super::*;
+    use serde_json::json;
+
+    fn reg() -> FedReg {
+        fed_reg_of(
+            "urn:ngsi-ld:ContextSourceRegistration:parts",
+            &json!({"endpoint": "http://127.0.0.1:1/ngsi-ld/v1/"}),
+        )
+    }
+
+    #[test]
+    fn the_advertised_context_follows_the_source_shape() {
+        let h = HeaderMap::new();
+        let core = antares_jsonld::CORE_CONTEXT;
+        assert_eq!(
+            ctx_link_url(&h, &json!("https://example.org/c.jsonld")),
+            "https://example.org/c.jsonld"
+        );
+        assert_eq!(
+            ctx_link_url(
+                &h,
+                &json!([
+                    "https://example.org/a.jsonld",
+                    "https://example.org/b.jsonld"
+                ])
+            ),
+            "https://example.org/a.jsonld",
+            "the first URL of a list of URLs"
+        );
+        assert_eq!(
+            ctx_link_url(&h, &json!([])),
+            core,
+            "an empty list is the core context"
+        );
+        let inline = ctx_link_url(&h, &json!(["https://example.org/a.jsonld", {"t": "urn:t"}]));
+        assert_eq!(
+            serde_json::from_str::<Value>(&inline).expect("JSON"),
+            json!(["https://example.org/a.jsonld", {"t": "urn:t"}])
+        );
+        let obj = ctx_link_url(&h, &json!({"t": "urn:t"}));
+        assert_eq!(
+            serde_json::from_str::<Value>(&obj).expect("JSON"),
+            json!({"t": "urn:t"})
+        );
+        assert_eq!(ctx_link_url(&h, &json!(7)), core);
+        assert_eq!(ctx_link_url(&h, &Value::Null), core);
+        let mut linked = HeaderMap::new();
+        linked.insert(
+            "link",
+            "<https://example.org/l.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\""
+                .parse()
+                .expect("link"),
+        );
+        assert_eq!(
+            ctx_link_url(&linked, &json!({"t": "urn:t"})),
+            "https://example.org/l.jsonld",
+            "the Link header wins"
+        );
+    }
+
+    #[test]
+    fn the_instance_cap_covers_the_whole_asked_page() {
+        let p = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        assert_eq!(instance_cap(&p(&[])), None);
+        assert_eq!(
+            instance_cap(&p(&[("lastN", "3")])),
+            Some(("lastN".into(), "3".into()))
+        );
+        assert_eq!(
+            instance_cap(&p(&[("firstN", "3"), ("offsetN", "4")])),
+            Some(("firstN".into(), "7".into()))
+        );
+        assert_eq!(
+            instance_cap(&p(&[("firstN", "x")])),
+            None,
+            "a value that is no count asks nothing"
+        );
+        assert_eq!(
+            instance_cap(&p(&[("lastN", "2"), ("offsetN", "x")])),
+            Some(("lastN".into(), "2".into()))
+        );
+        assert_eq!(
+            instance_cap(&p(&[("lastN", &usize::MAX.to_string()), ("offsetN", "9")])),
+            Some(("lastN".into(), usize::MAX.to_string())),
+            "the sum saturates"
+        );
+    }
+
+    #[test]
+    fn the_entity_map_gate_admits_only_listed_registrations() {
+        let id = "urn:ngsi-ld:Building:b1";
+        let rid = reg().reg_id;
+        assert!(map_gate(reg(), None, id).is_some(), "no map gates nothing");
+        let unlisted = json!({"entityMap": {id: ["urn:ngsi-ld:ContextSourceRegistration:other"]}});
+        assert!(map_gate(reg(), Some(&unlisted), id).is_none());
+        assert!(
+            map_gate(reg(), Some(&json!({})), id).is_none(),
+            "an id the map lacks"
+        );
+        let listed = json!({"entityMap": {id: [rid]}});
+        let r = map_gate(reg(), Some(&listed), id).expect("listed");
+        assert!(
+            r.csi.is_empty(),
+            "no linked map adds no header: {:?}",
+            r.csi
+        );
+        let linked = json!({"entityMap": {id: [rid]}, "linkedMaps": {rid.clone(): "urn:ngsi-ld:EntityMap:m1"}});
+        let r = map_gate(reg(), Some(&linked), id).expect("listed");
+        assert!(r.csi.contains(&(
+            "NGSILD-EntityMap".to_owned(),
+            "urn:ngsi-ld:EntityMap:m1".to_owned()
+        )));
+    }
+
+    /// 5.2.34: the management timeout and cooldown reach the forward, and
+    /// the endpoint loses its trailing API prefix.
+    #[test]
+    fn the_registration_view_reads_management_and_the_endpoint_base() {
+        let r = fed_reg_of(
+            "urn:ngsi-ld:ContextSourceRegistration:m",
+            &json!({"endpoint": "http://peer:9090/ngsi-ld/v1", "management": {"timeout": 250, "cooldown": 1000}}),
+        );
+        assert_eq!((r.timeout_ms, r.cooldown_ms), (Some(250), Some(1000)));
+        assert_eq!(r.endpoint, "http://peer:9090");
+        assert_eq!(r.ops, vec![DEFAULT_OPERATION_GROUP.to_owned()]);
+        let bare = reg();
+        assert_eq!((bare.timeout_ms, bare.cooldown_ms), (None, None));
+        assert_eq!(bare.endpoint, "http://127.0.0.1:1");
+    }
+
+    /// 5.12 / 5.2.9: each scope a registration declares drops it from the
+    /// candidates when the request's own scope misses it, and a scope it
+    /// does not declare drops nothing.
+    #[test]
+    fn a_candidate_is_dropped_by_each_declared_scope_it_misses() {
+        let ctx = antares_jsonld::core_context();
+        let doc = |extra: Value| {
+            let mut d = json!({
+                "id": "urn:ngsi-ld:ContextSourceRegistration:cand",
+                "endpoint": "http://peer:9090",
+                "information": [{"entities": [{"type": "Building"}]}]
+            });
+            for (k, v) in extra.as_object().into_iter().flatten() {
+                d[k] = v.clone();
+            }
+            d
+        };
+        let open = crate::registry::CsrSpec::default();
+        let plain = doc(json!({}));
+        assert!(
+            reg_candidate(&plain, &open, &ctx, &[]).is_some(),
+            "an unscoped request takes it"
+        );
+        let expired = doc(json!({"expiresAt": "2001-01-01T00:00:00Z"}));
+        assert!(
+            reg_candidate(&expired, &open, &ctx, &[]).is_none(),
+            "expired"
+        );
+        let aliased = doc(json!({"contextSourceAlias": "peer-a"}));
+        assert!(
+            reg_candidate(&aliased, &open, &ctx, &["peer-a".to_owned()]).is_none(),
+            "already in Via"
+        );
+        assert!(reg_candidate(&aliased, &open, &ctx, &["peer-b".to_owned()]).is_some());
+
+        let ds = crate::registry::CsrSpec {
+            dataset_ids: Some(vec!["urn:d:1".into()]),
+            ..Default::default()
+        };
+        assert!(reg_candidate(&doc(json!({"datasetId": ["urn:d:2"]})), &ds, &ctx, &[]).is_none());
+        assert!(reg_candidate(
+            &doc(json!({"datasetId": ["urn:d:2", "urn:d:1"]})),
+            &ds,
+            &ctx,
+            &[]
+        )
+        .is_some());
+        assert!(
+            reg_candidate(&plain, &ds, &ctx, &[]).is_some(),
+            "one side alone matches"
+        );
+
+        let p = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect()
+        };
+        let geo = antares_ql::geo::GeoQuery::from_params(&p(&[
+            ("georel", "near;maxDistance==1000"),
+            ("geometry", "Point"),
+            ("coordinates", "[0,0]"),
+        ]))
+        .expect("geo query")
+        .expect("present");
+        let near = crate::registry::CsrSpec {
+            geo: Some(geo),
+            ..Default::default()
+        };
+        let far = doc(json!({"location": {"type": "Point", "coordinates": [50, 50]}}));
+        let here = doc(json!({"location": {"type": "Point", "coordinates": [0, 0]}}));
+        assert!(
+            reg_candidate(&far, &near, &ctx, &[]).is_none(),
+            "outside the geo filter"
+        );
+        assert!(reg_candidate(&here, &near, &ctx, &[]).is_some());
+        assert!(
+            reg_candidate(&plain, &near, &ctx, &[]).is_some(),
+            "no location, no geo scope"
+        );
+
+        let tq = crate::temporalq::TemporalQ::from_params(
+            &p(&[("timerel", "after"), ("timeAt", "2020-01-01T00:00:00Z")]),
+            false,
+        )
+        .expect("temporal query")
+        .expect("present");
+        let after = crate::registry::CsrSpec {
+            temporal: Some(tq),
+            ..Default::default()
+        };
+        let old = doc(
+            json!({"observationInterval": {"startAt": "2000-01-01T00:00:00Z", "endAt": "2001-01-01T00:00:00Z"}}),
+        );
+        let new = doc(
+            json!({"observationInterval": {"startAt": "2025-01-01T00:00:00Z", "endAt": "2026-01-01T00:00:00Z"}}),
+        );
+        assert!(
+            reg_candidate(&old, &after, &ctx, &[]).is_none(),
+            "an interval before timeAt"
+        );
+        assert!(reg_candidate(&new, &after, &ctx, &[]).is_some());
+        assert!(
+            reg_candidate(&plain, &after, &ctx, &[]).is_some(),
+            "no interval, no temporal scope"
+        );
+    }
+
+    async fn built<'a>(
+        st: &AppState,
+        tenant: &'a TenantId,
+        r: &'a FedReg,
+        url: &str,
+        headers: &HeaderMap,
+        ctx_url: &str,
+        body: Option<Value>,
+    ) -> BuiltForward<'a> {
+        build_forward(
+            st,
+            reqwest::Method::POST,
+            url.to_owned(),
+            &[("lastN".to_owned(), "2".to_owned())],
+            headers,
+            tenant,
+            r,
+            ctx_url,
+            body,
+        )
+        .await
+    }
+
+    /// Clause 4.3.6, item 5 / F-ANT3-003 / F-R2ANT1-005: a registration states its own
+    /// headers; it never copies the caller's credential, never states a
+    /// gateway trust header, and copies a request header only when the
+    /// request carried it.
+    #[tokio::test]
+    async fn a_registration_cannot_forward_trust_or_credential_headers() {
+        let st = AppState::new("me".into());
+        let tenant = TenantId::default();
+        let mut r = reg();
+        r.csi = vec![
+            ("jc-organization".into(), "sk".into()),
+            ("l5d-client-id".into(), "mesh".into()),
+            ("Authorization".into(), "urn:ngsi-ld:request".into()),
+            ("Cookie".into(), "urn:ngsi-ld:request".into()),
+            ("X-Trace".into(), "urn:ngsi-ld:request".into()),
+            ("X-Missing".into(), "urn:ngsi-ld:request".into()),
+            ("X-Api-Key".into(), "own".into()),
+        ];
+        let mut h = HeaderMap::new();
+        h.insert("authorization", "Bearer caller".parse().expect("value"));
+        h.insert("cookie", "s=caller".parse().expect("value"));
+        h.insert("x-trace", "t-1".parse().expect("value"));
+        let b = built(
+            &st,
+            &tenant,
+            &r,
+            "http://127.0.0.1:1/ngsi-ld/v1/entities",
+            &h,
+            antares_jsonld::CORE_CONTEXT,
+            None,
+        )
+        .await;
+        let names: Vec<String> = b
+            .headers
+            .iter()
+            .map(|(k, _)| k.to_ascii_lowercase())
+            .collect();
+        for gone in [
+            "jc-organization",
+            "l5d-client-id",
+            "authorization",
+            "cookie",
+            "x-missing",
+        ] {
+            assert!(
+                !names.contains(&gone.to_owned()),
+                "{gone} must not travel: {names:?}"
+            );
+        }
+        assert!(b
+            .headers
+            .contains(&("X-Trace".to_owned(), "t-1".to_owned())));
+        assert!(b
+            .headers
+            .contains(&("X-Api-Key".to_owned(), "own".to_owned())));
+        assert_eq!(b.url(), "http://127.0.0.1:1/ngsi-ld/v1/entities");
+        assert_eq!(b.query(), &[("lastN".to_owned(), "2".to_owned())]);
+        assert_eq!(
+            b.target().as_deref(),
+            Some("http://127.0.0.1:1/ngsi-ld/v1/entities?lastN=2")
+        );
+    }
+
+    /// A body that is no object keeps its shape whatever carrier the
+    /// context takes: inline (ld+json), registered ld+json, or plain JSON.
+    #[tokio::test]
+    async fn a_non_object_body_travels_unchanged_under_each_carrier() {
+        let st = AppState::new("me".into());
+        let tenant = TenantId::default();
+        let url = "http://127.0.0.1:1/ngsi-ld/v1/entityOperations/upsert";
+        let body = json!([{"id": "urn:ngsi-ld:B:1", "type": "B"}]);
+        let ct = |b: &BuiltForward<'_>| {
+            b.headers
+                .iter()
+                .find(|(k, _)| k == "Content-Type")
+                .map(|(_, v)| v.clone())
+        };
+        let r = reg();
+        let inline = built(
+            &st,
+            &tenant,
+            &r,
+            url,
+            &HeaderMap::new(),
+            r#"{"t":"urn:t"}"#,
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(ct(&inline).as_deref(), Some("application/ld+json"));
+        assert!(
+            inline.headers.iter().all(|(k, _)| k != "Link"),
+            "an inline context sends no Link"
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(inline.body.as_deref().unwrap_or_default())
+                .expect("JSON"),
+            body
+        );
+        let mut ld = reg();
+        ld.csi = vec![("contentType".into(), "application/ld+json".into())];
+        let as_ld = built(
+            &st,
+            &tenant,
+            &ld,
+            url,
+            &HeaderMap::new(),
+            antares_jsonld::CORE_CONTEXT,
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(ct(&as_ld).as_deref(), Some("application/ld+json"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(as_ld.body.as_deref().unwrap_or_default())
+                .expect("JSON"),
+            body
+        );
+        let plain = built(
+            &st,
+            &tenant,
+            &r,
+            url,
+            &HeaderMap::new(),
+            antares_jsonld::CORE_CONTEXT,
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(ct(&plain).as_deref(), Some("application/json"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(plain.body.as_deref().unwrap_or_default())
+                .expect("JSON"),
+            body
+        );
+    }
+
+    /// Clause 4.3.6, item 8: a registration pinned to a conformance version has the
+    /// payload amended before it leaves.
+    #[tokio::test]
+    async fn a_pinned_conformance_version_amends_the_payload() {
+        let st = AppState::new("me".into());
+        let tenant = TenantId::default();
+        let mut r = reg();
+        r.csi = vec![("ngsildConformance".into(), "1.6".into())];
+        let body =
+            json!({"id": "urn:ngsi-ld:B:1", "type": "B", "p": {"type": "Property", "value": 1}});
+        let mut expect = body.clone();
+        crate::conformance::amend_payload(
+            &mut expect,
+            crate::conformance::parse_version("1.6").expect("1.6 parses"),
+        );
+        let b = built(
+            &st,
+            &tenant,
+            &r,
+            "http://127.0.0.1:1/ngsi-ld/v1/entities",
+            &HeaderMap::new(),
+            antares_jsonld::CORE_CONTEXT,
+            Some(body),
+        )
+        .await;
+        let sent: Value =
+            serde_json::from_slice(b.body.as_deref().unwrap_or_default()).expect("JSON");
+        assert_eq!(sent, expect);
+    }
+
+    /// The egress policy, the breaker and the 5.2.34 cooldown each answer
+    /// before a socket opens, with their own status.
+    #[tokio::test]
+    async fn refusals_before_the_socket_have_their_own_status() {
+        let st = AppState::new("me".into());
+        let tenant = TenantId::default();
+        let r = reg();
+        let h = HeaderMap::new();
+        let core = antares_jsonld::CORE_CONTEXT;
+        let b = built(&st, &tenant, &r, "ftp://127.0.0.1:1/x", &h, core, None).await;
+        assert_eq!(send_http(&st, b).await.0, 502, "a scheme egress refuses");
+        let url = "http://127.0.0.1:1/ngsi-ld/v1/entities";
+        for _ in 0..crate::egress::TRIP_AFTER {
+            st.egress.record_failure(tenant.as_str(), url);
+        }
+        let b = built(&st, &tenant, &r, url, &h, core, None).await;
+        assert_eq!(send_http(&st, b).await.0, 503, "an open breaker");
+        let mut cool = reg();
+        cool.reg_id = "urn:ngsi-ld:ContextSourceRegistration:cool".into();
+        cool.cooldown_ms = Some(60_000);
+        st.egress.reg_record(
+            &crate::egress::reg_key(tenant.as_str(), &cool.reg_id),
+            false,
+        );
+        let b = built(
+            &st,
+            &tenant,
+            &cool,
+            "http://127.0.0.1:2/ngsi-ld/v1/entities",
+            &h,
+            core,
+            None,
+        )
+        .await;
+        assert_eq!(send_http(&st, b).await.0, 504, "a registration in cooldown");
+    }
+
+    /// 5.2.34 timeout: a source that accepts and never answers costs the
+    /// registration's budget, answers 504 and feeds the breaker.
+    #[tokio::test]
+    async fn a_silent_source_times_out_at_the_registration_budget() {
+        let st = AppState::new("me".into());
+        let tenant = TenantId::default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let hold = tokio::spawn(async move {
+            let mut open = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                open.push(sock);
+            }
+        });
+        let mut r = reg();
+        r.timeout_ms = Some(150);
+        let url = format!("http://{addr}/ngsi-ld/v1/entities");
+        let b = built(
+            &st,
+            &tenant,
+            &r,
+            &url,
+            &HeaderMap::new(),
+            antares_jsonld::CORE_CONTEXT,
+            None,
+        )
+        .await;
+        let started = std::time::Instant::now();
+        assert_eq!(send_http(&st, b).await.0, 504);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "bounded by the budget"
+        );
+        hold.abort();
+    }
+
+    /// 6.3.17: the peer's NGSILD-Warning values travel on up to the cap,
+    /// the head kept.
+    #[tokio::test]
+    async fn peer_warnings_past_the_cap_are_dropped() {
+        let st = AppState::new("me".into());
+        let tenant = TenantId::default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let cap = crate::bounds::MAX_PEER_WARNINGS;
+        let app = axum::Router::new().fallback(move || async move {
+            let mut h = HeaderMap::new();
+            for i in 0..cap + 3 {
+                h.append(
+                    "NGSILD-Warning",
+                    format!("199 peer \"w{i}\"").parse().expect("value"),
+                );
+            }
+            (StatusCode::OK, h, "{}")
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let r = reg();
+        let url = format!("http://{addr}/ngsi-ld/v1/entities");
+        let b = built(
+            &st,
+            &tenant,
+            &r,
+            &url,
+            &HeaderMap::new(),
+            antares_jsonld::CORE_CONTEXT,
+            None,
+        )
+        .await;
+        let (status, _, warnings) = send_http(&st, b).await;
+        assert_eq!(status, 200);
+        assert_eq!(warnings.len(), cap);
+        assert!(warnings[0].contains("w0"), "{warnings:?}");
+        server.abort();
+    }
+
+    /// A store that cannot record the forward does not fail the forward.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn failed_bookkeeping_does_not_fail_the_forward() {
+        let st = crate::state::refusing_state();
+        let tenant = TenantId::default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let app = axum::Router::new().fallback(|| async { (StatusCode::OK, "{}") });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let r = reg();
+        let url = format!("http://{addr}/ngsi-ld/v1/entities");
+        let b = built(
+            &st,
+            &tenant,
+            &r,
+            &url,
+            &HeaderMap::new(),
+            antares_jsonld::CORE_CONTEXT,
+            None,
+        )
+        .await;
+        assert_eq!(send_http(&st, b).await.0, 200);
+        server.abort();
+    }
 }
 
 #[cfg(test)]

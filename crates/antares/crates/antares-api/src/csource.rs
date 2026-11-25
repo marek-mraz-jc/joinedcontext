@@ -541,8 +541,14 @@ pub fn normalize_registration(
     }
     let mut out = Map::new();
     for (k, v) in doc {
-        // NGSI-LD Fragment member removal (5.4): null / NGSI-LD Null
-        if is_patch && k != "id" && (v.is_null() || v.as_str() == Some("urn:ngsi-ld:null")) {
+        // NGSI-LD Fragment member removal (5.4): null / NGSI-LD Null. A `__`
+        // member is the broker's to remove, never a fragment's: it goes on
+        // to norm_reg_member, which drops it.
+        if is_patch
+            && k != "id"
+            && !k.starts_with("__")
+            && (v.is_null() || v.as_str() == Some("urn:ngsi-ld:null"))
+        {
             if ["type", "information", "endpoint"].contains(&k.as_str()) {
                 return Err(bad(format!("cannot remove mandatory member {k} (5.9.3)")));
             }
@@ -803,9 +809,10 @@ async fn take_live_registration(
 ) -> Result<Option<Value>, NgsiError> {
     match st.store.get(tenant, Kind::Registration, id).await? {
         Some(doc) if reg_expired(&doc) => {
-            if st.store.delete(tenant, Kind::Registration, id).await? {
-                st.reg_changed(tenant, id, None);
-            }
+            // A concurrent write that deleted it first already cleared the
+            // mirror; clearing an absent id again is a no-op.
+            st.store.delete(tenant, Kind::Registration, id).await?;
+            st.reg_changed(tenant, id, None);
             Ok(None)
         }
         live => Ok(live),
@@ -1078,9 +1085,9 @@ pub async fn create_registration(
         let tenant = tenant_from(&headers)?;
         check_params(&params, &["local"])?;
         let parsed = parse_body(&st, &headers, &body, BodyKind::Standard).await?;
-        let obj = parsed.value.as_object().ok_or_else(|| {
-            NgsiError::BadRequestData("registration must be a JSON object".into())
-        })?;
+        let obj = parsed.object(NgsiError::BadRequestData(
+            "registration must be a JSON object".into(),
+        ))?;
         // ADR-0020: 5.9.2 lets the client choose the registration id, and
         // it is in hand here — see the same note on subscription create.
         let named = obj.get("id").and_then(Value::as_str);
@@ -1636,6 +1643,669 @@ mod member_tenant_t7306 {
     }
 }
 
+/// Every refusal of Table 5.2.9-1 and of the handlers, one input each: the
+/// member a client got wrong is named in a 400, never kept, and a stored
+/// registration the broker cannot read answers a 500 instead of a guess.
+#[cfg(test)]
+mod table_5_2_9_1_refusals {
+    use super::*;
+    use antares_jsonld::Loader;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    const RID: &str = "urn:ngsi-ld:ContextSourceRegistration:edge";
+
+    fn base() -> Map<String, Value> {
+        json!({
+            "id": RID,
+            "type": "ContextSourceRegistration",
+            "endpoint": "http://peer:9090",
+            "information": [{"entities": [{"type": "Building"}]}]
+        })
+        .as_object()
+        .expect("object")
+        .clone()
+    }
+
+    fn with(key: &str, v: Value) -> Result<Map<String, Value>, NgsiError> {
+        let mut doc = base();
+        doc.insert(key.into(), v);
+        normalize_registration(&doc, &Loader::new().core(), false)
+    }
+
+    fn refused(r: Result<Map<String, Value>, NgsiError>, needle: &str) {
+        let e = r.expect_err("refused");
+        assert!(
+            matches!(&e, NgsiError::BadRequestData(m) if m.contains(needle)),
+            "expected BadRequestData naming {needle:?}, got {e:?}"
+        );
+    }
+
+    #[test]
+    fn information_shapes_are_refused_by_name() {
+        refused(with("information", json!([])), "non-empty array");
+        refused(with("information", json!("Building")), "non-empty array");
+        refused(
+            with("information", json!([1])),
+            "information entries must be objects",
+        );
+        refused(
+            with("information", json!([{"entities": [1]}])),
+            "entities entries must be objects",
+        );
+        refused(
+            with("information", json!([{"entities": []}])),
+            "entities must be a non-empty array",
+        );
+        refused(
+            with("information", json!([{"entities": [{"type": ""}]}])),
+            "non-empty string",
+        );
+        refused(
+            with("information", json!([{"entities": [{"type": [7]}]}])),
+            "non-empty string",
+        );
+        refused(
+            with("information", json!([{"entities": [{"type": []}]}])),
+            "must not be empty",
+        );
+        refused(
+            with("information", json!([{"entities": [{"id": 7}]}])),
+            "id must be a URI",
+        );
+        refused(
+            with("information", json!([{"entities": [{"idPattern": 7}]}])),
+            "idPattern must be a string",
+        );
+        refused(
+            with("information", json!([{"entities": [{"idPattern": "("}]}])),
+            "invalid idPattern",
+        );
+        refused(
+            with("information", json!([{"entities": [{"note": "x"}]}])),
+            "requires type, id or idPattern",
+        );
+        refused(
+            with("information", json!([{"propertyNames": []}])),
+            "propertyNames must be a non-empty array",
+        );
+        refused(
+            with("information", json!([{"propertyNames": [1]}])),
+            "propertyNames entries must be strings",
+        );
+    }
+
+    /// 5.5.9's tolerant reader: a member the table does not name is kept, at
+    /// each level, and the expanded names stay expanded.
+    #[test]
+    fn unknown_members_are_kept_verbatim() {
+        let out = with(
+            "information",
+            json!([{"entities": [{"type": "Building", "note": "kept"}], "extra": {"a": 1}}]),
+        )
+        .expect("legal");
+        let info = &out["information"][0];
+        assert_eq!(info["entities"][0]["note"], json!("kept"));
+        assert_eq!(info["extra"], json!({"a": 1}));
+        let out = with("vendorHint", json!(42)).expect("legal");
+        assert_eq!(out["vendorHint"], json!(42));
+    }
+
+    #[test]
+    fn each_typed_member_names_itself_when_refused() {
+        refused(
+            with("contextSourceInfo", json!({"key": "a"})),
+            "contextSourceInfo must be an array",
+        );
+        refused(with("id", json!(7)), "registration id must be a string URI");
+        refused(with("type", json!("Subscription")), "type must be");
+        refused(
+            with("endpoint", json!(9090)),
+            "endpoint must be a URI string",
+        );
+        refused(
+            with("endpoint", json!("not a uri")),
+            "endpoint is not a valid URI",
+        );
+        refused(
+            with("expiresAt", json!("tomorrow")),
+            "expiresAt must be an ISO 8601 DateTime",
+        );
+        refused(
+            with("expiresAt", json!("2001-01-01T00:00:00Z")),
+            "expiresAt is in the past",
+        );
+        refused(with("tenant", json!(["a"])), "tenant must be a string");
+        refused(
+            with("datasetId", json!("urn:ngsi-ld:Dataset:1")),
+            "datasetId must be an array",
+        );
+        refused(with("datasetId", json!(["no uri"])), "is not a URI");
+        refused(with("scope", json!(7)), "4.18 grammar");
+        refused(with("scope", json!(["/ok", 7])), "4.18 grammar");
+        refused(
+            with("observationInterval", json!("2020")),
+            "observationInterval must be a TimeInterval object",
+        );
+        refused(
+            with("managementInterval", json!({})),
+            "managementInterval.startAt",
+        );
+        refused(
+            with(
+                "managementInterval",
+                json!({"startAt": "2020-01-01T00:00:00Z", "endAt": "soon"}),
+            ),
+            "managementInterval.endAt",
+        );
+        refused(
+            with("localOnly", json!("yes")),
+            "localOnly must be a boolean",
+        );
+        refused(
+            with("description", json!("")),
+            "description must be a non-empty string",
+        );
+        refused(
+            with("location", json!({"type": "Point"})),
+            "location must be a 4.7 GeoJSON geometry",
+        );
+        // and the legal spellings of the same members pass
+        assert!(with("datasetId", json!(["@none", "urn:ngsi-ld:Dataset:1"])).is_ok());
+        assert!(with("scope", json!(["/a", "/b/c"])).is_ok());
+        assert!(with("tenant", json!("peer")).is_ok());
+        assert!(with(
+            "observationInterval",
+            json!({"startAt": "2020-01-01T00:00:00Z", "endAt": "2021-01-01T00:00:00Z"})
+        )
+        .is_ok());
+    }
+
+    /// 5.2.9: type, endpoint and information are mandatory on create, and a
+    /// 5.9.3 fragment may not remove any of them.
+    #[test]
+    fn mandatory_members_are_required_and_cannot_be_removed() {
+        let ctx = Loader::new().core();
+        for k in ["type", "endpoint", "information"] {
+            let mut doc = base();
+            doc.remove(k);
+            refused(normalize_registration(&doc, &ctx, false), k);
+            let frag = json!({ k: null });
+            refused(
+                normalize_registration(frag.as_object().expect("object"), &ctx, true),
+                &format!("cannot remove mandatory member {k}"),
+            );
+        }
+        // a fragment may drop an optional member, and carries no mandatory one
+        let frag = json!({"description": "urn:ngsi-ld:null"});
+        let out = normalize_registration(frag.as_object().expect("object"), &ctx, true)
+            .expect("an optional member is removable");
+        assert_eq!(out["description"], Value::Null);
+    }
+
+    /// The `__` members are the broker's (the creating subject, T-3692): a
+    /// fragment can neither write one nor remove one with null or the
+    /// NGSI-LD Null, so a registrant cannot strip the subject an engine
+    /// narrows Query Registrations by.
+    #[test]
+    fn a_fragment_cannot_remove_a_broker_internal_member() {
+        let ctx = Loader::new().core();
+        for v in [Value::Null, json!("urn:ngsi-ld:null"), json!("seeded")] {
+            let frag = json!({ crate::policy::SUBJECT_MEMBER: v.clone(), "description": "kept" });
+            let out = normalize_registration(frag.as_object().expect("object"), &ctx, true)
+                .expect("a legal fragment");
+            assert!(
+                !out.contains_key(crate::policy::SUBJECT_MEMBER),
+                "{v} reached the merge: {out:?}"
+            );
+            assert_eq!(out["description"], json!("kept"));
+        }
+    }
+
+    /// Clause 5.9.2, step 4: an auxiliary registration with no operations member takes
+    /// the deployment default, which is legal; one naming a write is not.
+    #[test]
+    fn auxiliary_operations_are_checked_only_when_present() {
+        let mut doc = base();
+        doc.insert("mode".into(), json!("auxiliary"));
+        assert!(validate_auxiliary_ops(&doc).is_ok());
+        doc.insert(
+            "operations".into(),
+            json!(["retrieveEntity", "createEntity"]),
+        );
+        let e = validate_auxiliary_ops(&doc).expect_err("a write op");
+        assert!(e.to_string().contains("createEntity"), "{e}");
+        doc.insert("operations".into(), json!(["retrieveOps", "queryEntity"]));
+        assert!(validate_auxiliary_ops(&doc).is_ok());
+    }
+
+    /// The policy gate sees each type and Attribute once, whatever the
+    /// spelling; an EntityInfo without a type adds none.
+    #[test]
+    fn info_members_lists_each_name_once() {
+        let doc = json!({"information": [
+            {"entities": [{"id": "urn:ngsi-ld:Building:b1"}, {"type": ["A", "B"]}, {"type": "A"}],
+             "propertyNames": ["p", "p"], "relationshipNames": ["r"]}
+        ]});
+        let (types, attrs) = info_members(doc.as_object().expect("object"));
+        assert_eq!(types, vec!["A", "B"]);
+        assert!(attrs.contains(&"p".to_owned()) && attrs.contains(&"r".to_owned()));
+        assert_eq!(attrs.iter().filter(|a| *a == "p").count(), 1);
+    }
+
+    /// Only proxied modes are checked against the registration set: an
+    /// inclusive registration overlaps nothing, and an information entry
+    /// without entities has nothing an Entity could conflict with.
+    #[tokio::test]
+    async fn non_proxied_and_entity_free_registrations_never_conflict() {
+        let st = AppState::new("antares-csr-edges".into());
+        let tenant = TenantId::default();
+        let ctx = st.loader.core();
+        st.store
+            .create(
+                &tenant,
+                Kind::Entity,
+                "urn:ngsi-ld:Building:b1",
+                json!({
+                    "id": "urn:ngsi-ld:Building:b1", "type": ["Building"]
+                }),
+            )
+            .await
+            .expect("seed");
+        st.store
+            .create(
+                &tenant,
+                Kind::Registration,
+                "urn:ngsi-ld:ContextSourceRegistration:expired",
+                json!({
+                    "id": "urn:ngsi-ld:ContextSourceRegistration:expired",
+                    "type": "ContextSourceRegistration",
+                    "endpoint": "http://peer:9090",
+                    "mode": "exclusive",
+                    "expiresAt": "2001-01-01T00:00:00Z",
+                    "information": [{"entities": [{"id": "urn:ngsi-ld:Building:b1", "type": "Building"}],
+                                     "propertyNames": ["height"]}]
+                }),
+            )
+            .await
+            .expect("seed expired");
+        let mut exclusive = base();
+        exclusive.insert("mode".into(), json!("exclusive"));
+        exclusive.insert(
+            "information".into(),
+            json!([{"entities": [{"id": "urn:ngsi-ld:Building:b1", "type": "Building"}],
+                    "propertyNames": ["height"]}]),
+        );
+        assert!(
+            check_proxied_overlap(&st, &tenant, &exclusive, None, &ctx)
+                .await
+                .is_ok(),
+            "an expired exclusive registration overlaps nothing"
+        );
+        let inclusive = base();
+        assert!(check_proxied_overlap(&st, &tenant, &inclusive, None, &ctx)
+            .await
+            .is_ok());
+        let mut redirect = base();
+        redirect.insert("mode".into(), json!("redirect"));
+        redirect.insert("information".into(), json!([{"propertyNames": ["height"]}]));
+        assert!(check_entity_conflict(&st, &tenant, &redirect).await.is_ok());
+        redirect.insert(
+            "information".into(),
+            json!([{"entities": [{"type": "Building"}]}]),
+        );
+        assert!(matches!(
+            check_entity_conflict(&st, &tenant, &redirect).await,
+            Err(NgsiError::Conflict(_))
+        ));
+    }
+
+    /// The sweep reaps only what it can name: an expired row whose document
+    /// carries no id, or an id other than its key, stays and is not counted.
+    #[tokio::test]
+    async fn the_sweep_counts_only_rows_it_deleted() {
+        let st = AppState::new("antares-csr-sweep".into());
+        let tenant = TenantId::default();
+        let past = "2001-01-01T00:00:00Z";
+        for (key, doc) in [
+            (
+                "urn:ngsi-ld:ContextSourceRegistration:dead",
+                json!({
+                "id": "urn:ngsi-ld:ContextSourceRegistration:dead", "expiresAt": past}),
+            ),
+            (
+                "urn:ngsi-ld:ContextSourceRegistration:noid",
+                json!({"expiresAt": past}),
+            ),
+            (
+                "urn:ngsi-ld:ContextSourceRegistration:key",
+                json!({
+                "id": "urn:ngsi-ld:ContextSourceRegistration:other", "expiresAt": past}),
+            ),
+            (
+                "urn:ngsi-ld:ContextSourceRegistration:live",
+                json!({
+                "id": "urn:ngsi-ld:ContextSourceRegistration:live"}),
+            ),
+        ] {
+            st.store
+                .create(&tenant, Kind::Registration, key, doc)
+                .await
+                .expect("seed");
+        }
+        assert_eq!(sweep_expired_registrations(&st, &tenant).await, 1);
+        let left = st
+            .store
+            .list(&tenant, Kind::Registration)
+            .await
+            .expect("list");
+        assert_eq!(left.len(), 3, "only the expired row named by its key went");
+        assert_eq!(
+            sweep_expired_registrations(&st, &tenant).await,
+            0,
+            "nothing left to reap"
+        );
+    }
+
+    /// A tenant the store refuses to enumerate reaps nothing and fails no
+    /// tick.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn the_sweep_of_a_refusing_store_reaps_nothing() {
+        let st = crate::state::refusing_state();
+        let tenant = TenantId::new("refused").expect("tenant");
+        assert_eq!(sweep_expired_registrations(&st, &tenant).await, 0);
+    }
+
+    fn json_headers() -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(
+            axum::http::header::CONTENT_TYPE,
+            "application/json".parse().expect("header value"),
+        );
+        h
+    }
+
+    fn no_params() -> CleanParams {
+        CleanParams(HashMap::new())
+    }
+
+    fn body(v: Value) -> Bytes {
+        Bytes::from(v.to_string())
+    }
+
+    async fn problem(resp: Response) -> (StatusCode, String) {
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .expect("body");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// The handlers refuse an id that is not a URI with 400 before any read,
+    /// a body that is not an object with 400, and a second create of one id
+    /// with 409.
+    #[tokio::test]
+    async fn handlers_refuse_bad_ids_bodies_and_duplicates() {
+        let st = AppState::new("antares-csr-handlers".into());
+        let bad = || Path("not a uri".to_owned());
+        let r =
+            retrieve_registration(State(st.clone()), bad(), no_params(), HeaderMap::new()).await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let r = update_registration(
+            State(st.clone()),
+            bad(),
+            no_params(),
+            json_headers(),
+            body(json!({})),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let r = delete_registration(State(st.clone()), bad(), no_params(), HeaderMap::new()).await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+        let r = create_registration(
+            State(st.clone()),
+            no_params(),
+            json_headers(),
+            body(json!([1])),
+        )
+        .await;
+        let (status, text) = problem(r).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(text.contains("must be a JSON object"), "{text}");
+        let doc = Value::Object(base());
+        let first = create_registration(
+            State(st.clone()),
+            no_params(),
+            json_headers(),
+            body(doc.clone()),
+        )
+        .await;
+        assert_eq!(first.status(), StatusCode::CREATED);
+        let (status, text) = problem(
+            create_registration(State(st.clone()), no_params(), json_headers(), body(doc)).await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(text.contains("already exists"), "{text}");
+    }
+
+    /// Clause 5.9.2, step 4: an expired registration's id is free again; the create that
+    /// names it deletes the expired row and stores its own.
+    #[tokio::test]
+    async fn a_create_takes_back_the_id_of_an_expired_registration() {
+        let st = AppState::new("antares-csr-reuse".into());
+        let tenant = TenantId::default();
+        let mut old = base();
+        old.insert("expiresAt".into(), json!("2001-01-01T00:00:00Z"));
+        old.insert("description".into(), json!("old"));
+        st.store
+            .create(&tenant, Kind::Registration, RID, Value::Object(old))
+            .await
+            .expect("seed");
+        let r = create_registration(
+            State(st.clone()),
+            no_params(),
+            json_headers(),
+            body(Value::Object(base())),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::CREATED);
+        let doc = st
+            .store
+            .get(&tenant, Kind::Registration, RID)
+            .await
+            .expect("read")
+            .expect("stored");
+        assert!(
+            doc.get("description").is_none(),
+            "the new registration, not the expired one: {doc}"
+        );
+        assert!(doc.get("expiresAt").is_none());
+    }
+
+    /// A fragment may repeat the registration's own id; the id is not a
+    /// member the merge rewrites.
+    #[tokio::test]
+    async fn a_fragment_carrying_the_id_patches_the_other_members() {
+        let st = AppState::new("antares-csr-patch-id".into());
+        let tenant = TenantId::default();
+        let created = create_registration(
+            State(st.clone()),
+            no_params(),
+            json_headers(),
+            body(Value::Object(base())),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let r = update_registration(
+            State(st.clone()),
+            Path(RID.to_owned()),
+            no_params(),
+            json_headers(),
+            body(json!({"id": RID, "description": "patched"})),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        let doc = st
+            .store
+            .get(&tenant, Kind::Registration, RID)
+            .await
+            .expect("read")
+            .expect("stored");
+        assert_eq!(doc["description"], json!("patched"));
+        assert_eq!(doc["id"], json!(RID));
+    }
+
+    /// A stored registration that is not a JSON object (a row written past
+    /// the API) is an internal error on patch, never silently replaced.
+    #[tokio::test]
+    async fn a_patch_of_an_unreadable_stored_registration_is_a_500() {
+        let st = AppState::new("antares-csr-odd".into());
+        let tenant = TenantId::default();
+        st.store
+            .create(&tenant, Kind::Registration, RID, json!("not an object"))
+            .await
+            .expect("seed");
+        let (status, text) = problem(
+            update_registration(
+                State(st.clone()),
+                Path(RID.to_owned()),
+                no_params(),
+                json_headers(),
+                body(json!({"description": "x"})),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(
+            text.contains("stored registration is not a JSON object"),
+            "{text}"
+        );
+        let kept = st
+            .store
+            .get(&tenant, Kind::Registration, RID)
+            .await
+            .expect("read");
+        assert_eq!(kept, Some(json!("not an object")));
+    }
+
+    async fn query(st: &AppState, pairs: &[(&str, &str)]) -> (StatusCode, String) {
+        let params: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        problem(query_registrations(State(st.clone()), CleanParams(params), HeaderMap::new()).await)
+            .await
+    }
+
+    /// 5.10.2: id lists, idPattern, q with several terms, csf and a temporal
+    /// query each narrow the answer; a malformed one of each is a 400.
+    #[tokio::test]
+    async fn query_selectors_narrow_and_malformed_ones_are_refused() {
+        let st = AppState::new("antares-csr-query".into());
+        let reg = |n: &str, extra: Value| {
+            let mut d = json!({
+                "id": format!("urn:ngsi-ld:ContextSourceRegistration:{n}"),
+                "type": "ContextSourceRegistration",
+                "endpoint": "http://peer:9090",
+                "information": [{"entities": [{"type": "Building"}], "propertyNames": ["height", "name"]}]
+            });
+            for (k, v) in extra.as_object().into_iter().flatten() {
+                d[k] = v.clone();
+            }
+            d
+        };
+        for (n, extra) in [
+            ("q1", json!({})),
+            (
+                "q2",
+                json!({"observationInterval": {"startAt": "2025-01-01T00:00:00Z", "endAt": "2026-01-01T00:00:00Z"}}),
+            ),
+            (
+                "q3",
+                json!({"observationInterval": {"startAt": "2000-01-01T00:00:00Z", "endAt": "2001-01-01T00:00:00Z"}}),
+            ),
+        ] {
+            let r = create_registration(
+                State(st.clone()),
+                no_params(),
+                json_headers(),
+                body(reg(n, extra)),
+            )
+            .await;
+            assert_eq!(r.status(), StatusCode::CREATED, "seed {n}");
+        }
+        let q1 = "urn:ngsi-ld:ContextSourceRegistration:q1";
+        let (s, t) = query(
+            &st,
+            &[("id", "urn:ngsi-ld:Building:b1,urn:ngsi-ld:Building:b2")],
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{t}");
+        let (s, t) = query(&st, &[("id", "urn:ngsi-ld:Building:b1,not a uri")]).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert!(t.contains("invalid id in list"), "{t}");
+        let (s, t) = query(&st, &[("idPattern", "^urn:ngsi-ld:Building:.*")]).await;
+        assert_eq!(s, StatusCode::OK, "{t}");
+        let (s, t) = query(&st, &[("idPattern", "(")]).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert!(t.contains("invalid idPattern"), "{t}");
+        let (s, t) = query(&st, &[("type", "Building"), ("q", "height>1;name==\"x\"")]).await;
+        assert_eq!(s, StatusCode::OK, "{t}");
+        assert!(t.contains(q1), "q over registered names matches: {t}");
+        let (s, _) = query(&st, &[("type", "Building"), ("csf", ">>")]).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "a csf that is no 4.9 query");
+        let (s, t) = query(
+            &st,
+            &[
+                ("type", "Building"),
+                ("timerel", "after"),
+                ("timeAt", "2020-01-01T00:00:00Z"),
+            ],
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{t}");
+        assert!(
+            t.contains("ContextSourceRegistration:q2"),
+            "the interval after timeAt: {t}"
+        );
+        assert!(
+            !t.contains("ContextSourceRegistration:q3"),
+            "an interval before timeAt: {t}"
+        );
+        assert!(
+            !t.contains(q1),
+            "a latest-information source is no temporal source: {t}"
+        );
+        let (s, t) = query(&st, &[("type", "Building")]).await;
+        assert_eq!(s, StatusCode::OK, "{t}");
+        assert!(
+            t.contains(q1) && !t.contains(":q2"),
+            "no interval without a temporal query: {t}"
+        );
+    }
+
+    /// A q term whose path has no root names no attribute to project.
+    #[test]
+    fn a_rootless_q_path_adds_no_projection_attribute() {
+        let node = antares_ql::QNode::Exists {
+            path: antares_ql::QPath {
+                links: Vec::new(),
+                path: Vec::new(),
+                bracket: None,
+            },
+            negated: false,
+        };
+        let mut out = Vec::new();
+        q_attr_roots(&node, &mut out);
+        assert!(out.is_empty());
+        q_attr_roots(&antares_ql::parse_q("a;b|c").expect("q"), &mut out);
+        assert_eq!(out, vec!["a", "b", "c"]);
+    }
+}
+
 #[cfg(test)]
 mod clause_4_20 {
     use super::*;
@@ -1915,11 +2585,12 @@ mod csi_tests {
             normalize_registration(doc.as_object().expect("object"), &ctx, false).expect("valid")
         };
         async fn err(st: &AppState, tenant: &TenantId, doc: Map<String, Value>) -> Option<String> {
-            match check_entity_conflict(st, tenant, &doc).await {
-                Err(NgsiError::Conflict(m)) => Some(m),
-                Err(other) => panic!("unexpected error {other:?}"),
-                Ok(()) => None,
-            }
+            let r = check_entity_conflict(st, tenant, &doc).await;
+            assert!(
+                matches!(r, Ok(()) | Err(NgsiError::Conflict(_))),
+                "unexpected {r:?}"
+            );
+            r.err().map(|e| e.to_string())
         }
         assert_eq!(
             err(&st, &tenant, reg(json!(["Vehicle"]))).await,
@@ -1978,11 +2649,12 @@ mod csi_tests {
             normalize_registration(doc.as_object().expect("object"), &ctx, false).expect("valid")
         };
         async fn err(st: &AppState, tenant: &TenantId, doc: Map<String, Value>) -> Option<String> {
-            match check_entity_conflict(st, tenant, &doc).await {
-                Err(NgsiError::Conflict(m)) => Some(m),
-                Err(other) => panic!("unexpected error {other:?}"),
-                Ok(()) => None,
-            }
+            let r = check_entity_conflict(st, tenant, &doc).await;
+            assert!(
+                matches!(r, Ok(()) | Err(NgsiError::Conflict(_))),
+                "unexpected {r:?}"
+            );
+            r.err().map(|e| e.to_string())
         }
         assert_eq!(
             err(
@@ -2200,11 +2872,11 @@ mod csi_tests {
     #[test]
     fn clause_5_9_2_4_past_expires_at_whatever_the_fraction_spelling() {
         let ctx = Loader::new().core();
-        for _ in 0..8 {
-            let now = now_iso();
-            if now.len() < 24 || &now[20..23] == "000" {
-                continue; // no sub-second gap to compare against
-            }
+        // a now with no sub-second gap to compare against is skipped
+        let nows = (0..8)
+            .map(|_| now_iso())
+            .filter(|now| &now[20..23] != "000");
+        for now in nows {
             let past = format!("{}Z", &now[..19]); // same second, no fraction
             let doc = json!({
                 "id": "urn:ngsi-ld:ContextSourceRegistration:exp1",

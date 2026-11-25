@@ -1,0 +1,1 @@
+{"type":"ContextSourceRegistration","endpoint":"http://p","information":[{"entities":[{"id":"urn:ngsi-ld:V:1","type":["A","B"]}],"relationshipNames":["r"]}],"mode":"exclusive","observationInterval":{"startAt":"2020-01-01T00:00:00Z"},"location":{"type":"Point","coordinates":[1,2]},"scope":["/a/b"]}

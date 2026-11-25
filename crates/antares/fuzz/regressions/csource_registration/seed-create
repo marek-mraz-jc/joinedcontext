@@ -1,0 +1,1 @@
+{"id":"urn:ngsi-ld:ContextSourceRegistration:s1","type":"ContextSourceRegistration","endpoint":"http://peer:9090","information":[{"entities":[{"type":"Building","idPattern":"^urn:.*"}],"propertyNames":["height"]}],"mode":"redirect","expiresAt":"2999-01-01T00:00:00Z","__subject":"x"}
