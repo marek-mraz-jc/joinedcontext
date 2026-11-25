@@ -211,15 +211,18 @@ async fn a_published_function_runs_the_served_build_with_the_callers_token() {
     if !runs_functions() {
         return;
     }
-    let rig = rig("fn-served").await;
-    let cookie = format!("__Host-jc_csrf={CSRF}");
+    let (_realm, runtime) = realm_and_runtime().await;
+    let rig = organization_rig("fn-served", runtime).await;
+    let eva = common::REALM.person_token("bbsk-open", "eva", &[]);
+    let csrf = index_csrf(&rig, "bbsk-open", &eva).await;
+    let cookie = format!("__Host-jc_csrf={csrf}");
     let (status, body) = post(
         &rig,
-        "/apps/open-data/api/functions/near-me?lat=60.17",
+        "/apps/bbsk-open/api/functions/near-me?lat=60.17",
         &[
-            ("x-access-token", "the-persons-edge-token"),
+            ("x-access-token", &eva),
             ("cookie", &cookie),
-            ("x-csrf-token", CSRF),
+            ("x-csrf-token", &csrf),
         ],
         br#"{"source":"export default () => 1","radius":500}"#.to_vec(),
     )
@@ -231,7 +234,7 @@ async fn a_published_function_runs_the_served_build_with_the_callers_token() {
         .await
         .try_into()
         .expect("one invocation");
-    assert_eq!(call["token"], "the-persons-edge-token");
+    assert_eq!(call["token"], eva);
     assert_eq!(
         call["files"]["@app/functions.js"], BUNDLE,
         "the served build, not the body"
@@ -317,24 +320,26 @@ async fn refusals_never_reach_the_runtime() {
             Vec::new(),
             StatusCode::NOT_FOUND,
         ),
-        // The edge's token rides on a cookie, so it needs the double-submit token beside it.
+        // An edge token this realm cannot verify names nobody: 401 before any pair is read,
+        // whatever rides beside it (S1-52). The CSRF refusals of a verified person's token are
+        // an_app_hosts_call_needs_the_token_bound_to_its_person_and_app.
         (
             "/apps/open-data/api/functions/near-me",
             &edge[..],
             Vec::new(),
-            StatusCode::FORBIDDEN,
+            StatusCode::UNAUTHORIZED,
         ),
         (
             "/apps/open-data/api/functions/near-me",
             &edge_and_bearer[..],
             Vec::new(),
-            StatusCode::FORBIDDEN,
+            StatusCode::UNAUTHORIZED,
         ),
         (
             "/apps/open-data/api/functions/near-me",
             &foreign_csrf[..],
             Vec::new(),
-            StatusCode::FORBIDDEN,
+            StatusCode::UNAUTHORIZED,
         ),
         // Not JSON.
         (
@@ -766,6 +771,23 @@ async fn an_app_hosts_call_needs_the_token_bound_to_its_person_and_app() {
         assert_eq!(status, StatusCode::FORBIDDEN, "{who}");
         assert_eq!(kind, "forbidden", "{who}");
     }
+    // A bearer beside the edge's token is no credential of this call and waives no check
+    // (T-4915).
+    let (status, _) = post(
+        &rig,
+        "/apps/bbsk-open/api/functions/near-me",
+        &[
+            ("x-access-token", &eva_open),
+            ("authorization", "Bearer planted-by-another-app"),
+        ],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "eva with a bearer and no token"
+    );
     assert!(invocations(&rig.runtime).await.is_empty());
 
     let (status, _) = call_with(&rig, uri, &eva, Some(&evas)).await;
@@ -821,7 +843,10 @@ async fn every_service_write_refuses_another_persons_csrf_token() {
         ("POST", "/apps/bbsk-events/api/services/ai/complete"),
         ("PUT", "/apps/bbsk-events/api/services/files/report.csv"),
         ("DELETE", "/apps/bbsk-events/api/services/files/report.csv"),
-        ("POST", "/apps/bbsk-events/api/services/files/report.csv"),
+        (
+            "POST",
+            "/apps/bbsk-events/api/services/files/report.csv:url",
+        ),
     ] {
         let (status, kind) = call_as(&rig, method, uri, &otto, Some(&evas)).await;
         assert_eq!(
