@@ -230,6 +230,28 @@ mod tests {
         assert_eq!(creates.reserve("a", "x", 2, 11 * DAY), Ok(()));
     }
 
+    #[test]
+    fn a_release_of_another_day_or_of_nothing_taken_gives_back_nothing() {
+        let creates = DailyCreates::default();
+        let noon = 10 * DAY + DAY / 2;
+        assert_eq!(creates.reserve("a", "x", 1, noon), Ok(()));
+        // nothing was taken by this caller or on this slug
+        creates.release("a", "nobody", noon);
+        creates.release("unknown", "x", noon);
+        assert_eq!(
+            creates.reserve("a", "x", 1, noon),
+            Err((DAY / 2, Spent::Caller))
+        );
+        // yesterday's slot given back the next day leaves the new day's count alone
+        let next = 11 * DAY + 60;
+        creates.release("a", "x", next);
+        assert_eq!(creates.reserve("a", "x", 1, next), Ok(()));
+        assert_eq!(
+            creates.reserve("a", "x", 1, next),
+            Err((DAY - 60, Spent::Caller))
+        );
+    }
+
     /// F-SEC1-027: a day full of distinct callers takes no new one, and a refused caller is
     /// not kept, so the map never grows past MAX_CALLERS within one day.
     #[test]
